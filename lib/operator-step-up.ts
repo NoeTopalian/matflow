@@ -54,6 +54,11 @@ export const STEP_UP_ACTIONS = [
   // Reserved for lane B (support sessions need fresh operator MFA); target =
   // the tenant id. Not yet demanded by any route in this lane.
   "support.impersonate",
+  // Owner login email (7 Oct 2026): mark provisional, clear provisional,
+  // change. Target = stepUpTarget(tenantId, ownerUserId, subAction), so a grant
+  // for one club's owner cannot be spent on another account, nor a grant for
+  // one sub-action on another.
+  "owner.login_email",
 ] as const;
 export type StepUpAction = (typeof STEP_UP_ACTIONS)[number];
 
@@ -64,10 +69,13 @@ export function isStepUpAction(value: unknown): value is StepUpAction {
 /**
  * The target string a grant is bound to. Routes and the Danger Zone build it
  * the same way: the tenant, then (where the action picks a person) that
- * person's id — so a grant for member A cannot be spent on member B.
+ * person's id — so a grant for member A cannot be spent on member B — then
+ * (where one action covers several operations) the sub-action, so a grant
+ * bought for "mark provisional" cannot be spent on "change" (review defect 7,
+ * 7 Oct 2026).
  */
-export function stepUpTarget(tenantId: string, subjectId?: string): string {
-  return subjectId ? `${tenantId}/${subjectId}` : tenantId;
+export function stepUpTarget(tenantId: string, subjectId?: string, subAction?: string): string {
+  return [tenantId, subjectId, subAction].filter((p): p is string => typeof p === "string" && p.length > 0).join("/");
 }
 
 type GrantPayload = { v: 1; op: string; act: StepUpAction; tgt: string; exp: number; n: string };

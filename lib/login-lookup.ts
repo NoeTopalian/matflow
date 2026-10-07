@@ -8,6 +8,13 @@ export interface GymBranding {
   bgColor?: string;
   fontFamily?: string;
   demo?: boolean;
+  /**
+   * Whether this deployment sends email (lib/email-delivery.ts). "off" makes
+   * the login screen withhold the sign-in-link and reset-code doors instead of
+   * promising an email that will never come. A deployment-wide switch, so it
+   * says nothing about any one account.
+   */
+  emailDelivery?: "on" | "off";
 }
 
 export interface LookupResult {

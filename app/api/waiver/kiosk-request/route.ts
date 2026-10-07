@@ -6,6 +6,7 @@ import { hashToken } from "@/lib/token-hash";
 import { verifyKioskMemberToken } from "@/lib/kiosk-token";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
+import { isEmailDeliveryOn } from "@/lib/email-delivery";
 import { getBaseUrl } from "@/lib/env-url";
 
 export const runtime = "nodejs";
@@ -51,6 +52,19 @@ export async function POST(req: Request) {
   );
   if (!tenant) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // Mail-dark (7 Oct 2026): no link can reach the member, so mint none — and do
+  // not retire a waiver link they may already hold. Said before the member is
+  // looked up because it is true for everyone at this kiosk.
+  if (!isEmailDeliveryOn()) {
+    return NextResponse.json(
+      {
+        error: "Email is turned off for this club, so no waiver link was sent. Ask a coach to open your waiver on a staff device.",
+        reason: "email_delivery_off",
+      },
+      { status: 503 },
+    );
   }
 
   const verified = verifyKioskMemberToken(kioskMemberToken, tenant.id);

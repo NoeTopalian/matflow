@@ -141,6 +141,15 @@ model User {
   // existed before this column, and passwords people chose themselves).
   // Cleared by /api/auth/set-password.
   tempPasswordExpiresAt DateTime?
+  // Provisional login identifier (7 Oct 2026): non-null = `email` is a login
+  // identifier only, NOT a verified mailbox. No reset code, sign-in link or
+  // external sign-in reaches it; password + TOTP sign-in is unaffected. Set by
+  // the operator (mark/change) and by the owner's own login-email change;
+  // cleared only by an operator attestation. See lib/login-email.ts.
+  loginEmailProvisionalSince DateTime?
+  // Single-use staff TOTP for step-up confirmations (login-email change): the
+  // last accepted time-step, spent with a conditional update.
+  totpLastUsedStep  Int?
   // P1.6 Login Notifications: opt-out per User. Owners cannot disable
   // (server-side guard in lib/login-event.ts). Default true.
   notifyOnNewLogin  Boolean   @default(true)

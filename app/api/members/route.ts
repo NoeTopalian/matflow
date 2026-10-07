@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { sendEmail } from "@/lib/email";
+import { suppressedMessage } from "@/lib/email-delivery";
 import { randomBytes } from "crypto";
 import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
@@ -510,6 +511,11 @@ export async function POST(req: Request) {
     // token for an inbox that does not exist would hand the owner an `inviteUrl`
     // and an EmailLog row for an invite no one can ever receive.
     let inviteUrl: string | null = null;
+    // Whether the invite EMAIL actually left (7 Oct 2026, mail-dark). The
+    // screen used to say "an invite email was queued" whatever happened; with
+    // email off, or a failed send, that sentence was false.
+    let inviteEmailSent = false;
+    let inviteEmailNote: string | null = null;
     if (!isKid && hasRealEmail) {
       try {
         // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.
@@ -532,7 +538,7 @@ export async function POST(req: Request) {
           });
         });
         inviteUrl = buildInviteUrl(req, token);
-        await sendEmail({
+        const sent = await sendEmail({
           tenantId: session.user.tenantId,
           templateId: "invite_member",
           to: email,
@@ -542,6 +548,8 @@ export async function POST(req: Request) {
             link: inviteUrl,
           },
         });
+        inviteEmailSent = sent?.ok === true;
+        if (!inviteEmailSent) inviteEmailNote = suppressedMessage(sent) ?? "The invite email could not be sent.";
       } catch (e) {
         // Token / email failure must not break the member creation flow.
         // The owner still gets back the new Member row; inviteUrl will be null
@@ -554,7 +562,7 @@ export async function POST(req: Request) {
     // Derived here rather than sniffed from the address by the client, so the
     // placeholder format stays a server detail.
     return NextResponse.json(
-      { ...member, inviteUrl, noEmail: !isKid && !hasRealEmail },
+      { ...member, inviteUrl, inviteEmailSent, inviteEmailNote, noEmail: !isKid && !hasRealEmail },
       { status: 201 },
     );
   } catch (e: unknown) {

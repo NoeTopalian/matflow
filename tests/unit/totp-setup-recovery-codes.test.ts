@@ -28,7 +28,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_tenantId: string, fn: (tx: unknown) => unknown) =>
     Promise.resolve(
       fn({
-        user: { findUnique: findUniqueMock, update: updateMock, findFirst: async () => ({ id: "staff" }) },
+        user: { findUnique: findUniqueMock, update: updateMock, updateMany: async () => ({ count: 1 }), findFirst: async () => ({ id: "staff" }) },
         // Lane D (6 Oct 2026): enrolment writes its audit row in this transaction.
         auditLog: { create: auditCreateMock },
       }),
@@ -41,7 +41,8 @@ vi.mock("next-auth/jwt", () => ({
 vi.mock("otplib", () => ({
   generateSecret: vi.fn().mockReturnValue("MOCK-SECRET"),
   generateURI: vi.fn().mockReturnValue("otpauth://totp/test"),
-  verifySync: vi.fn(({ token }: { token: string }) => ({ valid: token === "123456" })),
+  // timeStep: the routes now SPEND the code via consumeUserTotp (single use, 7 Oct 2026).
+  verifySync: vi.fn(({ token }: { token: string }) => ({ valid: token === "123456", timeStep: 1 })),
 }));
 vi.mock("qrcode", () => ({
   default: { toDataURL: vi.fn().mockResolvedValue("data:image/png;base64,STUB") },

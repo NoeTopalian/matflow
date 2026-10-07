@@ -16,6 +16,7 @@ import bcrypt from "bcryptjs";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
+import { isEmailDeliveryOn } from "@/lib/email-delivery";
 import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
 import { getOperatorContext } from "@/lib/operator-context";
@@ -131,20 +132,29 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: "Failed to create tenant" }, { status: 500 });
   }
 
-  // Mint an owner-activation magic-link token (30-min expiry, same shape as login).
-  const token = randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
-  await withTenantContext(tenantId, (tx) =>
-    tx.magicLinkToken.create({
-      data: {
-        tenantId,
-        email: application.email.toLowerCase().trim(),
-        tokenHash: hashToken(token),
-        purpose: "first_time_signup",
-        expiresAt,
-      },
-    }),
-  );
+  // Mint an owner-activation magic-link token (30-min expiry, same shape as login)
+  // — but only when email is on (review defect 5, 7 Oct 2026). With
+  // EMAIL_DELIVERY=off nobody can receive it, so minting it would only leave a
+  // live sign-in credential lying in the database. The response says plainly
+  // that no link exists; the operator gives the owner access another way.
+  const deliveryOn = isEmailDeliveryOn();
+  let token: string | null = null;
+  if (deliveryOn) {
+    token = randomBytes(32).toString("hex");
+    const tokenHash = hashToken(token);
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await withTenantContext(tenantId, (tx) =>
+      tx.magicLinkToken.create({
+        data: {
+          tenantId,
+          email: application.email.toLowerCase().trim(),
+          tokenHash,
+          purpose: "first_time_signup",
+          expiresAt,
+        },
+      }),
+    );
+  }
 
   // Flip application to approved (cross-tenant scope — bypass).
   await withRlsBypass((tx) =>
@@ -166,6 +176,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       ownerEmail: application.email,
       ownerUserId,
       operatorEmail: operator.operatorEmail,
+      activationLinkCreated: token !== null,
     },
     actAsUserId: operator.operatorId,
     req,
@@ -173,10 +184,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   // Send the activation email. Best-effort — DB state stays correct even if email fails.
   const baseUrl = getBaseUrl(req);
-  const link = `${baseUrl}/api/magic-link/verify?token=${encodeURIComponent(token)}&tenantSlug=${encodeURIComponent(slug)}`;
-  if (process.env.RESEND_API_KEY) {
+  const link = token
+    ? `${baseUrl}/api/magic-link/verify?token=${encodeURIComponent(token)}&tenantSlug=${encodeURIComponent(slug)}`
+    : undefined;
+  // `activationEmailSent` / `activationLinkCreated` are what the operator screen
+  // reports (7 Oct 2026, mail-dark): it is never told the contact was emailed
+  // unless sendEmail says so, and with email off it is told no link exists.
+  let activationEmailSent = false;
+  if (!link) {
+    console.warn(`[admin/applications/${id}/approve] email is turned off (EMAIL_DELIVERY=off) — no activation link was created or sent`);
+  } else if (process.env.RESEND_API_KEY) {
     try {
-      await sendEmail({
+      const sent = await sendEmail({
         tenantId,
         templateId: "owner_activation",
         to: application.email.toLowerCase().trim(),
@@ -187,6 +206,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           link,
         },
       });
+      activationEmailSent = sent.ok;
+      if (sent.suppressed) {
+        // The link itself is never logged here, in any environment.
+        console.warn(`[admin/applications/${id}/approve] activation email suppressed (${sent.suppressed}) — nothing was sent`);
+      }
     } catch (e) {
       console.error(`[admin/applications/${id}/approve] activation email failed`, e);
     }
@@ -203,6 +227,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     tenantId,
     slug,
     ownerEmail: application.email,
+    activationEmailSent,
+    activationLinkCreated: token !== null,
+    emailDelivery: deliveryOn ? "on" : "off",
     activationLink: process.env.NODE_ENV === "production" ? undefined : link,
   }, { status: 201 });
 }

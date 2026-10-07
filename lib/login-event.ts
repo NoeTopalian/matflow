@@ -144,7 +144,7 @@ export async function recordLoginEvent(args: RecordArgs): Promise<void> {
     const baseUrl = args.appUrl.replace(/\/$/, "");
     const disownLink = `${baseUrl}/api/auth/disown-login/${token}`;
 
-    await sendEmail({
+    const sent = await sendEmail({
       tenantId: subject.tenantId,
       templateId: "login_new_device",
       to: subject.email,
@@ -156,6 +156,11 @@ export async function recordLoginEvent(args: RecordArgs): Promise<void> {
         disownLink,
       },
     });
+
+    // "Alert sent" is recorded only when it was (7 Oct 2026, mail-dark): with
+    // email off or a failed send, the EmailLog row says why and the LoginEvent
+    // row above is still the sign-in evidence.
+    if (sent?.ok !== true) return;
 
     await logAudit({
       tenantId: subject.tenantId,

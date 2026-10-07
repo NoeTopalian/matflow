@@ -22,6 +22,7 @@ import { SettingImpact } from "@/components/dashboard/SettingImpact";
 import { StaffUnlockControl } from "@/components/dashboard/UnlockSignIn";
 import { StaffTotpResetControl } from "@/components/dashboard/StaffTotpReset";
 import { ContactEmailSection } from "@/components/dashboard/ContactEmailSection";
+import LoginEmailCard from "@/components/dashboard/LoginEmailCard";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
@@ -2395,6 +2396,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       {/* ── Account ── */}
       {tab === "account" && (
         <div className="space-y-4">
+
+          {/* Login email + provisional badge + change (7 Oct 2026). */}
+          <LoginEmailCard />
 
           {/* TOTP card — visible to all staff roles (2FA-optional spec, 2026-05-07).
               Once enrolled, no self-disable: only the operator support action

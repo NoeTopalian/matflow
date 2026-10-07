@@ -11,6 +11,7 @@ import { z } from "zod";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { sendEmail } from "@/lib/email";
+import { suppressedMessage } from "@/lib/email-delivery";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -116,10 +117,19 @@ export async function POST(req: Request) {
     action: "payment.chase",
     entityType: "Member",
     entityId: memberId,
-    metadata: { amountPence, emailSent: result.ok },
+    metadata: { amountPence, emailSent: result.ok, ...(result.suppressed ? { suppressed: result.suppressed } : {}) },
     req,
   });
 
+  // Mail-dark (7 Oct 2026): nothing was sent on purpose — say that, not "try
+  // again", and send staff to the phone.
+  const suppressed = suppressedMessage(result);
+  if (suppressed) {
+    return NextResponse.json(
+      { ok: false, error: `${suppressed} Chase this member in person or by phone.`, reason: `email_${result.suppressed}` },
+      { status: 409 },
+    );
+  }
   if (!result.ok) return apiError("Couldn't send the reminder email", 502);
   return NextResponse.json({ ok: true });
 }

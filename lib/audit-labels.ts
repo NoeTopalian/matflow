@@ -179,6 +179,10 @@ export const AUDIT_LABELS: Record<string, string> = {
   "auth.member.totp.recovery.used": "Member signed in with a recovery code",
   "auth.member.totp.recovery.failed": "Member recovery code refused",
   "user.password.set_own": "Set their own password",
+  "auth.magic_link.refused_provisional": "Refused a sign-in link for a provisional (unverified) login email",
+  "auth.password_reset.refused_provisional": "Refused a password reset for a provisional (unverified) login email",
+  "auth.external_signin.refused_provisional": "Refused an external sign-in for a provisional (unverified) login email",
+  "user.login_email.changed": "Changed their own login email (unverified until confirmed)",
 
   // ── Operator (MatFlow) ────────────────────────────────────────────────────
   "admin.application.approve": "MatFlow approved the club application",
@@ -195,6 +199,9 @@ export const AUDIT_LABELS: Record<string, string> = {
   "admin.tenant.ownership_transferred": "MatFlow transferred club ownership",
   "admin.owner.force_password_reset": "MatFlow issued the owner a temporary password",
   "admin.owner.totp_reset": "MatFlow reset the owner's authenticator",
+  "admin.owner.login_email.marked_provisional": "MatFlow marked the owner's login email as provisional (unverified)",
+  "admin.owner.login_email.cleared_provisional": "MatFlow confirmed the owner's login email on its own verification",
+  "admin.owner.login_email.changed": "MatFlow changed the owner's login email (unverified until confirmed)",
   "admin.member.totp_reset": "MatFlow reset a member's authenticator",
   "admin.impersonate.start": "MatFlow support signed in as the owner",
   "admin.impersonate.end": "MatFlow support ended the support session",
@@ -205,6 +212,9 @@ export const AUDIT_LABELS: Record<string, string> = {
   // grant request by LoginAsOwnerButton, so the scan below finds it. Not an
   // AuditLog action today; labelled so it reads well if it ever becomes one.
   "support.impersonate": "MatFlow support confirmed a support session",
+  // Step-up action name sent by the operator Login email card (7 Oct 2026);
+  // the audit rows it leads to are admin.owner.login_email.*.
+  "owner.login_email": "MatFlow confirmed a change to the owner's login email",
 };
 
 /** "member.photo.add" → "Member photo add" — only for names not in the map. */

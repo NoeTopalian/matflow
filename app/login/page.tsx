@@ -439,6 +439,7 @@ function LoginStep({
   initialError?: string | null;
 }) {
   const router = useRouter();
+  const emailOff = gym.emailDelivery === "off";
   const [error, setError] = useState<string | null>(initialError ?? null);
   // `initialError` is derived in the parent's mount effect, so on the deep-link
   // path it can arrive one render after this component's initial state was
@@ -828,14 +829,19 @@ function LoginStep({
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign in"}
             </button>
 
-            <button
-              type="button"
-              onClick={() => setMagicMode(true)}
-              className="w-full py-3 rounded-xl text-sm font-semibold transition-all hover:opacity-90"
-              style={{ color: theme.textMain, background: theme.surface, border: `1px solid ${theme.border}` }}
-            >
-              Email me a sign-in link
-            </button>
+            {/* Mail-dark (7 Oct 2026): no door that promises an email when
+                none can be sent. The switch is deployment-wide, so withholding
+                the door says nothing about any account. */}
+            {!emailOff && (
+              <button
+                type="button"
+                onClick={() => setMagicMode(true)}
+                className="w-full py-3 rounded-xl text-sm font-semibold transition-all hover:opacity-90"
+                style={{ color: theme.textMain, background: theme.surface, border: `1px solid ${theme.border}` }}
+              >
+                Email me a sign-in link
+              </button>
+            )}
 
             {process.env.NEXT_PUBLIC_ENABLE_GOOGLE_OAUTH === "true" && (
               <button
@@ -878,14 +884,21 @@ function LoginStep({
             )}
 
             <div className="flex flex-col items-center pt-1 gap-2">
-              <button
-                type="button"
-                onClick={() => onForgot(currentEmail)}
-                className="text-xs font-medium transition-colors hover:opacity-70"
-                style={{ color: theme.primary }}
-              >
-                Forgot password?
-              </button>
+              {emailOff ? (
+                <p className="text-xs text-center leading-relaxed" style={{ color: theme.textMuted }}>
+                  Forgot your password? Email is turned off for this club, so we can&apos;t send a reset code or
+                  sign-in link. Ask your club to reset your access — club owners, contact MatFlow.
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onForgot(currentEmail)}
+                  className="text-xs font-medium transition-colors hover:opacity-70"
+                  style={{ color: theme.primary }}
+                >
+                  Forgot password?
+                </button>
+              )}
             </div>
           </form>
         </div>

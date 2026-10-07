@@ -4,6 +4,8 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { hashToken } from "@/lib/token-hash";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { logAudit } from "@/lib/audit-log";
+import { isLoginEmailProvisional } from "@/lib/login-email";
 
 // UK NCSC / OWASP compliant password policy
 const HISTORY_LIMIT = 8; // cannot reuse last 8 passwords
@@ -106,8 +108,15 @@ export async function POST(req: Request) {
     // shape ever changes.
     const user = await tx.user.findFirst({
       where: { email: normEmail, tenantId: tenant.id },
-      select: { id: true, passwordHash: true, mustChangePassword: true },
+      select: { id: true, passwordHash: true, mustChangePassword: true, loginEmailProvisionalSince: true },
     });
+    // A provisional login email (7 Oct 2026, lib/login-email.ts) never
+    // receives a reset code, so a code for it can only predate the marking (or
+    // be a guess): refused as an expired code, and burned below so it cannot
+    // be replayed once the mark is cleared.
+    if (isLoginEmailProvisional(user)) {
+      return { resetToken, subject: null, history: [] as { passwordHash: string }[], provisionalUserId: user!.id };
+    }
     // A staff account on a temporary password cannot be reset by mailbox
     // (3 Oct 2026, see forgot-password). This catches a code requested before
     // the flag was set. Answered as an expired code: no new oracle, and no
@@ -148,6 +157,26 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { error: "Code is invalid or has expired (codes are valid for 2 minutes). Please request a new one." },
       { status: 400 }
+    );
+  }
+  if ("provisionalUserId" in lookups && lookups.provisionalUserId) {
+    const refusedId = lookups.provisionalUserId;
+    const tokenId = lookups.resetToken.id;
+    await withTenantContext(tenant.id, (tx) =>
+      tx.passwordResetToken.updateMany({ where: { id: tokenId, used: false }, data: { used: true } }),
+    );
+    await logAudit({
+      tenantId: tenant.id,
+      userId: null,
+      action: "auth.password_reset.refused_provisional",
+      entityType: "User",
+      entityId: refusedId,
+      metadata: { reason: "login_email_provisional", stage: "consume" },
+      req,
+    });
+    return NextResponse.json(
+      { error: "Code is invalid or has expired (codes are valid for 2 minutes). Please request a new one." },
+      { status: 400 },
     );
   }
   // If a token is valid but the subject no longer exists (e.g. soft-deleted),

@@ -39,6 +39,9 @@ vi.mock("@/lib/prisma-tenant", () => ({
         update: updateMock,
       },
     })),
+  // sendEmail's provisional-login-email check (7 Oct 2026) spans every club
+  // through withRlsBypass: no recipient here is provisional.
+  withRlsBypass: (fn: (tx: unknown) => unknown) => Promise.resolve(fn({ user: { findFirst: () => Promise.resolve(null) } })),
 }));
 
 import { sendEmail } from "@/lib/email";

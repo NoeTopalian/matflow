@@ -21,6 +21,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { getBaseUrl } from "@/lib/env-url";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
+import { EMAIL_OFF_MESSAGE, isEmailDeliveryOn, suppressedMessage } from "@/lib/email-delivery";
 import { NOT_SYNTHESISED_EMAIL, isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
 
@@ -57,6 +58,22 @@ export async function POST(req: Request) {
   try { body = await req.json(); } catch {}
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid data" }, { status: 400 });
+
+  // Mail-dark (7 Oct 2026): with email off an "invite" is a token nobody is
+  // told about, and minting it would also retire the link staff may already
+  // have handed over by hand. Refuse before touching a token, say so, and point
+  // at the route that does work without email.
+  if (!isEmailDeliveryOn()) {
+    return NextResponse.json(
+      {
+        error: `${EMAIL_OFF_MESSAGE} Use “Show invite link” on a member’s profile to hand them a sign-up link instead.`,
+        reason: "email_delivery_off",
+        invited: 0,
+        failed: [],
+      },
+      { status: 409 },
+    );
+  }
 
   // Eligibility: adults (kids are passwordless by design), with an email,
   // who cannot currently log in (no passwordHash).
@@ -128,7 +145,7 @@ export async function POST(req: Request) {
         vars: { memberName: member.name, gymName, link: inviteUrl },
       });
       if (result && typeof result === "object" && "ok" in result && !result.ok) {
-        failed.push({ id: member.id, error: "Email send failed" });
+        failed.push({ id: member.id, error: suppressedMessage(result) ?? "Email send failed" });
         continue;
       }
       invited++;

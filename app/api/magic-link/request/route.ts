@@ -6,6 +6,8 @@ import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
 import { hashToken } from "@/lib/token-hash";
 import { getBaseUrl } from "@/lib/env-url";
+import { isLoginEmailProvisional } from "@/lib/login-email";
+import { isEmailDeliveryOn } from "@/lib/email-delivery";
 import { z } from "zod";
 
 const schema = z.object({
@@ -39,7 +41,7 @@ export async function POST(req: Request) {
   const lookups = await withTenantContext(tenant.id, async (tx) => {
     const u = await tx.user.findFirst({
       where: { tenantId: tenant.id, email: normEmail },
-      select: { id: true, mustChangePassword: true },
+      select: { id: true, mustChangePassword: true, loginEmailProvisionalSince: true },
     });
     const m = !u
       ? await tx.member.findFirst({
@@ -51,10 +53,13 @@ export async function POST(req: Request) {
       : null;
     const owner = await tx.user.findFirst({
       where: { tenantId: tenant.id, role: "owner" },
-      select: { email: true },
+      select: { email: true, loginEmailProvisionalSince: true },
       orderBy: { createdAt: "asc" },
     });
-    return { user: u, member: m, ownerEmail: owner?.email ?? null };
+    // A provisional owner login is not a mailbox anyone has shown to be the
+    // owner's: never route members' replies to it (7 Oct 2026).
+    const ownerReplyTo = owner && !isLoginEmailProvisional(owner) ? owner.email : null;
+    return { user: u, member: m, ownerEmail: ownerReplyTo };
   });
   const { user, member, ownerEmail } = lookups;
   if (!user && !member) return NextResponse.json({ ok: true });
@@ -85,6 +90,29 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ ok: true });
   }
+
+  // A PROVISIONAL login email (7 Oct 2026, lib/login-email.ts) is an
+  // identifier, not a proven mailbox, so no sign-in link is ever sent to it —
+  // whatever the account's password state. Same opaque 200, nothing minted or
+  // sent, audited for the operator.
+  if (isLoginEmailProvisional(user)) {
+    await logAudit({
+      tenantId: tenant.id,
+      userId: null,
+      action: "auth.magic_link.refused_provisional",
+      entityType: "User",
+      entityId: user!.id,
+      metadata: { reason: "login_email_provisional" },
+      req,
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  // Mail-dark (7 Oct 2026, lib/email-delivery.ts): with delivery off no link
+  // can reach the person, so mint nothing and do not retire the earlier one
+  // (minting here only left orphan tokens behind a suppressed send). Same
+  // opaque 200 as every other exit.
+  if (!isEmailDeliveryOn()) return NextResponse.json({ ok: true });
 
   // Issue new token (B-3: 32 random bytes as hex = 64-char string).
   // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.

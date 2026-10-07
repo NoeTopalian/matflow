@@ -9,7 +9,9 @@ import { adminCard, adminContainer, adminNavLink, adminPage, adminPalette } from
 import AdminTopNav from "../../AdminTopNav";
 import LoginAsOwnerButton from "./LoginAsOwnerButton";
 import DangerZone, { type DeletionState } from "./DangerZone";
+import LoginEmailCard from "./LoginEmailCard";
 import { softDeleteCutoff } from "@/lib/tenant-lifecycle";
+import { emailDeliveryMode } from "@/lib/email-delivery";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,7 +44,7 @@ export default async function AdminTenantDetailPage({
         stripeAccountId: true,
         users: {
           where: { role: "owner" },
-          select: { id: true, email: true, name: true, totpEnabled: true, lockedUntil: true },
+          select: { id: true, email: true, name: true, totpEnabled: true, lockedUntil: true, loginEmailProvisionalSince: true },
           orderBy: { createdAt: "asc" },
         },
         _count: { select: { members: true, classes: true } },
@@ -133,6 +135,20 @@ export default async function AdminTenantDetailPage({
             deletionState={deletionState}
           />
         </div>
+
+        {owner && (
+          <div style={{ marginTop: 16 }}>
+            <LoginEmailCard
+              tenantId={tenant.id}
+              ownerUserId={owner.id}
+              ownerName={owner.name}
+              ownerEmail={owner.email}
+              provisionalSince={owner.loginEmailProvisionalSince ? owner.loginEmailProvisionalSince.toISOString() : null}
+              emailDelivery={emailDeliveryMode()}
+              disabled={isDeleted}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

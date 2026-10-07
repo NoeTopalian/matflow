@@ -89,7 +89,8 @@ describe("recovery-codes lib (pure helpers)", () => {
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
-vi.mock("otplib", () => ({ verifySync: vi.fn().mockReturnValue({ valid: true }) }));
+// timeStep: the route now SPENDS the code via consumeUserTotp (single use, 7 Oct 2026).
+vi.mock("otplib", () => ({ verifySync: vi.fn().mockReturnValue({ valid: true, timeStep: 1 }) }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
     const { prisma } = await import("@/lib/prisma");
@@ -112,6 +113,7 @@ vi.mock("@/lib/prisma", () => ({
     user: {
       findFirst: findFirstMock,
       update: updateMock,
+      updateMany: async () => ({ count: 1 }),
     },
     tenant: {
       findUnique: vi.fn(),

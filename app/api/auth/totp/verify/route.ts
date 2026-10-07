@@ -1,7 +1,7 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse } from "next/server";
 import { getToken, encode } from "next-auth/jwt";
-import { verifySync } from "otplib";
+import { consumeUserTotp } from "@/lib/login-email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
@@ -39,19 +39,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid code format" }, { status: 400 });
   }
 
-  const user = await withTenantContext(token.tenantId as string, (tx) =>
-    tx.user.findUnique({
+  // Single use (7 Oct 2026, handover lane P residual): the code is spent with a
+  // conditional update on totpLastUsedStep, so the code that just signed in
+  // cannot be replayed within its 30-second window — e.g. to confirm a
+  // login-email change — on this or any other server instance.
+  const outcome = await withTenantContext(token.tenantId as string, async (tx) => {
+    const user = await tx.user.findUnique({
       where: { id: token.id as string },
-      select: { totpSecret: true, totpEnabled: true },
-    }),
-  );
+      select: { id: true, totpSecret: true, totpEnabled: true, totpLastUsedStep: true },
+    });
+    if (!user?.totpSecret || !user.totpEnabled) return "not_enabled" as const;
+    const ok = await consumeUserTotp(tx, { id: user.id, totpSecret: user.totpSecret, totpLastUsedStep: user.totpLastUsedStep }, code);
+    return ok ? ("ok" as const) : ("invalid" as const);
+  });
 
-  if (!user?.totpSecret || !user.totpEnabled) {
+  if (outcome === "not_enabled") {
     return NextResponse.json({ error: "TOTP not enabled" }, { status: 400 });
   }
-
-  const result = verifySync({ token: code, secret: user.totpSecret });
-  if (!result.valid) {
+  if (outcome === "invalid") {
     return NextResponse.json({ error: "Invalid code" }, { status: 400 });
   }
 

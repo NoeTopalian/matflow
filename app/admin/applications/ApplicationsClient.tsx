@@ -48,7 +48,7 @@ export default function ApplicationsClient() {
   async function approve(id: string) {
     const ok = await ask({
       title: "Approve this application?",
-      body: "A live tenant and an owner account will be created, and an activation link will be emailed to the contact. Approving cannot be undone from this screen.",
+      body: "A live tenant and an owner account will be created, and an activation link will be emailed to the contact if email is turned on. Approving cannot be undone from this screen.",
       confirmLabel: "Approve",
     });
     if (!ok) return;
@@ -57,7 +57,17 @@ export default function ApplicationsClient() {
       const res = await fetch(`/api/admin/applications/${id}/approve`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setToast({ kind: "err", text: data?.error ?? `Approve failed (${res.status})` }); return; }
-      setToast({ kind: "ok", text: `Approved: slug ${data.slug}, owner ${data.ownerEmail}` });
+      // Mail-dark (7 Oct 2026): only say the contact was emailed when the server says it was.
+      setToast({
+        kind: "ok",
+        text: `Approved: slug ${data.slug}, owner ${data.ownerEmail}. ${
+          data.activationEmailSent === true
+            ? "Activation email sent."
+            : data.activationLinkCreated === false
+              ? "Email is turned off, so no activation link was created or sent — give the owner access another way."
+              : "No activation email was sent (the send failed or was blocked) — give the owner access another way."
+        }`,
+      });
       void load();
     } finally {
       setBusyId(null);

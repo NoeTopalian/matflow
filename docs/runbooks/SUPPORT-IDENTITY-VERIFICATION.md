@@ -19,7 +19,9 @@ WhatsApp or social message, or "I'm with the owner right now".
    - **Call back** on the number on file (not the number that called). Ask them to confirm the request and one detail
      only the club would know (for example the club's sign-up date, its membership count range, or the last payout).
    - **Email from the address on file**: you send a message to the owner's address on file describing the request;
-     act only on the reply to that message.
+     act only on the reply to that message. **Not valid while the login email is provisional** (Danger Zone shows
+     "Provisional — unverified") or while email delivery is off: nobody has proven they control that mailbox, so use
+     the call-back or an in-person check instead (docs/runbooks/OWNER-LOGIN-EMAIL-CHANGE.md).
 3. If the details on file are themselves what is being changed or are unreachable (lost phone AND lost mailbox), stop.
    Escalate to Noe, ask for documentary proof (for example the club's company or trading details matching the billing
    record), and record what was accepted.

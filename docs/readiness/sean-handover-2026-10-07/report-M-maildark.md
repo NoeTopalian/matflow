@@ -1,0 +1,9 @@
+# Lane M report (saved by lead)
+EMAIL_DELIVERY switch (lib/email-delivery.ts): unset/empty/"on" = send; "off" = nothing sent; any other value = off (fail closed). Default on (dev/test/preview unchanged); production needs EMAIL_DELIVERY=off set in Vercel + redeploy.
+sendEmail: check first; off → no Resend client constructed, EmailLog status suppressed / reason suppressed_delivery_off, returns {ok:false, suppressed:"delivery_off"}. Delivery on: recipient that is a User in the same tenant with loginEmailProvisionalSince → suppressed_provisional; lookup failure → not sent.
+env-guards: off → RESEND_API_KEY / RESEND_WEBHOOK_SECRET not required, loud warning; on → still required.
+Honest states: member create (inviteEmailSent + note; link still shown), bulk invite 409 before minting tokens, kiosk waiver link 503, chase 409, admin test email 409, owner activation (approve) via sendEmail with activationEmailSent, CSV handoff (teamNotified), new-device alert audit only when sent, login page hides magic link + replaces forgot-password with email-off text (tenant lookup returns emailDelivery — global flag, no account enumeration).
+Inventory: docs/readiness/MAIL-DARK-SEND-PATHS.md (19 paths) + Future Resend activation section.
+Tests: email-delivery-off (10), env-guards-email-delivery (6), mail-dark-send-paths (6, Resend never constructed), members/csv-handoff/login-event extended. tsc clean; eslint 0 errors; UI ratchet at baseline. Full suite pending (lead).
+Residual: provisional check per tenant; invite buttons visible but answer email-off; owner alerts (chargeback, Stripe disconnect, payment failed) not delivered while dark — tell Sean; scripts/test-resend.mjs ignores switch (manual only).
+Relayed to lane P: forgot-password + magic-link/request should return opaque ok before minting tokens when delivery off; login wording to point at recovery route.

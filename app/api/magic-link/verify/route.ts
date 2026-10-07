@@ -11,6 +11,7 @@ import { isTestingMode } from "@/lib/testing-mode";
 import { recordLoginEvent } from "@/lib/login-event";
 import { getClientIp } from "@/lib/rate-limit";
 import { getBaseUrl } from "@/lib/env-url";
+import { isLoginEmailProvisional } from "@/lib/login-email";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -100,7 +101,7 @@ export async function GET(req: NextRequest) {
   const lookups = await withTenantContext(tokenRow.tenantId, async (tx) => {
     const u = await tx.user.findFirst({
       where: { tenantId: tokenRow.tenantId, email: tokenRow.email },
-      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true, totpEnabled: true, mustChangePassword: true, notifyOnNewLogin: true },
+      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true, totpEnabled: true, mustChangePassword: true, notifyOnNewLogin: true, loginEmailProvisionalSince: true },
     });
     const m = !u
       ? await tx.member.findFirst({
@@ -147,6 +148,23 @@ export async function GET(req: NextRequest) {
       entityType: "User",
       entityId: user.id,
       metadata: { email: tokenRow.email, reason: "must_change_password" },
+      req,
+    });
+    return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
+  }
+
+  // A provisional login email (7 Oct 2026, lib/login-email.ts) never signs in
+  // by link, whatever the token's purpose (login or activation) or when it was
+  // minted. Answered as an expired link; the token was consumed above so it
+  // cannot be replayed once the mark is cleared.
+  if (isLoginEmailProvisional(user)) {
+    await logAudit({
+      tenantId: tokenRow.tenantId,
+      userId: null,
+      action: "auth.magic_link.refused_provisional",
+      entityType: "User",
+      entityId: user!.id,
+      metadata: { reason: "login_email_provisional", purpose: tokenRow.purpose },
       req,
     });
     return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));

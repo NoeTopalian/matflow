@@ -24,6 +24,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
+import { isEmailDeliveryOn } from "@/lib/email-delivery";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 
@@ -130,8 +131,10 @@ export async function POST(req: Request) {
       .map((s) => s.trim())
       .filter(Boolean);
 
-    // Fire-and-forget the team notifications — owner gets confirmation either way.
-    await Promise.allSettled(
+    // The team notifications. The owner gets confirmation either way, but the
+    // confirmation must not promise an email when none can go out (7 Oct 2026,
+    // mail-dark): whether a human at MatFlow was reached is read off the results.
+    const notified = await Promise.allSettled(
       internalRecipients.map((to) =>
         sendEmail({
           tenantId,
@@ -164,10 +167,18 @@ export async function POST(req: Request) {
       req,
     });
 
+    const teamReached = notified.some((r) => r.status === "fulfilled" && r.value?.ok === true);
+    const message = !isEmailDeliveryOn()
+      ? "Your file is uploaded and safe. Email is turned off for this club, so the MatFlow team was not notified automatically and you won't get an email when it's done — let your MatFlow contact know it's there."
+      : teamReached
+        ? "We'll import your members within 1 business day and email you when they're ready."
+        : "Your file is uploaded and safe, but our automatic notification to the MatFlow team didn't go through — email hello@matflow.studio so we can import it.";
+
     return NextResponse.json(
       {
         jobId: job.id,
-        message: "We'll import your members within 1 business day and email you when they're ready.",
+        message,
+        teamNotified: teamReached,
       },
       { status: 201 },
     );

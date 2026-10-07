@@ -55,6 +55,9 @@ vi.mock("@/lib/email", () => ({
   sendEmail: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
+// forgot-password audits its provisional-login-email refusal (7 Oct 2026).
+vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn() }));
+
 vi.mock("@/lib/google-drive", () => ({
   buildAuthUrl: vi.fn().mockReturnValue("https://accounts.google.com/o/oauth2/v2/auth?stub"),
 }));

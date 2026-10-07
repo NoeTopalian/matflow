@@ -18,6 +18,7 @@ import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
 import { checkSessionVersion } from "@/lib/session-revocation";
 import { resolveActiveImpersonation, hasImpersonationCookie } from "@/lib/impersonation";
 import { isTempPasswordExpired } from "@/lib/temp-password";
+import { isLoginEmailProvisional } from "@/lib/login-email";
 
 // Resolve the public app URL once for outbound links (e.g. the disown-login
 // link in P1.6 emails). Falls back to a sensible string in dev so the helper
@@ -760,6 +761,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // control of the mailbox (which is all Google proves) must not reach
       // /set-password — the same rule the magic-link door applies (3 Oct 2026).
       if (dbUser?.mustChangePassword === true) return "/login?error=invalid_link";
+      // A PROVISIONAL login email (7 Oct 2026, lib/login-email.ts) is an
+      // identifier, not a mailbox anyone has shown to be this person's — and a
+      // verified Google account proves exactly the mailbox and nothing more. No
+      // external identity provider signs a provisional identifier in. Audited;
+      // the answer is the one a dead link gets. Password + authenticator only.
+      if (isLoginEmailProvisional(dbUser)) {
+        try {
+          const { logAudit } = await import("@/lib/audit-log");
+          await logAudit({
+            tenantId: tenant.id,
+            userId: null,
+            action: "auth.external_signin.refused_provisional",
+            entityType: "User",
+            entityId: dbUser!.id,
+            metadata: { provider: "google", reason: "login_email_provisional" },
+          });
+        } catch {
+          // Best-effort: the refusal stands whether or not the row is written.
+        }
+        return "/login?error=invalid_link";
+      }
 
       // Hydrate the `user` object so the jwt() callback below populates the
       // token with the same shape as the Credentials path produces.

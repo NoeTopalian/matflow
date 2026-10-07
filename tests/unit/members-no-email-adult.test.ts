@@ -155,7 +155,22 @@ describe("POST /api/members — an adult with no email", () => {
     expect(written).toBe("jordan@example.com");
     expect(tokenCreateMock).toHaveBeenCalledTimes(1);
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
-    expect((await res.json() as { noEmail: boolean }).noEmail).toBe(false);
+    const body = await res.json() as { noEmail: boolean; inviteEmailSent: boolean; inviteEmailNote: string | null };
+    expect(body.noEmail).toBe(false);
+    expect(body.inviteEmailSent).toBe(true);
+    expect(body.inviteEmailNote).toBeNull();
+  });
+
+  // Mail-dark (7 Oct 2026): the screen used to say "an invite email was
+  // queued" whatever happened. The route now reports whether it left.
+  it("with email turned off: the invite link is still returned, and the response says no email was sent", async () => {
+    asRole("owner");
+    sendEmailMock.mockResolvedValueOnce({ ok: false, logId: "log-off", suppressed: "delivery_off" } as never);
+    const res = await createMember(postReq({ name: "Jordan", email: "jordan@example.com" }));
+    const body = await res.json() as { inviteUrl: string | null; inviteEmailSent: boolean; inviteEmailNote: string | null };
+    expect(typeof body.inviteUrl).toBe("string");
+    expect(body.inviteEmailSent).toBe(false);
+    expect(body.inviteEmailNote).toBe("Email is turned off for this club, so nothing was sent.");
   });
 });
 

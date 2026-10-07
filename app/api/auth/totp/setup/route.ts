@@ -2,7 +2,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { generateSecret, generateURI, verifySync } from "otplib";
+import { generateSecret, generateURI } from "otplib";
 import QRCode from "qrcode";
 import { getToken, encode } from "next-auth/jwt";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
@@ -11,6 +11,8 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { refuseSupportSession } from "@/lib/support-session";
+import { consumeUserTotp } from "@/lib/login-email";
+import { generateRecoveryCodes } from "@/lib/recovery-codes";
 
 // Per-user rate limit on the POST verify endpoint to prevent brute-forcing
 // the 6-digit code during initial enrolment. Mirrors the limit on
@@ -105,7 +107,7 @@ export async function POST(req: NextRequest) {
   let body: unknown;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  const { code } = body as { code?: string };
+  const { code, issueRecoveryCodes } = body as { code?: string; issueRecoveryCodes?: unknown };
   if (!code || !/^\d{6}$/.test(code)) {
     return NextResponse.json({ error: "Invalid code format" }, { status: 400 });
   }
@@ -119,13 +121,24 @@ export async function POST(req: NextRequest) {
   const verifyResult = await withTenantContext(session.user.tenantId, async (tx) => {
     const u = await tx.user.findUnique({
       where: { id: session.user.id },
-      select: { totpSecret: true, mustChangePassword: true },
+      select: { totpSecret: true, mustChangePassword: true, totpLastUsedStep: true },
     });
     if (u?.mustChangePassword === true) return { kind: "password-first" as const };
     if (!u?.totpSecret) return { kind: "not-initialised" as const };
-    if (!verifySync({ token: code, secret: u.totpSecret }).valid) {
+    // Single use (review defect 10, 7 Oct 2026): the code that confirms the
+    // enrolment is SPENT, so it cannot then be replayed within its window to
+    // complete a sign-in, regenerate recovery codes or change the login email.
+    const spent = await consumeUserTotp(
+      tx,
+      { id: session.user.id, totpSecret: u.totpSecret, totpLastUsedStep: u.totpLastUsedStep ?? null },
+      code,
+    );
+    if (!spent) {
       return { kind: "invalid-code" as const };
     }
+    // The wizard asks for its recovery codes here, in the enabling write,
+    // because the code it used to replay into /recovery-codes is now spent.
+    const recovery = issueRecoveryCodes === true ? generateRecoveryCodes() : null;
     await tx.user.update({
       where: { id: session.user.id },
       data: {
@@ -138,7 +151,8 @@ export async function POST(req: NextRequest) {
         // the owner just set up. The forced enrolment flow issues no new
         // codes, so after this the operator TOTP reset is the recovery path
         // until codes are issued from /api/auth/totp/recovery-codes.
-        totpRecoveryCodes: Prisma.JsonNull,
+        // With issueRecoveryCodes, the fresh set (hashes only) replaces them.
+        totpRecoveryCodes: recovery ? recovery.map((c) => c.hash) : Prisma.JsonNull,
       },
     });
     // Enrolment is a credential change: it writes an audit row in the same
@@ -156,7 +170,19 @@ export async function POST(req: NextRequest) {
       metadata: { role: session.user.role },
       req,
     });
-    return { kind: "ok" as const };
+    if (recovery) {
+      await logAudit({
+        tx,
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "auth.totp.recovery_codes.generated",
+        entityType: "User",
+        entityId: session.user.id,
+        metadata: { count: recovery.length, regenerated: false, atEnrolment: true },
+        req,
+      });
+    }
+    return { kind: "ok" as const, recoveryCodes: recovery ? recovery.map((c) => c.display) : undefined };
   });
 
   if (verifyResult.kind === "password-first") return passwordFirst();
@@ -196,7 +222,7 @@ export async function POST(req: NextRequest) {
       maxAge: 30 * 24 * 60 * 60,
       salt: SESSION_COOKIE_NAME,
     });
-    const res = NextResponse.json({ ok: true });
+    const res = NextResponse.json({ ok: true, recoveryCodes: verifyResult.recoveryCodes });
     res.cookies.set(SESSION_COOKIE_NAME, encoded, {
       httpOnly: true,
       sameSite: "lax",
@@ -207,5 +233,5 @@ export async function POST(req: NextRequest) {
     return res;
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, recoveryCodes: verifyResult.recoveryCodes });
 }

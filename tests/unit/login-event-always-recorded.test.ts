@@ -13,7 +13,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const h = vi.hoisted(() => ({
   rows: [] as Record<string, unknown>[],
-  sendEmail: vi.fn(async () => undefined),
+  // sendEmail resolves { ok, logId, suppressed? } (lib/email-delivery.ts); the
+  // "alert sent" audit row is written only for ok: true (7 Oct 2026, mail-dark).
+  sendEmail: vi.fn(async (): Promise<{ ok: boolean; logId: string; suppressed?: string }> => ({ ok: true, logId: "log-1" })),
   logAudit: vi.fn(async () => undefined),
 }));
 
@@ -111,6 +113,14 @@ describe("flag ON — behaviour unchanged", () => {
     expect(h.rows).toHaveLength(1);
     expect(h.sendEmail).toHaveBeenCalledTimes(1);
     expect(h.logAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "auth.login.new_device_notified" }));
+  });
+
+  it("email turned off → row kept, but no 'alert sent' audit row claims a notification", async () => {
+    h.sendEmail.mockResolvedValueOnce({ ok: false, logId: "log-off", suppressed: "delivery_off" });
+    await recordLoginEvent(args());
+    expect(h.rows).toHaveLength(1);
+    expect(h.sendEmail).toHaveBeenCalledTimes(1);
+    expect(h.logAudit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "auth.login.new_device_notified" }));
   });
 
   it("known device → no email", async () => {

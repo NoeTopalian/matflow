@@ -10,7 +10,7 @@ Findings register and evidence: `docs/readiness/OPERATOR-ADMIN-SECURITY-2026-10-
 | Item | Detail |
 |---|---|
 | Commits | `64c2657`, `8fb151a`, `d92435a` (already local) + the remediation commit(s) listed in §9 |
-| Migrations (auto-applied by the build — `scripts/maybe-migrate.mjs`) | `20261006010000_operator_auth_hardening`, `20261006020000_tenant_lifecycle_safety`, `20261006040000_support_session_binding`, `20261006050000_operator_enrolment_ticket` — all **additive, nullable columns, no defaults, no backfill**; safe on a live database and tolerated by the old code |
+| Migrations (auto-applied by the build — `scripts/maybe-migrate.mjs`) | `20261006010000_operator_auth_hardening`, `20261006020000_tenant_lifecycle_safety`, `20261006040000_support_session_binding`, `20261006050000_operator_enrolment_ticket`, `20261007010000_login_email_provisional` (handover, 7 Oct) — all **additive, nullable columns, no defaults, no backfill**; safe on a live database and tolerated by the old code |
 | Required env changes to deploy | **None for the build itself — but §3 is required first** (rotate the secret, Deployment Protection, delete old deployments). `MATFLOW_ADMIN_SECRET` is no longer required at boot. `ALLOW_ADMIN_SECRET_HEADER=0` (added 5 Oct) becomes irrelevant. |
 | Behaviour that changes on deploy | every operator is signed out (new session format); every live support session ends; the shared secret grants nothing; operators must have an authenticator (a new or recovered operator enrols only with a one-time ticket from `scripts/operator-access.mjs`); Danger Zone actions (reset, 2FA reset, transfer, soft-delete, suspend) and support start need a fresh authenticator code; support ("View as … (read-only)") is read-only for 30 min; suspension no longer touches member billing; restore/purge are serialised; high-impact audit rows commit with the change; sign-in records are written for every sign-in (not only when the notification flag is on) and kept 12 months; new temporary passwords expire after 72 h |
 
@@ -55,6 +55,9 @@ Findings register and evidence: `docs/readiness/OPERATOR-ADMIN-SECURITY-2026-10-
 - [ ] Optional, recorded for the register: runtime DB role (`docs/runbooks/RUNTIME-DB-ROLE-CHECK.md` §1) and the E-2
       cross-club class-link detection SQL (§4).
 
+- [ ] **Turn email off: `EMAIL_DELIVERY=off`** in Vercel → Production (handover decision: Resend is not in use). Without it
+      production keeps sending (the default is `on`), including the new-device alert to Sean's provisional address.
+
 ## 4. Deploy
 
 `git push origin main` → Vercel builds, applies the four migrations, deploys. Watch the build log for
@@ -73,6 +76,9 @@ Findings register and evidence: `docs/readiness/OPERATOR-ADMIN-SECURITY-2026-10-
 | 7 | `node scripts/readiness/owner-account-state.mjs` for Total BJJ (read-only, as before) | still PENDING; not ACTIVATED |
 | 8 | Vercel → Deployments → the new deployment's SHA matches the pushed HEAD | match |
 | 9 | An OLD deployment URL (`https://<old>.vercel.app/api/admin/activity`), no Vercel login, with `x-admin-secret: <old value>` | Vercel login wall (401/redirect), never JSON data |
+
+| 10 | Boot log shows the email-delivery-off warning; `/login?club=totalbjj` shows no "Email me a sign-in link" and the email-off text instead of "Forgot password?" | present |
+| 11 | Operator console → Total BJJ → **Login email** card → *Mark provisional* (reason + authenticator code) — **the one production write in this list, do it before Sean's first sign-in** | card shows "Provisional — unverified" |
 
 Do **not** reset, impersonate, suspend or delete anything on Total BJJ as a smoke test.
 
@@ -106,6 +112,11 @@ While the old code runs, these are reopened; operate around them until you deplo
 | Sign-in records gated by the notification flag | The activation verdict cannot read ACTIVATED for sign-ins during the window; confirm with the owner directly. |
 
 After any change of code version, operators sign in again (the session formats differ).
+
+**Rolling back past the handover change (7 Oct) reopens mail to Sean's provisional address.** The old code ignores the
+provisional mark, has no `EMAIL_DELIVERY` switch and requires `RESEND_API_KEY` to boot, so reset codes, sign-in links and
+alerts could be sent to that address again. Before running any older code: revoke the Resend API key at Resend (so nothing
+can send), then deploy; restore a key only when you deploy forward again.
 
 ## 7. Still open after this deploy (not fixed by it)
 
