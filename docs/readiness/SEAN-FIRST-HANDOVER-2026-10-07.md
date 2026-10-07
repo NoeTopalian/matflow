@@ -129,7 +129,14 @@ sets his own. Lost authenticator: operator *Reset owner 2FA* → recovery codes 
 
 ## 11. Commits, builds, coverage
 
-Filled in at commit time (§ Commits below).
+| What | Identity |
+|---|---|
+| Deployed production | `e8afb6a` (4 Oct) |
+| Candidate (local, unpushed) | `aff668283c63aadf07c8e3d8e49560238ee871df` — handover gaps — on top of the operator remediation `2203087`, `b5c3b6a`, `3da3fdf` and the earlier `64c2657`, `8fb151a`, `d92435a` |
+| Unit (388 files / 4,273 tests), typecheck, lint | pass on the tree committed as `aff6682` |
+| Integration (test branch, owner role and restricted `matflow_app`) | login-email change 11/11 both roles; earlier remediation suites as recorded in the operator package |
+| Production build + browser E2E (H1–H3) | the same code, built 12:25 UTC as HEAD `3da3fdf` + uncommitted diff `145233e5…` (48 files) — every code change in `aff6682`; H4–H5 ran on the slightly earlier build `336b3209…` |
+| Not run | multi-instance behaviour; real Google OAuth (not configured in production: absent and refused); anything against production except the read-only owner-account check |
 
 ## 12. Message Noe can send Sean (no password in it)
 
