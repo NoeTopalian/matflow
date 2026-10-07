@@ -60,8 +60,8 @@ Findings register and evidence: `docs/readiness/OPERATOR-ADMIN-SECURITY-2026-10-
 
 ## 4. Deploy
 
-`git push origin main` → Vercel builds, applies the four migrations, deploys. Watch the build log for
-`[build] DATABASE_URL set — running prisma migrate deploy` and four applied migrations.
+`git push origin main` → Vercel builds, applies the five migrations, deploys. Watch the build log for
+`[build] DATABASE_URL set — running prisma migrate deploy` and five applied migrations.
 
 ## 5. Smoke checks after deploy (production, no customer data touched)
 
@@ -93,7 +93,7 @@ area is cheaper to correct than a rollback that reopens all of them.
 
 **If you must run the old code:** build it fresh so it reads the CURRENT (rotated, unknown) secret —
 `git revert --no-edit <remediation commits>` and push, or deploy a checkout of `e8afb6a` with `vercel deploy --prod`.
-Migrations stay: rehearsed on the test branch 6 Oct — `e8afb6a`'s `prisma migrate deploy` with the four new migrations
+Migrations stay: rehearsed on the test branch 6 Oct — `e8afb6a`'s `prisma migrate deploy` with the four 6 Oct migrations (the rehearsal predates `20261007010000`, which is likewise additive and nullable)
 already applied exits 0 ("No pending migrations to apply", "Database schema is up to date") — log:
 `operator-remediation-2026-10-06/rollback-migrate-rehearsal.log`.
 
