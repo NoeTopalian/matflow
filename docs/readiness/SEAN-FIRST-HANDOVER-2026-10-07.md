@@ -171,3 +171,30 @@ sets his own. Lost authenticator: operator *Reset owner 2FA* → recovery codes 
 > set it up under Timetable — and there are about 300 suggested parent–child links waiting for you under Members to
 > confirm or reject. Please also check the prices on your 16 membership plans (Memberships, in the left-hand menu) — I entered them from
 > your price list; nothing is charged through MatFlow either way.
+
+## 13. Update — 9 Oct 2026 (supersedes §1, §3 and §10 where they differ)
+
+**Sean has signed in and activated himself on production (8 Oct).** Read-only check of owner
+`cmucpxcl70001uctgd60sfqec`: own password set (no forced change), authenticator enrolled, 8 recovery codes,
+sessionVersion 6, not locked. The script reports "ACTIVATED AFTER OPERATOR RESET — confirm with the owner"; it becomes
+ACTIVATED after Noe's phone confirmation (§3). Production still runs `e8afb6a`, which records no sign-in rows.
+
+**Consequences for §10:** do NOT run *Reset password* (step 8) — it would undo his activation. *Mark provisional* is
+replaced by the login-email change below.
+
+**Real login email.** Noe supplied Sean's real address (kept out of this file). It is already held, in Total BJJ, by
+Sean's own imported member record (same full name; cancelled; no login of its own; 0 attendance; 4 membership-history
+rows). A staff login may not share an address with a member of the same club, so the operator change answers 409 —
+correctly. Accounts are never merged to resolve this. Options for Noe: (a) **recommended** — use a "+" variant of the
+same Gmail address for the owner login (same mailbox, no collision, nothing else changes); (b) clear the email on the
+cancelled member record first (edits imported data and breaks TeamUp refresh matching for that record).
+
+**Release state (9 Oct):** Deployment Protection on (old deployments behind Vercel login); retention purges nothing
+(0 soft-deleted clubs); `EMAIL_DELIVERY=off` set in Vercel Production and read back as `off`. **Blocked on Noe:** the
+single production operator has no authenticator — enrol at `/admin/security` before any push, or the deploy locks the
+console. Then: rotate `MATFLOW_ADMIN_SECRET`, push, verify SHA/migrations/email-off boot warning, run the operator
+*Login email → Change* with the chosen address (Noe's code), read back the same account id.
+
+**Account editing (code verified, not deployed):** My account page for all staff (name, login email, password,
+authenticator status); operator owner-name correction; owner edits of staff follow the self-service rules. Field
+permissions: `docs/runbooks/ACCOUNT-EDITING.md`. Evidence: `docs/readiness/account-editing-2026-10-08/`.

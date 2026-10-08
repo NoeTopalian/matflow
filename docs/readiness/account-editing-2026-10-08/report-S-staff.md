@@ -1,0 +1,7 @@
+# Lane S report (saved by lead)
+S1 PATCH /api/staff/[id]: target looked up in tx (not owner, same club; owner/own/other-club/missing → 404 before anything); collisions via loginEmailTaken (staff + members) → opaque 409 (P2002 too); address change → provisional + sessionVersion bump + retireEmailBoundTokens (old+new, after write); unchanged address is not a change; audit staff.update with email digests only (email change no longer undoable from Activity log — edit back through the checks).
+S2 temporary password set by owner → staffPasswordSchema (10+, upper, lower, number); still mustChangePassword + 72 h.
+S3 set-password + reset-password on lib/password-policy.ts; history 8 (set-password was 5); reset-password staff rows refuse current password too; messages from shared schema.
+Guards confirmed: 401 unauth; 403 manager/admin/coach; 404 other owner/own/other club (both DB roles); role owner/operator/superadmin/member → 400; unknown keys dropped.
+Tests: staff-edit-account-rules (26; 11 red first), password-policy-doors (20; 6 red first); integration account-editing-db 14/14 both roles; cross-tenant matrix 54/54 both roles; staff-edit-email 4/4; full unit 393 files / 4433 passed; tsc 0; eslint clean. Updated: staff-last-owner-guard, verifier-lane1-fixes, cross-tenant matrix hijack password.
+Follow-ups (sent back to lane S): POST /api/staff min(8) + placeholder; role always sent → needless sign-out; route lacks requireApiOwner. Known gap: no DB constraint for member/user email collision (race).
