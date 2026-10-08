@@ -94,6 +94,27 @@ export async function retireEmailBoundTokens(
 }
 
 /**
+ * Check a staff user's authenticator code WITHOUT spending it (8 Oct 2026,
+ * account-editing review D1): same rules as `consumeUserTotp` (six digits,
+ * valid now, from a time-step later than the last one accepted). A route uses
+ * it to refuse a wrong code BEFORE answering anything that depends on other
+ * secrets, then spends the code with `consumeUserTotp` inside its transaction
+ * — the spend is still the single-use guarantee.
+ */
+export function verifyUserTotpCode(
+  user: { totpSecret: string; totpLastUsedStep: number | null },
+  code: string,
+): boolean {
+  if (!/^\d{6}$/.test(code)) return false;
+  const result = verifySync({
+    token: code,
+    secret: user.totpSecret,
+    ...(user.totpLastUsedStep !== null ? { afterTimeStep: user.totpLastUsedStep } : {}),
+  });
+  return result.valid === true;
+}
+
+/**
  * Verify a staff user's authenticator code and SPEND it (single use across
  * instances), as `consumeOperatorTotp` does for operators: the code must be
  * valid and from a time-step later than the last one accepted for this user,

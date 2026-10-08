@@ -102,7 +102,10 @@ const RESTORABLE: Record<string, readonly string[]> = {
     "billingContactEmail", "billingContactUrl", "privacyContactEmail", "privacyPolicyUrl", "contactEmail",
     "instagramUrl", "facebookUrl", "tiktokUrl", "youtubeUrl", "twitterUrl", "websiteUrl", "groupChatUrl",
   ],
-  User: ["name", "role", "email"],
+  // "email" removed (8 Oct 2026, review of lane S, S-2): a login-address change
+  // must go through PATCH /api/staff/[id] (collision check, provisional mark,
+  // token retirement); an undo would restore an address without any of them.
+  User: ["name", "role"],
   Class: [
     "name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration",
     "maxCapacity", "isKids", "requiredRankId", "maxRankId", "color", "isActive",

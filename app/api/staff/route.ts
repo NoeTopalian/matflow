@@ -9,6 +9,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { apiError } from "@/lib/api-error";
 import { refuseSupportSession } from "@/lib/support-session";
 import { tempPasswordExpiresAt } from "@/lib/temp-password";
+import { staffPasswordSchema } from "@/lib/password-policy";
 
 // Lane 1 iter-1 S-01 [Critical] fix: password is now REQUIRED. The previous
 // `.optional()` allowed the owner to omit the password and have the server
@@ -22,8 +23,13 @@ const createSchema = z.object({
   // the product looks the address up lowercased.
   email: emailField(),
   role: z.enum(["manager", "coach", "admin"]),
-  password: z.string().min(8),
+  // Same strength rule as every other staff password door (lib/password-policy.ts,
+  // 8 Oct 2026; was 8+ characters of anything). Still temporary — see below.
+  password: staffPasswordSchema,
 });
+
+const WEAK_TEMP_PASSWORD =
+  "The temporary password needs at least 10 characters, with an upper-case letter, a lower-case letter and a number.";
 
 export async function GET() {
   const session = await auth();
@@ -80,7 +86,10 @@ export async function POST(req: Request) {
 
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
+    const flat = parsed.error.flatten();
+    // The owner sees `error` as a toast: name the password rule rather than "Invalid data".
+    const error = flat.fieldErrors.password ? WEAK_TEMP_PASSWORD : "Invalid data";
+    return NextResponse.json({ error, details: flat }, { status: 400 });
   }
 
   const { name, email, role, password } = parsed.data;

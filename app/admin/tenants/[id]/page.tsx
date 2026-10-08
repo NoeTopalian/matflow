@@ -10,6 +10,7 @@ import AdminTopNav from "../../AdminTopNav";
 import LoginAsOwnerButton from "./LoginAsOwnerButton";
 import DangerZone, { type DeletionState } from "./DangerZone";
 import LoginEmailCard from "./LoginEmailCard";
+import OwnerProfileCard from "./OwnerProfileCard";
 import { softDeleteCutoff } from "@/lib/tenant-lifecycle";
 import { emailDeliveryMode } from "@/lib/email-delivery";
 
@@ -147,6 +148,12 @@ export default async function AdminTenantDetailPage({
               emailDelivery={emailDeliveryMode()}
               disabled={isDeleted}
             />
+          </div>
+        )}
+
+        {owner && (
+          <div style={{ marginTop: 16 }}>
+            <OwnerProfileCard tenantId={tenant.id} ownerUserId={owner.id} ownerName={owner.name} disabled={isDeleted} />
           </div>
         )}
       </div>

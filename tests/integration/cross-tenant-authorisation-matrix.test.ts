@@ -511,7 +511,9 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
   // does not exist; staff edits go through app/api/staff/[id].
 
   describe("User (staff) — app/api/staff/[id]", () => {
-    const hijack = { name: "Hijacked Coach", role: "manager", newPassword: "hijacked-password-123" };
+    // newPassword meets the shared rule (lib/password-policy.ts, 8 Oct 2026) so
+    // the probe reaches the tenant guard rather than stopping at validation.
+    const hijack = { name: "Hijacked Coach", role: "manager", newPassword: "Hijacked-Password-123" };
 
     it("owner A: PATCH of gym B's coach is 404 AND name/role/password/sessionVersion unchanged", async () => {
       const before = await withRlsBypass((tx) => tx.user.findUnique({ where: { id: coachBId } }));

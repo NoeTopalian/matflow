@@ -150,7 +150,7 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     await expect(applyUndo(tx, row("tenant.settings.update", { before: { name: "Old" }, after: { name: "New" } }, { entityType: "Tenant", entityId: "t-OTHER" }))).rejects.toBeInstanceOf(UndoStale);
   });
 
-  it("staff.update: undoing a role or email change signs the person out everywhere", async () => {
+  it("staff.update: undoing a role change signs the person out everywhere (email is no longer restorable: S-2)", async () => {
     fake.user.findFirst.mockResolvedValue({ id: "u2", role: "manager" });
     await applyUndo(tx, row("staff.update", { before: { role: "coach" }, after: { role: "manager" } }, { entityType: "User", entityId: "u2" }));
     expect(fake.user.update).toHaveBeenCalledWith({ where: { id: "u2" }, data: { role: "coach", sessionVersion: { increment: 1 } } });

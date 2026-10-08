@@ -6,9 +6,18 @@ import { hashToken } from "@/lib/token-hash";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit-log";
 import { isLoginEmailProvisional } from "@/lib/login-email";
+import {
+  PASSWORD_HISTORY_LIMIT,
+  passwordReused,
+  recentPasswordHashes,
+  recordPasswordHistory,
+  staffPasswordSchema,
+} from "@/lib/password-policy";
 
-// UK NCSC / OWASP compliant password policy
-const HISTORY_LIMIT = 8; // cannot reuse last 8 passwords
+// UK NCSC / OWASP compliant password policy: the shared staff rule and history
+// in lib/password-policy.ts (8 Oct 2026, the same module set-password and the
+// self-service change use). Staff accounts may not reuse the current password
+// or any of the last PASSWORD_HISTORY_LIMIT (8); members keep no history.
 
 /**
  * How many codes may be TRIED, as opposed to sent.
@@ -35,12 +44,8 @@ const bodySchema = z.object({
 });
 
 function validatePassword(password: string): string | null {
-  if (password.length < 10) return "Password must be at least 10 characters.";
-  if (password.length > 128) return "Password must be 128 characters or fewer.";
-  if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter.";
-  if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter.";
-  if (!/[0-9]/.test(password)) return "Password must contain at least one number.";
-  return null;
+  const r = staffPasswordSchema.safeParse(password);
+  return r.success ? null : (r.error.issues[0]?.message ?? "Choose a stronger password.");
 }
 
 export async function POST(req: Request) {
@@ -100,7 +105,7 @@ export async function POST(req: Request) {
         expiresAt: { gt: new Date() },
       },
     });
-    if (!resetToken) return { resetToken: null, subject: null, history: [] as { passwordHash: string }[] };
+    if (!resetToken) return { resetToken: null, subject: null, history: [] as string[] };
     // Audit iter-4-database A8I4-V-2 [High]: only id + passwordHash are
     // consumed (bcrypt comparison below + history check). Bare findFirst
     // would otherwise load totpSecret + totpRecoveryCodes + sessionVersion
@@ -115,21 +120,17 @@ export async function POST(req: Request) {
     // be a guess): refused as an expired code, and burned below so it cannot
     // be replayed once the mark is cleared.
     if (isLoginEmailProvisional(user)) {
-      return { resetToken, subject: null, history: [] as { passwordHash: string }[], provisionalUserId: user!.id };
+      return { resetToken, subject: null, history: [] as string[], provisionalUserId: user!.id };
     }
     // A staff account on a temporary password cannot be reset by mailbox
     // (3 Oct 2026, see forgot-password). This catches a code requested before
     // the flag was set. Answered as an expired code: no new oracle, and no
     // fall-through to a member sharing the address (User precedence holds).
     if (user?.mustChangePassword === true) {
-      return { resetToken, subject: null, history: [] as { passwordHash: string }[] };
+      return { resetToken, subject: null, history: [] as string[] };
     }
     if (user) {
-      const history = await tx.passwordHistory.findMany({
-        where: { userId: user.id },
-        orderBy: { createdAt: "desc" },
-        take: HISTORY_LIMIT,
-      });
+      const history = await recentPasswordHashes(tx, user.id);
       return {
         resetToken,
         subject: { kind: "user" as const, id: user.id, passwordHash: user.passwordHash },
@@ -144,12 +145,12 @@ export async function POST(req: Request) {
       select: { id: true, passwordHash: true },
     });
     if (!member || !member.passwordHash) {
-      return { resetToken, subject: null, history: [] as { passwordHash: string }[] };
+      return { resetToken, subject: null, history: [] as string[] };
     }
     return {
       resetToken,
       subject: { kind: "member" as const, id: member.id, passwordHash: member.passwordHash },
-      history: [] as { passwordHash: string }[],
+      history: [] as string[],
     };
   });
 
@@ -194,12 +195,11 @@ export async function POST(req: Request) {
   // Serial worst-case = 8 × ~100ms = ~800ms CPU before the new hash, which on
   // Vercel Hobby shared vCPU is a borderline-timeout DoS surface. bcrypt is
   // async and Node's libuv thread pool handles parallel CPU work cleanly.
-  const reuseFlags = await Promise.all(
-    history.map((entry) => bcrypt.compare(password, entry.passwordHash)),
-  );
-  if (reuseFlags.some(Boolean)) {
+  // Since 8 Oct 2026 the current password counts too (shared rule); members
+  // keep no history and are checked as before (nothing to compare).
+  if (subject.kind === "user" && (await passwordReused(password, subject.passwordHash, history))) {
     return NextResponse.json(
-      { error: `You cannot reuse any of your last ${HISTORY_LIMIT} passwords.` },
+      { error: `You cannot reuse your current password or any of your last ${PASSWORD_HISTORY_LIMIT} passwords.` },
       { status: 400 }
     );
   }
@@ -245,20 +245,8 @@ export async function POST(req: Request) {
           failedLoginCount: 0,
         },
       });
-      // Store current password in history before overwriting
-      await tx.passwordHistory.create({
-        data: { userId: subject.id, passwordHash: subject.passwordHash },
-      });
-
-      // Prune history beyond limit
-      const allHistory = await tx.passwordHistory.findMany({
-        where: { userId: subject.id },
-        orderBy: { createdAt: "desc" },
-      });
-      if (allHistory.length > HISTORY_LIMIT) {
-        const toDelete = allHistory.slice(HISTORY_LIMIT).map((h: { id: string }) => h.id);
-        await tx.passwordHistory.deleteMany({ where: { id: { in: toDelete } } });
-      }
+      // Store current password in history before overwriting, pruned to the limit.
+      await recordPasswordHistory(tx, subject.id, subject.passwordHash);
     } else {
       // Audit iter-1-auth-boundary AH-3: member password reset. Same
       // sessionVersion bump as User to invalidate stale JWTs. No password

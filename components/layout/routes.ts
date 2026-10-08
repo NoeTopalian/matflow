@@ -15,6 +15,7 @@ import {
   BrainCircuit,
   Settings,
   History,
+  UserCog,
 } from "lucide-react";
 
 export type StaffRole = "owner" | "manager" | "coach" | "admin";
@@ -67,6 +68,10 @@ export const STAFF_NAV: StaffNavItem[] = [
   { href: "/dashboard/payments", label: "Payments", icon: CreditCard, roles: ["owner", "manager"], section: "admin" },
   { href: "/dashboard/analysis", label: "Analysis", icon: BrainCircuit, roles: ["owner"], section: "admin" },
   { href: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["owner"], section: "admin" },
+  // Every staff role's own name, login email and password (8 Oct 2026,
+  // account-editing lane R). Settings is owner-only, so without this a
+  // manager, coach or admin had no account screen at all.
+  { href: "/dashboard/account", label: "My account", icon: UserCog, roles: ["owner", "manager", "coach", "admin"], section: "admin" },
 ];
 
 /**

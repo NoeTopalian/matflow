@@ -107,6 +107,11 @@ async function handler(file: string, method: string): Promise<H> {
 // [class, file, method] — the refused classes named in the brief.
 const CASES: [string, string, string][] = [
   ["credential: set own password", "app/api/auth/set-password/route.ts", "POST"],
+  // Account editing (8 Oct 2026, lane R): the session user's own name, login
+  // email and password. A support session must change none of them.
+  ["profile: own display name", "app/api/account/profile/route.ts", "PATCH"],
+  ["credential: change own login email", "app/api/account/login-email/route.ts", "POST"],
+  ["credential: change own password", "app/api/account/password/route.ts", "POST"],
   ["credential: TOTP setup GET (writes a secret)", "app/api/auth/totp/setup/route.ts", "GET"],
   ["credential: TOTP enable", "app/api/auth/totp/setup/route.ts", "POST"],
   ["credential: recovery codes", "app/api/auth/totp/recovery-codes/route.ts", "POST"],

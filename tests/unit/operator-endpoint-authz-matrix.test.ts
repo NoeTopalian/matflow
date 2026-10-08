@@ -238,6 +238,7 @@ describe("route inventory", () => {
       "app/api/admin/customers/[id]/force-password-reset/route.ts",
       "app/api/admin/customers/[id]/login-email/route.ts",
       "app/api/admin/customers/[id]/member-totp-reset/route.ts",
+      "app/api/admin/customers/[id]/owner-profile/route.ts",
       "app/api/admin/customers/[id]/review-lock/route.ts",
       "app/api/admin/customers/[id]/soft-delete/route.ts",
       "app/api/admin/customers/[id]/suspend/route.ts",

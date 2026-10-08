@@ -3,6 +3,10 @@
 Applies to every staff login email, and in particular to the first real club owner, whose initial login is an address
 supplied by MatFlow rather than one he has been shown to read. Added 7 Oct 2026.
 
+Who may edit which field of a staff account (name, login email, password, authenticator, role), the pre- and
+post-activation handover paths and recovery are in [ACCOUNT-EDITING.md](ACCOUNT-EDITING.md) (8 Oct 2026). The owner's
+login email can also be changed from **My account** (`/dashboard/account`), which every staff role can reach.
+
 ## Is email actually off? Check before relying on this page
 
 **Production sends email until `EMAIL_DELIVERY=off` is set.** The switch (`lib/email-delivery.ts`) defaults to ON when

@@ -183,6 +183,8 @@ export const AUDIT_LABELS: Record<string, string> = {
   "auth.password_reset.refused_provisional": "Refused a password reset for a provisional (unverified) login email",
   "auth.external_signin.refused_provisional": "Refused an external sign-in for a provisional (unverified) login email",
   "user.login_email.changed": "Changed their own login email (unverified until confirmed)",
+  "user.profile.updated": "Changed their own name",
+  "user.password.changed": "Changed their own password (signed out everywhere)",
 
   // ── Operator (MatFlow) ────────────────────────────────────────────────────
   "admin.application.approve": "MatFlow approved the club application",
@@ -202,6 +204,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "admin.owner.login_email.marked_provisional": "MatFlow marked the owner's login email as provisional (unverified)",
   "admin.owner.login_email.cleared_provisional": "MatFlow confirmed the owner's login email on its own verification",
   "admin.owner.login_email.changed": "MatFlow changed the owner's login email (unverified until confirmed)",
+  "admin.owner.profile.updated": "MatFlow corrected the owner's name",
   "admin.member.totp_reset": "MatFlow reset a member's authenticator",
   "admin.impersonate.start": "MatFlow support signed in as the owner",
   "admin.impersonate.end": "MatFlow support ended the support session",
@@ -215,6 +218,9 @@ export const AUDIT_LABELS: Record<string, string> = {
   // Step-up action name sent by the operator Login email card (7 Oct 2026);
   // the audit rows it leads to are admin.owner.login_email.*.
   "owner.login_email": "MatFlow confirmed a change to the owner's login email",
+  // Step-up action name sent by the operator Owner profile card (8 Oct 2026);
+  // the audit row it leads to is admin.owner.profile.updated.
+  "owner.profile": "MatFlow confirmed a correction to the owner's name",
 };
 
 /** "member.photo.add" → "Member photo add" — only for names not in the map. */

@@ -55,7 +55,11 @@ describe("staff/[id] — a club can never lose its last owner through this route
     const { PATCH } = await import("@/app/api/staff/[id]/route");
     const res = await PATCH(req("PATCH", { role: "coach" }), params("user-owner-2"));
     expect(res.status).toBe(404);
-    expect(updateManyMock).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ role: { not: "owner" } }) }));
+    // 8 Oct 2026 (lane S-staff): the route now looks the target up first with
+    // the same owner-excluding WHERE and stops on a miss, so no write is even
+    // attempted (was: the updateMany WHERE carried the exclusion and missed).
+    expect(findFirstMock).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ role: { not: "owner" } }) }));
+    expect(updateManyMock).not.toHaveBeenCalled();
   });
 
   it("an owner row cannot be deleted, and the miss reads as not found", async () => {

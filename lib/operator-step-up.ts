@@ -59,6 +59,9 @@ export const STEP_UP_ACTIONS = [
   // for one club's owner cannot be spent on another account, nor a grant for
   // one sub-action on another.
   "owner.login_email",
+  // Owner display-name correction (8 Oct 2026, account-editing lane R).
+  // Target = stepUpTarget(tenantId, ownerUserId, "name").
+  "owner.profile",
 ] as const;
 export type StepUpAction = (typeof STEP_UP_ACTIONS)[number];
 

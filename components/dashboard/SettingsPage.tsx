@@ -23,6 +23,8 @@ import { StaffUnlockControl } from "@/components/dashboard/UnlockSignIn";
 import { StaffTotpResetControl } from "@/components/dashboard/StaffTotpReset";
 import { ContactEmailSection } from "@/components/dashboard/ContactEmailSection";
 import LoginEmailCard from "@/components/dashboard/LoginEmailCard";
+import ProfileCard from "@/components/dashboard/ProfileCard";
+import PasswordCard from "@/components/dashboard/PasswordCard";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
@@ -1221,9 +1223,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     setSfSaving(true);
     try {
       if (editStaff) {
-        const body: Record<string, unknown> = { name: sfName, role: sfRole };
-        // Only send email when it actually changed — avoids triggering the
-        // session-version bump (and a needless audit-log entry) for no-op saves.
+        const body: Record<string, unknown> = { name: sfName };
+        // Only send role and email when they actually changed — a changed role
+        // or email signs the staff member out (the route also ignores an
+        // unchanged value), so a name-only save must not.
+        if (sfRole !== editStaff.role) body.role = sfRole;
         if (sfEmail && sfEmail.trim() !== editStaff.email) body.email = sfEmail.trim();
         if (sfPassword) body.newPassword = sfPassword;
         const res = await fetch(`/api/staff/${editStaff.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -2397,8 +2401,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       {tab === "account" && (
         <div className="space-y-4">
 
+          {/* Own display name (8 Oct 2026, account-editing lane R). */}
+          <ProfileCard />
+
           {/* Login email + provisional badge + change (7 Oct 2026). */}
           <LoginEmailCard />
+
+          {/* Self-service password change after activation (8 Oct 2026). */}
+          <PasswordCard totpEnabled={mfaEnabled} />
 
           {/* TOTP card — visible to all staff roles (2FA-optional spec, 2026-05-07).
               Once enrolled, no self-disable: only the operator support action
@@ -3156,8 +3166,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               </select>
             </div>
             <div>
-              <label className="text-tx-2 text-xs font-medium block mb-1.5">{editStaff ? "New temporary password (leave blank to keep) — they choose their own at next sign-in" : "Temporary password (8+ characters) — tell them in person; they choose their own when they first sign in"}</label>
-              <input aria-label={editStaff ? "New password" : "Password"} type="password" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfPassword} onChange={(e) => setSfPassword(e.target.value)} placeholder={editStaff ? "••••••••" : "at least 8 characters"} />
+              <label className="text-tx-2 text-xs font-medium block mb-1.5">{editStaff ? "New temporary password (leave blank to keep) — they choose their own at next sign-in" : "Temporary password — tell them in person; they choose their own when they first sign in"}</label>
+              <input aria-label={editStaff ? "New password" : "Password"} type="password" className={inputCls} style={inputStyle} {...inputFocusHandlers} value={sfPassword} onChange={(e) => setSfPassword(e.target.value)} placeholder="At least 10 characters, with upper-case, lower-case and a number" />
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={() => setStaffDrawer(false)} className="flex-1 py-2.5 rounded-xl border text-tx-2 text-sm font-medium hover:text-tx-1 transition-colors" style={{ borderColor: "var(--bd-default)" }}>Cancel</button>
