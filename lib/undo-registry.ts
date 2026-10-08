@@ -287,9 +287,10 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
     },
   }),
   "staff.update": snapshotHandler("User", {
-    // A role or email change forces re-sign-in on the staff PATCH; the undo
-    // must do the same or the person keeps the undone role on a live session.
-    extra: (restore) => ("role" in restore || "email" in restore ? { sessionVersion: { increment: 1 } } : {}),
+    // A role change forces re-sign-in on the staff PATCH; the undo must do the
+    // same or the person keeps the undone role on a live session. (Login
+    // addresses are not restorable here — see RESTORABLE.User.)
+    extra: (restore) => ("role" in restore ? { sessionVersion: { increment: 1 } } : {}),
   }),
   "class.updated": snapshotHandler("Class"),
   "membership.tier.update": snapshotHandler("MembershipTier", {
