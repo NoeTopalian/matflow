@@ -28,8 +28,10 @@
  * Session: the top bar reads the name from the session token, which is minted
  * at sign-in. This device's token is re-issued with the new name (same
  * re-encode /api/auth/set-password uses; sessionVersion is NOT bumped — a name
- * is not a credential). Other devices show the new name after their next
- * sign-in; the response says whether this device was refreshed.
+ * is not a credential). Every device — this one included, even if a request
+ * in flight re-sets an older cookie — also picks the name up on its next
+ * request: the per-request session check reads the row's current name
+ * (lib/session-revocation.ts, 8 Oct 2026).
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";

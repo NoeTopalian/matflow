@@ -1197,11 +1197,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // Extracted to lib/session-revocation so it can be tested at all: this
           // lived inline in a NextAuth config object, which is why the product's
           // revocation control had no test.
-          const verdict = await checkSessionVersion({
-            memberId: token.memberId as string | null,
-            userId: token.id as string,
-            tokenVersion: token.sessionVersion,
-          });
+          const verdict = await checkSessionVersion(
+            {
+              memberId: token.memberId as string | null,
+              userId: token.id as string,
+              tokenVersion: token.sessionVersion,
+            },
+            // The display name follows a profile edit on every device (8 Oct
+            // 2026). The row is the one this check reads anyway.
+            (name) => {
+              if (token.name !== name) token.name = name;
+            },
+          );
           if (verdict === "revoked") return null;
           // "unknown" keeps the token — a database blip must not sign out every
           // user in the product — but it is reported rather than swallowed.

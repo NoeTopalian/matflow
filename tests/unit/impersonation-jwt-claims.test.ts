@@ -231,6 +231,7 @@ describe("a sessionVersion bump evicts an impersonated session", () => {
     // And the check was asked about the TARGET, with the TOKEN's stale version.
     expect(checkSessionVersion).toHaveBeenLastCalledWith(
       expect.objectContaining({ userId: "u-target", tokenVersion: 2 }),
+      expect.any(Function),
     );
   });
 });

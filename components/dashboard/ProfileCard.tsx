@@ -6,8 +6,8 @@
 // staff account. Login email, password and authenticator are separate cards
 // with their own checks. Saved through PATCH /api/account/profile, which
 // re-issues this device's session so the top bar shows the new name; when it
-// cannot (the response says sessionRefreshed: false) the card says the name
-// shows after the next sign-in instead of pretending.
+// cannot (the response says sessionRefreshed: false) the per-request session
+// check still brings the new name in on the next page load (8 Oct 2026).
 //
 // A plain input element with a wired label: there is no Input primitive in
 // components/ui yet (docs/UI-RULES.md lists it as planned); same treatment as
@@ -77,7 +77,7 @@ export default function ProfileCard() {
       setName(String(data.name));
       setNotice(
         data.sessionRefreshed === false
-          ? "Saved. Your new name shows in the top bar after you next sign in."
+          ? "Saved. Your new name appears in the top bar when the page next loads."
           : "Saved.",
       );
       // Re-render the server layout so the top bar picks up the re-issued session.

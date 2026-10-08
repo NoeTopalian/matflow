@@ -181,3 +181,21 @@ describe("auth.ts does not cache the revocation check", () => {
     expect(source, "the guard itself must not be deleted").toMatch(/checkSessionVersion\(/);
   });
 });
+
+describe("display name follows the row (8 Oct 2026, account editing)", () => {
+  it("passes the current name to the callback when the version matches", async () => {
+    userFindUniqueMock.mockResolvedValue({ sessionVersion: 3, name: "Renamed Owner" });
+    const seen: string[] = [];
+    const verdict = await checkSessionVersion({ userId: "u1", tokenVersion: 3 }, (n) => seen.push(n));
+    expect(verdict).toBe("ok");
+    expect(seen).toEqual(["Renamed Owner"]);
+  });
+
+  it("never passes a name for a revoked session", async () => {
+    userFindUniqueMock.mockResolvedValue({ sessionVersion: 4, name: "Renamed Owner" });
+    const seen: string[] = [];
+    const verdict = await checkSessionVersion({ userId: "u1", tokenVersion: 3 }, (n) => seen.push(n));
+    expect(verdict).toBe("revoked");
+    expect(seen).toEqual([]);
+  });
+});

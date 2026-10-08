@@ -63,6 +63,13 @@ export interface SessionVersionCheck {
 
 export async function checkSessionVersion(
   check: SessionVersionCheck,
+  /**
+   * Called with the row's current display name when the version matches (8 Oct
+   * 2026, account editing). The row is read anyway, so the token's name can
+   * follow a profile edit on every device without a second query — and a
+   * request in flight during the edit cannot leave a stale name behind.
+   */
+  onCurrentName?: (name: string) => void,
 ): Promise<RevocationVerdict> {
   const { memberId, userId, tokenVersion } = check;
   if (!memberId && !userId) return "unknown";
@@ -70,13 +77,15 @@ export async function checkSessionVersion(
   try {
     const row = await withRlsBypass((tx) =>
       memberId
-        ? tx.member.findUnique({ where: { id: memberId }, select: { sessionVersion: true } })
-        : tx.user.findUnique({ where: { id: userId as string }, select: { sessionVersion: true } }),
+        ? tx.member.findUnique({ where: { id: memberId }, select: { sessionVersion: true, name: true } })
+        : tx.user.findUnique({ where: { id: userId as string }, select: { sessionVersion: true, name: true } }),
     );
 
     // THE FIX. `row === null` used to be indistinguishable from a match.
     if (row === null) return "revoked";
-    return row.sessionVersion === tokenVersion ? "ok" : "revoked";
+    if (row.sessionVersion !== tokenVersion) return "revoked";
+    if (onCurrentName && typeof row.name === "string") onCurrentName(row.name);
+    return "ok";
   } catch (err) {
     // Loud, not silent. Every revocation in the product is failing open for as
     // long as this keeps happening, and after the RLS role cutover a policy

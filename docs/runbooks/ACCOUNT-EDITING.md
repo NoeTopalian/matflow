@@ -50,7 +50,8 @@ session (403). Reads (GET profile, GET login email) follow the same rules except
 
 - **Name** — trimmed, 1–100 characters, no control characters (C0, C1), line or paragraph separators, or
   bidirectional embedding/override/isolate marks. This device's session is re-issued with
-  the new name so the top bar is right at once; other devices show it after their next sign-in.
+  the new name so the top bar is right at once; every other device picks it up on its next request (the per-request
+  session check reads the row's current name — lib/session-revocation.ts).
 - **Password** — an unenrolled owner, manager or admin row is refused (403; the password-only path is for roles that do
   not require an authenticator, e.g. a coach). Then, in order: current password (a wrong one does NOT spend the code);
   the authenticator code CHECKED without spending it, so a caller without the authenticator gets the same generic

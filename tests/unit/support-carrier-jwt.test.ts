@@ -129,7 +129,7 @@ describe("a carrier token is a vehicle for the support swap", () => {
     expect(t!.tenantId).toBe("t-victim");
     expect(t!.role).toBe("owner");
     expect(t!.impersonatedBy).toBe("op-noe");
-    expect(checkSessionVersion).toHaveBeenLastCalledWith(expect.objectContaining({ userId: "u-target", tokenVersion: 2 }));
+    expect(checkSessionVersion).toHaveBeenLastCalledWith(expect.objectContaining({ userId: "u-target", tokenVersion: 2 }), expect.any(Function));
     // And the session the dashboard sees is the target, flagged as support.
     resolveActiveImpersonation.mockResolvedValue(ACTIVE);
     const s = (await sessionFor(t!)) as { user: Record<string, unknown> };
