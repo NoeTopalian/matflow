@@ -1,0 +1,7 @@
+## red restricted — bash <scratchpad>/q78/run-restricted.sh tests/integration/sec-a3-lockout-oracle-db.test.ts, node v24.21.0, TEST branch ep-hidden-salad; tree: HEAD ebd761d auth.ts
+     × same code at 0, 9, 10, 11 prior failures for: account, row-locked member, row-locked staff, no account (20 samples each) 431649ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+AssertionError: row-locked member vs no account: expected [ 'refused', 'refused', …(10) ] to deeply equal [ 'refused', 'refused', …(10) ]
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+restricted exit=1

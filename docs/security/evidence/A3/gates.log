@@ -1,0 +1,11 @@
+## gates node v24.21.0
+npx tsc --noEmit -p . -> tsc exit=0
+npm run lint -> lint exit=0
+Lint passed: eslint clean, UI-RULES ratchet at or below baseline.
+## targeted auth unit files (20)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/unit/google-door-bootstrap.test.ts > Google sign-in refuses a staff account still on its temporary password > the refusal sits in the signIn callba
+ FAIL  tests/unit/provisional-login-email-doors.test.ts > Google / external sign-in — refused for a provisional login email (source) > the refusal sits in the
+ FAIL  tests/unit/sec-a2-google-link.test.ts > Google sign-in: no linking by email > controls unchanged: unverified address and unknown address keep their refus
+ Test Files  3 failed | 17 passed (20)
+      Tests  3 failed | 230 passed (233)

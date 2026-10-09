@@ -1,0 +1,43 @@
+## RED step 0: HEAD ebd761d auth.ts (no seam module imported), node v24.21.0
+ ✓ tests/unit/sec-a3-google-door.test.ts > Google door: one answer whether or not the address has an account > captured the real signIn callback 4ms
+ × tests/unit/sec-a3-google-door.test.ts > Google door: one answer whether or not the address has an account > an address with NO account here gets the same code as an account with no link 10ms
+ ✓ tests/unit/sec-a3-google-door.test.ts > Google door: one answer whether or not the address has an account > neither refusal hydrates a token, records a login event or consumes the club cookie 0ms
+ ✓ tests/unit/sec-a3-google-door.test.ts > Google door: one answer whether or not the address has an account > controls unchanged: an unverified address keeps its own refusal 0ms
+ × tests/unit/sec-a3-google-door.test.ts > Google door: the login event's client IP follows the product's trust order > positive control: a link to THIS member signs in and records a login event 1ms
+ ✓ tests/unit/sec-a3-google-door.test.ts > Google door: the login event's client IP follows the product's trust order > a link to a DIFFERENT account is refused 1ms
+ × tests/unit/sec-a3-google-door.test.ts > Google door: the login event's client IP follows the product's trust order > x-vercel-forwarded-for wins over a client-written x-forwarded-for 1ms
+ × tests/unit/sec-a3-google-door.test.ts > Google door: the login event's client IP follows the product's trust order > with only x-forwarded-for, the LAST hop (the one the platform appended) is used, not the first 1ms
+ × tests/unit/sec-a3-google-door.test.ts > Google door: the login event's client IP follows the product's trust order > x-real-ip is preferred over x-forwarded-for, as on the credentials path 1ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+AssertionError: expected '/login?error=NoAccountForGym' to be '/login?error=google_link_required' // Object.is equality
+AssertionError: expected '/login?error=google_link_required' to be true // Object.is equality
+AssertionError: expected '/login?error=google_link_required' to be true // Object.is equality
+AssertionError: expected '/login?error=google_link_required' to be true // Object.is equality
+AssertionError: expected '/login?error=google_link_required' to be true // Object.is equality
+ Test Files  1 failed (1)
+      Tests  5 failed | 4 passed (9)
+exit=1
+## RED step 1: seam moved to lib/external-identity.ts (behaviour-identical refactor), IP and code NOT yet fixed, node v24.21.0
+ ✓ tests/unit/sec-a3-google-door.test.ts > Google door: one answer whether or not the address has an account > captured the real signIn callback 2ms
+ × tests/unit/sec-a3-google-door.test.ts > Google door: one answer whether or not the address has an account > an address with NO account here gets the same code as an account with no link 7ms
+ ✓ tests/unit/sec-a3-google-door.test.ts > Google door: one answer whether or not the address has an account > neither refusal hydrates a token, records a login event or consumes the club cookie 1ms
+ ✓ tests/unit/sec-a3-google-door.test.ts > Google door: one answer whether or not the address has an account > controls unchanged: an unverified address keeps its own refusal 0ms
+ ✓ tests/unit/sec-a3-google-door.test.ts > Google door: the login event's client IP follows the product's trust order > positive control: a link to THIS member signs in and records a login event 1ms
+ ✓ tests/unit/sec-a3-google-door.test.ts > Google door: the login event's client IP follows the product's trust order > a link to a DIFFERENT account is refused 0ms
+ × tests/unit/sec-a3-google-door.test.ts > Google door: the login event's client IP follows the product's trust order > x-vercel-forwarded-for wins over a client-written x-forwarded-for 1ms
+ × tests/unit/sec-a3-google-door.test.ts > Google door: the login event's client IP follows the product's trust order > with only x-forwarded-for, the LAST hop (the one the platform appended) is used, not the first 1ms
+ × tests/unit/sec-a3-google-door.test.ts > Google door: the login event's client IP follows the product's trust order > x-real-ip is preferred over x-forwarded-for, as on the credentials path 1ms
+ ✓ tests/unit/sec-a2-google-link.test.ts > Google sign-in: no linking by email > captured the real signIn callback 2ms
+ ✓ tests/unit/sec-a2-google-link.test.ts > Google sign-in: no linking by email > a verified Google address matching a password-less MEMBER is refused, not signed in 2ms
+ ✓ tests/unit/sec-a2-google-link.test.ts > Google sign-in: no linking by email > a verified Google address matching a STAFF account is refused, not signed in 0ms
+ ✓ tests/unit/sec-a2-google-link.test.ts > Google sign-in: no linking by email > the pending-club cookie is not consumed by a refused attempt 0ms
+ ✓ tests/unit/sec-a2-google-link.test.ts > Google sign-in: no linking by email > controls unchanged: unverified address and unknown address keep their refusals 0ms
+ ✓ tests/unit/sec-a2-google-link.test.ts > Google sign-in: no linking by email > the credentials door is untouched by this rule (it does not consult Google links) 1ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+AssertionError: expected '/login?error=NoAccountForGym' to be '/login?error=google_link_required' // Object.is equality
+AssertionError: expected '203.0.113.66' to be '192.0.2.10' // Object.is equality
+AssertionError: expected '203.0.113.66' to be '198.51.100.9' // Object.is equality
+AssertionError: expected '203.0.113.66' to be '192.0.2.44' // Object.is equality
+ Test Files  1 failed | 1 passed (2)
+      Tests  4 failed | 11 passed (15)
+exit=1

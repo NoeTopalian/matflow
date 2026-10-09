@@ -31,6 +31,8 @@ import { checkSessionVersion } from "@/lib/session-revocation";
 import { resolveActiveImpersonation, hasImpersonationCookie } from "@/lib/impersonation";
 import { isTempPasswordExpired } from "@/lib/temp-password";
 import { isLoginEmailProvisional } from "@/lib/login-email";
+// SF-36: the explicit Google link seam (no store yet: always "no link").
+import { linkedExternalIdentity } from "@/lib/external-identity";
 
 // Resolve the public app URL once for outbound links (e.g. the disown-login
 // link in P1.6 emails). Falls back to a sensible string in dev so the helper
@@ -308,6 +310,13 @@ class TenantRefusedError extends CredentialsSignin {
 }
 
 /**
+ * An id no User or Member row can have (ids are cuids). The failure path runs
+ * its known-device lookup and row-counter write against it when the address
+ * has no account, so both paths cost the same round trips (SF-35, lane A3).
+ */
+const NO_ACCOUNT_ROW_ID = "no-account";
+
+/**
  * The revalidation marker (SF-44, security campaign iteration 2, lane A2,
  * 9 Oct 2026).
  *
@@ -372,22 +381,6 @@ export function usableSession<S>(session: S): S | null {
   if (!s || s.authUnavailable === true) return null;
   if (!s.user || typeof s.user.id !== "string" || !s.user.id) return null;
   return session;
-}
-
-/**
- * The explicit link between an external identity (provider + the provider's
- * stable subject id) and ONE account in ONE club — SF-36. Created only by the
- * account itself, signed in and re-proving its password or authenticator;
- * never derived from a matching email address. The table that holds links
- * (ExternalIdentity) is a proposed migration; until it exists there are no
- * links, and the Google door refuses everyone.
- */
-async function linkedExternalIdentity(
-  _provider: "google",
-  _providerSubject: string | undefined,
-  _tenantId: string,
-): Promise<{ userId?: string; memberId?: string } | null> {
-  return null;
 }
 
 const nextAuth = NextAuth({
@@ -501,7 +494,7 @@ const nextAuth = NextAuth({
               const row = await tx.loginEvent.findFirst({
                 where: user
                   ? { userId: user.id, deviceHash: dh, disownedAt: null, lastSeenAt: { gte: since } }
-                  : { memberId: memberRow?.id ?? "no-account", deviceHash: dh, disownedAt: null, lastSeenAt: { gte: since } },
+                  : { memberId: memberRow?.id ?? NO_ACCOUNT_ROW_ID, deviceHash: dh, disownedAt: null, lastSeenAt: { gte: since } },
                 select: { id: true },
               });
               return !!row;
@@ -536,76 +529,91 @@ const nextAuth = NextAuth({
             });
             throw new RateLimitedError();
           }
-          // A disown/operator lock: the generic refusal a wrong password gets.
-          // Its own message would say the address has an account.
-          if (rowLocked) {
-            console.warn("[auth] sign-in refused: account row locked (disown or operator)", {
-              tenantId: tenant.id,
-              subjectId: subject?.id ?? null,
-            });
-            return null;
-          }
-
-          if (!valid) {
-            // Count the failure against the address (fail closed: a write that
-            // cannot be made throws, and the attempt stays refused).
+          // EVERY refused attempt is counted against the address, BEFORE any
+          // row-state branch (lane A3, review R3-2). A row locked by "Wasn't
+          // me?" or an operator used to return null here before the failure
+          // was recorded, so it answered refused for ever while an address
+          // with no account was capped after ADDR_MAX: twelve guesses told a
+          // locked account apart (and it answered ~200 ms sooner). Now a
+          // locked row — right or wrong password — costs and answers exactly
+          // what any other address does at the same count.
+          if (rowLocked || !valid) {
+            // Fail closed: a counter write that cannot be made throws, and the
+            // attempt stays refused.
             const addrFailures = await recordFailure(keys);
-            if (subject) {
-              // The row counter is kept for the owner's and operator's view of
-              // an account under attack; it no longer locks anything. The
-              // database does the arithmetic ({ increment: 1 }), so overlapping
-              // attempts are all counted (tests/unit/account-lockout-counter).
-              try {
-                await withTenantContext(tenant.id, async (tx) => {
-                  if (user) {
-                    await tx.user.update({
-                      where: { id: user.id },
-                      data: { failedLoginCount: { increment: 1 } },
-                      select: { failedLoginCount: true },
-                    });
-                  } else {
-                    await tx.member.update({
-                      where: { id: memberRow!.id },
-                      data: { failedLoginCount: { increment: 1 } },
-                      select: { failedLoginCount: true },
-                    });
-                  }
-                });
-              } catch (err) {
-                console.error("[auth] failed-login row counter NOT recorded (the address lockout still counted)", {
-                  subject: user ? "user" : "member",
-                  subjectId: subject.id,
-                  tenantId: tenant.id,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-                Sentry.captureException(err, {
-                  tags: { area: "auth", control: "account-lockout", failMode: "closed" },
-                });
-              }
-              if (addrFailures === ADDR_MAX) {
-                // The owner sees an account under attack in the activity log.
-                // After the response, so the audit write adds no timing signal.
-                const auditArgs = {
-                  tenantId: tenant.id,
-                  userId: user?.id ?? null,
-                  action: "auth.account.locked",
-                  entityType: user ? "User" : "Member",
-                  entityId: subject.id,
-                  metadata: { reason: "failed_login_cap", scope: "unrecognised_devices", threshold: ADDR_MAX, windowMinutes: LOCKOUT_WINDOW_MS / 60000 },
-                };
-                const write = async () => {
-                  try {
-                    const { logAudit } = await import("@/lib/audit-log");
-                    await logAudit(auditArgs);
-                  } catch { /* best-effort */ }
-                };
-                try {
-                  after(write);
-                } catch {
-                  await write();
+            // The row counter is kept for the owner's and operator's view of
+            // an account under attack; it no longer locks anything. The
+            // database does the arithmetic ({ increment: 1 }), so overlapping
+            // attempts are all counted (tests/unit/account-lockout-counter).
+            //
+            // It runs UNCONDITIONALLY (lane A3, review R3-3): with no account
+            // the same single-statement transaction targets an id that matches
+            // nothing, so a wrong password costs the same round trips whether
+            // or not the address exists (+205..263 ms on the review link
+            // before; tests/unit/sec-a3-failure-path-cost pins the equality).
+            try {
+              await withTenantContext(tenant.id, async (tx) => {
+                if (user) {
+                  await tx.user.update({
+                    where: { id: user.id },
+                    data: { failedLoginCount: { increment: 1 } },
+                    select: { failedLoginCount: true },
+                  });
+                } else if (memberRow) {
+                  await tx.member.update({
+                    where: { id: memberRow.id },
+                    data: { failedLoginCount: { increment: 1 } },
+                    select: { failedLoginCount: true },
+                  });
+                } else {
+                  await tx.member.updateMany({
+                    where: { id: NO_ACCOUNT_ROW_ID, tenantId: tenant.id },
+                    data: { failedLoginCount: { increment: 1 } },
+                  });
                 }
+              });
+            } catch (err) {
+              console.error("[auth] failed-login row counter NOT recorded (the address lockout still counted)", {
+                subject: user ? "user" : memberRow ? "member" : "none",
+                subjectId: subject?.id ?? null,
+                tenantId: tenant.id,
+                error: err instanceof Error ? err.message : String(err),
+              });
+              Sentry.captureException(err, {
+                tags: { area: "auth", control: "account-lockout", failMode: "closed" },
+              });
+            }
+            if (rowLocked) {
+              console.warn("[auth] sign-in refused: account row locked (disown or operator)", {
+                tenantId: tenant.id,
+                subjectId: subject?.id ?? null,
+              });
+            }
+            if (subject && addrFailures === ADDR_MAX) {
+              // The owner sees an account under attack in the activity log.
+              // After the response, so the audit write adds no timing signal.
+              const auditArgs = {
+                tenantId: tenant.id,
+                userId: user?.id ?? null,
+                action: "auth.account.locked",
+                entityType: user ? "User" : "Member",
+                entityId: subject.id,
+                metadata: { reason: "failed_login_cap", scope: "unrecognised_devices", threshold: ADDR_MAX, windowMinutes: LOCKOUT_WINDOW_MS / 60000 },
+              };
+              const write = async () => {
+                try {
+                  const { logAudit } = await import("@/lib/audit-log");
+                  await logAudit(auditArgs);
+                } catch { /* best-effort */ }
+              };
+              try {
+                after(write);
+              } catch {
+                await write();
               }
             }
+            // The generic refusal a wrong password gets, for a locked row too:
+            // its own message would say the address has an account.
             return null;
           }
 
@@ -869,7 +877,12 @@ const nextAuth = NextAuth({
         ]),
       );
       // No auto-provisioning. Only existing accounts can use Google login.
-      if (!dbUser && !memberRow) return "/login?error=NoAccountForGym";
+      // ONE code with the no-link refusal below (lane A3, review R3 §5): this
+      // answered NoAccountForGym, so the door told the mailbox owner whether
+      // the address has an account in this club. When the link store lands
+      // the lookup by (club, provider, sub) runs BEFORE this email lookup and
+      // refuses with the same code (SF-36 proposal, "Lookup").
+      if (!dbUser && !memberRow) return "/login?error=google_link_required";
       // A staff account still on its temporary password is in bootstrap: its
       // only credential is that password, handed over privately. Proving
       // control of the mailbox (which is all Google proves) must not reach
@@ -973,8 +986,11 @@ const nextAuth = NextAuth({
       try {
         const { headers } = await import("next/headers");
         const h = await headers();
-        const fwd = h.get("x-forwarded-for");
-        const ip = fwd ? fwd.split(",")[0].trim() : (h.get("x-real-ip") ?? "unknown");
+        // The product's trust order, as on the credentials path (lane A3,
+        // review R3 §5). This read the FIRST x-forwarded-for entry — the one
+        // the client writes — and the login event it feeds decides which
+        // devices are "known" (new-device mail, the address-cap exemption).
+        const ip = requestClientIp(h);
         const ua = h.get("user-agent");
         const subjectArgs = dbUser
           ? {

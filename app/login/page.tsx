@@ -108,8 +108,10 @@ function urlErrorMessage(code: string | null): string | null {
       return signInMessage(code);
     case "invalid_link":
       return "That sign-in link is no longer valid. Request a new one below.";
-    case "NoAccountForGym":
-      return "That account is not registered with this club.";
+    // "NoAccountForGym" is no longer produced (lane A3): the Google door
+    // answers google_link_required whether or not the address has an account
+    // here, and a crafted ?error=NoAccountForGym must not render a sentence
+    // about whether an account exists. It falls through to silence below.
     default:
       return null;
   }

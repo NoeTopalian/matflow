@@ -1,0 +1,8 @@
+## tests/integration/sec-a2-*-db.test.ts as owner (guarded runner), node v24.21.0
+ Test Files  5 passed (5)
+      Tests  29 passed (29)
+owner exit=0
+## tests/integration/sec-a2-*-db.test.ts as restricted (guarded runner), node v24.21.0
+ Test Files  5 passed (5)
+      Tests  29 passed (29)
+restricted exit=0

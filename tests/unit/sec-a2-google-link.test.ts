@@ -113,9 +113,10 @@ describe("Google sign-in: no linking by email", () => {
     expect(h.clearPending).not.toHaveBeenCalled();
   });
 
-  it("controls unchanged: unverified address and unknown address keep their refusals", async () => {
+  it("controls: unverified address keeps its refusal; unknown address gets the one Google-door code", async () => {
     expect(await google("coach@example.test", false).result).toBe("/login?error=GoogleEmailUnverified");
-    expect(await google("nobody@example.test").result).toBe("/login?error=NoAccountForGym");
+    // Lane A3 (R3 §5): one code whether or not the address has an account here.
+    expect(await google("nobody@example.test").result).toBe("/login?error=google_link_required");
   });
 
   it("the credentials door is untouched by this rule (it does not consult Google links)", async () => {

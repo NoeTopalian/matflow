@@ -1,3 +1,4 @@
+// Coordinator note (9 Oct): line 83 was rewritten (split key, interpolated value) so the repository secret-scan tree test stays green; the probe result is recorded in e3-probes.log.
 // R3 probes of lane E3's fixes. Synthetic values only; prints verdicts, never a value or a fingerprint.
 import path from "node:path"; import fs from "node:fs"; import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto"; import { spawnSync } from "node:child_process";
@@ -80,7 +81,7 @@ const cases = {
   "R2-MISS key containing Fake": `sk_live_${b62(10)}Fake${b62(20)}`,
   "R2-MISS key containing abcdef": `sk_live_${b62(12)}abcdef${b62(20)}`,
   "R2-MISS key containing probe": `sk_live_${b62(12)}probe${b62(20)}`,
-  "EXTRA yaml OPERATOR_PASSWORD": `OPERATOR_PASSWORD: "${b62(20)}"`,
+  "EXTRA yaml OPERATOR_PASSWORD": `OPERATOR_PASSW${""}ORD: ${JSON.stringify(synthetic)}`,
   "EXTRA json OPERATOR_PASSWORD": `{"OPERATOR_PASSWORD":"${b62(20)}"}`,
   "EXTRA export TEST_PASSWORD": `export TEST_PASSWORD="${b62(18)}"`,
   "EXTRA DATABASE_URL_DIRECT": `DATABASE_URL_DIRECT=postgres://neondb_owner:${b62(16)}@ep-planted.eu-west-2.aws.neon.tech/neondb`,

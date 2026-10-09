@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Lane A3 mutant runner. Unit tests only (repository config). Restores each file from a byte copy and checks the hash.
+set -u
+S=/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/A3
+export PATH="$S/../node24/node-v24.21.0-win-x64:$PATH"
+cd /c/Users/NoeTo/Desktop/matflow || exit 1
+UNIT="tests/unit/sec-a3-failure-path-cost.test.ts tests/unit/sec-a3-google-door.test.ts tests/unit/sec-a3-login-copy.test.tsx tests/unit/sec-a2-lockout-flags.test.ts tests/unit/sec-a2-google-link.test.ts tests/unit/account-lockout-counter.test.ts"
+run() { # id file
+  local id=$1 file=$2
+  cp "$file" "$S/restore.bak"; local before; before=$(sha256sum "$file" | cut -c1-16)
+  node "$S/mutate.mjs" . "$id" || { echo "$id APPLY-FAILED"; return; }
+  local out; out=$(npx vitest run $UNIT 2>&1)
+  local code=$?
+  cp "$S/restore.bak" "$file"; local after; after=$(sha256sum "$file" | cut -c1-16)
+  local summary; summary=$(echo "$out" | grep -E "^\s+Tests " | tr -s ' ')
+  local reds; reds=$(echo "$out" | grep -E "^ FAIL " | sed 's/^ FAIL  //' | cut -c1-170 | tr '\n' '|')
+  echo "$id exit=$code $summary restored=$([ "$before" = "$after" ] && echo yes || echo NO) :: $reds"
+}
+for id in A3-1-locked-returns-early A3-2-row-counter-only-if-account A3-2b-noop-statement-skipped R3-35-skip-known-device-for-none A3-count-row-not-address A3-4-no-account-own-code A3-4-google-ip-first-xff; do run $id auth.ts; done
+for id in A3-3-page-noaccount-copy A3-3-page-account-locked-copy A3-3-page-url-account-locked A3-3-page-few-minutes; do run $id app/login/page.tsx; done
+echo DONE

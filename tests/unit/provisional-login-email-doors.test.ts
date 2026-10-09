@@ -311,7 +311,7 @@ describe("mail-dark (EMAIL_DELIVERY=off) — no orphan codes or links are minted
 describe("Google / external sign-in — refused for a provisional login email (source)", () => {
   const src = readFileSync("auth.ts", "utf8");
   it("the refusal sits in the signIn callback after the account lookup and before the token is hydrated", () => {
-    const lookup = src.indexOf('return "/login?error=NoAccountForGym"');
+    const lookup = src.indexOf('if (!dbUser && !memberRow) return "/login?error=google_link_required"');
     const refusal = src.indexOf("if (isLoginEmailProvisional(dbUser))");
     const hydrate = src.indexOf("Object.assign(user, dbUser");
     expect(lookup).toBeGreaterThan(0);

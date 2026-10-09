@@ -1,0 +1,10 @@
+## Full unit suite, repository config (vitest run tests/unit), v24.21.0, lane A3 working tree before a comment-only move in auth.ts (re-verified after: tsc 0, lint 0, 20 auth files 230/233 with the same 3 pinned failures)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/unit/google-door-bootstrap.test.ts > Google sign-in refuses a staff account still on its temporary password > the refusal sits in the signIn callback after the account lookup and before the token is hydrated
+ FAIL  tests/unit/journeys-manifest.test.ts > journey manifest > claims every app/api route file
+ FAIL  tests/unit/provisional-login-email-doors.test.ts > Google / external sign-in — refused for a provisional login email (source) > the refusal sits in the signIn callback after the account lookup and before the token is hydr
+ FAIL  tests/unit/sec-a2-google-link.test.ts > Google sign-in: no linking by email > controls unchanged: unverified address and unknown address keep their refusals
+ FAIL  tests/unit/sec-e-secret-scan.test.ts > repository tree (tracked files at HEAD) > contains no candidate secret beyond the documented fixtures
+ Test Files  5 failed | 453 passed (458)
+      Tests  5 failed | 6303 passed (6308)
+unit exit=1

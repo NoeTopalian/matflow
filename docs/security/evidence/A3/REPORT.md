@@ -1,0 +1,30 @@
+# Lane A3 (close review R3's SF-35 refusal and the SF-36 residuals) — iteration 2, 9 Oct 2026 (saved by the coordinator from the hand-back)
+
+Baseline HEAD ebd761d. Node v24.21.0; TEST only (guarded runners). Nothing staged, committed, pushed or deployed. Verdict: all five items done. SF-35 FIXED AWAITING REVIEW with R3-2 and R3-3 closed red→green under both roles; SF-36 residuals closed in code where allowed, the rest written into the proposal.
+
+## Files
+Modified: auth.ts, app/login/page.tsx, docs/security/evidence/A2/SF-36-google-linking-proposal.md. New: lib/external-identity.ts (the linkedExternalIdentity seam moved there, no behaviour change, so tests can reach the Google path past the link refusal — outside the listed files, accepted by the coordinator); tests/unit/sec-a3-failure-path-cost.test.ts, sec-a3-google-door.test.ts, sec-a3-login-copy.test.tsx; tests/integration/sec-a3-lockout-oracle-db.test.ts; evidence/A3/** (logs, oracle JSON, mutants, patches/companion-edits.patch — applied by the coordinator).
+
+## Item 1 — R3-2 row-locked oracle
+auth.ts: `if (rowLocked || !valid) { recordFailure (both counters) → row counter → … return null }` runs before any row-state branch, so every refused attempt is counted, including a locked row with the right password; blocked attempts (lock.blocked) still throw rate_limited uncounted, as before. R3's probe adopted as sec-a3-lockout-oracle-db (secA3- prefix, real bcrypt cost 12, identical request shapes, 20 samples per level; account, Wasn't-me-locked member, operator-locked staff, no account at 0/9/10/11 prior failures, plus the 12-attempt run from zero for both lock kinds). HEAD: 1 failed / 1 passed each role (locked rows answered refused ×12; no account refused ×10 then rate_limited ×2). After: 2/2 each role — all four kinds refused at 0 and 9, rate_limited at 10 and 11, same sequence from zero. Teardown count-checked to 0 tenants/members/users/RateLimitHit rows.
+
+## Item 2 — R3-3 equal-cost failure path
+The row-counter transaction runs unconditionally; with no account it runs member.updateMany against NO_ACCOUNT_ROW_ID (the id the known-device lookup already used); both paths are one single-statement transaction. sec-a3-failure-path-cost (23): a recording fake Prisma traces every query and transaction with statement counts through the real authorize() and lib/auth-lockout; member, user, locked member, locked user must produce the same answer and trace as no account at 0/9/10/11, plus the 12-attempt locked test. HEAD 13 failed / 10 passed → 23/23. Timing (median difference vs no account, 20 samples): HEAD owner account +272/+208 ms, locked rows −207 to −230 ms (locked rows were also a timing oracle — faster); restricted +224/+207 and −203 to −227; after: within ±49 ms at every level, both roles (oracle-{red,green}-{owner,restricted}.json).
+
+## Item 3 — login page
+0619b7d copy confirmed (rate_limited one-hour text, google_link_required copy, crafted account_locked renders nothing or the generic message). Gap fixed: a crafted ?error=NoAccountForGym still rendered "That account is not registered with this club." — case removed. sec-a3-login-copy (8, rendered through the real page): HEAD 1 failed → 8/8.
+
+## Item 4 — SF-36
+In code, red first: the Google door's no-account answer is now google_link_required (auth.ts one line); the Google login event's IP uses requestClientIp(h) (trust order) instead of the first x-forwarded-for entry (red: 203.0.113.66 where 192.0.2.10 / 198.51.100.9 / 192.0.2.44 expected); sec-a3-google-door 9/9. In the proposal: SQL for composite foreign keys tying ExternalIdentity to the account's own club ((userId, tenantId), (memberId, tenantId), supporting unique indexes, an RLS policy, Prisma form); unlinking REQUIRED in the same transaction on password reset, revoke-access, Wasn't-me, deletion/erasure and self-unlink; lookup by club + provider + sub first — the email-first lookup at auth.ts:869-878 must go when the store lands, the seam at :929-931 only confirms the email match today. Remaining Low: invalid_link at :890/:910 is still a distinct answer until the link-first lookup lands.
+
+## Mutants 11/11 killed (byte-copy restore, hash checked, git diff --stat identical)
+Locked row returns early; row counter only when an account exists; no-op statement skipped; R3's SURVIVING mutant (skip known-device lookup for non-existent addresses) now KILLED — 9 sec-a3 tests red; failures counted against the row; NoAccountForGym restored on the Google door; Google IP from the first x-forwarded-for entry; three page-copy mutants plus the "a few minutes" wording.
+
+## Item 5 — regression and gates
+A2 DB tests owner 29/29, restricted 29/29. 20 auth unit files 230/233 (the 3 failures = tests pinning the old NoAccountForGym answer: google-door-bootstrap, provisional-login-email-doors, sec-a2-google-link — fixed by patches/companion-edits.patch, 26/26). Full unit suite 458 files / 6308 tests, 5 failed: the 3 above + 2 already failing at HEAD and not A3's — journeys-manifest (csp-report route from C2 not in the manifest) and sec-e-secret-scan (flags R3's committed evidence files e3-probes.mjs.txt:83 and tls-inert-proof.mjs.txt:39/46) — both fixed by the coordinator. tsc 0; lint 0; secret scanner 0 findings across the 24 files changed/added.
+
+## Proposed ledger text
+SF-35 FIXED AWAITING RETEST: every refused attempt, including on a row locked by Wasn't-me or an operator, counts against the address counters before any row-state branch; the failure path does the same database work whether or not the account exists; sec-a3-lockout-oracle-db (both roles, red on HEAD) and sec-a3-failure-path-cost (exact trace equality; kills R3's surviving mutant); R3-2 and R3-3 closed. SF-36: interim refusal approved (R3); one code for no account and no link; login-event IP in trust order; proposal covers club binding, mandatory unlink, sub-first lookup; explicit linking BLOCKED on the lead-owned migration.
+
+## Gaps
+DB oracle test asserts response codes only (timing recorded, not asserted — noisy shared link; equal work pinned by the unit test). No browser pass. No permission layer refused anything.

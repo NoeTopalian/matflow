@@ -1,0 +1,30 @@
+// Lane A3 mutant applier: node mutate.mjs <repo> <mutant-id>. Exact-anchor replacement (LF-normalised), refuses
+// if the anchor is absent or ambiguous. The runner restores the file from a byte copy taken before mutation.
+import fs from "node:fs"; import path from "node:path";
+const [,, repo, id] = process.argv;
+const M = {
+  "A3-1-locked-returns-early": ["auth.ts", "          if (rowLocked || !valid) {\n", "          if (rowLocked) return null; // A3 mutant\n          if (rowLocked || !valid) {\n"],
+  "A3-2-row-counter-only-if-account": ["auth.ts", "            try {\n              await withTenantContext(tenant.id, async (tx) => {\n                if (user) {\n                  await tx.user.update({\n                    where: { id: user.id },\n                    data: { failedLoginCount: { increment: 1 } },",
+    "            if (subject) try {\n              await withTenantContext(tenant.id, async (tx) => {\n                if (user) {\n                  await tx.user.update({\n                    where: { id: user.id },\n                    data: { failedLoginCount: { increment: 1 } },"],
+  "A3-2b-noop-statement-skipped": ["auth.ts", "                } else {\n                  await tx.member.updateMany({", "                } else if (false) {\n                  await tx.member.updateMany({"],
+  "R3-35-skip-known-device-for-none": ["auth.ts", "            withTenantContext(tenant.id, async (tx) => {\n              const dh = deviceHash(ip, userAgent);",
+    "            withTenantContext(tenant.id, async (tx) => {\n              if (!user && !memberRow) return false; // R3 mutant\n              const dh = deviceHash(ip, userAgent);"],
+  "A3-count-row-not-address": ["auth.ts", "const addrFailures = await recordFailure(keys);", "const addrFailures = subject ? await recordFailure(keys) : 0;"],
+  "A3-4-no-account-own-code": ["auth.ts", "if (!dbUser && !memberRow) return \"/login?error=google_link_required\";", "if (!dbUser && !memberRow) return \"/login?error=NoAccountForGym\";"],
+  "A3-4-google-ip-first-xff": ["auth.ts", "        const ip = requestClientIp(h);", "        const fwd = h.get(\"x-forwarded-for\");\n        const ip = fwd ? fwd.split(\",\")[0].trim() : (h.get(\"x-real-ip\") ?? \"unknown\");"],
+  "A3-3-page-noaccount-copy": ["app/login/page.tsx", "    default:\n      return null;", "    case \"NoAccountForGym\":\n      return \"That account is not registered with this club.\";\n    default:\n      return null;"],
+  "A3-3-page-account-locked-copy": ["app/login/page.tsx", "    case \"rate_limited\":\n      // One message", "    case \"account_locked\":\n      return \"This account is temporarily locked. Try again later.\";\n    case \"rate_limited\":\n      // One message"],
+  "A3-3-page-url-account-locked": ["app/login/page.tsx", "    case \"invalid_link\":\n      return \"That sign-in link", "    case \"account_locked\":\n      return \"This account is temporarily locked. Try again later.\";\n    case \"invalid_link\":\n      return \"That sign-in link"],
+  "A3-3-page-few-minutes": ["app/login/page.tsx", "Wait up to an hour and try again", "Wait a few minutes and try again"],
+};
+const m = M[id];
+if (!m) { console.error(`unknown mutant ${id}`); process.exit(2); }
+const [rel, from, to] = m;
+const f = path.join(repo, rel);
+const raw = fs.readFileSync(f, "utf8"); const crlf = raw.includes("\r\n");
+const src = raw.replace(/\r\n/g, "\n");
+const n = src.split(from).length - 1;
+if (n !== 1) { console.error(`anchor count ${n} for ${id}`); process.exit(3); }
+let out = src.replace(from, to); if (crlf) out = out.replace(/\n/g, "\r\n");
+fs.writeFileSync(f, out);
+console.log(`applied ${id} to ${rel}`);
