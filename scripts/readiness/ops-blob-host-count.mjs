@@ -12,13 +12,15 @@
 // The agent runs it only against the TEST branch (expected host ep-hidden-salad).
 //
 // Safety: shared target guard (scripts/readiness/db-target.mjs, production admitted because this is a read-only
-// baseline); TLS verification cannot be downgraded by the URL; one READ ONLY transaction with a statement timeout,
+// baseline); the pg client is built from an explicit config (buildClientConfig: TLS verification forced, TLS/target
+// URL parameters and PG* environment variables refused — review R2 / lane E3); one READ ONLY transaction with a statement timeout,
 // rolled back; SELECT only. RLS caveat: when the connecting role is subject to row security (not superuser, no
 // BYPASSRLS, not exempt as owner under FORCE), rows hidden by policies are NOT counted — the script says so.
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import pg from "pg";
+import { parse as parsePg } from "pg-connection-string";
 import { resolveDbTarget, TargetRefused } from "./db-target.mjs";
 
 export const BLOB_URL_RE_SQL = "https://([a-z0-9.-]*blob\\.vercel-storage\\.com)";
@@ -47,14 +49,64 @@ export function extractBlobHosts(text) {
   return [...String(text).matchAll(BLOB_URL_RE_JS)].map((m) => m[1].toLowerCase());
 }
 
-/** The URL must not be able to switch TLS verification off: pg lets connection-string parameters override `ssl`. */
+/** Query keys that steer TLS or the target. Compared after percent-decoding (repeatedly) and lower-casing. */
+const TLS_KEYS = ["ssl", "sslmode", "sslrootcert", "sslcert", "sslkey", "sslpassword", "sslcrl", "sslcrldir", "sslsni", "sslnegotiation", "sslcompression", "requiressl", "uselibpqcompat", "gssencmode"];
+const TARGET_KEYS = ["host", "hostaddr", "options", "endpoint"];
+
+function normaliseKey(k) {
+  let s = String(k);
+  for (let i = 0; i < 3; i++) { try { const d = decodeURIComponent(s); if (d === s) break; s = d; } catch { break; } }
+  return s.trim().toLowerCase();
+}
+
+/**
+ * The URL must not be able to weaken TLS or move the target (review R2, 9 Oct 2026). pg-connection-string applies the
+ * LAST of duplicate keys and URL parameters override a `ssl` option passed next to `connectionString`, so a guard
+ * that reads the first `sslmode` is defeated by `?sslmode=require&sslmode=no-verify` or `&ssl%6dode=disable`. The
+ * client is therefore built from an explicit config (buildClientConfig) and this check refuses, in any case and any
+ * encoding: every TLS or target key, except ONE `sslmode` whose value is `require` or `verify-full` — the standard Neon
+ * URL form, inert under the explicit config — and `channel_binding`.
+ */
 export function assertTlsNotDowngraded(url) {
-  const u = new URL(url);
-  const mode = u.searchParams.get("sslmode");
-  if (mode !== null && !["require", "verify-full"].includes(mode)) throw new TargetRefused(`REFUSED: sslmode=${mode}`);
-  for (const k of ["uselibpqcompat", "sslrootcert", "sslcert", "sslkey", "ssl"]) {
-    if (u.searchParams.has(k)) throw new TargetRefused(`REFUSED: connection string carries ${k}=`);
+  let u;
+  try { u = new URL(url); } catch { throw new TargetRefused("REFUSED: connection string is not a URL"); }
+  let sslmodes = 0;
+  // Raw pairs, not searchParams: the literal key text is needed to tell `sslmode` from `ssl%6dode`.
+  for (const pair of u.search.replace(/^\?/, "").split("&").filter(Boolean)) {
+    const eq = pair.indexOf("=");
+    const rawKey = eq < 0 ? pair : pair.slice(0, eq);
+    const rawValue = eq < 0 ? "" : pair.slice(eq + 1);
+    const k = normaliseKey(rawKey.replace(/\+/g, " "));
+    if (TARGET_KEYS.includes(k)) throw new TargetRefused(`REFUSED: connection string carries a ${k}= parameter`);
+    if (!TLS_KEYS.includes(k) && !k.startsWith("ssl")) continue;
+    if (rawKey === "sslmode" && ["require", "verify-full"].includes(rawValue) && ++sslmodes === 1) continue;
+    throw new TargetRefused(`REFUSED: connection string carries ${k}= (TLS parameters are not taken from the URL)`);
   }
+}
+
+/**
+ * Explicit pg config for the vetted URL: host, port, user, password, database and ssl { rejectUnauthorized: true } —
+ * never a connection string, so no URL parameter reaches the driver. node-postgres fills empty fields (and `options`)
+ * from PG* environment variables, so any PG* variable is refused, and a URL without user/password/database is refused.
+ * @param {string} url
+ * @param {{ expectHost: string, env?: Record<string, string | undefined> }} opts
+ */
+export function buildClientConfig(url, { expectHost, env = process.env }) {
+  const pgEnv = Object.keys(env).filter((k) => /^PG[A-Z_]*$/i.test(k) && env[k] !== undefined && env[k] !== "");
+  if (pgEnv.length) throw new TargetRefused(`REFUSED: PG* environment variables are set (${pgEnv.join(", ")}); node-postgres would apply them`);
+  assertTlsNotDowngraded(url);
+  const host = resolveDbTarget(url, { expectHost, allowProduction: true });
+  const p = parsePg(url);
+  if (!p.user || !p.password || !p.database) throw new TargetRefused("REFUSED: the connection string lacks a user, password or database");
+  return {
+    host,
+    port: p.port ? Number(p.port) : 5432,
+    user: p.user,
+    password: p.password,
+    database: p.database,
+    ssl: { rejectUnauthorized: true, servername: host },
+    application_name: "matflow-ops-blob-host-count",
+  };
 }
 
 /** Double-quote a Postgres identifier taken from the catalogue. */
@@ -82,16 +134,17 @@ async function main(argv) {
   if (!envFile || !expectHost) { console.error("usage: node scripts/readiness/ops-blob-host-count.mjs <env-file> <expected-host-substring> [VAR]"); return 2; }
   const url = readEnv(envFile, varName);
   if (!url) { console.error(`no ${varName} in env file`); return 2; }
-  let host;
+  let config;
   try {
-    host = resolveDbTarget(url, { expectHost, allowProduction: true });
-    assertTlsNotDowngraded(url);
+    // buildClientConfig runs assertTlsNotDowngraded(url) and the shared guard (allowProduction: true — read-only baseline).
+    config = buildClientConfig(url, { expectHost });
   } catch (e) {
     console.error(e instanceof TargetRefused ? e.message : "REFUSED: connection string rejected");
     return 2;
   }
+  const host = config.host;
   console.log(JSON.stringify({ target: host.split(".")[0], pooler: host.includes("-pooler") }));
-  const client = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: true }, application_name: "matflow-ops-blob-host-count" });
+  const client = new pg.Client(config);
   await client.connect();
   try {
     await client.query("BEGIN READ ONLY");

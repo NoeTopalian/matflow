@@ -307,3 +307,21 @@ report and `test-skip-gate.mjs`, never a scraped exit code.
 Gate the DB sweep with `--require-db --expect=tests/integration/*-db.test.ts --allow=tests/integration/rls-foundation.test.ts`
 (owner role) and add `--allow-blocked` only while SF-57 is unapplied — the verdict then reads
 PASS-WITH-BLOCKED-COVERAGE, never PASS.
+
+## Iteration 2 — lane E3 (9 Oct 2026; every run on Node v24.21.0, the scratchpad `node24` binary)
+Closes review R2 "Owed" 1–5 and the two coordinator residuals. Base HEAD `5f87b11` + lane E3 working-tree edits.
+Exact red/green counts per item: `evidence/E3/runs-2026-10-09.txt`. No production access; one read-only TEST-branch
+run (`ops-blob-host-count`, positive control). Commands (from the repo root, Node 24 first on PATH):
+
+| Item | Command | Result |
+|---|---|---|
+| 1 ops-blob-host-count explicit config + duplicate/encoded sslmode refusal | `npx vitest run tests/unit/sec-e3-ops-guards.test.ts tests/unit/sec-e2-ops-scripts.test.ts` | red on HEAD 29 failed / 1 passed; green 42/42 |
+| 1 positive control (TEST) | `node scripts/readiness/ops-blob-host-count.mjs .env.test ep-hidden-salad TEST_DATABASE_URL` | exit 0, 451 columns, 0 Blob URLs |
+| 2 fingerprint CLI: no argument echo, dotenv parsing, `--from-env-file` | same two files | green 42/42 (window check: no 8-char substring of the value in the output) |
+| 3 secret-scan new names + captured-value placeholder test | `npx vitest run tests/unit/sec-e-secret-scan.test.ts tests/unit/sec-e2-containment-redaction.test.ts` | red 13 failed / 28 passed; green 54/54 |
+| 3 tree | `node scripts/readiness/secret-scan.mjs --tree` | 1982 files, 49 findings, 5 candidates = the two documented fixture fingerprints (before: 38 / 5), exit 1 as before |
+| 3 history | `node scripts/readiness/secret-scan.mjs --history` | 6360 blobs, 134 findings, 12 candidates (before: 120 / 11); the new one is rule `secret-name-table-value` in `docs/SECURITY-AUDIT-2026-05-07.md` (the 7 May leak document, SF-14), not inspected further |
+| 4 skip gate zero-match `--expect` glob | `npx vitest run tests/unit/sec-f2-skip-gate.test.ts tests/unit/sec-r-skip-gate-expected-files.test.ts` | HEAD CLI: expected 0, PASS, exit 0; red 1 failed / 7; green 11/11 |
+| 5 `/api/upload` limitInputPixels pinned at the route | `npx vitest run tests/unit/sec-e3-upload-limit-input-pixels.test.ts tests/unit/sec-d-image-bounds.test.ts` | option removed: 3 failed (sec-d-image-bounds stays green); restored: 3/3 |
+| 6 setup-test-db PG* refusal + lower-casing pinned | `npx vitest run tests/unit/sec-e3-setup-test-db-guard.test.ts` | red 3 failed / 3; green 6/6; toLowerCase mutant 2 failed |
+| 6 db-target positive allowlist | `npx vitest run tests/unit/sec-r-db-target-guard.test.ts tests/unit/sec-b2-rls-test-target.test.ts tests/unit/sec-f2-restore-verify-compare.test.ts` | red 1 failed (sibling `ep-hidden-salad-*` endpoint accepted); green |

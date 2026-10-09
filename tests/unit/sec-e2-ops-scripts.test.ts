@@ -80,7 +80,7 @@ describe("ops-credential-fingerprint", () => {
     const file = path.join(dir, "x.env");
     fs.writeFileSync(file, `DATABASE_URL=postgres://u:${secret}@h.example.invalid/d\n`);
     try {
-      const out2 = execFileSync(process.execPath, [FP_SCRIPT, "--env-file", file, "--var", "DATABASE_URL", "--var", "ABSENT"], { encoding: "utf8" });
+      const out2 = execFileSync(process.execPath, [FP_SCRIPT, "--from-env-file", file, "--var", "DATABASE_URL", "--var", "ABSENT"], { encoding: "utf8" });
       expect(out2).toMatch(/DATABASE_URL: no match/);
       expect(out2).toMatch(/ABSENT: not present/);
       expect(out2).not.toContain(secret);

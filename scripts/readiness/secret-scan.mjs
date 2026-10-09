@@ -9,7 +9,9 @@
  * Output never contains a matched value: each finding carries the rule, the location, the length,
  * the rule's fixed public prefix (e.g. `sk_live_`) and a 12-hex SHA-256 fingerprint so two findings can be
  * correlated without revealing the secret. Placeholders (`not-real`, `example`, localhost URLs …) are
- * classified `placeholder` and do not fail the run.
+ * classified `placeholder` and do not fail the run. The placeholder test reads the CAPTURED value only (a URL's
+ * password and host, an assignment's value), never the surrounding text, and a marker word downgrades a value only
+ * when nothing random-looking remains without it (lane E3, review R2).
  *
  * Exit codes: 0 = no non-placeholder finding; 1 = at least one; 2 = usage or I/O error.
  * The scan is a pattern list, not proof of absence: a secret in an unknown format is not detected.
@@ -35,8 +37,38 @@ export const RULES = [
   {
     id: "postgres-url-with-password",
     prefix: "postgres://",
-    re: /\bpostgres(?:ql)?:\/\/[^\s:@/'"`<>]+:[^\s@'"`<>]{6,}@[^\s'"`<>]+/g,
+    // Group 1 = password, group 2 = host: the placeholder test reads only these (lane E3), the fingerprint the URL.
+    re: /\bpostgres(?:ql)?:\/\/[^\s:@/'"`<>]+:([^\s@'"`<>]{6,})@(?=[^\s'"`<>])([^\s'"`<>/:?]*)[^\s'"`<>]*/g,
     severity: "critical",
+    checkGroup: 1,
+    hostGroup: 2,
+  },
+  // Lane E3 (review R2): names missing from the list. The tenant-context signing key is 128 hex.
+  {
+    id: "rls-context-signing-key",
+    prefix: "RLS_CONTEXT_SIGNING_KEY=",
+    re: /(?:^|[^A-Za-z0-9_])RLS_CONTEXT_SIGNING_KEY["']?\s*[=:]\s*["'`]?([0-9A-Fa-f]{128})(?![0-9A-Fa-f])/g,
+    severity: "critical",
+    valueGroup: 1,
+  },
+  // Passwords have no format: any assigned literal of 8+ characters that is not an interpolation or a placeholder.
+  {
+    id: "password-env-assignment",
+    prefix: "NAME=",
+    re: /(?:^|[\s"'`{,])(?:export\s+)?(?:OPERATOR_PASSWORD|MATFLOW_PROD_PASSWORD|TEST_PASSWORD)["']?\s*[=:]\s*["'`]?([^\s"'`,;)}]{8,})/gm,
+    severity: "high",
+    valueGroup: 1,
+    minEntropy: 2,
+  },
+  // Owner / direct URLs with ANY non-empty password (the generic URL rule needs 6+ characters).
+  {
+    id: "database-url-env-assignment",
+    prefix: "NAME=postgres://",
+    re: /(?:^|[\s"'`{,])(?:export\s+)?(?:MIGRATION_DATABASE_URL|DATABASE_URL_DIRECT)["']?\s*[=:]\s*["'`]?(postgres(?:ql)?:\/\/[^\s:@/'"`<>]+:([^\s@'"`<>]+)@([^\s'"`<>/:?]+)[^\s'"`<>]*)/gm,
+    severity: "critical",
+    valueGroup: 1,
+    checkGroup: 2,
+    hostGroup: 3,
   },
   // Neon role passwords are issued as `npg_` + 12+ characters; they also appear outside a URL
   // (the 7 May 2026 audit table quoted one as "password npg_…").
@@ -63,12 +95,35 @@ export const RULES = [
   },
 ];
 
-const PLACEHOLDER = [
-  /not[-_]?real/i, /example/i, /placeholder/i, /changeme/i, /dummy/i, /fake/i, /x{6,}/i, /\.{3}/, /<[^>]+>/,
-  /your[-_]/i, /ci[-_]only/i, /test[-_]secret/i, /redacted/i, /\$\{/, /process\.env/, /\*{3,}/,
-  /@(?:localhost|127\.0\.0\.1|0\.0\.0\.0|host|db|postgres)(?:[:/]|$)/i, /:postgres@/, /:password@/i, /:pass@/i, /:p@/,
-  /^(?:sk|rk)_(?:live|test)_(?:0+|1234)/, /0{12,}/, /abcdef/i, /replace[-_]with/i, /deadbeef/i, /probe/i,
+// The placeholder test reads the CAPTURED VALUE only (the rule's value/check group), never the whole match: review R2
+// found a real-looking URL followed by "..." and a key containing Fake/abcdef/probe classified as placeholders because
+// the patterns were tested on the whole match (lane E3, 9 Oct 2026).
+//
+// STRUCTURAL: the value is not a literal at all (interpolation, a reference, an angle-bracket slot) or is a bare
+// placeholder word / filler. Any of these makes the value a placeholder.
+const PLACEHOLDER_STRUCTURAL = [
+  /\$\{/, /\$\(/, /process\.env/, /^<[^>]*>?$/, /^\*+$/, /^x+$/i, /^(.)\1*$/,
+  /^(?:user|username|password|passwd|pass|pw|pwd|p|postgres|secret|changeme|test|admin|root|fixture)$/i,
 ];
+// MARKERS: words and fillers that usually mean a fixture. A marker downgrades a value ONLY when nothing random-looking
+// is left once the markers (and separators) are removed — so `sk_live_<10>Fake<20>` stays a candidate while
+// `sk_test_000…`, `replace-with-openssl-rand-base64-32` and `not-a-real-key` stay placeholders.
+const PLACEHOLDER_MARKERS = [
+  /not[-_]?(?:a[-_]?)?real/gi, /example/gi, /placeholder/gi, /changeme/gi, /dummy/gi, /fake/gi, /x{6,}/gi, /\.{3,}/g,
+  /your[-_]/gi, /ci[-_]only/gi, /test[-_]secret/gi, /redacted/gi, /\*{3,}/g, /0{12,}/g, /abcdef/gi, /replace[-_]with/gi,
+  /deadbeef/gi, /probe/gi, /1234567890|123456789|12345678|1234/g,
+];
+// Hosts that cannot be a real database: loopback / container names, and RFC 2606 / 6761 reserved names.
+const PLACEHOLDER_HOST = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|host|db|postgres|\[::1\])$|(?:^|\.)(?:example(?:\.com|\.org|\.net)?|invalid|test|localhost)$/i;
+
+/** True when some alphanumeric run of 16+ characters (12+ for a run of mixed case and digits) looks random. */
+export function hasRandomRun(s) {
+  for (const run of String(s).split(/[^0-9A-Za-z]+/)) {
+    if (run.length >= 16 && shannon(run) >= 3.0) return true;
+    if (run.length >= 12 && /[a-z]/.test(run) && /[A-Z]/.test(run) && /[0-9]/.test(run) && shannon(run) >= 3.0) return true;
+  }
+  return false;
+}
 
 export function shannon(s) {
   const f = {};
@@ -82,8 +137,23 @@ export function fingerprint(value) {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
+/** Placeholder test on a CAPTURED value (never the whole match). */
 export function isPlaceholder(value) {
-  return PLACEHOLDER.some((re) => re.test(value));
+  const v = String(value);
+  if (PLACEHOLDER_STRUCTURAL.some((re) => re.test(v))) return true;
+  let rest = v;
+  let marked = false;
+  for (const re of PLACEHOLDER_MARKERS) {
+    re.lastIndex = 0;
+    const next = rest.replace(re, " ");
+    if (next !== rest) { marked = true; rest = next; }
+  }
+  return marked && !hasRandomRun(rest);
+}
+
+/** Host of a URL rule that cannot be a real database (loopback, container name, reserved domain). */
+export function isPlaceholderHost(host) {
+  return PLACEHOLDER_HOST.test(String(host).replace(/\.$/, ""));
 }
 
 /** Scan one text. Returns redacted findings only. */
@@ -99,10 +169,19 @@ export function scanText(text, location = "<text>") {
       const lead = m[0].length - m[0].trimStart().length;
       const line = text.slice(0, m.index + lead).split("\n").length;
       let host = undefined;
-      if (rule.id === "postgres-url-with-password") {
-        const h = /@([^/:?\s'"`]+)/.exec(m[0]);
-        host = h ? (/neon\.tech$/i.test(h[1]) ? "neon.tech" : /localhost|127\.0\.0\.1/.test(h[1]) ? "local" : "other") : "unknown";
+      const hostVal = rule.hostGroup ? m[rule.hostGroup] ?? "" : undefined;
+      if (hostVal !== undefined) {
+        host = hostVal ? (/neon\.tech$/i.test(hostVal) ? "neon.tech" : /localhost|127\.0\.0\.1/.test(hostVal) ? "local" : "other") : "unknown";
       }
+      // Placeholder test on the captured value only (check group, else value group, else the match for a fixed-format
+      // rule whose match IS the value); a URL rule is also a placeholder when its host cannot be a real database.
+      let check = rule.checkGroup ? m[rule.checkGroup] ?? "" : value;
+      if (hostVal !== undefined) {
+        // URL password: percent-decode, and drop Neon's `endpoint=<id>;` routing prefix — the rest is the password.
+        try { check = decodeURIComponent(check); } catch { /* keep the raw form */ }
+        check = check.replace(/^endpoint=[^;]*;/i, "");
+      }
+      const placeholder = isPlaceholder(check) || (hostVal !== undefined && isPlaceholderHost(hostVal));
       findings.push({
         rule: rule.id,
         severity: rule.severity,
@@ -112,7 +191,7 @@ export function scanText(text, location = "<text>") {
         prefix: rule.prefix,
         fingerprint: fingerprint(value),
         hostClass: host,
-        classification: isPlaceholder(m[0]) ? "placeholder" : "candidate",
+        classification: placeholder ? "placeholder" : "candidate",
       });
     }
   }

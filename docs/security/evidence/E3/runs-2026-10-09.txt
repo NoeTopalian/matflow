@@ -1,0 +1,78 @@
+Lane E3 (security campaign iteration 2) — closes review R2 "Owed" 1-5 + two coordinator residuals.
+Base: HEAD 5f87b11 (branch security/assurance-2026-10) + lane E3 working-tree edits. Runtime for every run below:
+node v24.21.0 (scratchpad node24 binary). No production access; the only database connection was a read-only run of
+ops-blob-host-count against the TEST branch (ep-hidden-salad-abom7cg4) as the positive control for item 1.
+Synthetic values only; raw logs (which contain synthetic random values) stay in the lane scratchpad.
+
+Runner: npx vitest run <files> (one invocation per row); counts copied from vitest's summary line.
+
+Item 1  ops-blob-host-count TLS/target guard
+  red   tests/unit/sec-e3-ops-guards.test.ts on HEAD scripts ........ 29 failed | 1 passed (30), exit 1
+        (old assertTlsNotDowngraded ACCEPTED: sslmode=require&sslmode=no-verify, &sslmode=disable, &ssl%6dode=no-verify,
+         ssl%6Dode=disable, SSLMODE=disable, host=/h%6fst=/HOSTADDR=/options=/endpoint=; buildClientConfig absent)
+  green sec-e3-ops-guards + sec-e2-ops-scripts ....................... 42 passed (42), exit 0
+  CLI negative controls (synthetic URL on the TEST host, refused before any connection):
+        sslmode=require&sslmode=no-verify -> REFUSED, exit 2
+        sslmode=require&sslmode=disable   -> REFUSED, exit 2
+        sslmode=require&ssl%6dode=no-verify -> REFUSED, exit 2
+  CLI positive control: node scripts/readiness/ops-blob-host-count.mjs .env.test ep-hidden-salad TEST_DATABASE_URL
+        -> exit 0, target ep-hidden-salad-abom7cg4-pooler, columnsScanned 451, byStore {}, "at most one Blob store"
+        (explicit config, rejectUnauthorized true, servername = host)
+
+Item 2  ops-credential-fingerprint
+  red   (same red run) unknown positional echoed in full ("unknown argument <value>"); KEY="..." # comment parsed as
+        the quoted string plus comment (no MATCH against its own fingerprint)
+  found Node v24.21.0 intercepts --env-file / --env-file-if-exists even AFTER the script path: with a missing file it
+        prints "<path>: not found" and exits 9 before the script runs; with an existing file it loads it into the
+        process environment. The option is now --from-env-file (CONTAINMENT-CHECKLIST §4 step 1 updated).
+  green 42 passed (42) as above; outputs checked for the value and every 8-character window of it.
+
+Item 3  secret-scan
+  red   tests/unit/sec-e-secret-scan.test.ts with new cases on HEAD scanner ... 13 failed | 28 passed (41), exit 1
+  green sec-e-secret-scan + sec-e2-containment-redaction ................ 54 passed (54), exit 0
+  R2 plant re-run (docs/security/evidence/R2/plant.mjs.txt): every GAP now candidate (rls-context-signing-key,
+        password-env-assignment, postgres-url-with-password + database-url-env-assignment for the "..." URL,
+        stripe-live-secret for the Fake key); every SHOULD-IGNORE unchanged (placeholder / no finding).
+  node scripts/readiness/secret-scan.mjs --tree      before: scanned 1982, findings 38, candidates 5, exit 1
+                                                     after:  scanned 1982, findings 49, candidates 5, exit 1
+        (the 5 candidates are the two documented fixture fingerprints 7d3bddd6e499 / 0895203bc15e in both runs)
+  node scripts/readiness/secret-scan.mjs --history   before: scanned 6360, findings 120, candidates 11, exit 1
+                                                     after:  scanned 6360, findings 134, candidates 12, exit 1
+        NEW candidate (described by rule and file only, not inspected further):
+        rule secret-name-table-value, file docs/SECURITY-AUDIT-2026-05-07.md (blob e4d2cafc2e, the 7 May leak
+        document already in SF-14), line 53, len 28, fp 460ee66a6d1a — previously classified placeholder.
+  parallel: the tree test ran inside a 17-file parallel vitest invocation, 8.35 s total, no timeout (explicit 180 s budget).
+
+Item 4  test-skip-gate --expect zero-match glob
+  red   HEAD CLI: --expect=tests/integration/*-dbb.test.ts -> {"expected":0,...,"verdict":"PASS"}, exit 0
+        sec-f2-skip-gate.test.ts with the new case ............... 1 failed | 7 passed (8), exit 1
+  green sec-f2-skip-gate + sec-r-skip-gate-expected-files ............ 11 passed (11), exit 0
+        message: --expect glob "<glob>" matched no file under <cwd>; verdict FAIL, exit 1
+
+Item 5  /api/upload limitInputPixels pinned at route level
+  test  tests/unit/sec-e3-upload-limit-input-pixels.test.ts (sharp mocked; branding + profile-pic branches; positive
+        control status 200)
+  red   option removed from app/api/upload/route.ts (scratch copy of the original kept, restored, git diff clean):
+        sec-e3-upload-limit-input-pixels 3 failed; sec-d-image-bounds stayed green (R2's residual reproduced)
+        -> 3 failed | 5 passed (8), exit 1
+  green 3 passed (3), exit 0
+
+Item 6  tests/setup-test-db.ts + db-target allowlist
+  red   tests/unit/sec-e3-setup-test-db-guard.test.ts on HEAD setup file .... 3 failed | 3 passed (6), exit 1
+        (PGOPTIONS / PGHOST / PGHOSTADDR not refused)
+  green 6 passed (6), exit 0
+  mutant toLowerCase() removed from both comparisons -> 2 failed | 4 passed (6), exit 1 (restored)
+  red   sec-r-db-target-guard.test.ts allowlist case on HEAD db-target .... 1 failed | 5 passed (6), exit 1
+        (first accepted look-alike: ep-hidden-salad-r2fake.eu-west-2.aws.neon.tech with expectHost ep-hidden-salad)
+  green sec-r-db-target-guard + sec-b2-rls-test-target + sec-f2-restore-verify-compare + sec-e3-ops-guards
+        -> 65 passed (65), exit 0
+  real TEST targets (.env.test, no connection): ownerPooled / ownerDirect / appPooled / appDirect all accepted.
+
+Gates (node v24.21.0)
+  unit: 17 files (sec-e-*, sec-e2-*, sec-e3-*, sec-f2-*, sec-r-*, sec-b2-rls-test-target, sec-d-image-bounds,
+        upload-blob) in ONE parallel invocation -> 17 passed, 210 passed (210), exit 0
+  final re-run after the type fixes: 17 files, 210 passed (210), exit 0, 11.42 s (parallel, no timeout)
+  npx tsc --noEmit -p . ............ exit 0 (first run exit 2: 6 errors in E3's own new tests/JSDoc, fixed)
+  npm run lint ..................... exit 0 "eslint clean, UI-RULES ratchet at or below baseline"
+        (one earlier run exited 1 with ENOENT on a lane-A2 integration file deleted mid-walk; not an E3 file)
+  node scripts/readiness/secret-scan.mjs --dir docs/security ... 172 files, 0 candidates, exit 0

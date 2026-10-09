@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { evaluate, MAINTENANCE, BLOCKED } from "../../scripts/readiness/test-skip-gate.mjs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { evaluate, expandExpect, MAINTENANCE, BLOCKED } from "../../scripts/readiness/test-skip-gate.mjs";
 
 /**
  * Lane F2 (iteration 2, 9 Oct 2026). A throwing beforeAll is reported by vitest as a FAILED file whose tests are all
@@ -57,6 +61,28 @@ describe("test-skip-gate evaluate()", () => {
     const allowed = evaluate(j, { requireDb: true, allowBlocked: true });
     expect(allowed.summary.verdict).toBe("PASS-WITH-BLOCKED-COVERAGE");
     expect(allowed.blocked[0]).toMatch(/SF-57/);
+  });
+
+  it("lane E3 (review R2): an --expect glob matching zero files FAILS, naming the glob and the cwd", () => {
+    const ok = "tests/integration/*-db.test.ts";
+    const typo = "tests/integration/*-dbb.test.ts";
+    const { expected, unmatched } = expandExpect([ok, typo], process.cwd());
+    expect(expected.size).toBeGreaterThan(10);
+    expect(unmatched).toEqual([typo]);
+    const j = { testResults: [file("tests/integration/a-db.test.ts", "passed", ["passed"])] };
+    const r = evaluate(j, { requireDb: true, expected: [], unmatchedGlobs: unmatched, cwd: "C:/repo" });
+    expect(r.summary.verdict).toBe("FAIL");
+    expect(r.problems.join("\n")).toContain(`--expect glob "${typo}" matched no file under C:/repo`);
+    // End to end: before E3 this printed "expected":0 and exited 0.
+    const dir = mkdtempSync(join(tmpdir(), "e3-gate-"));
+    const report = join(dir, "vitest.json");
+    writeFileSync(report, JSON.stringify({ success: true, testResults: [{ name: join(process.cwd(), "tests/unit/x.test.ts"), status: "passed", assertionResults: [{ status: "passed" }] }] }));
+    let code = 0, out = "";
+    try { out = execFileSync(process.execPath, ["scripts/readiness/test-skip-gate.mjs", report, `--expect=${typo}`], { encoding: "utf8" }); }
+    catch (e) { const err = e as { status?: number; stdout?: string }; code = err.status ?? 1; out = err.stdout ?? ""; }
+    expect(code).toBe(1);
+    expect(out).toContain(`--expect glob "${typo}" matched no file under ${process.cwd()}`);
+    expect(out).toContain('"verdict":"FAIL"');
   });
 
   it("an unlisted skip still fails under --require-db; a named --allow entry passes", () => {

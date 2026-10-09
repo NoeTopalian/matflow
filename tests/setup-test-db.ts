@@ -18,6 +18,15 @@
 
 const PROD_NEON_ENDPOINT = "ep-bold-wave-abt39t7x";
 
+// node-postgres applies PGOPTIONS (and PGHOST / PGHOSTADDR when a field is empty) from the environment, so an inherited
+// PGOPTIONS=endpoint=<production id> could route a TEST URL to production without touching it. Refused outright, as
+// scripts/readiness/db-target.mjs does (patch 0003; mirrored here in lane E3 after review R2).
+for (const k of ["PGOPTIONS", "PGHOST", "PGHOSTADDR"]) {
+  if (process.env[k]) {
+    throw new Error(`${k} is set in the environment; node-postgres would apply it to the test database connection. Unset it before running the tests.`);
+  }
+}
+
 const testUrl = process.env.TEST_DATABASE_URL;
 
 if (testUrl) {
@@ -37,3 +46,6 @@ if (testUrl) {
   // Unit tests that don't read DATABASE_URL are unaffected.
   delete process.env.DATABASE_URL;
 }
+
+// A module (lane E3: the guard test re-imports this file).
+export {};

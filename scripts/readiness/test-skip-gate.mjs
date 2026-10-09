@@ -17,7 +17,8 @@
 //   - any file reports zero tests (a file that defines nothing passes vacuously);
 //   - with --require-db (CI, or any run that claims DB evidence): any test is skipped/todo outside the --allow list;
 //   - with --expect=<glob>: any matching file is absent from the run (a run that leaves the DB files out is otherwise
-//     indistinguishable from one that ran them — review of lane F).
+//     indistinguishable from one that ran them — review of lane F); and a glob that matches NO file fails, naming the
+//     glob and the cwd (it used to report "expected 0, PASS" — review R2, fixed in lane E3).
 // Allowed skips must be named one by one with a reason in the CI step that passes them; a pattern is not accepted.
 //
 // Two registries below are part of the gate (iteration 2):
@@ -45,12 +46,15 @@ export const BLOCKED = {
 /**
  * Pure evaluation (unit-tested in tests/unit/sec-f2-skip-gate.test.ts). `present` paths are repo-relative.
  * @param {any} j vitest JSON report
- * @param {{ allow?: string[], requireDb?: boolean, expected?: Iterable<string>, allowBlocked?: boolean }} [opts]
+ * @param {{ allow?: string[], requireDb?: boolean, expected?: Iterable<string>, allowBlocked?: boolean, unmatchedGlobs?: string[], cwd?: string }} [opts]
  * @param {(p: string) => string} [rel]
  */
-export function evaluate(j, { allow = [], requireDb = false, expected = [], allowBlocked = false } = {}, rel = (p) => p) {
+export function evaluate(j, { allow = [], requireDb = false, expected = [], allowBlocked = false, unmatchedGlobs = [], cwd = "" } = {}, rel = (p) => p) {
   const allowSet = new Set(allow);
   const problems = [];
+  // Lane E3 (review R2): a glob that matches nothing used to give "expected 0, PASS" — a typo or a wrong cwd silently
+  // switched the check off. Every --expect glob must match at least one file.
+  for (const g of unmatchedGlobs) problems.push(`--expect glob "${g}" matched no file under ${cwd || "the current directory"}`);
   const blocked = [];
   let total = 0, passed = 0, skipped = 0, failed = 0;
   const files = j.testResults ?? [];
@@ -89,16 +93,32 @@ export function evaluate(j, { allow = [], requireDb = false, expected = [], allo
   return { summary: { files: files.length, total, passed, failed, skipped, requireDb, allowed: [...allowSet], expected: exp.length, blocked: blocked.length, verdict }, problems, blocked };
 }
 
+/**
+ * Expand --expect globs relative to `cwd`. Returns the matched repo-relative paths and every glob that matched nothing.
+ * @param {string[]} globs @param {string} cwd
+ */
+export function expandExpect(globs, cwd) {
+  const expected = new Set();
+  const unmatched = [];
+  for (const g of globs) {
+    const hits = fs.globSync(g, { cwd }).map((p) => p.split(path.sep).join("/"));
+    if (hits.length === 0) unmatched.push(g);
+    for (const h of hits) expected.add(h);
+  }
+  return { expected, unmatched };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const file = process.argv[2];
   if (!file) { console.error("usage: test-skip-gate.mjs <vitest.json> [--allow=a,b] [--require-db] [--expect=<glob>] [--allow-blocked]"); process.exit(2); }
   const args = process.argv.slice(3);
   const allow = (args.find((a) => a.startsWith("--allow=")) ?? "--allow=").slice(8).split(",").filter(Boolean);
   const expectGlobs = (args.find((a) => a.startsWith("--expect=")) ?? "--expect=").slice(9).split(",").filter(Boolean);
-  const expected = new Set(expectGlobs.flatMap((g) => fs.globSync(g).map((p) => p.split(path.sep).join("/"))));
+  const cwd = process.cwd();
+  const { expected, unmatched } = expandExpect(expectGlobs, cwd);
   const j = JSON.parse(fs.readFileSync(file, "utf8"));
-  const rel = (p) => path.relative(process.cwd(), p).split(path.sep).join("/");
-  const r = evaluate(j, { allow, requireDb: args.includes("--require-db"), expected, allowBlocked: args.includes("--allow-blocked") }, rel);
+  const rel = (p) => path.relative(cwd, p).split(path.sep).join("/");
+  const r = evaluate(j, { allow, requireDb: args.includes("--require-db"), expected, allowBlocked: args.includes("--allow-blocked"), unmatchedGlobs: unmatched, cwd }, rel);
   console.log(JSON.stringify(r.summary));
   for (const b of r.blocked) console.log(" ~", b);
   for (const p of r.problems) console.log(" -", p);
