@@ -47,8 +47,19 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/prisma-tenant", () => ({
-  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>) =>
-    fn({ user: { findUnique: async ({ where }: { where: { id: string } }) => st.users.get(where.id) ?? null } }),
+  // Lane C (9 Oct 2026): the grant is spent inside the start row's
+  // transaction, so the transaction client carries the Operator table too.
+  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>) => {
+    const { prisma } = (await import("@/lib/prisma")) as unknown as { prisma: { operator: unknown } };
+    return fn({
+      operator: prisma.operator,
+      user: {
+        findUnique: async ({ where }: { where: { id: string } }) => st.users.get(where.id) ?? null,
+        findFirst: async ({ where }: { where: { tenantId?: string; role?: string } }) =>
+          [...st.users.values()].find((u) => u.tenantId === where.tenantId && (!where.role || u.role === where.role)) ?? null,
+      },
+    });
+  },
   withTenantContext: vi.fn(),
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async (a: Record<string, unknown>) => { st.audit.push(a); }) }));
@@ -169,6 +180,10 @@ describe("POST /api/admin/impersonate", () => {
   );
 
   it("404 for an unknown person", async () => {
-    expect((await POST(startReq({ ...GOOD, targetUserId: "nobody" }, await grant("t-club/nobody")))).status).toBe(404);
+    // Lane C (9 Oct 2026): no grant can be issued for a person who does not
+    // exist (the step-up route resolves their version first), so any header
+    // will do: the 404 comes before the grant is looked at.
+    expect((await POST(startReq({ ...GOOD, targetUserId: "nobody" }, "not-a-grant"))).status).toBe(404);
+    await expect(grant("t-club/nobody")).rejects.toThrow(/subject not found/);
   });
 });

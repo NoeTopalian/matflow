@@ -13,6 +13,7 @@ import { computeMemberStats } from "@/lib/member-stats";
 import { buildRankTimeline } from "@/lib/member-home";
 import { memberSelfUpdateSchema } from "@/lib/schemas/member";
 import { demoBadges } from "@/lib/demo-member";
+import { LoginIdentityTaken, claimLoginIdentity, retireEmailBoundTokens } from "@/lib/login-email";
 
 const DEMO_RESPONSE = {
   id: "demo-member",
@@ -495,16 +496,34 @@ export async function PATCH(req: Request) {
 
     if (Object.keys(updateData).length > 0) {
       try {
-        await withTenantContext(session.user.tenantId, (tx) =>
-          tx.member.updateMany({
+        await withTenantContext(session.user.tenantId, async (tx) => {
+          const newEmail = typeof updateData.email === "string" ? updateData.email : null;
+          // A new login address is claimed across staff AND members of this
+          // club before the write (AH-01, 9 Oct 2026); lock held to commit.
+          if (newEmail !== null) {
+            const claim = await claimLoginIdentity(tx, {
+              tenantId: session.user.tenantId,
+              email: newEmail,
+              exclude: { memberId },
+            });
+            if (claim.kind !== "none") throw new LoginIdentityTaken(claim);
+          }
+          await tx.member.updateMany({
             where: { id: memberId, tenantId: session.user.tenantId },
             data: updateData,
-          }),
-        );
+          });
+          // Reset codes and sign-in links minted for either address in this
+          // club are retired, so a link to the old mailbox cannot reach
+          // whoever holds that address next.
+          if (newEmail !== null && before) {
+            await retireEmailBoundTokens(tx, { tenantId: session.user.tenantId, emails: [before.email, newEmail] });
+          }
+        });
       } catch (e: unknown) {
-        // @@unique([tenantId, email]) — another account at this gym already
-        // uses the requested address (mirrors the staff route's 409).
-        if ((e as { code?: string }).code === "P2002") {
+        // @@unique([tenantId, email]) or the cross-table claim — another
+        // account at this gym already uses the requested address (mirrors the
+        // staff route's 409; whose it is is not said).
+        if (e instanceof LoginIdentityTaken || (e as { code?: string }).code === "P2002") {
           return NextResponse.json(
             { error: "Email already in use", fieldErrors: { email: "That email is already used at this gym." } },
             { status: 409 },

@@ -22,7 +22,13 @@ import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { hashToken } from "@/lib/token-hash";
-import { requireStepUp, stepUpTarget } from "@/lib/operator-step-up";
+import {
+  StepUpRefusedError,
+  consumeStepUpGrant,
+  refuseStepUp,
+  requireStepUp,
+  stepUpTarget,
+} from "@/lib/operator-step-up";
 
 export const runtime = "nodejs";
 
@@ -63,11 +69,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "memberId, reason (min 5), and confirmName required" }, { status: 400 });
   }
 
-  // Fresh operator re-authentication bound to THIS action on THIS member of
-  // THIS club: a grant for one member cannot be spent on another.
-  const stepUp = await requireStepUp(req, ctx, "member.totp_reset", stepUpTarget(tenantId, parsed.data.memberId));
-  if (stepUp) return stepUp;
-
   const tenant = await withRlsBypass((tx) =>
     tx.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } }),
   );
@@ -84,11 +85,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
   if (!member) return NextResponse.json({ error: "Member not found in this tenant" }, { status: 404 });
 
-  // The reset and its audit row are ONE transaction (operator audit 5 Oct
-  // 2026, Q9): no 2FA reset without a durable record of who did it and why.
+  // Fresh operator re-authentication bound to THIS action on THIS member of
+  // THIS club (a grant for one member cannot be spent on another), this
+  // operator session and the member's credential version. Checked after the
+  // harmless preflight above; spent inside the transaction below.
+  const stepUp = await requireStepUp(req, ctx, "member.totp_reset", stepUpTarget(tenantId, member.id), { change: {} });
+  if (stepUp instanceof Response) return stepUp;
+
+  // ONE transaction: grant spent (member version re-checked), reset, audit row
+  // (operator audit 5 Oct 2026, Q9; lane C 9 Oct 2026).
+  let replay: Record<string, unknown> | null = null;
   try {
-    await withRlsBypass(async (tx) => {
-      await tx.member.update({
+    replay = await withRlsBypass(async (tx) => {
+      const spend = await consumeStepUpGrant(tx, stepUp, { replayActions: ["admin.member.totp_reset"] });
+      if (spend.kind === "replay") return spend.outcome;
+      const updated = await tx.member.update({
         where: { id: member.id },
         data: {
           totpEnabled: false,
@@ -100,7 +111,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           totpRecoveryCodes: Prisma.JsonNull,
           sessionVersion: { increment: 1 },
         },
+        select: { sessionVersion: true },
       });
+      const sessionVersionAfter = typeof updated?.sessionVersion === "number" ? updated.sessionVersion : null;
       await logAudit({
         tx,
         tenantId,
@@ -115,17 +128,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // lib/audit-log.ts). Same precedent as the DSAR export route.
           memberEmailHash: hashToken(member.email),
           wasEnrolled: member.totpEnabled,
+          result: { memberId: member.id, wasEnrolled: member.totpEnabled, sessionVersionAfter },
         },
         actAsUserId: ctx.operatorId,
+        operatorId: stepUp.operatorId,
+        requestId: stepUp.requestId,
         req,
       });
+      return null;
     });
   } catch (err) {
+    if (err instanceof StepUpRefusedError) return refuseStepUp(err, req);
     console.error("[member-totp-reset] reset or audit write failed; nothing changed", err);
     return NextResponse.json(
       { error: "The reset could not be recorded, so nothing was changed. Try again with a new authenticator code." },
       { status: 500 },
     );
+  }
+
+  if (replay) {
+    return NextResponse.json({
+      ok: true,
+      alreadyApplied: true,
+      ...replay,
+      message: "This 2FA reset was already applied with this confirmation. Nothing else was changed.",
+    });
   }
 
   return NextResponse.json({

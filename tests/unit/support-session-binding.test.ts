@@ -145,6 +145,16 @@ describe("support authority ends on the next request after…", () => {
     expect(await resolveActiveImpersonation()).toBeNull();
   });
 
+  it("the operator being removed from OPERATOR_ALLOWED_IDS (ledger AH-B4, 9 Oct 2026)", async () => {
+    await start();
+    vi.stubEnv("OPERATOR_ALLOWED_IDS", "someone-else");
+    try {
+      expect(await resolveActiveImpersonation()).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("expiry of the cookie (31 minutes later)", async () => {
     await start();
     vi.useFakeTimers({ toFake: ["Date"] });

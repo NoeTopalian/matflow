@@ -18,7 +18,13 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { requireStepUp, stepUpTarget } from "@/lib/operator-step-up";
+import {
+  StepUpRefusedError,
+  consumeStepUpGrant,
+  refuseStepUp,
+  requireStepUp,
+  stepUpTarget,
+} from "@/lib/operator-step-up";
 
 export const runtime = "nodejs";
 
@@ -31,6 +37,11 @@ const bodySchema = z.object({
 // Audit iter-1-operator-admin A6I1-S-5: rate-limit destructive admin ops.
 const RL_MAX = 20;
 const RL_WINDOW_MS = 60 * 60 * 1000;
+
+/** A refusal decided inside the transaction: thrown so the grant's spend rolls back. */
+class Refusal extends Error {
+  constructor(readonly status: number, readonly error: string) { super(error); }
+}
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!(await isAdminAuthed(req))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -71,16 +82,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "targetUserId, reason, confirmName required" }, { status: 400 });
 
-  // Fresh operator re-authentication bound to THIS club AND this new owner: a
-  // grant to hand the club to one person cannot hand it to another.
-  const stepUp = await requireStepUp(req, ctx, "tenant.transfer_ownership", stepUpTarget(tenantId, parsed.data.targetUserId));
-  if (stepUp) return stepUp;
-
   const tenant = await withRlsBypass((tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } }));
   if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
   if (parsed.data.confirmName.trim() !== tenant.name) {
     return NextResponse.json({ error: "Gym name confirmation does not match" }, { status: 400 });
   }
+
+  // Fresh operator re-authentication bound to THIS club AND this new owner (a
+  // grant to hand the club to one person cannot hand it to another), this
+  // operator session and the version of both people. Verified after the
+  // harmless preflight above; spent inside the transaction below, where the
+  // 404/400 refusals roll the spend back.
+  const stepUp = await requireStepUp(
+    req,
+    ctx,
+    "tenant.transfer_ownership",
+    stepUpTarget(tenantId, parsed.data.targetUserId),
+    { change: {} },
+  );
+  if (stepUp instanceof Response) return stepUp;
 
   // Audit iter-1-operator-admin A6I1-V-2 + S-9: collapse the read of
   // currentOwner+target and the role swap into ONE withRlsBypass block.
@@ -94,6 +114,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let result;
   try {
     result = await withRlsBypass(async (tx) => {
+      const spend = await consumeStepUpGrant(tx, stepUp, { replayActions: ["admin.tenant.ownership_transferred"] });
+      if (spend.kind === "replay") return { ok: "replay" as const, replay: spend.outcome };
       const currentOwner = await tx.user.findFirst({
         where: { tenantId, role: "owner" },
         select: { id: true, email: true, name: true },
@@ -103,9 +125,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         where: { id: parsed.data.targetUserId, tenantId },
         select: { id: true, email: true, name: true, role: true },
       });
-      if (!currentOwner) return { ok: false as const, status: 404, error: "Tenant has no current owner" };
-      if (!target) return { ok: false as const, status: 404, error: "Target user not found on this tenant" };
-      if (target.id === currentOwner.id) return { ok: false as const, status: 400, error: "Target is already the owner" };
+      // Thrown, not returned: a refusal here must roll back the grant's spend.
+      if (!currentOwner) throw new Refusal(404, "Tenant has no current owner");
+      if (!target) throw new Refusal(404, "Target user not found on this tenant");
+      if (target.id === currentOwner.id) throw new Refusal(400, "Target is already the owner");
       await tx.user.update({
         where: { id: currentOwner.id },
         data: { role: "manager", sessionVersion: { increment: 1 } },
@@ -128,13 +151,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           newOwnerId: target.id,
           newOwnerEmail: target.email,
           previousTargetRole: target.role,
+          result: { previousOwnerId: currentOwner.id, newOwnerId: target.id },
         },
         actAsUserId: ctx.operatorId,
+        operatorId: stepUp.operatorId,
+        requestId: stepUp.requestId,
         req,
       });
       return { ok: true as const, currentOwner, target };
     });
   } catch (err) {
+    if (err instanceof StepUpRefusedError) return refuseStepUp(err, req);
+    if (err instanceof Refusal) return NextResponse.json({ error: err.error }, { status: err.status });
     console.error("[transfer-ownership] transfer or audit write failed; nothing changed", err);
     return NextResponse.json(
       { error: "The transfer could not be recorded, so nothing was changed. Try again with a new authenticator code." },
@@ -142,8 +170,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
-  if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+  if (result.ok === "replay") {
+    return NextResponse.json({
+      ok: true,
+      alreadyApplied: true,
+      ...result.replay,
+      message: "This ownership transfer was already applied with this confirmation. Nothing else was changed.",
+    });
   }
   const { currentOwner, target } = result;
 

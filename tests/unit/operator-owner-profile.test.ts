@@ -12,6 +12,10 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 const h = vi.hoisted(() => ({
   isAdminAuthed: vi.fn(async () => true),
   requireStepUp: vi.fn<(...a: unknown[]) => Promise<unknown>>(async () => null),
+  // Lane C (9 Oct 2026): requireStepUp returns the verified grant; the spend is
+  // consumeStepUpGrant inside the route's transaction (pinned in operator-step-up.test.ts).
+  grant: { operatorId: "op-1", sessionVersion: 0, action: "owner.profile", targetId: "t", tenantId: "t", versionDigest: "v", requestId: "rq-test" },
+  consumeStepUpGrant: vi.fn<(...a: unknown[]) => Promise<unknown>>(async () => ({ kind: "spent" })),
   logAudit: vi.fn<(args: Record<string, unknown>) => Promise<void>>(async () => {}),
   owner: null as null | Record<string, unknown>,
 }));
@@ -40,6 +44,7 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/operator-step-up", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/operator-step-up")>()),
   requireStepUp: h.requireStepUp,
+  consumeStepUpGrant: h.consumeStepUpGrant,
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: h.logAudit }));
 
@@ -60,7 +65,8 @@ const good = { name: "Sean Example", reason: "owner asked by phone, ticket 42" }
 beforeEach(() => {
   vi.clearAllMocks();
   h.isAdminAuthed.mockResolvedValue(true);
-  h.requireStepUp.mockResolvedValue(null);
+  h.requireStepUp.mockResolvedValue(h.grant);
+  h.consumeStepUpGrant.mockResolvedValue({ kind: "spent" });
   h.owner = { id: "owner-1", name: "Placeholder Owner" };
   tx.user.updateMany.mockResolvedValue({ count: 1 });
 });
@@ -85,6 +91,8 @@ describe("operator owner-profile — gates", () => {
       expect.objectContaining({ operatorId: "op-1" }),
       "owner.profile",
       "tenant-A/owner-1/name",
+      // Lane C: bound to THIS name (the canonical change).
+      { change: { name: "Sean Example" } },
     );
   });
 

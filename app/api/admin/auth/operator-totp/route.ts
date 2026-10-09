@@ -9,6 +9,9 @@
  * 6 Oct 2026: the code is SPENT (lib/operator-auth.ts consumeOperatorTotp), so a
  * code that has signed someone in once cannot sign anyone in again, on any
  * instance. A replayed code counts as a wrong code towards the lockout.
+ *
+ * 9 Oct 2026: an operator not named in OPERATOR_ALLOWED_IDS is refused here,
+ * after a valid code and before any session exists (403, audited).
  */
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -17,12 +20,15 @@ import { prisma } from "@/lib/prisma";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
 import {
+  OPERATOR_REFUSED_MESSAGE,
   OP_TOTP_CHALLENGE_COOKIE,
   completeOperatorLogin,
   consumeOperatorTotp,
+  isOperatorAllowed,
   issueOperatorSession,
   operatorCookieSetHeaderValue,
   operatorTotpChallengeCookieClearHeaderValue,
+  recordOperatorRefusal,
   verifyOperatorTotpChallenge,
 } from "@/lib/operator-auth";
 
@@ -136,6 +142,15 @@ export async function POST(req: Request) {
       );
     }
     return NextResponse.json({ error: "Invalid code" }, { status: 401 });
+  }
+
+  // Allowlist (admin hub lane B, 9 Oct 2026): the password and the code may be
+  // right, but only an operator named in OPERATOR_ALLOWED_IDS gets a session.
+  // Checked only AFTER both factors, so the refusal tells nothing to someone
+  // holding just the password. The code is spent; the challenge is cleared.
+  if (!isOperatorAllowed(operator.id)) {
+    await recordOperatorRefusal(operator.id, "session_mint", req);
+    return jsonWithClearedChallenge({ error: OPERATOR_REFUSED_MESSAGE }, 403);
   }
 
   // Operator sign-in is recorded DURABLY before the session exists (review

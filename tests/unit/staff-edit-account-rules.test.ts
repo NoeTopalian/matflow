@@ -15,6 +15,7 @@
  * filter shows up as a wrong row being touched.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { addLoginClaimSql } from "./login-claim-fake";
 import { emailDigest } from "@/lib/login-email";
 
 type Row = Record<string, unknown>;
@@ -83,6 +84,7 @@ const tx = {
   passwordResetToken: table(h.db.resets),
   magicLinkToken: table(h.db.links),
 };
+addLoginClaimSql(tx); // claim lock + holder reads (AH-01)
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (t: unknown) => Promise<T>): Promise<T> => fn(tx),
 }));

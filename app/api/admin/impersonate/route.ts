@@ -45,7 +45,13 @@ import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { getOperatorContext } from "@/lib/operator-context";
 import { OP_SESSION_COOKIE, resolveOperatorFromCookie } from "@/lib/operator-auth";
-import { requireStepUp, stepUpTarget } from "@/lib/operator-step-up";
+import {
+  StepUpRefusedError,
+  consumeStepUpGrant,
+  refuseStepUp,
+  requireStepUp,
+  stepUpTarget,
+} from "@/lib/operator-step-up";
 import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
 import { assertSameOrigin } from "@/lib/csrf";
 
@@ -163,15 +169,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: admissionMessage(admission.reason, "staff") }, { status: 409 });
   }
 
-  // Fresh operator MFA, bound to this club and this person. Checked last so a
-  // refusal above does not burn the operator's grant.
+  // Fresh operator MFA, bound to this club and this person, this operator
+  // session and the person's role/sessionVersion as confirmed. VERIFIED here,
+  // after the refusals above; SPENT below in the same transaction as the
+  // durable start row (lane C, 9 Oct 2026).
   const stepUp = await requireStepUp(
     req,
-    { operatorId: named.id, named: true },
+    { operatorId: named.id, named: true, sessionVersion: named.sessionVersion },
     "support.impersonate",
     stepUpTarget(target.tenantId, target.id),
+    { change: {} },
   );
-  if (stepUp) return stepUp;
+  if (stepUp instanceof Response) return stepUp;
 
   // The carrier, if this browser needs one. Failing to mint it is not a
   // security failure — it grants nothing — so it does not stop the start; the
@@ -185,14 +194,21 @@ export async function POST(req: Request) {
     }
   }
 
-  // Durable audit FIRST (operator audit 5 Oct 2026, Q9-3): the support
-  // session used to be minted before a fire-and-forget audit write, so a
-  // session could start with no record at all. The row is written and
-  // committed before anything is granted; if it cannot be written, nothing is.
+  // ORDER (operator audit 5 Oct 2026, Q9-3; lane C 9 Oct 2026):
+  //   1. ONE transaction: spend the grant (the person's version re-checked)
+  //      and write the durable start row ("authorised", with the grant's
+  //      request id). If the row cannot be written the spend rolls back and
+  //      nothing is granted.
+  //   2. Bind the support session on the Operator row, then set the cookies.
+  // A failure in 2 leaves a spent grant and a start row with no live support
+  // session (the Operator row's support nonce is the truth): the operator gets
+  // a 500, never a success, and starts again with a new code. NO replay: a
+  // support session lives in this browser's cookies, which a replayed request
+  // cannot honestly hand back — the same grant again is refused as used.
   const adminUserId = named.id;
   try {
-    await logAudit({
-      durable: true,
+    await withRlsBypass((tx) => consumeStepUpGrant(tx, stepUp).then(() => logAudit({
+      tx,
       outcome: "authorised",
       tenantId: target.tenantId,
       userId: target.id,
@@ -206,9 +222,12 @@ export async function POST(req: Request) {
         operatorEmail: operator.operatorEmail,
       },
       actAsUserId: adminUserId,
+      operatorId: adminUserId,
+      requestId: stepUp.requestId,
       req,
-    });
+    })));
   } catch (err) {
+    if (err instanceof StepUpRefusedError) return refuseStepUp(err, req);
     console.error("[impersonate] audit write failed; support session not started", err);
     return NextResponse.json(
       { error: "The support session could not be recorded, so it was not started. Try again with a new authenticator code." },
@@ -216,12 +235,21 @@ export async function POST(req: Request) {
     );
   }
 
-  const { expiresAt } = await startSupportSession({
-    operatorId: named.id,
-    operatorSessionVersion: named.sessionVersion,
-    target: { id: target.id, tenantId: target.tenantId, sessionVersion: target.sessionVersion },
-    reason,
-  });
+  let expiresAt: Date;
+  try {
+    ({ expiresAt } = await startSupportSession({
+      operatorId: named.id,
+      operatorSessionVersion: named.sessionVersion,
+      target: { id: target.id, tenantId: target.tenantId, sessionVersion: target.sessionVersion },
+      reason,
+    }));
+  } catch (err) {
+    console.error("[impersonate] support session could not be bound after its start row was written", err);
+    return NextResponse.json(
+      { error: "The support session was not started. Your confirmation was used; start again with a new authenticator code." },
+      { status: 500 },
+    );
+  }
 
   // A browser that already has a club session keeps it (jwt() stashes those
   // claims, as before); one without gets the carrier. The stop (DELETE below)

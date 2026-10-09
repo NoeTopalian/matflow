@@ -20,6 +20,7 @@ import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
 import { initialDeskPaymentStatus } from "@/lib/payment-status";
 import { CONFIRMED_BY, guardianSuggestionSource } from "@/lib/guardianship";
+import { LoginIdentityTaken, claimLoginIdentity } from "@/lib/login-email";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -419,6 +420,15 @@ export async function POST(req: Request) {
 
   try {
     const member = await withTenantContext(session.user.tenantId, async (tx) => {
+      // One login identity per club across staff AND members (AH-01, 9 Oct
+      // 2026; was gap #11 in docs/readiness/MAIL-DARK-SEND-PATHS.md — a member
+      // could be created on a staff address). The claim lock is held to
+      // commit, so a concurrent staff writer of the same address waits. A
+      // child or no-email adult gets a synthesised login that nobody shares.
+      if (hasRealEmail) {
+        const claim = await claimLoginIdentity(tx, { tenantId: session.user.tenantId, email });
+        if (claim.kind !== "none") throw new LoginIdentityTaken(claim);
+      }
       const created = await tx.member.create({
         data: {
           tenantId: session.user.tenantId,
@@ -566,11 +576,12 @@ export async function POST(req: Request) {
       { status: 201 },
     );
   } catch (e: unknown) {
-    if ((e as { code?: string }).code === "P2002") {
+    if (e instanceof LoginIdentityTaken || (e as { code?: string }).code === "P2002") {
       // Two copies of one request racing: the other one landed — return it.
       const raced = await replay();
       if (raced) return raced;
-      return NextResponse.json({ error: "A member with that email already exists" }, { status: 409 });
+      // Opaque: whose address it is (staff or member) is not said.
+      return NextResponse.json({ error: "That email address is already in use at this club." }, { status: 409 });
     }
     return apiError("Failed to create member", 500, e, "[members.POST]");
   }

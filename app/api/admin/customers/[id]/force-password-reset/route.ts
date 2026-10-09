@@ -5,6 +5,7 @@
 // the gym owner via whatever support channel they already have.
 
 import { NextResponse } from "next/server";
+import { emailDigest } from "@/lib/login-email";
 import { z } from "zod";
 import { randomBytes } from "crypto";
 import bcrypt from "bcryptjs";
@@ -14,7 +15,13 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { requireStepUp, stepUpTarget } from "@/lib/operator-step-up";
+import {
+  StepUpRefusedError,
+  consumeStepUpGrant,
+  refuseStepUp,
+  requireStepUp,
+  stepUpTarget,
+} from "@/lib/operator-step-up";
 import { tempPasswordExpiresAt as tempPasswordDeadline } from "@/lib/temp-password";
 
 export const runtime = "nodejs";
@@ -61,10 +68,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Reason required (min 5 chars)" }, { status: 400 });
 
-  // Fresh operator re-authentication bound to THIS action on THIS club.
-  const stepUp = await requireStepUp(req, ctx, "owner.force_password_reset", stepUpTarget(tenantId));
-  if (stepUp) return stepUp;
-
+  // Harmless preflight first: a 404 here costs the operator nothing.
   const tenant = await withRlsBypass((tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } }));
   if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
@@ -77,16 +81,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
   if (!owner) return NextResponse.json({ error: "No owner on this tenant" }, { status: 404 });
 
+  // Fresh operator re-authentication bound to THIS action on THIS club, this
+  // operator session and the owner's credential version (lib/operator-step-up.ts).
+  // Verified here, spent inside the transaction below.
+  const stepUp = await requireStepUp(req, ctx, "owner.force_password_reset", stepUpTarget(tenantId), { change: {} });
+  if (stepUp instanceof Response) return stepUp;
+
   const tempPassword = makeTempPassword();
   const hash = bcrypt.hashSync(tempPassword, 12);
   const tempPasswordExpiresAt = tempPasswordDeadline();
 
-  // The reset and its audit row are ONE transaction (operator audit 5 Oct
-  // 2026, Q9-2): the temporary password used to be handed out even when the
-  // audit insert failed. If the row cannot be written nothing changes, and no
-  // temporary password leaves this route.
+  // ONE transaction: the grant is spent, the owner re-checked (the version the
+  // grant carries includes the owner's id and sessionVersion), the password
+  // reset, and the audit row written (operator audit 5 Oct 2026, Q9-2; lane C
+  // 9 Oct 2026). If any of it fails nothing changes, the grant stays unspent,
+  // and no temporary password leaves this route.
+  //
+  // The temporary password is the one effect outside the database: it exists
+  // only in this response. A lost response leaves the owner with a reset they
+  // cannot use (72-hour expiry, must-change) — a replay of the same grant is
+  // answered "already applied" WITHOUT the password, and the operator issues a
+  // new reset with a new code. Never a second reset from one grant.
+  let outcome: { replay: Record<string, unknown> } | { sessionVersionAfter: number | null };
   try {
-    await withRlsBypass(async (tx) => {
+    outcome = await withRlsBypass(async (tx) => {
+      const spend = await consumeStepUpGrant(tx, stepUp, { replayActions: ["admin.owner.force_password_reset"] });
+      if (spend.kind === "replay") return { replay: spend.outcome };
       // Keep the password being replaced in history, so the owner cannot choose
       // it again on /set-password — the page promises "not one you have used"
       // (verifier lane 1, 30 Sep 2026: the old password was accepted because
@@ -95,7 +115,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (current?.passwordHash) {
         await tx.passwordHistory.create({ data: { userId: owner.id, passwordHash: current.passwordHash } });
       }
-      await tx.user.update({
+      const updated = await tx.user.update({
         where: { id: owner.id },
         data: {
           passwordHash: hash,
@@ -106,7 +126,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           mustChangePassword: true,
           tempPasswordExpiresAt,
         },
+        select: { sessionVersion: true },
       });
+      const sessionVersionAfter = typeof updated?.sessionVersion === "number" ? updated.sessionVersion : null;
       await logAudit({
         tx,
         tenantId,
@@ -114,17 +136,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         action: "admin.owner.force_password_reset",
         entityType: "User",
         entityId: owner.id,
-        metadata: { reason: parsed.data.reason, ownerEmail: owner.email, tempPasswordExpiresAt: tempPasswordExpiresAt.toISOString(), stepUp: true },
+        metadata: {
+          reason: parsed.data.reason,
+          // Keyed digest, never the address (ledger AH-03 proposal, 9 Oct 2026).
+          ownerEmailDigest: emailDigest(owner.email),
+          tempPasswordExpiresAt: tempPasswordExpiresAt.toISOString(),
+          stepUp: true,
+          // The minimal result a replay of this grant echoes (never the password).
+          result: { ownerId: owner.id, tempPasswordExpiresAt: tempPasswordExpiresAt.toISOString(), sessionVersionAfter },
+        },
         actAsUserId: ctx.operatorId,
+        operatorId: stepUp.operatorId,
+        requestId: stepUp.requestId,
         req,
       });
+      return { sessionVersionAfter };
     });
   } catch (err) {
+    if (err instanceof StepUpRefusedError) return refuseStepUp(err, req);
     console.error("[force-password-reset] reset or audit write failed; nothing changed", err);
     return NextResponse.json(
       { error: "The reset could not be recorded, so nothing was changed. Try again with a new authenticator code." },
       { status: 500 },
     );
+  }
+
+  if ("replay" in outcome) {
+    return NextResponse.json({
+      ok: true,
+      alreadyApplied: true,
+      ...outcome.replay,
+      message:
+        "This reset was already applied with this confirmation. The temporary password cannot be shown again; " +
+        "if it was lost, issue a new reset with a new authenticator code.",
+    });
   }
 
   return NextResponse.json({

@@ -8,6 +8,10 @@
  * any other device, any copy — is refused from the next request. The cost is
  * that signing out on one device signs the operator out everywhere; for the
  * operator console that is the safer default.
+ *
+ * 9 Oct 2026: the session is resolved WITHOUT the operator allowlist
+ * (resolveOperatorForSignOut), so a session of an operator who is no longer
+ * allow-listed can still be revoked here. Revoking only takes authority away.
  */
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -21,7 +25,7 @@ import {
   operatorEnrolmentCookieClearHeaderValue,
   operatorTotpChallengeCookieClearHeaderValue,
   resolveOperatorEnrolment,
-  resolveOperatorFromCookie,
+  resolveOperatorForSignOut,
 } from "@/lib/operator-auth";
 
 export const runtime = "nodejs";
@@ -32,7 +36,7 @@ export async function POST(req: Request) {
 
   const store = await cookies();
   const op =
-    (await resolveOperatorFromCookie(store.get(OP_SESSION_COOKIE)?.value)) ??
+    (await resolveOperatorForSignOut(store.get(OP_SESSION_COOKIE)?.value)) ??
     (await resolveOperatorEnrolment(store.get(OP_ENROL_COOKIE)?.value, "sign-out-only"));
   if (op) {
     // Conditional on the version the token carried: a concurrent sign-in that

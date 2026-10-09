@@ -38,6 +38,7 @@ const state = vi.hoisted(() => ({
   jar: new Map<string, string>(),
   session: null as null | { user: Record<string, unknown> },
   sideEffects: [] as string[],
+  auditActions: [] as string[],
   operatorRow: null as null | Record<string, unknown>,
 }));
 
@@ -92,7 +93,11 @@ vi.mock("@/lib/rate-limit", () => ({
   getClientIp: () => "203.0.113.9",
 }));
 vi.mock("@/lib/audit-log", () => ({
-  logAudit: async () => { state.sideEffects.push("audit"); return {}; },
+  logAudit: async (a: { action?: string }) => {
+    state.sideEffects.push("audit");
+    state.auditActions.push(String(a?.action));
+    return {};
+  },
 }));
 vi.mock("@/lib/email", () => ({
   sendEmail: async () => { state.sideEffects.push("email"); return { ok: true }; },
@@ -210,12 +215,15 @@ function reset(p: Persona) {
   state.jar = new Map(Object.entries(p.cookies));
   state.session = p.session;
   state.sideEffects = [];
+  state.auditActions = [];
   state.operatorRow = null;
 }
 
 beforeEach(() => {
   process.env.MATFLOW_ADMIN_SECRET = ADMIN_SECRET;
   delete process.env.ALLOW_ADMIN_SECRET_HEADER;
+  // Unset = development/test default (allow). The allowlist block sets it.
+  delete process.env.OPERATOR_ALLOWED_IDS;
 });
 afterAll(() => {
   process.env = { ...savedEnv };
@@ -447,6 +455,112 @@ describe("the bootstrap secret cannot enrol operator TOTP", () => {
         const res = await handler(makeReq(file, method), ctx);
         expect(res.status, `${file} ${method}`).toBe(401);
       }
+    }
+  });
+});
+
+// ── operator allowlist (admin hub lane B, 9 Oct 2026, ledger AH-02) ───────
+//
+// Before this block "only Noe" meant "only one Operator row exists": a second
+// row with an enrolled authenticator passed every gate below. OPERATOR_ALLOWED_IDS
+// now names the Operator.ids that may hold operator authority. Enforced in the
+// shared resolver (lib/operator-auth.ts resolveOperatorFromCookie), so every
+// route reaches it through isAdminAuthed / getOperatorContext with no route
+// change. The refusal writes ONE security row (admin.operator.refused) and
+// nothing else: no target lookup, no mutation, no email, no cookie.
+describe("allowlist: a valid MFA session of an operator who is not allow-listed is refused everywhere", () => {
+  const enrolled = () => ({ id: "op-1", email: "op@example.test", name: "Op", sessionVersion: 3, totpEnabled: true, totpSecret: null });
+  const PROD_KEYS = ["NODE_ENV", "VERCEL_ENV", "DATABASE_URL", "OPERATOR_ALLOWED_IDS"];
+  const restore = () => {
+    for (const k of PROD_KEYS) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
+    delete process.env.OPERATOR_ALLOWED_IDS;
+  };
+
+  async function refusedWithOneRefusalRow(label: string) {
+    const token = issueOperatorSession("op-1", 3);
+    for (const file of OPERATOR_ROUTES) {
+      for (const [method, handler] of await loadHandlers(file)) {
+        reset({ name: label, session: null, cookies: { matflow_op_session: token }, clubRole: false });
+        state.operatorRow = enrolled();
+        const res = await handler(makeReq(file, method), ctx);
+        expect([401, 403], `${file} ${method} (${label})`).toContain(res.status);
+        expect(state.sideEffects, `${file} ${method} (${label}) reached past the gate`).toEqual(["audit"]);
+        expect(state.auditActions, `${file} ${method} (${label})`).toEqual(["admin.operator.refused"]);
+        expect(res.headers.getSetCookie().filter((c) => !/Max-Age=0/.test(c)), `${file} ${method} minted a cookie`).toEqual([]);
+      }
+    }
+  }
+
+  it("development/test: a SET list that names someone else is enforced", async () => {
+    process.env.OPERATOR_ALLOWED_IDS = "op-noe-only";
+    try { await refusedWithOneRefusalRow("second operator row, dev"); } finally { restore(); }
+  });
+
+  it.each(PRODUCTION_SHAPES)("%s: an UNSET list means nobody", async (_l, env) => {
+    Object.assign(process.env, env);
+    delete process.env.OPERATOR_ALLOWED_IDS;
+    try { await refusedWithOneRefusalRow("unset list, production"); } finally { restore(); }
+  });
+
+  it.each(PRODUCTION_SHAPES)("%s: an empty or separator-only list means nobody", async (_l, env) => {
+    for (const value of ["", "  ", " , ,"]) {
+      Object.assign(process.env, env, { OPERATOR_ALLOWED_IDS: value });
+      try { await refusedWithOneRefusalRow(`list ${JSON.stringify(value)}, production`); } finally { restore(); }
+    }
+  });
+
+  it.each(PRODUCTION_SHAPES)("%s: another operator id, a prefix or a case variant does not match", async (_l, env) => {
+    for (const value of ["op-2", "op-", "OP-1", "op-1x", "op-1;op-2"]) {
+      Object.assign(process.env, env, { OPERATOR_ALLOWED_IDS: value });
+      try { await refusedWithOneRefusalRow(`list ${value}, production`); } finally { restore(); }
+    }
+  });
+
+  // Positive controls: the refusal above is the allowlist, not something else.
+  it.each(PRODUCTION_SHAPES)("%s positive control: the allow-listed id (trimmed, among others) opens every route", async (_l, env) => {
+    Object.assign(process.env, env, { OPERATOR_ALLOWED_IDS: " op-other , op-1 " });
+    try {
+      for (const file of OPERATOR_ROUTES) {
+        await getsPastGate(
+          file,
+          { name: "allow-listed operator, production", session: null, cookies: { matflow_op_session: issueOperatorSession("op-1", 3) }, clubRole: false },
+          () => { state.operatorRow = enrolled(); },
+        );
+      }
+    } finally { restore(); }
+  });
+
+  it("development/test positive control: an UNSET list allows (the suites above rely on it)", async () => {
+    delete process.env.OPERATOR_ALLOWED_IDS;
+    for (const file of OPERATOR_ROUTES) {
+      await getsPastGate(
+        file,
+        { name: "dev, unset list", session: null, cookies: { matflow_op_session: issueOperatorSession("op-1", 3) }, clubRole: false },
+        () => { state.operatorRow = enrolled(); },
+      );
+    }
+  });
+});
+
+// ── legacy transports: a secret in the query string or the body opens nothing ─
+//
+// The shared secret is read from exactly two places (x-admin-secret header,
+// matflow_admin cookie; lib/admin-auth.ts) plus the development-only sign-in
+// route body. Even in development, where the secret is still live, putting it
+// in a query string or a JSON body of an operator route must open nothing.
+describe("legacy transports: the secret supplied by query string or body is never read", () => {
+  it.each(OPERATOR_ROUTES)("%s", async (file) => {
+    for (const [method, handler] of await loadHandlers(file)) {
+      reset({ name: "secret in query/body", session: null, cookies: {}, clubRole: false });
+      const qs = `?secret=${ADMIN_SECRET}&adminSecret=${ADMIN_SECRET}&x-admin-secret=${ADMIN_SECRET}&matflow_admin=${ADMIN_SECRET}`;
+      const init: RequestInit = { method, headers: { origin: ORIGIN, host: "localhost:3847", "content-type": "application/json" } };
+      if (method !== "GET") init.body = JSON.stringify({ secret: ADMIN_SECRET, adminSecret: ADMIN_SECRET, "x-admin-secret": ADMIN_SECRET });
+      const res = await handler(new Request(urlFor(file) + qs, init), ctx);
+      expect([401, 403], `${file} ${method}`).toContain(res.status);
+      expect(state.sideEffects, `${file} ${method}`).toEqual([]);
     }
   });
 });

@@ -7,6 +7,7 @@
 // mandatory for owners. This is the documented operator escape hatch.
 
 import { NextResponse } from "next/server";
+import { emailDigest } from "@/lib/login-email";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { isAdminAuthed } from "@/lib/admin-auth";
@@ -15,7 +16,13 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { requireStepUp, stepUpTarget } from "@/lib/operator-step-up";
+import {
+  StepUpRefusedError,
+  consumeStepUpGrant,
+  refuseStepUp,
+  requireStepUp,
+  stepUpTarget,
+} from "@/lib/operator-step-up";
 
 export const runtime = "nodejs";
 
@@ -53,10 +60,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Reason and confirmName required" }, { status: 400 });
 
-  // Fresh operator re-authentication bound to THIS action on THIS club.
-  const stepUp = await requireStepUp(req, ctx, "owner.totp_reset", stepUpTarget(tenantId));
-  if (stepUp) return stepUp;
-
   const tenant = await withRlsBypass((tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } }));
   if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
   if (parsed.data.confirmName.trim() !== tenant.name) {
@@ -72,11 +75,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
   if (!owner) return NextResponse.json({ error: "No owner on this tenant" }, { status: 404 });
 
-  // The reset and its audit row are ONE transaction (operator audit 5 Oct
-  // 2026, Q9): no 2FA reset without a durable record of who did it and why.
+  // Fresh operator re-authentication bound to THIS action on THIS club, this
+  // operator session and the owner's credential version. Checked after the
+  // harmless preflight above; spent inside the transaction below.
+  const stepUp = await requireStepUp(req, ctx, "owner.totp_reset", stepUpTarget(tenantId), { change: {} });
+  if (stepUp instanceof Response) return stepUp;
+
+  // ONE transaction: grant spent (and the owner's version re-checked), reset,
+  // audit row (operator audit 5 Oct 2026, Q9; lane C 9 Oct 2026). An audit
+  // failure rolls back the reset AND the spend.
+  let replay: Record<string, unknown> | null = null;
   try {
-    await withRlsBypass(async (tx) => {
-      await tx.user.update({
+    replay = await withRlsBypass(async (tx) => {
+      const spend = await consumeStepUpGrant(tx, stepUp, { replayActions: ["admin.owner.totp_reset"] });
+      if (spend.kind === "replay") return spend.outcome;
+      const updated = await tx.user.update({
         where: { id: owner.id },
         data: {
           totpEnabled: false,
@@ -88,7 +101,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           totpRecoveryCodes: Prisma.JsonNull,
           sessionVersion: { increment: 1 },
         },
+        select: { sessionVersion: true },
       });
+      const sessionVersionAfter = typeof updated?.sessionVersion === "number" ? updated.sessionVersion : null;
       await logAudit({
         tx,
         tenantId,
@@ -98,19 +113,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         entityId: owner.id,
         metadata: {
           reason: parsed.data.reason,
-          ownerEmail: owner.email,
+          // Keyed digest, never the address (ledger AH-03 proposal, 9 Oct 2026).
+          ownerEmailDigest: emailDigest(owner.email),
           wasEnrolled: owner.totpEnabled,
+          result: { ownerId: owner.id, wasEnrolled: owner.totpEnabled, sessionVersionAfter },
         },
         actAsUserId: ctx.operatorId,
+        operatorId: stepUp.operatorId,
+        requestId: stepUp.requestId,
         req,
       });
+      return null;
     });
   } catch (err) {
+    if (err instanceof StepUpRefusedError) return refuseStepUp(err, req);
     console.error("[totp-reset] reset or audit write failed; nothing changed", err);
     return NextResponse.json(
       { error: "The reset could not be recorded, so nothing was changed. Try again with a new authenticator code." },
       { status: 500 },
     );
+  }
+
+  if (replay) {
+    return NextResponse.json({
+      ok: true,
+      alreadyApplied: true,
+      ...replay,
+      message: "This 2FA reset was already applied with this confirmation. Nothing else was changed.",
+    });
   }
 
   return NextResponse.json({

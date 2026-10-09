@@ -27,7 +27,7 @@ const PUBLIC_PREFIXES = [
   // covered by that prefix, but called out here for searchability.
   "/api/tenant",
   "/api/apply",
-  "/api/admin",           // Super-admin surface — each route enforces MATFLOW_ADMIN_SECRET via header or cookie (lib/admin-auth.ts)
+  "/api/admin",           // Operator surface — each route runs its own operator gate (lib/admin-auth.ts / lib/operator-context.ts: MFA session + allowlist; shared secret in development/test only)
   "/admin",               // Super-admin pages — /admin/login is open; other /admin/* pages do client-side cookie check
   "/api/member/totp/recover",  // Public-by-design: no session required (mirrors /api/auth/totp/recover for the Member table)
   "/api/members/accept-invite", // LB-003: invite-token-gated, public by design
@@ -69,26 +69,45 @@ function sharedAdminSecretPermittedAtEdge(): boolean {
 }
 
 /**
+ * Mirror of isOperatorAllowed() in lib/operator-auth.ts (same reason it is a
+ * copy; admin hub lane B, 9 Oct 2026). OPERATOR_ALLOWED_IDS is a comma-separated
+ * list of Operator.ids, trimmed, exact match. Unset or blank: nobody in a
+ * production-like process, everybody in development/test. Exported only for
+ * tests/unit/operator-allowlist.test.ts, which pins it to the library version.
+ */
+export function operatorAllowedAtEdge(operatorId: string): boolean {
+  if (!operatorId) return false;
+  const raw = process.env.OPERATOR_ALLOWED_IDS;
+  if (raw === undefined || raw.trim() === "") return sharedAdminSecretPermittedAtEdge();
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .includes(operatorId);
+}
+
+/**
  * Edge-safe verification of the operator session cookie.
- * Verifies HMAC signature (MFA session domain) + non-expired exp. Does NOT
- * check sessionVersion or TOTP state (no Prisma at edge); every /admin page and
- * /api/admin route does the full check itself (lib/admin-auth.ts /
- * resolveOperatorFromCookie), including revocation.
+ * Verifies HMAC signature (MFA session domain) + non-expired exp, and returns
+ * the operator id it names (null on any failure). Does NOT check sessionVersion
+ * or TOTP state (no Prisma at edge); every /admin page and /api/admin route
+ * does the full check itself (lib/admin-auth.ts / resolveOperatorFromCookie),
+ * including revocation and the allowlist.
  */
 async function verifyOpSessionAtEdge(
   cookieValue: string | undefined,
   secret: string | undefined,
-): Promise<boolean> {
-  if (!cookieValue || !secret) return false;
+): Promise<string | null> {
+  if (!cookieValue || !secret) return null;
   const parts = cookieValue.split(".");
-  if (parts.length !== 4) return false;
+  if (parts.length !== 4) return null;
   const [id, ver, exp, sig] = parts;
-  if (!id || !ver || !exp || !sig) return false;
+  if (!id || !ver || !exp || !sig) return null;
   const expMs = Number(exp);
   const sessionVersion = Number(ver);
-  if (!Number.isSafeInteger(expMs) || expMs <= Date.now()) return false;
-  if (!Number.isSafeInteger(sessionVersion) || sessionVersion < 0) return false;
-  if (!/^[a-f0-9]{64}$/i.test(sig)) return false;
+  if (!Number.isSafeInteger(expMs) || expMs <= Date.now()) return null;
+  if (!Number.isSafeInteger(sessionVersion) || sessionVersion < 0) return null;
+  if (!/^[a-f0-9]{64}$/i.test(sig)) return null;
 
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
@@ -102,12 +121,12 @@ async function verifyOpSessionAtEdge(
   const expectedHex = Array.from(new Uint8Array(sigBuf))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-  if (expectedHex.length !== sig.length) return false;
+  if (expectedHex.length !== sig.length) return null;
   let mismatch = 0;
   for (let i = 0; i < expectedHex.length; i++) {
     mismatch |= expectedHex.charCodeAt(i) ^ sig.charCodeAt(i);
   }
-  return mismatch === 0;
+  return mismatch === 0 ? id : null;
 }
 
 // Audit iter-1-infra A7I1-S-4: hash both inputs to fixed-length SHA-256
@@ -222,7 +241,8 @@ export default auth(async function proxy(req) {
   // session-less access can reach /admin/login, but the rest of /admin/* needs
   // either:
   //   - matflow_op_session cookie with a valid MFA-session HMAC + unexpired
-  //     exp (every environment), OR
+  //     exp, naming an allow-listed operator (OPERATOR_ALLOWED_IDS; every
+  //     environment), OR
   //   - in development/test only, the matflow_admin cookie holding
   //     MATFLOW_ADMIN_SECRET. Never in production (6 Oct 2026).
   //
@@ -245,7 +265,8 @@ export default auth(async function proxy(req) {
 
     const opCookie = req.cookies.get("matflow_op_session")?.value;
     const authSecret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;
-    const opOk = await verifyOpSessionAtEdge(opCookie, authSecret);
+    const opId = await verifyOpSessionAtEdge(opCookie, authSecret);
+    const opOk = opId !== null && operatorAllowedAtEdge(opId);
 
     if (!legacyOk && !opOk) {
       return NextResponse.redirect(new URL("/admin/login", req.url));

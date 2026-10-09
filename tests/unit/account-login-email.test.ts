@@ -1,5 +1,6 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { createHash } from "node:crypto";
+import { addLoginClaimSql } from "./login-claim-fake";
+import { emailDigest } from "@/lib/login-email";
 import { generateSecret, generateSync } from "otplib";
 
 // POST /api/account/login-email (7 Oct 2026, US-002): a signed-in staff user
@@ -40,6 +41,7 @@ const tx = {
   passwordResetToken: { updateMany: vi.fn(async () => ({ count: 1 })) },
   magicLinkToken: { updateMany: vi.fn(async () => ({ count: 0 })) },
 };
+addLoginClaimSql(tx); // claim lock + holder reads (AH-01)
 
 vi.mock("@/auth", () => ({ auth: vi.fn(async () => h.session) }));
 vi.mock("@/lib/prisma-tenant", () => ({
@@ -52,7 +54,10 @@ vi.mock("bcryptjs", () => ({ default: { compare: h.compare } }));
 
 import { GET, POST } from "@/app/api/account/login-email/route";
 
-const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+// Audit rows carry the KEYED digest (AH-E2, 9 Oct 2026). Until then this was a
+// plain SHA-256, which is dictionary-reversible for a predictable address; the
+// keyed form is pinned against it in tests/unit/login-identity-claim.test.ts.
+const sha = (s: string) => emailDigest(s);
 const ownerSession = (extra: Record<string, unknown> = {}) => ({
   user: { id: "owner-1", tenantId: "tenant-A", role: "owner", totpPending: false, mustChangePassword: false, requireTotpSetup: false, ...extra },
 });

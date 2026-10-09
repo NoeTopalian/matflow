@@ -44,7 +44,7 @@ async function capturedRow(): Promise<Record<string, unknown>> {
   const create = vi.fn().mockResolvedValue({});
   // Every actor in this file is a staff User of the tenant, so logAudit's
   // pre-insert staff check (functional review round 3, F10) finds them.
-  await fn({ user: { findFirst: vi.fn(async ({ where }: { where: { id: string } }) => ({ id: where.id })) }, auditLog: { create } });
+  await fn({ user: { findFirst: vi.fn(async ({ where }: { where: { id: string } }) => ({ id: where.id })) }, auditLog: { create }, operator: { findUnique: async ({ where }: { where: { id: string } }) => ({ id: where.id }) } });
   expect(create).toHaveBeenCalledTimes(1);
   return (create.mock.calls[0][0] as { data: Record<string, unknown> }).data;
 }

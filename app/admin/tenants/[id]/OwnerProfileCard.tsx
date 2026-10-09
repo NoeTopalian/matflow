@@ -49,8 +49,9 @@ export default function OwnerProfileCard({ tenantId, ownerUserId, ownerName: ini
       const su = await fetch("/api/admin/auth/step-up", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Same shape as stepUpTarget(tenantId, ownerUserId, "name") on the server.
-        body: JSON.stringify({ action: "owner.profile", targetId: `${tenantId}/${ownerUserId}/name`, code }),
+        // Same shape as stepUpTarget(tenantId, ownerUserId, "name") on the server,
+        // bound to THIS name (the change the route re-derives from the body below).
+        body: JSON.stringify({ action: "owner.profile", targetId: `${tenantId}/${ownerUserId}/name`, change: { name: trimmed }, code }),
       });
       const suData = await su.json().catch(() => ({}));
       if (!su.ok || typeof suData?.grant !== "string") {

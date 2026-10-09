@@ -12,6 +12,7 @@
  * with a member store that honours `parentMemberId: { in }`.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { addLoginClaimSql } from "./login-claim-fake";
 
 const h = vi.hoisted(() => ({
   gate: vi.fn(),
@@ -40,7 +41,7 @@ vi.mock("@/lib/import-storage", () => ({
   deleteImportFile: async () => {},
 }));
 vi.mock("@/lib/prisma-tenant", () => ({
-  withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) => fn(makeTx()),
+  withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) => fn(addLoginClaimSql(makeTx())),
 }));
 
 type Row = Record<string, unknown> & { id: string };

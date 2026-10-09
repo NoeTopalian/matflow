@@ -30,13 +30,20 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { requireStepUp, stepUpTarget } from "@/lib/operator-step-up";
+import {
+  StepUpRefusedError,
+  consumeStepUpGrant,
+  refuseStepUp,
+  requireStepUp,
+  stepUpTarget,
+} from "@/lib/operator-step-up";
 import { emailField } from "@/lib/email-normalise";
 import {
   LOGIN_EMAIL_REASON_MIN,
   emailDigest,
   isLoginEmailProvisional,
-  loginEmailTaken,
+  LoginIdentityTaken,
+  claimLoginIdentity,
   retireEmailBoundTokens,
 } from "@/lib/login-email";
 
@@ -101,12 +108,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Fresh operator re-authentication bound to THIS sub-action on THIS owner
   // (review defect 7): a grant bought to mark provisional cannot be spent on a
   // change. The shared-secret sentinel (no named operator) is refused here.
-  const stepUp = await requireStepUp(req, ctx, "owner.login_email", stepUpTarget(tenantId, owner.id, body.action));
-  if (stepUp) return stepUp;
+  // Since lane C (9 Oct 2026) the grant is also bound to this operator
+  // session, the canonical change (the normalised new address, or nothing)
+  // and the owner's address/provisional state as confirmed; it is VERIFIED
+  // here and SPENT inside the transaction below, so a collision, a stale
+  // address or a failed audit row rolls the spend back with the change.
+  const stepUp = await requireStepUp(req, ctx, "owner.login_email", stepUpTarget(tenantId, owner.id, body.action), {
+    change: body.action === "change" ? { newEmail: body.newEmail } : {},
+  });
+  if (stepUp instanceof Response) return stepUp;
+  const correlation = { operatorId: stepUp.operatorId, requestId: stepUp.requestId };
 
   const now = new Date();
   try {
     const result = await withRlsBypass(async (tx) => {
+      const spend = await consumeStepUpGrant(tx, stepUp, {
+        replayActions: [
+          "admin.owner.login_email.marked_provisional",
+          "admin.owner.login_email.cleared_provisional",
+          "admin.owner.login_email.changed",
+        ],
+      });
+      if (spend.kind === "replay") return { alreadyApplied: true, ...spend.outcome };
       if (body.action === "mark_provisional") {
         await tx.user.update({
           where: { id: owner.id },
@@ -120,8 +143,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           action: "admin.owner.login_email.marked_provisional",
           entityType: "User",
           entityId: owner.id,
-          metadata: { reason: body.reason, emailSha256: emailDigest(owner.email), retired },
+          metadata: { reason: body.reason, emailSha256: emailDigest(owner.email), retired, result: { provisional: true } },
           actAsUserId: ctx.operatorId,
+          ...correlation,
           req,
         });
         return { email: owner.email, provisional: true };
@@ -143,15 +167,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             verification: "operator_attestation",
             emailSha256: emailDigest(owner.email),
             provisionalSince: owner.loginEmailProvisionalSince?.toISOString() ?? null,
+            result: { provisional: false },
           },
           actAsUserId: ctx.operatorId,
+          ...correlation,
           req,
         });
         return { email: owner.email, provisional: false };
       }
 
       // change
-      if (await loginEmailTaken(tx, { tenantId, userId: owner.id, email: body.newEmail })) throw new Collision();
+      // Cross-table claim lock (lib/login-email.ts, AH-01): held to commit.
+      const claim = await claimLoginIdentity(tx, { tenantId, email: body.newEmail, exclude: { userId: owner.id } });
+      if (claim.kind !== "none") throw new LoginIdentityTaken(claim);
       // Conditional on the address read above (review defect 6): if the owner
       // changed it themselves in between, this change does not overwrite it
       // and the stale address's tokens are not the ones retired.
@@ -178,21 +206,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           newEmailSha256: emailDigest(body.newEmail),
           provisional: true,
           retired,
+          result: { provisional: true },
         },
         actAsUserId: ctx.operatorId,
+        ...correlation,
         req,
       });
       return { email: body.newEmail, provisional: true };
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
+    if (err instanceof StepUpRefusedError) return refuseStepUp(err, req);
     if (err instanceof StaleOwnerEmail) {
       return NextResponse.json(
         { error: "The owner's login email changed while you were working, so nothing was changed. Reload the page and check it." },
         { status: 409 },
       );
     }
-    if (err instanceof Collision || (err as { code?: string })?.code === "P2002") {
+    // Operators only: two rows already hold this address (a legacy duplicate
+    // written before the claim lock). Never resolved by picking one.
+    if (err instanceof LoginIdentityTaken && err.claim.kind === "many") {
+      return NextResponse.json(
+        { error: "Two or more accounts in this club already hold that address (a legacy duplicate). Review them before using it; nothing was changed.", result: "legacy_duplicate" },
+        { status: 409 },
+      );
+    }
+    if (err instanceof Collision || err instanceof LoginIdentityTaken || (err as { code?: string })?.code === "P2002") {
       return NextResponse.json(
         { error: "That address cannot be used as this owner's login email." },
         { status: 409 },

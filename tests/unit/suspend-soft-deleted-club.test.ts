@@ -51,8 +51,13 @@ vi.mock("@/lib/rate-limit", () => ({
   getClientIp: () => "127.0.0.1",
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async (a: unknown) => { st.audit.push(a); }) }));
+// Lane C (9 Oct 2026): requireStepUp returns the verified grant; the spend is
+// consumeStepUpGrant inside the transaction (pinned in operator-step-up.test.ts).
 vi.mock("@/lib/operator-step-up", () => ({
-  requireStepUp: async () => null,
+  requireStepUp: async () => ({ operatorId: "op_1", sessionVersion: 0, action: "tenant.suspend", targetId: "t1", tenantId: "t1", versionDigest: "v", requestId: "rq-test" }),
+  consumeStepUpGrant: async () => ({ kind: "spent" }),
+  refuseStepUp: () => new Response(null, { status: 403 }),
+  StepUpRefusedError: class StepUpRefusedError extends Error {},
   stepUpTarget: (t: string) => t,
 }));
 

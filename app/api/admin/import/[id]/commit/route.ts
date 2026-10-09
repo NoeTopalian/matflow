@@ -16,6 +16,8 @@ import { recordStatusEventsBulk } from "@/lib/member-status";
 // closes the persistence window for member PII outside the tenant DB.
 import { deleteImportFile, readImportFile } from "@/lib/import-storage";
 import { assertSameOrigin } from "@/lib/csrf";
+import { claimLoginIdentities, type LoginIdentityClaim } from "@/lib/login-email";
+import { normaliseEmail } from "@/lib/email-normalise";
 import { parseTeamUp } from "@/lib/importers/teamup";
 import {
   changedFields,
@@ -28,6 +30,17 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
+
+/** The owner-facing reason a row was refused because a staff login holds its address. */
+const STAFF_LOGIN_REFUSAL =
+  "this email address is already a staff login at this club, so the row was not imported. Correct the address in the file (or the staff login) and import again.";
+
+/** True when a staff (User) row holds the address — alone or among legacy duplicates. */
+function holdsStaffLogin(claim: LoginIdentityClaim | undefined): boolean {
+  if (!claim) return false;
+  if (claim.kind === "user") return true;
+  return claim.kind === "many" && claim.holders.some((h) => h.kind === "user");
+}
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   // CSRF. Commits a whole membership import. The sibling upload route
@@ -288,7 +301,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // case but doesn't tell us how many were skipped.
       const sliceEmails = slice.map((d) => d.email).filter(Boolean);
       try {
-        const inserted = await withTenantContext(tenantId, async (tx) => {
+        const { inserted, refused } = await withTenantContext(tenantId, async (tx) => {
+          // Login identity is one per club across staff AND members (AH-01,
+          // 9 Oct 2026): lock every real address in this slice (sorted, so
+          // two slices cannot deadlock) before reading or writing, and refuse
+          // a row whose address is a staff login — a member created on it
+          // would be shadowed by the staff row at sign-in. Synthesised
+          // no-login addresses are never shared and are not locked.
+          const claims = await claimLoginIdentities(tx, tenantId, sliceEmails);
+          const refused = slice.filter((d) => holdsStaffLogin(claims.get(normaliseEmail(d.email ?? ""))));
+          const staffHeld = new Set(refused.map((d) => d.email));
           const existing = sliceEmails.length
             ? await tx.member.findMany({
                 where: { tenantId, email: { in: sliceEmails } },
@@ -323,11 +345,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           );
           const fresh = slice.filter(
             (d) =>
+              !staffHeld.has(d.email) &&
               !existingEmails.has(d.email) &&
               !(d.nonContactable && !d.unverified && existingByNameDob.has(`${d.name.toLowerCase()}|${d.dateOfBirth ?? ""}`)) &&
               !(d.unverified && d.unverifiedEmail && existingUnverified.has(d.unverifiedEmail)),
           );
-          if (fresh.length === 0) return 0;
+          if (fresh.length === 0) return { inserted: 0, refused };
           const result = await tx.member.createMany({
             data: fresh.map((d) => columnsFor(d, null)),
             skipDuplicates: true,
@@ -357,10 +380,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             );
           }
 
-          return result.count;
+          return { inserted: result.count, refused };
         });
         imported += inserted;
-        skippedExisting += slice.length - inserted;
+        skippedExisting += slice.length - inserted - refused.length;
+        for (const d of refused) {
+          commitErrors.push({ row: i + slice.indexOf(d), email: d.email, error: `${d.name}: ${STAFF_LOGIN_REFUSAL}` });
+        }
       } catch (e: unknown) {
         // Bulk failure — fall back to per-row error reporting so the
         // operator can see which rows broke. We don't retry; this branch
@@ -386,7 +412,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     for (let i = 0; i < kidPass.length; i += BATCH) {
       const slice = kidPass.slice(i, i + BATCH);
       try {
-        const inserted = await withTenantContext(tenantId, async (tx) => {
+        const { inserted, refused } = await withTenantContext(tenantId, async (tx) => {
+          // Children normally carry synthesised logins (never locked); a child
+          // row that carries a real address is claimed like an adult's.
+          const claims = await claimLoginIdentities(tx, tenantId, slice.map((d) => d.email).filter(Boolean));
+          const refused = slice.filter((d) => holdsStaffLogin(claims.get(normaliseEmail(d.email ?? ""))));
           const parentEmails = [...new Set(slice.map((d) => d.parentEmail).filter((e): e is string => !!e))];
           const parents = parentEmails.length
             ? await tx.member.findMany({
@@ -406,6 +436,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           for (const p of parents) parentByEmail.set(p.email, p);
           const fresh: Array<{ d: MemberDraft; parentId: string }> = [];
           for (const [idx, d] of slice.entries()) {
+            if (refused.includes(d)) continue;
             const parent = d.parentEmail ? parentByEmail.get(d.parentEmail) : undefined;
             if (!parent) {
               commitErrors.push({ row: i + idx, email: d.parentEmail, error: `${d.name}: parent ${d.parentEmail ?? "(none)"} was not imported, so this child was not either.` });
@@ -417,7 +448,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             if (dup) { skippedExisting += 1; continue; }
             fresh.push({ d, parentId: parent.id });
           }
-          if (fresh.length === 0) return 0;
+          if (fresh.length === 0) return { inserted: 0, refused };
           const result = await tx.member.createMany({
             data: fresh.map(({ d, parentId }) => columnsFor(d, parentId)),
             skipDuplicates: true,
@@ -432,9 +463,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               createdRows.map((m) => ({ tenantId, memberId: m.id, fromStatus: null, toStatus: m.status, reason: "import" as const, changedById: null })),
             );
           }
-          return result.count;
+          return { inserted: result.count, refused };
         });
         imported += inserted;
+        for (const d of refused) {
+          commitErrors.push({ row: i + slice.indexOf(d), email: d.email, error: `${d.name}: ${STAFF_LOGIN_REFUSAL}` });
+        }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
         console.error("[import-commit] slice failed", e);

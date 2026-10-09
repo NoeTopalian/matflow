@@ -17,6 +17,7 @@ import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tie
 import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
 import { refuseSupportSession } from "@/lib/support-session";
+import { LoginIdentityTaken, claimLoginIdentity, retireEmailBoundTokens } from "@/lib/login-email";
 
 // feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
 // compromised staff session (or a script) can't carpet-bomb every member row
@@ -355,6 +356,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           preferredPaymentMethod: true, leaderboardOptOut: true, holdUntil: true,
         },
       });
+      // A new login address is claimed across staff AND members of this club
+      // before the write (AH-01, 9 Oct 2026); the lock is held to commit. The
+      // member's own current address is not a collision.
+      const emailChange = rest.email !== undefined && beforeRow !== null && rest.email !== beforeRow.email;
+      if (emailChange) {
+        const claim = await claimLoginIdentity(tx, {
+          tenantId: session.user.tenantId,
+          email: rest.email!,
+          exclude: { memberId: id },
+        });
+        if (claim.kind !== "none") throw new LoginIdentityTaken(claim);
+      }
       const m = await tx.member.updateMany({
         where: { id, tenantId: session.user.tenantId, ...concurrencyGuard },
         data: {
@@ -373,6 +386,24 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           select: { updatedAt: true },
         });
         return { updated: null, existing };
+      }
+      // Only after the row is written: outstanding reset codes and sign-in
+      // links minted for either address in this club are retired, so a link
+      // sent to the old mailbox cannot reach whoever holds that address next.
+      // A member who can sign in with a password is signed out everywhere: the
+      // new address is a login nobody has proved they read (there is no
+      // member verification flow), consistent with the staff route. Decided
+      // by a conditional update on THIS row inside the transaction, not from
+      // a password state read earlier. Nothing else about the credentials
+      // changes (password hash, authenticator, recovery codes).
+      let sessionsRevoked = false;
+      if (emailChange && beforeRow) {
+        await retireEmailBoundTokens(tx, { tenantId: session.user.tenantId, emails: [beforeRow.email, rest.email!] });
+        const bumped = await tx.member.updateMany({
+          where: { id, tenantId: session.user.tenantId, passwordHash: { not: null } },
+          data: { sessionVersion: { increment: 1 } },
+        });
+        sessionsRevoked = bumped.count === 1;
       }
       // Audit iter-2-database A8I2-S-1 [Critical]: explicit select on the
       // post-update re-fetch. Same vulnerability class as the GET fix —
@@ -437,7 +468,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           changedById: session.user.id,
         });
       }
-      return { updated: fresh, existing: null, beforeRow };
+      return { updated: fresh, existing: null, beforeRow, sessionsRevoked };
     });
 
     if (!result.updated) {
@@ -490,6 +521,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         // A3H-6: surface the Stripe outcome in the audit row so the gym
         // owner can trace any billing-state side-effects of this PATCH.
         ...(stripeCancelMetadata ? { stripe: stripeCancelMetadata } : {}),
+        // A changed login address on a password-holding member: unverified,
+        // and every session of theirs was revoked (sessionVersion +1).
+        ...("sessionsRevoked" in result && result.sessionsRevoked ? { unverified: true, sessionsRevoked: true } : {}),
       },
       req,
     });
@@ -519,7 +553,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
     return NextResponse.json(updated);
   } catch (e: unknown) {
-    if ((e as { code?: string }).code === "P2002") {
+    if (e instanceof LoginIdentityTaken || (e as { code?: string }).code === "P2002") {
       return NextResponse.json({ error: "Email already in use" }, { status: 409 });
     }
     return NextResponse.json({ error: "Failed to update member" }, { status: 500 });

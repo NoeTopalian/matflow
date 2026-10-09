@@ -71,8 +71,15 @@ export default function LoginEmailCard(props: Props) {
       const su = await fetch("/api/admin/auth/step-up", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Same shape as stepUpTarget(tenantId, ownerUserId, mode) on the server.
-        body: JSON.stringify({ action: "owner.login_email", targetId: `${tenantId}/${ownerUserId}/${mode}`, code }),
+        // Same shape as stepUpTarget(tenantId, ownerUserId, mode) on the server,
+        // and the same change the route re-derives from the body below: the
+        // grant is bound to THIS new address (lib/operator-step-up.ts).
+        body: JSON.stringify({
+          action: "owner.login_email",
+          targetId: `${tenantId}/${ownerUserId}/${mode}`,
+          change: mode === "change" ? { newEmail: newEmail.trim() } : {},
+          code,
+        }),
       });
       const suData = await su.json().catch(() => ({}));
       if (!su.ok || typeof suData?.grant !== "string") {

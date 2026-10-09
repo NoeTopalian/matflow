@@ -31,7 +31,13 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { requireStepUp, stepUpTarget } from "@/lib/operator-step-up";
+import {
+  StepUpRefusedError,
+  consumeStepUpGrant,
+  refuseStepUp,
+  requireStepUp,
+  stepUpTarget,
+} from "@/lib/operator-step-up";
 import { displayNameSchema } from "@/lib/account-profile";
 
 export const runtime = "nodejs";
@@ -92,11 +98,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "That is already the owner's name." }, { status: 400 });
   }
 
-  const stepUp = await requireStepUp(req, ctx, "owner.profile", stepUpTarget(tenantId, owner.id, "name"));
-  if (stepUp) return stepUp;
+  // Bound (lane C, 9 Oct 2026) to this operator session, the canonical change
+  // { name } and the owner's name as confirmed. Verified here; spent inside the
+  // transaction below, so a stale name or a failed audit row rolls it back.
+  const stepUp = await requireStepUp(req, ctx, "owner.profile", stepUpTarget(tenantId, owner.id, "name"), {
+    change: { name: body.name },
+  });
+  if (stepUp instanceof Response) return stepUp;
 
   try {
-    await withRlsBypass(async (tx) => {
+    const replay = await withRlsBypass(async (tx) => {
+      const spend = await consumeStepUpGrant(tx, stepUp, { replayActions: ["admin.owner.profile.updated"] });
+      if (spend.kind === "replay") return spend.outcome;
       const changed = await tx.user.updateMany({
         where: { id: owner.id, tenantId, role: "owner", name: owner.name },
         data: { name: body.name },
@@ -114,13 +127,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           changed: ["name"],
           before: { name: owner.name },
           after: { name: body.name },
+          result: { name: body.name },
         },
         actAsUserId: ctx.operatorId,
+        operatorId: stepUp.operatorId,
+        requestId: stepUp.requestId,
         req,
       });
+      return null;
     });
+    if (replay) return NextResponse.json({ ok: true, alreadyApplied: true, ...replay });
     return NextResponse.json({ ok: true, name: body.name });
   } catch (err) {
+    if (err instanceof StepUpRefusedError) return refuseStepUp(err, req);
     if (err instanceof StaleOwnerName) {
       return NextResponse.json(
         { error: "The owner's name changed while you were working, so nothing was changed. Reload the page and check it." },

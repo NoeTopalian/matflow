@@ -19,7 +19,14 @@
 //                               suspected compromise) + a one-time ENROLMENT
 //                               TICKET. Re-enrol at next sign-in.
 //   revoke                     every session and step-up grant revoked; nothing else
-//   list                       operators and whether each has an authenticator
+//   list                       operators: id, email, name, role, authenticator,
+//                               and (when OPERATOR_ALLOWED_IDS is set in this
+//                               shell) whether each id is allow-listed
+//
+// Allowlist (admin hub lane B, 9 Oct 2026): production refuses every operator
+// whose Operator.id is not in OPERATOR_ALLOWED_IDS (Vercel -> Production env;
+// unset there = NOBODY). create and recover print the id and that reminder;
+// list prints every id so the variable can be set. This script never sets it.
 //
 // Safety:
 //   - Does NOT read .env. DATABASE_URL must be set in the environment for this
@@ -104,6 +111,16 @@ function newEnrolmentTicket() {
   };
 }
 
+const ALLOWLIST_REMINDER =
+  "Production admits ONLY operators whose id is in OPERATOR_ALLOWED_IDS (Vercel -> Settings -> Environment Variables -> Production; comma-separated ids; unset = nobody). Changing it needs a redeploy.";
+
+/** The ids in OPERATOR_ALLOWED_IDS in THIS shell, or null when unset/blank. Display only. */
+function allowlistInShell() {
+  const raw = process.env.OPERATOR_ALLOWED_IDS;
+  if (raw === undefined || raw.trim() === "") return null;
+  return new Set(raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0));
+}
+
 function newPassword() {
   const supplied = process.env.OPERATOR_PASSWORD;
   if (supplied !== undefined) {
@@ -116,13 +133,17 @@ function newPassword() {
 try {
   if (command === "list") {
     const ops = await prisma.operator.findMany({
-      select: { email: true, name: true, role: true, totpEnabled: true, lastLoginAt: true, lockedUntil: true },
+      select: { id: true, email: true, name: true, role: true, totpEnabled: true, lastLoginAt: true, lockedUntil: true },
       orderBy: { createdAt: "asc" },
     });
+    const allow = allowlistInShell();
     for (const o of ops) {
-      console.log(`${o.email}  ${o.name}  role=${o.role}  authenticator=${o.totpEnabled ? "yes" : "NO"}  lastLogin=${o.lastLoginAt?.toISOString() ?? "never"}${o.lockedUntil && o.lockedUntil > new Date() ? "  LOCKED" : ""}`);
+      const listed = allow === null ? "" : `  allowlisted=${allow.has(o.id) ? "yes" : "NO"}`;
+      console.log(`id=${o.id}  ${o.email}  ${o.name}  role=${o.role}  authenticator=${o.totpEnabled ? "yes" : "NO"}${listed}  lastLogin=${o.lastLoginAt?.toISOString() ?? "never"}${o.lockedUntil && o.lockedUntil > new Date() ? "  LOCKED" : ""}`);
     }
     if (ops.length === 0) console.log("(no operators)");
+    console.log(ALLOWLIST_REMINDER);
+    if (allow === null) console.log("(OPERATOR_ALLOWED_IDS is not set in this shell, so allowlisting is not shown; compare with the Vercel Production value.)");
     process.exit(0);
   }
 
@@ -140,7 +161,7 @@ try {
     const { password, printed } = newPassword();
     const passwordHash = await bcrypt.hash(password, 12);
     const t = newEnrolmentTicket();
-    await changeWithAudit("admin.operator.created", reason, async (tx) => {
+    const createdId = await changeWithAudit("admin.operator.created", reason, async (tx) => {
       const op = await tx.operator.create({
         data: {
           email, name, passwordHash, role: "super_admin",
@@ -150,10 +171,12 @@ try {
       });
       return op.id;
     });
-    console.log(`Created operator ${email}.`);
+    console.log(`Created operator ${email}. Operator id: ${createdId}`);
     console.log(printed ? `Password (shown once, save it now): ${password}` : "Password: as supplied in OPERATOR_PASSWORD (not printed).");
     console.log(`Enrolment ticket (shown once, works once, expires ${t.expiresAt.toISOString()}): ${t.ticket}`);
     console.log("Next: sign in at /admin/login within 30 minutes, enter the ticket, and set up the authenticator. Without the ticket the password cannot enrol one; run recover for a new ticket if it expires.");
+    console.log(`Allowlist: add ${createdId} to OPERATOR_ALLOWED_IDS in Vercel Production and redeploy BEFORE enrolling; a non-allow-listed operator cannot enrol or sign in there.`);
+    console.log(ALLOWLIST_REMINDER);
   } else if (command === "recover") {
     if (!existing) fail("no operator with that email");
     const { password, printed } = newPassword();
@@ -184,6 +207,8 @@ try {
     console.log(printed ? `Password (shown once, save it now): ${password}` : "Password: as supplied in OPERATOR_PASSWORD (not printed).");
     console.log(`Enrolment ticket (shown once, works once, expires ${t.expiresAt.toISOString()}): ${t.ticket}`);
     console.log("Next: sign in at /admin/login within 30 minutes, enter the ticket, and enrol the new authenticator.");
+    console.log(`Operator id: ${existing.id} (unchanged by recover). It must already be in OPERATOR_ALLOWED_IDS in Vercel Production, or enrolment and sign-in are refused there.`);
+    console.log(ALLOWLIST_REMINDER);
   } else if (command === "revoke") {
     if (!existing) fail("no operator with that email");
     await changeWithAudit("admin.operator.sessions_revoked", reason, async (tx) => {

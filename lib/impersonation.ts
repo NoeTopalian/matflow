@@ -38,7 +38,7 @@ import { cookies } from "next/headers";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { prisma } from "@/lib/prisma";
 import { withRlsBypass } from "@/lib/prisma-tenant";
-import { OP_SESSION_COOKIE, verifyOperatorSession } from "@/lib/operator-auth";
+import { OP_SESSION_COOKIE, verifyOperatorSession, isOperatorAllowed } from "@/lib/operator-auth";
 import { tenantAdmission } from "@/lib/tenant-admission";
 
 export const IMPERSONATION_COOKIE = "matflow_impersonation";
@@ -256,6 +256,9 @@ export async function resolveActiveImpersonation(): Promise<
     select: { sessionVersion: true, totpEnabled: true, supportNonceHash: true, supportExpiresAt: true },
   });
   if (!op || op.sessionVersion !== imp.opSv || op.totpEnabled !== true) return null;
+  // A de-listed operator loses support at once, not at the 30-minute end
+  // (ledger AH-B4, 9 Oct 2026): the allowlist is read on every pass.
+  if (!isOperatorAllowed(imp.adminUserId)) return null;
   if (!op.supportNonceHash || op.supportNonceHash !== sha256Hex(imp.n)) return null;
   if (!op.supportExpiresAt || op.supportExpiresAt.getTime() <= Date.now()) return null;
 

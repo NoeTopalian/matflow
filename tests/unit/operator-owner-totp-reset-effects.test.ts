@@ -31,9 +31,17 @@ vi.mock("@/lib/operator-context", () => ({ getOperatorContext: vi.fn(async () =>
 // Step-up re-authentication (6 Oct 2026) is pinned in
 // tests/unit/operator-step-up.test.ts; here it is passed so the row effects
 // stay the subject. The call itself is asserted below.
-const { requireStepUpMock } = vi.hoisted(() => ({ requireStepUpMock: vi.fn(async () => null) }));
+// Lane C (9 Oct 2026): requireStepUp returns the verified grant; the spend is
+// consumeStepUpGrant inside the reset's transaction.
+const { requireStepUpMock, consumeStepUpGrantMock } = vi.hoisted(() => ({
+  requireStepUpMock: vi.fn(async () => ({ operatorId: "op-1", sessionVersion: 0, action: "owner.totp_reset", targetId: "t1", tenantId: "t1", versionDigest: "v", requestId: "rq-test" })),
+  consumeStepUpGrantMock: vi.fn(async () => ({ kind: "spent" })),
+}));
 vi.mock("@/lib/operator-step-up", () => ({
   requireStepUp: requireStepUpMock,
+  consumeStepUpGrant: consumeStepUpGrantMock,
+  refuseStepUp: () => new Response(null, { status: 403 }),
+  StepUpRefusedError: class StepUpRefusedError extends Error {},
   stepUpTarget: (t: string, s?: string) => (s ? `${t}/${s}` : t),
 }));
 vi.mock("@/lib/prisma-tenant", () => ({
@@ -69,7 +77,8 @@ describe("POST /api/admin/customers/[id]/totp-reset", () => {
     expect(data.totpRecoveryCodes).toBe(Prisma.JsonNull);
     expect(data.sessionVersion).toEqual({ increment: 1 });
     // Fresh operator re-authentication, bound to this action on this club.
-    expect(requireStepUpMock).toHaveBeenCalledWith(expect.any(Request), expect.objectContaining({ operatorId: "op-1" }), "owner.totp_reset", "t1");
+    expect(requireStepUpMock).toHaveBeenCalledWith(expect.any(Request), expect.objectContaining({ operatorId: "op-1" }), "owner.totp_reset", "t1", { change: {} });
+    expect(consumeStepUpGrantMock).toHaveBeenCalledTimes(1);
   });
 
   it("leaves the password and the forced-change flag exactly as they were", async () => {

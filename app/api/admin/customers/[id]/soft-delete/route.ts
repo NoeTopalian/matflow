@@ -16,7 +16,13 @@ import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
-import { requireStepUp, stepUpTarget } from "@/lib/operator-step-up";
+import {
+  StepUpRefusedError,
+  consumeStepUpGrant,
+  refuseStepUp,
+  requireStepUp,
+  stepUpTarget,
+} from "@/lib/operator-step-up";
 import {
   isTenantRowBusyError,
   restoreRefusal,
@@ -62,11 +68,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid input" }, { status: 400 });
 
-  // Fresh operator re-authentication bound to deleting THIS club (operator
-  // audit 5 Oct 2026, Workstream A5). The Danger Zone sends the grant.
-  const stepUp = await requireStepUp(req, ctx, "tenant.soft_delete", stepUpTarget(tenantId));
-  if (stepUp) return stepUp;
-
   const tenant = await withRlsBypass((tx) =>
     tx.tenant.findUnique({
       where: { id: tenantId },
@@ -80,30 +81,61 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "Confirmation name does not match the tenant name" }, { status: 400 });
   }
 
-  // Durable audit (operator audit 5 Oct 2026, Q9). The Stripe calls below are
-  // outside any DB transaction, so the request is recorded FIRST, in its own
-  // transaction, and nothing happens if that row cannot be written. The
-  // outcome row then commits atomically with the deletion stamp. A request
-  // row with no outcome row is an attempt that did not complete.
+  // Fresh operator re-authentication bound to deleting THIS club (operator
+  // audit 5 Oct 2026, Workstream A5), this operator session and the club's
+  // state as confirmed. Verified after the harmless preflight above.
+  const stepUp = await requireStepUp(req, ctx, "tenant.soft_delete", stepUpTarget(tenantId), { change: {} });
+  if (stepUp instanceof Response) return stepUp;
+
+  // ORDER (lane C, 9 Oct 2026). The Stripe calls are outside any DB
+  // transaction, so:
+  //   1. ONE transaction: spend the grant (the club's state re-checked) and
+  //      write the durable "requested" row. If the row cannot be written the
+  //      spend rolls back and nothing happens.
+  //   2. Stripe: stop member renewals at period end (idempotent).
+  //   3. ONE transaction: the deletion stamp + the outcome row, both carrying
+  //      the grant's request id.
+  // A failure after 1 leaves a spent grant and a "requested" row with no
+  // outcome row (an attempt that did not complete; renewals may be stopped):
+  // the operator is told so (500, never a success) and retries with a new
+  // code. A replay of the same grant echoes the outcome row if 3 committed,
+  // and is otherwise refused as used — it never deletes twice.
+  let replay: Record<string, unknown> | null = null;
   try {
-    await logAudit({
-      durable: true,
-      outcome: "requested",
-      tenantId,
-      userId: null,
-      action: "admin.tenant.soft_delete.requested",
-      entityType: "Tenant",
-      entityId: tenantId,
-      metadata: { reason: parsed.data.reason, tenantName: tenant.name },
-      actAsUserId: ctx.operatorId,
-      req,
+    replay = await withRlsBypass(async (tx) => {
+      const spend = await consumeStepUpGrant(tx, stepUp, { replayActions: ["admin.tenant.soft_deleted"] });
+      if (spend.kind === "replay") return spend.outcome;
+      await logAudit({
+        tx,
+        outcome: "requested",
+        tenantId,
+        userId: null,
+        action: "admin.tenant.soft_delete.requested",
+        entityType: "Tenant",
+        entityId: tenantId,
+        metadata: { reason: parsed.data.reason, tenantName: tenant.name },
+        actAsUserId: ctx.operatorId,
+        operatorId: stepUp.operatorId,
+        requestId: stepUp.requestId,
+        req,
+      });
+      return null;
     });
   } catch (err) {
+    if (err instanceof StepUpRefusedError) return refuseStepUp(err, req);
     console.error("[soft-delete] audit write failed; refusing to delete", err);
     return NextResponse.json(
       { error: "The deletion could not be recorded, so nothing was changed. Try again with a new authenticator code." },
       { status: 500 },
     );
+  }
+  if (replay) {
+    return NextResponse.json({
+      ok: true,
+      alreadyApplied: true,
+      ...replay,
+      message: "This club was already closed with this confirmation. Nothing else was changed.",
+    });
   }
 
   // Audit iter-1-operator-admin A6I1-S-4: cancel Stripe subscriptions
@@ -174,8 +206,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           stripeCancelled,
           stripeFailed,
           stripeFailedIds: stripeFailedIds.length ? stripeFailedIds : undefined,
+          result: { stripeCancelled, stripeFailed },
         },
         actAsUserId: ctx.operatorId,
+        operatorId: stepUp.operatorId,
+        requestId: stepUp.requestId,
         req,
       });
       return true;

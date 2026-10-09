@@ -123,6 +123,22 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // The whole operator plane (9 Oct 2026, ledger AH-B5): every /api/admin
+        // response and every /admin page carries operator-only data (customer
+        // records, conflict diagnoses, audit) and must never be cached by an
+        // intermediary or the back-forward cache.
+        source: "/api/admin/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
+        ],
+      },
+      {
+        source: "/admin/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
+        ],
+      },
+      {
         source: "/api/magic-link/:path*",
         headers: [
           { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },

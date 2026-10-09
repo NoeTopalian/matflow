@@ -24,14 +24,16 @@
  * never have seen a code; the domain change makes every one of them fail
  * verification, so the deploy itself signs every operator out.
  *
- * Validity of a full session: HMAC, expiry, sessionVersion equal to the DB, and
- * the operator still has TOTP enabled.
+ * Validity of a full session: HMAC, expiry, sessionVersion equal to the DB, the
+ * operator still has TOTP enabled, AND the operator id is allow-listed
+ * (OPERATOR_ALLOWED_IDS, admin hub lane B, 9 Oct 2026 — see isOperatorAllowed).
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { verifySync } from "otplib";
 import { prisma } from "@/lib/prisma";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
+import { isProductionDatabase } from "@/lib/testing-mode";
 
 export const OP_SESSION_COOKIE = "matflow_op_session";
 export const OP_TOTP_CHALLENGE_COOKIE = "matflow_op_challenge";
@@ -353,13 +355,121 @@ export async function completeOperatorLogin(operatorId: string) {
   });
 }
 
+// ── Operator allowlist (admin hub lane B, 9 Oct 2026, ledger AH-02) ──────────
+//
+// Before this, "only Noe can operate" meant "only one Operator row exists": any
+// second row with a password and an enrolled authenticator — created by anyone
+// holding database credentials, or by a future bug — had full operator power.
+// Now the deployment names the operators it trusts, by immutable Operator.id,
+// in OPERATOR_ALLOWED_IDS (comma-separated, whitespace trimmed, exact match,
+// case-sensitive). Never by email (mutable, and a club user can share it) and
+// never "the first row".
+//
+//   production-like process (the same three signals that close the shared
+//   secret: NODE_ENV=production, VERCEL_ENV=production, the production
+//   database) — an unset, empty or separator-only list means NOBODY.
+//   development/test — unset (or blank) means everyone, so local tooling and
+//   the suites keep working; a list that names anyone is enforced.
+//
+// Enforced in resolveOperatorFromCookie (below), the one resolver every
+// operator gate goes through (isAdminAuthed, isAdminPageAuthed,
+// getOperatorContext, step-up, impersonation start, enrolment GET), AFTER the
+// MFA-session checks and BEFORE any target lookup; and again at every point
+// that mints a full session (operator-totp, operator-totp/setup), so a
+// non-allow-listed operator never holds one. proxy.ts mirrors the rule at the
+// edge for /admin pages (operatorAllowedAtEdge; pinned by
+// tests/unit/operator-allowlist.test.ts).
+
+export const OPERATOR_ALLOWLIST_ENV = "OPERATOR_ALLOWED_IDS";
+
+/** Generic refusal text. Says nothing about which check failed. */
+export const OPERATOR_REFUSED_MESSAGE = "This operator account is not permitted to use the operator console.";
+
 /**
- * Resolve the operator from a FULL session cookie value. Returns null if the
- * cookie is missing, invalid, expired, of another kind (challenge, enrolment,
- * pre-hardening), its sessionVersion no longer matches the DB, or the operator
- * no longer has TOTP enabled.
+ * NODE_ENV=production, VERCEL_ENV=production, or the production database —
+ * exactly the signals on which sharedAdminSecretPermitted() (lib/admin-auth.ts)
+ * closes the shared secret; proxy.ts carries an edge copy. All three are pinned
+ * to the same answer by tests/unit/operator-allowlist.test.ts.
  */
-export async function resolveOperatorFromCookie(cookieValue: string | null | undefined) {
+export function isProductionLikeProcess(): boolean {
+  if (process.env.NODE_ENV === "production") return true;
+  if (process.env.VERCEL_ENV === "production") return true;
+  return isProductionDatabase();
+}
+
+/** The configured ids, or null when the variable is unset or blank. */
+export function operatorAllowlist(): ReadonlySet<string> | null {
+  const raw = process.env[OPERATOR_ALLOWLIST_ENV];
+  if (raw === undefined || raw.trim() === "") return null;
+  return new Set(raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0));
+}
+
+/** May this Operator.id hold operator authority in this process? */
+export function isOperatorAllowed(operatorId: string): boolean {
+  if (typeof operatorId !== "string" || operatorId.length === 0) return false;
+  const list = operatorAllowlist();
+  if (list === null) return !isProductionLikeProcess();
+  return list.has(operatorId);
+}
+
+/**
+ * Keyed digest of an operator id for security rows about refused operators.
+ * HMAC with the auth secret, domain separated: not reversible from the row
+ * alone, and recomputable by someone holding the secret to match a known id.
+ */
+export function operatorIdDigest(operatorId: string): string {
+  return `opd_${createHmac("sha256", AUTH_SECRET_VALUE).update(`operator-id-digest.v1.${operatorId}`).digest("hex").slice(0, 32)}`;
+}
+
+export type OperatorRefusalStage = "session" | "session_mint" | "enrolment";
+
+/**
+ * Requests already recorded. A route gate may resolve the same cookie twice
+ * (getOperatorContext, then isAdminAuthed inside it); one refused request is
+ * one row. Weak: entries go with the Request object.
+ */
+const refusalRecorded = new WeakSet<Request>();
+
+/**
+ * Durable security row for a refused operator: `admin.operator.refused`,
+ * tenant null, entity = the keyed id digest, metadata { reason, stage }. Its
+ * OWN transaction, never inside a mutation (nothing is being mutated). If the
+ * row cannot be written the refusal still stands — a lost row never turns
+ * into access — and the failure is logged without the id.
+ */
+export async function recordOperatorRefusal(
+  operatorId: string,
+  stage: OperatorRefusalStage,
+  req?: Request,
+): Promise<void> {
+  if (req) {
+    if (refusalRecorded.has(req)) return;
+    refusalRecorded.add(req);
+  }
+  try {
+    // Dynamic: keeps the audit graph (RLS wrappers, impersonation) out of the
+    // many modules that import this file only for cookie helpers.
+    const { logAudit } = await import("@/lib/audit-log");
+    await logAudit({
+      tenantId: null,
+      action: "admin.operator.refused",
+      entityType: "Operator",
+      entityId: operatorIdDigest(operatorId),
+      metadata: { reason: "not_allowlisted", stage },
+      req,
+      durable: true,
+      outcome: "refused",
+    });
+  } catch (err) {
+    console.error("[operator-auth] refusal row could not be written; access is still refused", (err as Error)?.name ?? "error");
+  }
+}
+
+/**
+ * The MFA-session checks without the allowlist: HMAC (MFA domain), expiry,
+ * sessionVersion equal to the DB, TOTP still enabled.
+ */
+async function resolveMfaSessionRow(cookieValue: string | null | undefined) {
   if (!cookieValue) return null;
   const verified = verifyOperatorSession(cookieValue);
   if (!verified) return null;
@@ -371,6 +481,36 @@ export async function resolveOperatorFromCookie(cookieValue: string | null | und
   if (op.sessionVersion !== verified.sessionVersion) return null;
   if (op.totpEnabled !== true) return null;
   return { id: op.id, email: op.email, name: op.name, sessionVersion: op.sessionVersion };
+}
+
+/**
+ * Resolve the operator from a FULL session cookie value. Returns null if the
+ * cookie is missing, invalid, expired, of another kind (challenge, enrolment,
+ * pre-hardening), its sessionVersion no longer matches the DB, the operator no
+ * longer has TOTP enabled, or the operator is not allow-listed (that last case
+ * also writes one `admin.operator.refused` row; pass `req` for its IP/agent).
+ */
+export async function resolveOperatorFromCookie(
+  cookieValue: string | null | undefined,
+  opts: { req?: Request } = {},
+) {
+  const op = await resolveMfaSessionRow(cookieValue);
+  if (!op) return null;
+  if (!isOperatorAllowed(op.id)) {
+    await recordOperatorRefusal(op.id, "session", opts.req);
+    return null;
+  }
+  return op;
+}
+
+/**
+ * SIGN-OUT ONLY. The MFA-session checks without the allowlist, so that a
+ * session of an operator who is no longer allow-listed can still be revoked
+ * (sessionVersion bump) by /api/admin/auth/logout. Grants nothing; never use
+ * it to authorise anything else.
+ */
+export async function resolveOperatorForSignOut(cookieValue: string | null | undefined) {
+  return resolveMfaSessionRow(cookieValue);
 }
 
 // ── Enrolment ticket (review finding D3, 6 Oct 2026) ──────────────────────

@@ -7,6 +7,7 @@
  * clears it (tests/unit/temp-password-expiry.test.ts, set-password-temp-expiry).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { addLoginClaimSql } from "./login-claim-fake";
 
 const h = vi.hoisted(() => ({
   authMock: vi.fn(),
@@ -21,7 +22,7 @@ vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn().mockResolvedValue(undefine
 vi.mock("bcryptjs", () => ({ default: { hash: vi.fn().mockResolvedValue("$2a$12$hashed") } }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
-    fn({ user: { updateMany: h.updateMany, findFirst: h.findFirst, create: h.create } }),
+    fn(addLoginClaimSql({ user: { updateMany: h.updateMany, findFirst: h.findFirst, create: h.create } }, {})), // claim lock; address free (AH-01)
 }));
 
 import { POST as createStaff } from "@/app/api/staff/route";

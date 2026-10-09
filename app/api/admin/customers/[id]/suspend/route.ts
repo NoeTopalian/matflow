@@ -26,7 +26,13 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { requireStepUp, stepUpTarget } from "@/lib/operator-step-up";
+import {
+  StepUpRefusedError,
+  consumeStepUpGrant,
+  refuseStepUp,
+  requireStepUp,
+  stepUpTarget,
+} from "@/lib/operator-step-up";
 
 export const runtime = "nodejs";
 
@@ -38,6 +44,9 @@ const bodySchema = z.object({ reason: z.string().min(5).max(500) });
 // operator triage shift without enabling mass disruption.
 const RL_MAX = 20;
 const RL_WINDOW_MS = 60 * 60 * 1000;
+
+/** The conditional flip matched nothing: thrown so the transaction (and the grant's spend) rolls back. */
+class StatusMoved extends Error {}
 
 /** Statuses un-suspension may restore. Anything else falls back to "active", flagged. */
 const RESTORABLE = new Set(["trial", "active", "cancelled"]);
@@ -94,9 +103,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // read and its 404/409 refusals (review of lane I), as the impersonate route
   // does: the grant is single-use, and a refused suspend must not spend it.
   // The flip below is conditional on the status read here, so a change in
-  // between is still a 409.
-  const stepUp = await requireStepUp(req, ctx, "tenant.suspend", stepUpTarget(tenantId));
-  if (stepUp) return stepUp;
+  // between is still a 409. Since lane C (9 Oct 2026) this only VERIFIES the
+  // grant (operator, session, action, club, change); it is spent inside the
+  // transaction below, together with the flip and its audit row.
+  const stepUp = await requireStepUp(req, ctx, "tenant.suspend", stepUpTarget(tenantId), { change: {} });
+  if (stepUp instanceof Response) return stepUp;
 
   const previousStatus = tenant.subscriptionStatus;
 
@@ -108,9 +119,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // sessionVersion-gated JWTs, so both tables are bumped.
   // The audit row is written in the same transaction (operator audit 5 Oct
   // 2026, Q9): no suspension without its record.
-  let outcome: SuspensionBilling | null;
+  // The grant is spent FIRST in the transaction (its record version is the
+  // club's status and deletion stamp as the operator confirmed them); a
+  // status that moved since, or a failed audit row, rolls back the spend with
+  // the flip. A replay of a grant whose suspension committed echoes it.
+  let outcome: SuspensionBilling | { replay: Record<string, unknown> } | null;
   try {
     outcome = await withRlsBypass(async (tx) => {
+      const spend = await consumeStepUpGrant(tx, stepUp, { replayActions: ["admin.tenant.suspended"] });
+      if (spend.kind === "replay") return { replay: spend.outcome };
       const subs = await tx.member.findMany({
         where: { tenantId, stripeSubscriptionId: { not: null } },
         select: { stripeSubscriptionId: true },
@@ -129,7 +146,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           suspensionBilling: billing as unknown as Prisma.InputJsonValue,
         },
       });
-      if (flipped.count !== 1) return null;
+      // Thrown, not returned: the grant's spend rolls back with it.
+      if (flipped.count !== 1) throw new StatusMoved();
       await tx.user.updateMany({ where: { tenantId }, data: { sessionVersion: { increment: 1 } } });
       await tx.member.updateMany({ where: { tenantId }, data: { sessionVersion: { increment: 1 } } });
       await logAudit({
@@ -145,21 +163,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           memberBilling: billing.policy,
           liveStripeSubscriptions: billing.liveStripeSubscriptions,
           stripeSubscriptionIds: billing.stripeSubscriptionIds,
+          result: {
+            previousStatus,
+            memberBilling: billing.policy,
+            liveStripeSubscriptions: billing.liveStripeSubscriptions,
+          },
         },
         actAsUserId: ctx.operatorId,
+        operatorId: stepUp.operatorId,
+        requestId: stepUp.requestId,
         req,
       });
       return billing;
     });
   } catch (err) {
-    console.error("[suspend] suspension or audit write failed; nothing changed", err);
-    return NextResponse.json({ error: "The suspension could not be recorded, so nothing was changed. Try again." }, { status: 500 });
+    if (err instanceof StepUpRefusedError) return refuseStepUp(err, req);
+    if (err instanceof StatusMoved) outcome = null;
+    else {
+      console.error("[suspend] suspension or audit write failed; nothing changed", err);
+      return NextResponse.json({ error: "The suspension could not be recorded, so nothing was changed. Try again." }, { status: 500 });
+    }
   }
   if (!outcome) {
     return NextResponse.json(
       { error: "The club's status changed while suspending. Reload and try again." },
       { status: 409 },
     );
+  }
+  if ("replay" in outcome) {
+    return NextResponse.json({
+      ok: true,
+      alreadyApplied: true,
+      ...outcome.replay,
+      message: "This suspension was already applied with this confirmation. Nothing else was changed.",
+    });
   }
 
   return NextResponse.json({

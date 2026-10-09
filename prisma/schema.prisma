@@ -853,8 +853,19 @@ model AuditLog {
   ipAddress  String?
   userAgent  String?
   createdAt  DateTime @default(now())
+  // Admin hub lane C (9 Oct 2026, migration 20261009010000_audit_operator_request).
+  // The OPERATOR behind the row, as a column, distinct from `userId` (the
+  // subject user on operator rows). SetNull: deleting an Operator keeps the
+  // record of what was done. metadata.actingAs is still written for readers.
+  operatorId String?
+  operator   Operator? @relation(fields: [operatorId], references: [id], onDelete: SetNull)
+  // Correlation id: the SHA-256 of the spent step-up nonce on step-up rows
+  // (lib/operator-step-up.ts idempotent replay looks it up), otherwise the
+  // platform request id (x-vercel-id) or a UUID on durable rows.
+  requestId  String?
 
   @@index([tenantId, createdAt])
+  @@index([tenantId, requestId])
   // Audit iter-1-operator-admin A6I1-P-4: backs the dashboard's
   // `findMany({ orderBy: { createdAt: "desc" }, take: 10 })` cross-tenant
   // scan. Without a standalone `createdAt` index Postgres has to sort the
@@ -1373,6 +1384,8 @@ model Operator {
   // (30 minutes). Cleared by the conditional update that enables TOTP.
   enrolmentTicketHash      String?
   enrolmentTicketExpiresAt DateTime?
+  // Audit rows naming this operator (AuditLog.operatorId, 9 Oct 2026).
+  auditLogs                AuditLog[]
 }
 
 // ─── Platform-level configuration (singleton-style key/value) ────────────────

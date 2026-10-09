@@ -108,8 +108,14 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/audit-log", () => ({ logAudit: m.logAudit, auditLogRetentionWhere: () => ({ createdAt: { lt: new Date(0) } }) }));
 // Lane D (6 Oct 2026): soft-delete demands a step-up grant. Passed by default
 // so the lifecycle stays the subject; refused in its own test below.
+// Lane C (9 Oct 2026): requireStepUp returns the verified grant (or a
+// refusal); consumeStepUpGrant spends it inside the route's transaction.
+const GRANT = { operatorId: "op_1", sessionVersion: 4, action: "tenant.soft_delete", targetId: "t1", tenantId: "t1", versionDigest: "v", requestId: "rq-test" };
 vi.mock("@/lib/operator-step-up", () => ({
   requireStepUp: m.requireStepUp,
+  consumeStepUpGrant: async () => ({ kind: "spent" }),
+  refuseStepUp: () => new Response(null, { status: 403 }),
+  StepUpRefusedError: class StepUpRefusedError extends Error {},
   stepUpTarget: (t: string, s?: string) => (s ? `${t}/${s}` : t),
 }));
 vi.mock("@/lib/stripe/subscriptions", () => ({ cancelSubscriptionAtPeriodEnd: m.cancelAtPeriodEnd }));
@@ -247,7 +253,7 @@ beforeEach(() => {
   m.cancelAtPeriodEnd.mockResolvedValue({ ok: true, cancelAt: null });
   m.generateMonthlyReport.mockResolvedValue({ ok: true });
   m.cascade.mockResolvedValue({ kind: "ok", name: "Member" });
-  m.requireStepUp.mockResolvedValue(null);
+  m.requireStepUp.mockResolvedValue(GRANT);
 });
 
 afterEach(() => {
@@ -558,10 +564,10 @@ describe("soft-delete: review mode refuses it; otherwise sessions die with it", 
 
   it("soft-delete demands a step-up grant for this club: refused before anything is written or cancelled", async () => {
     tenants = [tenant({ id: "t1", stripeAccountId: "acct_1" })];
-    m.requireStepUp.mockResolvedValueOnce({ status: 403, json: async () => ({ stepUpRequired: true }) });
+    m.requireStepUp.mockResolvedValueOnce(new Response(JSON.stringify({ stepUpRequired: true }), { status: 403 }));
     const res = await softDeleteRoute.POST(adminReq("POST", { reason: "Club closed for good", confirmName: "Club t1" }), params("t1"));
     expect(res.status).toBe(403);
-    expect(m.requireStepUp).toHaveBeenCalledWith(expect.anything(), expect.anything(), "tenant.soft_delete", "t1");
+    expect(m.requireStepUp).toHaveBeenCalledWith(expect.anything(), expect.anything(), "tenant.soft_delete", "t1", { change: {} });
     expect(tenants[0].deletedAt).toBeNull();
     expect(m.cancelAtPeriodEnd).not.toHaveBeenCalled();
     expect(m.logAudit).not.toHaveBeenCalled();
@@ -573,7 +579,10 @@ describe("soft-delete: review mode refuses it; otherwise sessions die with it", 
     m.logAudit.mockRejectedValueOnce(new Error("audit insert failed"));
     const res = await softDeleteRoute.POST(adminReq("POST", { reason: "Club closed for good", confirmName: "Club t1" }), params("t1"));
     expect(res.status).toBe(500);
-    expect(m.logAudit.mock.calls[0][0]).toMatchObject({ durable: true, action: "admin.tenant.soft_delete.requested", outcome: "requested" });
+    // Lane C (9 Oct 2026): the request row is now written in the SAME
+    // transaction as the grant's spend (logAudit({ tx })) — still durable
+    // (awaited, throws) and still before any Stripe call. Was `durable: true`.
+    expect(m.logAudit.mock.calls[0][0]).toMatchObject({ tx: expect.anything(), action: "admin.tenant.soft_delete.requested", outcome: "requested", requestId: "rq-test" });
     expect(m.cancelAtPeriodEnd).not.toHaveBeenCalled();
     expect(tenants[0].deletedAt).toBeNull();
   });
@@ -892,7 +901,7 @@ describe("impersonation into a closed club", () => {
     ["cancelled", "cancelled", null],
   ] as const)("REFUSED: a %s club cannot be entered, and the operator's grant is not spent", async (_label, sub, deletedAt) => {
     h.impl.user = { findUnique: () => owner(sub, deletedAt) };
-    m.requireStepUp.mockResolvedValue(null);
+    m.requireStepUp.mockResolvedValue(GRANT);
     const res = await impersonateStart(adminReq("POST", { targetUserId: "u1", reason: "Support ticket 42" }));
     expect(res.status).toBe(409);
     expect(m.setImpersonationCookie).not.toHaveBeenCalled();
@@ -902,10 +911,10 @@ describe("impersonation into a closed club", () => {
   it("positive control: an active club is entered once the step-up grant is accepted", async () => {
     h.impl.user = { findUnique: () => owner("active", null) };
     m.setImpersonationCookie.mockResolvedValue({ expiresAt: new Date(Date.now() + 1_800_000) });
-    m.requireStepUp.mockResolvedValue(null);
+    m.requireStepUp.mockResolvedValue(GRANT);
     const res = await impersonateStart(adminReq("POST", { targetUserId: "u1", reason: "Support ticket 42" }));
     expect(res.status).toBe(200);
-    expect(m.requireStepUp).toHaveBeenCalledWith(expect.anything(), { operatorId: "op_1", named: true }, "support.impersonate", "t1/u1");
+    expect(m.requireStepUp).toHaveBeenCalledWith(expect.anything(), { operatorId: "op_1", named: true, sessionVersion: 4 }, "support.impersonate", "t1/u1", { change: {} });
     expect(m.setImpersonationCookie).toHaveBeenCalledWith(expect.objectContaining({
       operatorId: "op_1", operatorSessionVersion: 4, target: { id: "u1", tenantId: "t1", sessionVersion: 0 },
     }));

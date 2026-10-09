@@ -43,6 +43,9 @@ export default function LoginAsOwnerButton({
         body: JSON.stringify({
           action: "support.impersonate",
           targetId: `${tenantId}/${ownerUserId}`,
+          // A support session changes nothing on the person: the grant is
+          // bound to their state as it stands (lib/operator-step-up.ts).
+          change: {},
           code: code.trim(),
         }),
       });

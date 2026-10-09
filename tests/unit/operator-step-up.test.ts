@@ -1,17 +1,30 @@
-// Operator step-up re-authentication (lane A, 6 Oct 2026) — audit
-// OPERATOR-ADMIN-SECURITY 2026-10-05 Q5: "Operator re-authentication: none at
-// the moment of action."
+// Operator step-up re-authentication (lane A, 6 Oct 2026; bindings, atomic
+// spend and idempotent replay — admin hub lane C, 9 Oct 2026, ledger AH-03).
+// Audit OPERATOR-ADMIN-SECURITY 2026-10-05 Q5: "Operator re-authentication:
+// none at the moment of action."
 //
 // Pins, against the real routes and lib/operator-step-up.ts:
-//   - the step-up route needs a full MFA session AND a fresh code (spent);
+//   - the step-up route needs a full MFA session AND a fresh code (spent), and
+//     a change that is valid for the action (checked BEFORE the code is spent);
 //   - each Danger Zone route refuses without a grant, with NO tenant write;
-//   - a grant is single use (replay refused), bound to operator + action +
-//     target (substitution refused) and expires after 5 minutes;
+//   - a grant is bound to operator + operator SESSION + action + target +
+//     canonical CHANGE + subject VERSION, and expires after 5 minutes;
+//   - it is spent INSIDE the route's transaction: an audit failure rolls back
+//     the mutation AND the spend (the grant stays usable); a stale version
+//     rolls back the spend (409);
+//   - a replay of a grant whose mutation committed answers "already applied"
+//     with the recorded result and changes nothing; without that record → used;
 //   - the development shared secret (sentinel operator) can never step up.
-// Red on revert: remove a requireStepUp call and that route's "no grant" case
-// fails; drop the nonce check in consumeStepUpGrant and "replay" fails.
+// History: until 9 Oct 2026 the grant was spent by requireStepUp BEFORE the
+// route's transaction and was bound to operator/action/target only; a replay
+// was a bare 403 (pinned by "the replay is refused with no further write").
+// Red on revert: drop the change-digest compare and "wrong_change" fails; drop
+// the sv compare and "wrong_session" fails; spend outside the transaction and
+// "audit failure rolls back the spend" fails; drop replayActions and the replay
+// cases fail.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
 import { generateSecret, generateSync } from "otplib";
 
 const h = vi.hoisted(() => {
@@ -22,6 +35,8 @@ const h = vi.hoisted(() => {
     writes: [] as string[],
     audit: [] as Array<Record<string, unknown>>,
     auditFail: false,
+    ownerSv: 0,
+    ownerName: "Owner",
   };
 });
 
@@ -86,13 +101,23 @@ vi.mock("@/lib/rate-limit", () => ({
 }));
 vi.mock("@/lib/audit-log", () => ({
   logAudit: async (a: Record<string, unknown>) => {
-    if (h.auditFail) throw new Error("audit store unavailable");
+    if (h.auditFail && a.action !== "admin.operator.step_up_refused") throw new Error("audit store unavailable");
     h.audit.push(a);
   },
 }));
 
 // Club data the Danger Zone routes touch. Every WRITE is recorded.
 const club = {
+  operator: tableFactory(h.ops),
+  // Replay lookup (findAppliedGrant) over the rows the mocked logAudit kept.
+  auditLog: {
+    findFirst: async ({ where }: { where: { tenantId: string; requestId: string; action: { in: string[] } } }) => {
+      const row = [...h.audit].reverse().find(
+        (a) => a.tenantId === where.tenantId && a.requestId === where.requestId && where.action.in.includes(a.action as string),
+      );
+      return row ? { action: row.action, metadata: row.metadata } : null;
+    },
+  },
   tenant: {
     findUnique: async ({ where }: { where: { id: string } }) => ({ id: where.id, name: "Club Name" }),
     // suspend (lane H, 6 Oct 2026)
@@ -101,30 +126,76 @@ const club = {
   user: {
     findFirst: async ({ where }: { where: { id?: string; role?: string } }) =>
       where.role === "owner"
-        ? { id: "u-owner", email: "owner@example.test", name: "Owner", totpEnabled: true }
-        : { id: where.id ?? "u-target", email: "staff@example.test", name: "Staff", role: "manager" },
+        ? { id: "u-owner", email: "owner@example.test", name: h.ownerName, totpEnabled: true, sessionVersion: h.ownerSv, loginEmailProvisionalSince: null }
+        : { id: where.id ?? "u-target", email: "staff@example.test", name: "Staff", role: "manager", sessionVersion: 0 },
     findUnique: async () => ({ passwordHash: "$2a$04$abcdefghijklmnopqrstuuJ1yJ0Q0m0m0m0m0m0m0m0m0m0m0m0m" }),
     update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
       h.writes.push(`user.update:${where.id}:${Object.keys(data).sort().join(",")}`);
-      return { ...data };
+      if (where.id === "u-owner" && data.sessionVersion) h.ownerSv += 1;
+      return { ...data, sessionVersion: where.id === "u-owner" ? h.ownerSv : 1 };
     },
-    updateMany: async () => { h.writes.push("user.updateMany"); return { count: 1 }; },
+    updateMany: async ({ where, data }: { where: { id?: string; name?: string }; data: Record<string, unknown> }) => {
+      h.writes.push("user.updateMany");
+      if (where.id === "u-owner" && typeof data.name === "string") {
+        if (where.name !== undefined && where.name !== h.ownerName) return { count: 0 };
+        h.ownerName = data.name;
+      }
+      return { count: 1 };
+    },
   },
   member: {
-    findFirst: async ({ where }: { where: { id: string } }) => ({ id: where.id, email: "m@example.test", name: "Member", totpEnabled: true }),
-    update: async ({ where }: { where: { id: string } }) => { h.writes.push(`member.update:${where.id}`); return {}; },
+    findFirst: async ({ where }: { where: { id: string } }) => ({ id: where.id, email: "m@example.test", name: "Member", totpEnabled: true, sessionVersion: 0 }),
+    update: async ({ where }: { where: { id: string } }) => { h.writes.push(`member.update:${where.id}`); return { sessionVersion: 1 }; },
     findMany: async () => [],
     updateMany: async () => { h.writes.push("member.updateMany"); return { count: 0 }; },
   },
   passwordHistory: { create: async () => { h.writes.push("passwordHistory.create"); return {}; } },
 };
+// A transaction stand-in: on a throw, every write it made is undone (the
+// Operator row, the recorded writes, the audit rows, the owner's state) — so
+// "rolled back" is observable here. The real rollback is proven on Postgres in
+// tests/integration/operator-step-up-db.test.ts.
+// Transactions run one at a time, as two transactions updating the same
+// Operator row do in Postgres (the second waits for the first's row lock).
+let txChain: Promise<unknown> = Promise.resolve();
+function inTx<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
+  const run = txChain.then(() => inTxNow(fn));
+  txChain = run.catch(() => undefined);
+  return run;
+}
+async function inTxNow<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
+  const ops = new Map([...h.ops].map(([k, v]) => [k, { ...v }]));
+  const writes = h.writes.length;
+  const audit = h.audit.length;
+  const owner = { sv: h.ownerSv, name: h.ownerName };
+  try {
+    return await fn(club);
+  } catch (e) {
+    h.ops.clear();
+    for (const [k, v] of ops) h.ops.set(k, v);
+    h.writes.length = writes;
+    h.audit.length = audit;
+    h.ownerSv = owner.sv;
+    h.ownerName = owner.name;
+    throw e;
+  }
+}
 vi.mock("@/lib/prisma-tenant", () => ({
-  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>) => fn(club),
-  withTenantContext: async <T,>(_id: string, fn: (tx: unknown) => Promise<T>) => fn(club),
+  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>) => inTx(fn),
+  withTenantContext: async <T,>(_id: string, fn: (tx: unknown) => Promise<T>) => inTx(fn),
 }));
 
 import { issueOperatorSession, issueOperatorEnrolmentSession } from "@/lib/operator-auth";
-import { STEP_UP_HEADER, issueStepUpGrant, consumeStepUpGrant, type StepUpAction } from "@/lib/operator-step-up";
+import {
+  STEP_UP_HEADER,
+  canonicalStepUpChange,
+  consumeStepUpGrant,
+  issueStepUpGrant,
+  requireStepUp,
+  type StepUpAction,
+  type VerifiedStepUp,
+} from "@/lib/operator-step-up";
+import { withRlsBypass } from "@/lib/prisma-tenant";
 
 const ORIGIN = "http://localhost:3847";
 let SECRET = "";
@@ -146,14 +217,14 @@ function post(path: string, body: unknown, extra: Record<string, string> = {}) {
   });
 }
 
-type Case = { name: string; action: StepUpAction; file: string; tenant: string; body: Record<string, unknown>; target: string };
+type Case = { name: string; action: StepUpAction; file: string; tenant: string; body: Record<string, unknown>; target: string; outcome: string };
 const CASES: Case[] = [
-  { name: "force-password-reset", action: "owner.force_password_reset", file: "force-password-reset", tenant: "t-a", body: { reason: "verified by call-back" }, target: "t-a" },
-  { name: "owner totp-reset", action: "owner.totp_reset", file: "totp-reset", tenant: "t-a", body: { reason: "verified by call-back", confirmName: "Club Name" }, target: "t-a" },
-  { name: "member-totp-reset", action: "member.totp_reset", file: "member-totp-reset", tenant: "t-a", body: { memberId: "m-1", reason: "verified by call-back", confirmName: "Club Name" }, target: "t-a/m-1" },
-  { name: "transfer-ownership", action: "tenant.transfer_ownership", file: "transfer-ownership", tenant: "t-a", body: { targetUserId: "u-target", reason: "verified by call-back", confirmName: "Club Name" }, target: "t-a/u-target" },
+  { name: "force-password-reset", action: "owner.force_password_reset", file: "force-password-reset", tenant: "t-a", body: { reason: "verified by call-back" }, target: "t-a", outcome: "admin.owner.force_password_reset" },
+  { name: "owner totp-reset", action: "owner.totp_reset", file: "totp-reset", tenant: "t-a", body: { reason: "verified by call-back", confirmName: "Club Name" }, target: "t-a", outcome: "admin.owner.totp_reset" },
+  { name: "member-totp-reset", action: "member.totp_reset", file: "member-totp-reset", tenant: "t-a", body: { memberId: "m-1", reason: "verified by call-back", confirmName: "Club Name" }, target: "t-a/m-1", outcome: "admin.member.totp_reset" },
+  { name: "transfer-ownership", action: "tenant.transfer_ownership", file: "transfer-ownership", tenant: "t-a", body: { targetUserId: "u-target", reason: "verified by call-back", confirmName: "Club Name" }, target: "t-a/u-target", outcome: "admin.tenant.ownership_transferred" },
   // Review recommendation (lane H, 6 Oct 2026): suspending a club signs out every user and member of it.
-  { name: "suspend", action: "tenant.suspend", file: "suspend", tenant: "t-a", body: { reason: "verified by call-back" }, target: "t-a" },
+  { name: "suspend", action: "tenant.suspend", file: "suspend", tenant: "t-a", body: { reason: "verified by call-back" }, target: "t-a", outcome: "admin.tenant.suspended" },
 ];
 
 async function route(c: Case) {
@@ -164,6 +235,8 @@ async function route(c: Case) {
       { params: Promise.resolve({ id: tenant }) },
     );
 }
+const nonceHash = () => h.ops.get("op-noe")!.stepUpNonceHash;
+const refusals = () => h.audit.filter((a) => a.action === "admin.operator.step_up_refused").map((a) => (a.metadata as { refusal: string }).refusal);
 
 beforeEach(() => {
   h.jar.clear();
@@ -171,6 +244,8 @@ beforeEach(() => {
   h.writes.length = 0;
   h.audit.length = 0;
   h.auditFail = false;
+  h.ownerSv = 0;
+  h.ownerName = "Owner";
   seed();
   h.jar.set("matflow_op_session", issueOperatorSession("op-noe", 0));
   process.env.MATFLOW_ADMIN_SECRET = "step-up-test-shared-secret";
@@ -185,17 +260,24 @@ describe.each(CASES)("$name", (c) => {
     expect(h.writes).toEqual([]);
   });
 
-  it("proceeds with a valid grant, once; the replay is refused with no further write", async () => {
+  // Flipped 9 Oct 2026 (lane C): the replay used to be a bare 403. It now
+  // finds the outcome row by the grant's request id and echoes it — still no
+  // further write.
+  it("proceeds with a valid grant, once; the replay is answered 'already applied' with no further write", async () => {
     const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: c.action, targetId: c.target });
     const call = await route(c);
     const ok = await call(grant);
     expect(ok.status).toBe(200);
     const after = [...h.writes];
     expect(after.length).toBeGreaterThan(0);
+    const row = h.audit.find((a) => a.action === c.outcome)!;
+    expect(row).toMatchObject({ operatorId: "op-noe", requestId: expect.stringMatching(/^[a-f0-9]{64}$/) });
 
     const replay = await call(grant);
-    expect(replay.status).toBe(403);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ ok: true, alreadyApplied: true, recordedAction: c.outcome });
     expect(h.writes).toEqual(after);
+    expect(h.audit.filter((a) => a.action === c.outcome)).toHaveLength(1);
   });
 
   it("refuses a grant for the same action on ANOTHER target", async () => {
@@ -221,6 +303,7 @@ describe.each(CASES)("$name", (c) => {
     h.jar.set("matflow_op_session", issueOperatorSession("op-noe", 0));
     const res = await (await route(c))(grant);
     expect(res.status).toBe(403);
+    expect((await res.json()).refusal).toBe("expired");
     expect(h.writes).toEqual([]);
   });
 
@@ -232,12 +315,36 @@ describe.each(CASES)("$name", (c) => {
     expect(h.writes).toEqual([]);
   });
 
+  it("refuses a grant issued to an EARLIER session of the same operator (wrong_session)", async () => {
+    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: c.action, targetId: c.target });
+    // Signed out everywhere and signed in again: new sessionVersion, new cookie.
+    h.ops.get("op-noe")!.sessionVersion = 1;
+    h.jar.set("matflow_op_session", issueOperatorSession("op-noe", 1));
+    const res = await (await route(c))(grant);
+    expect(res.status).toBe(403);
+    expect((await res.json()).refusal).toBe("wrong_session");
+    expect(h.writes).toEqual([]);
+    expect(refusals()).toContain("wrong_session");
+  });
+
   it("refuses the development shared secret (no named operator, no authenticator)", async () => {
     h.jar.clear();
     h.jar.set("matflow_admin", "step-up-test-shared-secret");
     const res = await (await route(c))("anything");
     expect(res.status).toBe(403);
     expect(h.writes).toEqual([]);
+  });
+
+  it("an audit failure rolls back the mutation AND the spend: the grant stays usable", async () => {
+    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: c.action, targetId: c.target });
+    const before = nonceHash();
+    h.auditFail = true;
+    const res = await (await route(c))(grant);
+    expect(res.status).toBe(500);
+    expect(h.writes).toEqual([]);
+    expect(nonceHash()).toBe(before);
+    h.auditFail = false;
+    expect((await (await route(c))(grant)).status).toBe(200);
   });
 });
 
@@ -257,33 +364,165 @@ describe("substitution of the person inside the club", () => {
     expect(res.status).toBe(403);
     expect(h.writes).toEqual([]);
   });
+
+  it("a grant for one club cannot be spent on another (tenant substitution)", async () => {
+    const c = CASES[1];
+    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: c.action, targetId: "t-a" });
+    const res = await (await route(c))(grant, "t-b");
+    expect(res.status).toBe(403);
+    expect((await res.json()).refusal).toBe("wrong_target");
+  });
 });
 
-describe("single use across instances", () => {
-  it("two instances spending the same grant at once: exactly one succeeds", async () => {
-    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: "owner.totp_reset", targetId: "t-a" });
-    const args = { token: grant, operatorId: "op-noe", action: "owner.totp_reset" as const, targetId: "t-a" };
-    const results = await Promise.all([consumeStepUpGrant(args), consumeStepUpGrant(args)]);
-    expect(results.filter((r) => r.ok)).toHaveLength(1);
+describe("record version (the subject as confirmed)", () => {
+  it("the owner's credentials moved after the grant was issued → 409 stale, nothing written, grant NOT spent", async () => {
+    const c = CASES[0];
+    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: c.action, targetId: c.target });
+    const before = nonceHash();
+    h.ownerSv = 7; // e.g. the owner changed their own password meanwhile
+    const res = await (await route(c))(grant);
+    expect(res.status).toBe(409);
+    expect((await res.json()).refusal).toBe("stale");
+    expect(h.writes).toEqual([]);
+    expect(nonceHash()).toBe(before);
+  });
+
+  it("owner-profile: a grant for one name cannot set another (wrong_change); the grant is not spent", async () => {
+    const { POST } = await import("@/app/api/admin/customers/[id]/owner-profile/route");
+    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: "owner.profile", targetId: "t-a/u-owner/name", change: { name: "Ann Smith" } });
+    const before = nonceHash();
+    const res = await POST(
+      post("/api/admin/customers/t-a/owner-profile", { name: "Mallory", reason: "placeholder name at signup" }, { [STEP_UP_HEADER]: grant }),
+      { params: Promise.resolve({ id: "t-a" }) },
+    );
+    expect(res.status).toBe(403);
+    expect((await res.json()).refusal).toBe("wrong_change");
+    expect(nonceHash()).toBe(before);
+    expect(h.ownerName).toBe("Owner");
+    const ok = await POST(
+      post("/api/admin/customers/t-a/owner-profile", { name: "  Ann Smith ", reason: "placeholder name at signup" }, { [STEP_UP_HEADER]: grant }),
+      { params: Promise.resolve({ id: "t-a" }) },
+    );
+    expect(ok.status).toBe(200);
+    expect(h.ownerName).toBe("Ann Smith");
+  });
+});
+
+describe("change binding (requireStepUp)", () => {
+  const verify = (grant: string, change: unknown, sessionVersion = 0) =>
+    requireStepUp(
+      new Request(ORIGIN + "/x", { headers: { [STEP_UP_HEADER]: grant } }),
+      { operatorId: "op-noe", named: true, sessionVersion },
+      "owner.login_email",
+      "t-a/u-owner/change",
+      { change },
+    );
+
+  it("same operator, same target, DIFFERENT new email → wrong_change", async () => {
+    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: "owner.login_email", targetId: "t-a/u-owner/change", change: { newEmail: "real@club.test" } });
+    const res = await verify(grant, { newEmail: "attacker@evil.test" });
+    expect(res).toBeInstanceOf(Response);
+    expect((res as Response).status).toBe(403);
+    expect(await (res as Response).json()).toMatchObject({ refusal: "wrong_change" });
+  });
+
+  it("the same address in another case / with spaces is the same change (one normalisation)", async () => {
+    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: "owner.login_email", targetId: "t-a/u-owner/change", change: { newEmail: "  Real@Club.TEST " } });
+    const res = await verify(grant, { newEmail: "real@club.test" });
+    expect(res).not.toBeInstanceOf(Response);
+    expect((res as VerifiedStepUp).requestId).toBe(nonceHash());
+  });
+
+  it("an empty change cannot stand in for a change of address, nor the reverse", async () => {
+    const empty = (await issueStepUpGrant({ operatorId: "op-noe", action: "owner.login_email", targetId: "t-a/u-owner/change", change: {} })).grant;
+    expect(((await verify(empty, { newEmail: "real@club.test" })) as Response).status).toBe(403);
+    const full = (await issueStepUpGrant({ operatorId: "op-noe", action: "owner.login_email", targetId: "t-a/u-owner/change", change: { newEmail: "real@club.test" } })).grant;
+    expect(((await verify(full, {})) as Response).status).toBe(403);
+  });
+
+  it("the grant payload carries no address (keyed digest only)", async () => {
+    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: "owner.login_email", targetId: "t-a/u-owner/change", change: { newEmail: "real@club.test" } });
+    const payload = Buffer.from(grant.split(".")[0], "base64url").toString("utf8");
+    expect(payload).not.toMatch(/real@club\.test|owner@example\.test/);
+    expect(JSON.parse(payload)).toMatchObject({ v: 2, sv: 0, chg: expect.stringMatching(/^[a-f0-9]{64}$/), ver: expect.stringMatching(/^[a-f0-9]{64}$/) });
+  });
+
+  it("requireStepUp spends nothing (verification only)", async () => {
+    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: "owner.login_email", targetId: "t-a/u-owner/change", change: { newEmail: "real@club.test" } });
+    const before = nonceHash();
+    await verify(grant, { newEmail: "real@club.test" });
+    expect(nonceHash()).toBe(before);
+  });
+
+  it("unknown keys or the wrong shape are not a change for the action", () => {
+    expect(canonicalStepUpChange("owner.profile", { name: "A", role: "owner" })).toBeNull();
+    expect(canonicalStepUpChange("owner.totp_reset", { anything: 1 })).toBeNull();
+    expect(canonicalStepUpChange("owner.login_email", { newEmail: "not-an-address" })).toBeNull();
+  });
+});
+
+describe("single use and replay", () => {
+  async function verified(action: StepUpAction = "owner.totp_reset", target = "t-a") {
+    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action, targetId: target });
+    const v = await requireStepUp(new Request(ORIGIN, { headers: { [STEP_UP_HEADER]: grant } }), { operatorId: "op-noe", named: true, sessionVersion: 0 }, action, target, { change: {} });
+    return { grant, v: v as VerifiedStepUp };
+  }
+
+  it("two concurrent spends of one grant: exactly one is spent, the other is refused as used", async () => {
+    const { v } = await verified();
+    const results = await Promise.allSettled([
+      withRlsBypass((tx) => consumeStepUpGrant(tx as never, v)),
+      withRlsBypass((tx) => consumeStepUpGrant(tx as never, v)),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ reason: "used" });
   });
 
   it("issuing a new grant supersedes the outstanding one", async () => {
-    const first = await issueStepUpGrant({ operatorId: "op-noe", action: "owner.totp_reset", targetId: "t-a" });
+    const first = await verified();
     await issueStepUpGrant({ operatorId: "op-noe", action: "owner.totp_reset", targetId: "t-a" });
-    const r = await consumeStepUpGrant({ token: first.grant, operatorId: "op-noe", action: "owner.totp_reset", targetId: "t-a" });
-    expect(r).toEqual({ ok: false, reason: "spent" });
+    await expect(withRlsBypass((tx) => consumeStepUpGrant(tx as never, first.v))).rejects.toMatchObject({ reason: "used" });
   });
 
-  it("the force-password-reset temporary password carries a 72-hour expiry", async () => {
+  it("a replayed grant with NO recorded outcome is refused as used (403), nothing written", async () => {
+    const c = CASES[1];
+    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: c.action, targetId: c.target });
+    h.ops.get("op-noe")!.stepUpNonceHash = null; // spent elsewhere, its change never committed
+    const res = await (await route(c))(grant);
+    expect(res.status).toBe(403);
+    expect((await res.json()).refusal).toBe("used");
+    expect(h.writes).toEqual([]);
+  });
+
+  it("double-click: two concurrent submissions of one grant → ONE mutation, ONE sessionVersion bump", async () => {
+    const c = CASES[0];
+    const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: c.action, targetId: c.target });
+    const call = await route(c);
+    const [a, b] = await Promise.all([call(grant), call(grant)]);
+    expect([a.status, b.status].sort()).toEqual([200, 200]);
+    const bodies = [await a.json(), await b.json()];
+    expect(bodies.filter((x) => x.alreadyApplied === true)).toHaveLength(1);
+    expect(bodies.filter((x) => typeof x.tempPassword === "string")).toHaveLength(1);
+    expect(h.ownerSv).toBe(1);
+    expect(h.writes.filter((w) => w.startsWith("user.update:u-owner:"))).toHaveLength(1);
+  });
+
+  it("the force-password-reset temporary password carries a 72-hour expiry, and a replay never re-shows it", async () => {
     const c = CASES[0];
     const { grant } = await issueStepUpGrant({ operatorId: "op-noe", action: c.action, targetId: c.target });
     const before = Date.now();
-    const res = await (await route(c))(grant);
+    const call = await route(c);
+    const res = await call(grant);
     const data = (await res.json()) as { tempPasswordExpiresAt: string };
     const at = new Date(data.tempPasswordExpiresAt).getTime();
     expect(at - before).toBeGreaterThanOrEqual(72 * 3600 * 1000 - 1000);
     expect(at - before).toBeLessThanOrEqual(72 * 3600 * 1000 + 5000);
     expect(h.writes.some((w) => w.startsWith("user.update:u-owner:") && w.includes("tempPasswordExpiresAt"))).toBe(true);
+    const replay = (await (await call(grant)).json()) as Record<string, unknown>;
+    expect(replay.alreadyApplied).toBe(true);
+    expect(replay.tempPassword).toBeUndefined();
+    expect(JSON.stringify(h.audit)).not.toContain((data as unknown as { tempPassword: string }).tempPassword);
   });
 });
 
@@ -295,13 +534,13 @@ describe("POST /api/admin/auth/step-up", () => {
 
   it("issues a grant for a fresh code, and the same code cannot buy a second grant", async () => {
     const code = generateSync({ secret: SECRET });
-    const first = await stepUp({ action: "owner.totp_reset", targetId: "t-a", code });
+    const first = await stepUp({ action: "owner.totp_reset", targetId: "t-a", change: {}, code });
     expect(first.status).toBe(200);
     const { grant } = (await first.json()) as { grant: string };
     expect(typeof grant).toBe("string");
     expect(h.audit.map((a) => a.action)).toContain("admin.operator.step_up");
 
-    const again = await stepUp({ action: "owner.totp_reset", targetId: "t-a", code });
+    const again = await stepUp({ action: "owner.totp_reset", targetId: "t-a", change: {}, code });
     expect(again.status).toBe(401);
   });
 
@@ -310,7 +549,7 @@ describe("POST /api/admin/auth/step-up", () => {
     const res = await stepUp({ action: "owner.totp_reset", targetId: "t-a", code });
     expect(res.status).toBe(200);
     const row = h.audit.find((a) => a.action === "admin.operator.step_up");
-    expect(row).toMatchObject({ durable: true, tenantId: null, entityId: "op-noe" });
+    expect(row).toMatchObject({ durable: true, tenantId: null, entityId: "op-noe", operatorId: "op-noe" });
   });
 
   it("D5: if the issuance row cannot be written, no grant is issued or returned", async () => {
@@ -321,6 +560,21 @@ describe("POST /api/admin/auth/step-up", () => {
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.grant).toBeUndefined();
     expect(h.ops.get("op-noe")!.stepUpNonceHash).toBeNull();
+  });
+
+  it("an invalid change for the action is refused BEFORE the code is spent", async () => {
+    const code = generateSync({ secret: SECRET });
+    for (const change of [{ name: "x", role: "owner" }, {}]) {
+      const res = await stepUp({ action: "owner.profile", targetId: "t-a/u-owner/name", change, code });
+      expect(res.status).toBe(400);
+    }
+    expect(h.ops.get("op-noe")!.totpLastUsedStep).toBeNull();
+    expect((await stepUp({ action: "owner.profile", targetId: "t-a/u-owner/name", change: { name: "Ann" }, code })).status).toBe(200);
+  });
+
+  it("refuses unknown body keys (strict)", async () => {
+    const code = generateSync({ secret: SECRET });
+    expect((await stepUp({ action: "owner.totp_reset", targetId: "t-a", code, operatorId: "op-other" })).status).toBe(400);
   });
 
   it("refuses a wrong code", async () => {
@@ -350,6 +604,18 @@ describe("POST /api/admin/auth/step-up", () => {
       body: JSON.stringify({ action: "owner.totp_reset", targetId: "t-a", code: generateSync({ secret: SECRET }) }),
     }));
     expect(res.status).toBe(403);
+  });
+});
+
+describe("UI grant-request payloads (pinned)", () => {
+  const src = (f: string) => readFileSync(`app/admin/tenants/[id]/${f}`, "utf8");
+  it("every step-up request declares the canonical change the route re-derives", () => {
+    expect(src("DangerZone.tsx")).toMatch(/JSON\.stringify\(\{ action: args\.stepUpAction, targetId: args\.targetId, change: args\.change \?\? \{\}, code: args\.code\.trim\(\) \}\)/);
+    expect(src("LoginEmailCard.tsx")).toMatch(/change: mode === "change" \? \{ newEmail: newEmail\.trim\(\) \} : \{\},/);
+    expect(src("LoginEmailCard.tsx")).toMatch(/\{ action: mode, reason: reason\.trim\(\), newEmail: newEmail\.trim\(\) \}/);
+    expect(src("OwnerProfileCard.tsx")).toMatch(/change: \{ name: trimmed \}/);
+    expect(src("OwnerProfileCard.tsx")).toMatch(/JSON\.stringify\(\{ name: trimmed, reason: reason\.trim\(\) \}\)/);
+    expect(src("LoginAsOwnerButton.tsx")).toMatch(/change: \{\},/);
   });
 });
 

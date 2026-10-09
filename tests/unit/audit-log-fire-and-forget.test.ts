@@ -76,12 +76,16 @@ describe("logAudit — fire-and-forget contract", () => {
     const fakeTx = {
       user: { findFirst: vi.fn().mockResolvedValue({ id: "owner-1" }) },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
+      // AuditLog.operatorId (lane C, 9 Oct 2026): the real actor is a column
+      // too when it is an Operator row.
+      operator: { findUnique: vi.fn().mockResolvedValue({ id: "admin-99" }) },
     };
     await fn(fakeTx as never);
 
     expect(fakeTx.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         userId: "owner-1",
+        operatorId: "admin-99",
         metadata: { reason: "lost device", actingAs: "admin-99" },
       }),
     });

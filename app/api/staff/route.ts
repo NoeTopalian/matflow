@@ -10,6 +10,7 @@ import { apiError } from "@/lib/api-error";
 import { refuseSupportSession } from "@/lib/support-session";
 import { tempPasswordExpiresAt } from "@/lib/temp-password";
 import { staffPasswordSchema } from "@/lib/password-policy";
+import { LoginIdentityTaken, claimLoginIdentity } from "@/lib/login-email";
 
 // Lane 1 iter-1 S-01 [Critical] fix: password is now REQUIRED. The previous
 // `.optional()` allowed the owner to omit the password and have the server
@@ -98,8 +99,14 @@ export async function POST(req: Request) {
   const passwordHash = await bcrypt.hash(password, 12);
 
   try {
-    const user = await withTenantContext(session.user.tenantId, (tx) =>
-      tx.user.create({
+    const user = await withTenantContext(session.user.tenantId, async (tx) => {
+      // One login identity per club across staff AND members (AH-01, 9 Oct
+      // 2026). Before this, a staff row created on a member's address took the
+      // member's sign-in over (auth.ts prefers the User row). Claim lock held
+      // to commit, so a concurrent member writer of the same address waits.
+      const claim = await claimLoginIdentity(tx, { tenantId: session.user.tenantId, email });
+      if (claim.kind !== "none") throw new LoginIdentityTaken(claim);
+      return tx.user.create({
         data: {
           tenantId: session.user.tenantId,
           email,
@@ -116,8 +123,8 @@ export async function POST(req: Request) {
           tempPasswordExpiresAt: tempPasswordExpiresAt(),
         },
         select: { id: true, name: true, email: true, role: true, createdAt: true, mustChangePassword: true },
-      }),
-    );
+      });
+    });
 
     await logAudit({
       tenantId: session.user.tenantId,
@@ -133,8 +140,9 @@ export async function POST(req: Request) {
       { status: 201 }
     );
   } catch (e: unknown) {
-    if ((e as { code?: string }).code === "P2002") {
-      return NextResponse.json({ error: "A user with that email already exists" }, { status: 409 });
+    if (e instanceof LoginIdentityTaken || (e as { code?: string }).code === "P2002") {
+      // Opaque: whether a staff member or a member holds it is not said.
+      return NextResponse.json({ error: "That email address is already in use at this club." }, { status: 409 });
     }
     return NextResponse.json({ error: "Failed to create staff member" }, { status: 500 });
   }

@@ -23,7 +23,14 @@ vi.mock("@/lib/operator-context", () => ({ getOperatorContext: vi.fn(async () =>
 // passed here so the row effects stay the subject (pinned in
 // tests/unit/operator-step-up.test.ts).
 vi.mock("@/lib/operator-step-up", () => ({
-  requireStepUp: async () => null,
+  // Lane C (9 Oct 2026): requireStepUp returns the verified grant and
+  // consumeStepUpGrant spends it inside the route's transaction (both pinned
+  // in tests/unit/operator-step-up.test.ts and, on Postgres, in
+  // tests/integration/operator-step-up-db.test.ts).
+  requireStepUp: async () => ({ operatorId: "op-int-test", sessionVersion: 0, action: "x", targetId: "t", tenantId: "t", versionDigest: "v", requestId: `rq-${Date.now()}-${Math.random()}` }),
+  consumeStepUpGrant: async () => ({ kind: "spent" }),
+  refuseStepUp: () => new Response(null, { status: 403 }),
+  StepUpRefusedError: class StepUpRefusedError extends Error {},
   stepUpTarget: (t: string, s?: string) => (s ? `${t}/${s}` : t),
 }));
 

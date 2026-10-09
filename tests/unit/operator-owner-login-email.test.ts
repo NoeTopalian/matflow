@@ -1,5 +1,6 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { createHash } from "node:crypto";
+import { emailDigest } from "@/lib/login-email";
+import { addLoginClaimSql } from "./login-claim-fake";
 
 // POST /api/admin/customers/[id]/login-email (7 Oct 2026, US-001/US-002).
 // Operator control of the club owner's login email: mark provisional, clear
@@ -11,6 +12,10 @@ import { createHash } from "node:crypto";
 const h = vi.hoisted(() => ({
   isAdminAuthed: vi.fn(async () => true),
   requireStepUp: vi.fn(async () => null as unknown),
+  // Lane C (9 Oct 2026): requireStepUp returns the verified grant; the spend is
+  // consumeStepUpGrant inside the route's transaction (pinned in operator-step-up.test.ts).
+  grant: { operatorId: "op-1", sessionVersion: 0, action: "owner.login_email", targetId: "t", tenantId: "t", versionDigest: "v", requestId: "rq-test" },
+  consumeStepUpGrant: vi.fn(async () => ({ kind: "spent" }) as unknown),
   logAudit: vi.fn(async () => {}),
   owner: null as null | Record<string, unknown>,
   userCollision: null as null | { id: string },
@@ -29,6 +34,7 @@ const tx = {
   passwordResetToken: { updateMany: vi.fn(async () => ({ count: 2 })) },
   magicLinkToken: { updateMany: vi.fn(async () => ({ count: 1 })) },
 };
+addLoginClaimSql(tx); // claim lock + holder reads (AH-01); collisions still come from the findFirst mocks above
 
 vi.mock("@/lib/prisma-tenant", () => ({
   withRlsBypass: async <T,>(fn: (t: unknown) => Promise<T>) => fn(tx),
@@ -46,12 +52,16 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/operator-step-up", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/operator-step-up")>()),
   requireStepUp: h.requireStepUp,
+  consumeStepUpGrant: h.consumeStepUpGrant,
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: h.logAudit }));
 
 import { POST } from "@/app/api/admin/customers/[id]/login-email/route";
 
-const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+// Audit rows carry the KEYED digest (AH-E2, 9 Oct 2026). Until then this was a
+// plain SHA-256, which is dictionary-reversible for a predictable address; the
+// keyed form is pinned against it in tests/unit/login-identity-claim.test.ts.
+const sha = (s: string) => emailDigest(s);
 const SINCE = new Date("2026-10-07T08:00:00Z");
 const call = (body: unknown) =>
   POST(
@@ -66,7 +76,8 @@ const call = (body: unknown) =>
 beforeEach(() => {
   vi.clearAllMocks();
   h.isAdminAuthed.mockResolvedValue(true);
-  h.requireStepUp.mockResolvedValue(null);
+  h.requireStepUp.mockResolvedValue(h.grant);
+  h.consumeStepUpGrant.mockResolvedValue({ kind: "spent" });
   h.owner = { id: "owner-1", email: "provisional@club.example", loginEmailProvisionalSince: null };
   h.userCollision = null;
   h.memberCollision = null;
@@ -97,7 +108,8 @@ describe("operator login-email — gates", () => {
     h.requireStepUp.mockResolvedValue(new Response(JSON.stringify({ stepUpRequired: true }), { status: 403 }));
     const res = await call({ action: "mark_provisional", reason: "owner verified by call-back" });
     expect(res.status).toBe(403);
-    expect(h.requireStepUp).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ operatorId: "op-1" }), "owner.login_email", "tenant-A/owner-1/mark_provisional");
+    // Lane C (9 Oct 2026): also bound to the canonical change ({} for a mark).
+    expect(h.requireStepUp).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ operatorId: "op-1" }), "owner.login_email", "tenant-A/owner-1/mark_provisional", { change: {} });
     expect(tx.user.update).not.toHaveBeenCalled();
     expect(h.logAudit).not.toHaveBeenCalled();
   });
@@ -108,6 +120,9 @@ describe("operator login-email — gates", () => {
     await call({ action: "change", reason: "owner verified by call-back", newEmail: "real@owner.example" });
     const targets = h.requireStepUp.mock.calls.map((c) => (c as unknown as unknown[])[3]);
     expect(targets).toEqual(["tenant-A/owner-1/clear_provisional", "tenant-A/owner-1/change"]);
+    // ...and a change grant is bound to THIS normalised address (lane C, 9 Oct 2026).
+    const changes = h.requireStepUp.mock.calls.map((c) => (c as unknown as unknown[])[4]);
+    expect(changes).toEqual([{ change: {} }, { change: { newEmail: "real@owner.example" } }]);
   });
 
   it("clearing a mark that is not set is 409 BEFORE the grant is spent", async () => {

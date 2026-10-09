@@ -2,6 +2,7 @@
 // the owner-side version history written by PATCH /api/member/me.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { addLoginClaimSql } from "./login-claim-fake";
 
 vi.mock("next/server", () => ({
   NextResponse: {
@@ -19,6 +20,9 @@ vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => {}) }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findFirst: vi.fn(), updateMany: vi.fn() },
+    // An email change retires reset codes and sign-in links for old + new (AH-01).
+    passwordResetToken: { updateMany: vi.fn(async () => ({ count: 0 })) },
+    magicLinkToken: { updateMany: vi.fn(async () => ({ count: 0 })) },
     attendanceRecord: { count: vi.fn(), findMany: vi.fn() },
     classInstance: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
     user: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
@@ -31,7 +35,7 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/prisma-tenant", async () => {
   const { prisma } = await import("@/lib/prisma");
   return {
-    withTenantContext: async (_tenantId: string, fn: (tx: unknown) => unknown) => fn(prisma),
+    withTenantContext: async (_tenantId: string, fn: (tx: unknown) => unknown) => fn(addLoginClaimSql(prisma)),
   };
 });
 

@@ -24,11 +24,15 @@ async function stepUpFetch(args: {
   code: string;
   url: string;
   init: RequestInit;
+  // The canonical intended change the grant is bound to (lib/operator-step-up.ts
+  // canonicalStepUpChange). Every Danger Zone action changes only the subject's
+  // state, so it is {}; the server binds the grant to that state's version.
+  change?: Record<string, string>;
 }): Promise<StepUpResult> {
   const su = await fetch("/api/admin/auth/step-up", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: args.stepUpAction, targetId: args.targetId, code: args.code.trim() }),
+    body: JSON.stringify({ action: args.stepUpAction, targetId: args.targetId, change: args.change ?? {}, code: args.code.trim() }),
   });
   const suData = await su.json().catch(() => ({}));
   if (!su.ok || typeof suData?.grant !== "string") {

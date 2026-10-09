@@ -15,6 +15,7 @@ const st = vi.hoisted(() => ({
   audit: [] as unknown[],
   stepUp: null as null | Response,
   stepUpCalls: 0,
+  spends: 0,
 }));
 
 vi.mock("@/lib/prisma-tenant", () => {
@@ -47,8 +48,13 @@ vi.mock("@/lib/rate-limit", () => ({
   getClientIp: () => "127.0.0.1",
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async (a: unknown) => { st.audit.push(a); }) }));
+// Lane C (9 Oct 2026): requireStepUp only VERIFIES (returns the grant or a
+// refusal); consumeStepUpGrant spends it inside the suspension's transaction.
 vi.mock("@/lib/operator-step-up", () => ({
-  requireStepUp: async () => { st.stepUpCalls += 1; return st.stepUp; },
+  requireStepUp: async () => { st.stepUpCalls += 1; return st.stepUp ?? { operatorId: "op_1", sessionVersion: 0, action: "tenant.suspend", targetId: "t1", tenantId: "t1", versionDigest: "v", requestId: "rq-test" }; },
+  consumeStepUpGrant: async () => { st.spends += 1; return { kind: "spent" }; },
+  refuseStepUp: () => new Response(null, { status: 403 }),
+  StepUpRefusedError: class StepUpRefusedError extends Error {},
   stepUpTarget: (t: string) => t,
 }));
 
@@ -70,6 +76,7 @@ beforeEach(() => {
   st.audit = [];
   st.stepUp = null;
   st.stepUpCalls = 0;
+  st.spends = 0;
 });
 
 describe("a refused suspend does not spend the step-up grant", () => {
@@ -98,6 +105,7 @@ describe("a refused suspend does not spend the step-up grant", () => {
     expect(st.stepUpCalls).toBe(1);
     expect(st.writes).toEqual([]);
     expect(st.audit).toEqual([]);
+    expect(st.spends).toBe(0);
     expect(st.tenant.subscriptionStatus).toBe("active");
   });
 
@@ -105,6 +113,7 @@ describe("a refused suspend does not spend the step-up grant", () => {
     st.tenant = { id: "t1", name: "BJJ", subscriptionStatus: "active", deletedAt: null };
     expect((await post()).status).toBe(200);
     expect(st.stepUpCalls).toBe(1);
+    expect(st.spends).toBe(1);
     expect(st.tenant.subscriptionStatus).toBe("suspended");
   });
 });

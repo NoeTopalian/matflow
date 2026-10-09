@@ -1,4 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { addLoginClaimSql } from "./login-claim-fake";
 
 /**
  * Lane L-C round 3 — approved policies 2 and 4 (Noe, 19 Sep 2026).
@@ -77,13 +78,13 @@ const { createMock, tokenCreateMock, sendEmailMock } = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
-    fn({
+    fn(addLoginClaimSql({
       member: { create: createMock, findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn() },
       magicLinkToken: { create: tokenCreateMock, updateMany: vi.fn() },
       tenant: { findUnique: vi.fn(async () => ({ name: "Total BJJ" })) },
       // Attribution (M1): create route records the funnel start event in-tx.
       memberStatusEvent: { create: vi.fn(async () => ({ id: "evt" })) },
-    }),
+    }, {})), // claim lock; nobody else holds these addresses (AH-01)
 }));
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));

@@ -9,6 +9,7 @@
 // month, in the club's own zone.
 
 import { vi, describe, it, expect, beforeEach, beforeAll } from "vitest";
+import { addLoginClaimSql } from "./login-claim-fake";
 
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("next/server", () => ({
@@ -55,7 +56,7 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
     const { prisma } = await import("@/lib/prisma");
-    return fn(prisma);
+    return fn(addLoginClaimSql(prisma));
   },
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));

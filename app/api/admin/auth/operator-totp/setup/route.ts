@@ -25,6 +25,10 @@
  *
  * CSRF: POST checks the origin like every other operator mutation (audit 5 Oct
  * 2026, Q1/Q6: this route had no check).
+ *
+ * 9 Oct 2026 (admin hub lane B): a per-IP limit on GET and POST before anything
+ * is examined, and an operator not named in OPERATOR_ALLOWED_IDS cannot enrol
+ * (403, audited) — so it never reaches the session minted below.
  */
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -32,20 +36,23 @@ import { generateSecret, generateURI } from "otplib";
 import QRCode from "qrcode";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import {
+  OPERATOR_REFUSED_MESSAGE,
   OP_ENROL_COOKIE,
   OP_ENROLMENT_TICKET_HEADER,
   OP_SESSION_COOKIE,
   completeOperatorLogin,
   consumeOperatorTotp,
   hashOperatorEnrolmentTicket,
+  isOperatorAllowed,
   issueOperatorSession,
   operatorCookieSetHeaderValue,
   operatorEnrolmentCookieClearHeaderValue,
+  recordOperatorRefusal,
   resolveOperatorEnrolment,
   resolveOperatorFromCookie,
 } from "@/lib/operator-auth";
@@ -60,12 +67,39 @@ const schema = z.object({
 const TICKET_REFUSED =
   "Enter the enrolment ticket from the operator-access script. A ticket lasts 30 minutes and works once; run the script again for a new one.";
 
-async function resolveCaller(ticket: unknown) {
+/**
+ * Per-IP brake on the whole route, before any cookie or ticket is examined
+ * (admin hub lane B, 9 Oct 2026): GET had no limit at all, and POST limited
+ * per operator only AFTER the ticket matched, so ticket guesses were free.
+ * DB-backed (lib/rate-limit), so it holds across instances.
+ */
+async function ipLimited(req: Request): Promise<NextResponse | null> {
+  const rl = await checkRateLimit(`admin:operator-totp-setup-ip:${getClientIp(req)}`, 20, 15 * 60 * 1000);
+  if (rl.allowed) return null;
+  return NextResponse.json(
+    { error: "Too many attempts. Try again later." },
+    { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+  );
+}
+
+/**
+ * Allowlist (admin hub lane B, 9 Oct 2026): an operator not named in
+ * OPERATOR_ALLOWED_IDS cannot enrol, so it changes nothing (no pending secret,
+ * no spent ticket) and can never reach the session minted at the end of
+ * enrolment. 403, audited.
+ */
+async function refuseIfNotAllowed(operatorId: string, req: Request): Promise<NextResponse | null> {
+  if (isOperatorAllowed(operatorId)) return null;
+  await recordOperatorRefusal(operatorId, "enrolment", req);
+  return NextResponse.json({ error: OPERATOR_REFUSED_MESSAGE }, { status: 403 });
+}
+
+async function resolveCaller(ticket: unknown, req: Request) {
   const store = await cookies();
   const enrolCookie = store.get(OP_ENROL_COOKIE)?.value;
   const enrolling = await resolveOperatorEnrolment(enrolCookie, { ticket });
   if (enrolling) return { kind: "enrolment" as const, operator: enrolling };
-  const full = await resolveOperatorFromCookie(store.get(OP_SESSION_COOKIE)?.value);
+  const full = await resolveOperatorFromCookie(store.get(OP_SESSION_COOKIE)?.value, { req });
   if (full) return { kind: "session" as const, operator: full };
   // A valid enrolment cookie with a missing, wrong, expired or spent ticket:
   // say what is missing rather than a bare 401.
@@ -74,7 +108,9 @@ async function resolveCaller(ticket: unknown) {
 }
 
 export async function GET(req: Request) {
-  const caller = await resolveCaller(req.headers.get(OP_ENROLMENT_TICKET_HEADER));
+  const limited = await ipLimited(req);
+  if (limited) return limited;
+  const caller = await resolveCaller(req.headers.get(OP_ENROLMENT_TICKET_HEADER), req);
   if (!caller) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -85,6 +121,8 @@ export async function GET(req: Request) {
     // A full session exists only for an enrolled operator.
     return NextResponse.json({ alreadyEnabled: true });
   }
+  const notAllowed = await refuseIfNotAllowed(caller.operator.id, req);
+  if (notAllowed) return notAllowed;
 
   const operator = await prisma.operator.findUnique({
     where: { id: caller.operator.id },
@@ -112,12 +150,14 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const csrf = assertSameOrigin(req);
   if (csrf) return csrf;
+  const limited = await ipLimited(req);
+  if (limited) return limited;
 
   let body: unknown;
   try { body = await req.json(); } catch { body = null; }
   const parsed = schema.safeParse(body);
 
-  const caller = await resolveCaller(parsed.success ? parsed.data.ticket : undefined);
+  const caller = await resolveCaller(parsed.success ? parsed.data.ticket : undefined, req);
   if (!caller) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -127,6 +167,8 @@ export async function POST(req: Request) {
   if (caller.kind === "ticket-refused") {
     return NextResponse.json({ error: TICKET_REFUSED, ticketRequired: true }, { status: 403 });
   }
+  const notAllowed = await refuseIfNotAllowed(caller.operator.id, req);
+  if (notAllowed) return notAllowed;
 
   const rl = await checkRateLimit(`admin:operator-totp-setup:${caller.operator.id}`, 5, 10 * 60 * 1000);
   if (!rl.allowed) {

@@ -61,6 +61,11 @@ export { constantTimeEq };
  * defect this replaces. proxy.ts mirrors this decision at the edge (it cannot
  * import this module); tests/unit/operator-auth-hardening.test.ts pins the two
  * against each other.
+ *
+ * The operator allowlist (lib/operator-auth.ts isProductionLikeProcess, 9 Oct
+ * 2026) uses the same three signals; tests/unit/operator-allowlist.test.ts pins
+ * the two to the same answer on every production shape. Kept as a copy here
+ * because suites mock lib/operator-auth wholesale.
  */
 export function sharedAdminSecretPermitted(): boolean {
   if (process.env.NODE_ENV === "production") return false;
@@ -107,12 +112,13 @@ export async function checkAdminCookie(): Promise<boolean> {
 
 /**
  * Check the operator-session cookie. True only for a valid, unexpired,
- * unrevoked MFA-verified session of an operator who still has TOTP enabled.
+ * unrevoked MFA-verified session of an operator who still has TOTP enabled
+ * and is allow-listed (OPERATOR_ALLOWED_IDS; lib/operator-auth.ts).
  */
-export async function checkOperatorSession(): Promise<boolean> {
+export async function checkOperatorSession(req?: Request): Promise<boolean> {
   const store = await cookies();
   const value = store.get(OP_SESSION_COOKIE)?.value;
-  const op = await resolveOperatorFromCookie(value);
+  const op = await resolveOperatorFromCookie(value, { req });
   return op !== null;
 }
 
@@ -129,7 +135,7 @@ export async function isAdminPageAuthed(): Promise<boolean> {
  */
 export async function isAdminAuthed(req: Request): Promise<boolean> {
   if (checkAdminHeader(req)) return true;
-  if (await checkOperatorSession()) return true;
+  if (await checkOperatorSession(req)) return true;
   return await checkAdminCookie();
 }
 

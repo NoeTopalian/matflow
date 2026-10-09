@@ -100,6 +100,11 @@ describe("next.config.ts — strict cache-control on auth surfaces", () => {
     expect(CONFIG_SRC).toContain('"/api/admin/auth/:path*"');
   });
 
+  it("the whole operator plane gets private, no-store (AH-B5, 9 Oct 2026)", () => {
+    expect(CONFIG_SRC).toContain('"/api/admin/:path*"');
+    expect(CONFIG_SRC).toContain('"/admin/:path*"');
+  });
+
   it("/api/magic-link/:path* gets the same strict cache-control", () => {
     expect(CONFIG_SRC).toContain('"/api/magic-link/:path*"');
   });

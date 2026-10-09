@@ -111,6 +111,81 @@ provisional again; confirm it with the operator attestation if it had been confi
 accepted, same user id; rollback → the reverse; replayed code refused; collisions refused; same address in another club
 allowed).
 
+## Verification (machine-enforced, 9 Oct 2026)
+
+Do not judge a change by eye or by a script that prints lines and exits 0. Two read-only scripts give the verdict as
+their exit code (0 = every check passed; 1 = any check failed, was missing, malformed or timed out; 2 = refused before
+connecting). Each prints one JSON summary on stdout and human lines on stderr, and never prints an address, credential,
+session value, password hash, authenticator secret or recovery code. In a pipeline use `set -o pipefail` (or read
+`$?` / `$LASTEXITCODE` directly): the exit code is the verdict, not the text.
+
+**1. The change itself — `scripts/readiness/owner-login-change-check.mjs`.**
+
+1. Write a private file **outside the repository** (the script refuses one inside it), for example
+   `%LOCALAPPDATA%\matflow-readiness\<club>-addresses.json`:
+   `{ "runSecret": "<at least 32 random characters>", "ownerOriginalEmail": "…", "ownerTargetEmail": "…",
+   "memberOriginalEmail": "…", "memberTargetEmail": "…" }` (the member pair only when a member's contact address is
+   changed first). Addresses are never accepted on the command line. Keep the file until verification is done, then
+   delete it; never commit it.
+2. Before any change:
+   `node scripts/readiness/owner-login-change-check.mjs baseline --tenant <slug> --owner-id <User.id> --member-id <Member.id> --expect-email-file <private file> --expect-host <Neon endpoint id> --env <env file>`
+   (`--no-member` instead of `--member-id` when no member is involved). `--expect-host` is the exact Neon endpoint id
+   (for example `ep-hidden-salad-abom7cg4` for the test branch); any other endpoint is refused — no substring guessing.
+   The baseline is written outside the repository (default `%LOCALAPPDATA%\matflow-readiness\`, refused inside the
+   repo, never overwritten without `--overwrite`) and holds ids plus HMAC fingerprints keyed with the private
+   runSecret — no addresses, hashes or secrets. Baseline refuses (exit 1, nothing written) if the owner's or member's
+   current address is not the "original" in the private file.
+3. Make the change (self-service, or the operator route(s)).
+4. After it: the same command with `verify --path self-service|operator` (and `--operator-id <Operator.id>` for the
+   operator path).
+
+What verify asserts, each a named check: same tenant, owner and member ids; owner role; the owner's login equals the
+target (keyed digest); provisional **set and freshly stamped** — both routes set `loginEmailProvisionalSince` in the
+change transaction (`app/api/account/login-email/route.ts`; operator `change` in
+`app/api/admin/customers/[id]/login-email/route.ts`), so the expectation is the same for both paths; password hash,
+authenticator flag/secret, recovery codes, `mustChangePassword` and password-history **ids** unchanged;
+`sessionVersion` exactly baseline + 1 (any other delta fails and names it); the member keeps its status, externalRef,
+credentials, imported-membership ids and contents, attendance ids and guardian links, and its address is the expected
+contact address; in THIS club exactly one User (the owner) holds the target and no Member does (the same address in
+another club is legitimate); no live reset code or `login` / `first_time_signup` link for either original address in
+this club (`waiver_open` ignored); audit rows after the baseline matched by exact action (`user.login_email.changed`
+or `admin.owner.login_email.changed`, and `admin.member.contact_email.changed` when a member is named), subject,
+actor (`operatorId` column, or none for self-service), a request id carried by exactly one row, distinct request ids
+for the two steps, old/new digests equal to the private addresses; and no audit metadata contains any of the private
+addresses (compared against the addresses themselves, not an "@" scan).
+
+Audit correlation reads `AuditLog.operatorId` / `requestId` (migration `20261009010000_audit_operator_request`)
+when the columns exist and falls back to `metadata.actingAs` / `metadata.requestId` when they do not; the summary's
+`auditPath` says which (`columns` or `metadata-fallback`).
+
+The read is one `REPEATABLE READ READ ONLY` transaction with a statement timeout, selecting only the columns each check
+needs, then rolled back. It sets `app.bypass_rls` locally for the one tenant lookup by slug, then runs every other
+query in the tenant's RLS context, so it also works as the restricted role (`--db-var RESTRICTED_DATABASE_URL`).
+Timestamps are read as UTC text (Prisma stores UTC without a zone; reading them as local time shifted rows by the
+machine's offset — caught on the test-branch proof run).
+
+**2. The release — `scripts/readiness/release-verify.mjs`.**
+
+`node scripts/readiness/release-verify.mjs --target production --sha <full sha> --base-url https://matflow.studio --tenant <slug> --env-file-for-migrations <env file> --expect-host <Neon endpoint id> --expect-migrations local --expect-operator-login --operator-session-file <private file holding the operator session cookie value>`
+
+Asserts: Vercel's production target is exactly `--sha` and READY (`vercel api`, run with `MSYS_NO_PATHCONV=1`);
+`/api/health` is 200 with `{status:"ok", db:"ok"}`; every expected migration is finished and not rolled back;
+the club lookup reports `emailDelivery: "off"`; each legacy shared-secret transport (`x-admin-secret` header,
+`matflow_admin` cookie, `POST /api/admin/auth/login`) answered with the application's own 401/403 JSON to a
+well-formed credential — a random 64-hex value on production (state the result as "transport closed"); a redirect,
+an edge wall, a same-origin refusal, a 5xx or a 429 is INCONCLUSIVE and fails; and the authenticated operator check
+returns 200 JSON (a redirect fails). Operator access is required evidence on production: without a session file the
+check fails rather than passing.
+
+On a TEST server only (`--target test`, loopback URL): `--legacy-credential-file <private>` sends the real legacy value
+(refused for production); and the delivery boundary is observed — start the server with
+`RESEND_BASE_URL=http://127.0.0.1:4599` and a dummy `RESEND_API_KEY`, run
+`node scripts/readiness/release-verify.mjs mail-interceptor --port 4599`, and pass
+`--mail-counter-url http://127.0.0.1:4599 --mail-trigger-file <private file with a non-provisional synthetic address>`:
+after a forgot-password request the interceptor count must be 0 and no `EmailLog` row may be queued/sent since.
+Run a positive control first (the same request with `EMAIL_DELIVERY=on` must raise the count to 1) to show the
+interceptor is wired; a count of 0 without that control proves nothing. Not yet run on a server (9 Oct 2026).
+
 ## When email delivery is switched on (future work — not built)
 
 Listed, not built. Enabling Resend must not, on its own, change any of the above. Before a provisional address can be

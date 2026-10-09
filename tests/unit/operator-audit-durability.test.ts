@@ -41,10 +41,13 @@ const opTx = {
   user: { findFirst: h.userFindFirst, findUnique: h.userFindUnique, update: h.userUpdate },
   passwordHistory: { create: h.historyCreate },
   auditLog: { create: h.auditCreate },
+  // AuditLog.operatorId (lane C, 9 Oct 2026) is checked against the Operator table.
+  operator: { findUnique: async ({ where }: { where: { id: string } }) => ({ id: where.id }) },
 };
 const auditTx = {
   user: { findFirst: h.auditStaffLookup },
   auditLog: { create: h.auditCreate },
+  operator: { findUnique: async ({ where }: { where: { id: string } }) => ({ id: where.id }) },
 };
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
@@ -72,7 +75,12 @@ vi.mock("@/lib/tenant-admission", () => ({
 // Lane A (6 Oct 2026): Danger Zone actions now demand a step-up grant. Passed
 // here so audit durability stays the subject; pinned in operator-step-up.test.ts.
 vi.mock("@/lib/operator-step-up", () => ({
-  requireStepUp: async () => null,
+  // Lane C (9 Oct 2026): requireStepUp returns the verified grant and the
+  // spend is consumeStepUpGrant inside the route's transaction.
+  requireStepUp: async () => ({ operatorId: "op-noe", sessionVersion: 0, action: "x", targetId: "t", tenantId: "t", versionDigest: "v", requestId: "rq-test" }),
+  consumeStepUpGrant: async () => ({ kind: "spent" }),
+  refuseStepUp: () => new Response(null, { status: 403 }),
+  StepUpRefusedError: class StepUpRefusedError extends Error {},
   stepUpTarget: (t: string, s?: string) => (s ? `${t}/${s}` : t),
 }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
@@ -187,6 +195,8 @@ describe("logAudit's contract", () => {
       requestId: "lhr1::req-1",
       outcome: "requested",
     });
+    // Lane C (9 Oct 2026): actor and correlation are COLUMNS too, not only metadata.
+    expect(row).toMatchObject({ operatorId: "op-noe", requestId: "lhr1::req-1" });
   });
 
   it("a durable row without a platform request id gets a generated one", async () => {

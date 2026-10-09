@@ -49,6 +49,21 @@ type LogArgs = {
   durable?: boolean;
   /** What happened, for durable rows: "requested", "succeeded", "authorised", … */
   outcome?: string;
+  /**
+   * The Operator.id behind the row (column AuditLog.operatorId, 9 Oct 2026).
+   * Defaults to the real actor (`actAsUserId` — passed only by operator
+   * routes — or the support-session cookie's operator); the shared-secret
+   * sentinel is never written. Checked against the Operator table before the
+   * insert: an id with no Operator row is written as null (metadata.actingAs
+   * keeps it) rather than aborting the caller's transaction.
+   */
+  operatorId?: string | null;
+  /**
+   * Correlation id (column AuditLog.requestId). Step-up routes pass the spent
+   * grant's request id (lib/operator-step-up.ts) — the idempotent-replay key.
+   * Otherwise durable rows get the platform request id or a UUID.
+   */
+  requestId?: string | null;
 };
 
 /**
@@ -129,6 +144,8 @@ type Row = {
   metadata: object | undefined;
   ipAddress: string | null;
   userAgent: string | null;
+  operatorId: string | null;
+  requestId: string | null;
 };
 
 async function buildRow(args: LogArgs, durable: boolean): Promise<Row> {
@@ -149,6 +166,10 @@ async function buildRow(args: LogArgs, durable: boolean): Promise<Row> {
       ? "shared-secret"
       : null;
 
+  const requestId = args.requestId ? args.requestId.slice(0, 200) : durable ? requestIdOf(args.req) : null;
+  const operatorCandidate = args.operatorId ?? actingAs;
+  const operatorId = operatorCandidate && operatorCandidate !== SHARED_SECRET_ACTOR ? operatorCandidate : null;
+
   const extra: Record<string, unknown> = {};
   if (actingAs) extra.actingAs = actingAs;
   if (via) extra.via = via;
@@ -165,7 +186,7 @@ async function buildRow(args: LogArgs, durable: boolean): Promise<Row> {
         ? "user"
         : "system";
     if (actingAs && args.userId) extra.effectiveUserId = args.userId;
-    extra.requestId = requestIdOf(args.req);
+    extra.requestId = requestId;
     extra.outcome = args.outcome ?? "succeeded";
   }
 
@@ -181,6 +202,8 @@ async function buildRow(args: LogArgs, durable: boolean): Promise<Row> {
     metadata: metadata ? (metadata as object) : undefined,
     ipAddress: args.req ? getClientIp(args.req) : null,
     userAgent: args.req?.headers.get("user-agent")?.slice(0, 500) ?? null,
+    operatorId,
+    requestId,
   };
 }
 
@@ -205,6 +228,14 @@ async function insert(tx: Prisma.TransactionClient, d: Row) {
       select: { id: true },
     });
     if (!staff) row = asActor(d, d.userId);
+  }
+  // Same reasoning for the operator column (9 Oct 2026): a foreign-key failure
+  // inside a caller's transaction would abort the change it records, so an id
+  // that is not (or no longer) an Operator row is written as null. The id is
+  // still in metadata.actingAs, so the attribution is not lost.
+  if (row.operatorId) {
+    const op = await tx.operator.findUnique({ where: { id: row.operatorId }, select: { id: true } });
+    if (!op) row = { ...row, operatorId: null };
   }
   return tx.auditLog.create({ data: row as Prisma.AuditLogUncheckedCreateInput });
 }
@@ -245,8 +276,9 @@ export async function logAudit(args: LogArgs): Promise<void> {
       // non-staff actor to metadata.actorId. If the foreign key still fails
       // (e.g. the user was deleted between the check and the insert), keep the
       // row rather than lose it.
-      if ((e as { code?: string }).code === "P2003" && data.userId) {
-        return writeOwnTx(asActor(data, data.userId));
+      if ((e as { code?: string }).code === "P2003" && (data.userId || data.operatorId)) {
+        const retry = data.userId ? asActor(data, data.userId) : data;
+        return writeOwnTx({ ...retry, operatorId: null });
       }
       throw e;
     })

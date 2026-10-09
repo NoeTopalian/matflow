@@ -210,6 +210,11 @@ export const AUDIT_LABELS: Record<string, string> = {
   "admin.impersonate.end": "MatFlow support ended the support session",
   "admin.operator.totp_enrolled": "A MatFlow operator set up their authenticator",
   "admin.operator.step_up": "A MatFlow operator confirmed an action with their authenticator",
+  // Security log of a refused step-up confirmation (lib/operator-step-up.ts,
+  // 9 Oct 2026): written outside any mutation, platform-scoped (no club).
+  "admin.operator.step_up_refused": "A MatFlow operator confirmation was refused",
+  // Security row for a refused operator (lib/operator-auth.ts, admin hub lane B).
+  "admin.operator.refused": "A MatFlow operator request was refused",
   "admin.operator.signed_in": "A MatFlow operator signed in to the operator console",
   // A step-up action name (lib/operator-step-up.ts), sent as `action:` in the
   // grant request by LoginAsOwnerButton, so the scan below finds it. Not an

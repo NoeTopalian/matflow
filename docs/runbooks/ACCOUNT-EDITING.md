@@ -96,6 +96,71 @@ Both sign the owner out everywhere and leave the new address provisional until a
 | Wrong login email typed by an operator | Operator | Change it back (same checks); see the login-email runbook's Rollback |
 | Wrong display name | Owner self-service, or operator Owner profile | Same route again; every change is audited with before/after |
 
+## What an email means
+
+One column can carry different meanings depending on the record. Do not read every address as the same thing.
+
+| Field | Meaning | Unique? |
+| --- | --- | --- |
+| `User.email` | Staff **login identity** (and normally the staff member's mailbox; while `loginEmailProvisionalSince` is set it is an identifier only — see `OWNER-LOGIN-EMAIL-CHANGE.md`) | One login per club across User **and** Member |
+| `Member.email` | Member **login identity**. It is also the member's **contact** address: the same column serves both, a documented limitation (there is no separate contact field) | One login per club across User **and** Member |
+| `Member.email` = `…@no-login.matflow.local` | **Synthesised** login for a child or a no-email adult. Random, nobody's mailbox, never sent to, never shared | Unique by construction |
+| `Member.email` = `deleted-<id>@deleted.invalid` | Erased (Article 17) sentinel. Not a login | Unique by member id |
+| `Member.unverifiedEmail` | The **shared family payer** address an import found (e.g. a guardian draft from an emergency contact). Contact only — **not** a login and not claimed; several family rows may share it | No |
+| `Member.externalRef` | **Imported source identity** (`teamup:<email>\|<name>`), written once by the first import, never rewritten by an edit | Per import source |
+
+**Canonical form.** Every stored login address is `trim` + lower-case (`lib/email-normalise.ts`). Plus tags and dots
+are **not** stripped (`a.b+c@x` and `ab@x` are different mailboxes at many providers), and no address is ever
+fabricated except the synthesised no-login form above.
+
+**One login per club across both tables.** auth.ts resolves the club, then looks the address up in User and in Member,
+and a User row wins — so a member on a staff address (or the reverse) is shadowed. The same address in **another club**
+is a different login and is allowed. Two separate `@@unique([tenantId, email])` indexes do not make the pair unique, so
+every writer of a login address calls `claimLoginIdentity` (one address) or `claimLoginIdentities` (an import slice) in
+`lib/login-email.ts` **inside its own transaction, before its write**. The claim takes a transaction-scoped advisory
+lock on (club, canonical address) — released at commit, safe behind the Neon pooler, available to the restricted
+`matflow_app` role — then reports the holders: `none`, one `user`/`member` (id, name, role or status, whether the
+address can sign in), or `many`. `many` is a legacy duplicate (two rows on one canonical address, written before the
+lock or before the 13 Sep lower-case backfill): it is never resolved by picking one. Club routes answer every collision
+with the same opaque 409; the operator owner-login route answers `many` with a 409 `legacy_duplicate` to review.
+
+Writers that claim: member create, member edit, member self-service edit, guardian confirm that adopts the payer
+address, staff create, staff edit, own login email, operator owner login email, members import (a row on a **staff**
+address is refused and reported; a row on an existing member's address is "already in the club" as before).
+Allow-listed with a reason (no claim needed): club creation (the club does not exist yet), application approval (same),
+DSAR erase (renames to the per-member sentinel), tenant purge (deletes), and writes that never set `email`.
+
+**Enforcement statement.** This is enforceable only while every writer participates. `tests/unit/login-identity-writers.test.ts`
+scans `app/` and `lib/` and fails the build when a User/Member write that could set `email` appears in a file that
+neither claims nor sits on its allow-list with a reason. A raw SQL write, a seed or a hand-run script is outside that
+guard. Pinned under real concurrency (two connections, both DB roles) by
+`tests/integration/login-identity-race-db.test.ts`, and per writer by `tests/integration/login-identity-claims-db.test.ts`.
+
+**When a member's login address changes** (staff edit or self-service): reset codes and sign-in/activation links for the
+old and new address in that club are retired (a waiver link is kept; another club is untouched). A staff edit of a
+member who has a password also signs that member out everywhere (`sessionVersion` +1) and the audit row records
+`unverified: true` — there is no member verification flow, so the new address is a login nobody has proved they read.
+
+**Legacy duplicates.** `node scripts/readiness/login-identity-duplicates.mjs --env <file> [--tenant <slug>]` is read-only
+and prints, per club, cross-table / user-user / member-member duplicate groups with record ids and a per-run keyed
+digest (no addresses). Exit 0 none, 3 found, 1 failed. Production needs `--production` and is the operator's call.
+Resolution is a human decision per group (correct one address through the normal routes); nothing auto-merges.
+
+## Imports after a contact change
+
+Correcting a member's address does not change who they are to an import. Their source identity is
+`Member.externalRef` (`teamup:<email>|<name>`, written once by the first members import); no edit route rewrites it,
+so a later TeamUp status refresh or attendance import with the original rows still finds the same member, and a
+refresh never writes an address (it writes standing fields only). The attendance import has one fallback: a row whose
+key matches no externalRef is matched on name **and** the member's **current** address, and only when exactly one
+member carries both. So after a correction, rows with the old address and no stored key stay **pending** for the
+owner to decide (never matched to whoever holds that address now), and rows already carrying the new address match.
+A saved person decision always wins, including "keep pending". Ambiguous rows are never resolved automatically.
+Reset codes and sign-in/activation links sent to the old (or new) address in that club are retired when the address
+changes; a waiver link is kept, and the same address in another club is untouched. Pinned by
+`tests/integration/contact-email-change-imports-db.test.ts`, `tests/integration/token-scoping-db.test.ts` and
+`tests/unit/import-matching-after-contact-change.test.ts`.
+
 ## Known gaps (not built here)
 
 - Closed 8 Oct 2026 (lane S-staff): the owner's staff edit (`PATCH /api/staff/[id]`) now applies the club-wide
@@ -106,10 +171,9 @@ Both sign the owner out everywhere and leave the new address provisional until a
   address equal to the stored one is not a change, so a name-only save signs nobody out; the staff edit route is gated
   by `requireApiOwner`, so an owner session still owing its code, on a temporary password or not yet enrolled is
   refused inside the route as well as by `proxy.ts`.
-- **No database constraint backs the staff/member address check.** `@@unique([tenantId, email])` covers User rows
-  only; the "not a member of this club" half is an application check inside the transaction. Two requests at the same
-  instant (an owner edit and a member being added with the same address) could both pass. Same limit on the
-  self-service and operator login-email changes. Not fixed: needs a cross-table constraint or serialisable isolation.
+- Closed 9 Oct 2026 (admin hub AH-01): the staff/member address check is no longer a bare read. Every writer takes the
+  claim lock described in "What an email means" below, so two requests at the same instant (an owner edit and a member
+  being added with the same address) cannot both pass. Still no database constraint: see the enforcement statement.
 - Recovery-code regeneration is in Settings → Account (owner) only; managers, coaches and admins see their
   authenticator status on My account but cannot regenerate codes from the UI.
 - Regenerating recovery codes still asks for the code through a browser prompt, not the Dialog primitive.
