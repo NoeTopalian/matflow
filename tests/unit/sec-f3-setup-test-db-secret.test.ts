@@ -49,8 +49,8 @@ describe("tests/setup-test-db.ts signing secret (SF-102)", () => {
   });
 
   it.each([
-    ["AUTH_SECRET", { AUTH_SECRET: "configured-auth-secret-value-0001" }],
-    ["NEXTAUTH_SECRET", { NEXTAUTH_SECRET: "configured-nextauth-secret-value-01" }],
+    ["AUTH_SECRET", { AUTH_SECRET: "fixture-" + "a".repeat(24) }],
+    ["NEXTAUTH_SECRET", { NEXTAUTH_SECRET: "fixture-" + "n".repeat(24) }],
   ])("a configured %s is left exactly as it is, and nothing is printed", async (_k, env) => {
     const lines = await loadSetup({ TEST_DATABASE_URL: TEST_URL, ...env });
     expect(process.env.AUTH_SECRET).toBe((env as Record<string, string>).AUTH_SECRET);
