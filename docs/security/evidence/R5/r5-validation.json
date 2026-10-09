@@ -1,0 +1,470 @@
+[
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "extra property",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "wrong type (number for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "wrong type (object for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "wrong type (bool for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "null",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "array",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "string",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "number",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "1 MB string body",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "1 MB object (valid + big extra)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "1 MB value in first field",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "proto key",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/verify",
+  "label": "empty body",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "extra property",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "wrong type (number for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "wrong type (object for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "wrong type (bool for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "null",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "array",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "string",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "number",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "1 MB string body",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "1 MB object (valid + big extra)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "1 MB value in first field",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "proto key",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/verify",
+  "label": "empty body",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "extra property",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "wrong type (number for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "wrong type (object for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "wrong type (bool for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "null",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "array",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "string",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "number",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "1 MB string body",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "1 MB object (valid + big extra)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "1 MB value in first field",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "proto key",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/auth/totp/setup",
+  "label": "empty body",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "extra property",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "wrong type (number for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "wrong type (object for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "wrong type (bool for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "null",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "array",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "string",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "number",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "1 MB string body",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "1 MB object (valid + big extra)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "1 MB value in first field",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "proto key",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/member/totp/setup",
+  "label": "empty body",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "extra property",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "wrong type (number for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "wrong type (object for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "wrong type (bool for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "null",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "array",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "string",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "number",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "1 MB string body",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "1 MB object (valid + big extra)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "1 MB value in first field",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "proto key",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/members/[id]/hold",
+  "label": "empty body",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "extra property",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "wrong type (number for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "wrong type (object for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "wrong type (bool for first field)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "null",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "array",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "string",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "number",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "1 MB string body",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "1 MB object (valid + big extra)",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "1 MB value in first field",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "proto key",
+  "status": 400,
+  "effect": false
+ },
+ {
+  "route": "/api/admin/import/uploads",
+  "label": "empty body",
+  "status": 400,
+  "effect": false
+ }
+]

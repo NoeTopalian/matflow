@@ -1,0 +1,136 @@
+v24.21.0
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/R5/wt
+
+22:10:25 [vite] [33m[2m(ssr)[22m[39m [33mwarning: invalid import "../../app/api/admin/customers/[id]/${c.file}/route". A file extension must be included in the static part of the import. For example: import(`./foo/${bar}.js`).[39m
+  Plugin: [35mvite:dynamic-import-vars[39m
+  File: [36mC:/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/R5/wt/tests/unit/operator-step-up.test.ts[39m
+ ❯ tests/unit/sec-e-secret-scan.test.ts (41 tests | 1 failed) 2228ms
+     × contains no candidate secret beyond the documented fixtures 2203ms
+(node:104404) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ❯ tests/unit/readiness-scripts-release-verify.test.ts (59 tests | 2 failed) 397ms
+     × passes when every assertion holds, and prints neither the session nor any credential 43ms
+     × a large valid JSON activity page (~60 KB) is parsed whole — operator.access PASSES (AH-G3) 5ms
+ ❯ tests/unit/journeys-manifest.test.ts (4 tests | 1 failed) 84ms
+     × claims every app/api route file 47ms
+(node:105372) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:83400) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/journeys-manifest.test.ts > journey manifest > claims every app/api route file
+AssertionError: routes no journey names: csp-report: expected [ 'csp-report' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "csp-report",
++ ]
+
+ ❯ tests/unit/journeys-manifest.test.ts:31:75
+     29|     const claimed = new Set(apiPaths());
+     30|     const unclaimed = files.filter((f) => !claimed.has(f)).sort();
+     31|     expect(unclaimed, `routes no journey names: ${unclaimed.join(", ")…
+       |                                                                           ^
+     32|   });
+     33|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/unit/readiness-scripts-release-verify.test.ts > release-verify: production target > passes when every assertion holds, and prints neither the session nor any credential
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/unit/readiness-scripts-release-verify.test.ts:136:46
+    134| describe("release-verify: production target", () => {
+    135|   it("passes when every assertion holds, and prints neither the sessio…
+    136|     expect(await s.main(prodArgs(), deps())).toBe(0);
+       |                                              ^
+    137|     const sum = summary();
+    138|     expect(sum.result).toBe("PASS");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/unit/readiness-scripts-release-verify.test.ts > release-verify: production target > a large valid JSON activity page (~60 KB) is parsed whole — operator.access PASSES (AH-G3)
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/unit/readiness-scripts-release-verify.test.ts:205:46
+    203|       i.headers?.cookie?.startsWith("matflow_op_session") ? jsonRes(20…
+    204|     expect(JSON.stringify({ rows }).length).toBeGreaterThan(8192 * 6);
+    205|     expect(await s.main(prodArgs(), deps())).toBe(0);
+       |                                              ^
+    206|     expect(statusOf("operator.access")).toBe("PASS");
+    207|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/unit/sec-e-secret-scan.test.ts > repository tree (tracked files at HEAD) > contains no candidate secret beyond the documented fixtures
+AssertionError: expected [ …(3) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "password-env-assignment docs/security/evidence/R3/e3-probes.mjs.txt:83 fp=b708c00c8fe7",
++   "postgres-url-with-password docs/security/evidence/R3/tls-inert-proof.mjs.txt:39 fp=5c4e5b746c9f",
++   "postgres-url-with-password docs/security/evidence/R3/tls-inert-proof.mjs.txt:46 fp=7ac9ab974891",
++ ]
+
+ ❯ tests/unit/sec-e-secret-scan.test.ts:149:21
+    147|       }
+    148|     }
+    149|     expect(unknown).toEqual([]);
+       |                     ^
+    150|   });
+    151| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  3 failed | 452 passed (455)
+      Tests  4 failed | 6264 passed (6268)
+   Start at  22:08:51
+   Duration  408.30s (transform 18.15s, setup 3.05s, import 87.04s, tests 142.97s, environment 82.96s)
+
+exit=1

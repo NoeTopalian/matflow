@@ -1,0 +1,26 @@
+{
+ "role": "owner",
+ "host": "ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech",
+ "sequential": {
+  "verdicts": [
+   true,
+   true,
+   true,
+   true,
+   true,
+   false
+  ],
+  "rows": 5
+ },
+ "burst10": {
+  "allowed": 10,
+  "rows": 10,
+  "backendsForRole": 6
+ },
+ "burst20": {
+  "allowed": 10,
+  "rows": 10,
+  "backendsForRole": 7
+ },
+ "deleted": 25
+}

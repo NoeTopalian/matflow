@@ -1,0 +1,170 @@
+// Review R5: CSP pass over a LOCAL production build on the TEST branch (127.0.0.1 only).
+// Usage: node csp-probe.mjs <base> <private-r5.json> <out.json> <label>
+// For every page: exact CSP / CSP-Report-Only headers (nonce redacted to its length), whether the
+// nonce differs between two fetches, whether EVERY server-rendered <script> in the raw HTML carries
+// the header nonce, x-request-id presence (proxy ran), then a headless-Chromium load recording
+// securitypolicyviolation events + console CSP messages. Injection controls on /login and on the
+// valid-token kiosk page. Tokens and credentials are read from the private file and never printed;
+// page addresses with tokens are written as <kiosk-token> etc.
+import fs from "node:fs";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const { chromium } = require("C:/Users/NoeTo/Desktop/matflow/node_modules/@playwright/test");
+
+const [BASE, STATE_FILE, OUT, LABEL = "run"] = process.argv.slice(2);
+const S = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+const redactPath = (p) => p.replace(S.kiosk, "<kiosk-token>").replace(S.display, "<display-token>").replace(S.waiver, "<waiver-token>").replace(S.slug, "<slug>");
+const results = { label: LABEL, base: BASE, at: new Date().toISOString(), pages: [], controls: {}, policies: {} };
+
+const INIT = () => {
+  window.__cspViolations = [];
+  document.addEventListener("securitypolicyviolation", (e) => {
+    window.__cspViolations.push({ directive: e.effectiveDirective, blocked: String(e.blockedURI).slice(0, 20), disposition: e.disposition });
+  });
+};
+
+function normalisePolicy(p) {
+  return p ? p.replace(/'nonce-[^']+'/g, "'nonce-<redacted>'") : null;
+}
+function scriptAudit(html, nonce) {
+  const tags = [...html.matchAll(/<script\b[^>]*>/gi)].map((m) => m[0]);
+  const withNonce = tags.filter((t) => nonce && t.includes(`nonce="${nonce}"`)).length;
+  const otherNonce = tags.filter((t) => /nonce="/.test(t) && !(nonce && t.includes(`nonce="${nonce}"`))).length;
+  const inlineHandlers = (html.match(/\son[a-z]+\s*=\s*["']/gi) || []).length;
+  return { scripts: tags.length, withHeaderNonce: withNonce, withOtherNonce: otherNonce, without: tags.length - withNonce - otherNonce, inlineEventHandlerAttrs: inlineHandlers };
+}
+
+async function headerProbe(request, path, who) {
+  const rows = [];
+  for (let i = 0; i < 2; i++) {
+    const r = await request.get(BASE + path, { maxRedirects: 0, failOnStatusCode: false });
+    const h = r.headers();
+    const ro = h["content-security-policy-report-only"] ?? null;
+    const enf = h["content-security-policy"] ?? null;
+    const nonce = (ro ?? enf ?? "").match(/'nonce-([^']+)'/)?.[1] ?? null;
+    const body = r.status() === 200 ? await r.text() : "";
+    rows.push({ status: r.status(), location: h["location"] ? redactPath(new URL(h["location"], BASE).pathname) : null, ro, enf, nonce, requestId: !!h["x-request-id"], reporting: h["reporting-endpoints"] ?? null, audit: body ? scriptAudit(body, nonce) : null });
+  }
+  const [a, b] = rows;
+  const row = {
+    who, path: redactPath(path), status: a.status, location: a.location, proxyRan: a.requestId,
+    reportOnly: normalisePolicy(a.ro), enforcing: normalisePolicy(a.enf),
+    enforcingHeaderCount: a.enf ? a.enf.split(/,(?=\s*default-src)/).length : 0,
+    nonceLen: a.nonce ? a.nonce.length : 0, nonceDiffers: !!(a.nonce && b.nonce && a.nonce !== b.nonce),
+    reportingEndpoints: a.reporting, scripts: a.audit,
+  };
+  for (const p of [row.reportOnly, row.enforcing]) if (p) results.policies[p] = (results.policies[p] ?? 0) + 1;
+  return row;
+}
+
+async function browserProbe(page, path) {
+  const consoleCsp = [];
+  const onConsole = (m) => { if (/Content Security Policy|Content-Security-Policy/i.test(m.text())) consoleCsp.push(m.text().slice(0, 140).replace(S.kiosk, "<k>").replace(S.display, "<d>").replace(S.waiver, "<w>")); };
+  page.on("console", onConsole);
+  let err = null;
+  try { await page.goto(BASE + path, { waitUntil: "networkidle", timeout: 90000 }); } catch (e) { err = String(e.message).slice(0, 100); }
+  await page.waitForTimeout(1200);
+  const dom = await page.evaluate(() => ({ violations: window.__cspViolations ?? [], title: document.title.slice(0, 50), h1: (document.querySelector("h1")?.textContent ?? "").slice(0, 50) })).catch(() => ({ violations: [], title: "eval failed", h1: "" }));
+  page.off("console", onConsole);
+  return { finalPath: redactPath(new URL(page.url()).pathname + new URL(page.url()).search), error: err, violations: dom.violations.length, violationKinds: [...new Set(dom.violations.map((v) => `${v.directive}|${v.blocked}|${v.disposition}`))], consoleCsp: consoleCsp.length, consoleSample: consoleCsp.slice(0, 2), title: dom.title, h1: dom.h1 };
+}
+
+async function signIn(page, email) {
+  await page.goto(`${BASE}/login?club=${S.slug}`, { waitUntil: "networkidle", timeout: 90000 });
+  await page.waitForSelector("input[type='email']", { timeout: 60000 });
+  await page.fill("input[type='email']", email);
+  await page.fill("input[type='password']", S.pw);
+  await page.click("button[type='submit']");
+  await page.waitForURL((u) => !/^\/login\/?$/.test(u.pathname), { timeout: 90000 }).catch(() => {});
+  await page.waitForTimeout(2000);
+  return new URL(page.url()).pathname;
+}
+
+async function injection(ctx, path, tag) {
+  const p = await ctx.newPage();
+  const marker = `r5inj=${tag}`;
+  const target = BASE + path + (path.includes("?") ? "&" : "?") + marker;
+  await p.route((u) => u.href === target, async (route) => {
+    const resp = await route.fetch();
+    const body = (await resp.text()).replace(/<\/body>/, `<script>window.__r5s=true</script><img src="data:," onerror="window.__r5h=true"></body>`);
+    await route.fulfill({ response: resp, body });
+  });
+  await p.goto(target, { waitUntil: "networkidle", timeout: 90000 }).catch(() => {});
+  await p.waitForTimeout(800);
+  const r = await p.evaluate(() => ({ scriptRan: window.__r5s === true, handlerRan: window.__r5h === true, violations: (window.__cspViolations ?? []).map((v) => `${v.directive}|${v.blocked}|${v.disposition}`) })).catch((e) => ({ error: String(e).slice(0, 80) }));
+  await p.close();
+  return r;
+}
+
+const ANON = ["/", "/login", `/login?club=${S.slug}`, "/apply", "/legal/privacy", "/admin/login",
+  `/kiosk/${S.kiosk}`, `/leaderboard/${S.display}`, `/waiver/open?token=${S.waiver}`, "/kiosk/r5-not-a-valid-token-xx", "/leaderboard/r5-not-a-valid-token-xx"];
+const STAFF = ["/dashboard", "/dashboard/members", "/dashboard/settings", "/dashboard/payments", "/dashboard/checkin"];
+const MEMBER = ["/member/home", "/member/schedule", "/member/shop", "/member/billing", "/member/profile"];
+
+const browser = await chromium.launch();
+try {
+  // Anonymous
+  const anon = await browser.newContext();
+  await anon.addInitScript(INIT);
+  const ap = await anon.newPage();
+  for (const path of ANON) {
+    const row = await headerProbe(anon.request, path, "anonymous");
+    Object.assign(row, { browser: await browserProbe(ap, path) });
+    results.pages.push(row);
+    console.log(`${row.status} ${row.path} proxy=${row.proxyRan} ro=${!!row.reportOnly} enf=${row.enforcingHeaderCount} nonceDiff=${row.nonceDiffers} scripts=${JSON.stringify(row.scripts)} viol=${row.browser.violations} h1=${JSON.stringify(row.browser.h1)}`);
+  }
+  // Report sink: proxy must not run (no x-request-id); GET 405.
+  const sink = await anon.request.get(BASE + "/api/csp-report", { failOnStatusCode: false });
+  results.controls.reportSinkGet = { status: sink.status(), proxyRan: !!sink.headers()["x-request-id"] };
+  results.controls.injectLogin = await injection(anon, "/login", "login");
+  results.controls.injectKiosk = await injection(anon, `/kiosk/${S.kiosk}`, "kiosk");
+  console.log("controls", JSON.stringify(results.controls));
+  await anon.close();
+
+  // Staff (owner)
+  const staff = await browser.newContext();
+  await staff.addInitScript(INIT);
+  const sp = await staff.newPage();
+  results.controls.ownerLanding = await signIn(sp, S.ownerEmail);
+  for (const path of STAFF) {
+    const row = await headerProbe(staff.request, path, "owner");
+    Object.assign(row, { browser: await browserProbe(sp, path) });
+    results.pages.push(row);
+    console.log(`${row.status} ${row.path} ro=${!!row.reportOnly} enf=${row.enforcingHeaderCount} nonceDiff=${row.nonceDiffers} scripts=${JSON.stringify(row.scripts)} viol=${row.browser.violations}`);
+  }
+  // Signed-in owner still reaches the kiosk page with no change (token door, not session door)
+  const ownerKiosk = await headerProbe(staff.request, `/kiosk/${S.kiosk}`, "owner-on-kiosk");
+  results.controls.ownerOnKiosk = { status: ownerKiosk.status, nonceLen: ownerKiosk.nonceLen };
+  await staff.close();
+
+  // Member
+  const mem = await browser.newContext();
+  await mem.addInitScript(INIT);
+  const mp = await mem.newPage();
+  results.controls.memberLanding = await signIn(mp, S.memberEmail);
+  for (const path of MEMBER) {
+    const row = await headerProbe(mem.request, path, "member");
+    Object.assign(row, { browser: await browserProbe(mp, path) });
+    results.pages.push(row);
+    console.log(`${row.status} ${row.path} ro=${!!row.reportOnly} enf=${row.enforcingHeaderCount} nonceDiff=${row.nonceDiffers} scripts=${JSON.stringify(row.scripts)} viol=${row.browser.violations}`);
+  }
+  await mem.close();
+} finally {
+  await browser.close();
+}
+const t = results.pages.filter((r) => r.status === 200);
+results.summary = {
+  pages: results.pages.length,
+  pages200: t.length,
+  withNoncePolicy: t.filter((r) => r.nonceLen > 0).length,
+  nonceDiffersEverywhere: t.every((r) => r.nonceDiffers),
+  scriptsWithoutHeaderNonce: t.reduce((a, r) => a + (r.scripts?.without ?? 0) + (r.scripts?.withOtherNonce ?? 0), 0),
+  totalScripts: t.reduce((a, r) => a + (r.scripts?.scripts ?? 0), 0),
+  inlineHandlerAttrs: t.reduce((a, r) => a + (r.scripts?.inlineEventHandlerAttrs ?? 0), 0),
+  unsafeInlineInNoncePolicyScriptSrc: Object.keys(results.policies).filter((p) => p.includes("nonce-") && /script-src[^;]*'unsafe-inline'/.test(p)).length,
+  violations: results.pages.reduce((a, r) => a + (r.browser?.violations ?? 0), 0),
+  consoleCsp: results.pages.reduce((a, r) => a + (r.browser?.consoleCsp ?? 0), 0),
+  distinctPolicies: Object.keys(results.policies).length,
+};
+console.log("SUMMARY", JSON.stringify(results.summary));
+fs.writeFileSync(OUT, JSON.stringify(results, null, 2));

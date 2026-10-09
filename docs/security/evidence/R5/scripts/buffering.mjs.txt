@@ -1,0 +1,27 @@
+// Review R5: does the server answer an oversize declared body BEFORE the body arrives?
+// Sends headers with a large Content-Length and only 1 KB of body, and waits 8 s.
+// /api/csp-report is outside the proxy matcher; /api/upload is inside it (Next buffers proxy bodies).
+import net from "node:net";
+const PORT = Number(process.argv[2]);
+function probe(path, declared, extraHeaders = "") {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const s = net.connect(PORT, "127.0.0.1");
+    let data = "";
+    const timer = setTimeout(() => { s.destroy(); resolve({ path, declared, answeredWithoutBody: false, status: null, ms: Date.now() - t0 }); }, 8000);
+    s.on("data", (d) => {
+      data += d.toString("latin1");
+      const m = data.match(/HTTP\/1\.1 (\d{3})/);
+      if (m) { clearTimeout(timer); s.destroy(); resolve({ path, declared, answeredWithoutBody: true, status: m[1], ms: Date.now() - t0 }); }
+    });
+    s.on("error", () => {});
+    s.write(`POST ${path} HTTP/1.1\r\nHost: 127.0.0.1:${PORT}\r\nOrigin: http://127.0.0.1:${PORT}\r\nContent-Type: application/octet-stream\r\nContent-Length: ${declared}\r\n${extraHeaders}\r\n`);
+    s.write(Buffer.alloc(1024, 0x41));
+  });
+}
+const out = [];
+out.push(await probe("/api/csp-report", 20 * 1024));
+out.push(await probe("/api/upload", 10 * 1024 * 1024));
+out.push(await probe("/api/upload", 5 * 1024 * 1024));
+out.push(await probe("/api/members", 5 * 1024 * 1024));
+console.log(JSON.stringify(out));
