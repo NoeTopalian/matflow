@@ -121,7 +121,7 @@ describe.skipIf(!HAS_DB)("login identity claims on real rows", () => {
       if (out.kind !== "purged" && out.kind !== "gone-during-purge") console.error(`[login-identity-claims cleanup] ${id}: ${out.kind}`);
     }
     await withRlsBypass((tx) => tx.auditLog.deleteMany({ where: { action: "admin.tenant.hard_deleted", entityId: { in: created } } }));
-  }, 120_000);
+  }, 600_000); // the tenant purge path runs 2–3 minutes through the pooler (review D2)
 
   // ── The helper ────────────────────────────────────────────────────────────
   it("free address → none; occupied → the one holder, with its id, name and capability", async () => {

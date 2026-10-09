@@ -54,6 +54,7 @@ import {
 } from "@/lib/operator-step-up";
 import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
 import { assertSameOrigin } from "@/lib/csrf";
+import { emailDigest } from "@/lib/login-email";
 
 export const runtime = "nodejs";
 
@@ -217,7 +218,7 @@ export async function POST(req: Request) {
       entityId: target.id,
       metadata: {
         reason,
-        targetEmail: target.email,
+        targetEmailSha256: emailDigest(target.email),
         targetRole: target.role,
         operatorEmail: operator.operatorEmail,
       },

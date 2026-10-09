@@ -14,6 +14,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { isAdminAuthed } from "@/lib/admin-auth";
 import { assertSameOrigin } from "@/lib/csrf";
+import { emailDigest } from "@/lib/login-email";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
@@ -147,9 +148,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         metadata: {
           reason: parsed.data.reason,
           previousOwnerId: currentOwner.id,
-          previousOwnerEmail: currentOwner.email,
+          previousOwnerEmailSha256: emailDigest(currentOwner.email),
           newOwnerId: target.id,
-          newOwnerEmail: target.email,
+          newOwnerEmailSha256: emailDigest(target.email),
           previousTargetRole: target.role,
           result: { previousOwnerId: currentOwner.id, newOwnerId: target.id },
         },

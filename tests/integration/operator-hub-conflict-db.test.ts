@@ -121,7 +121,7 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
     );
   const owner = () =>
     withRlsBypass((tx) =>
-      tx.user.findUniqueOrThrow({ where: { id: ids.owner }, select: { email: true, passwordHash: true, sessionVersion: true, loginEmailProvisionalSince: true, role: true } }),
+      tx.user.findUniqueOrThrow({ where: { id: ids.owner }, select: { email: true, passwordHash: true, sessionVersion: true, loginEmailProvisionalSince: true, role: true, totpSecret: true, totpRecoveryCodes: true } }),
     );
   const rows = (action: string) =>
     withRlsBypass((tx) => tx.auditLog.findMany({ where: { tenantId: ids.a, action }, select: { requestId: true, operatorId: true, entityId: true, metadata: true } }));
@@ -281,6 +281,9 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
     const after = await owner();
     expect(after).toMatchObject({ email: TARGET, role: "owner", passwordHash: "owner-hash-unchanged", sessionVersion: before.sessionVersion + 1 });
     expect(after.loginEmailProvisionalSince).not.toBeNull();
+    // Authenticator and recovery codes byte-identical on the database (review D4).
+    expect(after.totpSecret).toBe(before.totpSecret);
+    expect(after.totpRecoveryCodes).toEqual(before.totpRecoveryCodes);
     expect((await member(ids.pat)).email).toBe(PAT_NEW);
     expect((await check(TARGET)).body).toMatchObject({ free: true, sameAsOwner: true });
   });

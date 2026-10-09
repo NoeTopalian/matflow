@@ -218,7 +218,7 @@ describe.skipIf(!HAS_DB)("login identity: concurrent claims across User and Memb
       if (out.kind !== "purged" && out.kind !== "gone-during-purge") console.error(`[login-identity-race cleanup] ${id}: ${out.kind}`);
     }
     await withRlsBypass((tx) => tx.auditLog.deleteMany({ where: { action: "admin.tenant.hard_deleted", entityId: { in: created } } }));
-  }, 120_000);
+  }, 600_000); // the tenant purge path runs 2–3 minutes through the pooler (review D2)
 
   it("member create (holding) vs staff email change to the same address: one holder, the staff change is refused", async () => {
     const c = await mkClub("mc-se");

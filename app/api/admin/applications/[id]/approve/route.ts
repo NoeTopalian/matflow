@@ -22,6 +22,7 @@ import { getBaseUrl } from "@/lib/env-url";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
+import { emailDigest } from "@/lib/login-email";
 
 // Audit iter-1-operator-admin A6I1-S-5: rate-limit destructive admin ops.
 const RL_MAX = 20;
@@ -173,7 +174,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     entityId: id,
     metadata: {
       tenantSlug: slug,
-      ownerEmail: application.email,
+      ownerEmailSha256: emailDigest(application.email),
       ownerUserId,
       operatorEmail: operator.operatorEmail,
       activationLinkCreated: token !== null,

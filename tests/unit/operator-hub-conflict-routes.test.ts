@@ -447,6 +447,34 @@ describe("preflight: answered with nothing written and the grant unspent", () =>
     unspent();
   });
 
+  // Review D1 (9 Oct 2026): records whose address the system manages are never
+  // given a contact address here, and such an address is never a target.
+  it.each([
+    ["an erased record (GDPR sentinel)", "deleted-abc123@deleted.invalid"],
+    ["a no-login child placeholder", "kid-m-pat@no-login.matflow.local"],
+  ])("%s: 409 managed, nothing written, grant unspent", async (_l, managed) => {
+    h.members.get("m-pat")!.email = managed;
+    const v = (await versionOf("t-a", "m-pat"))!;
+    const g = await grantFor();
+    const res = await call({ newEmail: NEW, reason: REASON, version: v }, { grant: g });
+    expect(res.status).toBe(409);
+    expect((await body(res)).result).toBe("managed");
+    expect(h.members.get("m-pat")!.email).toBe(managed);
+    expect(outcomes()).toHaveLength(0);
+    unspent();
+  });
+
+  it.each([
+    ["an erasure sentinel", "deleted-zzz@deleted.invalid"],
+    ["a no-login placeholder", "someone@no-login.matflow.local"],
+  ])("%s as the NEW address: 400, nothing written, grant unspent", async (_l, target) => {
+    const g = await grantFor("m-pat", target);
+    const res = await call({ newEmail: target, reason: REASON, version }, { grant: g });
+    expect(res.status).toBe(400);
+    expect(h.members.get("m-pat")!.email).toBe(OLD);
+    unspent();
+  });
+
   it("an address someone else in the club holds: 409 naming the holder to the OPERATOR", async () => {
     const res = await call({ newEmail: "coach@club.example", reason: REASON, version }, { grant });
     expect(res.status).toBe(409);

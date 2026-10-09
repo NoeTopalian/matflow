@@ -65,8 +65,19 @@ import {
   verifyStepUpGrantToken,
 } from "@/lib/operator-step-up";
 import { sha256Hex } from "@/lib/operator-auth";
+import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 
 export const runtime = "nodejs";
+
+// Records whose address is managed by the system never get a contact address
+// here (review D1, 9 Oct 2026): a no-login placeholder (a child's synthesised
+// login — giving it a real address makes the row reachable by address, which
+// the contact-only rule forbids) and a GDPR erasure sentinel (a live address
+// on an erased record undoes the erasure). The same shapes are refused as a
+// target. The conflict workflow never needs either.
+const ERASED_SENTINEL = /^deleted-.*@deleted\.invalid$/i;
+const managedAddress = (email: string) => isSynthesisedEmail(email) || ERASED_SENTINEL.test(email);
+class ManagedRecord extends Error {}
 
 const bodySchema = z
   .object({
@@ -115,6 +126,9 @@ async function appliedOutcome(req: Request, operatorId: string, tenantId: string
 
 const TAKEN_MESSAGE = "That address is already held by someone else in this club, so nothing was changed. Check it again.";
 const STALE_MESSAGE = "This member's record changed since you checked it, so nothing was changed. Check the address again.";
+const MANAGED_RECORD_MESSAGE =
+  "This record's address is managed by MatFlow (a no-login placeholder or an erased record) and cannot be given a contact address. Nothing was changed.";
+const MANAGED_TARGET_MESSAGE = "That address is a system placeholder and cannot be used as a contact address.";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string; memberId: string }> }) {
   const csrfViolation = assertSameOrigin(req);
@@ -146,6 +160,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!tenant) return { kind: "no_tenant" as const };
     const member = await tx.member.findFirst({ where: { id: memberId, tenantId }, select: { id: true, email: true } });
     if (!member) return { kind: "no_member" as const };
+    if (managedAddress(member.email)) return { kind: "managed_record" as const };
+    if (managedAddress(newEmail)) return { kind: "managed_target" as const };
     if (normaliseEmail(member.email) === newEmail) return { kind: "same" as const };
     const claim = await claimLoginIdentity(tx, { tenantId, email: newEmail, exclude: { memberId } });
     if (claim.kind !== "none") return { kind: "taken" as const, claim };
@@ -161,6 +177,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const applied = await appliedOutcome(req, ctx.operatorId, tenantId, target);
     if (applied) return json({ ok: true, alreadyApplied: true, ...applied });
   }
+  if (pre.kind === "managed_record") return json({ error: MANAGED_RECORD_MESSAGE, result: "managed" }, 409);
+  if (pre.kind === "managed_target") return json({ error: MANAGED_TARGET_MESSAGE, result: "managed" }, 400);
   if (pre.kind === "same") return json({ error: "That is already this member's address." }, 400);
   if (pre.kind === "taken") return json({ error: TAKEN_MESSAGE, result: "taken", holder: holderOf(pre.claim) }, 409);
   if (pre.kind === "stale") return json({ error: STALE_MESSAGE, result: "stale" }, 409);
@@ -186,6 +204,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         select: { id: true, tenantId: true, email: true, passwordHash: true, externalRef: true, sessionVersion: true },
       });
       if (!member) throw new StaleMember();
+      // Decided again on the row as it is now (an erasure between preflight
+      // and here must not be undone by this write).
+      if (managedAddress(member.email) || managedAddress(newEmail)) throw new ManagedRecord();
       if ((await stepUpVersionDigestIn(tx, "member.contact_email", target)) !== version) throw new StaleMember();
 
       // 3. Claim the address (lock held to commit) — refuse if anyone holds it.
@@ -245,6 +266,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return res;
     }
     if (err instanceof StaleMember) return json({ error: STALE_MESSAGE, result: "stale" }, 409);
+    if (err instanceof ManagedRecord) return json({ error: MANAGED_RECORD_MESSAGE, result: "managed" }, 409);
     if (err instanceof LoginIdentityTaken) return json({ error: TAKEN_MESSAGE, result: "taken", holder: holderOf(err.claim) }, 409);
     if ((err as { code?: string })?.code === "P2002") return json({ error: TAKEN_MESSAGE, result: "taken" }, 409);
     console.error("[member contact-email] change or audit write failed; nothing changed", err);
