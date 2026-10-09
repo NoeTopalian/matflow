@@ -1,0 +1,28 @@
+// Lane C3 mutant runner: apply one string mutation, run one test file, restore, prove git diff clean.
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import { execSync, spawnSync } from "node:child_process";
+const REPO = "C:/Users/NoeTo/Desktop/matflow";
+const set = process.argv[2];
+const sets = JSON.parse(fs.readFileSync(new URL("./mutants.json", import.meta.url), "utf8"));
+const results = [];
+for (const m of sets[set]) {
+  const p = `${REPO}/${m.file}`;
+  const orig = fs.readFileSync(p, "utf8");
+  if (!orig.includes(m.from)) { results.push({ id: m.id, error: "pattern not found" }); continue; }
+  fs.writeFileSync(p, orig.replace(m.from, m.to));
+  let out = "";
+  try {
+    const cmd = m.runner ? `bash ${m.runner} ${m.test}` : `npx vitest run ${m.test}`;
+    const r = spawnSync("bash", ["-c", cmd], { cwd: REPO, encoding: "utf8", env: { ...process.env, C3_OUT: fileURLToPath(new URL(`./mut-${m.id}.json`, import.meta.url)) }, maxBuffer: 64 * 1024 * 1024 });
+    out = (r.stdout || "") + (r.stderr || "");
+    const tl = out.match(/Tests\s+(.*)/);
+    results.push({ id: m.id, file: m.file, test: m.test, runner: m.runner ?? "vitest", exit: r.status, tests: tl ? tl[1].replace(/\x1b\[[0-9;]*m/g, "").trim() : null, failed: [...out.matchAll(/(?:×|FAIL)\s+([^\n]{0,160})/g)].map((x) => x[1].replace(/\x1b\[[0-9;]*m/g, "")).slice(0, 8) });
+  } finally {
+    fs.writeFileSync(p, orig);
+  }
+  const diff = execSync(`git diff --stat -- ${m.file}`, { cwd: REPO, encoding: "utf8" });
+  results[results.length - 1].restoredDiffAgainstStart = m.expectDirty ? "(file had lane edits; content restored byte-for-byte)" : (diff.trim() || "clean");
+  results[results.length - 1].restoredBytesEqual = fs.readFileSync(p, "utf8") === orig;
+}
+console.log(JSON.stringify(results, null, 1));

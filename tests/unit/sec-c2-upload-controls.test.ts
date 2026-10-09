@@ -40,7 +40,24 @@ vi.mock("@/lib/prisma", () => {
     },
     deleteMany: async () => ({ count: 0 }),
   };
-  return { prisma: { rateLimitHit } };
+  // Lane C3: the allowed path is now one transaction — advisory lock, then a conditional insert whose
+  // interpolations are (bucket, windowMs, id, bucket, max). This fake gives it the same semantics so the
+  // shared-table path (not the memory fallback) is what these cells exercise.
+  const $executeRaw = (_s: TemplateStringsArray, ..._v: unknown[]) => ({ op: "lock" as const });
+  const $queryRaw = (_s: TemplateStringsArray, ...v: unknown[]) => ({ op: "insert" as const, bucket: v[0] as string, windowMs: Number(v[1]), max: Number(v[4]) });
+  const $transaction = async (ops: Array<{ op: string; bucket?: string; windowMs?: number; max?: number }>) => {
+    if (h.dbDown) throw new Error("connect ECONNREFUSED (secC2 fake)");
+    return ops.map((o) => {
+      if (o.op !== "insert") return 1;
+      const since = Date.now() - o.windowMs!;
+      const rows = h.hits.filter((x) => x.bucket === o.bucket && x.hitAt.getTime() >= since);
+      const ok = rows.length < o.max!;
+      if (ok) h.hits.push({ bucket: o.bucket!, hitAt: new Date() });
+      const oldest = rows.reduce<number | null>((a, b) => (a === null || b.hitAt.getTime() < a ? b.hitAt.getTime() : a), null);
+      return [{ count: rows.length, inserted: ok ? 1 : 0, oldestAgeMs: oldest === null ? null : Date.now() - oldest }];
+    });
+  };
+  return { prisma: { rateLimitHit, $executeRaw, $queryRaw, $transaction } };
 });
 
 const tx = {

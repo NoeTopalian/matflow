@@ -1,0 +1,58 @@
+[
+ {
+  "id": "C3-U-no-lock",
+  "file": "lib/rate-limit.ts",
+  "test": "tests/unit/sec-c3-rate-limit-atomic.test.ts",
+  "runner": "vitest",
+  "exit": 1,
+  "tests": "1 failed | 3 passed (4)",
+  "failed": [
+   "an allowed hit is one transaction: [advisory lock on this bucket, conditional insert] — and no bare create 11ms",
+   "tests/unit/sec-c3-rate-limit-atomic.test.ts > checkRateLimit: lock, then conditional insert, in one transaction > an allowed hit is one transaction: [advisory l"
+  ],
+  "restoredDiffAgainstStart": "(file had lane edits; content restored byte-for-byte)",
+  "restoredBytesEqual": true
+ },
+ {
+  "id": "C3-U-session-lock",
+  "file": "lib/rate-limit.ts",
+  "test": "tests/unit/sec-c3-rate-limit-atomic.test.ts",
+  "runner": "vitest",
+  "exit": 1,
+  "tests": "1 failed | 3 passed (4)",
+  "failed": [
+   "an allowed hit is one transaction: [advisory lock on this bucket, conditional insert] — and no bare create 13ms",
+   "tests/unit/sec-c3-rate-limit-atomic.test.ts > checkRateLimit: lock, then conditional insert, in one transaction > an allowed hit is one transaction: [advisory l"
+  ],
+  "restoredDiffAgainstStart": "(file had lane edits; content restored byte-for-byte)",
+  "restoredBytesEqual": true
+ },
+ {
+  "id": "C3-U-off-by-one",
+  "file": "lib/rate-limit.ts",
+  "test": "tests/unit/sec-c3-rate-limit-atomic.test.ts",
+  "runner": "vitest",
+  "exit": 1,
+  "tests": "1 failed | 3 passed (4)",
+  "failed": [
+   "an allowed hit is one transaction: [advisory lock on this bucket, conditional insert] — and no bare create 10ms",
+   "tests/unit/sec-c3-rate-limit-atomic.test.ts > checkRateLimit: lock, then conditional insert, in one transaction > an allowed hit is one transaction: [advisory l"
+  ],
+  "restoredDiffAgainstStart": "(file had lane edits; content restored byte-for-byte)",
+  "restoredBytesEqual": true
+ },
+ {
+  "id": "C3-U-no-precheck",
+  "file": "lib/rate-limit.ts",
+  "test": "tests/unit/sec-c3-rate-limit-atomic.test.ts",
+  "runner": "vitest",
+  "exit": 1,
+  "tests": "1 failed | 3 passed (4)",
+  "failed": [
+   "a bucket already full is refused by the unlocked aggregate without opening a transaction 4ms",
+   "tests/unit/sec-c3-rate-limit-atomic.test.ts > checkRateLimit: lock, then conditional insert, in one transaction > a bucket already full is refused by the unlock"
+  ],
+  "restoredDiffAgainstStart": "(file had lane edits; content restored byte-for-byte)",
+  "restoredBytesEqual": true
+ }
+]

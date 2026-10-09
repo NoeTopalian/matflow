@@ -1,0 +1,132 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+(node:104980) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+(Use `node --trace-warnings ...` to show where the warning was created)
+stderr | tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)
+[rate-limit] bucket=secc3-rl-owner-mv1h3ycklpix-burst20-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)
+[rate-limit] bucket=secc3-rl-owner-mv1h3ycklpix-burst20-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)
+[rate-limit] bucket=secc3-rl-owner-mv1h3ycklpix-burst20-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)
+[rate-limit] bucket=secc3-rl-owner-mv1h3ycklpix-burst20-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)
+[rate-limit] bucket=secc3-rl-owner-mv1h3ycklpix-burst20-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)
+[rate-limit] bucket=secc3-rl-owner-mv1h3ycklpix-burst20-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)
+[rate-limit] bucket=secc3-rl-owner-mv1h3ycklpix-burst20-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)
+[rate-limit] bucket=secc3-rl-owner-mv1h3ycklpix-burst20-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)
+[rate-limit] bucket=secc3-rl-owner-mv1h3ycklpix-burst20-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)
+[rate-limit] bucket=secc3-rl-owner-mv1h3ycklpix-burst20-r1 max=5 windowMs=60000 retryAfter=60s
+
+ ❯ tests/integration/sec-c3-rate-limit-atomic-db.test.ts (6 tests | 4 failed) 4912ms
+     × burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1) 609ms
+     × burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 2) 192ms
+     × burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 3) 195ms
+     × two buckets bursting at once do not borrow from each other (10 + 10 parallel, max 5 each) 250ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)
+AssertionError: expected { allowed: 10, rows: 10 } to deeply equal { allowed: 5, rows: 5 }
+
+- Expected
++ Received
+
+  {
+-   "allowed": 5,
+-   "rows": 5,
++   "allowed": 10,
++   "rows": 10,
+  }
+
+ ❯ tests/integration/sec-c3-rate-limit-atomic-db.test.ts:68:36
+     66|       const refusedRetry = res.filter((r) => !r.allowed).map((r) => r.…
+     67|       out[`burst20_r${round}`] = { allowed, rows: n, refusedRetryMin: …
+     68|       expect({ allowed, rows: n }).toEqual({ allowed: 5, rows: 5 });
+       |                                    ^
+     69|       for (const s of refusedRetry) {
+     70|         expect(s).toBeGreaterThanOrEqual(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 2)
+ FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 3)
+AssertionError: expected { allowed: 20, rows: 20 } to deeply equal { allowed: 5, rows: 5 }
+
+- Expected
++ Received
+
+  {
+-   "allowed": 5,
+-   "rows": 5,
++   "allowed": 20,
++   "rows": 20,
+  }
+
+ ❯ tests/integration/sec-c3-rate-limit-atomic-db.test.ts:68:36
+     66|       const refusedRetry = res.filter((r) => !r.allowed).map((r) => r.…
+     67|       out[`burst20_r${round}`] = { allowed, rows: n, refusedRetryMin: …
+     68|       expect({ allowed, rows: n }).toEqual({ allowed: 5, rows: 5 });
+       |                                    ^
+     69|       for (const s of refusedRetry) {
+     70|         expect(s).toBeGreaterThanOrEqual(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > two buckets bursting at once do not borrow from each other (10 + 10 parallel, max 5 each)
+AssertionError: expected { okA: 10, okB: 10, nA: 10, nB: 10 } to deeply equal { okA: 5, okB: 5, nA: 5, nB: 5 }
+
+- Expected
++ Received
+
+  {
+-   "nA": 5,
+-   "nB": 5,
+-   "okA": 5,
+-   "okB": 5,
++   "nA": 10,
++   "nB": 10,
++   "okA": 10,
++   "okB": 10,
+  }
+
+ ❯ tests/integration/sec-c3-rate-limit-atomic-db.test.ts:86:34
+     84|     rowsWritten += nA + nB;
+     85|     out.pair = { okA, okB, rowsA: nA, rowsB: nB };
+     86|     expect({ okA, okB, nA, nB }).toEqual({ okA: 5, okB: 5, nA: 5, nB: …
+       |                                  ^
+     87|   });
+     88|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 2 passed (6)
+   Start at  22:24:26
+   Duration  5.36s (transform 80ms, setup 46ms, import 207ms, tests 4.91s, environment 0ms)
+

@@ -1,0 +1,46 @@
+// SCRATCH (lane C3, deleted after the run): latency of the old count-then-insert path vs the locked path on TEST.
+import { describe, it, afterAll } from "vitest";
+import { writeFileSync } from "node:fs";
+import { prisma } from "@/lib/prisma";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+const ON = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
+const P = `secc3-cost-${Date.now().toString(36)}`;
+const out: Record<string, unknown> = { role: process.env.RLS_ENFORCED === "1" ? "restricted" : "owner" };
+
+async function oldPath(bucket: string, max: number, windowMs: number) {
+  const cutoff = new Date(Date.now() - windowMs);
+  const agg = await prisma.rateLimitHit.groupBy({ by: ["bucket"], where: { bucket, hitAt: { gte: cutoff } }, _count: { _all: true }, _min: { hitAt: true } });
+  if ((agg[0]?._count?._all ?? 0) >= max) return false;
+  await prisma.rateLimitHit.create({ data: { bucket } });
+  return true;
+}
+const med = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return Math.round(s[Math.floor(s.length / 2)] * 10) / 10; };
+async function time(n: number, f: (i: number) => Promise<unknown>) {
+  const t: number[] = [];
+  for (let i = 0; i < n; i++) { const s = performance.now(); await f(i); t.push(performance.now() - s); }
+  return { median: med(t), min: Math.round(Math.min(...t) * 10) / 10 };
+}
+
+(ON ? describe : describe.skip)("cost", () => {
+  afterAll(async () => {
+    const d = await prisma.rateLimitHit.deleteMany({ where: { bucket: { startsWith: P } } });
+    out.deleted = d.count;
+    out.left = await prisma.rateLimitHit.count({ where: { bucket: { startsWith: P } } });
+    writeFileSync(process.env.C3_OUT ?? "cost.json", JSON.stringify(out, null, 1));
+  });
+  it("measures", async () => {
+    await Promise.all(Array.from({ length: 5 }, () => prisma.$queryRaw`SELECT 1`));
+    const N = 20;
+    out.rttSelect1 = await time(N, () => prisma.$queryRaw`SELECT 1`);
+    out.oldAllowed = await time(N, (i) => oldPath(`${P}-old-a-${i}`, 1000, 60_000));
+    out.newAllowed = await time(N, (i) => checkRateLimit(`${P}-new-a-${i}`, 1000, 60_000));
+    await oldPath(`${P}-old-d`, 1, 60_000);
+    out.oldDenied = await time(N, () => oldPath(`${P}-old-d`, 1, 60_000));
+    await checkRateLimit(`${P}-new-d`, 1, 60_000);
+    const w = console.warn; console.warn = () => {};
+    out.newDenied = await time(N, () => checkRateLimit(`${P}-new-d`, 1, 60_000));
+    console.warn = w;
+    out.samplesEach = N;
+  }, 120_000);
+});

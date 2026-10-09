@@ -13,8 +13,22 @@
  * Rollout is report-only first. proxy.ts sends this policy as
  * `Content-Security-Policy-Report-Only` unless MATFLOW_CSP_ENFORCE is "1" or
  * "true", in which case it is sent as the enforcing `Content-Security-Policy`.
- * The static next.config.ts policy keeps enforcing in both modes, so turning
- * the flag on can only make the effective policy stricter.
+ *
+ * What each mode actually enforces (corrected by lane C3 after review R5;
+ * the earlier "can only make the effective policy stricter" was wrong):
+ *  - Report-only: documents carry BOTH headers — the static next.config.ts
+ *    policy (with `'unsafe-inline'`) enforcing, and this nonce policy as
+ *    Report-Only. Nothing changes for the browser except reports.
+ *  - Enforce: on documents this nonce policy REPLACES the static one — the
+ *    response carries one `Content-Security-Policy`, this one. The static
+ *    policy still governs everything that is not a document (/api responses
+ *    and paths outside the proxy matcher, e.g. /api/health). The effective
+ *    document policy is therefore this
+ *    policy alone, and it is not a superset of the static one: it drops
+ *    `'unsafe-inline'` (stricter), but under `'strict-dynamic'` a CSP3 browser
+ *    IGNORES the script host allow-list and `'self'`, so a script created or
+ *    loaded by an already-trusted (nonced) script runs whatever its origin
+ *    (looser for that path — the createElement residual).
  *
  * Next reads the nonce from the REQUEST header (`content-security-policy`, or
  * `content-security-policy-report-only` when the former is absent —

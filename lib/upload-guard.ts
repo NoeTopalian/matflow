@@ -15,10 +15,19 @@
  * in-memory Map that is PER INSTANCE: with N warm instances the effective
  * ceiling during that fault is N × the limit. The limits below are sized so
  * that even N = 20 instances × limit stays cheap (an image decode is bounded at
- * 50 MP by sharp's limitInputPixels; ~1 s CPU worst case). The DB path is also
- * count-then-insert, not atomic: a burst of k concurrent requests arriving at
- * count = max − 1 can all pass, so the overshoot is bounded by concurrency,
- * not by the limit. Neither is claimed to be a distributed exact limit.
+ * 50 MP by sharp's limitInputPixels; ~1 s CPU worst case). While the database
+ * answers, the shared limit is exact under concurrency (lane C3, 9 Oct 2026:
+ * per-bucket advisory lock + conditional insert; a burst of 20 against max 5
+ * lets exactly 5 through under both roles). The per-instance fallback is still
+ * N × the limit, so no distributed exact limit is claimed during a fault.
+ *
+ * WHAT "BEFORE THE BODY" MEANS. Inside the handler, a refused caller's body is
+ * never parsed, decoded or stored. It is still RECEIVED: behind proxy.ts,
+ * Next 16 drains the whole request body (buffering up to
+ * experimental.proxyClientMaxBodySize, 10 MB by default) before the handler
+ * runs, so a 413/401/429 reaches the client only after the upload completes.
+ * And a body with no Content-Length (chunked) passes the declared-size check,
+ * so its caller's rate-limit budget is spent before the parsed size refuses it.
  *
  * Two buckets per request: per user (one account cannot burn the club's
  * allowance alone) and per tenant (many accounts in one club cannot exceed the
@@ -62,7 +71,8 @@ export async function checkUploadRateLimit(
 }
 
 /**
- * The declared body length, judged BEFORE the body is read. Returns a 413 when
+ * The declared body length, judged before the handler parses the body (it has
+ * already been received — see the header comment). Returns a 413 when
  * Content-Length exceeds `maxBytes` plus a small multipart-overhead allowance,
  * else null. The declared length is only ever used to refuse: the parsed
  * file's own size stays the authority on what is accepted, so a lying header

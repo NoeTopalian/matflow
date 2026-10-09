@@ -1,0 +1,36 @@
+[
+ {
+  "id": "R5-M-cap32",
+  "file": "lib/csp-report.ts",
+  "test": "tests/unit/sec-c2-csp-report.test.ts",
+  "runner": "vitest",
+  "exit": 1,
+  "tests": "3 failed | 8 passed (11)",
+  "failed": [
+   "an ABSOLUTE 20 KB report is refused 413 with an honest Content-Length and when chunked 4ms",
+   "a declared Content-Length over the bound is refused WITHOUT pulling a byte of the body 1ms",
+   "…and without touching any body accessor of the request 1ms",
+   "tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > absolute bound and refusal before the body is read (lane C3) > an ABSOLUTE 20 KB report is refused 413 ",
+   "tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > absolute bound and refusal before the body is read (lane C3) > a declared Content-Length over the bound",
+   "tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > absolute bound and refusal before the body is read (lane C3) > …and without touching any body accessor "
+  ],
+  "restoredDiffAgainstStart": "clean",
+  "restoredBytesEqual": true
+ },
+ {
+  "id": "R5-M-no-content-length-precheck",
+  "file": "app/api/csp-report/route.ts",
+  "test": "tests/unit/sec-c2-csp-report.test.ts",
+  "runner": "vitest",
+  "exit": 1,
+  "tests": "2 failed | 9 passed (11)",
+  "failed": [
+   "a declared Content-Length over the bound is refused WITHOUT pulling a byte of the body 6ms",
+   "…and without touching any body accessor of the request 2ms",
+   "tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > absolute bound and refusal before the body is read (lane C3) > a declared Content-Length over the bound",
+   "tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > absolute bound and refusal before the body is read (lane C3) > …and without touching any body accessor "
+  ],
+  "restoredDiffAgainstStart": "clean",
+  "restoredBytesEqual": true
+ }
+]

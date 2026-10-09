@@ -1,0 +1,26 @@
+{
+ "role": "owner",
+ "rttSelect1": {
+  "median": 57.1,
+  "min": 41
+ },
+ "oldAllowed": {
+  "median": 137.5,
+  "min": 103.3
+ },
+ "newAllowed": {
+  "median": 577.5,
+  "min": 292.4
+ },
+ "oldDenied": {
+  "median": 64,
+  "min": 54.7
+ },
+ "newDenied": {
+  "median": 63.2,
+  "min": 46.8
+ },
+ "samplesEach": 20,
+ "deleted": 42,
+ "left": 0
+}

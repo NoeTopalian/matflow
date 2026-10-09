@@ -1,0 +1,60 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-c3-rate-limit-atomic.test.ts (4 tests | 2 failed) 15ms
+     × an allowed hit is one transaction: [advisory lock on this bucket, conditional insert] — and no bare create 10ms
+     × the conditional insert declining (count reached under the lock) is a refusal with a bounded Retry-After 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-c3-rate-limit-atomic.test.ts > checkRateLimit: lock, then conditional insert, in one transaction > an allowed hit is one transaction: [advisory lock on this bucket, conditional insert] — and no bare create
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ tests/unit/sec-c3-rate-limit-atomic.test.ts:62:28
+     60|   it("an allowed hit is one transaction: [advisory lock on this bucket…
+     61|     expect(await checkRateLimit("secc3-unit-a", 5, 60_000)).toEqual({ …
+     62|     expect(h.transactions).toHaveLength(1);
+       |                            ^
+     63|     const [lock, insert] = h.transactions[0];
+     64|     expect(h.transactions[0]).toHaveLength(2);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/unit/sec-c3-rate-limit-atomic.test.ts > checkRateLimit: lock, then conditional insert, in one transaction > the conditional insert declining (count reached under the lock) is a refusal with a bounded Retry-After
+AssertionError: expected { Object (allowed, retryAfterSeconds) } to deeply equal { allowed: false, …(1) }
+
+- Expected
++ Received
+
+  {
+-   "allowed": false,
+-   "retryAfterSeconds": 15,
++   "allowed": true,
++   "retryAfterSeconds": 0,
+  }
+
+ ❯ tests/unit/sec-c3-rate-limit-atomic.test.ts:79:61
+     77|   it("the conditional insert declining (count reached under the lock) …
+     78|     h.insertResult = [{ count: 5, inserted: 0, oldestAgeMs: 45_500 }];
+     79|     expect(await checkRateLimit("secc3-unit-b", 5, 60_000)).toEqual({ …
+       |                                                             ^
+     80|     h.insertResult = [{ count: 5, inserted: 0, oldestAgeMs: 59_999.9 }…
+     81|     expect((await checkRateLimit("secc3-unit-b", 5, 60_000)).retryAfte…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed (4)
+   Start at  22:46:25
+   Duration  499ms (transform 98ms, setup 53ms, import 135ms, tests 15ms, environment 0ms)
+

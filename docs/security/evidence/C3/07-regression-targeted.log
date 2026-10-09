@@ -1,0 +1,49 @@
+v24.21.0
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-c-static-guards.test.ts (13 tests | 1 failed) 562ms
+     × the reviewed raw-SQL call sites are exactly these (values interpolated as bind parameters only) 71ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-c-static-guards.test.ts > SEC-033 raw SQL is parameterised > the reviewed raw-SQL call sites are exactly these (values interpolated as bind parameters only)
+AssertionError: expected [ …(11) ] to deeply equal [ 'app/api/health/route.ts', …(6) ]
+
+- Expected
++ Received
+
+@@ -1,8 +1,12 @@
+  [
++   "app/api/admin/dsar/erase/route.ts",
+    "app/api/health/route.ts",
++   "app/api/member/children/[id]/route.ts",
+    "app/api/member/class-subscriptions/[classId]/route.ts",
++   "app/api/members/[id]/route.ts",
++   "app/api/staff/[id]/route.ts",
+    "lib/attendance-import.ts",
+    "lib/checkin.ts",
+    "lib/login-email.ts",
+    "lib/prisma-tenant.ts",
+    "lib/rate-limit.ts",
+
+ ❯ tests/unit/sec-c-static-guards.test.ts:46:69
+     44|   });
+     45|   it("the reviewed raw-SQL call sites are exactly these (values interp…
+     46|     expect(hits(/\$(queryRaw|executeRaw)\s*(<[^`]*>)?\s*`/).sort()).to…
+       |                                                                     ^
+     47|       "app/api/health/route.ts",
+     48|       "app/api/member/class-subscriptions/[classId]/route.ts",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 20 passed (21)
+      Tests  1 failed | 1084 passed (1085)
+   Start at  22:35:59
+   Duration  30.26s (transform 5.64s, setup 194ms, import 4.42s, tests 20.98s, environment 2ms)
+
+exit 1

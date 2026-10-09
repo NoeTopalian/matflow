@@ -1,0 +1,34 @@
+Lane C3, item 3 — experimental.proxyClientMaxBodySize (Next 16.3.8, node_modules/next/package.json)
+Decision: next.config.ts NOT changed.
+
+Sources read (installed package, 9 Oct 2026):
+1. node_modules/next/dist/docs/01-app/03-api-reference/05-config/01-next-config-js/proxyClientMaxBodySize.md
+   "When proxy is used, Next.js automatically clones the request body and buffers it in memory ... By default, the
+   maximum body size is 10MB." Behaviour when exceeded: "buffer only the first N bytes", "a warning will be logged",
+   "The request will continue processing normally, but only the partial body will be available", "The request will
+   not fail or return an error to the client."
+2. node_modules/next/dist/server/lib/router-utils/resolve-routes.js:124-125 — every non-upgrade request gets
+   getCloneableBody(req, config.experimental.proxyClientMaxBodySize).
+3. node_modules/next/dist/server/body-streams.js getCloneableBody — past the limit it stops copying (push(null) to both
+   clones) but keeps the 'data' listener attached; finalize() awaits endPromise = the ORIGINAL request's 'end' event.
+4. node_modules/next/dist/server/next-server.js:1205-1221 — the node proxy runs with cloneBodyStream(), and in a
+   finally block `await requestData.body.finalize()` — i.e. before the route handler (or the proxy's own response)
+   proceeds, the whole body has been received, whatever the limit.
+
+Consequences:
+- Lowering the limit to 5 MB would NOT make 413/401/429 arrive earlier: finalize() still waits for the end of the
+  body. It would only cap the memory held per request (the cloned buffer).
+- It WOULD silently truncate legitimate bodies between 5 and 10 MB: the handler sees the first 5 MB and the request
+  "continues processing normally". Routes that accept 10 MB today: app/api/admin/import/upload (MAX_BYTES 10 MB),
+  app/api/onboarding/csv-handoff (10 MB), app/api/initiatives/[id]/attachments (10 MB). A truncated multipart body
+  fails to parse (400) at best; a truncated text body is the failure mode to avoid. /api/upload is 4 MB and the
+  chunked import uses 1 MB chunks (lib/import-upload.ts CHUNK_SIZE), so those would fit.
+- On Vercel the platform request-body cap (~4.5 MB, per the repo's own comments in lib/import-upload.ts and
+  lib/upload-guard.ts — NOT re-verified against Vercel's documentation in this lane) is below both values, so in
+  production the buffered amount is bounded by the platform, not by this option.
+
+Therefore: leave the default. The honest claim is "not decoded or authorised before the refusal", not "never read"
+(docs/security/evidence/C2/REPORT.md §4 restated; lib/upload-guard.ts header comment corrected).
+Follow-up options (not in C3's file scope): exclude the multipart upload routes from the proxy matcher so their
+handlers can refuse on Content-Length before the body is drained (proxy.ts is lead/A-owned), or lower the limit only
+after the three 10 MB routes are reduced to <= the new limit.

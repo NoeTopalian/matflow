@@ -1,0 +1,81 @@
+{
+ "report": [
+  {
+   "id": "R5-M-cap32",
+   "file": "lib/csp-report.ts",
+   "from": "export const CSP_REPORT_MAX_BYTES = 16 * 1024;",
+   "to": "export const CSP_REPORT_MAX_BYTES = 32 * 1024;",
+   "test": "tests/unit/sec-c2-csp-report.test.ts"
+  },
+  {
+   "id": "R5-M-no-content-length-precheck",
+   "file": "app/api/csp-report/route.ts",
+   "from": "if (Number.isFinite(declared) && declared > CSP_REPORT_MAX_BYTES) {",
+   "to": "if (false && Number.isFinite(declared) && declared > CSP_REPORT_MAX_BYTES) {",
+   "test": "tests/unit/sec-c2-csp-report.test.ts"
+  }
+ ],
+ "rl": [
+  {
+   "id": "C3-M-no-lock-owner",
+   "file": "lib/rate-limit.ts",
+   "from": "prisma.$executeRaw`SELECT pg_advisory_xact_lock(${RATE_LIMIT_LOCK_NS}::int4, hashtext(${bucket}::text))`",
+   "to": "prisma.$executeRaw`SELECT 1`",
+   "test": "tests/integration/sec-c3-rate-limit-atomic-db.test.ts",
+   "runner": "/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/att/run-engine.sh",
+   "expectDirty": true
+  },
+  {
+   "id": "C3-M-no-lock-restricted",
+   "file": "lib/rate-limit.ts",
+   "from": "prisma.$executeRaw`SELECT pg_advisory_xact_lock(${RATE_LIMIT_LOCK_NS}::int4, hashtext(${bucket}::text))`",
+   "to": "prisma.$executeRaw`SELECT 1`",
+   "test": "tests/integration/sec-c3-rate-limit-atomic-db.test.ts",
+   "runner": "/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/q78/run-restricted.sh",
+   "expectDirty": true
+  },
+  {
+   "id": "C3-M-off-by-one-owner",
+   "file": "lib/rate-limit.ts",
+   "from": "WHERE win.n < ${max}::int",
+   "to": "WHERE win.n <= ${max}::int",
+   "test": "tests/integration/sec-c3-rate-limit-atomic-db.test.ts",
+   "runner": "/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/att/run-engine.sh",
+   "expectDirty": true
+  }
+ ],
+ "unit": [
+  {
+   "id": "C3-U-no-lock",
+   "file": "lib/rate-limit.ts",
+   "from": "prisma.$executeRaw`SELECT pg_advisory_xact_lock(${RATE_LIMIT_LOCK_NS}::int4, hashtext(${bucket}::text))`",
+   "to": "prisma.$executeRaw`SELECT 1`",
+   "test": "tests/unit/sec-c3-rate-limit-atomic.test.ts",
+   "expectDirty": true
+  },
+  {
+   "id": "C3-U-session-lock",
+   "file": "lib/rate-limit.ts",
+   "from": "pg_advisory_xact_lock(${RATE",
+   "to": "pg_advisory_lock(${RATE",
+   "test": "tests/unit/sec-c3-rate-limit-atomic.test.ts",
+   "expectDirty": true
+  },
+  {
+   "id": "C3-U-off-by-one",
+   "file": "lib/rate-limit.ts",
+   "from": "WHERE win.n < ${max}::int",
+   "to": "WHERE win.n <= ${max}::int",
+   "test": "tests/unit/sec-c3-rate-limit-atomic.test.ts",
+   "expectDirty": true
+  },
+  {
+   "id": "C3-U-no-precheck",
+   "file": "lib/rate-limit.ts",
+   "from": "if ((pre?._count?._all ?? 0) >= max) {",
+   "to": "if (false) {",
+   "test": "tests/unit/sec-c3-rate-limit-atomic.test.ts",
+   "expectDirty": true
+  }
+ ]
+}
