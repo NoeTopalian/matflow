@@ -177,6 +177,18 @@ const WAITLIST = new Set(["waitlist", "waitlisted", "wait list", "waiting list"]
 const YES = new Set(["yes", "y", "true", "1", "attended", "checked in"]);
 const NO = new Set(["no", "n", "false", "0"]);
 
+/**
+ * A name folded for the "is this name unique in the club?" test (AH-D1 retest,
+ * reviewer R, 9 Oct 2026): compatibility decomposition, combining marks
+ * (category Mn, which includes U+0300 to U+036F) and format characters (category Cf: zero-width space/joiner,
+ * BOM, bidi marks) removed, whitespace collapsed, case folded. "B<e-acute>a Lane",
+ * "Bea<U+200B>Lane" and "BEA  lane" all fold to "bea lane". Used only to find
+ * AMBIGUITY (a collision means "not unique"); never to bind anyone.
+ */
+export function foldName(s: string): string {
+  return s.normalize("NFKD").replace(/\p{Mn}/gu, "").replace(/\p{Cf}/gu, "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 export function norm(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -582,6 +594,14 @@ export function planAttendanceImport(
     decisions: PlanDecisions;
     /** True when a member's email is a synthesised no-login address (lib/synthesise-kid-email): never matched on. */
     isSynthesisedEmail: (email: string) => boolean;
+    /**
+     * Members (ids) that once held this address in this club and moved off it,
+     * from the address-change audit trail; an empty array = released by a staff
+     * login. Undefined = never released. A released address never identifies
+     * anyone by the name+email fallback (AH-D1 retest: a rename or an accent can
+     * hide the original from the same-name test, the release cannot).
+     */
+    releasedBy?: (email: string) => string[] | undefined;
     /** Classes a commit already created for `new:` class keys (classKey -> class id), so every step resolves them alike. */
     createdClasses?: Record<string, string>;
   },
@@ -599,7 +619,7 @@ export function planAttendanceImport(
   for (const m of opts.members) {
     if (m.externalRef) push(byRef, m.externalRef.trim().toLowerCase(), m);
     const email = synthetic(m.email) ? "" : m.email.trim().toLowerCase();
-    push(byName, norm(m.name), m);
+    push(byName, foldName(m.name), m);
     if (email) { push(byEmail, email, m); push(byNameEmail, `${norm(m.name)}|${email}`, m); }
   }
   const classById = new Map(opts.classes.map((c) => [c.id, c]));
@@ -636,8 +656,9 @@ export function planAttendanceImport(
         // shared address, a parent and child with one name) is ambiguity, so the
         // row stays pending and both are offered as candidates (AH-D1 / SEC-053).
         const ne = byNameEmail.get(`${norm(r.personName)}|${r.email}`) ?? [];
-        const sameName = byName.get(norm(r.personName)) ?? [];
-        if (ne.length === 1 && sameName.length === 1) out = { memberId: ne[0].id, method: "name_and_email", decidedPending: false };
+        const sameName = byName.get(foldName(r.personName)) ?? [];
+        const released = opts.releasedBy?.(r.email);
+        if (ne.length === 1 && sameName.length === 1 && !released) out = { memberId: ne[0].id, method: "name_and_email", decidedPending: false };
       }
     }
     resolved.set(r.personKey, out);
@@ -788,8 +809,10 @@ export function planAttendanceImport(
     p.sharedEmail = !!p.email && (emailHolders.get(p.email) ?? 0) > 1;
     if (p.memberId) continue;
     const cands = new Map<string, "same_name" | "same_email">();
-    for (const m of byName.get(norm(p.name)) ?? []) cands.set(m.id, "same_name");
+    for (const m of byName.get(foldName(p.name)) ?? []) cands.set(m.id, "same_name");
     if (p.email) for (const m of byEmail.get(p.email) ?? []) if (!cands.has(m.id)) cands.set(m.id, "same_email");
+    // Whoever released the address is offered too: they held it before.
+    if (p.email) for (const id of opts.releasedBy?.(p.email) ?? []) if (memberById.has(id) && !cands.has(id)) cands.set(id, "same_email");
     p.candidates = [...cands.entries()].slice(0, 5).map(([memberId, reason]) => ({ memberId, reason }));
   }
   for (const o of offerings.values()) {

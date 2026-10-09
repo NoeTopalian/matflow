@@ -33,9 +33,16 @@ export function csvCell(v: string | number | null | undefined): string {
   // (2) Formula-injection guard — leading =, +, -, @, tab, CR or LF, and the
   // full-width ＝ ＋ － ＠ some locales evaluate (OWASP CSV Injection, checked
   // 9 Oct 2026; security lane D SEC-052 — LF and full-width were missing).
-  if (/^[=+\-@\t\r\n＝＋－＠]/.test(s)) s = `'${s}`;
-  // (1) RFC-4180 quoting.
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  // Reviewer R retest (9 Oct 2026): the trigger is looked for AFTER any leading
+  // space-separator (\p{Zs}: space, NBSP, ideographic space) or format character
+  // (\p{Cf}: BOM, zero-width space/joiner), which a spreadsheet may trim before
+  // evaluating; the small equals sign ﹦ (U+FE66) and a pipe (DDE `|cmd`) are
+  // triggers too. The apostrophe goes in front of the whole value, so nothing
+  // of the value is lost.
+  if (/^[\p{Zs}\p{Cf}]*[=+\-@|\t\r\n＝＋－＠﹦]/u.test(s)) s = `'${s}`;
+  // (1) RFC-4180 quoting — plus ";", so a semicolon-locale reader cannot
+  // split the cell and evaluate its tail.
+  if (/[",;\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
 

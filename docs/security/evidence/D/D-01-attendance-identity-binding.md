@@ -64,3 +64,19 @@ or slow import).
 Commands: `bash <scratchpad>/att/run-engine.sh tests/integration/sec-d-attendance-misbinding-db.test.ts`, the same with
 `q78/run-restricted.sh`, and `npx vitest run tests/unit/sec-d-attendance-ambiguity.test.ts`. Raw logs are in `<scratchpad>/security/D/logs/`
 (`red-misbinding-*.log`, `green-misbinding-*.log`, `final-*.log`, `mutant-*.log`, `regress-*.log`).
+
+## Retest after reviewer R (REPORT-D.md), HEAD 035e27e + lane D working tree
+R refuted "never commits": accent ("Béa"), rename ("Beatrice") and zero-width variants of the original still committed
+history to the different "Bea Lane" holding the released address. Red (real owner PATCH writes the audit row; real
+attendance route): `sec-d-attendance-misbinding-db` 3 failed / 11 passed on both roles ("attendance committed to the
+member who took the released address: expected 1 to be 0"). Planner red against HEAD: 5 failed / 13 passed.
+Fix: (1) `foldName` (NFKD, strip Mn and Cf, collapse whitespace, lower-case) for the uniqueness test and candidates; a
+fold collision is "not unique". (2) `loadClubInputs` reads every OLD-address digest in this club's audit rows
+(`oldEmailSha256`, and `oldEmailDigest` from the operator contact-email route) and `buildPlan` passes
+`releasedBy(email)`. A released address never matches by the fallback, and whoever released it is offered as a
+candidate. The digest set is included in `planHashOf`. Green: misbinding 14/14 on each role (role asserted:
+neondb_owner / matflow_app). attendance-import-engine 19/19 and contact-email-change-imports-db 7/7, each on both roles.
+Mutants: fold reverted → 3 failed; release check removed → 2 failed. Both restored and byte-compared.
+Residual: a release is recognised only through the audit trail. An address change made outside the audited writers
+(raw SQL, a script) or before digests existed, or a rotated AUTH_SECRET (digest key), is not seen. Rows are then
+caught only by the fold test.

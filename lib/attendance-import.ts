@@ -32,6 +32,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { emailDigest } from "@/lib/login-email";
 import { usableTimezone } from "@/lib/class-time";
 import {
   attendanceControls,
@@ -89,6 +90,12 @@ export type ClubInputs = {
   classes: RosterClass[];
   locations: RosterLocation[];
   decisions: PlanDecisions;
+  /**
+   * Addresses released in this club (keyed by lib/login-email emailDigest): the
+   * digest of every OLD address in an address-change audit row, with the ids of
+   * the members who released them (AH-D1 retest).
+   */
+  released?: Record<string, string[]>;
 };
 
 export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInputs> {
@@ -113,9 +120,24 @@ export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInpu
         : m.action === "club" ? { action: "club" } : { action: "pending" }) as VenueDecision;
     }
   }
+  // Every address change in this club writes its OLD address's digest: member.update / member.self_update
+  // (oldEmailSha256), admin.member.contact_email.changed (oldEmailDigest), staff.update /
+  // user.login_email.changed / admin.owner.login_email.changed (oldEmailSha256, entityType User).
+  const releasedRows = await tx.$queryRaw<{ entityType: string; entityId: string; d: string }[]>`
+    SELECT "entityType", "entityId", COALESCE(metadata->>'oldEmailSha256', metadata->>'oldEmailDigest') AS d
+    FROM "AuditLog"
+    WHERE "tenantId" = ${tenantId}
+      AND (metadata->>'oldEmailSha256' IS NOT NULL OR metadata->>'oldEmailDigest' IS NOT NULL)`;
+  const released: Record<string, string[]> = Object.create(null);
+  for (const r of releasedRows) {
+    if (!r.d) continue;
+    const list = (released[r.d] ??= []);
+    if (r.entityType === "Member" && !list.includes(r.entityId)) list.push(r.entityId);
+  }
   return {
     timezone: usableTimezone(tenant?.timezone),
     members,
+    released,
     classes: classes.map((c) => ({ id: c.id, name: c.name, isActive: c.isActive, historical: !!c.sourceImportJobId, locationId: c.locationId })),
     locations,
     decisions,
@@ -138,6 +160,11 @@ export function buildPlan(text: string, inputs: ClubInputs, now: Date, createdCl
     decisions: inputs.decisions,
     isSynthesisedEmail,
     createdClasses,
+    releasedBy: (email: string) => {
+      const d = emailDigest(email);
+      const map = inputs.released ?? {};
+      return Object.hasOwn(map, d) ? map[d] : undefined;
+    },
   });
   return { parsed, plan, controls: attendanceControls(parsed.rows) };
 }
@@ -151,6 +178,7 @@ export function planHashOf(fileHash: string, inputs: ClubInputs): string {
   h.update(JSON.stringify(inputs.classes.map((c) => [c.id, c.isActive, c.locationId]).sort()));
   h.update(JSON.stringify(inputs.locations.map((l) => l.id).sort()));
   h.update(inputs.timezone);
+  h.update(JSON.stringify(Object.keys(inputs.released ?? {}).sort()));
   return h.digest("hex");
 }
 

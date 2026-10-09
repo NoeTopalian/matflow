@@ -28,14 +28,17 @@ vi.mock("next/server", () => ({
   },
 }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
-vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => {}) }));
+// The audit log is REAL: the owner PATCH below must write the address-change row (oldEmailSha256) the importer reads.
 vi.mock("@/lib/email", () => ({ sendEmail: vi.fn(async () => ({ ok: false, logId: "mail-dark" })) }));
 vi.mock("@/lib/rate-limit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
   checkRateLimit: vi.fn(async () => ({ allowed: true, retryAfterSeconds: 0 })),
 }));
-vi.mock("@/auth", () => ({ auth: vi.fn(async () => null), signIn: vi.fn(), signOut: vi.fn(), handlers: {} }));
 const gate = vi.hoisted(() => ({ current: null as null | { tenantId: string; userId: string } }));
+vi.mock("@/auth", () => ({
+  auth: vi.fn(async () => (gate.current ? { user: { id: gate.current.userId, tenantId: gate.current.tenantId, role: "owner" } } : null)),
+  signIn: vi.fn(), signOut: vi.fn(), handlers: {},
+}));
 vi.mock("@/lib/api-authz", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api-authz")>()),
   requireApiOwner: vi.fn(async () => {
@@ -54,6 +57,7 @@ import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { teamupPersonKey } from "@/lib/importers/teamup";
 import { JOB_SOURCE, LEDGER_SOURCE, MAPPING_VERSION, buildPlan, loadClubInputs, planHashOf, saveDecisions } from "@/lib/attendance-import";
 import { POST } from "@/app/api/admin/import/attendance/route";
+import { PATCH as patchMember } from "@/app/api/members/[id]/route";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = `secd-${Date.now().toString(36)}`;
@@ -136,6 +140,18 @@ async function commitAndRun(club: Club, jobId: string, planHash: string, between
   throw new Error("import did not complete");
 }
 
+/** The REAL owner PATCH (app/api/members/[id]) — writes the member and its audit row in one transaction. */
+async function ownerPatch(club: Club, memberId: string, body: Record<string, unknown>) {
+  gate.current = { tenantId: club.tenantId, userId: club.userId };
+  const req = new Request(`https://test.local/api/members/${memberId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" },
+    body: JSON.stringify(body),
+  });
+  const res = (await patchMember(req, { params: Promise.resolve({ id: memberId }) })) as unknown as { status: number; json: () => Promise<unknown> };
+  expect(res.status, JSON.stringify(await res.json())).toBe(200);
+}
+
 const ledger = (club: Club) =>
   withRlsBypass((tx) => tx.importedBooking.findMany({ where: { tenantId: club.tenantId, source: LEDGER_SOURCE }, select: { sourcePersonKey: true, memberId: true, matchMethod: true, disposition: true, attendanceRecordId: true } }));
 const attendanceOf = (club: Club, memberId: string) =>
@@ -154,6 +170,7 @@ afterAll(async () => {
       await tx.importSourceMapping.deleteMany({ where: { tenantId } });
       await tx.class.deleteMany({ where: { tenantId } });
       await tx.importJob.deleteMany({ where: { tenantId } });
+      await tx.auditLog.deleteMany({ where: { tenantId } });
       await tx.memberStatusEvent.deleteMany({ where: { tenantId } });
       await tx.member.deleteMany({ where: { tenantId } });
       await tx.location.deleteMany({ where: { tenantId } });
@@ -167,14 +184,19 @@ afterAll(async () => {
     bookings: await tx.importedBooking.count({ where: { tenantId: { in: ids } } }),
     attendance: await tx.attendanceRecord.count({ where: { tenantId: { in: ids } } }),
     jobs: await tx.importJob.count({ where: { tenantId: { in: ids } } }),
+    audit: await tx.auditLog.count({ where: { tenantId: { in: ids } } }),
   }));
-  expect(left).toEqual({ tenants: 0, members: 0, bookings: 0, attendance: 0, jobs: 0 });
+  expect(left).toEqual({ tenants: 0, members: 0, bookings: 0, attendance: 0, jobs: 0, audit: 0 });
 }, 180_000);
 
 describe.skipIf(!HAS_DB)("SEC-053 / AH-D1 — attendance identity binding is never silently wrong (REAL route, TEST DB)", () => {
   beforeAll(async () => {
     const who = await withRlsBypass((tx) => tx.$queryRaw<{ current_user: string }[]>`SELECT current_user`);
     console.log(`[sec-d] connected as ${who[0]?.current_user}; RLS_ENFORCED=${process.env.RLS_ENFORCED ?? "0"}`);
+    // The role is asserted, not just logged: the restricted runner must really be matflow_app.
+    if (process.env.RLS_ENFORCED === "1") expect(who[0]?.current_user).toBe("matflow_app");
+    else expect(who[0]?.current_user).not.toBe("matflow_app");
+    process.stderr.write(`[sec-d] role ${who[0]?.current_user} RLS_ENFORCED=${process.env.RLS_ENFORCED ?? "0"}\n`);
   });
 
 
@@ -239,6 +261,46 @@ describe.skipIf(!HAS_DB)("SEC-053 / AH-D1 — attendance identity binding is nev
     const rows = await ledger(club);
     // Either the previewed member or pending — never the record that was not previewed.
     expect([fin, null]).toContain(rows[0].memberId);
+  });
+
+  // Reviewer R variants (9 Oct 2026, REPORT-D.md): the true person differs from the row by an accent, a rename or a
+  // zero-width character, moved to a new address through the REAL owner PATCH, and a DIFFERENT member holds the
+  // released old address. None may receive the history.
+  const releasedAddressCase = async (label: string, original: string, rename?: string) => {
+    const club = await mkClub(label);
+    const orig = await mkMember(club, original, E(`${label}-old`), null);
+    await ownerPatch(club, orig, { email: E(`${label}-new`), ...(rename ? { name: rename } : {}) });
+    const other = await mkMember(club, N("Bea Lane"), E(`${label}-old`), null);
+    const { jobId, planHash, plan } = await mkPreview(club, csvOf([{ name: N("Bea Lane"), email: E(`${label}-old`) }]));
+    await commitAndRun(club, jobId, planHash);
+    expect(await attendanceOf(club, other), "attendance committed to the member who took the released address").toBe(0);
+    expect(await attendanceOf(club, orig)).toBe(0);
+    const rows = await ledger(club);
+    expect(rows[0].memberId).toBeNull();
+    expect(rows[0].disposition).toBe("pending_person");
+    expect(plan.people[0].candidates.map((c) => c.memberId).sort()).toEqual([orig, other].sort());
+  };
+
+  it("VARIANT accent: the original 'Béa Lane' moved away; a different 'Bea Lane' holds the released address → pending", async () => {
+    await releasedAddressCase("accent", N("B" + String.fromCharCode(0xe9) + "a Lane")); // precomposed e-acute
+  });
+
+  it("VARIANT rename: the original renamed 'Beatrice Lane' and moved; a different 'Bea Lane' holds the released address → pending", async () => {
+    await releasedAddressCase("rename", N("Bea Lane"), N("Beatrice Lane"));
+  });
+
+  it("VARIANT zero-width: the original 'Be<ZWSP>a Lane' moved away; a different 'Bea Lane' holds the released address → pending", async () => {
+    await releasedAddressCase("zw", N("Be" + String.fromCharCode(0x200b) + "a Lane")); // zero-width space
+  });
+
+  it("POSITIVE CONTROL: a member who moved to a NEW address (never held by anyone else) still matches on it", async () => {
+    const club = await mkClub("moved");
+    const ola = await mkMember(club, N("Ola Moved"), E("ola-old"), null);
+    await ownerPatch(club, ola, { email: E("ola-new") });
+    const { jobId, planHash } = await mkPreview(club, csvOf([{ name: N("Ola Moved"), email: E("ola-new") }]));
+    await commitAndRun(club, jobId, planHash);
+    expect((await ledger(club))[0].matchMethod).toBe("name_and_email");
+    expect(await attendanceOf(club, ola)).toBe(1);
   });
 
   it("MISSING REFERENCES: a row with no email, or with no name, never binds by the fallback", async () => {

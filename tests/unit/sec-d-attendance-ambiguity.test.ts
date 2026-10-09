@@ -120,3 +120,59 @@ describe("SEC-053 frozen resolutions — a commit binds only what was committed"
     expect(p.people[0].memberId).toBeNull();
   });
 });
+
+describe("SEC-053 retest (reviewer R): folded names and released addresses", () => {
+  const E_ACUTE = String.fromCharCode(0xe9);
+  const COMBINING_ACUTE = String.fromCharCode(0x301);
+  const ZWSP = String.fromCharCode(0x200b);
+  const BOM = String.fromCharCode(0xfeff);
+  const other: RosterMember = { id: "m_other", name: "Bea Lane", email: "bea.old@example.test", externalRef: null };
+  for (const [label, name] of [
+    ["precomposed accent", `B${E_ACUTE}a Lane`],
+    ["combining accent", `Be${COMBINING_ACUTE}a Lane`],
+    ["zero-width space", `Be${ZWSP}a Lane`],
+    ["BOM + case + spacing", `${BOM}BEA   lane`],
+  ] as const) {
+    it(`fold collision (${label}) counts as the same name → pending, both offered`, () => {
+      const p = plan([row("Bea Lane", "bea.old@example.test")], [{ id: "m_orig", name, email: "bea.new@example.test", externalRef: null }, other]);
+      expect(p.people[0].memberId).toBeNull();
+      expect(p.people[0].candidates.map((c) => c.memberId).sort()).toEqual(["m_orig", "m_other"]);
+    });
+  }
+
+  it("released address (rename case): the original renamed 'Beatrice Lane' released it → the new holder is not bound; both offered", () => {
+    const parsed = parseAttendanceCsv([HEADER, row("Bea Lane", "bea.old@example.test")].join("\n"));
+    const p = planAttendanceImport(parsed.rows, {
+      timezone: "Europe/London", now: new Date("2026-10-09T00:00:00Z"),
+      members: [{ id: "m_orig", name: "Beatrice Lane", email: "bea.new@example.test", externalRef: null }, other],
+      classes: [{ id: "cls_1", name: "Adults Gi", isActive: true, historical: false, locationId: null }],
+      locations: [{ id: "loc_1", name: "Main" }], decisions: DECISIONS(), isSynthesisedEmail,
+      releasedBy: (email) => (email === "bea.old@example.test" ? ["m_orig"] : undefined),
+    } as Parameters<typeof planAttendanceImport>[1]);
+    expect(p.people[0].memberId).toBeNull();
+    expect(p.bookings[0].intent).toBe("pending_person");
+    expect(p.people[0].candidates.map((c) => c.memberId).sort()).toEqual(["m_orig", "m_other"]);
+  });
+
+  it("an address released by a staff login (no member id) still refuses the fallback", () => {
+    const parsed = parseAttendanceCsv([HEADER, row("Bea Lane", "bea.old@example.test")].join("\n"));
+    const p = planAttendanceImport(parsed.rows, {
+      timezone: "Europe/London", now: new Date("2026-10-09T00:00:00Z"), members: [other],
+      classes: [{ id: "cls_1", name: "Adults Gi", isActive: true, historical: false, locationId: null }],
+      locations: [{ id: "loc_1", name: "Main" }], decisions: DECISIONS(), isSynthesisedEmail,
+      releasedBy: (email) => (email === "bea.old@example.test" ? [] : undefined),
+    } as Parameters<typeof planAttendanceImport>[1]);
+    expect(p.people[0].memberId).toBeNull();
+  });
+
+  it("positive control: an address nobody released still matches by name and email", () => {
+    const parsed = parseAttendanceCsv([HEADER, row("Bea Lane", "bea.old@example.test")].join("\n"));
+    const p = planAttendanceImport(parsed.rows, {
+      timezone: "Europe/London", now: new Date("2026-10-09T00:00:00Z"), members: [other],
+      classes: [{ id: "cls_1", name: "Adults Gi", isActive: true, historical: false, locationId: null }],
+      locations: [{ id: "loc_1", name: "Main" }], decisions: DECISIONS(), isSynthesisedEmail,
+      releasedBy: () => undefined,
+    } as Parameters<typeof planAttendanceImport>[1]);
+    expect(p.people[0]).toMatchObject({ memberId: "m_other", matchMethod: "name_and_email" });
+  });
+});

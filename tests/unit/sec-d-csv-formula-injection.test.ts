@@ -109,3 +109,34 @@ describe("SEC-052 inventory: every CSV producer uses lib/csv.ts", () => {
     }
   });
 });
+
+describe("SEC-052 retest (reviewer R): invisible leading characters, ﹦ and |, semicolon locales", () => {
+  const C = (n: number) => String.fromCharCode(n);
+  const LEADERS: Array<[string, string]> = [
+    ["space", " "], ["NBSP", C(0xa0)], ["BOM", C(0xfeff)], ["zero-width space", C(0x200b)], ["ideographic space", C(0x3000)],
+    ["two spaces + NBSP", "  " + C(0xa0)],
+  ];
+  for (const [label, lead] of LEADERS) {
+    it(`a formula behind a leading ${label} is neutralised (apostrophe first, value kept)`, () => {
+      const v = `${lead}=HYPERLINK("https://example.test","x")`;
+      const out = decode(csvCell(v));
+      expect(out.startsWith("'")).toBe(true);
+      expect(out.slice(1)).toBe(v);
+    });
+  }
+
+  it("small equals sign U+FE66 and a leading pipe are neutralised", () => {
+    for (const v of [`${C(0xfe66)}1+1`, "|cmd /c calc", ` |cmd`]) expect(decode(csvCell(v)).startsWith("'"), JSON.stringify(v)).toBe(true);
+  });
+
+  it("a cell containing ';' is quoted, so a semicolon-locale reader keeps it in one cell", () => {
+    expect(csvCell("Ann;=1+1")).toBe('"Ann;=1+1"');
+    expect(decode(csvCell("Ann;=1+1"))).toBe("Ann;=1+1");
+  });
+
+  it("ordinary values are untouched: inner spaces, a leading space before text, a number", () => {
+    expect(csvCell(" Ann Lee")).toBe(" Ann Lee");
+    expect(csvCell("Zoe")).toBe("Zoe");
+    expect(csvCell(-5)).toBe("-5");
+  });
+});
