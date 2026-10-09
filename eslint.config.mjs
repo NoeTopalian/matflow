@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Security-campaign evidence artefacts (probe scripts, CommonJS tracers, saved logs) are records, not app code.
+    "docs/security/evidence/**",
     // Agent worktrees + session state — stale checkouts here once OOM'd ESLint
     // by feeding it built .next chunks from nested worktrees.
     ".claude/**",

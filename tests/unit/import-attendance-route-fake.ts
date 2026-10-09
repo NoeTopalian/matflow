@@ -243,6 +243,10 @@ export function makeAttendanceFakeDb() {
   }
 
   const tx = Object.fromEntries(MODELS.map((m) => [m, delegate(m)]));
+  // The planner reads the released-address digests with one raw SELECT (lane D third pass, 9 Oct 2026);
+  // the fake answers it from the auditLog table it holds so release rows seeded here count.
+  (tx as Record<string, unknown>).$queryRaw = async () => (tables.auditLog ?? []).map((r: Record<string, unknown>) => ({ entityType: r.entityType, entityId: r.entityId, metadata: r.metadata ?? null }));
+  (tx as Record<string, unknown>).$executeRaw = async () => 0;
   return {
     tables,
     writes,

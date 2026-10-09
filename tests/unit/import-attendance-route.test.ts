@@ -169,9 +169,12 @@ beforeEach(() => {
   const db = h.db;
   db.seed("tenant", { id: "t1", timezone: "Europe/London" });
   db.seed("tenant", { id: "t2", timezone: "Europe/London" });
-  db.seed("member", { id: "m1", tenantId: "t1", name: "Ada Lovelace", email: "ada@example.com" });
+  // Member ids are cuid-shaped with a 2020 timestamp: the name+address fallback binds only a member that
+  // demonstrably held the address before the bookings (lane D third pass, 9 Oct 2026); a hand-set id
+  // has no derivable creation time and never qualifies.
+  db.seed("member", { id: "ck4ujaio0m1a2m1a2m1a2m1a2", tenantId: "t1", name: "Ada Lovelace", email: "ada@example.com" });
   // Grace exists only in the OTHER club: she must stay pending in t1.
-  db.seed("member", { id: "m-t2", tenantId: "t2", name: "Grace Hopper", email: "grace@example.com" });
+  db.seed("member", { id: "ck4ujaio0mt2bmt2bmt2bmt2b", tenantId: "t2", name: "Grace Hopper", email: "grace@example.com" });
   db.seed("class", { id: "c-t2", tenantId: "t2", name: "Fundamentals" });
   db.seed("location", { id: "l1", tenantId: "t1", name: "Main Hall" });
   db.seed("location", { id: "l-t2", tenantId: "t2", name: "Main Hall" });
@@ -428,7 +431,7 @@ describe("preview: a valid attendance file", () => {
     // Ada matches m1 by name and email; Grace exists only in t2 and stays pending.
     expect(summary.people).toMatchObject({ total: 2, matched: 1, pending: 1 });
     expect(summary.people.pendingList.map((p: { name: string }) => p.name)).toEqual(["Grace Hopper"]);
-    expect(JSON.stringify(summary)).not.toContain("m-t2");
+    expect(JSON.stringify(summary)).not.toContain("ck4ujaio0mt2bmt2bmt2bmt2b");
   });
 
   it("offers only its own club's classes and locations as targets", async () => {
@@ -683,7 +686,7 @@ describe("step", () => {
     expect(r.status).toBe(200);
     expect(r.json.done).toBe(true);
     expect(job(jobId).status).toBe("complete");
-    expect(h.db.tables.attendanceRecord.map((a) => [a.memberId, a.checkInMethod, a.tenantId])).toEqual([["m1", "import", "t1"]]);
+    expect(h.db.tables.attendanceRecord.map((a) => [a.memberId, a.checkInMethod, a.tenantId])).toEqual([["ck4ujaio0m1a2m1a2m1a2m1a2", "import", "t1"]]);
     expect(h.db.tables.importedBooking).toHaveLength(4);
     expect(h.db.tables.importedBooking.every((b) => b.tenantId === "t1" && b.source === LEDGER_SOURCE)).toBe(true);
   });
@@ -693,7 +696,7 @@ describe("step", () => {
 
 describe("decide: targets must belong to this club", () => {
   it.each([
-    ["member", { kind: "person", sourceKey: "teamup:grace@example.com|grace hopper", action: "member", targetId: "m-t2" }, "That member is not in this club."],
+    ["member", { kind: "person", sourceKey: "teamup:grace@example.com|grace hopper", action: "member", targetId: "ck4ujaio0mt2bmt2bmt2bmt2b" }, "That member is not in this club."],
     ["class", { kind: "offering", sourceKey: "Fundamentals", action: "class", targetId: "c-t2" }, "That class is not in this club."],
     ["location", { kind: "venue", sourceKey: "Main Hall", action: "location", targetId: "l-t2" }, "That location is not in this club."],
   ])("refuses another club's %s with 400 and stores nothing", async (_k, decision, message) => {
@@ -986,7 +989,7 @@ describe("export CSV", () => {
     h.db.seed("classInstance", { id: "ci_gi", classId: "cls_gi" });
     h.db.seed("classInstance", { id: "ci_nogi", classId: "cls_nogi" });
     h.db.seed("classInstance", { id: "ci_foreign", classId: "cls_foreign" });
-    h.db.seed("attendanceRecord", { id: "ar_1", tenantId: "t1", memberId: "m1", classInstanceId: "ci_gi", checkInMethod: "import" });
+    h.db.seed("attendanceRecord", { id: "ar_1", tenantId: "t1", memberId: "ck4ujaio0m1a2m1a2m1a2m1a2", classInstanceId: "ci_gi", checkInMethod: "import" });
     const base = {
       tenantId: "t1", source: LEDGER_SOURCE, startsAt: new Date(Date.UTC(2025, 9, 4, 8)), startsAtRaw: "2025-10-04T09:00:00+01:00",
       venueLabel: "Main Hall", rawStatus: "Attended", sourceName: "Pat", sourceEmail: "pat@example.com", bookingMethod: "Membership",
