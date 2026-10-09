@@ -12,7 +12,7 @@
 // Synthetic clubs only, unique slugs, everything removed in afterAll. Run with
 // the TEST branch runner (scratchpad att/run-engine.sh); skips without a DB.
 
-import { vi, describe, it, beforeAll, afterAll, expect } from "vitest";
+import { vi, describe, it, beforeAll, beforeEach, afterAll, expect } from "vitest";
 
 vi.mock("@vercel/blob", () => ({ del: vi.fn(async () => undefined) }));
 vi.mock("@/lib/stripe/subscriptions", () => ({
@@ -98,9 +98,23 @@ async function waitForLockWaiter(needle: string) {
 }
 
 describe.skipIf(!HAS_DB)("restore vs purge on the authoritative Tenant row", () => {
+  // A throwing beforeAll makes vitest report every test in the file as SKIPPED (file status "failed", 0 failed
+  // tests) — which is how the 9 Oct final sweep showed "1 failed, 5 skipped" for this file under matflow_app and a
+  // sweep script that recorded exit=0 (lane F2). A setup failure (database unreachable, migration missing) is a
+  // FAILURE of every test here, never a skip: capture it and rethrow it per test.
+  let setupError: unknown = null;
   beforeAll(async () => {
     // Fail fast if the migration is missing on this branch.
-    await withRlsBypass((tx) => tx.tenant.findFirst({ select: { purgeStartedAt: true } }));
+    try {
+      await withRlsBypass((tx) => tx.tenant.findFirst({ select: { purgeStartedAt: true } }));
+    } catch (e) {
+      setupError = e;
+    }
+  });
+  beforeEach(() => {
+    if (setupError) {
+      throw new Error(`setup failed (counted as a failure, not a skip): ${setupError instanceof Error ? setupError.message : String(setupError)}`);
+    }
   });
 
   afterAll(async () => {

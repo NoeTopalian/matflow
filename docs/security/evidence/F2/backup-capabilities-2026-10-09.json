@@ -1,0 +1,10 @@
+{
+ "observedAt": "2026-10-09T18:28:36Z",
+ "observer": "lane F2 (read-only: gh CLI, local PATH, env-file key NAMES only)",
+ "githubBackupWorkflow": { "source": "gh run list --workflow db-backup.yml (GitHub API)", "runs": {"conclusions":{"failure":22},"newest":"2026-10-04T09:14:16Z","oldest":"2026-05-10T05:59:29Z","total":22},
+   "newestRunSteps": "Set up job=success, Install Postgres 16 client=success, Validate secrets=failure, Take logical dump=skipped, Upload to S3 with 30-day lifecycle=skipped, Verify object landed=skipped, Complete job=success",
+   "note": "Every recorded run failed at 'Validate secrets' (no repository secrets), so no dump was ever taken; the run on main installs a Postgres 16 client while this branch's workflow pins 17. The designed dump is --no-owner --no-privileges: it would NOT carry the matflow_app role, its grants, or the schema USAGE grant (none of which is in any migration), so a restore from it alone leaves the runtime role without privileges." },
+ "neonPitr": { "status": "UNKNOWN", "why": "no neonctl, no Neon API key in .env.test/.env.local (key names checked, values not read), production read refused (SF-02); the PITR window and branch-restore time are not observable from here" },
+ "localTooling": { "pg_dump": "absent", "pg_restore": "absent", "psql": "absent", "postgres server": "absent", "docker": "absent", "wsl": "not installed", "neonctl": "absent", "PGlite": "@electric-sql/pglite 0.4.3 (Postgres 17.5, WASM) + pglite-socket 0.1.3, transitive via prisma 7.10.0 -> @prisma/dev 0.24.17 (not a direct dependency)" },
+ "drill": { "export": "scripts/readiness/backup-export.mjs (TEST branch, REPEATABLE READ READ ONLY, owner role)", "restoreTarget": "PGlite in-process, 127.0.0.1, memory (scripts/readiness/backup-restore.mjs)", "neonChildBranch": "BLOCKED — no Neon CLI/API credential available to this lane" }
+}

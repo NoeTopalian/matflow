@@ -191,3 +191,73 @@ maintenance mode on the domain, not promotion of an old build.
 - **SF-17 extended**: with `CRON_SECRET` unset in production, the retention cron also never runs the Stripe
   reconciliation it hosts, so a webhook lost to an outage is never repaired, and soft-deleted clubs are never purged.
 - **SF-19**: no logical backup exists; PITR window unknown; no restore ever executed.
+
+---
+
+## 6. Iteration 2 (lane F2, 9 Oct 2026 evening UK) — what exists, the drill that was run, and what changed above
+
+### 6.1 Capabilities actually established (sources and times in `evidence/F2/backup-capabilities-2026-10-09.json`)
+- **Neon PITR: UNKNOWN.** No Neon CLI or API key reachable from the campaign; the production read stays refused
+  (SF-02). The history window, branch-restore time and whether a restore branch was ever made are not observable here.
+  A dashboard showing "history retention" is not a demonstrated restore.
+- **Weekly pg_dump: never produced a dump.** 22 of 22 recorded runs failed at "Validate secrets" (GitHub API, 9 Oct).
+  Even when it runs, it dumps `--no-owner --no-privileges`: the `matflow_app` role, its table grants and its
+  `USAGE` on schema public are in **no migration and no dump**. A restore from that archive alone leaves the runtime
+  role with no privileges (outage) — or, if someone "fixes" it by pointing the app at the owner, with RLS off (SF-02).
+  Record the role and grants separately (`backup-export.mjs` writes them into its manifest; §6.3 replays them).
+- **Local:** no `pg_dump`, `psql`, server, Docker or WSL. PGlite 0.4.3 (Postgres 17.5 in WebAssembly) is present as a
+  transitive dependency of Prisma and is what the drill below restores into.
+
+### 6.2 Migration history does not match the repository for six migrations
+The TEST branch's `_prisma_migrations` checksums for `20260923220000` … `20260930100000` (six) match the commits that
+were applied (901bd83, 9993565, fe299eb, 30dce22, c6517c5, 0f8c2b1), not HEAD: d403f30 (30 Sep) wrapped them in
+BEGIN/COMMIT after they had run. Semantically equivalent here, but a restore that replays migrations from HEAD is not
+replaying what the source ran. `backup-restore.mjs` replays the committed text whose checksum matches and lists the
+edits; whether production ran the original or the edited text is unknown (production unreadable).
+
+### 6.3 The isolated restore drill (TEST branch → private in-process Postgres) — run 9 Oct 2026, Node 24.21.0
+```
+node scripts/readiness/backup-export.mjs .env.test ep-hidden-salad TEST_DATABASE_URL <scratch>/export      # read-only
+node scripts/readiness/backup-restore.mjs <scratch>/export --port=55440 --out=<scratch>/restore           # 127.0.0.1, memory
+```
+- **Export**: one `REPEATABLE READ READ ONLY` transaction; the baseline fingerprint (with per-table content hashes) is
+  taken inside the same snapshot as the rows, so the recovery point is exact (`now()` of that transaction). 53 tables,
+  115,224 rows, 77 MB, 36–46 s. Output outside the repository only (refused inside it); production refused without an
+  override; `PGOPTIONS`/`PGHOST`/`PGHOSTADDR` in the environment refused.
+- **Restore**: export hashes verified → roles and memberships recreated with the source's flags → 100 migrations
+  replayed as the table owner (six from history, §6.2) → rows loaded with triggers and FK checks off
+  (`session_replication_role = replica`, as `pg_restore --disable-triggers`) → grants replayed → fingerprint compared.
+- **Result**: first run **FAILED** — the content hash showed 6 `User.totpRecoveryCodes` values that were JSON `null`
+  (Prisma `JsonNull`) restored as SQL `NULL` (`DbNull`); a logical JSON export cannot tell them apart. The export now
+  carries a sentinel and the restore checks the count. Second run **PASS**: identical tables, rows, content hashes,
+  policies (with expressions), triggers, functions, roles, grants, extensions, FKs (0 orphans) and security state.
+  Restore time to a verified copy: **9.6 s** for this size, in-process (not representative of a Neon branch restore,
+  which is unmeasured). Recoverable age: the export is the recovery point — **RPO = time since the last export; no
+  schedule exists, so today it is unbounded** (and Neon PITR is UNKNOWN).
+- **Tamper controls** on the restored copy (`evidence/F2/restore-tamper-controls.mjs`): 10/10 as expected — positive
+  control PASS; policy expression, function body, disabled trigger, BYPASSRLS on the app role, an extra TRUNCATE
+  grant, an audit row rewritten with its count kept, a rewound session version (with and without content hashes) and
+  a planted outstanding sign-in link each FAIL. These were the SF-64 gaps.
+
+### 6.4 Nothing restored may activate (checked on the drill copy; counts only)
+The restored copy holds: 6 soft-deleted clubs **already past the 30-day purge grace** (the retention cron would
+hard-delete them on its first run against a restored copy wired to a deployment with `CRON_SECRET`), 28 kiosk token
+hashes, 5 Stripe connected-account ids (webhooks would route to the copy if it were promoted), 17 staff and 3 member
+TOTP secrets, 0 Drive OAuth tokens, 0 push subscriptions, 0 outstanding links/codes. Rules for any restored copy:
+attach no deployment, no `CRON_SECRET`, no mail (`EMAIL_DELIVERY=off`) and no Stripe webhook endpoint to it until §3
+and §6.5 are done; the drill copy itself lives in process memory, listens on 127.0.0.1 only and vanishes at exit.
+
+### 6.5 Post-restore revocation, proved on the drill copy
+`scripts/readiness/backup-post-restore.mjs` (exports `revokeAllAfterRestore`; refuses production and the shared
+TEST branch) applies the revoke-access route's containment to every club at once — `sessionVersion + 1` for every
+User and Member, plus every **Operator** (the route never touches operator sessions), every outstanding reset code and
+**every** sign-in link purpose (the route retires only `login` and `first_time_signup`) — in one audited transaction.
+Then `restore-verify compare --expect-revoked` must PASS: 0 outstanding links/codes and each session-version sum
+raised by at least its row count. Drill: 584 users, 3,916 members, 1 operator bumped; compare PASS. On a production
+cut-over the order is unchanged from §3: rotate `AUTH_SECRET`/`NEXTAUTH_SECRET` (ends every JWT regardless of
+version), then this revocation, then re-apply post-restore-point erasures. The script is not authorised for production.
+
+### 6.6 restore-verify changes (SF-64) — `compare` now FAILS (it used to print) on
+policy expressions/roles/permissive flag, trigger definitions and enabled state, public function source/owner/
+SECURITY DEFINER/search_path/ACL, table owners and ACLs, role flags and memberships, schema ACL, extensions, event
+triggers, migration checksums, per-table content hashes (`--content-hash`), and ANY security-state difference.

@@ -6,6 +6,12 @@
 //
 // Runs only via the guarded runners (TEST branch only). Skips without a DB and
 // unless SEC_B_SWEEP=1, so a normal `npm test` never deletes anything.
+//
+// NOT a required security check (lane F2, iteration 2, 9 Oct 2026): it is a
+// maintenance tool that deletes leftovers and asserts only that its own
+// deletions completed. It is excluded from the skip gate's expected list and
+// its skip is allowed there, with this reason (scripts/readiness/
+// test-skip-gate.mjs MAINTENANCE). Run it on purpose, never as evidence.
 
 import { describe, it, expect } from "vitest";
 import { prisma } from "@/lib/prisma";

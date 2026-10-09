@@ -1,0 +1,191 @@
+diff --git a/prisma/migrations/20261010090000_auditlog_append_only/migration.sql b/prisma/migrations/20261010090000_auditlog_append_only/migration.sql
+new file mode 100644
+index 0000000..2aa1df0
+--- /dev/null
++++ b/prisma/migrations/20261010090000_auditlog_append_only/migration.sql
+@@ -0,0 +1,185 @@
++-- SF-57 / SEC-083: append-only AuditLog for the runtime role; retention only through audit_log_purge().
++-- Source: docs/security/evidence/F2/proposed-auditlog-append-only-v2.sql (rationale, boundary and limits there).
++-- NOT APPROVED: adopting this migration was refused to the lead on 9 Oct 2026 (Claude Code auto-mode classifier);
++-- it needs Noe's explicit approval, a backup/restore point first (runbook §2), and must run as the AuditLog owner.
++-- All-or-nothing: Prisma does not wrap a migration in a transaction, so this one does it itself.
++BEGIN;
++-- Supersedes evidence/F/proposed-auditlog-append-only.sql (kept unchanged as the iteration-1 record) with the four
++-- changes the independent reviewer required (evidence/R/REPORT-F.md):
++--   R1  SET search_path = public, pg_temp on the SECURITY DEFINER function (and on the trigger functions).
++--   R2  no hard-coded owner name: every owner test compares current_user with the AuditLog table's ACTUAL owner,
++--       looked up from pg_class at run time; the migration refuses to finish if the purge function's owner is not
++--       the table owner (so the exemption cannot silently attach to the wrong role).
++--   R3  BEFORE INSERT trigger forcing "createdAt" = now() for every role except the table owner.
++--   R4  the no-op REVOKE TRUNCATE is gone (matflow_app never had TRUNCATE on TEST, evidence/lead/test-db-role-*.txt).
++-- Further changes made while revising (each is argued in evidence/F2/REPORT.md):
++--   - The UPDATE check compares the whole row (to_jsonb minus userId/operatorId) instead of a column list, so a
++--     column added later is protected without editing the trigger.
++--   - UPDATE is now refused for EVERY role, the owner included, except the foreign-key SET NULL of userId /
++--     operatorId. Nothing in lib/, app/ or scripts/ updates AuditLog (grep, 9 Oct 2026); the four e2e helpers that do
++--     only set "userId" = NULL, which stays allowed.
++--   - A BEFORE TRUNCATE statement trigger refuses TRUNCATE for every role. RLS does not govern TRUNCATE; this is the
++--     only in-database brake on an owner-role TRUNCATE (the owner can still DISABLE TRIGGER — that is DDL, see limits).
++--   - Every statement that names matflow_app is conditional on the role existing, so the migration cannot fail (and
++--     block the push-to-deploy pipeline) on a branch where matflow_app does not exist (SF-02: production unknown).
++--   - Timestamps: "createdAt" is timestamp(3) WITHOUT time zone holding UTC wall-clock (Prisma). The trigger and the
++--     purge use now() AT TIME ZONE 'UTC', so a session whose TimeZone is not UTC can neither store a skewed time nor
++--     shift the purge cut-off (no dependency on the session TimeZone).
++--   - Evidence prefixes use starts_with() rather than LIKE: '_' in 'member.dsar_erase' is a LIKE wildcard.
++--   - The purge does NOT use the app.bypass_rls flag (SF-62 is replacing it, and a set_config inside the body would
++--     leak into the caller's transaction). It relies on the table owner holding BYPASSRLS (true on TEST:
++--     neondb_owner, evidence/lead/test-db-role-*.txt) and REFUSES to run otherwise, rather than silently deleting
++--     nothing under FORCE ROW LEVEL SECURITY. A first draft set it as a function-level option (SET app.bypass_rls =
++--     'on'); the sandbox replay refused that on Postgres 17 for a non-superuser owner ("permission denied to set
++--     parameter app.bypass_rls", 42501) — Neon's owner is not a superuser, so that draft would have failed the
++--     production migration and with it the push-to-deploy (evidence/F2/REPORT.md).
++--
++-- What this does and does not stop (the boundary):
++--   STOPS, for any connection that is not the table owner (the runtime role matflow_app, therefore a compromised
++--   application or a SQL injection running as it): rewriting any column of an audit row; back-dating a row (UPDATE
++--   refused; INSERT has createdAt forced to now()); deleting rows (DELETE privilege revoked AND trigger); TRUNCATE
++--   (no privilege AND trigger); disabling or replacing the triggers or functions (ownership required); purging rows
++--   younger than the published minimums (the only delete path is audit_log_purge, which hard-codes them).
++--   DOES NOT STOP: (a) the table owner / a DBA / anyone holding the owner's credentials — they can DISABLE TRIGGER,
++--   DROP, or DELETE directly; while production connects as the owner role (SF-02 unverified) this protects NOTHING;
++--   (b) a compromised application writing FALSE rows — INSERT stays open by design, so append-only guarantees the
++--   history is not rewritten, not that what was appended is true; (c) a flood of junk rows (no rate limit in the
++--   database); (d) reading audit rows across clubs while SF-62 lets the runtime role set app.bypass_rls itself;
++--   (e) loss of the whole database — that is the backup's job (SF-19). Independent evidence for (a)/(b): ship audit
++--   rows off-database (Neon/Vercel log drain or a periodic signed export) so a later comparison can detect deletion
++--   or rewrite by a privileged actor; keep PITR long enough to cover the detection window.
++
++-- 0. Guard: refuse to run if AuditLog is missing (wrong database) — fail loudly instead of half-applying.
++DO $$
++BEGIN
++  IF to_regclass('public."AuditLog"') IS NULL THEN
++    RAISE EXCEPTION 'AuditLog not found in schema public';
++  END IF;
++END $$;
++
++-- 1. Helper: is the current role the AuditLog table owner? (R2 — no literal owner name anywhere.)
++CREATE OR REPLACE FUNCTION audit_log_is_table_owner() RETURNS boolean
++  LANGUAGE sql STABLE
++  SET search_path = public, pg_temp
++AS $$
++  SELECT EXISTS (
++    SELECT 1 FROM pg_catalog.pg_class c
++     WHERE c.oid = 'public."AuditLog"'::regclass
++       AND c.relowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
++  )
++$$;
++
++-- 2. Row trigger: UPDATE may only null userId/operatorId (foreign-key SET NULL); DELETE only as the table owner.
++CREATE OR REPLACE FUNCTION audit_log_append_only() RETURNS trigger
++  LANGUAGE plpgsql
++  SET search_path = public, pg_temp
++AS $$
++BEGIN
++  IF TG_OP = 'UPDATE' THEN
++    -- Whole-row comparison minus the two nullable foreign keys, so a column added later is covered automatically.
++    IF (to_jsonb(NEW) - 'userId' - 'operatorId') IS DISTINCT FROM (to_jsonb(OLD) - 'userId' - 'operatorId')
++       OR (NEW."userId" IS DISTINCT FROM OLD."userId" AND NEW."userId" IS NOT NULL)
++       OR (NEW."operatorId" IS DISTINCT FROM OLD."operatorId" AND NEW."operatorId" IS NOT NULL) THEN
++      RAISE EXCEPTION 'AuditLog is append-only' USING ERRCODE = '42501';
++    END IF;
++    RETURN NEW;
++  END IF;
++  IF TG_OP = 'DELETE' THEN
++    IF audit_log_is_table_owner() THEN
++      RETURN OLD;
++    END IF;
++    RAISE EXCEPTION 'AuditLog rows are deleted only by audit_log_purge()' USING ERRCODE = '42501';
++  END IF;
++  RAISE EXCEPTION 'unexpected trigger operation %', TG_OP;
++END $$;
++
++-- 3. Row trigger: createdAt is the database's clock for every role except the owner (R3). The owner is exempt so a
++--    data restore (pg_restore as the owner) keeps the original timestamps instead of re-stamping history.
++CREATE OR REPLACE FUNCTION audit_log_stamp_created_at() RETURNS trigger
++  LANGUAGE plpgsql
++  SET search_path = public, pg_temp
++AS $$
++BEGIN
++  IF NOT audit_log_is_table_owner() THEN
++    NEW."createdAt" := (now() AT TIME ZONE 'UTC');  -- Prisma stores DateTime as UTC wall-clock in timestamp(3)
++  END IF;
++  RETURN NEW;
++END $$;
++
++-- 4. Statement trigger: no TRUNCATE for anyone (RLS never applied to TRUNCATE).
++CREATE OR REPLACE FUNCTION audit_log_no_truncate() RETURNS trigger
++  LANGUAGE plpgsql
++  SET search_path = public, pg_temp
++AS $$
++BEGIN
++  RAISE EXCEPTION 'AuditLog cannot be truncated' USING ERRCODE = '42501';
++END $$;
++
++DROP TRIGGER IF EXISTS "AuditLog_append_only" ON "AuditLog";
++CREATE TRIGGER "AuditLog_append_only" BEFORE UPDATE OR DELETE ON "AuditLog"
++  FOR EACH ROW EXECUTE FUNCTION audit_log_append_only();
++DROP TRIGGER IF EXISTS "AuditLog_stamp_created_at" ON "AuditLog";
++CREATE TRIGGER "AuditLog_stamp_created_at" BEFORE INSERT ON "AuditLog"
++  FOR EACH ROW EXECUTE FUNCTION audit_log_stamp_created_at();
++DROP TRIGGER IF EXISTS "AuditLog_no_truncate" ON "AuditLog";
++CREATE TRIGGER "AuditLog_no_truncate" BEFORE TRUNCATE ON "AuditLog"
++  FOR EACH STATEMENT EXECUTE FUNCTION audit_log_no_truncate();
++
++-- 5. Retention: the ONLY delete path for the runtime role. Runs as its owner (SECURITY DEFINER), pinned search_path
++--    (R1), batch bounded 1..5000, minimums matching lib/audit-log.ts (AUDIT_LOG_RETENTION_MS = 365 d;
++--    AUDIT_EVIDENCE_RETENTION_MS = 6 × 365 = 2190 d for admin.*, member.dsar_erase*, and rows whose metadata
++--    carries actingAs). The actingAs test is conservative: a row whose metadata HAS the key (even with a JSON null
++--    value) is kept for six years; lib/audit-log.ts treats a JSON-null actingAs as absent (deletable at 365 d).
++CREATE OR REPLACE FUNCTION audit_log_purge(batch integer) RETURNS integer
++  LANGUAGE plpgsql
++  SECURITY DEFINER
++  SET search_path = public, pg_temp
++AS $$
++DECLARE n integer;
++BEGIN
++  IF batch IS NULL OR batch < 1 OR batch > 5000 THEN
++    RAISE EXCEPTION 'batch out of range (1..5000)' USING ERRCODE = '22023';
++  END IF;
++  -- Runs as the definer (the table owner). Under FORCE ROW LEVEL SECURITY an owner without BYPASSRLS would see no
++  -- rows and the purge would silently do nothing: refuse instead.
++  IF NOT (SELECT rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = current_user) THEN
++    RAISE EXCEPTION 'audit_log_purge: the AuditLog owner lacks BYPASSRLS' USING ERRCODE = '42501';
++  END IF;
++  WITH doomed AS (
++    SELECT a.id FROM "AuditLog" a
++     WHERE (a."createdAt" < (now() AT TIME ZONE 'UTC') - interval '365 days'
++            AND NOT starts_with(a.action, 'admin.')
++            AND NOT starts_with(a.action, 'member.dsar_erase')
++            AND (a.metadata IS NULL OR jsonb_typeof(a.metadata) <> 'object' OR NOT (a.metadata ? 'actingAs')))
++        OR a."createdAt" < (now() AT TIME ZONE 'UTC') - interval '2190 days'
++     ORDER BY a."createdAt"
++     LIMIT batch)
++  DELETE FROM "AuditLog" x USING doomed d WHERE x.id = d.id;
++  GET DIAGNOSTICS n = ROW_COUNT;
++  RETURN n;
++END $$;
++
++REVOKE ALL ON FUNCTION audit_log_purge(integer) FROM PUBLIC;
++
++-- 6. The definer must BE the table owner, or the DELETE exemption in step 2 would not apply to the purge (R2).
++DO $$
++DECLARE fn_owner oid; tbl_owner oid;
++BEGIN
++  SELECT p.proowner INTO fn_owner FROM pg_proc p WHERE p.oid = 'public.audit_log_purge(integer)'::regprocedure;
++  SELECT c.relowner INTO tbl_owner FROM pg_class c WHERE c.oid = 'public."AuditLog"'::regclass;
++  IF fn_owner IS DISTINCT FROM tbl_owner THEN
++    RAISE EXCEPTION 'audit_log_purge must be owned by the AuditLog owner (run this migration as the table owner)';
++  END IF;
++END $$;
++
++-- 7. Runtime role: EXECUTE on the purge; UPDATE and DELETE withdrawn (INSERT and SELECT stay). Conditional, so a
++--    branch without matflow_app (production unknown, SF-02) still migrates; the triggers protect regardless.
++DO $$
++BEGIN
++  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'matflow_app') THEN
++    EXECUTE 'GRANT EXECUTE ON FUNCTION audit_log_purge(integer) TO matflow_app';
++    EXECUTE 'REVOKE UPDATE, DELETE ON "AuditLog" FROM matflow_app';
++  END IF;
++END $$;
++
++COMMIT;

@@ -1,0 +1,24 @@
+# Harness evidence, lane F2, 9 Oct 2026 (UK evening). Node v24.21.0 for every run below; HEAD daba6d7 + lane F2 working tree.
+## 1. The 9 Oct final sweep recorded exit=0 for a failed file (scratchpad final-sweep.sh): code=${PIPESTATUS[0]} after res=$(cmd | grep | tr) is the status of the substitution's LAST command (tr), never vitest's.
+evidence/lead/final-sweep-2026-10-09.log: restricted tests/integration/tenant-restore-purge-race.test.ts exit=0 Test Files 1 failed (1) Tests 5 skipped (5) 
+demo: res=$(false | true) -> PIPESTATUS[0]=0
+## 2. vitest 4.1.11 semantics (scratch probe): a throwing beforeAll => file 'failed', tests 'skipped' (numPendingTests), vitest exit 1; captured and rethrown per test => tests 'failed'.
+## 3. tenant-restore-purge-race with an unreachable DB (127.0.0.1:1; no database touched):
+HEAD version: Tests 5 skipped (5); vitest exit 1
+F2 version:   ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯; each: 'setup failed (counted as a failure, not a skip): Can't reach database server'; vitest exit 1
+## 4. TEST branch through the guarded runners, 9 Oct ~18:45-19:20 UK:
+owner       purge-race + sec-f2: passed 5 failed 0 skipped 10
+matflow_app purge-race + sec-f2 (run 1): passed 3 failed 2 skipped 10 — purge-race lock-wait cells timed out at 30 s
+matflow_app purge-race re-runs: F2 version ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯ (3 timeouts); HEAD version Tests 5 passed (5); F2 version Tests 5 passed (5); F2 version Tests 5 passed (5) — timing-dependent under shared-branch load, not caused by the setup change
+sec-f2 on TEST, owner and matflow_app: [sec-f2-auditlog-append-only] SKIPPED: SF-57 append-only migration not applied on this database (missing: AuditLog_append_only, AuditLog_stamp_created_at, AuditLog_no_truncate, audit_log_purge(integer)); Tests 10 skipped (10) / Tests 10 skipped (10)
+## 5. Skip gate on those reports:
+engine strict: {"files":2,"total":15,"passed":5,"failed":0,"skipped":10,"requireDb":true,"allowed":[],"expected":0,"blocked":1,"verdict":"FAIL"}
+engine --allow-blocked: {"files":2,"total":15,"passed":5,"failed":0,"skipped":10,"requireDb":true,"allowed":[],"expected":0,"blocked":1,"verdict":"PASS-WITH-BLOCKED-COVERAGE"}
+restricted strict: {"files":2,"total":15,"passed":3,"failed":2,"skipped":10,"requireDb":true,"allowed":[],"expected":0,"blocked":1,"verdict":"FAIL"}
+restricted --allow-blocked: {"files":2,"total":15,"passed":3,"failed":2,"skipped":10,"requireDb":true,"allowed":[],"expected":0,"blocked":1,"verdict":"FAIL"}
+HEAD-version setup-failure report:  - tests/integration/tenant-restore-purge-race.test.ts: SETUP FAILURE — file failed and all 5 tests were reported skipped ()
+## 6. Unit (no database): {"files":5,"total":39,"passed":39,"failed":0,"skipped":0,"requireDb":false,"allowed":[],"expected":0,"blocked":0,"verdict":"PASS"}
+## 7. coverage-reconcile (default, then --require-reviewed):
+{"rows":96,"missing":[],"dups":[],"unexpected":[],"malformed":[],"unparsed":[],"inconsistent":[],"applicability":{"APPLICABLE":92,"NOT APPLICABLE WITH EVIDENCE":3,"UNKNOWN":1},"verification":{"BLOCKED":4,"FAIL":14,"FIXED AWAITING RETEST":13,"N/A (guard test)":3,"NOT RUN":7,"PARTIAL":1,"PASS":50,"UNKNOWN":4},"requireReviewed":false,"rowsWithResidualQualifiers":27,"verdict":"RECONCILED","findings":{"rows":75,"dups":[],"gaps":[],"outOfOrder":["SF-22"],"problems":["SF-52: 8 cells, its table header has 6 (an unescaped \"|\" inside a cell?)"],"verdict":"FAIL"}}
+{"rows":96,"missing":[],"dups":[],"unexpected":[],"malformed":[],"unparsed":[],"inconsistent":[],"applicability":{"APPLICABLE":92,"NOT APPLICABLE WITH EVIDENCE":3,"UNKNOWN":1},"verification":{"BLOCKED":4,"FAIL":14,"FIXED AWAITING RETEST":4,"N/A (guard test)":3,"NOT RUN":7,"PARTIAL":1,"PASS":59,"UNKNOWN":4},"requireReviewed":true,"fixedCountedAsPass":9,"fixedAwaitingApproval":4,"rowsWithResidualQualifiers":27,"verdict":"RECONCILED","findings":{"rows":75,"dups":[],"gaps":[],"outOfOrder":["SF-22"],"problems":["SF-52: 8 cells, its table header has 6 (an unescaped \"|\" inside a cell?)"],"verdict":"FAIL"}}
+## 8. tsc --noEmit -p . exit 0 (repo with F2 files); patched scratch worktree with patches 0001+0002: tsc exit 0, retention-cron + sec-c-static-guards 51/51, migrations-are-atomic 22/22; red: the 2 new retention cells fail on the unpatched route; patch 0003 red/green 4+1fail -> 5/5. eslint on F2 files exit 0.

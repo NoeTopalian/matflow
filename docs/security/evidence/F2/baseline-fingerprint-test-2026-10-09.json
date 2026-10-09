@@ -1,0 +1,1228 @@
+{
+ "takenAt": "2026-10-09T17:49:05.633Z",
+ "role": "neondb_owner",
+ "pgMajor": 17,
+ "migrations": [
+  "20260424205716_init",
+  "20260424213718_add_logo_size",
+  "20260424215639_add_session_version_and_hot_path_indexes",
+  "20260425124239_totp_questionnaire_stripe",
+  "20260426122130_add_member_account_type",
+  "20260426154929_add_tenant_waiver_content",
+  "20260426162644_phase1_security_hardening",
+  "20260426195401_reports_ai_causal_drive",
+  "20260426231623_payment_ledger",
+  "20260426232203_email_log",
+  "20260426232743_bacs_direct_debit",
+  "20260427112350_class_packs",
+  "20260427112739_import_jobs",
+  "20260427174714_magic_link_and_signed_waiver_extensions",
+  "20260428000001_audit_p1_monthly_report_unique",
+  "20260428000002_audit_p1_indexes",
+  "20260428000003_membership_tiers",
+  "20260428000004_tenant_self_billing",
+  "20260428000005_member_last_announcement_seen",
+  "20260428000006_member_parent_child",
+  "20260428000007_tenant_privacy_fields",
+  "20260428000008_tenant_socials_fields",
+  "20260428000009_class_max_rank",
+  "20260428000010_class_coach_user",
+  "20260430000001_schema_check_constraints",
+  "20260430000002_soft_delete_extensions",
+  "20260430000003_products",
+  "20260430000004_gym_applications",
+  "20260430000005_orders",
+  "20260501000001_member_emergency_contact_relation",
+  "20260502000001_hash_bearer_tokens",
+  "20260502000001_rank_requirement",
+  "20260502000002_tenant_stripe_account_status",
+  "20260503000001_tenant_currency_timezone_recovery_codes",
+  "20260503100000_rls_policies_foundation",
+  "20260503200000_activate_rls_enforcement",
+  "20260503300000_account_lockout",
+  "20260503400000_member_notification_prefs",
+  "20260504000000_login_events",
+  "20260504100000_tenant_kiosk_token",
+  "20260505000000_attendance_checked_in_by",
+  "20260506000000_operator_platform_config_feature_flags",
+  "20260507000000_add_member_totp_fields",
+  "20260509115719_add_class_roster",
+  "20260509130805_add_tenant_group_chat_url",
+  "20260512000001_member_account_type_parent",
+  "20260513000001_member_photos",
+  "20260513000002_login_event_fk_alignment",
+  "20260513000003_tenant_checkin_window",
+  "20260513000004_push_subscriptions",
+  "20260513000005_member_photo_rank_link",
+  "20260515000001_member_kids_check_constraint",
+  "20260515000002_membership_tier_stripe_ids",
+  "20260517000001_add_perf_indexes",
+  "20260530192937_add_tasks",
+  "20260530201740_task_rls_and_createdby_index",
+  "20260531000001_member_lifecycle_indexes",
+  "20260531200000_rank_history_indexes",
+  "20260601000001_area6_indexes_and_fk_setnull",
+  "20260601000002_area8_rls_fk_indexes",
+  "20260601100000_notes_length_check",
+  "20260601110000_task_member_assignee_and_body",
+  "20260606100000_member_photo_profile_kind",
+  "20260606200000_member_name_index",
+  "20260610100000_add_kids_waiver_fields",
+  "20260628004500_unique_tenant_stripe_account",
+  "20260628110000_member_cancelled_at",
+  "20260816090000_signed_waiver_retention_on_member_delete",
+  "20260816100000_hot_path_indexes",
+  "20260818200000_payment_money_constraints",
+  "20260819090000_class_instance_unique_slot",
+  "20260821050000_announcement_expiry",
+  "20260910100000_member_card_version",
+  "20260910140000_member_membership_tier_fk",
+  "20260911184911_tenant_payment_rail",
+  "20260911202009_member_next_due_at",
+  "20260913220000_payment_request_id",
+  "20260913230000_lowercase_emails",
+  "20260915150000_lowercase_email_trigger",
+  "20260921150000_attribution_and_leaderboard",
+  "20260923220000_billing_cycle_weekly",
+  "20260924120000_member_hold_until",
+  "20260925000000_locations",
+  "20260925090000_tier_location",
+  "20260926130000_user_must_change_password",
+  "20260930100000_import_provenance_review_lock",
+  "20260930120000_request_ids",
+  "20260930140000_member_billing_source",
+  "20260930160000_class_is_kids",
+  "20261001100000_member_hold_prior_status",
+  "20261001200000_tenant_contact_email",
+  "20261002120000_imported_membership_and_guardianship",
+  "20261003120000_import_source_time_provenance",
+  "20261003180000_attendance_history_ledger",
+  "20261006010000_operator_auth_hardening",
+  "20261006020000_tenant_lifecycle_safety",
+  "20261006040000_support_session_binding",
+  "20261006050000_operator_enrolment_ticket",
+  "20261007010000_login_email_provisional",
+  "20261009010000_audit_operator_request"
+ ],
+ "migrationChecksums": {
+  "20260424205716_init": "b1bbb06c0937e6da0e95148da7bd6252aa2f227637d15c8be6911c36b2b501c8",
+  "20260424213718_add_logo_size": "4e5e268382b59978c3411945db556a3e31d6df6d6fea0ececfc62824960e6c43",
+  "20260424215639_add_session_version_and_hot_path_indexes": "30304182ca26502bf6c0bb7dcbd286f354d732a055572de9e48b67a263807161",
+  "20260425124239_totp_questionnaire_stripe": "8e0420dc2ae03877ef98f1a6ac626290d0098135930fcc084969d0d03459380b",
+  "20260426122130_add_member_account_type": "3b7a1a02c27c5dee8289a9c444b4a328e45acc48379bb024a74fbfc27120c57c",
+  "20260426154929_add_tenant_waiver_content": "bcf8e7d57576893d4b19469785655cc6a81dce0db7818402e02657c670ed308c",
+  "20260426162644_phase1_security_hardening": "c9120d607847de47aabb544f650afc20fd0e9f2b7e29d5402418f3aa0b5898b2",
+  "20260426195401_reports_ai_causal_drive": "53eb22e582b08c4058937a1b5b651536119bd005843e8fdca26f389a5278d79b",
+  "20260426231623_payment_ledger": "d0d076102b6ec1a6cd3085483c91f8e4840ce313a427eed63dff02ce20992562",
+  "20260426232203_email_log": "aa47ba2ebb278c5249692c63b12da090ab438a9d4fc5bfc1ad5c1ee814dbae08",
+  "20260426232743_bacs_direct_debit": "c3316c4081785a689caca218a25e7120245eebf86805109f0c04340ee6ac6918",
+  "20260427112350_class_packs": "3472c2d247d98e3107ae05be0292965b7f4248c0e8ff9417ba4843380b8199db",
+  "20260427112739_import_jobs": "c9c5d3b71bf7683604a47f77fcdde4caea22ecb93010ecfc4a2c12b2a949f1a5",
+  "20260427174714_magic_link_and_signed_waiver_extensions": "27191ca680ebe00ac2c7e2e75024654062a9d39146ae98313e0865ce8b5cab4b",
+  "20260428000001_audit_p1_monthly_report_unique": "4cf0b0f29d07fffdf1c024696b21f37a63c89a6ec7b4d1a2326076f386e2842b",
+  "20260428000002_audit_p1_indexes": "8f2af57352493cc274378f1332f5b990491f62abf2c20afa0d4674f8c14a50ff",
+  "20260428000003_membership_tiers": "7004815845becf643411361a9c63e50705c00ad8aecf6a646309b4b8472b798a",
+  "20260428000004_tenant_self_billing": "008a6749a006dc0d02999e5aa804288e0d908ced77e0ace53c2958fe9fd40e4d",
+  "20260428000005_member_last_announcement_seen": "83d2a967e7f2612d3edcef259eec37bd8d07d025f1188f927cd0b05739b39fbb",
+  "20260428000006_member_parent_child": "f252c68b8e00cb469305d534759e02af0ac767abe0971a4df951c466c6d5082e",
+  "20260428000007_tenant_privacy_fields": "49f7e1a30ceeb7a76c32fe42559b15d760d0adda6a82244c7ed8112cce89b421",
+  "20260428000008_tenant_socials_fields": "a54736fab1769f85885c84a160e3de234941a7c5dc3cad7addc239a63e1164be",
+  "20260428000009_class_max_rank": "27cb4b9f2fe514638d3c068a27fdff304d1a1a70a05e0bf31aa071b9726f0d08",
+  "20260428000010_class_coach_user": "f8d37cf453777d992dfa006ca3a50a5cb3e12aa2b1a1341f467caa573bf16dbd",
+  "20260430000001_schema_check_constraints": "67e77261d0ef9b433e0f61744801c5a756fe06270a1d986e1bd166cdad7acb36",
+  "20260430000002_soft_delete_extensions": "baf873a484675426635f2576ee9a8f7a5fe8de09f951bc4303bde0fdce8e18a1",
+  "20260430000003_products": "582f0a68227d95cfdcf4ef01165c95c36c4b7c7de137e349efa15a317f822cea",
+  "20260430000004_gym_applications": "883866ec8b7c41e75bf7f205b0df2f84a14859cdb05107a7aac7c6d4dee9f771",
+  "20260430000005_orders": "d9662a629bd54e3913598f2cbc644a26196ac7e6337b831a90ef03e0874e3ef6",
+  "20260501000001_member_emergency_contact_relation": "e494b743fe133482e58a4822cbdb7ce973a107e68f8a19a0c59bd704c35ed695",
+  "20260502000001_hash_bearer_tokens": "8d2feadf9b89f06f6907aea35f9b4f8a1fbaad3a4871fbb87025c3d69558c088",
+  "20260502000001_rank_requirement": "d3bc6841c5c91493be1683796b2c5f1ba07e07f3bd0f06c27ad2a32bc2ec78b8",
+  "20260502000002_tenant_stripe_account_status": "115c58c5c96f247b91d820b93a852ef098d899dda3d05569c3ea6ab696961542",
+  "20260503000001_tenant_currency_timezone_recovery_codes": "5ebb5665f43f2ce24dbecc89197a7e997703d658bbf554da9b93d6ec1c6be7b7",
+  "20260503100000_rls_policies_foundation": "aba35c312c250adc3e1b958f24537781a7afa8f54bd32be610d3a6d5f889cc9f",
+  "20260503200000_activate_rls_enforcement": "7452e607885abb304f82314775aa4842cd59364f9a8949c8d966fb110a96a146",
+  "20260503300000_account_lockout": "e138f78c9cac8113f7bffc9a1ba21f39c1013d43f40d95a8d6f70b1f46016670",
+  "20260503400000_member_notification_prefs": "1010efaba926a83e612ac795061f2fcb39b02eb25aeda896782c7e44501bb929",
+  "20260504000000_login_events": "88c611dbdea25bbd32e20cede0c66cd6ace13020a4488f7192ad9e8c4235941c",
+  "20260504100000_tenant_kiosk_token": "89a4abe83f87684733a08fb1cd7f62aa51180a595cc295d2c2b79386d5d9baac",
+  "20260505000000_attendance_checked_in_by": "9b87a16cb60c890709ed5f547197028e26b618a2cfffa99cd860dac2210790e9",
+  "20260506000000_operator_platform_config_feature_flags": "64261e1756cc0e81411c8cd32282422a2cbe772b4cc5a23f594a89b696fa57bb",
+  "20260507000000_add_member_totp_fields": "79cd747615bc628de4354e4a7d1d440c25409677859eec0425b9a3299e7b1abb",
+  "20260509115719_add_class_roster": "92db383d60051313fda654cbcaf4c9d1f2f4c8c4faa5ec2d59762e5cf1c2b180",
+  "20260509130805_add_tenant_group_chat_url": "057530d2160a7980887e0dc0da53ef1a9f64f5657b2d6f2953572d773590c3f2",
+  "20260512000001_member_account_type_parent": "ef59b4f89913b21db8c5bc74d7ec3d0e009d55e9eb0154ade02cd828c3d9ec17",
+  "20260513000001_member_photos": "302037bb4b48c8d0186392e6c262f95f56b9071174a5f23332c4594ab1501c85",
+  "20260513000002_login_event_fk_alignment": "bd588573ba58d82ee0548f765fe01ca27593981cc692f3910a8ddbbe0143593e",
+  "20260513000003_tenant_checkin_window": "455436f4478824f4b0ad02f48258c16d1d3d9606aa6a16e389643454da140fbe",
+  "20260513000004_push_subscriptions": "7058da283c2b31a5dc19cc24c58ee4319c46755a3a6f3ba1488f9ea51bf752b1",
+  "20260513000005_member_photo_rank_link": "900e86ddeae24c6cc3456cb7b8c2866eab4b7558ed6116dba253658476ddd44e",
+  "20260515000001_member_kids_check_constraint": "2089a9a8d73a305297e08fe09bf59b0aa26c540865c03380995852b68a7a5a05",
+  "20260515000002_membership_tier_stripe_ids": "f46912e856a9fa9574222d9524fd0d420b86f42550d69d6af8bd7e66affc9cc8",
+  "20260517000001_add_perf_indexes": "fc11eba772eb82ee17fcb23bdfac9539d65d52f4517b3cf1084dd05838ef23b4",
+  "20260530192937_add_tasks": "6e81e0b55ff3a2bf88262cbe43ada7d463ab0c639bd36b80ff1615bbadaa8417",
+  "20260530201740_task_rls_and_createdby_index": "d12e560389725aede788e950a61a4d678ef8013d7261345185878b0b2a263c77",
+  "20260531000001_member_lifecycle_indexes": "63873a4e08725454090fa97d89f049d492b2b310f331bc5d498b3177c0bcde2a",
+  "20260531200000_rank_history_indexes": "7d0c5cc83f55b024b9b5c8cb6f4cf18fa588691df164958de18581af4d3fa5c7",
+  "20260601000001_area6_indexes_and_fk_setnull": "88a0aae148359412da5a194b06192797c0dbaa6dfc569e0bab6a35db35c08c92",
+  "20260601000002_area8_rls_fk_indexes": "92366bf010c4f40c394d36b5b5bb327fdf1808e0ea138d6fcb59763babd0ae63",
+  "20260601100000_notes_length_check": "61f51ca9ab78801ef67944274e0fd67b646bb8185a9237fe9fd738fe345ec6bf",
+  "20260601110000_task_member_assignee_and_body": "75a39168d6cb7cb570c4b8000d1317fc173683d711d16a015eed4b6905f3318f",
+  "20260606100000_member_photo_profile_kind": "74244184d7d3ed2636a922cc582dd1947c6d875377e38ffdac436ebaedb0c04c",
+  "20260606200000_member_name_index": "0990db4ea0b3edcf8bc457b9429382fbd8f1a905ded01b4d54e387aa57044151",
+  "20260610100000_add_kids_waiver_fields": "522e0c5ccb8475bfeb3165462edab9e3054886da5848ddf14d7ec295f6e865dd",
+  "20260628004500_unique_tenant_stripe_account": "59e471dd72cbd43ad4ea103dcbf064fc8c92ec196e41e6104bc8497e61cd31a1",
+  "20260628110000_member_cancelled_at": "efe178c5b36c5584fd191ad150b43d982bbaa0016643c8dc17a3d41ab0b42021",
+  "20260816090000_signed_waiver_retention_on_member_delete": "162c4ad2ed77707924d6cee7c21ba34375d2235ab310c08d2148fa92d6fa1b70",
+  "20260816100000_hot_path_indexes": "a6935708f6cd8295d856f8cf98409de9d6b743347abc2e502364e343654002ef",
+  "20260818200000_payment_money_constraints": "d32ea5cd498d8c13c6c729c28c3d5ad57e178e66fc4766130ec6b4f70a955f02",
+  "20260819090000_class_instance_unique_slot": "4ef650245153718fd39ad33123a99fcb321afc33751091107ec1909e27af2347",
+  "20260821050000_announcement_expiry": "60738edb79ec4b98008d2f1d04290fbedfd076760ed295969ab930faed280af4",
+  "20260910100000_member_card_version": "8bc89900331f5b2c0602c4be59be71d2930f7018420f7027f0d6c44de6a87341",
+  "20260910140000_member_membership_tier_fk": "f205d504a028ebc2bc5ba09bb82a98a8c5c8880892f013cb8dffba9465129517",
+  "20260911184911_tenant_payment_rail": "305aaacb82fa42111613d6f9c7804fb080362fb5f0e617830d5e3aa57902b3fb",
+  "20260911202009_member_next_due_at": "4e16774034d62b3223849c7f1e5a8797d7ae99e0cf7d6b064290132b05344b34",
+  "20260913220000_payment_request_id": "be0e33378ca514beece6776dc19eb6b375f897c249ef518d216eb58601780a9c",
+  "20260913230000_lowercase_emails": "3cd49f9aa632544c52f6c5ef9c3de098f210774cdae760bf25ad527fe77df424",
+  "20260915150000_lowercase_email_trigger": "f62d20db4269315bc3664610654b1b7618f37ca3362cf6db817312a700d6e04d",
+  "20260921150000_attribution_and_leaderboard": "73ad25e4facd3a4fc2a42cd8de714c18406d11f372a2130ae6c16f2b0fb49186",
+  "20260923220000_billing_cycle_weekly": "392c9e730dcc1b2045458763db2a3ef4313bc9610cd4848fcc93332ba6385ad4",
+  "20260924120000_member_hold_until": "3be4d035dc979c27b49d9b0534b9f025db8c12cef28bdabad66bc9686625e52a",
+  "20260925000000_locations": "5d31c4c0e13f867c81f53d89d38e308b6b0071819b96e085d51c82164316648b",
+  "20260925090000_tier_location": "cfca097cb49e3b711a7ea2792115d9097266acb43894e940a8e9a17533467c54",
+  "20260926130000_user_must_change_password": "14df2e77c0669777e04cc56a4f4930726ca3739e947e870a3b14f54af5941941",
+  "20260930100000_import_provenance_review_lock": "4c72c787db63c294697849388114b3070c3f3b5da8dd1190fbb6a620af753d64",
+  "20260930120000_request_ids": "a1c780c84ea50beb5cf3b0e9b522323fae447783b3834be8d84ff824ddf4b86d",
+  "20260930140000_member_billing_source": "cf0d1693d5d2eff59498e15350a34777652942cca967de578e9b2ebc9716e00a",
+  "20260930160000_class_is_kids": "b8828bf5fb309382bdc9d19901b929b3bd61ba4994462908d8a08c54363c4cde",
+  "20261001100000_member_hold_prior_status": "f6a5ae6ba55573516c797e295ee43efffb41e5886c55de6d1fdbddb7ed3673f8",
+  "20261001200000_tenant_contact_email": "6020bc41700cc14bafacec52831bfc7ea073f0549b8a4ba4d529e564a6e70c79",
+  "20261002120000_imported_membership_and_guardianship": "aa59d1049f73789b41d4a0b8a2be482e5674747ce493489b96c685a567bdc598",
+  "20261003120000_import_source_time_provenance": "d4ff127c8d7d887d97efcdc819db33302d0b9edda3220333b2565b997c9f7ef4",
+  "20261003180000_attendance_history_ledger": "cd73aca7b4c14891241393536a345420e182660c2d6c6e81bc69ce409df61f45",
+  "20261006010000_operator_auth_hardening": "416677535e2261b88ede2985ed670e855ad8af5779dbc6735d6d00edc2a81628",
+  "20261006020000_tenant_lifecycle_safety": "150298f404d1cd87042cb8cce9fa4d5b3a4cdecd3007adba2a7bd3be98aa5e62",
+  "20261006040000_support_session_binding": "8a4e7fa143248e20f3ec5a2e4e35107858048099d238a5fd5e80bd3c84df3040",
+  "20261006050000_operator_enrolment_ticket": "f978582f9ce24b915932f5556b08ff7285e8028555d1b9547ee840f0ea676a56",
+  "20261007010000_login_email_provisional": "57a4b9f63eab9d7b5470aca87a0d0434cb58d53e14eb01ea9cb6a19212df5f1f",
+  "20261009010000_audit_operator_request": "a6bcf8a1c1126f1a1199c5b1af708f933f06d18e1f9dcd4ca0ed3ec8883dd809"
+ },
+ "tables": {
+  "Announcement": {
+   "rows": 12,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "abac198c0c7e7422c6220c3077abc884"
+  },
+  "AttendanceRecord": {
+   "rows": 63477,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "7b488fb115625049e5454cccf72a7939"
+  },
+  "AuditLog": {
+   "rows": 9858,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "1d09497be55bc6f92c91b7d87bd76059"
+  },
+  "Class": {
+   "rows": 163,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "91dc0fcd425590a02b5940388e53ffe1"
+  },
+  "ClassInstance": {
+   "rows": 5072,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (EXISTS ( SELECT 1\n   FROM \"Class\"\n  WHERE ((\"Class\".id = \"ClassInstance\".\"classId\") AND (\"Class\".\"tenantId\" = current_setting('app.current_tenant_id'::text, true)))))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "59ff58b74b8dda73f4e1379c5baa8015"
+  },
+  "ClassPack": {
+   "rows": 5,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "21f6412285717b8436048d5c21cfd865"
+  },
+  "ClassPackRedemption": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (EXISTS ( SELECT 1\n   FROM \"MemberClassPack\"\n  WHERE ((\"MemberClassPack\".id = \"ClassPackRedemption\".\"memberPackId\") AND (\"MemberClassPack\".\"tenantId\" = current_setting('app.current_tenant_id'::text, true)))))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "ClassRoster": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "ClassSchedule": {
+   "rows": 174,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (EXISTS ( SELECT 1\n   FROM \"Class\"\n  WHERE ((\"Class\".id = \"ClassSchedule\".\"classId\") AND (\"Class\".\"tenantId\" = current_setting('app.current_tenant_id'::text, true)))))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "bbb364be4a25fd49726976dbf910d0fb"
+  },
+  "ClassSubscription": {
+   "rows": 5,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (EXISTS ( SELECT 1\n   FROM \"Member\"\n  WHERE ((\"Member\".id = \"ClassSubscription\".\"memberId\") AND (\"Member\".\"tenantId\" = current_setting('app.current_tenant_id'::text, true)))))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "44eada66074bc3ee09916ba1ab0ba0ed"
+  },
+  "ClassWaitlist": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (EXISTS ( SELECT 1\n   FROM \"Member\"\n  WHERE ((\"Member\".id = \"ClassWaitlist\".\"memberId\") AND (\"Member\".\"tenantId\" = current_setting('app.current_tenant_id'::text, true)))))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "Dispute": {
+   "rows": 6,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "56ee5196b5508889a73a547adbe7bc44"
+  },
+  "EmailLog": {
+   "rows": 3921,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "424fee1008d35ae481faa8381ed6e8a4"
+  },
+  "GoogleDriveConnection": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "GymApplication": {
+   "rows": 46,
+   "rls": false,
+   "force": false,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "",
+   "triggers": "",
+   "contentMd5": "bb1a38b525cae2058e8cd2ece730c7c6"
+  },
+  "ImportJob": {
+   "rows": 118,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "f89c7010aac794f1dfedb16e3ad0aced"
+  },
+  "ImportSourceMapping": {
+   "rows": 15,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "bd3322f91a2fc31b13c290dd87f86f70"
+  },
+  "ImportUpload": {
+   "rows": 2,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "aa49173900535312b1457ff76b2e54b5"
+  },
+  "ImportUploadChunk": {
+   "rows": 10,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "87cba20fa3046c79d86a52707f0a199d"
+  },
+  "ImportedBooking": {
+   "rows": 15273,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "e6ff8d4a30e2754669e7b1bd0ee0d662"
+  },
+  "ImportedMembership": {
+   "rows": 1082,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "3280263a52f02f6525a2466e1d4132ae"
+  },
+  "IndexedDriveFile": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "Initiative": {
+   "rows": 4,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "d46704d7c70f58dce43e7c8452fbdb14"
+  },
+  "InitiativeAttachment": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (EXISTS ( SELECT 1\n   FROM \"Initiative\"\n  WHERE ((\"Initiative\".id = \"InitiativeAttachment\".\"initiativeId\") AND (\"Initiative\".\"tenantId\" = current_setting('app.current_tenant_id'::text, true)))))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "Location": {
+   "rows": 42,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "4c2d69b132354deadcb9043bc3d019bc"
+  },
+  "LoginEvent": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "MagicLinkToken": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "MagicLinkToken_email_lowercase|enabled=O|CREATE TRIGGER \"MagicLinkToken_email_lowercase\" BEFORE INSERT OR UPDATE OF email ON public.\"MagicLinkToken\" FOR EACH ROW EXECUTE FUNCTION matflow_lowercase_email()",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "Member": {
+   "rows": 3916,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "Member_email_lowercase|enabled=O|CREATE TRIGGER \"Member_email_lowercase\" BEFORE INSERT OR UPDATE OF email ON public.\"Member\" FOR EACH ROW EXECUTE FUNCTION matflow_lowercase_email()",
+   "contentMd5": "2315f53e267036f981a7e0962faee48c"
+  },
+  "MemberClassPack": {
+   "rows": 3,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "df73106e453676fd7a23e503fe9b45c1"
+  },
+  "MemberPhoto": {
+   "rows": 9,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "61589038dcf5688e2194ee353ecbdc81"
+  },
+  "MemberRank": {
+   "rows": 14,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (EXISTS ( SELECT 1\n   FROM \"Member\"\n  WHERE ((\"Member\".id = \"MemberRank\".\"memberId\") AND (\"Member\".\"tenantId\" = current_setting('app.current_tenant_id'::text, true)))))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "f68c71ef7677fd1bee751a6b6769e4cb"
+  },
+  "MemberStatusEvent": {
+   "rows": 1563,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "a3e3db434cf53ee9e7c37bb9657fa064"
+  },
+  "MembershipTier": {
+   "rows": 94,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "b4aa6671898addbd99f9966327a55422"
+  },
+  "MonthlyReport": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "Notification": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "Operator": {
+   "rows": 1,
+   "rls": false,
+   "force": false,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "",
+   "triggers": "Operator_email_lowercase|enabled=O|CREATE TRIGGER \"Operator_email_lowercase\" BEFORE INSERT OR UPDATE OF email ON public.\"Operator\" FOR EACH ROW EXECUTE FUNCTION matflow_lowercase_email()",
+   "contentMd5": "2865a40a30d7d52540d06180ca5fb411"
+  },
+  "Order": {
+   "rows": 9,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "f96fc32c2bf84f38f06b02a2a1c5eae8"
+  },
+  "PasswordHistory": {
+   "rows": 33,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (EXISTS ( SELECT 1\n   FROM \"User\"\n  WHERE ((\"User\".id = \"PasswordHistory\".\"userId\") AND (\"User\".\"tenantId\" = current_setting('app.current_tenant_id'::text, true)))))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "bec1b8d52eeaf3feb4bf85456b74d37f"
+  },
+  "PasswordResetToken": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "PasswordResetToken_email_lowercase|enabled=O|CREATE TRIGGER \"PasswordResetToken_email_lowercase\" BEFORE INSERT OR UPDATE OF email ON public.\"PasswordResetToken\" FOR EACH ROW EXECUTE FUNCTION matflow_lowercase_email()",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "Payment": {
+   "rows": 9168,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "826cdbd7102749b78a6992c1f9442893"
+  },
+  "PlatformConfig": {
+   "rows": 0,
+   "rls": false,
+   "force": false,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "",
+   "triggers": "",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "Product": {
+   "rows": 22,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "979209f5b69b5311a34726d0e56d81d6"
+  },
+  "PushSubscription": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "RankHistory": {
+   "rows": 2,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (EXISTS ( SELECT 1\n   FROM (\"MemberRank\"\n     JOIN \"Member\" ON ((\"Member\".id = \"MemberRank\".\"memberId\")))\n  WHERE ((\"MemberRank\".id = \"RankHistory\".\"memberRankId\") AND (\"Member\".\"tenantId\" = current_setting('app.current_tenant_id'::text, true)))))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "026fd6dc8ea19e21f4226a6130e93f82"
+  },
+  "RankRequirement": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "RankSystem": {
+   "rows": 35,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "f6d773572196b8d0a09c12f76bc463ee"
+  },
+  "RateLimitHit": {
+   "rows": 116,
+   "rls": false,
+   "force": false,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "",
+   "triggers": "",
+   "contentMd5": "f1838d91d7196d59ea96a7fd325a4464"
+  },
+  "SignedWaiver": {
+   "rows": 80,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "8dd2d00f4f7182d941fa507ec726ad94"
+  },
+  "StripeEvent": {
+   "rows": 44,
+   "rls": false,
+   "force": false,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "",
+   "triggers": "",
+   "contentMd5": "d43610ca4521c08237476bc0e9c94630"
+  },
+  "Task": {
+   "rows": 5,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "53ccfc2c77b02f3e491af57abfd11e0d"
+  },
+  "Tenant": {
+   "rows": 141,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (id = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "",
+   "contentMd5": "70d243a296078ab2069e90c1c0748d99"
+  },
+  "User": {
+   "rows": 584,
+   "rls": true,
+   "force": true,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "tenant_isolation|ALL|PERMISSIVE|{public}|USING(((current_setting('app.bypass_rls'::text, true) = 'on'::text) OR (\"tenantId\" = current_setting('app.current_tenant_id'::text, true))))|CHECK()",
+   "triggers": "User_email_lowercase|enabled=O|CREATE TRIGGER \"User_email_lowercase\" BEFORE INSERT OR UPDATE OF email ON public.\"User\" FOR EACH ROW EXECUTE FUNCTION matflow_lowercase_email()",
+   "contentMd5": "79d41667021b2b89f80d501521fa032c"
+  },
+  "_prisma_migrations": {
+   "rows": 100,
+   "rls": false,
+   "force": false,
+   "owner": "neondb_owner",
+   "acl": "{neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner}",
+   "policies": "",
+   "triggers": "",
+   "contentMd5": "eb2545392f9fbb61ad053445aaa6f7fd"
+  }
+ },
+ "functions": {
+  "matflow_lowercase_email()": {
+   "owner": "neondb_owner",
+   "secdef": false,
+   "config": "",
+   "lang": "plpgsql",
+   "acl": "",
+   "srcMd5": "e0aec06cd168d5d566705e24f9922b06"
+  }
+ },
+ "schemaPublic": {
+  "owner": "pg_database_owner",
+  "acl": "{pg_database_owner=UC/pg_database_owner,=U/pg_database_owner,matflow_app=U/pg_database_owner}"
+ },
+ "extensions": [
+  "plpgsql@1.0"
+ ],
+ "eventTriggers": [],
+ "roles": {
+  "matflow_app": {
+   "rolsuper": false,
+   "rolbypassrls": false,
+   "rolinherit": true,
+   "rolcreaterole": false,
+   "rolcreatedb": false,
+   "rolcanlogin": true,
+   "rolreplication": false,
+   "memberof": ""
+  },
+  "neondb_owner": {
+   "rolsuper": false,
+   "rolbypassrls": true,
+   "rolinherit": true,
+   "rolcreaterole": true,
+   "rolcreatedb": true,
+   "rolcanlogin": true,
+   "rolreplication": true,
+   "memberof": "matflow_app,neon_superuser"
+  },
+  "pg_database_owner": {
+   "rolsuper": false,
+   "rolbypassrls": false,
+   "rolinherit": true,
+   "rolcreaterole": false,
+   "rolcreatedb": false,
+   "rolcanlogin": false,
+   "rolreplication": false,
+   "memberof": ""
+  }
+ },
+ "foreignKeys": {
+  "Announcement_tenantId_fkey": {
+   "child": "Announcement",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "AttendanceRecord_checkedInById_fkey": {
+   "child": "AttendanceRecord",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "AttendanceRecord_classInstanceId_fkey": {
+   "child": "AttendanceRecord",
+   "parent": "ClassInstance",
+   "validated": true,
+   "orphans": 0
+  },
+  "AttendanceRecord_memberId_fkey": {
+   "child": "AttendanceRecord",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "AuditLog_operatorId_fkey": {
+   "child": "AuditLog",
+   "parent": "Operator",
+   "validated": true,
+   "orphans": 0
+  },
+  "AuditLog_userId_fkey": {
+   "child": "AuditLog",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassInstance_classId_fkey": {
+   "child": "ClassInstance",
+   "parent": "Class",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassPackRedemption_memberPackId_fkey": {
+   "child": "ClassPackRedemption",
+   "parent": "MemberClassPack",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassRoster_addedByUserId_fkey": {
+   "child": "ClassRoster",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassRoster_classId_fkey": {
+   "child": "ClassRoster",
+   "parent": "Class",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassRoster_memberId_fkey": {
+   "child": "ClassRoster",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassRoster_tenantId_fkey": {
+   "child": "ClassRoster",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassSchedule_classId_fkey": {
+   "child": "ClassSchedule",
+   "parent": "Class",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassSubscription_classId_fkey": {
+   "child": "ClassSubscription",
+   "parent": "Class",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassSubscription_memberId_fkey": {
+   "child": "ClassSubscription",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassWaitlist_classInstanceId_fkey": {
+   "child": "ClassWaitlist",
+   "parent": "ClassInstance",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassWaitlist_memberId_fkey": {
+   "child": "ClassWaitlist",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "Class_coachUserId_fkey": {
+   "child": "Class",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "Class_locationId_fkey": {
+   "child": "Class",
+   "parent": "Location",
+   "validated": true,
+   "orphans": 0
+  },
+  "Class_maxRankId_fkey": {
+   "child": "Class",
+   "parent": "RankSystem",
+   "validated": true,
+   "orphans": 0
+  },
+  "Class_requiredRankId_fkey": {
+   "child": "Class",
+   "parent": "RankSystem",
+   "validated": true,
+   "orphans": 0
+  },
+  "Class_tenantId_fkey": {
+   "child": "Class",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportSourceMapping_tenantId_fkey": {
+   "child": "ImportSourceMapping",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportUploadChunk_uploadId_fkey": {
+   "child": "ImportUploadChunk",
+   "parent": "ImportUpload",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportUpload_tenantId_fkey": {
+   "child": "ImportUpload",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportedBooking_memberId_fkey": {
+   "child": "ImportedBooking",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportedBooking_tenantId_fkey": {
+   "child": "ImportedBooking",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportedMembership_importJobId_fkey": {
+   "child": "ImportedMembership",
+   "parent": "ImportJob",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportedMembership_memberId_fkey": {
+   "child": "ImportedMembership",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportedMembership_tenantId_fkey": {
+   "child": "ImportedMembership",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "InitiativeAttachment_initiativeId_fkey": {
+   "child": "InitiativeAttachment",
+   "parent": "Initiative",
+   "validated": true,
+   "orphans": 0
+  },
+  "Location_tenantId_fkey": {
+   "child": "Location",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "LoginEvent_memberId_fkey": {
+   "child": "LoginEvent",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "LoginEvent_userId_fkey": {
+   "child": "LoginEvent",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberClassPack_memberId_fkey": {
+   "child": "MemberClassPack",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberClassPack_packId_fkey": {
+   "child": "MemberClassPack",
+   "parent": "ClassPack",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberPhoto_memberId_fkey": {
+   "child": "MemberPhoto",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberPhoto_memberRankId_fkey": {
+   "child": "MemberPhoto",
+   "parent": "MemberRank",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberPhoto_tenantId_fkey": {
+   "child": "MemberPhoto",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberPhoto_uploadedByMemberId_fkey": {
+   "child": "MemberPhoto",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberRank_memberId_fkey": {
+   "child": "MemberRank",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberRank_rankSystemId_fkey": {
+   "child": "MemberRank",
+   "parent": "RankSystem",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberStatusEvent_changedById_fkey": {
+   "child": "MemberStatusEvent",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberStatusEvent_memberId_fkey": {
+   "child": "MemberStatusEvent",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberStatusEvent_tenantId_fkey": {
+   "child": "MemberStatusEvent",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "Member_creditedToMemberId_fkey": {
+   "child": "Member",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "Member_creditedToUserId_fkey": {
+   "child": "Member",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "Member_membershipTierId_fkey": {
+   "child": "Member",
+   "parent": "MembershipTier",
+   "validated": true,
+   "orphans": 0
+  },
+  "Member_parentMemberId_fkey": {
+   "child": "Member",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "Member_tenantId_fkey": {
+   "child": "Member",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "Member_trialRunById_fkey": {
+   "child": "Member",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "MembershipTier_locationId_fkey": {
+   "child": "MembershipTier",
+   "parent": "Location",
+   "validated": true,
+   "orphans": 0
+  },
+  "MembershipTier_tenantId_fkey": {
+   "child": "MembershipTier",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "Notification_memberId_fkey": {
+   "child": "Notification",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "Notification_tenantId_fkey": {
+   "child": "Notification",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "Order_memberId_fkey": {
+   "child": "Order",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "PasswordHistory_userId_fkey": {
+   "child": "PasswordHistory",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "Payment_memberId_fkey": {
+   "child": "Payment",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "PushSubscription_memberId_fkey": {
+   "child": "PushSubscription",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "PushSubscription_tenantId_fkey": {
+   "child": "PushSubscription",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "PushSubscription_userId_fkey": {
+   "child": "PushSubscription",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "RankHistory_memberRankId_fkey": {
+   "child": "RankHistory",
+   "parent": "MemberRank",
+   "validated": true,
+   "orphans": 0
+  },
+  "RankRequirement_rankSystemId_fkey": {
+   "child": "RankRequirement",
+   "parent": "RankSystem",
+   "validated": true,
+   "orphans": 0
+  },
+  "RankSystem_tenantId_fkey": {
+   "child": "RankSystem",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "SignedWaiver_memberId_fkey": {
+   "child": "SignedWaiver",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "Task_assignedToId_fkey": {
+   "child": "Task",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "Task_assigneeMemberId_fkey": {
+   "child": "Task",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "Task_completedById_fkey": {
+   "child": "Task",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "Task_createdById_fkey": {
+   "child": "Task",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "Task_tenantId_fkey": {
+   "child": "Task",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "User_tenantId_fkey": {
+   "child": "User",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  }
+ },
+ "securityState": {
+  "magicLinkOutstanding": 0,
+  "passwordResetOutstanding": 0,
+  "userSessionVersionSum": 251,
+  "memberSessionVersionSum": 305,
+  "operatorSessionVersionSum": 3,
+  "operators": 1,
+  "latestAuditAt": "2026-10-09T10:49:57.626Z"
+ }
+}

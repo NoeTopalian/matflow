@@ -280,3 +280,30 @@ DB evidence add `--reporter=json --outputFile=x.json` and gate with `node script
 ## Final both-role sweep (coordinator, 9 Oct 2026 16:55–17:40 UK) — `evidence/lead/final-sweep-2026-10-09.log`
 39 security-relevant database files × 2 roles (owner runner `neondb_owner`; restricted runner `matflow_app`, RLS enforced), one file at a time with a 300 s ceiling, on the working tree at `e5f4daf` when the sweep started (lane D's fifth pass `788d29a` landed mid-sweep; the three files it touches — sec-d-attendance-misbinding-db, attendance-import-engine, contact-email-change-imports-db — were re-run afterwards on `788d29a`, see the targeted line below). Result: 78/78 runs exit 0. Not counted as passes: `sec-b-fixture-sweep-db` (opt-in with SEC_B_SWEEP=1; skipped by design under both roles) and `tenant-restore-purge-race` under the restricted role (file reported failed with its 5 tests skipped — cause recorded below; the owner-role run passed). Every other file reports its tests passed under both roles.
 Targeted re-run on the final source tree (`788d29a`; working tree `6ff5c4e`, docs only after it; `evidence/lead/final-sweep-targeted-2026-10-09.log`): sec-d-attendance-misbinding-db 23/23, attendance-import-engine 19/19, contact-email-change-imports-db 7/7 — each under both roles, exit 0. `tenant-restore-purge-race` under the restricted role re-run alone: 5/5 passed — the sweep's "failed, 5 skipped" was a transient setup failure (the same class of network blip lanes D and F recorded), not a defect; both roles now green.
+
+## Iteration 2 — lane F2 (9 Oct 2026, ~18:30–19:40 UK; every run on Node v24.21.0, the scratchpad `node24` binary)
+Source: HEAD `daba6d7` (lane F2 started at `6043fed`; lanes B2/E2 and the lead committed meanwhile) + lane F2's
+working-tree files. Evidence: `evidence/F2/` (`harness-2026-10-09.txt` has the exact commands' results).
+
+**Correction to the final sweep above.** Its `exit=` column is not vitest's exit code: the script stored
+`${PIPESTATUS[0]}` after `res=$(cmd | grep | tr)`, which is the status of the substitution (tr, always 0). The
+`tenant-restore-purge-race` restricted row "exit=0, 1 failed, 5 skipped" was a setup failure (a throwing `beforeAll`
+— vitest reports the file failed and every test skipped; vitest's own exit was 1). For gate evidence use the JSON
+report and `test-skip-gate.mjs`, never a scraped exit code.
+
+| Item | Level | Result (Node 24.21.0) |
+|---|---|---|
+| `tenant-restore-purge-race` setup failure now FAILS each test (was: 5 skipped) | U (unreachable DB 127.0.0.1:1) | HEAD: 5 skipped / file failed; F2: 5 failed, "setup failed (counted as a failure, not a skip)" |
+| same, TEST branch | I owner / matflow_app | owner 5/5; matflow_app run 1: 3 lock-wait timeouts (30 s), then 5/5, 5/5 (F2 version) and 5/5 (HEAD version) — timing-dependent under shared-branch load |
+| `test-skip-gate.mjs` v2 (setup failure never green; success:false; MAINTENANCE; BLOCKED with `--allow-blocked`) | U | sec-f2-skip-gate 7/7; sec-r-skip-gate-expected-files 3/3 |
+| `sec-b-fixture-sweep-db` | decision | maintenance tool, NOT a required check — excluded from `--expect`, skip allowed, reason in the file and the gate |
+| `sec-f2-auditlog-append-only-db` on TEST | I owner / matflow_app | 10/10 SKIPPED with the reason (migration absent) → gate FAIL (strict) / PASS-WITH-BLOCKED-COVERAGE (`--allow-blocked`) |
+| same, in the isolated restore with the v2 SQL applied | I (PGlite 17.5, SET ROLE) | matflow_app 9 passed + 1 owner-only; owner 10/10; mutants stamp-noop, like-wildcard, delete-open each killed |
+| `restore-verify` SF-64 | U + I (isolated restore) | sec-f2-restore-verify-compare 16/16 (incl. guard refusals); tamper controls 10/10 as expected |
+| backup export → isolated restore → verify → revoke → verify | R (TEST → PGlite) | run 1 FAIL (JSON null lost — fixed); run 2 PASS, 9.6 s to verified, revoke compare PASS |
+| `coverage-reconcile.mjs` | U + C | sec-f2-coverage-reconcile 9/9; real matrix: 96 rows, 0 UNPARSED, deterministic (3 identical runs); `--require-reviewed` counts FIXED as PASS only with a named approval |
+| patches 0001–0003 (not applied to the repo) | U + tsc in a scratch worktree | tsc 0; retention-cron + sec-c-static-guards 51/51; migrations-are-atomic 22/22; red without the patch: 2 new retention cells, 1 new guard cell |
+
+Gate the DB sweep with `--require-db --expect=tests/integration/*-db.test.ts --allow=tests/integration/rls-foundation.test.ts`
+(owner role) and add `--allow-blocked` only while SF-57 is unapplied — the verdict then reads
+PASS-WITH-BLOCKED-COVERAGE, never PASS.
