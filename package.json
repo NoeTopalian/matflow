@@ -81,7 +81,8 @@
     "vitest": "^4.1.4"
   },
   "overrides": {
-    "deepmerge-ts": "^8.0.0"
+    "deepmerge-ts": "^8.0.0",
+    "mysql2": "^3.24.5"
   },
   "engines": {
     "node": ">=24.18.1 <25"
