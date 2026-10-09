@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# R3 mutant runner: apply one mutant, run the named tests, restore the file byte-for-byte from git, verify clean.
+set -u
+R=/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/R3
+WT=$R/wt
+export PATH="$R/../node24/node-v24.21.0-win-x64:$PATH"
+OUT=$R/logs/mutants-summary.txt
+run_case() { # id file kind tests...
+  local id=$1 file=$2 kind=$3; shift 3
+  local log=$R/logs/mutant-$id-$kind.log
+  (cd $WT && node $R/scripts/mutate.mjs "$(cygpath -w $WT)" "$id") > $log 2>&1 || { echo "$id APPLY-FAILED" >> $OUT; return; }
+  if [ "$kind" = unit ]; then bash $R/run-unit.sh "$@" >> $log 2>&1; else bash $R/run-owner.sh "$@" >> $log 2>&1; fi
+  local code=$?
+  (cd $WT && git checkout -- "$file" && git diff --quiet -- "$file") || echo "$id RESTORE-FAILED" >> $OUT
+  local t=$(grep -E "^ +Tests " $log | tail -1 | sed 's/ \+/ /g')
+  local failed=$(grep -E "^ FAIL " $log | sed 's/^ FAIL //' | cut -c1-150 | sort -u | head -4 | tr '\n' '|')
+  echo "$id [$kind] exit=$code $t :: $failed" >> $OUT
+}
+: > $OUT
+U="tests/unit"
+I="tests/integration"
+run_case 44-no-stamp auth.ts unit $U/sec-a2-proxy-outage-cookie.test.ts
+run_case 44-no-bound auth.ts unit $U/sec-a2-proxy-outage-cookie.test.ts
+run_case 44-proxy-clears proxy.ts unit $U/sec-a2-proxy-outage-cookie.test.ts
+run_case 44-edge-clears-marker auth.ts unit $U/sec-a2-proxy-outage-cookie.test.ts
+run_case 44-support-unknown-kept auth.ts unit $U/support-session-fail-closed-proxy.test.ts $U/sec-a-revocation-fail-closed.test.ts $U/support-session-binding.test.ts $U/support-swap-identity.test.ts $U/support-carrier-jwt.test.ts
+run_case 35-skip-known-device-for-none auth.ts unit $U/sec-a2-lockout-flags.test.ts $U/account-lockout-counter.test.ts
+run_case 35-skip-known-device-for-none auth.ts db $I/sec-a2-lockout-oracle-db.test.ts
+run_case 35-count-row-not-address auth.ts db $I/sec-a2-lockout-oracle-db.test.ts
+run_case 59-false-honoured-on-vercel auth.ts unit $U/sec-a2-lockout-flags.test.ts $U/login-throttle-defaults-on.test.ts
+run_case 37-get-acts "app/api/auth/disown-login/[token]/route.ts" db $I/sec-a2-verify-disown-db.test.ts
+run_case 37-post-no-csrf "app/api/auth/disown-login/[token]/route.ts" unit $U/sec-c-csrf-sweep.test.ts
+run_case 37-bypass-on-vercel auth.ts unit $U/sec-a2-lockout-flags.test.ts $U/e2e-bypass-no-owner-escalation.test.ts
+run_case 37-bypass-header auth.ts unit $U/sec-a2-lockout-flags.test.ts $U/e2e-bypass-no-owner-escalation.test.ts
+run_case 36-link-bypassed auth.ts unit $U/sec-a2-google-link.test.ts
+echo "DONE" >> $OUT

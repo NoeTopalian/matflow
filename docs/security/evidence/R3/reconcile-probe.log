@@ -1,0 +1,19 @@
+{"baselineVerdict":"RECONCILED","baselineMalformed":[],"verdict":"FAIL","malformed":["SEC-010 (12 cells, header 11)"],"inconsistent":["SEC-016: applicability NOT APPLICABLE WITH EVIDENCE with verification PASS"],"unparsed":["SEC-010"]}
+{"id":"SEC-011","applicability":"APPLICABLE","verification":"BLOCKED","viaFixed":false,"reviewerApproved":true,"residual":true}
+{"id":"SEC-012","applicability":"NOT APPLICABLE WITH EVIDENCE","verification":"N/A (guard test)","viaFixed":false,"reviewerApproved":true,"residual":false}
+{"id":"SEC-013","applicability":"APPLICABLE","verification":"FIXED AWAITING RETEST","viaFixed":true,"reviewerApproved":false,"residual":false}
+{"id":"SEC-014","applicability":"APPLICABLE","verification":"PASS","viaFixed":true,"reviewerApproved":true,"residual":false}
+{"id":"SEC-015","applicability":"APPLICABLE","verification":"FIXED AWAITING RETEST","viaFixed":true,"reviewerApproved":false,"residual":false}
+{"id":"SEC-016","applicability":"NOT APPLICABLE WITH EVIDENCE","verification":"PASS","viaFixed":false,"reviewerApproved":true,"residual":false}
+{"reviewer":"R3: not yet approved","approved":true}
+{"reviewer":"R: approved in part; NOT APPROVED for X","approved":false}
+{"reviewer":"R: unapproved","approved":false}
+{"reviewer":"approved? no","approved":true}
+{"reviewer":"R2: approval withdrawn","approved":false}
+{"reviewer":"R: disapproved","approved":false}
+{"cell":"PASS (U) → FAIL","cls":"FAIL","viaFixed":false,"residual":false,"alternatives":["FAIL"]}
+{"cell":"BLOCKED / PASS","cls":"BLOCKED","viaFixed":false,"residual":true,"alternatives":["BLOCKED","PASS"]}
+{"cell":"PASSED","cls":"UNPARSED","viaFixed":false,"residual":false,"alternatives":["UNPARSED"]}
+{"cell":"NOT APPLICABLE","cls":"UNPARSED","viaFixed":false,"residual":false,"alternatives":["UNPARSED"]}
+{"cell":"pass","cls":"PASS","viaFixed":false,"residual":false,"alternatives":["PASS"]}
+{"cell":"PASS; FAIL (browser)","cls":"PASS","viaFixed":false,"residual":true,"alternatives":["PASS"]}

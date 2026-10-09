@@ -1,0 +1,169 @@
+// Reviewer R3 (iteration 2) — independent oracle probe of lockout v2 (SF-35/SF-59).
+// TEST branch only via the R3 copies of the guarded runners. Synthetic secR3- club,
+// count-checked teardown. Real authorize(), real bcrypt (cost 12, as production
+// hashes and DUMMY_HASH), real RateLimitHit counters. Per-IP attempt throttle
+// replaced by "allowed" (attacker pacing under it), as in A2's own test.
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+import bcrypt from "bcryptjs";
+import { writeFileSync } from "node:fs";
+
+type Authorize = (credentials: Record<string, unknown>, request: Request) => Promise<Record<string, unknown> | null>;
+const captured = vi.hoisted(() => {
+  process.env.AUTH_SECRET ??= "sec-r3-lockout-db-secret-0123456789abcdef0123456789";
+  return { authorize: undefined as undefined | Authorize, knownDeviceCalls: 0 };
+});
+
+vi.mock("next-auth", () => ({
+  default: (config: { providers: { authorize?: Authorize }[] }) => {
+    for (const p of config.providers) if (p?.authorize) captured.authorize = p.authorize;
+    return { handlers: {}, auth: async () => null, signIn: async () => {}, signOut: async () => {} };
+  },
+  CredentialsSignin: class extends Error {
+    code = "credentials";
+  },
+}));
+vi.mock("next-auth/providers/credentials", () => ({ default: (c: unknown) => c }));
+vi.mock("next-auth/providers/google", () => ({ default: (c: unknown) => c }));
+vi.mock("@/lib/login-event", () => ({ recordLoginEvent: async () => {} }));
+vi.mock("@sentry/nextjs", () => ({ captureException: () => {} }));
+// after() as in a real request: scheduled, not awaited by the response.
+vi.mock("next/server", async (orig) => ({
+  ...(await orig<typeof import("next/server")>()),
+  after: (fn: () => unknown) => {
+    setTimeout(() => void fn(), 0);
+  },
+}));
+vi.mock("@/lib/rate-limit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  checkRateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }),
+}));
+
+import { withRlsBypass } from "@/lib/prisma-tenant";
+import { prisma } from "@/lib/prisma";
+import { lockoutKeys } from "@/lib/auth-lockout";
+
+const HAS_DB = !!process.env.DATABASE_URL;
+const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
+const STAMP = `secR3-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const E = (who: string) => `${STAMP}-${who}@example.test`.toLowerCase();
+const PASSWORD = "secR3-correct-horse-battery";
+const ATTACKER_IP = `198.51.100.${Math.floor(Math.random() * 200) + 20}`;
+const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+const OUT = process.env.R3_OUT ?? "";
+
+describe.skipIf(!HAS_DB)("R3 lockout oracle probe", () => {
+  const ids = { tenant: "", slug: "" };
+
+  async function attempt(email: string, password: string, fromIp = ATTACKER_IP) {
+    if (!captured.authorize) await import("@/auth");
+    const t0 = performance.now();
+    let outcome: string;
+    try {
+      const r = await captured.authorize!(
+        { email, password, tenantSlug: ids.slug },
+        new Request("http://localhost/api/auth/callback/credentials", {
+          method: "POST",
+          headers: { "x-vercel-forwarded-for": fromIp, "user-agent": UA },
+        }),
+      );
+      outcome = r ? "admitted" : "refused";
+    } catch (e) {
+      outcome = `code:${(e as { code?: string }).code ?? "error"}`;
+    }
+    return { outcome, ms: performance.now() - t0 };
+  }
+
+  async function seed(email: string, addrN: number, pairN: number) {
+    const k = lockoutKeys(ids.slug, email, ATTACKER_IP);
+    await prisma.rateLimitHit.deleteMany({ where: { bucket: { in: [k.addr, k.pair] } } });
+    const rows = [
+      ...Array.from({ length: addrN }, () => ({ bucket: k.addr })),
+      ...Array.from({ length: pairN }, () => ({ bucket: k.pair })),
+    ];
+    if (rows.length) await prisma.rateLimitHit.createMany({ data: rows });
+  }
+
+  const median = (xs: number[]) => {
+    const s = [...xs].sort((a, b) => a - b);
+    return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+  };
+
+  beforeAll(async () => {
+    const hash = bcrypt.hashSync(PASSWORD, 12);
+    await withRlsBypass(async (tx) => {
+      const t = await tx.tenant.create({ data: { name: `${STAMP} club`, slug: `${STAMP}-club`.toLowerCase(), onboardingCompleted: true } });
+      ids.tenant = t.id;
+      ids.slug = t.slug;
+      await tx.member.create({ data: { tenantId: t.id, email: E("acct"), name: "secR3 acct", passwordHash: hash } });
+      await tx.member.create({
+        data: { tenantId: t.id, email: E("locked"), name: "secR3 locked", passwordHash: hash, lockedUntil: new Date(Date.now() + 24 * 3600 * 1000) },
+      });
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    if (!ids.tenant) return;
+    await new Promise((r) => setTimeout(r, 1500));
+    for (const who of ["acct", "ghost", "locked", "ghost2"]) {
+      const k = lockoutKeys(ids.slug, E(who), ATTACKER_IP);
+      await prisma.rateLimitHit.deleteMany({ where: { bucket: { in: [k.addr, k.pair] } } });
+    }
+    await withRlsBypass(async (tx) => {
+      await tx.auditLog.deleteMany({ where: { tenantId: ids.tenant } });
+      await tx.loginEvent.deleteMany({ where: { tenantId: ids.tenant } });
+      await tx.member.deleteMany({ where: { tenantId: ids.tenant } });
+      await tx.tenant.delete({ where: { id: ids.tenant } });
+    }, { timeout: 60_000 });
+    const left = await withRlsBypass(async (tx) => ({
+      tenants: await tx.tenant.count({ where: { id: ids.tenant } }),
+      members: await tx.member.count({ where: { tenantId: ids.tenant } }),
+    }));
+    expect(left).toEqual({ tenants: 0, members: 0 });
+  }, 120_000);
+
+  it("identical shapes at 0, 9, 10, 11 prior failures (address-wide, distributed): same code; timing reported", async () => {
+    // Round-trip baseline for this machine.
+    const rtt: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const t0 = performance.now();
+      await prisma.$queryRawUnsafe("SELECT 1");
+      rtt.push(performance.now() - t0);
+    }
+    const report: Record<string, unknown> = { role: ROLE, rttMedianMs: median(rtt) };
+    const mismatches: string[] = [];
+    for (const n of [0, 9, 10, 11]) {
+      const res: Record<string, { outcomes: string[]; ms: number[] }> = { acct: { outcomes: [], ms: [] }, ghost: { outcomes: [], ms: [] } };
+      for (let i = 0; i < 20; i++) {
+        const order = i % 2 ? ["acct", "ghost"] : ["ghost", "acct"];
+        for (const who of order) {
+          await seed(E(who), n, 0);
+          const a = await attempt(E(who), "wrong-password-r3");
+          res[who].outcomes.push(a.outcome);
+          res[who].ms.push(a.ms);
+        }
+      }
+      const acctSet = [...new Set(res.acct.outcomes)];
+      const ghostSet = [...new Set(res.ghost.outcomes)];
+      report[`n${n}`] = {
+        acct: { outcomes: acctSet, medianMs: Math.round(median(res.acct.ms)) },
+        ghost: { outcomes: ghostSet, medianMs: Math.round(median(res.ghost.ms)) },
+        diffMs: Math.round(median(res.acct.ms) - median(res.ghost.ms)),
+      };
+      if (JSON.stringify(acctSet) !== JSON.stringify(ghostSet)) mismatches.push(`n=${n}: ${acctSet} vs ${ghostSet}`);
+    }
+    // Natural accumulation: a row-locked ("Wasn't me?" / operator) account vs no account.
+    const lockedSeq: string[] = [];
+    const ghostSeq: string[] = [];
+    await seed(E("locked"), 0, 0);
+    await seed(E("ghost2"), 0, 0);
+    for (let i = 0; i < 12; i++) {
+      lockedSeq.push((await attempt(E("locked"), "wrong-password-r3")).outcome);
+      ghostSeq.push((await attempt(E("ghost2"), "wrong-password-r3")).outcome);
+    }
+    report.rowLockedVsNone = { locked: lockedSeq.join(","), none: ghostSeq.join(",") };
+    console.log("R3-ORACLE " + JSON.stringify(report));
+    if (OUT) writeFileSync(OUT, JSON.stringify(report, null, 2));
+    expect(mismatches, "response code differs by existence").toEqual([]);
+    expect(lockedSeq, "row-locked account vs no account").toEqual(ghostSeq);
+  }, 900_000);
+});

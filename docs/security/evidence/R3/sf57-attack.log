@@ -1,0 +1,42 @@
+{"applied":true,"mutant":null,"asRole":"neondb_owner","ms":15,"triggers":"AuditLog_append_only:O,AuditLog_no_truncate:O,AuditLog_stamp_created_at:O","auditLogAcl":"{neondb_owner=arwdDxtm/neondb_owner,matflow_app=ar/neondb_owner}","node":"v24.21.0"}
+{"role":"matflow_app","name":"positive control: SELECT count","result":"SUCCEEDED","rowCount":1,"check":9888}
+{"role":"matflow_app","name":"positive control: INSERT a fresh row","result":"SUCCEEDED","rowCount":1}
+{"role":"matflow_app","name":"UPDATE action","result":"REFUSED","code":"42501","msg":"permission denied for table AuditLog"}
+{"role":"matflow_app","name":"UPDATE userId to another non-null value","result":"REFUSED","code":"42501","msg":"permission denied for table AuditLog"}
+{"role":"matflow_app","name":"UPDATE userId = NULL (the FK SET NULL shape)","result":"REFUSED","code":"42501","msg":"permission denied for table AuditLog"}
+{"role":"matflow_app","name":"DELETE one row","result":"REFUSED","code":"42501","msg":"permission denied for table AuditLog"}
+{"role":"matflow_app","name":"TRUNCATE","result":"REFUSED","code":"42501","msg":"permission denied for table AuditLog"}
+{"role":"matflow_app","name":"INSERT back-dated to 2000-01-01","result":"SUCCEEDED","rowCount":1,"check":"2026-10-09 19:30:52.452"}
+{"role":"matflow_app","name":"INSERT ... ON CONFLICT DO UPDATE (rewrite via upsert)","result":"REFUSED","code":"42501","msg":"permission denied for table AuditLog"}
+{"role":"matflow_app","name":"ALTER TABLE DISABLE TRIGGER ALL","result":"REFUSED","code":"42501","msg":"must be owner of table AuditLog"}
+{"role":"matflow_app","name":"CREATE OR REPLACE the append-only trigger function","result":"REFUSED","code":"42501","msg":"permission denied for schema public"}
+{"role":"matflow_app","name":"SET session_replication_role = replica (triggers off)","result":"REFUSED","code":"42501","msg":"permission denied to set parameter \"session_replication_role\""}
+{"role":"matflow_app","name":"purge batch 0","result":"REFUSED","code":"22023","msg":"batch out of range (1..5000)"}
+{"role":"matflow_app","name":"purge batch 1000000","result":"REFUSED","code":"22023","msg":"batch out of range (1..5000)"}
+{"role":"matflow_app","name":"purge 5000 x2: rows younger than 365 d (and evidence < 2190 d) survive","result":"SUCCEEDED","rowCount":1,"check":{"young":9888,"old":0}}
+{"role":"matflow_app","name":"search_path trick: temp audit_log_is_table_owner() = true, then back-dated INSERT","result":"SUCCEEDED","rowCount":1,"check":"2026-10-09 19:30:52.518"}
+{"role":"matflow_app","name":"CREATE a function in schema public (needed for any public-schema shadowing)","result":"REFUSED","code":"42501","msg":"permission denied for schema public"}
+{"role":"matflow_app","name":"GRANT UPDATE back to self","result":"SUCCEEDED","rowCount":null}
+{"role":"neondb_owner","name":"positive control: SELECT count","result":"SUCCEEDED","rowCount":1,"check":9888}
+{"role":"neondb_owner","name":"positive control: INSERT a fresh row","result":"SUCCEEDED","rowCount":1}
+{"role":"neondb_owner","name":"UPDATE action","result":"REFUSED","code":"42501","msg":"AuditLog is append-only"}
+{"role":"neondb_owner","name":"UPDATE userId to another non-null value","result":"REFUSED","code":"42501","msg":"AuditLog is append-only"}
+{"role":"neondb_owner","name":"UPDATE userId = NULL (the FK SET NULL shape)","result":"SUCCEEDED","rowCount":1}
+{"role":"neondb_owner","name":"DELETE one row","result":"SUCCEEDED","rowCount":1}
+{"role":"neondb_owner","name":"TRUNCATE","result":"REFUSED","code":"42501","msg":"AuditLog cannot be truncated"}
+{"role":"neondb_owner","name":"INSERT back-dated to 2000-01-01","result":"SUCCEEDED","rowCount":1,"check":"2000-01-01 00:00:00"}
+{"role":"neondb_owner","name":"INSERT ... ON CONFLICT DO UPDATE (rewrite via upsert)","result":"REFUSED","code":"42501","msg":"AuditLog is append-only"}
+{"role":"neondb_owner","name":"ALTER TABLE DISABLE TRIGGER ALL","result":"SUCCEEDED","rowCount":null}
+{"role":"neondb_owner","name":"CREATE OR REPLACE the append-only trigger function","result":"SUCCEEDED","rowCount":null}
+{"role":"neondb_owner","name":"SET session_replication_role = replica (triggers off)","result":"REFUSED","code":"42501","msg":"permission denied to set parameter \"session_replication_role\""}
+{"role":"neondb_owner","name":"purge batch 0","result":"REFUSED","code":"22023","msg":"batch out of range (1..5000)"}
+{"role":"neondb_owner","name":"purge batch 1000000","result":"REFUSED","code":"22023","msg":"batch out of range (1..5000)"}
+{"role":"neondb_owner","name":"purge 5000 x2: rows younger than 365 d (and evidence < 2190 d) survive","result":"SUCCEEDED","rowCount":1,"check":{"young":9888,"old":0}}
+{"role":"neondb_owner","name":"search_path trick: temp audit_log_is_table_owner() = true, then back-dated INSERT","result":"SUCCEEDED","rowCount":1,"check":"2000-01-01 00:00:00"}
+{"role":"neondb_owner","name":"CREATE a function in schema public (needed for any public-schema shadowing)","result":"SUCCEEDED","rowCount":null}
+{"role":"neondb_owner","name":"GRANT UPDATE back to self","result":"SUCCEEDED","rowCount":null}
+{"cases":36,"node":"v24.21.0","owner":"neondb_owner","before":{"n":9888}}
+exit=0
+{"notice":"no privileges were granted for \"AuditLog\""}
+{"afterSelfGrant":"{neondb_owner=arwdDxtm/neondb_owner,matflow_app=ar/neondb_owner}"}
+{"purgedByApp":4,"survivors":["act-366","actnull-366","adm-366","dsar-366","dsarx-366","ord-364"],"deleted":["ord-366","adm-2191","dsarlike-366","act-2191"],"node":"v24.21.0"}

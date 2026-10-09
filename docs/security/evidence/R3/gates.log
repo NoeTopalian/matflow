@@ -1,0 +1,30 @@
+# Gates on af803d5, scratch worktree, v24.21.0
+## npm run lint
+Lint passed: eslint clean, UI-RULES ratchet at or below baseline.
+(node:95964) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+exit=0
+## tsc --noEmit -p .
+exit=0
+## npm run build (no DB URL; node_modules a real copy: Turbopack refused the junction — 'Symlink [project]/node_modules is invalid, it points out of the filesystem root', exit 1, environment only)
+[build] Neither MIGRATION_DATABASE_URL nor DATABASE_URL is set — skipping `prisma migrate deploy`
+✓ Compiled successfully in 44s
+exit=0
+## npm audit --omit=dev
+found 0 vulnerabilities
+exit=0
+## full unit suite (repository vitest config)
+ Test Files  1 failed | 449 passed (450)
+      Tests  2 failed | 6131 passed (6133)
+   Duration  325.98s (transform 19.50s, setup 2.95s, import 71.76s, tests 133.30s, environment 40.67s)
+exit=1
+failing: tests/unit/readiness-scripts-release-verify.test.ts 2 cases — reads untracked .vercel/project.json; with that file present 59/59
+## A2 DB files
+a2-db-owner.log:node=v24.21.0 role=owner head=af803d5
+a2-db-owner.log: Test Files  5 passed (5)
+a2-db-owner.log:      Tests  29 passed (29)
+a2-db-owner.log:exit=0
+a2-db-restricted.log:node=v24.21.0 role=restricted head=af803d5
+a2-db-restricted.log: Test Files  5 passed (5)
+a2-db-restricted.log:      Tests  29 passed (29)
+a2-db-restricted.log:exit=0

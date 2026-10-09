@@ -59,8 +59,9 @@ type ResetForm = z.infer<typeof resetSchema>;
  */
 function signInMessage(code: string | undefined): string {
   switch (code) {
-    case "account_locked":
-      return "This account is temporarily locked after too many failed attempts. Try again in an hour, or reset your password.";
+    // "account_locked" is no longer produced (lane A2): a crafted
+    // ?error=account_locked must not render a message that implies the
+    // account exists, so it falls through to the generic default below.
     case "rate_limited":
       // One message for every throttle and lock (lane A2): the window is an
       // hour, and a known device of the real account is exempt from the
@@ -102,7 +103,6 @@ function urlErrorMessage(code: string | null): string | null {
   switch (code) {
     case "tenant_paused":
     case "tenant_closed":
-    case "account_locked":
     case "rate_limited":
     case "google_link_required":
       return signInMessage(code);

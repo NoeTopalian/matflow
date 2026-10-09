@@ -1,0 +1,33 @@
+// R3 mutant applier: node mutate.mjs <worktree> <mutant-id>. Exact-anchor replacement, refuses if the anchor is absent
+// or ambiguous. Restore with `git checkout -- <file>` afterwards (the runner does it).
+import fs from "node:fs"; import path from "node:path";
+const [,, wt, id] = process.argv;
+const M = {
+  "44-no-stamp": ["auth.ts", "  (token as Record<string, unknown>)[REVALIDATE_CLAIM] = since;\n", "  // R3 mutant: no stamp\n"],
+  "44-no-bound": ["auth.ts", "  if (now - since > REVALIDATE_MAX_MS) {", "  if (false && now - since > REVALIDATE_MAX_MS) {"],
+  "44-proxy-clears": ["proxy.ts", "    return authUnavailableResponse(pathname, requestId);",
+    "    { const r = authUnavailableResponse(pathname, requestId); for (const c of req.cookies.getAll()) if (c.name.includes(\"session-token\")) r.cookies.set(c.name, \"\", { maxAge: 0, path: \"/\" }); return r; }"],
+  "44-edge-clears-marker": ["auth.ts", "      if (\n        process.env.NEXT_RUNTIME !== \"edge\" &&\n        token.id && token.tenantId",
+    "      if (process.env.NEXT_RUNTIME === \"edge\") delete (token as Record<string, unknown>)[REVALIDATE_CLAIM];\n      if (\n        process.env.NEXT_RUNTIME !== \"edge\" &&\n        token.id && token.tenantId"],
+  "44-support-unknown-kept": ["auth.ts", "              tags: { area: \"auth\", control: \"support-session\", failMode: \"closed\" },\n            });\n            return null;\n          }\n          active = null;",
+    "              tags: { area: \"auth\", control: \"support-session\", failMode: \"closed\" },\n            });\n            return markForRevalidation(token, \"r3-mutant\");\n          }\n          active = null;"],
+  "35-skip-known-device-for-none": ["auth.ts", "            withTenantContext(tenant.id, async (tx) => {\n              const dh = deviceHash(ip, userAgent);",
+    "            withTenantContext(tenant.id, async (tx) => {\n              if (!user && !memberRow) return false; // R3 mutant\n              const dh = deviceHash(ip, userAgent);"],
+  "35-count-row-not-address": ["auth.ts", "const addrFailures = await recordFailure(keys);", "const addrFailures = subject ? await recordFailure(keys) : 0;"],
+  "59-false-honoured-on-vercel": ["auth.ts", "  if (process.env.VERCEL || process.env.VERCEL_ENV || isProductionDatabase()) {", "  if (isProductionDatabase()) {"],
+  "37-get-acts": ["app/api/auth/disown-login/[token]/route.ts", "  const action = new URL(req.url).pathname;\n",
+    "  if (verified.ok) return POST(new Request(req.url, { method: \"POST\", headers: { origin: new URL(req.url).origin } }), { params: Promise.resolve({ token }) });\n  const action = new URL(req.url).pathname;\n"],
+  "37-post-no-csrf": ["app/api/auth/disown-login/[token]/route.ts", "  const csrfViolation = assertSameOrigin(req);\n  if (csrfViolation) return csrfViolation;", "  // R3 mutant: no same-origin check"],
+  "37-bypass-on-vercel": ["auth.ts", "  if (process.env.VERCEL || process.env.VERCEL_ENV) return false;", "  // R3 mutant: Vercel not refused"],
+  "37-bypass-header": ["auth.ts", "  if (process.env.E2E_AUTH_BYPASS !== \"true\") return false;", "  // R3 mutant: no flag needed"],
+  "36-link-bypassed": ["auth.ts", "      if (!linkedToThisAccount) {", "      if (false && !linkedToThisAccount) {"],
+};
+const m = M[id];
+if (!m) { console.error(`unknown mutant ${id}`); process.exit(2); }
+const [rel, from, to] = m;
+const f = path.join(wt, rel);
+const src = fs.readFileSync(f, "utf8").replace(/\r\n/g, "\n");
+const n = src.split(from).length - 1;
+if (n !== 1) { console.error(`anchor count ${n} for ${id}`); process.exit(3); }
+fs.writeFileSync(f, src.replace(from, to));
+console.log(`applied ${id} to ${rel}`);

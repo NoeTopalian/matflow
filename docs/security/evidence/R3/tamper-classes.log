@@ -1,0 +1,36 @@
+{"listed":true,"case":"positive control (no tamper)","got":"PASS","caught":true,"firstFail":null}
+{"listed":true,"case":"policy expression","got":"FAIL","caught":true,"firstFail":"policies changed on Member (name, command, roles or expression)"}
+{"listed":true,"case":"trigger definition (BEFORE INSERT only)","got":"FAIL","caught":true,"firstFail":"triggers changed on User (definition or enabled state)"}
+{"listed":true,"case":"trigger enabled state","got":"FAIL","caught":true,"firstFail":"triggers changed on Member (definition or enabled state)"}
+{"listed":true,"case":"function source","got":"FAIL","caught":true,"firstFail":"function changed: matflow_lowercase_email()"}
+{"listed":true,"case":"function owner","got":"FAIL","caught":true,"firstFail":"function changed: matflow_lowercase_email()"}
+{"listed":true,"case":"function SECURITY DEFINER","got":"FAIL","caught":true,"firstFail":"function changed: matflow_lowercase_email()"}
+{"listed":true,"case":"function search_path config","got":"FAIL","caught":true,"firstFail":"function changed: matflow_lowercase_email()"}
+{"listed":true,"case":"function ACL","got":"FAIL","caught":true,"firstFail":"function changed: matflow_lowercase_email()"}
+{"listed":true,"case":"table owner","got":"FAIL","caught":true,"firstFail":"owner changed on Tenant: neondb_owner -> matflow_app"}
+{"listed":true,"case":"table ACL","got":"FAIL","caught":true,"firstFail":"grants changed on Member: {neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner} -> {neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwdD/neondb_owner}"}
+{"listed":true,"case":"role flag (BYPASSRLS)","got":"FAIL","caught":true,"firstFail":"role changed: matflow_app"}
+{"listed":true,"case":"role membership","got":"ERROR","error":"role \"neondb_owner\" is a member of role \"matflow_app\""}
+{"listed":true,"case":"schema ACL","got":"FAIL","caught":true,"firstFail":"schema public owner or grants changed"}
+{"listed":true,"case":"extension (none available)","got":"PASS","caught":true,"firstFail":null}
+{"listed":true,"case":"event trigger","got":"FAIL","caught":true,"firstFail":"unexpected function in restored copy: zz_r3_evt()"}
+{"listed":true,"case":"migration checksum","got":"FAIL","caught":true,"firstFail":"migration checksum differs: 20260424205716_init"}
+{"listed":true,"case":"content hash (row rewritten, count kept)","got":"FAIL","caught":true,"firstFail":"content of Member differs"}
+{"listed":true,"case":"RLS flags (NO FORCE)","got":"FAIL","caught":true,"firstFail":"RLS flags changed on Member: true/true -> true/false"}
+{"listed":true,"case":"foreign key dropped","got":"FAIL","caught":true,"firstFail":"foreign key missing in restored copy: Member_tenantId_fkey"}
+{"listed":false,"case":"column-level grant (UPDATE (action) on AuditLog)","got":"PASS","caught":false,"firstFail":null}
+{"listed":false,"case":"rewrite rule (INSERT into AuditLog DO INSTEAD NOTHING)","got":"PASS","caught":false,"firstFail":null}
+{"listed":false,"case":"role default setting (matflow_app: app.bypass_rls = on)","got":"PASS","caught":false,"firstFail":null}
+{"listed":false,"case":"database default setting (app.bypass_rls = on)","got":"PASS","caught":false,"firstFail":null}
+{"listed":false,"case":"default privileges for future tables","got":"PASS","caught":false,"firstFail":null}
+{"listed":false,"case":"view over User granted to the runtime role","got":"FAIL","caught":true,"firstFail":"unexpected role in restored copy: postgres"}
+{"listed":false,"case":"sequence/other-schema function shadow (new schema + role search_path)","got":"PASS","caught":false,"firstFail":null}
+{"cases":27,"listedCaught":19,"listedTotal":20,"unlistedCaught":1,"unlistedTotal":7,"node":"v24.21.0"}
+exit=0
+{"listed":true,"case":"positive control (no tamper)","got":"PASS","caught":true,"firstFail":null}
+{"listed":true,"case":"role membership (pg_write_all_data granted to matflow_app)","got":"FAIL","caught":true,"firstFail":"role changed: matflow_app"}
+{"listed":true,"case":"role membership (runtime role granted into a new role)","got":"FAIL","caught":true,"firstFail":"role changed: matflow_app"}
+{"listed":false,"case":"view over User created BY THE OWNER, granted to the runtime role","got":"PASS","caught":false,"firstFail":null}
+{"cases":4,"listedCaught":3,"listedTotal":3,"unlistedCaught":0,"unlistedTotal":1,"node":"v24.21.0"}
+{"case":"extension added (pure compare on the baseline)","extensionsBaseline":["plpgsql@1.0"],"got":"FAIL","firstFail":"extensions differ: [plpgsql@1.0] -> [plpgsql@1.0,pgcrypto@1.3]"}
+{"case":"pure compare positive control","got":"PASS"}

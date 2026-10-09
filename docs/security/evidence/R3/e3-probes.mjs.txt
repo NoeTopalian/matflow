@@ -1,0 +1,123 @@
+// R3 probes of lane E3's fixes. Synthetic values only; prints verdicts, never a value or a fingerprint.
+import path from "node:path"; import fs from "node:fs"; import { pathToFileURL } from "node:url";
+import { randomBytes } from "node:crypto"; import { spawnSync } from "node:child_process";
+const [,, wt, tmp] = process.argv;
+const blob = await import(pathToFileURL(path.join(wt, "scripts/readiness/ops-blob-host-count.mjs")).href);
+const fpm = await import(pathToFileURL(path.join(wt, "scripts/readiness/ops-credential-fingerprint.mjs")).href);
+const { scanText } = await import(pathToFileURL(path.join(wt, "scripts/readiness/secret-scan.mjs")).href);
+const { resolveDbTarget } = await import(pathToFileURL(path.join(wt, "scripts/readiness/db-target.mjs")).href);
+const b62 = (n) => { const a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"; let s = ""; for (const x of randomBytes(n)) s += a[x % 62]; return s; };
+const hex = (n) => randomBytes(n).toString("hex");
+const TEST = "ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech";
+const U = `postgresql://synthetic:${b62(16)}@${TEST}/neondb`;
+
+console.log("== 1. ops-blob-host-count: URL forms through buildClientConfig (env empty)");
+const forms = ["", "?sslmode=require", "?sslmode=verify-full", "?sslmode=require&channel_binding=require", "?sslmode=require&sslmode=no-verify", "?sslmode=require&sslmode=disable",
+  "?sslmode=require&sslmode=require", "?sslmode=verify-full&ssl%6dode=no-verify", "?ssl%6Dode=disable", "?SSLMODE=disable", "?sslmode=prefer", "?sslmode=no-verify", "?ssl=false", "?ssl=true",
+  "?sslmode=require&uselibpqcompat=true", "?sslmode%3Ddisable", "?sslmode=require&%2573slmode=disable", "?sslmode=REQUIRE", "?sslmode=require+", "?host=evil.example", "?h%6fst=evil.example",
+  "?hostaddr=127.0.0.1", "?options=-c%20search_path%3Dx", "?endpoint=ep-bold-wave-abt39t7x", "?sslrootcert=system", "?sslnegotiation=direct", "?gssencmode=disable", "?channel_binding=disable"];
+for (const f of forms) {
+  let v;
+  try {
+    const c = blob.buildClientConfig(U + f, { expectHost: "ep-hidden-salad", env: {} });
+    v = `ACCEPT ssl.rejectUnauthorized=${c.ssl.rejectUnauthorized} servernameIsHost=${c.ssl.servername === TEST} keys=${Object.keys(c).sort().join(",")}`;
+  } catch (e) { v = `REFUSE (${String(e.message).slice(0, 70)})`; }
+  console.log(`${(f || "(none)").padEnd(46)} ${v}`);
+}
+console.log("== 1b. PG* / TLS environment");
+for (const env of [{ PGSSLMODE: "disable" }, { pgsslmode: "disable" }, { PGOPTIONS: "-c x=y" }, { PGHOST: "evil" }, { PGHOSTADDR: "127.0.0.1" }, { PGPASSWORD: "x" }, { PGSSLROOTCERT: "x" }, { NODE_TLS_REJECT_UNAUTHORIZED: "0" }]) {
+  let v;
+  try { const c = blob.buildClientConfig(U, { expectHost: "ep-hidden-salad", env }); v = `ACCEPT rejectUnauthorized=${c.ssl.rejectUnauthorized}`; } catch (e) { v = `REFUSE (${String(e.message).slice(0, 60)})`; }
+  console.log(`${JSON.stringify(Object.keys(env))}`.padEnd(46), v);
+}
+
+console.log("== 2. ops-credential-fingerprint");
+const script = path.join(wt, "scripts/readiness/ops-credential-fingerprint.mjs");
+const secret = "rk_live_" + b62(40);
+const pieces = new Set(); for (let i = 0; i + 8 <= secret.length; i++) pieces.add(secret.slice(i, i + 8));
+const leakCheck = (out) => ({ whole: out.includes(secret), any8: [...pieces].filter((p) => out.includes(p)).length, fp: out.includes(fpm.fingerprint(secret)) });
+for (const [name, args] of [["value as first argument", [secret]], ["value after --var", ["--var", secret]], ["value after --from-env-file", ["--from-env-file", secret]], ["value as 3rd argument", ["--from-env-file", "x.env", secret]], ["--var=value form", [`--var=${secret}`]], ["--stdin then value arg", ["--stdin", secret]]]) {
+  const r = spawnSync(process.execPath, [script, ...args], { encoding: "utf8", input: "" });
+  console.log(`${name.padEnd(30)} exit=${r.status} leak=${JSON.stringify(leakCheck((r.stdout || "") + (r.stderr || "")))}`);
+}
+const v = "npg_" + b62(16);
+const list = [{ id: "synthetic", fp: fpm.fingerprint(v) }];
+const envf = path.join(tmp, "r3probe.env");
+const lines = {
+  QC: `QC="postgresql://r:${v}@h.example/db" # prod`,
+  SC: `SC='postgresql://r:${v}@h.example/db' # prod`,
+  UC: `UC=postgresql://r:${v}@h.example/db # prod`,
+  EX: `export EX="${v}"`,
+  HC: `HC=${v}#notacomment`,
+  SP: `SP = "${v}"`,
+};
+fs.writeFileSync(envf, Object.values(lines).join("\n") + "\n");
+const parsed = fpm.parseEnvText(fs.readFileSync(envf, "utf8"));
+for (const k of Object.keys(lines)) console.log(`env line ${k.padEnd(3)} parseEnvText present=${k in parsed} match=${JSON.stringify(fpm.matchAgainst(parsed[k] ?? "", list))}`);
+const r1 = spawnSync(process.execPath, [script, "--from-env-file", envf, "--var", "QC", "--var", "SC", "--var", "UC", "--var", "EX", "--var", "HC", "--var", "SP"], { encoding: "utf8" });
+console.log(`CLI --from-env-file exit=${r1.status} leakV=${(r1.stdout + r1.stderr).includes(v)}`);
+for (const l of (r1.stdout || "").trim().split("\n")) console.log("   " + l.replace(/[0-9a-f]{10,}/g, "<hex>"));
+const r2 = spawnSync(process.execPath, [script, "--env-file", path.join(tmp, "definitely-missing.env"), "--var", "QC"], { encoding: "utf8" });
+console.log(`--env-file (missing file): exit=${r2.status} printsPath=${(r2.stdout + r2.stderr).includes("definitely-missing.env")}`);
+const r3 = spawnSync(process.execPath, [script, "--env-file", envf, "--var", "QC"], { encoding: "utf8" });
+console.log(`--env-file (existing file): exit=${r3.status} leakV=${(r3.stdout + r3.stderr).includes(v)} stderrHead=${JSON.stringify((r3.stderr || "").trim().slice(0, 100))}`);
+const r4 = spawnSync(process.execPath, [script, "--from-env-file", path.join(tmp, "secret-dir-name", "x.env"), "--var", "QC"], { encoding: "utf8" });
+console.log(`unreadable --from-env-file: exit=${r4.status} printsPath=${(r4.stdout + r4.stderr).includes("secret-dir-name")}`);
+fs.rmSync(envf);
+
+console.log("== 3. secret-scan plant (R2 misses + extras)");
+const cases = {
+  "MUST stripe live key": `const k = "sk_live_${b62(40)}";`,
+  "MUST neon url": `DATABASE_URL=postgresql://matflow_app:npg_${b62(14)}@ep-planted-pooler.eu-west-2.aws.neon.tech/neondb?sslmode=require`,
+  "MUST AUTH_SECRET json": `{"AUTH_SECRET": "${randomBytes(32).toString("base64url")}"}`,
+  "MUST blob token yaml": `BLOB_READ_WRITE_TOKEN: vercel_blob_rw_${b62(16)}_${b62(30)}`,
+  "R2-MISS RLS_CONTEXT_SIGNING_KEY": `RLS_CONTEXT_SIGNING_KEY=${hex(64)}`,
+  "R2-MISS OPERATOR_PASSWORD": `OPERATOR_PASSWORD=${b62(20)}`,
+  "R2-MISS MATFLOW_PROD_PASSWORD": `MATFLOW_PROD_PASSWORD=${b62(20)}`,
+  "R2-MISS TEST_PASSWORD": `TEST_PASSWORD=${b62(18)}`,
+  "R2-MISS MIGRATION_DATABASE_URL non-npg": `MIGRATION_DATABASE_URL=postgresql://neondb_owner:${b62(16)}@ep-planted.eu-west-2.aws.neon.tech/neondb`,
+  "R2-MISS owner URL then ellipsis": `MIGRATION_DATABASE_URL=postgresql://neondb_owner:${b62(16)}@ep-planted.eu-west-2.aws.neon.tech/neondb... (see vault)`,
+  "R2-MISS key containing Fake": `sk_live_${b62(10)}Fake${b62(20)}`,
+  "R2-MISS key containing abcdef": `sk_live_${b62(12)}abcdef${b62(20)}`,
+  "R2-MISS key containing probe": `sk_live_${b62(12)}probe${b62(20)}`,
+  "EXTRA yaml OPERATOR_PASSWORD": `OPERATOR_PASSWORD: "${b62(20)}"`,
+  "EXTRA json OPERATOR_PASSWORD": `{"OPERATOR_PASSWORD":"${b62(20)}"}`,
+  "EXTRA export TEST_PASSWORD": `export TEST_PASSWORD="${b62(18)}"`,
+  "EXTRA DATABASE_URL_DIRECT": `DATABASE_URL_DIRECT=postgres://neondb_owner:${b62(16)}@ep-planted.eu-west-2.aws.neon.tech/neondb`,
+  "EXTRA signing key 128 hex in json": `{"RLS_CONTEXT_SIGNING_KEY": "${hex(64)}"}`,
+  "EXTRA neon password containing example": `postgresql://neondb_owner:${b62(8)}example${b62(8)}@ep-planted.eu-west-2.aws.neon.tech/neondb`,
+  "EXTRA lower-case operator_password": `operator_password=${b62(20)}`,
+  "EXTRA other *_PASSWORD (SMTP_PASSWORD)": `SMTP_PASSWORD=${b62(20)}`,
+  "NEG stripe zero placeholder": `STRIPE_SECRET_KEY=sk_test_000000000000000000000000`,
+  "NEG low-entropy CRON": `CRON_SECRET=aaaaaaaaaaaaaaaaaaaaaaaa`,
+  "NEG localhost url": `postgresql://postgres:postgres@localhost:5432/matflow`,
+  "NEG env interpolation": "AUTH_SECRET=${AUTH_SECRET_FROM_VAULT}",
+  "NEG process.env reference": "OPERATOR_PASSWORD=process.env.OPERATOR_PASSWORD",
+  "NEG bare word": "TEST_PASSWORD=PASSWORD",
+  "NEG RLS key placeholder": "RLS_CONTEXT_SIGNING_KEY=<128 hex>",
+};
+for (const [name, text] of Object.entries(cases)) {
+  const f = scanText(text + "\n", name);
+  console.log(`${name.padEnd(44)} -> ${f.map((x) => `${x.rule}:${x.classification}`).join(",") || "NO FINDING"}`);
+}
+
+console.log("== 4. db-target allowlist (no connection opened)");
+const T2 = (h) => `postgresql://s:${b62(10)}@${h}/neondb?sslmode=require`;
+for (const [h, e] of [[TEST, "ep-hidden-salad"], ["ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech", "ep-hidden-salad"], ["ep-hidden-salad-r2fake.eu-west-2.aws.neon.tech", "ep-hidden-salad"],
+  ["ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech.evil.example", "ep-hidden-salad"], ["ep-hidden-salad-abom7cg4.us-east-1.aws.neon.tech", "ep-hidden-salad"],
+  ["ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech", "ep-hidden-salad-abom7cg4"], ["ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech", "hidden-salad"],
+  ["ep-bold-wave-abt39t7x.eu-west-2.aws.neon.tech", "ep-bold-wave"], ["EP-HIDDEN-SALAD-ABOM7CG4.EU-WEST-2.AWS.NEON.TECH", "ep-hidden-salad"],
+  ["ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech.", "ep-hidden-salad"], ["ep-other-thing-abcd1234.eu-west-2.aws.neon.tech", "ep-other-thing-abcd1234"],
+  ["ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech", "ep-other-thing-abcd1234"]]) {
+  let r;
+  try { r = "ACCEPT " + resolveDbTarget(T2(h), { expectHost: e }); } catch (er) { r = "REFUSE (" + String(er.message).slice(0, 60) + ")"; }
+  console.log(`${h.padEnd(64)} expect=${e.padEnd(26)} ${r}`);
+}
+const envTest = fs.readFileSync(path.join(wt, ".env.test"), "utf8");
+for (const line of envTest.split(/\r?\n/)) {
+  const m = /^([A-Z_]*DATABASE_URL[A-Z_]*)=(.*)$/.exec(line);
+  if (!m) continue;
+  const url = m[2].replace(/^"|"$/g, "");
+  let r; try { resolveDbTarget(url, { expectHost: "ep-hidden-salad" }); r = "ACCEPT"; } catch (e) { r = "REFUSE " + String(e.message).slice(0, 60); }
+  console.log(`.env.test ${m[1]}: ${r}`);
+}

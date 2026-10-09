@@ -1,0 +1,158 @@
+## real matrix --require-all
+  "distinctCwe": 66,
+  "unmappedRows": [],
+  "problems": [],
+  "verdict": "PASS"
+}
+exit=0
+## neg-bad-cwe.md
+  ],
+  "verdict": "FAIL"
+}
+exit=1
+## neg-chapter-only.md
+  ],
+  "verdict": "FAIL"
+}
+exit=1
+## neg-cwe.md
+  ],
+  "verdict": "FAIL"
+}
+exit=1
+## neg-fake-asvs.md
+  ],
+  "verdict": "FAIL"
+}
+exit=1
+## neg-fake-wstg.md
+  ],
+  "verdict": "FAIL"
+}
+exit=1
+## neg-junk-segment.md
+  ],
+  "verdict": "FAIL"
+}
+exit=1
+## neg-mismatch.md
+  ],
+  "verdict": "FAIL"
+}
+exit=1
+
+### SEC-001 | Authentication and account recovery | risk: Credential guessing/stuffing
+  invariant: throttling and account protections cannot be bypassed via alternate entry points
+  refs: ASVS V6.3.1, V6.3.4, V15.3.4; WSTG-ATHN-03, WSTG-ATHN-10; CWE-307
+   V6.3.1: Verify that controls to prevent attacks such as credential stuffing and password brute force are implemented according to the application's security documentation.
+   V6.3.4: Verify that, if the application includes multiple authentication pathways, there are no undocumented pathways and that security controls and authentication strength are enforced consistently.
+   V15.3.4: Verify that all proxying and middleware components transfer the user's original IP address correctly using trusted data fields that cannot be manipulated by the end user, and the application and web server use this correct value for logging and security decisi
+
+### SEC-006 | Authentication and account recovery | risk: MFA bypass / recovery downgrade
+  invariant: incomplete MFA and recovery states never obtain privileged sessions
+  refs: ASVS V6.4.3, V6.4.4, V6.3.3; WSTG-ATHN-04; CWE-288
+   V6.4.3: Verify that a secure process for resetting a forgotten password is implemented, that does not bypass any enabled multi-factor authentication mechanisms.
+   V6.4.4: Verify that if a multi-factor authentication factor is lost, evidence of identity proofing is performed at the same level as during enrollment.
+   V6.3.3: Verify that either a multi-factor authentication mechanism or a combination of single-factor authentication mechanisms, must be used in order to access the application. For L3, one of the factors must be a hardware-based authentication mechanism which provides
+
+### SEC-011 | Sessions and sensitive action approval | risk: Cookie theft/unsafe storage
+  invariant: see brief
+  refs: ASVS V3.3.1, V3.3.4, V14.3.3; WSTG-SESS-02, WSTG-CLNT-12; CWE-1004, CWE-614
+   V3.3.1: Verify that cookies have the 'Secure' attribute set, and if the '\__Host-' prefix is not used for the cookie name, the '__Secure-' prefix must be used for the cookie name.
+   V3.3.4: Verify that if the value of a cookie is not meant to be accessible to client-side scripts (such as a session token), the cookie must have the 'HttpOnly' attribute set and the same value (e. g. session token) must only be transferred to the client via the 'Set-
+   V14.3.3: Verify that data stored in browser storage (such as localStorage, sessionStorage, IndexedDB, or cookies) does not contain sensitive data, with the exception of session tokens.
+
+### SEC-016 | Sessions and sensitive action approval | risk: Confused session precedence
+  invariant: see brief
+  refs: ASVS V8.2.1, V3.5.4; WSTG-SESS-08
+   V8.2.1: Verify that the application ensures that function-level access is restricted to consumers with explicit permissions.
+   V3.5.4: Verify that separate applications are hosted on different hostnames to leverage the restrictions provided by same-origin policy, including how documents or scripts loaded by one origin can interact with resources from another origin and hostname-based restrict
+
+### SEC-021 | Authorization and tenant isolation | risk: RLS bypass / privileged runtime role
+  invariant: actual deployed role, grants, policies, tenant context
+  refs: ASVS V8.4.1, V13.2.2; CWE-250
+   V8.4.1: Verify that multi-tenant applications use cross-tenant controls to ensure consumer operations will never affect tenants with which they do not have permissions to interact.
+   V13.2.2: Verify that communications between backend application components, including local or operating system services, APIs, middleware, and data layers, are performed with accounts assigned the least necessary privileges.
+
+### SEC-026 | Identity and transactional business rules | risk: Normalisation mismatch
+  invariant: see brief
+  refs: ASVS V1.1.1; CWE-178
+   V1.1.1: Verify that input is decoded or unescaped into a canonical form only once, it is only decoded when encoded data in that form is expected, and that this is done before processing the input further, for example it is not performed after input validation or sanit
+
+### SEC-031 | Identity and transactional business rules | risk: Lost response/retry corruption
+  invariant: see brief
+  refs: ASVS V2.3.3; WSTG-BUSL-05
+   V2.3.3: Verify that transactions are being used at the business logic level such that either a business logic operation succeeds in its entirety or it is rolled back to the previous correct state.
+
+### SEC-036 | Input handling and server execution | risk: Prototype pollution
+  invariant: see brief
+  refs: ASVS V15.3.6; CWE-1321
+   V15.3.6: Verify that JavaScript code is written in a way that prevents prototype pollution, for example, by using Set() or Map() instead of object literals.
+
+### SEC-041 | Browser, HTTP and framework boundaries | risk: Stored/reflected/DOM XSS
+  invariant: see brief
+  refs: ASVS V1.2.1, V3.2.2, V3.4.3; WSTG-INPV-02, WSTG-CLNT-01; CWE-79
+   V1.2.1: Verify that output encoding for an HTTP response, HTML document, or XML document is relevant for the context required, such as encoding the relevant characters for HTML elements, HTML attributes, HTML comments, CSS, or HTTP header fields, to avoid changing the
+   V3.2.2: Verify that content intended to be displayed as text, rather than rendered as HTML, is handled using safe rendering functions (such as createTextNode or textContent) to prevent unintended execution of content such as HTML or JavaScript.
+   V3.4.3: Verify that HTTP responses include a Content-Security-Policy response header field which defines directives to ensure the browser only loads and executes trusted content or resources, in order to limit execution of malicious JavaScript. As a minimum, a global 
+
+### SEC-046 | Browser, HTTP and framework boundaries | risk: Request smuggling/proxy disagreement
+  invariant: see brief
+  refs: ASVS V4.2.1, V4.1.3, V15.3.4; WSTG-INPV-15; CWE-444
+   V4.2.1: Verify that all application components (including load balancers, firewalls, and application servers) determine boundaries of incoming HTTP messages using the appropriate mechanism for the HTTP version to prevent HTTP request smuggling. In HTTP/1.x, if a Trans
+   V4.1.3: Verify that any HTTP header field used by the application and set by an intermediary layer, such as a load balancer, a web proxy, or a backend-for-frontend service, cannot be overridden by the end-user. Example headers might include X-Real-IP, X-Forwarded-*, o
+   V15.3.4: Verify that all proxying and middleware components transfer the user's original IP address correctly using trusted data fields that cannot be manipulated by the end user, and the application and web server use this correct value for logging and security decisi
+
+### SEC-051 | Files, TeamUp imports and data integrity | risk: Archive/decompression bombs
+  invariant: see brief
+  refs: ASVS V5.2.3, V5.2.6, V5.2.1; WSTG-BUSL-09; CWE-409
+   V5.2.3: Verify that the application checks compressed files (e.g., zip, gz, docx, odt) against maximum allowed uncompressed size and against maximum number of files before uncompressing the file.
+   V5.2.6: Verify that the application rejects uploaded images with a pixel size larger than the maximum allowed, to prevent pixel flood attacks.
+   V5.2.1: Verify that the application will only accept files of a size which it can process without causing a loss of performance or a denial of service attack.
+
+### SEC-056 | Files, TeamUp imports and data integrity | risk: Family/guardian access confusion
+  invariant: see brief
+  refs: ASVS V8.2.2; WSTG-ATHZ-04; CWE-639
+   V8.2.2: Verify that the application ensures that data-specific access is restricted to consumers with explicit permissions to specific data items to mitigate insecure direct object reference (IDOR) and broken object level authorization (BOLA).
+
+### SEC-061 | Dependencies, native runtime and build chain | risk: CI workflow injection
+  invariant: see brief
+  refs: ASVS — (no requirement; see mapping §5); CWE-77
+
+### SEC-066 | Hosting, database and control-plane access | risk: Stale deployments/aliases
+  invariant: see brief
+  refs: ASVS — (no requirement; see mapping §5); WSTG-INFO-04
+
+### SEC-071 | Hosting, database and control-plane access | risk: TLS/transport
+  invariant: see brief
+  refs: ASVS V12.2.1, V12.1.1, V3.4.1; WSTG-CRYP-01, WSTG-CONF-07; CWE-319
+   V12.2.1: Verify that TLS is used for all connectivity between a client and external facing, HTTP-based services, and does not fall back to insecure or unencrypted communications.
+   V12.1.1: Verify that only the latest recommended versions of the TLS protocol are enabled, such as TLS 1.2 and TLS 1.3. The latest version of the TLS protocol must be the preferred option.
+   V3.4.1: Verify that a Strict-Transport-Security header field is included on all responses to enforce an HTTP Strict Transport Security (HSTS) policy. A maximum age of at least 1 year must be defined, and for L2 and up, the policy must apply to all subdomains as well.
+
+### SEC-076 | Availability and financial resource abuse | risk: Pool/lock exhaustion
+  invariant: see brief
+  refs: ASVS V13.1.2, V15.4.4, V15.4.3; CWE-400
+   V13.1.2: Verify that for each service the application uses, the documentation defines the maximum number of concurrent connections (e.g., connection pool limits) and how the application behaves when that limit is reached, including any fallback or recovery mechanisms, 
+   V15.4.4: Verify that resource allocation policies prevent thread starvation by ensuring fair access to resources, such as by leveraging thread pools, allowing lower-priority threads to proceed within a reasonable timeframe.
+   V15.4.3: Verify that locks are used consistently to avoid threads getting stuck, whether by waiting on each other or retrying endlessly, and that locking logic stays within the code responsible for managing the resource to ensure locks cannot be inadvertently or malici
+
+### SEC-081 | Audit, destruction prevention and recovery | risk: Audit omission/rollback confusion
+  invariant: see brief
+  refs: ASVS V16.3.3, V16.1.1; CWE-778
+   V16.3.3: Verify that the application logs the security events that are defined in the documentation and also logs attempts to bypass the security controls, such as input validation, business logic, and anti-automation.
+   V16.1.1: Verify that an inventory exists documenting the logging performed at each layer of the application's technology stack, what events are being logged, log formats, where that logging is stored, how it is used, how access to it is controlled, and for how long log
+
+### SEC-086 | Audit, destruction prevention and recovery | risk: Unrestorable backup
+  invariant: see brief
+  refs: ASVS — (no requirement; see mapping §5)
+
+### SEC-091 | Integrations, human access and emerging surfaces | risk: Email delivery/notification abuse
+  invariant: see brief
+  refs: ASVS V1.3.11, V2.4.1; WSTG-INPV-10; CWE-93
+   V1.3.11: Verify that the application sanitizes user input before passing to mail systems to protect against SMTP or IMAP injection.
+   V2.4.1: Verify that anti-automation controls are in place to protect against excessive calls to application functions that could lead to data exfiltration, garbage-data creation, quota exhaustion, rate-limit breaches, denial-of-service, or overuse of costly resources.
+
+### SEC-096 | Integrations, human access and emerging surfaces | risk: Physical/provider/unknown residual risks
+  invariant: see brief
+  refs: ASVS — (no requirement; see mapping §5)

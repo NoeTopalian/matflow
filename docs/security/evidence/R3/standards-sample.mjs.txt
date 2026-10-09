@@ -1,0 +1,13 @@
+// R3: print 20 matrix rows spread across the catalogue with the ASVS text of every cited id, for a manual fit review.
+import fs from "node:fs";
+const [,, matrix, flat] = process.argv;
+const asvs = JSON.parse(fs.readFileSync(flat, "utf8")).requirements;
+const byId = Object.fromEntries(asvs.map((r) => [r.req_id, r.req_description]));
+const rows = fs.readFileSync(matrix, "utf8").split(/\r?\n/).filter((l) => l.startsWith("| SEC-"))
+  .map((l) => l.replace(/^\|/, "").replace(/\|\s*$/, "").split("|").map((c) => c.trim()));
+const pick = [1, 6, 11, 16, 21, 26, 31, 36, 41, 46, 51, 56, 61, 66, 71, 76, 81, 86, 91, 96];
+for (const n of pick) {
+  const c = rows[n - 1];
+  console.log(`\n### ${c[0]} | ${c[1]} | risk: ${c[3]}\n  invariant: ${c[4]}\n  refs: ${c[10]}`);
+  for (const id of (c[10].match(/V\d+\.\d+\.\d+/g) ?? [])) console.log(`   ${id}: ${(byId[id] ?? "(NOT FOUND)").slice(0, 260)}`);
+}

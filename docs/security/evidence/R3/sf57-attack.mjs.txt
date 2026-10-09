@@ -1,0 +1,60 @@
+// R3: attack the SF-57 v2 SQL in the isolated PGlite restore (already applied by F2's sql-sandbox-apply.mjs).
+// Every case in its own transaction, rolled back. Never TEST, never production.
+import { createRequire } from "node:module";
+const pg = createRequire(import.meta.url)("pg");
+const port = Number(process.argv[2]);
+const c = new pg.Client({ host: "127.0.0.1", port, user: "postgres", database: "postgres", ssl: false });
+await c.connect();
+const owner = (await c.query(`select pg_get_userbyid(relowner) o from pg_class where oid = '"AuditLog"'::regclass`)).rows[0].o;
+const one = async (sql) => (await c.query(sql)).rows[0];
+const res = [];
+async function run(role, name, stmts, check) {
+  await c.query("BEGIN");
+  let outcome;
+  try {
+    await c.query(`SET LOCAL ROLE "${role}"`);
+    await c.query(`SELECT set_config('app.bypass_rls','on',true)`); // the compromised app sets it itself (SF-62)
+    let last;
+    for (const s of stmts) last = await c.query(s);
+    outcome = { result: "SUCCEEDED", rowCount: last?.rowCount ?? null };
+    if (check) outcome.check = await check();
+  } catch (e) {
+    outcome = { result: "REFUSED", code: e.code, msg: String(e.message).slice(0, 110) };
+  } finally {
+    await c.query("ROLLBACK");
+  }
+  res.push({ role, name, ...outcome });
+  console.log(JSON.stringify(res.at(-1)));
+}
+const sample = `(SELECT id FROM "AuditLog" ORDER BY "createdAt" DESC LIMIT 1)`;
+for (const role of ["matflow_app", owner]) {
+  await run(role, "positive control: SELECT count", [`SELECT count(*)::int n FROM "AuditLog"`], async () => (await one(`SELECT count(*)::int n FROM "AuditLog"`)).n);
+  await run(role, "positive control: INSERT a fresh row", [`INSERT INTO "AuditLog"(id,"tenantId",action,"entityType","entityId") SELECT 'zzr3-ok-${role}', "tenantId", 'zzr3.ok','X','x' FROM "AuditLog" LIMIT 1`]);
+  await run(role, "UPDATE action", [`UPDATE "AuditLog" SET action = 'zzr3.tampered' WHERE id = ${sample}`]);
+  await run(role, "UPDATE userId to another non-null value", [`UPDATE "AuditLog" SET "userId" = (SELECT id FROM "User" LIMIT 1) WHERE id = (SELECT id FROM "AuditLog" WHERE "userId" IS NOT NULL LIMIT 1)`]);
+  await run(role, "UPDATE userId = NULL (the FK SET NULL shape)", [`UPDATE "AuditLog" SET "userId" = NULL WHERE id = (SELECT id FROM "AuditLog" WHERE "userId" IS NOT NULL LIMIT 1)`]);
+  await run(role, "DELETE one row", [`DELETE FROM "AuditLog" WHERE id = ${sample}`]);
+  await run(role, "TRUNCATE", [`TRUNCATE "AuditLog"`]);
+  await run(role, "INSERT back-dated to 2000-01-01", [`INSERT INTO "AuditLog"(id,"tenantId",action,"entityType","entityId","createdAt") SELECT 'zzr3-bd-${role}', "tenantId", 'zzr3.backdated','X','x', '2000-01-01' FROM "AuditLog" LIMIT 1`],
+    async () => (await one(`SELECT "createdAt"::text t FROM "AuditLog" WHERE id = 'zzr3-bd-${role}'`)).t);
+  await run(role, "INSERT ... ON CONFLICT DO UPDATE (rewrite via upsert)", [`INSERT INTO "AuditLog"(id,"tenantId",action,"entityType","entityId") SELECT id,"tenantId",'x','X','x' FROM "AuditLog" WHERE id = ${sample} ON CONFLICT (id) DO UPDATE SET action = 'zzr3.upsert'`]);
+  await run(role, "ALTER TABLE DISABLE TRIGGER ALL", [`ALTER TABLE "AuditLog" DISABLE TRIGGER USER`]);
+  await run(role, "CREATE OR REPLACE the append-only trigger function", [`CREATE OR REPLACE FUNCTION audit_log_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN COALESCE(NEW, OLD); END $$`]);
+  await run(role, "SET session_replication_role = replica (triggers off)", [`SET LOCAL session_replication_role = replica`, `UPDATE "AuditLog" SET action = 'zzr3.replica' WHERE id = ${sample}`]);
+  await run(role, "purge batch 0", [`SELECT audit_log_purge(0)`]);
+  await run(role, "purge batch 1000000", [`SELECT audit_log_purge(1000000)`]);
+  await run(role, "purge 5000 x2: rows younger than 365 d (and evidence < 2190 d) survive", [`SELECT audit_log_purge(5000)`, `SELECT audit_log_purge(5000)`],
+    async () => one(`SELECT count(*) FILTER (WHERE "createdAt" >= (now() AT TIME ZONE 'UTC') - interval '365 days')::int young,
+                            count(*) FILTER (WHERE "createdAt" < (now() AT TIME ZONE 'UTC') - interval '365 days')::int old FROM "AuditLog"`));
+  await run(role, "search_path trick: temp audit_log_is_table_owner() = true, then back-dated INSERT", [
+    `CREATE FUNCTION pg_temp.audit_log_is_table_owner() RETURNS boolean LANGUAGE sql AS $$ SELECT true $$`,
+    `SET LOCAL search_path = pg_temp, public`,
+    `INSERT INTO "AuditLog"(id,"tenantId",action,"entityType","entityId","createdAt") SELECT 'zzr3-sp-${role}', "tenantId", 'zzr3.sp','X','x', '2000-01-01' FROM public."AuditLog" LIMIT 1`],
+    async () => (await one(`SELECT "createdAt"::text t FROM public."AuditLog" WHERE id = 'zzr3-sp-${role}'`)).t);
+  await run(role, "CREATE a function in schema public (needed for any public-schema shadowing)", [
+    `CREATE FUNCTION public.zz_r3_probe() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$`]);
+  await run(role, "GRANT UPDATE back to self", [`GRANT UPDATE ON "AuditLog" TO matflow_app`]);
+}
+const counts = { cases: res.length, node: process.version, owner, before: await one(`SELECT count(*)::int n FROM "AuditLog"`) };
+console.log(JSON.stringify(counts));
+await c.end();
