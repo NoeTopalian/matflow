@@ -24,22 +24,22 @@ CAPEC) are filled only when a lane has looked the ID up — never invented.
 | SEC-014 | Sessions and sensitive action approval | A | Step-up substitution | approval binds actor, session, tenant, subject, action, values, version | U/I | UNKNOWN | NOT RUN | — | — | — |
 | SEC-015 | Sessions and sensitive action approval | A | Grant replay/duplicate mutation | see brief | I | UNKNOWN | NOT RUN | — | — | — |
 | SEC-016 | Sessions and sensitive action approval | A | Confused session precedence | see brief | I/B | UNKNOWN | NOT RUN | — | — | — |
-| SEC-017 | Authorization and tenant isolation | B | Object-level authorization (I/B). SEC-018 Function-level escalation | role-by-route matrix with positive controls | I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-018 | Authorization and tenant isolation | B | Function-level escalation — role-by-route matrix with positive controls | see brief | I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-019 | Authorization and tenant isolation | B | Property-level authorization/mass assignment | unknown, duplicate, nested keys | U/I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-020 | Authorization and tenant isolation | B | Tenant selection confusion | host/URL/cookie/body/session disagreement fails closed | I/B | UNKNOWN | NOT RUN | — | — | — |
-| SEC-021 | Authorization and tenant isolation | B | RLS bypass / privileged runtime role | actual deployed role, grants, policies, tenant context | I/C | UNKNOWN | NOT RUN | — | — | — |
-| SEC-022 | Authorization and tenant isolation | B | Search/list/export disclosure | see brief | I/B | UNKNOWN | NOT RUN | — | — | — |
-| SEC-023 | Authorization and tenant isolation | B | Support impersonation escalation | see brief | I/B | UNKNOWN | NOT RUN | — | — | — |
-| SEC-024 | Authorization and tenant isolation | B | Background-job authority confusion | see brief | I/C | UNKNOWN | NOT RUN | — | — | — |
-| SEC-025 | Identity and transactional business rules | B | Cross-table email collision | see brief | I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-026 | Identity and transactional business rules | B | Normalisation mismatch | see brief | U/I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-027 | Identity and transactional business rules | B | Legacy duplicate ambiguity | see brief | I/B | UNKNOWN | NOT RUN | — | — | — |
-| SEC-028 | Identity and transactional business rules | B | TOCTOU/stale version writes (I). SEC-029 Writer bypass | upserts, nested writes, raw SQL, imports, jobs | Review/I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-029 | Identity and transactional business rules | B | Writer bypass — upserts, nested writes, raw SQL, imports, jobs | see brief | Review/I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-030 | Identity and transactional business rules | B | Partial multi-step completion | see brief | I/B | UNKNOWN | NOT RUN | — | — | — |
-| SEC-031 | Identity and transactional business rules | B | Lost response/retry corruption | see brief | I/B | UNKNOWN | NOT RUN | — | — | — |
-| SEC-032 | Identity and transactional business rules | B | Ownership/destructive-action races | see brief | I | UNKNOWN | NOT RUN | — | — | — |
+| SEC-017 | Authorization and tenant isolation | B | Object-level authorization (I/B). SEC-018 Function-level escalation | role-by-route matrix with positive controls | I | APPLICABLE | PASS (I, both roles) | evidence/B/05; sec-b-role-matrix-db (2ec8d88) | — | — |
+| SEC-018 | Authorization and tenant isolation | B | Function-level escalation — role-by-route matrix with positive controls | see brief | I | APPLICABLE | PASS 9 routes × 7 sessions with positive controls (I); other handlers by code inventory | sec-b-role-matrix-db 59/59 (2ec8d88) | — | — |
+| SEC-019 | Authorization and tenant isolation | B | Property-level authorization/mass assignment | unknown, duplicate, nested keys | U/I | APPLICABLE | PASS member create/edit (U/I); other routes → lane C | evidence/B/05 (2ec8d88) | — | — |
+| SEC-020 | Authorization and tenant isolation | B | Tenant selection confusion | host/URL/cookie/body/session disagreement fails closed | I/B | APPLICABLE | PASS by code review (C); browser NOT RUN | evidence/B/05 (2ec8d88) | — | — |
+| SEC-021 | Authorization and tenant isolation | B | RLS bypass / privileged runtime role | actual deployed role, grants, policies, tenant context | I/C | APPLICABLE | TEST PASS under matflow_app; production BLOCKED | sec-b-rls-identity-db; evidence/lead (2ec8d88) | — | — |
+| SEC-022 | Authorization and tenant isolation | B | Search/list/export disclosure | see brief | I/B | APPLICABLE | PASS member list (I); exports NOT RUN | evidence/B/05 (2ec8d88) | — | — |
+| SEC-023 | Authorization and tenant isolation | B | Support impersonation escalation | see brief | I/B | APPLICABLE | FIXED AWAITING RETEST → PASS (SF-24) | sec-b-support-backstop; support-session-binding-db 5/5 (2ec8d88) | — | — |
+| SEC-024 | Authorization and tenant isolation | B | Background-job authority confusion | see brief | I/C | APPLICABLE | NOT RUN | — (lane F / coordinator) (2ec8d88) | — | — |
+| SEC-025 | Identity and transactional business rules | B | Cross-table email collision | see brief | I | APPLICABLE | PASS (I) | login-identity-race-db 7/7, claims-db 13/13 (2ec8d88) | — | — |
+| SEC-026 | Identity and transactional business rules | B | Normalisation mismatch | see brief | U/I | APPLICABLE | PASS (U/I) | sec-b-email-normalisation (2ec8d88) | — | — |
+| SEC-027 | Identity and transactional business rules | B | Legacy duplicate ambiguity | see brief | I/B | APPLICABLE | PASS (I) | claims-db legacy duplicate cell (2ec8d88) | — | — |
+| SEC-028 | Identity and transactional business rules | B | TOCTOU/stale version writes (I). SEC-029 Writer bypass | upserts, nested writes, raw SQL, imports, jobs | Review/I | APPLICABLE | PASS member route; owner route AH-C2 OPEN Low | sec-b-version-at-check-db 4/4 (2ec8d88) | — | — |
+| SEC-029 | Identity and transactional business rules | B | Writer bypass — upserts, nested writes, raw SQL, imports, jobs | see brief | Review/I | APPLICABLE | FIXED AWAITING RETEST (guard rewritten); no live bypass | login-identity-writers; evidence/B/02 (2ec8d88) | — | — |
+| SEC-030 | Identity and transactional business rules | B | Partial multi-step completion | see brief | I/B | APPLICABLE | PASS (I/B) | hub-db 7a/7b; browser flow 7 (2ec8d88) | — | — |
+| SEC-031 | Identity and transactional business rules | B | Lost response/retry corruption | see brief | I/B | APPLICABLE | PASS (I/B) | hub-db 5/7b/10; browser flow 6b (2ec8d88) | — | — |
+| SEC-032 | Identity and transactional business rules | B | Ownership/destructive-action races | see brief | I | APPLICABLE | FIXED AWAITING RETEST (SF-23) → PASS | sec-b-ownership-transfer-db 9/9 (2ec8d88) | — | — |
 | SEC-033 | Input handling and server execution | C | SQL/ORM injection incl. raw SQL and dynamic identifiers | Untrusted values cannot change query structure or escape tenant scoping | U/I | UNKNOWN | NOT RUN | — | — | — |
 | SEC-034 | Input handling and server execution | C | Command/argument injection | see brief | U/I | UNKNOWN | NOT RUN | — | — | — |
 | SEC-035 | Input handling and server execution | C | Template/expression injection | see brief | U/I | UNKNOWN | NOT RUN | — | — | — |
