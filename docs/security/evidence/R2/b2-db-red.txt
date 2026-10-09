@@ -1,0 +1,5 @@
+ lib/prisma-tenant.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+RED restricted exit=1  FAIL  tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > a SESSION-level app.bypass_rls = 'on' left on the connection does not widen the next tenant-scoped transaction       Tests  1 failed | 5 passed (6) 
+RED owner exit=0       Tests  6 passed (6) 
+restored-clean

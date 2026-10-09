@@ -23,6 +23,12 @@ export class TargetRefused extends Error {}
  */
 export function resolveDbTarget(url, { expectHost, allowProduction = false } = {}) {
   if (typeof url !== "string" || url.length === 0) throw new TargetRefused("no connection string");
+  // pg applies PGOPTIONS (and PGHOST/PGHOSTADDR when the URL lacks them) from the environment, so an
+  // `endpoint=<id>` in PGOPTIONS can route a TEST hostname to another Neon endpoint without touching the URL
+  // (lane F2 review of b871619, 9 Oct 2026). Refuse rather than resolve.
+  for (const k of ["PGOPTIONS", "PGHOST", "PGHOSTADDR"]) {
+    if (process.env[k]) throw new TargetRefused(`REFUSED: ${k} is set in the environment`);
+  }
   let u;
   try { u = new URL(url); } catch { throw new TargetRefused("connection string is not a URL"); }
   // Override parameters that make the effective target differ from the URL host are refused, never resolved.

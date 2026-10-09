@@ -1,0 +1,17 @@
+== blob-host-count TLS guard vs what pg would use (ssl as the script passes it, URL params merged)
+?sslmode=require                           guard=ACCEPT  pg=TLS verify
+?sslmode=disable                           guard=REFUSE  pg=TLS OFF
+?sslmode=no-verify                         guard=REFUSE  pg=TLS NO-VERIFY
+?sslmode=require&sslmode=disable           guard=ACCEPT  pg=TLS OFF   <-- GUARD DEFEATED
+?sslmode=require&sslmode=no-verify         guard=ACCEPT  pg=TLS NO-VERIFY   <-- GUARD DEFEATED
+?sslmode=verify-full&ssl%6dode=no-verify   guard=ACCEPT  pg=TLS NO-VERIFY   <-- GUARD DEFEATED
+?sslmode=require&SSLMODE=disable           guard=ACCEPT  pg=TLS verify
+?ssl=false                                 guard=REFUSE  pg=TLS verify
+(none)                                     guard=ACCEPT  pg=TLS verify
+== credential fingerprint: near-miss and output hygiene
+exact -> ["synthetic"] | last-char flipped -> [] | prefix only -> [] | in URL -> ["synthetic"] | upper-cased -> []
+env line with inline comment -> match? [] (empty = FALSE NEGATIVE)
+env-file                       exit=0 outputLines=4 leakedValuesOrFingerprints=0
+stdin                          exit=0 outputLines=3 leakedValuesOrFingerprints=0
+value mistakenly as argument   exit=2 outputLines=1 leakedValuesOrFingerprints=2
+missing env file               exit=9 outputLines=1 leakedValuesOrFingerprints=0

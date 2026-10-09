@@ -1,0 +1,41 @@
+// R2 probes for lane E2 ops scripts. Synthetic values only; prints verdicts, never a value or its fingerprint.
+import path from "node:path"; import fs from "node:fs"; import { pathToFileURL } from "node:url"; import { createRequire } from "node:module";
+import { randomBytes } from "node:crypto"; import { spawnSync } from "node:child_process";
+const [,, wt, tmp] = process.argv;
+const require = createRequire(path.join(wt, "package.json")); const CP = require("pg/lib/connection-parameters.js");
+const blob = await import(pathToFileURL(path.join(wt, "scripts/readiness/ops-blob-host-count.mjs")).href);
+const fpm = await import(pathToFileURL(path.join(wt, "scripts/readiness/ops-credential-fingerprint.mjs")).href);
+const T = "postgresql://u:pw@ep-hidden-salad-r2fake.eu-west-2.aws.neon.tech/db";
+console.log("== blob-host-count TLS guard vs what pg would use (ssl as the script passes it, URL params merged)");
+for (const qs of ["?sslmode=require", "?sslmode=disable", "?sslmode=no-verify", "?sslmode=require&sslmode=disable", "?sslmode=require&sslmode=no-verify", "?sslmode=verify-full&ssl%6dode=no-verify", "?sslmode=require&SSLMODE=disable", "?ssl=false", ""]) {
+  let g; try { blob.assertTlsNotDowngraded(T + qs); g = "ACCEPT"; } catch (e) { g = "REFUSE"; }
+  const c = new CP({ connectionString: T + qs, ssl: { rejectUnauthorized: true } });
+  const s = c.ssl === false ? "TLS OFF" : (c.ssl && c.ssl.rejectUnauthorized === false) ? "TLS NO-VERIFY" : "TLS verify";
+  console.log(`${(qs || "(none)").padEnd(42)} guard=${g.padEnd(7)} pg=${s}${g === "ACCEPT" && s !== "TLS verify" ? "   <-- GUARD DEFEATED" : ""}`);
+}
+console.log("== credential fingerprint: near-miss and output hygiene");
+const v = "npg_" + randomBytes(12).toString("base64url").replace(/[-_]/g, "a");
+const list = [{ id: "synthetic", fp: fpm.fingerprint(v) }];
+const flip = v.slice(0, -1) + (v.at(-1) === "a" ? "b" : "a");
+console.log("exact ->", JSON.stringify(fpm.matchAgainst(v, list)), "| last-char flipped ->", JSON.stringify(fpm.matchAgainst(flip, list)),
+  "| prefix only ->", JSON.stringify(fpm.matchAgainst(v.slice(0, -1), list)), "| in URL ->", JSON.stringify(fpm.matchAgainst(`postgresql://r:${v}@h.example/db`, list)),
+  "| upper-cased ->", JSON.stringify(fpm.matchAgainst(v.toUpperCase(), list)));
+const quotedWithComment = fpm.parseEnvText(`DATABASE_URL="postgresql://r:${v}@h.example/db" # prod\n`).DATABASE_URL;
+console.log("env line with inline comment -> match?", JSON.stringify(fpm.matchAgainst(quotedWithComment, list)), "(empty = FALSE NEGATIVE)");
+const secretVals = [v, "rk_live_" + randomBytes(30).toString("hex"), "postgresql://r:" + v + "@h.example/db"];
+const envf = path.join(tmp, "e2probe.env"); fs.writeFileSync(envf, `A=${secretVals[0]}\nB="${secretVals[1]}"\nC=${secretVals[2]}\n`);
+const script = path.join(wt, "scripts/readiness/ops-credential-fingerprint.mjs");
+const runs = [
+  ["env-file", ["--env-file", envf, "--var", "A", "--var", "B", "--var", "C", "--var", "MISSING"], ""],
+  ["stdin", ["--stdin"], secretVals.join("\n") + "\n"],
+  ["value mistakenly as argument", [secretVals[1]], ""],
+  ["missing env file", ["--env-file", path.join(tmp, "nope.env"), "--var", "A"], ""],
+];
+const forbidden = secretVals.flatMap((s) => [s, fpm.fingerprint(s), fpm.fingerprint(v), s.slice(0, 25), fpm.fingerprint(s.slice(0, 25))]);
+for (const [name, args, input] of runs) {
+  const r = spawnSync(process.execPath, [script, ...args], { input, encoding: "utf8" });
+  const out = (r.stdout || "") + (r.stderr || "");
+  const leaks = forbidden.filter((f) => out.includes(f)).length;
+  console.log(`${name.padEnd(30)} exit=${r.status} outputLines=${out.trim().split("\n").length} leakedValuesOrFingerprints=${leaks}`);
+}
+fs.rmSync(envf);

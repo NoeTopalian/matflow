@@ -32,4 +32,16 @@ describe("resolveDbTarget", () => {
     expect(() => resolveDbTarget("", { expectHost: "x" })).toThrow(TargetRefused);
     expect(() => resolveDbTarget("not a url", { expectHost: "x" })).toThrow(TargetRefused);
   });
+
+  it("refuses PGOPTIONS / PGHOST / PGHOSTADDR in the environment (pg would apply them) — lane F2", () => {
+    for (const k of ["PGOPTIONS", "PGHOST", "PGHOSTADDR"]) {
+      process.env[k] = k === "PGOPTIONS" ? `endpoint=${PRODUCTION_ENDPOINT_ID}` : "elsewhere";
+      try {
+        expect(() => resolveDbTarget(url(TEST), { expectHost: "ep-hidden-salad" })).toThrow(new RegExp(k));
+      } finally {
+        delete process.env[k];
+      }
+    }
+    expect(resolveDbTarget(url(TEST), { expectHost: "ep-hidden-salad" })).toBe(TEST);
+  });
 });

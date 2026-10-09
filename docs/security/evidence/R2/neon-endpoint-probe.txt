@@ -1,0 +1,3 @@
+control CONNECTED endpointSetting= TEST
+options ERROR 28000 Inconsistent project name inferred from SNI ('<TEST-ep>') and project option ('ep-r2-nonexistent-000000').
+password CONNECTED endpointSetting= TEST

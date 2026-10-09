@@ -1,0 +1,22 @@
+import { describe, it, expect, vi } from "vitest";
+const txSpy = vi.fn();
+vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: (...a: unknown[]) => { txSpy(...a); return Promise.resolve("opened"); } } }));
+import { tenantContextKey, withTenantContext, TENANT_CONTEXT_KEY_ENV } from "@/lib/prisma-tenant";
+const H = "a".repeat(128);
+describe("R2: signing-key parsing fails closed", () => {
+  const cases: Array<[string, string | undefined, "null" | "key" | "throw"]> = [
+    ["unset", undefined, "null"], ["empty", "", "null"], ["whitespace", "   ", "throw"], ["127 hex", H.slice(1), "throw"],
+    ["129 hex", H + "a", "throw"], ["128 hex + newline", H + "\n", "throw"], ["128 hex + CR", H + "\r", "throw"],
+    ["quoted", `"${H}"`, "throw"], ["non-hex", "g".repeat(128), "throw"], ["upper hex", "A".repeat(128), "key"], ["base64 64 bytes", Buffer.alloc(64, 7).toString("base64"), "throw"],
+  ];
+  for (const [name, raw, want] of cases) it(name, () => {
+    let got: string; try { got = tenantContextKey(raw) === null ? "null" : "key"; } catch { got = "throw"; }
+    expect(got).toBe(want);
+  });
+  it("withTenantContext with a malformed env key throws before any transaction opens", async () => {
+    process.env[TENANT_CONTEXT_KEY_ENV] = H + "\n";
+    await expect(withTenantContext("t1", async () => 1)).rejects.toThrow(/64 bytes of hex/);
+    expect(txSpy).not.toHaveBeenCalled();
+    delete process.env[TENANT_CONTEXT_KEY_ENV];
+  });
+});

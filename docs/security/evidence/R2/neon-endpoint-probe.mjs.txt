@@ -1,0 +1,20 @@
+// R2: does the Neon proxy honour an endpoint id carried in options= or in the password when SNI names the TEST
+// endpoint? Uses ONLY the TEST credential and a NON-EXISTENT endpoint id. Prints error codes/messages, never the URL.
+import fs from "node:fs"; import path from "node:path"; import { createRequire } from "node:module";
+const wt = process.argv[2]; const require = createRequire(path.join(wt, "package.json")); const pg = require("pg");
+const env = Object.fromEntries(fs.readFileSync(path.join(wt, ".env.test"), "utf8").split(/\r?\n/).filter((l) => /^[A-Z_]+=/.test(l)).map((l) => { const i = l.indexOf("="); return [l.slice(0, i), l.slice(i + 1).replace(/^"|"$/g, "")]; }));
+const base = new URL(env.TEST_DATABASE_URL);
+if (!base.hostname.includes("ep-hidden-salad") || base.hostname.includes("ep-bold-wave")) { console.log("REFUSED: not TEST"); process.exit(2); }
+base.hostname = base.hostname.replace("-pooler", ""); // direct host, so nothing touches the shared pooler
+const FAKE = "ep-r2-nonexistent-000000";
+const variants = {
+  control: () => { const u = new URL(base); return { connectionString: u.toString() }; },
+  options: () => { const u = new URL(base); u.searchParams.set("options", `endpoint=${FAKE}`); return { connectionString: u.toString() }; },
+  password: () => { const u = new URL(base); return { connectionString: u.toString(), password: `endpoint=${FAKE};${decodeURIComponent(base.password)}` }; },
+};
+for (const [name, mk] of Object.entries(variants)) {
+  const cfg = mk(); const c = new pg.Client({ ...cfg, connectionTimeoutMillis: 15000, ssl: { rejectUnauthorized: true } });
+  try { await c.connect(); const r = await c.query("select current_database() as d, (select setting from pg_settings where name='neon.endpoint_id') as ep"); console.log(name, "CONNECTED", "endpointSetting=", r.rows[0].ep ? (r.rows[0].ep.includes("hidden-salad") ? "TEST" : "OTHER") : "n/a"); }
+  catch (e) { console.log(name, "ERROR", e.code ?? "", String(e.message).replace(/ep-hidden-salad[\w-]*/g, "<TEST-ep>").slice(0, 160)); }
+  finally { try { await c.end(); } catch {} }
+}
