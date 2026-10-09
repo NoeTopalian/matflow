@@ -10,7 +10,7 @@ candidate lines as character shapes (`a`/`A`/`9`) for triage.
 | Full git history (all refs; the repository is public) | `node scripts/readiness/secret-scan.mjs --history` | 5,949 unique blobs | 10 (7 unique) | 1 |
 | Tracked tree at 2a6487e | `--tree` | 1,749 files | 5 (2 unique values) | 1 |
 | Client bundles `.next/static` (build xP9P9cHvx9xkgqHPXnOa9) | `--dir .next/static` | 119 files | **0** | 0 |
-| Server output `.next/server` | `--dir .next/server` | 4,279 files | 2: `-----BEGIN PRIVATE KEY-----` literal inside the jose `importPKCS8` source in `@auth/core` server source maps. A library string, **not a key** | 1 |
+| Server output `.next/server` | `--dir .next/server` | 4,279 files | 2: the PEM private-key header literal (redacted here so this evidence file does not itself trip the scanner) inside the jose `importPKCS8` source in `@auth/core` server source maps. A library string, **not a key** | 1 |
 
 ## Triage
 1. **`docs/SECURITY-AUDIT-2026-05-07.md`, original version `fa3c460` (7 May; superseded by `2ee3bfb`, 9 May), public

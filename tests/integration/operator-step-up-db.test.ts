@@ -183,7 +183,8 @@ describe.skipIf(!HAS_DB)("operator single-use controls on the database", () => {
     await prisma.operator.update({ where: { id: OP_ID }, data: { stepUpExpiresAt: new Date(Date.now() - 1000) } });
     const res = await post("totp-reset", { reason: "lost phone, verified", confirmName: TENANT_NAME }, grant);
     expect(res.status).toBe(403);
-    expect((await res.json()).refusal).toBe("used");
+    // AH-G5 (lane A, 9 Oct 2026): the label now names the cause; it was "used".
+    expect((await res.json()).refusal).toBe("expired");
     expect((await ownerRow())?.totpEnabled).toBe(true);
   });
 

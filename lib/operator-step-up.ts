@@ -98,6 +98,12 @@ export const STEP_UP_ACTIONS = [
   // for the owner (admin hub lane F, 9 Oct 2026). Target =
   // stepUpTarget(tenantId, memberId, "change"); change = { newEmail }.
   "member.contact_email",
+  // Incident revoke-all (security campaign lane A, 9 Oct 2026, AH-R7 /
+  // SEC-013): end every session and retire every sign-in token of one staff
+  // user, one member, or a whole club. Target = stepUpTarget(tenantId,
+  // subjectId, scope) with scope "user" | "member", or
+  // stepUpTarget(tenantId, CLUB_REVOKE_SUBJECT, "club") for the whole club.
+  "access.revoke_all",
 ] as const;
 export type StepUpAction = (typeof STEP_UP_ACTIONS)[number];
 
@@ -141,7 +147,11 @@ const CHANGE_SCHEMAS: Record<StepUpAction, z.ZodType<StepUpChange>> = {
   "owner.login_email": z.union([z.object({ newEmail: emailField(120) }).strict(), EMPTY_CHANGE]),
   "owner.profile": z.object({ name: displayNameSchema }).strict(),
   "member.contact_email": z.object({ newEmail: emailField(120) }).strict(),
+  "access.revoke_all": EMPTY_CHANGE,
 };
+
+/** The subject segment of a whole-club revoke-all target (never a cuid). */
+export const CLUB_REVOKE_SUBJECT = "all";
 
 /** Normalise a declared change for `action`; null when it is not a valid change for it. */
 export function canonicalStepUpChange(action: StepUpAction, raw: unknown): StepUpChange | null {
@@ -246,6 +256,29 @@ export async function stepUpVersion(
       if (!t) return null;
       const deleted = t.deletedAt ? new Date(t.deletedAt).toISOString() : "-";
       return `tenant:${t.id}:${t.subscriptionStatus}:deleted=${deleted}`;
+    }
+    case "access.revoke_all": {
+      // Existence ONLY, never a session version: revoking is idempotent ("end
+      // whatever exists now"), and a version that moves on every sign-out
+      // would let the attacker being evicted keep the operator's grant stale
+      // (log out everywhere, sign in, repeat) — an incident control that the
+      // incident can block. A grant for one scope never fits another, and a
+      // subject deleted or moved since issue yields null (refused).
+      const scope = targetId.split("/")[2];
+      if (!subjectId) return null;
+      if (scope === "user") {
+        const u = await tx.user.findFirst({ where: { id: subjectId, tenantId }, select: { id: true } });
+        return u ? `revoke:user:${tenantId}:${u.id}` : null;
+      }
+      if (scope === "member") {
+        const m = await tx.member.findFirst({ where: { id: subjectId, tenantId }, select: { id: true } });
+        return m ? `revoke:member:${tenantId}:${m.id}` : null;
+      }
+      if (scope === "club" && subjectId === CLUB_REVOKE_SUBJECT) {
+        const t = await tx.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
+        return t ? `revoke:club:${t.id}` : null;
+      }
+      return null;
     }
     case "support.impersonate": {
       if (!subjectId) return null;
@@ -579,7 +612,10 @@ export async function consumeStepUpGrant(
     }
     return { kind: "spent" };
   }
-  const op = await tx.operator.findUnique({ where: { id: grant.operatorId }, select: { sessionVersion: true } });
+  const op = await tx.operator.findUnique({
+    where: { id: grant.operatorId },
+    select: { sessionVersion: true, stepUpNonceHash: true, stepUpExpiresAt: true },
+  });
   if (!op || op.sessionVersion !== grant.sessionVersion) throw new StepUpRefusedError("wrong_session", grant);
   if (opts.replayActions && opts.replayActions.length > 0) {
     const outcome = await findAppliedGrant(tx, {
@@ -589,5 +625,10 @@ export async function consumeStepUpGrant(
     });
     if (outcome) return { kind: "replay", outcome };
   }
+  // AH-G5 / SEC-015 (security campaign lane A, 9 Oct 2026): the nonce is
+  // still this grant's, so it was never spent — the conditional update missed
+  // on the expiry alone (natural expiry between the check and the spend, or a
+  // stored expiry moved by hand). Refused either way; the label now says why.
+  if (op.stepUpNonceHash === grant.requestId) throw new StepUpRefusedError("expired", grant);
   throw new StepUpRefusedError("used", grant);
 }

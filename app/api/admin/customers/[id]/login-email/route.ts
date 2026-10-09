@@ -70,9 +70,9 @@ async function appliedOwnerOutcome(req: Request, operatorId: string, tenantId: s
 
 const reason = z.string().trim().min(LOGIN_EMAIL_REASON_MIN).max(500);
 const bodySchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("mark_provisional"), reason }),
-  z.object({ action: z.literal("clear_provisional"), reason, attestMailboxVerified: z.literal(true) }),
-  z.object({ action: z.literal("change"), reason, newEmail: emailField(120) }),
+  z.strictObject({ action: z.literal("mark_provisional"), reason }),
+  z.strictObject({ action: z.literal("clear_provisional"), reason, attestMailboxVerified: z.literal(true) }),
+  z.strictObject({ action: z.literal("change"), reason, newEmail: emailField(120) }),
 ]);
 
 // Same budget as the other Danger Zone actions (A6I1-S-5).

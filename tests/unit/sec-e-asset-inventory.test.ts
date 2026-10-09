@@ -11,7 +11,7 @@ import { analyseRoute, classify, routeUrl } from "../../scripts/readiness/asset-
 const ROOT = path.resolve(__dirname, "../..");
 
 function routes() {
-  const out: Array<{ url: string; guards: string[]; methods: string[] }> = [];
+  const out: Array<{ url: string; guards: Array<string | RegExp>; methods: string[] }> = [];
   const walk = (d: string) => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
       const p = path.join(d, e.name);
@@ -60,7 +60,7 @@ describe("repository route invariants", () => {
   it("every webhook route verifies a signature", () => {
     const hooks = all.filter((r) => r.url.startsWith("/api/webhooks/") || r.url === "/api/stripe/webhook");
     expect(hooks.length).toBeGreaterThanOrEqual(2);
-    expect(hooks.filter((r) => !r.guards.some((g) => /Signature$/.test(g))).map((r) => r.url)).toEqual([]);
+    expect(hooks.filter((r) => !r.guards.some((g) => /Signature$/.test(String(g)))).map((r) => r.url)).toEqual([]);
   });
 
   it("every operator-plane route resolves an operator (tenant-owner routes under /api/admin are listed explicitly)", () => {
@@ -82,6 +82,6 @@ describe("repository route invariants", () => {
   it("tenant-owner routes under /api/admin carry an owner/role marker", () => {
     const owner = all.filter((r) => /^\/api\/admin\/(import|dsar|email\/test)(\/|$)/.test(r.url));
     expect(owner.length).toBe(15);
-    expect(owner.filter((r) => !r.guards.some((g) => ["owner", "role", "ownerOrManager", "magicLinkToken"].includes(g))).map((r) => r.url)).toEqual([]);
+    expect(owner.filter((r) => !r.guards.some((g) => ["owner", "role", "ownerOrManager", "magicLinkToken"].includes(String(g)))).map((r) => r.url)).toEqual([]);
   });
 });

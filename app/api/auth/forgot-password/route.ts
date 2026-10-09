@@ -4,7 +4,7 @@ import { randomInt } from "crypto";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
-import { hashToken } from "@/lib/token-hash";
+import { hashSubjectBoundResetCode } from "@/lib/auth-token-binding";
 import { logAudit } from "@/lib/audit-log";
 import { isLoginEmailProvisional } from "@/lib/login-email";
 import { isEmailDeliveryOn } from "@/lib/email-delivery";
@@ -127,7 +127,13 @@ export async function POST(req: Request) {
       data: {
         email: normEmail,
         tenantId: tenant.id,
-        tokenHash: hashToken(token),
+        // Committed to THIS person (AH-D2 / SEC-003, 9 Oct 2026): the stored
+        // hash covers the subject's id, so the code resets nobody else's
+        // password even if the address changes hands within its two minutes.
+        tokenHash: hashSubjectBoundResetCode(token, {
+          tenantId: tenant.id,
+          subject: user ? { kind: "user", id: user.id } : { kind: "member", id: member!.id },
+        }),
         expiresAt,
       },
     });

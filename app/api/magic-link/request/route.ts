@@ -1,10 +1,10 @@
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
-import { randomBytes } from "crypto";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
 import { hashToken } from "@/lib/token-hash";
+import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
 import { getBaseUrl } from "@/lib/env-url";
 import { isLoginEmailProvisional } from "@/lib/login-email";
 import { isEmailDeliveryOn } from "@/lib/email-delivery";
@@ -116,7 +116,14 @@ export async function POST(req: Request) {
 
   // Issue new token (B-3: 32 random bytes as hex = 64-char string).
   // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.
-  const token = randomBytes(32).toString("hex");
+  // Bound to THIS person (AH-D2 / SEC-004, 9 Oct 2026): the link carries an
+  // HMAC tag over the club, the purpose and the subject's id, so it cannot
+  // sign in whoever holds this address next (lib/auth-token-binding.ts).
+  const token = mintSubjectBoundToken({
+    purpose: "login",
+    tenantId: tenant.id,
+    subject: user ? { kind: "user", id: user.id } : { kind: "member", id: member!.id },
+  });
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
   await withTenantContext(tenant.id, async (tx) => {
     // Anti-stockpile: invalidate prior unused LOGIN tokens for this email+tenant.

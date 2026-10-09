@@ -90,6 +90,11 @@ export async function GET(req: Request) {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="${filename}"`,
+      // Every payment in the club, with names and emails: never stored by a
+      // browser or an intermediary (SEC-047, lane C SF-C4, 9 Oct 2026). The
+      // sibling exports already send no-store; /api/payments has no
+      // next.config.ts no-store rule of its own.
+      "Cache-Control": "private, no-store, max-age=0",
       "X-Row-Cap": String(EXPORT_ROW_CAP),
       "X-Rows-Truncated": truncated ? "true" : "false",
     },

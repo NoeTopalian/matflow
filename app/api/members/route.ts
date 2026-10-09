@@ -10,6 +10,7 @@ import { sendEmail } from "@/lib/email";
 import { suppressedMessage } from "@/lib/email-delivery";
 import { randomBytes } from "crypto";
 import { hashToken } from "@/lib/token-hash";
+import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
 import { getBaseUrl } from "@/lib/env-url";
 import { synthesiseKidEmail, synthesiseMemberEmail, isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { MAX_KIDS_PER_PARENT, childAccountTypeFor } from "@/lib/kids-policy";
@@ -532,7 +533,9 @@ export async function POST(req: Request) {
       try {
         // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.
         // The raw token goes in the invite email + URL; the DB stores only the hash.
-        const token = randomBytes(24).toString("hex");
+        // Bound to THIS member (AH-D2, lib/auth-token-binding.ts): the
+        // invitation cannot set the password of whoever holds the address next.
+        const token = mintSubjectBoundToken({ purpose: "first_time_signup", tenantId: session.user.tenantId, subject: { kind: "member", id: member.id } });
         const tenant = await withTenantContext(session.user.tenantId, async (tx) => {
           await tx.magicLinkToken.create({
             data: {

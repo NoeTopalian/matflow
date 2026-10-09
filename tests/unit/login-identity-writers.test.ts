@@ -75,9 +75,6 @@ const OUT_OF_BAND: Record<string, [number, string]> = {
   "scripts/stripe-lifecycle-e2e.mjs#member.create": [1, "Stripe test-mode e2e fixture club"],
   "scripts/stripe-migration-e2e.mjs#user.create": [1, "Stripe test-mode e2e fixture club"],
   "scripts/stripe-migration-e2e.mjs#member.create": [4, "Stripe test-mode e2e fixture club"],
-  "scripts/wipe-totalbjj-demo-data.mjs#user.update": [1, "one-shot of 3 Oct 2026 (already run): demo owner → the real owner, guarded by exact demo-state checks; no claim/token retirement/audit"],
-  "scripts/setup-test-accounts.mjs#user.updateMany": [2, "OPEN FINDING SEC-B-F1: rewrites the owner login of the `totalbjj` club and of `noetest` to fixed addresses and resets the password, against whatever DATABASE_URL dotenv loads (.env = production), with no host guard, no claim, no token retirement, no audit — delete or guard (lane E / lead)"],
-  "scripts/setup-test-accounts.mjs#user.create": [1, "OPEN FINDING SEC-B-F1 (same script): creates the noetest owner"],
   "scripts/apply-rls-enforcement.ts#raw executeRawUnsafe (non-literal)": [1, "DDL only: ALTER TABLE … ENABLE/FORCE ROW LEVEL SECURITY statements filtered from the migration file; no row data"],
   "scripts/create-restricted-role.ts#raw executeRawUnsafe (non-literal)": [1, "DDL only: CREATE ROLE / GRANT for matflow_app; no row data"],
 };

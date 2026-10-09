@@ -84,6 +84,21 @@ export async function POST(req: Request) {
       if (!result.ok) {
         return { kind: "invalid" as const, userId: user.id };
       }
+      // SINGLE WINNER (SEC-007, security campaign lane A, 9 Oct 2026). The
+      // codes above were read, then the remainder written back unconditionally:
+      // two concurrent recoveries (two different codes, or one code twice) both
+      // "succeeded", and the later write put the earlier request's consumed
+      // code back into the stored list. The recovery's own effect — the second
+      // factor switched off — is now claimed by a conditional update first, so
+      // exactly one request wins; the other blocks on the row and matches
+      // nothing. A recovery with no second factor to recover is refused too.
+      const claimed = await tx.user.updateMany({
+        where: { id: user.id, totpEnabled: true },
+        data: { totpEnabled: false },
+      });
+      if (claimed.count !== 1) {
+        return { kind: "invalid" as const, userId: user.id };
+      }
       await tx.user.update({
         where: { id: user.id },
         data: {

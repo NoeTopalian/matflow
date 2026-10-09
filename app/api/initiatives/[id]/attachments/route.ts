@@ -134,6 +134,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 }
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  // Same-origin first (security campaign SF-C3, 9 Oct 2026) — every data-changing handler refuses a foreign origin.
+  const csrf = assertSameOrigin(req);
+  if (csrf) return csrf;
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
   const { tenantId, userId } = gate;

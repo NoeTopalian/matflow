@@ -5,6 +5,7 @@ import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { hashToken } from "@/lib/token-hash";
+import { linkTokenBinding } from "@/lib/auth-token-binding";
 
 /**
  * POST /api/members/accept-invite — public (token-gated).
@@ -140,6 +141,26 @@ export async function POST(req: Request) {
   );
   if (!member) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
+  }
+
+  // SUBJECT BINDING (AH-D2 / SEC-003, 9 Oct 2026; lib/auth-token-binding.ts).
+  // An invitation names an address; the member found at it now may be a
+  // different person from the one it was sent for (the first deleted, another
+  // created at the same address — lib/member-delete.ts retires nothing). A
+  // tagged invitation sets a password ONLY on the member its tag names.
+  // Refused before the claim, so nothing is consumed or written. Untagged
+  // (pre-binding) invitations keep the old address-only rule until expiry.
+  if (
+    linkTokenBinding(parsed.data.token, {
+      purpose: "first_time_signup",
+      tenantId: tokenRow.tenantId,
+      subject: { kind: "member", id: member.id },
+    }) === "mismatch"
+  ) {
+    return NextResponse.json(
+      { error: "This invite is no longer valid for this account. Ask your gym for a new one." },
+      { status: 410 },
+    );
   }
 
   try {

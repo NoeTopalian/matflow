@@ -180,6 +180,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "auth.member.totp.recovery.failed": "Member recovery code refused",
   "user.password.set_own": "Set their own password",
   "auth.magic_link.refused_provisional": "Refused a sign-in link for a provisional (unverified) login email",
+  "auth.magic_link.refused_subject": "Refused a sign-in link that was sent to a different person at this address",
   "auth.password_reset.refused_provisional": "Refused a password reset for a provisional (unverified) login email",
   "auth.external_signin.refused_provisional": "Refused an external sign-in for a provisional (unverified) login email",
   "user.login_email.changed": "Changed their own login email (unverified until confirmed)",
@@ -209,6 +210,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   // Admin hub lane F (9 Oct 2026): resolving a login-address conflict.
   "admin.login_email.checked": "MatFlow checked who holds a login address in the club",
   "admin.member.contact_email.changed": "MatFlow changed a member's contact email (unverified until confirmed)",
+  "admin.access.revoked": "MatFlow signed out every session and cancelled every sign-in link or code in scope (incident revoke-all)",
   "admin.impersonate.start": "MatFlow support signed in as the owner",
   "admin.impersonate.end": "MatFlow support ended the support session",
   "admin.operator.totp_enrolled": "A MatFlow operator set up their authenticator",

@@ -1,0 +1,24 @@
+diff --git a/lib/importers/attendance.ts b/lib/importers/attendance.ts
+index 53d31e0..ccd07e9 100644
+--- a/lib/importers/attendance.ts
++++ b/lib/importers/attendance.ts
+@@ -599,7 +599,7 @@ export function planAttendanceImport(
+     const hit = resolved.get(r.personKey);
+     if (hit) return hit;
+     let out: Resolved = { memberId: null, method: null, decidedPending: false };
+-    const d = decisions.person[r.personKey];
++    const d = Object.hasOwn(decisions.person, r.personKey) ? decisions.person[r.personKey] : undefined;
+     if (d?.action === "member" && memberById.has(d.targetId)) out = { memberId: d.targetId, method: "decision", decidedPending: false };
+     // A decision whose member no longer exists, or "keep pending": pending — never re-matched behind the owner's back.
+     else if (d) out = { memberId: null, method: null, decidedPending: true };
+@@ -663,8 +663,8 @@ export function planAttendanceImport(
+     const status = r.status as BookingStatus;
+ 
+     // Offering and venue as the owner mapped them.
+-    const od = decisions.offering[r.className] ?? null;
+-    const vd = decisions.venue[r.venue] ?? null;
++    const od = Object.hasOwn(decisions.offering, r.className) ? decisions.offering[r.className] : null;
++    const vd = Object.hasOwn(decisions.venue, r.venue) ? decisions.venue[r.venue] : null;
+     const venueKey = vd?.action === "location" && locationIds.has(vd.targetId) ? `loc:${vd.targetId}` : vd?.action === "club" ? "club" : null;
+     let classKey: string | null = null;
+     let venueConflict = false;

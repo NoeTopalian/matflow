@@ -17,6 +17,7 @@ import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { refuseSupportSession } from "@/lib/support-session";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { hashToken } from "@/lib/token-hash";
+import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
 import { assertSameOrigin } from "@/lib/csrf";
 import { getBaseUrl } from "@/lib/env-url";
 import { logAudit } from "@/lib/audit-log";
@@ -120,7 +121,8 @@ export async function POST(req: Request) {
       continue;
     }
     try {
-      const token = randomBytes(24).toString("hex");
+      // Bound to THIS member (AH-D2, lib/auth-token-binding.ts).
+      const token = mintSubjectBoundToken({ purpose: "first_time_signup", tenantId, subject: { kind: "member", id: member.id } });
       await withTenantContext(tenantId, async (tx) => {
         // Only the newest invite link should work.
         await tx.magicLinkToken.updateMany({

@@ -1149,7 +1149,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               token.brandFetchedAt = 0;
             }
           }
-        } catch { /* impersonation override best-effort — don't break the JWT path */ }
+        } catch (err) {
+          // FAIL CLOSED (SEC-012, 9 Oct 2026). This block only does work when a
+          // support session is starting, live or ending; a throw part-way
+          // through leaves the token half-swapped between the operator and the
+          // target. It used to be swallowed ("best-effort") and the half-swapped
+          // token carried on. Ending the session is the only safe answer.
+          console.error("[auth] support swap/restore failed — session ended", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          Sentry.captureException(err, {
+            tags: { area: "auth", control: "support-session", failMode: "closed" },
+          });
+          return null;
+        }
       }
 
       // Non-user refresh: verify the token's sessionVersion still matches DB.
@@ -1202,6 +1215,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               memberId: token.memberId as string | null,
               userId: token.id as string,
               tokenVersion: token.sessionVersion,
+              tenantId: token.tenantId as string,
             },
             // The display name follows a profile edit on every device (8 Oct
             // 2026). The row is the one this check reads anyway.
@@ -1209,9 +1223,23 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               if (token.name !== name) token.name = name;
             },
           );
-          if (verdict === "revoked") return null;
-          // "unknown" keeps the token — a database blip must not sign out every
-          // user in the product — but it is reported rather than swallowed.
+          // "revoked" AND "unknown" both refuse (AH-G7 / SEC-012, security
+          // campaign lane A, 9 Oct 2026). Until then "unknown" kept the token
+          // and session() returned the full user, so for as long as this lookup
+          // kept failing every revocation in the product (password reset, log
+          // out everywhere, staff removal, suspension) failed OPEN on any
+          // request whose later queries happened to succeed.
+          //
+          // Why null and not a "user-less" session: auth() hands a route the
+          // session() result, and a session object WITHOUT a user is truthy —
+          // 57 call sites check only `if (!session)` before reading
+          // `session.user.*`. null is the one answer every gate already reads
+          // as signed out. It costs less than it looks: the server-side auth()
+          // (route handlers, pages) applies no Set-Cookie, so the browser keeps
+          // its cookie and the NEXT request is checked afresh; only a failure
+          // that lands on /api/auth/session itself clears the cookie. Reported
+          // in lib/session-revocation.ts.
+          if (verdict !== "ok") return null;
           // `sessionVersionCheckedAt` is now a record of the last successful
           // check and nothing gates on it: no branch above may read it back as
           // permission to skip the check, which is what made the guarantee
@@ -1235,7 +1263,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                 tx.user.findUnique({ where: { id: token.id as string }, select: { mustChangePassword: true } }),
               );
               if (row) token.mustChangePassword = row.mustChangePassword === true;
-            } catch { /* transient — retried on the next pass */ }
+            } catch {
+              // Cannot tell whether this legacy token is a temporary-password
+              // session: refuse this request rather than read "absent" as "no
+              // change needed" (SEC-012). Same null as above, same reasons.
+              return null;
+            }
           }
         }
 

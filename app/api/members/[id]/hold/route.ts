@@ -33,6 +33,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   let body: { until?: unknown } = {};
   try { body = await req.json(); } catch {}
+  if (typeof body !== "object" || body === null || Array.isArray(body)) body = {}; // SF-C5: a non-object body is treated as an empty one, not a 500
   const now = new Date();
   const parsed = parseHoldUntil(body.until, now);
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });

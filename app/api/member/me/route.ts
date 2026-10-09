@@ -291,7 +291,12 @@ export async function PATCH(req: Request) {
   try {
     // Defence in depth: strip TOTP fields so a body like { totpEnabled: false }
     // cannot bypass the no-self-disable invariant via this PATCH route.
-    const rawBody = stripTotpFields(await req.json() as Record<string, unknown>);
+    const parsedJson: unknown = await req.json();
+    // SF-C5: a JSON body that is not an object is a 400, not a 500 from the destructure below.
+    if (typeof parsedJson !== "object" || parsedJson === null || Array.isArray(parsedJson)) {
+      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    }
+    const rawBody = stripTotpFields(parsedJson as Record<string, unknown>);
 
     // 2 Oct 2026 — administrator-controlled families. A member editing their own
     // profile may not carry a relationship, account-type or guardian-confirmation

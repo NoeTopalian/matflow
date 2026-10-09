@@ -5,6 +5,7 @@ import { logAudit } from "@/lib/audit-log";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { hashToken } from "@/lib/token-hash";
+import { linkTokenBinding } from "@/lib/auth-token-binding";
 import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
 import { isElevatedRole, requiresTotpEnrolment } from "@/lib/mfa-policy";
 import { isTestingMode } from "@/lib/testing-mode";
@@ -130,6 +131,32 @@ export async function GET(req: NextRequest) {
   const { user, member, tenant } = lookups;
 
   if (!user && !member) {
+    return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
+  }
+
+  // SUBJECT BINDING (AH-D2 / SEC-004, 9 Oct 2026; lib/auth-token-binding.ts).
+  // The row names an address; the person at that address now may not be the
+  // person the link was sent for (a member deleted and another created at the
+  // same address, a staff user removed and the address reused). A tagged link
+  // signs in ONLY the subject its tag was computed for; anyone else gets the
+  // answer an expired link gets. The token is already consumed above, so a
+  // mismatched link is dead either way. An untagged (pre-binding) link keeps
+  // the old address-only rule until it expires.
+  const binding = linkTokenBinding(token, {
+    purpose: tokenRow.purpose as "login" | "first_time_signup",
+    tenantId: tokenRow.tenantId,
+    subject: user ? { kind: "user", id: user.id } : { kind: "member", id: member!.id },
+  });
+  if (binding === "mismatch") {
+    await logAudit({
+      tenantId: tokenRow.tenantId,
+      userId: null,
+      action: "auth.magic_link.refused_subject",
+      entityType: user ? "User" : "Member",
+      entityId: user?.id ?? member!.id,
+      metadata: { reason: "token_subject_mismatch", purpose: tokenRow.purpose },
+      req,
+    });
     return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
   }
 

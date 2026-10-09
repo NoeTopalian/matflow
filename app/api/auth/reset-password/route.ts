@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { hashToken } from "@/lib/token-hash";
+import { hashSubjectBoundResetCode, type TokenSubject } from "@/lib/auth-token-binding";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit-log";
 import { isLoginEmailProvisional } from "@/lib/login-email";
@@ -95,16 +96,41 @@ export async function POST(req: Request) {
   // discovered here. User takes precedence (staff accounts) over Member
   // when both share an email — should be rare given staff and member share
   // an email tend to be edge cases (e.g. the owner has their own member row).
+  // Set when the code was found by its subject-bound hash (below).
+  let boundTo: TokenSubject | null = null;
   const lookups = await withTenantContext(tenant.id, async (tx) => {
-    const resetToken = await tx.passwordResetToken.findFirst({
-      where: {
-        tokenHash: hashToken(token),
-        email: normEmail,
-        tenantId: tenant.id,
-        used: false,
-        expiresAt: { gt: new Date() },
-      },
+    const live = { email: normEmail, tenantId: tenant.id, used: false, expiresAt: { gt: new Date() } };
+    // A code minted before subject binding (hash of the code alone). None is
+    // minted any more; one can only predate the deploy (codes live 2 minutes).
+    let resetToken = await tx.passwordResetToken.findFirst({
+      where: { tokenHash: hashToken(token), ...live },
     });
+    // SUBJECT BINDING (AH-D2 / SEC-003, 9 Oct 2026; lib/auth-token-binding.ts):
+    // a current code's stored hash covers the id of the person it was sent
+    // for. Look for the hash computed for whoever holds this address NOW — a
+    // different person (the first deleted, another created at the address)
+    // computes a different hash and finds nothing. Same precedence as
+    // forgot-password: a staff user, else a member who can sign in.
+    if (!resetToken) {
+      const holderUser = await tx.user.findFirst({ where: { email: normEmail, tenantId: tenant.id }, select: { id: true } });
+      const holderMember = holderUser
+        ? null
+        : await tx.member.findFirst({
+            where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null } },
+            select: { id: true },
+          });
+      const holder: TokenSubject | null = holderUser
+        ? { kind: "user", id: holderUser.id }
+        : holderMember
+          ? { kind: "member", id: holderMember.id }
+          : null;
+      if (holder) {
+        resetToken = await tx.passwordResetToken.findFirst({
+          where: { tokenHash: hashSubjectBoundResetCode(token, { tenantId: tenant.id, subject: holder }), ...live },
+        });
+        if (resetToken) boundTo = holder;
+      }
+    }
     if (!resetToken) return { resetToken: null, subject: null, history: [] as string[] };
     // Audit iter-4-database A8I4-V-2 [High]: only id + passwordHash are
     // consumed (bcrypt comparison below + history check). Bare findFirst
@@ -183,6 +209,16 @@ export async function POST(req: Request) {
   // If a token is valid but the subject no longer exists (e.g. soft-deleted),
   // collapse to the same 400/message as an invalid token so an attacker who
   // somehow guesses a valid token can't learn that the user was deleted.
+  // The subject the reset will write must be the one the code is bound to
+  // (the two reads above are separate statements; a holder swapped between
+  // them is refused, not reset).
+  const bound = boundTo as TokenSubject | null;
+  if (bound && lookups.subject && (bound.kind !== lookups.subject.kind || bound.id !== lookups.subject.id)) {
+    return NextResponse.json(
+      { error: "Code is invalid or has expired (codes are valid for 2 minutes). Please request a new one." },
+      { status: 400 },
+    );
+  }
   if (!lookups.subject) {
     return NextResponse.json(
       { error: "Code is invalid or has expired (codes are valid for 2 minutes). Please request a new one." },

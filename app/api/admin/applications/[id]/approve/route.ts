@@ -18,6 +18,7 @@ import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
 import { isEmailDeliveryOn } from "@/lib/email-delivery";
 import { hashToken } from "@/lib/token-hash";
+import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
 import { getBaseUrl } from "@/lib/env-url";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
@@ -141,7 +142,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const deliveryOn = isEmailDeliveryOn();
   let token: string | null = null;
   if (deliveryOn) {
-    token = randomBytes(32).toString("hex");
+    // Bound to THIS owner (AH-D2, lib/auth-token-binding.ts).
+    token = mintSubjectBoundToken({ purpose: "first_time_signup", tenantId, subject: { kind: "user", id: ownerUserId } });
     const tokenHash = hashToken(token);
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
     await withTenantContext(tenantId, (tx) =>

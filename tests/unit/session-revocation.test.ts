@@ -85,7 +85,7 @@ describe("a failure to check is not a pass", () => {
     expect(await checkSessionVersion({ userId: "user-1", tokenVersion: 3 })).toBe("unknown");
   });
 
-  it("REPORTS the failure, because revocation is failing open while it lasts", async () => {
+  it("REPORTS the failure (and auth.ts now refuses the request: SEC-012, 9 Oct 2026)", async () => {
     userFindUniqueMock.mockRejectedValue(new Error("connection reset"));
     await checkSessionVersion({ userId: "user-1", tokenVersion: 3 });
 
@@ -95,7 +95,7 @@ describe("a failure to check is not a pass", () => {
     // same catch — the one failure that must never look like a blip.
     expect(captureExceptionMock).toHaveBeenCalledTimes(1);
     expect(captureExceptionMock.mock.calls[0][1]).toMatchObject({
-      tags: { area: "auth", control: "session-revocation", failMode: "open" },
+      tags: { area: "auth", control: "session-revocation", failMode: "closed" },
     });
   });
 

@@ -39,7 +39,7 @@ describe("scanText — every rule fires on a synthetic value and never echoes it
       const findings = scanText(`const x = "${value}";\n`, "synthetic.ts");
       const hit = findings.find((f: { rule: string }) => f.rule === rule);
       expect(hit, `rule ${rule} did not fire`).toBeTruthy();
-      expect(hit.classification).toBe("candidate");
+      expect(hit!.classification).toBe("candidate");
       expect(JSON.stringify(findings)).not.toContain(value.slice(-12));
     });
   }

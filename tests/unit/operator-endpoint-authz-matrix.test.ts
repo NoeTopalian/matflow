@@ -252,6 +252,8 @@ describe("route inventory", () => {
       "app/api/admin/customers/[id]/members/[memberId]/contact-email/route.ts",
       "app/api/admin/customers/[id]/owner-profile/route.ts",
       "app/api/admin/customers/[id]/review-lock/route.ts",
+      // Security campaign lane A (9 Oct 2026, AH-R7 / SEC-013): incident revoke-all.
+      "app/api/admin/customers/[id]/revoke-access/route.ts",
       "app/api/admin/customers/[id]/soft-delete/route.ts",
       "app/api/admin/customers/[id]/suspend/route.ts",
       "app/api/admin/customers/[id]/totp-reset/route.ts",

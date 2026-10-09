@@ -131,6 +131,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   } catch {
     return apiError("Invalid JSON", 400);
   }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return apiError("Invalid JSON", 400); // SF-C5
 
   // 2 Oct 2026 — administrator-controlled families. The allow-list below
   // already meant a forged field never reached the database, but it was
