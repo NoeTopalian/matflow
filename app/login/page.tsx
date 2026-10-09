@@ -62,7 +62,12 @@ function signInMessage(code: string | undefined): string {
     case "account_locked":
       return "This account is temporarily locked after too many failed attempts. Try again in an hour, or reset your password.";
     case "rate_limited":
-      return "Too many sign-in attempts. Please wait a few minutes and try again.";
+      // One message for every throttle and lock (lane A2): the window is an
+      // hour, and a known device of the real account is exempt from the
+      // per-address cap, so say so without hinting whether the account exists.
+      return "Too many sign-in attempts for this email. Wait up to an hour and try again, sign in from a device you've used before, or use a sign-in link or password reset instead.";
+    case "google_link_required":
+      return "This Google account isn't linked to a MatFlow login yet. Sign in with your email and password first; Google sign-in can be linked from your account afterwards.";
     case "tenant_paused":
       // Not the member's fault and not fixable by them — point at the gym
       // rather than at a password reset that cannot help.
@@ -99,6 +104,7 @@ function urlErrorMessage(code: string | null): string | null {
     case "tenant_closed":
     case "account_locked":
     case "rate_limited":
+    case "google_link_required":
       return signInMessage(code);
     case "invalid_link":
       return "That sign-in link is no longer valid. Request a new one below.";
