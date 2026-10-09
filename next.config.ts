@@ -139,6 +139,16 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // Every API response is per-principal (members, registers, payments, exports):
+        // nothing under /api may be stored by a shared or back-forward cache
+        // (security campaign SF-29 residual, 9 Oct 2026). Route-level headers
+        // still win where a route sets its own (blob-image, downloads).
+        source: "/api/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
+        ],
+      },
+      {
         source: "/api/magic-link/:path*",
         headers: [
           { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },

@@ -100,6 +100,12 @@ describe("next.config.ts — strict cache-control on auth surfaces", () => {
     expect(CONFIG_SRC).toContain('"/api/admin/auth/:path*"');
   });
 
+  it("every /api response is private, no-store (security campaign SF-29 residual, 9 Oct 2026)", () => {
+    expect(CONFIG_SRC).toContain('"/api/:path*"');
+    const i = CONFIG_SRC.indexOf('"/api/:path*"');
+    expect(CONFIG_SRC.slice(i, i + 400)).toContain("private, no-store, max-age=0, must-revalidate");
+  });
+
   it("the whole operator plane gets private, no-store (AH-B5, 9 Oct 2026)", () => {
     expect(CONFIG_SRC).toContain('"/api/admin/:path*"');
     expect(CONFIG_SRC).toContain('"/admin/:path*"');
