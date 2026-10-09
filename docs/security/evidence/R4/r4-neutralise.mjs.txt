@@ -1,0 +1,39 @@
+// R4 neutralisation probe against the ISOLATED PGlite restored copy on 127.0.0.1 (never TEST, never production).
+//   node r4-neutralise.mjs <export-dir> <port> check|neutralise <label>
+// Imports the worktree module (so a mutant applied to it is what runs). Prints counts and verdicts only.
+import fs from "node:fs";
+import path from "node:path";
+const WT = "C:/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/R4/wt";
+const { default: pg } = await import(`file:///${WT}/node_modules/pg/lib/index.js`);
+const { neutraliseRestoredCopy, neutralisationCheck } = await import(`file:///${WT}/scripts/readiness/backup-post-restore.mjs`);
+const [exportDir, portArg, phase, label = ""] = process.argv.slice(2);
+const port = Number(portArg);
+if (!exportDir || !port || !["check", "neutralise"].includes(phase)) { console.error("usage"); process.exit(2); }
+const owner = JSON.parse(fs.readFileSync(path.join(exportDir, "baseline-fingerprint.json"), "utf8")).tables.AuditLog.owner;
+if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(owner)) throw new Error("unexpected owner name");
+const client = new pg.Client({ host: "127.0.0.1", port, user: "postgres", database: "postgres", ssl: false });
+await client.connect();
+await client.query(`SET ROLE "${owner}"`);
+const state = async () => {
+  await client.query("BEGIN READ ONLY");
+  await client.query("SELECT set_config('app.bypass_rls','on',true)");
+  try {
+    const c = await neutralisationCheck(client);
+    const n = async (sql) => Number(Object.values((await client.query(sql)).rows[0])[0]);
+    return {
+      ok: c.ok, tenantsPastPurgeGrace: c.tenantsPastPurgeGrace, kiosk: c.tenantsWithKioskToken, display: c.tenantsWithDisplayToken, stripe: c.tenantsWithStripeAccount,
+      totpKept: c.totpSecretsKept, totpDigest: c.totpDigest,
+      softDeleted: await n(`select count(*) from "Tenant" where "deletedAt" is not null`),
+      purgePredicate: await n(`select count(*) from "Tenant" where "deletedAt" is not null and "deletedAt" < now() - interval '30 days'`),
+      neutraliseAuditRows: await n(`select count(*) from "AuditLog" where action = 'admin.restore.neutralise'`),
+    };
+  } finally { await client.query("ROLLBACK"); }
+};
+let result = null; let error = null; const t = Date.now();
+if (phase === "neutralise") {
+  try { result = await neutraliseRestoredCopy(client, { reason: `R4 ${label}` }); } catch (e) { error = String(e?.message ?? e); }
+}
+const s = await state();
+await client.query("RESET ROLE");
+await client.end();
+console.log(JSON.stringify({ label, phase, node: process.version, target: `PGlite 127.0.0.1:${port}`, ms: Date.now() - t, result, error, state: s }));
