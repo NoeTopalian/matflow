@@ -6,178 +6,178 @@ v24.21.0
 
 === eslint ===
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\admin\activity\ActivityFeed.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\app\admin\activity\ActivityFeed.tsx
   172:7  warning  'nav' is assigned a value but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\admin\applications\ApplicationsClient.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\app\admin\applications\ApplicationsClient.tsx
   3:8  warning  'Link' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\admin\billing\page.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\app\admin\billing\page.tsx
   249:7  warning  'nav' is assigned a value but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\admin\page.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\app\admin\page.tsx
   316:7  warning  'header' is assigned a value but never used    @typescript-eslint/no-unused-vars
   324:7  warning  'title' is assigned a value but never used     @typescript-eslint/no-unused-vars
   325:7  warning  'subtitle' is assigned a value but never used  @typescript-eslint/no-unused-vars
   326:7  warning  'nav' is assigned a value but never used       @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\admin\tenants\TenantsList.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\app\admin\tenants\TenantsList.tsx
    39:9  warning  'router' is assigned a value but never used  @typescript-eslint/no-unused-vars
   276:7  warning  'nav' is assigned a value but never used     @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\admin\tenants\[id]\DangerZone.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\app\admin\tenants\[id]\DangerZone.tsx
   343:12  warning  Do not use `window.location.href` to navigate to internal Next.js pages. Use `redirect()` in the render phase, or `useRouter().push()` in Client Components' event handlers instead. See: https://nextjs.org/docs/messages/no-location-assign-relative-destination  @next/next/no-location-assign-relative-destination
   357:40  warning  Do not use `window.location.href` to navigate to internal Next.js pages. Use `redirect()` in the render phase, or `useRouter().push()` in Client Components' event handlers instead. See: https://nextjs.org/docs/messages/no-location-assign-relative-destination  @next/next/no-location-assign-relative-destination
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\api\announcements\route.ts
+<scratchpad-root>\scratchpad\security\R5\wt\app\api\announcements\route.ts
   2:10  warning  'prisma' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\api\members\[id]\invite-link\route.ts
+<scratchpad-root>\scratchpad\security\R5\wt\app\api\members\[id]\invite-link\route.ts
   21:10  warning  'randomBytes' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\api\members\[id]\route.ts
+<scratchpad-root>\scratchpad\security\R5\wt\app\api\members\[id]\route.ts
   2:10  warning  'prisma' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\api\members\[id]\unlock\route.ts
+<scratchpad-root>\scratchpad\security\R5\wt\app\api\members\[id]\unlock\route.ts
   19:10  warning  'auth' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\api\members\bulk-invite\route.ts
+<scratchpad-root>\scratchpad\security\R5\wt\app\api\members\bulk-invite\route.ts
   14:10  warning  'randomBytes' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\api\members\route.ts
+<scratchpad-root>\scratchpad\security\R5\wt\app\api\members\route.ts
    2:10  warning  'prisma' is defined but never used       @typescript-eslint/no-unused-vars
   11:10  warning  'randomBytes' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\api\stripe\connect\health\route.ts
+<scratchpad-root>\scratchpad\security\R5\wt\app\api\stripe\connect\health\route.ts
   23:10  warning  'apiError' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\member\home\page.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\app\member\home\page.tsx
      4:82  warning  'ChevronDown' is defined but never used               @typescript-eslint/no-unused-vars
      4:95  warning  'ChevronUp' is defined but never used                 @typescript-eslint/no-unused-vars
   1470:9   warning  'upcomingClasses' is assigned a value but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\member\shop\page.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\app\member\shop\page.tsx
   4:40  warning  'ChevronDown' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\app\preview\page.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\app\preview\page.tsx
   8:3  warning  'ChevronRight' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\auth.ts
+<scratchpad-root>\scratchpad\security\R5\wt\auth.ts
     5:10  warning  'prisma' is defined but never used            @typescript-eslint/no-unused-vars
   386:3   warning  '_provider' is defined but never used         @typescript-eslint/no-unused-vars
   387:3   warning  '_providerSubject' is defined but never used  @typescript-eslint/no-unused-vars
   388:3   warning  '_tenantId' is defined but never used         @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\dashboard\AnnouncementsView.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\dashboard\AnnouncementsView.tsx
   530:5  warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\dashboard\AttributionView.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\dashboard\AttributionView.tsx
   5:10  warning  'EmptyState' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\dashboard\KioskPanel.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\dashboard\KioskPanel.tsx
   78:6  warning  React Hook useEffect has a missing dependency: 'refresh'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\dashboard\LoginEmailCard.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\dashboard\LoginEmailCard.tsx
   108:34  warning  Do not use `window.location.assign()` to navigate to internal Next.js pages. Use `redirect()` in the render phase, or `useRouter().push()` in Client Components' event handlers instead. See: https://nextjs.org/docs/messages/no-location-assign-relative-destination  @next/next/no-location-assign-relative-destination
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\dashboard\MonthlyReportView.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\dashboard\MonthlyReportView.tsx
   21:38  warning  'end' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\dashboard\PasswordCard.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\dashboard\PasswordCard.tsx
   104:34  warning  Do not use `window.location.assign()` to navigate to internal Next.js pages. Use `redirect()` in the render phase, or `useRouter().push()` in Client Components' event handlers instead. See: https://nextjs.org/docs/messages/no-location-assign-relative-destination  @next/next/no-location-assign-relative-destination
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\dashboard\RecordPaymentModal.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\dashboard\RecordPaymentModal.tsx
   93:5  warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\dashboard\ReportsView.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\dashboard\ReportsView.tsx
   261:3  warning  'primaryColor' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\dashboard\SettingsPage.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\dashboard\SettingsPage.tsx
    211:17  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
   1709:19  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
   1768:27  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\dashboard\WeeklyCalendar.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\dashboard\WeeklyCalendar.tsx
    48:7   warning  'DAY_FULL' is assigned a value but never used                                                                @typescript-eslint/no-unused-vars
    64:6   warning  React Hook useEffect has a missing dependency: 'weekDays'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
   261:3   warning  'dayIdx' is defined but never used                                                                           @typescript-eslint/no-unused-vars
   418:10  warning  'getGreeting' is defined but never used                                                                      @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\layout\ThemeProvider.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\layout\ThemeProvider.tsx
   21:11  warning  'bg' is assigned a value but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\member\AnnouncementModal.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\member\AnnouncementModal.tsx
   54:19  warning  The ref value 'triggerRef.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'triggerRef.current' to a variable inside the effect, and use that variable in the cleanup function  react-hooks/exhaustive-deps
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\member\ClassPacksWidget.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\member\ClassPacksWidget.tsx
   70:5  warning  Do not use `window.location.href` to navigate to internal Next.js pages. Use `redirect()` in the render phase, or `useRouter().push()` in Client Components' event handlers instead. See: https://nextjs.org/docs/messages/no-location-assign-relative-destination  @next/next/no-location-assign-relative-destination
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\member\FamilySection.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\member\FamilySection.tsx
   66:11  warning  'toast' is assigned a value but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\member\KidBillingCard.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\member\KidBillingCard.tsx
   100:6  warning  React Hook useEffect has a missing dependency: 'refresh'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\onboarding\OwnerOnboardingWizard.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\onboarding\OwnerOnboardingWizard.tsx
   161:10  warning  'GymPreview' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\components\print\MemberCardSheet.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\components\print\MemberCardSheet.tsx
   246:5  warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\lib\default-waiver.ts
+<scratchpad-root>\scratchpad\security\R5\wt\lib\default-waiver.ts
   7:41  warning  '_gymName' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\lib\email.ts
+<scratchpad-root>\scratchpad\security\R5\wt\lib\email.ts
   309:30  warning  'memberName' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\lib\member-home.ts
+<scratchpad-root>\scratchpad\security\R5\wt\lib\member-home.ts
   168:23  warning  '_toRankId' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\lib\prisma.ts
+<scratchpad-root>\scratchpad\security\R5\wt\lib\prisma.ts
   125:22  warning  'receiver' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\scripts\playwright-prod-admin-login.mjs
+<scratchpad-root>\scratchpad\security\R5\wt\scripts\playwright-prod-admin-login.mjs
   202:12  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\scripts\readiness\teamup-reconcile.mjs
+<scratchpad-root>\scratchpad\security\R5\wt\scripts\readiness\teamup-reconcile.mjs
   10:39  warning  'existsSync' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\scripts\setup-stripe-webhook.mjs
+<scratchpad-root>\scratchpad\security\R5\wt\scripts\setup-stripe-webhook.mjs
   177:9  warning  'd' is assigned a value but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\tests\e2e\member\cancellation-banner.spec.ts
+<scratchpad-root>\scratchpad\security\R5\wt\tests\e2e\member\cancellation-banner.spec.ts
   16:7  warning  'BANNER_TEXT' is assigned a value but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\tests\e2e\member\shop.spec.ts
+<scratchpad-root>\scratchpad\security\R5\wt\tests\e2e\member\shop.spec.ts
   23:11  warning  'cartBtn' is assigned a value but never used    @typescript-eslint/no-unused-vars
   38:13  warning  'cartBadge' is assigned a value but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\tests\integration\parent-pays-for-kid.test.ts
+<scratchpad-root>\scratchpad\security\R5\wt\tests\integration\parent-pays-for-kid.test.ts
   95:7  warning  'parentBId' is assigned a value but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\tests\unit\class-create-schema.test.ts
+<scratchpad-root>\scratchpad\security\R5\wt\tests\unit\class-create-schema.test.ts
   40:24  warning  '_omit' is assigned a value but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\tests\unit\kids-tenant-scope.test.ts
+<scratchpad-root>\scratchpad\security\R5\wt\tests\unit\kids-tenant-scope.test.ts
   64:7  warning  'mockFindMany' is assigned a value but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\tests\unit\login-branding-race.test.ts
+<scratchpad-root>\scratchpad\security\R5\wt\tests\unit\login-branding-race.test.ts
   41:52  warning  '_url' is defined but never used     @typescript-eslint/no-unused-vars
   41:58  warning  'options' is defined but never used  @typescript-eslint/no-unused-vars
   64:32  warning  '_url' is defined but never used     @typescript-eslint/no-unused-vars
   68:32  warning  '_url' is defined but never used     @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\tests\unit\member-status-event.test.ts
+<scratchpad-root>\scratchpad\security\R5\wt\tests\unit\member-status-event.test.ts
   14:31  warning  '_args' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\tests\unit\member-tier-dropdown.test.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\tests\unit\member-tier-dropdown.test.tsx
   89:64  warning  'init' is defined but never used  @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\tests\unit\onboarding-parent-mode.test.tsx
+<scratchpad-root>\scratchpad\security\R5\wt\tests\unit\onboarding-parent-mode.test.tsx
   35:46  warning  '_props' is defined but never used  @typescript-eslint/no-unused-vars
   35:63  warning  '_ref' is defined but never used    @typescript-eslint/no-unused-vars
 
-C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt\tests\unit\sec-e3-upload-limit-input-pixels.test.ts
+<scratchpad-root>\scratchpad\security\R5\wt\tests\unit\sec-e3-upload-limit-input-pixels.test.ts
   29:30  warning  '_input' is defined but never used  @typescript-eslint/no-unused-vars
   29:48  warning  '_opts' is defined but never used   @typescript-eslint/no-unused-vars
 

@@ -2,7 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 /* Tailwind scans every non-gitignored file for class candidates. Campaign evidence under docs/ is prose, logs and
-   probe records; one of them held a Windows path whose "cc670…" segment Tailwind read as a CSS escape and the
+   probe records; one of them held a Windows path with a backslash-plus-hex-digits segment that Tailwind read as a CSS escape, and the
    production build failed with "Invalid code point". Evidence must never be a build input. */
 @source not "../docs";
 

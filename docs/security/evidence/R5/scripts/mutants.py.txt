@@ -2,9 +2,9 @@
 records exit code + failed counts, then restores the file with git checkout. Node 24 on PATH."""
 import json, os, re, subprocess, sys
 
-WT = r"C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\wt"
-NODE = r"C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\node24\node-v24.21.0-win-x64"
-LOGS = r"C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R5\logs"
+WT = r"<scratchpad-root>\scratchpad\security\R5\wt"
+NODE = r"<scratchpad-root>\scratchpad\security\node24\node-v24.21.0-win-x64"
+LOGS = r"<scratchpad-root>\scratchpad\security\R5\logs"
 env = dict(os.environ)
 env["PATH"] = NODE + os.pathsep + env["PATH"]
 

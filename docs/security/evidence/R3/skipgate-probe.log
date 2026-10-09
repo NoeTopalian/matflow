@@ -1,6 +1,6 @@
 ## --expect=tests/unit/zz-no-such-*.test.ts
 {"files":1,"total":8,"passed":8,"failed":0,"skipped":0,"requireDb":false,"allowed":[],"expected":0,"blocked":0,"verdict":"FAIL"}
- - --expect glob "tests/unit/zz-no-such-*.test.ts" matched no file under C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R3\wt
+ - --expect glob "tests/unit/zz-no-such-*.test.ts" matched no file under <scratchpad-root>\scratchpad\security\R3\wt
 exit=1
 ## --expect=tests/unit/sec-f2-skip-gate.test.ts
 {"files":1,"total":8,"passed":8,"failed":0,"skipped":0,"requireDb":false,"allowed":[],"expected":1,"blocked":0,"verdict":"PASS"}
@@ -12,12 +12,12 @@ exit=0
 exit=1
 ## --expect=tests/unit/sec-f2-skip-gate.test.ts,tests/integration/zz-none-*.test.ts
 {"files":1,"total":8,"passed":8,"failed":0,"skipped":0,"requireDb":false,"allowed":[],"expected":1,"blocked":0,"verdict":"FAIL"}
- - --expect glob "tests/integration/zz-none-*.test.ts" matched no file under C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R3\wt
+ - --expect glob "tests/integration/zz-none-*.test.ts" matched no file under <scratchpad-root>\scratchpad\security\R3\wt
 exit=1
 ## --expect=tests/unit/{sec-f2-skip-gate,nothing}.test.ts
 {"files":1,"total":8,"passed":8,"failed":0,"skipped":0,"requireDb":false,"allowed":[],"expected":0,"blocked":0,"verdict":"FAIL"}
- - --expect glob "tests/unit/{sec-f2-skip-gate" matched no file under C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R3\wt
- - --expect glob "nothing}.test.ts" matched no file under C:\Users\NoeTo\AppData\Local\Temp\claude\c--Users-NoeTo-Desktop-matflow\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\scratchpad\security\R3\wt
+ - --expect glob "tests/unit/{sec-f2-skip-gate" matched no file under <scratchpad-root>\scratchpad\security\R3\wt
+ - --expect glob "nothing}.test.ts" matched no file under <scratchpad-root>\scratchpad\security\R3\wt
 exit=1
 ## --expect=TESTS/UNIT/SEC-F2-SKIP-GATE.TEST.TS
 {"files":1,"total":8,"passed":8,"failed":0,"skipped":0,"requireDb":false,"allowed":[],"expected":1,"blocked":0,"verdict":"FAIL"}
