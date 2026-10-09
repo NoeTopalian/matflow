@@ -57,29 +57,29 @@ CAPEC) are filled only when a lane has looked the ID up — never invented.
 | SEC-047 | Browser, HTTP and framework boundaries | C | Cache poisoning/private cache leaks | see brief | I/B/C | UNKNOWN | NOT RUN | — | — | — |
 | SEC-048 | Browser, HTTP and framework boundaries | C | Middleware/Server Actions/RSC exposure incl. vendor advisories | Framework routing shortcuts cannot bypass endpoint authorization or leak server-only material | I/B/C | UNKNOWN | NOT RUN | — | — | — |
 | SEC-049 | Files, TeamUp imports and data integrity | D | Malicious upload types (U/I/B). SEC-050 Image/document parser vulnerabilities | exact native inventory | S/U/I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-050 | Files, TeamUp imports and data integrity | D | Image/document parser vulnerabilities — exact native inventory | see brief | S/U/I | UNKNOWN | NOT RUN | — | — | — |
+| SEC-050 | Files, TeamUp imports and data integrity | D | Image/document parser vulnerabilities — exact native inventory | see brief | S/U/I | APPLICABLE | PASS (advisories) / fuzz NOT RUN | E-03; sharp 0.35.5, libvips 8.18.7; /api/upload (2a6487e) | — | — |
 | SEC-051 | Files, TeamUp imports and data integrity | D | Archive/decompression bombs | see brief | U/I | UNKNOWN | NOT RUN | — | — | — |
 | SEC-052 | Files, TeamUp imports and data integrity | D | CSV formula injection | see brief | U/I/manual | UNKNOWN | NOT RUN | — | — | — |
 | SEC-053 | Files, TeamUp imports and data integrity | D | Import identity misbinding | see brief | I/B | UNKNOWN | NOT RUN | — | — | — |
 | SEC-054 | Files, TeamUp imports and data integrity | D | Import overwrites security state | see brief | I | UNKNOWN | NOT RUN | — | — | — |
 | SEC-055 | Files, TeamUp imports and data integrity | D | Concurrent/replayed imports | see brief | I | UNKNOWN | NOT RUN | — | — | — |
 | SEC-056 | Files, TeamUp imports and data integrity | D | Family/guardian access confusion | see brief | I/B | UNKNOWN | NOT RUN | — | — | — |
-| SEC-057 | Dependencies, native runtime and build chain | E | Known dependency vulnerabilities | see brief | S/C | UNKNOWN | NOT RUN | — | — | — |
-| SEC-058 | Dependencies, native runtime and build chain | E | Transitive/optional/native blind spots | see brief | S/C | UNKNOWN | NOT RUN | — | — | — |
-| SEC-059 | Dependencies, native runtime and build chain | E | Typosquatting/dependency confusion | see brief | C | UNKNOWN | NOT RUN | — | — | — |
-| SEC-060 | Dependencies, native runtime and build chain | E | Install-script/maintainer compromise | see brief | C | UNKNOWN | NOT RUN | — | — | — |
-| SEC-061 | Dependencies, native runtime and build chain | E | CI workflow injection | see brief | C/I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-062 | Dependencies, native runtime and build chain | E | Leaked source/build secrets | see brief | S/C | UNKNOWN | NOT RUN | — | — | — |
-| SEC-063 | Dependencies, native runtime and build chain | E | Untrusted artifact promotion (C). SEC-064 Memory-safety/runtime exploitation | Node, sharp/libvips, OS | S/C/I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-064 | Dependencies, native runtime and build chain | E | Memory-safety/runtime exploitation — Node, sharp/libvips, OS | see brief | S/C/I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-065 | Hosting, database and control-plane access | E | Cloud/repository account takeover | see brief | C/manual | UNKNOWN | NOT RUN | — | — | — |
-| SEC-066 | Hosting, database and control-plane access | E | Stale deployments/aliases | see brief | C, read-only | UNKNOWN | NOT RUN | — | — | — |
-| SEC-067 | Hosting, database and control-plane access | E | Exposed secrets/unsafe rotation | see brief | C/I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-068 | Hosting, database and control-plane access | E | Overprivileged DB access | actual current_user/session_user, flags, memberships, grants, policies | I/C | UNKNOWN | NOT RUN | — | — | — |
-| SEC-069 | Hosting, database and control-plane access | E | DB/storage exposure | see brief | C/I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-070 | Hosting, database and control-plane access | E | DNS/dangling-domain takeover | see brief | C, passive | UNKNOWN | NOT RUN | — | — | — |
-| SEC-071 | Hosting, database and control-plane access | E | TLS/transport | see brief | C/I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-072 | Hosting, database and control-plane access | E | Debug/management surface exposure | see brief | I/C | UNKNOWN | NOT RUN | — | — | — |
+| SEC-057 | Dependencies, native runtime and build chain | E | Known dependency vulnerabilities | see brief | S/C | APPLICABLE | PASS (candidate, mysql2 exception to 2026-11-09); production e8afb6a FAIL | E-02, npm-audit/osv JSON (2a6487e) | — | — |
+| SEC-058 | Dependencies, native runtime and build chain | E | Transitive/optional/native blind spots | see brief | S/C | APPLICABLE | UNKNOWN (postinstall binaries outside lockfile integrity) | E-03 (2a6487e) | — | — |
+| SEC-059 | Dependencies, native runtime and build chain | E | Typosquatting/dependency confusion | see brief | C | APPLICABLE | PASS | sec-e-supply-chain (guard test) (2a6487e) | — | — |
+| SEC-060 | Dependencies, native runtime and build chain | E | Install-script/maintainer compromise | see brief | C | APPLICABLE | OPEN | E-05 (2a6487e) | — | — |
+| SEC-061 | Dependencies, native runtime and build chain | E | CI workflow injection | see brief | C/I | APPLICABLE | PASS (hardening proposals open) | E-05 (2a6487e) | — | — |
+| SEC-062 | Dependencies, native runtime and build chain | E | Leaked source/build secrets | see brief | S/C | APPLICABLE | BLOCKED (7 May leak rotation unverifiable read-only) | E-06, secret-scan --history exit 1 (2a6487e) | — | — |
+| SEC-063 | Dependencies, native runtime and build chain | E | Untrusted artifact promotion (C). SEC-064 Memory-safety/runtime exploitation | Node, sharp/libvips, OS | S/C/I | APPLICABLE | FAIL | E-05 (2a6487e) | — | — |
+| SEC-064 | Dependencies, native runtime and build chain | E | Memory-safety/runtime exploitation — Node, sharp/libvips, OS | see brief | S/C/I | APPLICABLE | FAIL local (Node EOL) / UNKNOWN Vercel | E-03 (2a6487e) | — | — |
+| SEC-065 | Hosting, database and control-plane access | E | Cloud/repository account takeover | see brief | C/manual | APPLICABLE | UNKNOWN (2FA unreadable); main unprotected | E-05 (2a6487e) | — | — |
+| SEC-066 | Hosting, database and control-plane access | E | Stale deployments/aliases | see brief | C, read-only | APPLICABLE | FAIL | E-04 (2a6487e) | — | — |
+| SEC-067 | Hosting, database and control-plane access | E | Exposed secrets/unsafe rotation | see brief | C/I | APPLICABLE | OPEN | E-04, E-06 (2a6487e) | — | — |
+| SEC-068 | Hosting, database and control-plane access | E | Overprivileged DB access | actual current_user/session_user, flags, memberships, grants, policies | I/C | APPLICABLE | BLOCKED (production read refused; TEST baseline recorded) | evidence/lead/test-db-role-*.txt (2a6487e) | — | — |
+| SEC-069 | Hosting, database and control-plane access | E | DB/storage exposure | see brief | C/I | APPLICABLE | PASS (Blob writes private) / UNKNOWN (Neon allow-list, August blobs) | E-07 (2a6487e) | — | — |
+| SEC-070 | Hosting, database and control-plane access | E | DNS/dangling-domain takeover | see brief | C, passive | APPLICABLE | PASS (no dangling) / FAIL (no DMARC, no apex SPF) | E-07 (2a6487e) | — | — |
+| SEC-071 | Hosting, database and control-plane access | E | TLS/transport | see brief | C/I | APPLICABLE | PASS (config) / BLOCKED (live TLS) | E-07 (2a6487e) | — | — |
+| SEC-072 | Hosting, database and control-plane access | E | Debug/management surface exposure | see brief | I/C | APPLICABLE | PASS (surface) / FAIL (CRON_SECRET unset) | E-07 (2a6487e) | — | — |
 | SEC-073 | Availability and financial resource abuse | F | Auth/crypto resource exhaustion | see brief | U/I/L | UNKNOWN | NOT RUN | — | — | — |
 | SEC-074 | Availability and financial resource abuse | F | Regex/parser CPU exhaustion | see brief | U/Fuzz | UNKNOWN | NOT RUN | — | — | — |
 | SEC-075 | Availability and financial resource abuse | F | Unbounded DB queries | see brief | I/L | UNKNOWN | NOT RUN | — | — | — |
