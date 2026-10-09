@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   if (typeof body !== "object" || body === null || Array.isArray(body)) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); // SF-C5
   const { code } = body as { code?: string };
-  if (!code || !/^\d{6}$/.test(code)) {
+  if (typeof code !== "string" || !/^\d{6}$/.test(code)) { // review R-4: a number or array must not coerce past the regex
     return NextResponse.json({ error: "Invalid code format" }, { status: 400 });
   }
 

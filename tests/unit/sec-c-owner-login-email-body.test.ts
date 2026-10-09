@@ -146,6 +146,9 @@ describe("AH-G6 unknown top-level security-sensitive keys", () => {
   ])("%s + forged role/tenant/identity/credential/verification keys: refused before any effect, or stripped — never assigned", async (action, legit) => {
     if (action === "clear_provisional") h.owner = { ...h.owner!, loginEmailProvisionalSince: new Date("2026-10-07T08:00:00Z") };
     const res = await call({ ...FORGED, ...legit });
+    // Pinned (review R-3, 9 Oct 2026): the body schema is strict, so an unknown key is a 400 with
+    // nothing read, nothing bound and nothing written. Reverting to the lenient schema fails here.
+    expect(res.status).toBe(400);
     if (res.status === 400) {
       // The strict form (recommended): nothing read, nothing bound, nothing written.
       expect(h.requireStepUp).not.toHaveBeenCalled();

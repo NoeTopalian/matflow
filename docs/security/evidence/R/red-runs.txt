@@ -1,0 +1,28 @@
+G7 [3deb7c7] owner exit=1       Tests  3 failed | 3 passed (6)
+G7 [3deb7c7] restricted exit=1       Tests  3 failed | 3 passed (6)
+G7 restored-clean
+D2 [3deb7c7] owner exit=1       Tests  3 failed | 4 passed (7)
+D2 [3deb7c7] restricted exit=1       Tests  3 failed | 4 passed (7)
+D2 restored-clean
+A4 [3deb7c7] owner exit=1       Tests  3 failed | 1 passed (4)
+A4 [3deb7c7] restricted exit=1       Tests  3 failed | 1 passed (4)
+A4 restored-clean
+G5 [3deb7c7] owner exit=1       Tests  1 failed | 5 passed (6)
+G5 restored-clean
+SF23 [5680c5d] owner exit=1       Tests  3 failed | 6 passed (9)
+SF23 [5680c5d] restricted exit=1       Tests  3 failed | 6 passed (9)
+SF23 restored-clean
+SFC1 [3deb7c7] unit exit=1       Tests  5 failed | 9 passed (14)
+SFC1 restored-clean
+SFC4 [3deb7c7] unit exit=1       Tests  2 failed | 5 passed (7)
+SFC4 restored-clean
+AHG6 [3deb7c7] unit exit=0       Tests  23 passed (23)
+AHG6 restored-clean
+SFC3 [3deb7c7] unit exit=1       Tests  1 failed | 423 passed (424)
+SFC3 restored-clean
+SF24 [5680c5d] unit exit=1       Tests  1 failed | 1 passed (2)
+SF24 restored-clean
+DONE
+transfer owner rerun1 exit=0       Tests  9 passed (9)
+transfer owner rerun2 exit=0       Tests  9 passed (9)
+ALLDONE

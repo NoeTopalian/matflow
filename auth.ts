@@ -1234,11 +1234,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // session() result, and a session object WITHOUT a user is truthy —
           // 57 call sites check only `if (!session)` before reading
           // `session.user.*`. null is the one answer every gate already reads
-          // as signed out. It costs less than it looks: the server-side auth()
-          // (route handlers, pages) applies no Set-Cookie, so the browser keeps
-          // its cookie and the NEXT request is checked afresh; only a failure
-          // that lands on /api/auth/session itself clears the cookie. Reported
-          // in lib/session-revocation.ts.
+          // as signed out. Availability cost, measured by the independent review
+          // (R-1, 9 Oct 2026): proxy.ts is wrapped by next-auth auth() and copies
+          // the session response Set-Cookie onto the reply, so a faulted lookup
+          // DOES clear the browser cookie on pages and API routes alike — during a
+          // database outage every user who makes a request is signed out and
+          // signs in again afterwards. Accepted for this candidate as the price of
+          // never admitting a token the database cannot vouch for; recorded in
+          // docs/security/FINDINGS.md (SF-44) for Noe to veto.
           if (verdict !== "ok") return null;
           // `sessionVersionCheckedAt` is now a record of the last successful
           // check and nothing gates on it: no branch above may read it back as
@@ -1251,8 +1254,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // that predates the deploy is gated like a fresh one instead of
           // reading `undefined` as "no change needed" for up to 30 days. Only
           // legacy tokens pay this read; every new token carries the claim.
-          // On a DB error the key stays absent and the next pass retries; the
-          // dashboard layout's own DB read still holds the pages meanwhile.
+          // On a DB error this request is refused (fail closed, like the
+          // revocation check above); the next request reads the row again.
           if (
             typeof token.mustChangePassword !== "boolean" &&
             !token.memberId &&

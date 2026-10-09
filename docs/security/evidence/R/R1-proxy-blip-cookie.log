@@ -1,0 +1,9 @@
+ALL /dashboard ok 200 ["__Host-authjs.csrf-token=5e0de |  Path=/; HttpOnly; Secure; SameSite=Lax","__Secure-authjs.callback-url=h |  Path=/; HttpOnly; Secure; SameSite=Lax","__Secure-authjs.session-token= |  Path=/; Expires=Sun, 08 Nov 2026 12:25:43 GMT; HttpOnly; Secure; SameSite=Lax"]
+ALL /api/members ok 200 ["__Host-authjs.csrf-token=3b22a |  Path=/; HttpOnly; Secure; SameSite=Lax","__Secure-authjs.callback-url=h |  Path=/; HttpOnly; Secure; SameSite=Lax","__Secure-authjs.session-token= |  Path=/; Expires=Sun, 08 Nov 2026 12:25:43 GMT; HttpOnly; Secure; SameSite=Lax"]
+ALL /dashboard fault 307 ["__Host-authjs.csrf-token=58ac2 |  Path=/; HttpOnly; Secure; SameSite=Lax","__Secure-authjs.callback-url=h |  Path=/; HttpOnly; Secure; SameSite=Lax","__Secure-authjs.session-token= |  Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax"]
+ALL /api/members fault 401 ["__Host-authjs.csrf-token=9a2b0 |  Path=/; HttpOnly; Secure; SameSite=Lax","__Secure-authjs.callback-url=h |  Path=/; HttpOnly; Secure; SameSite=Lax","__Secure-authjs.session-token= |  Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax"]
+ ✓ tests/unit/zz-r-proxy-blip-cookie.test.ts > R-1 proxy + DB fault > healthy lookup on /dashboard: passes, cookie refreshed not cleared 39ms
+ ✓ tests/unit/zz-r-proxy-blip-cookie.test.ts > R-1 proxy + DB fault > healthy lookup on /api/members: passes, cookie refreshed not cleared 10ms
+ ✓ tests/unit/zz-r-proxy-blip-cookie.test.ts > R-1 proxy + DB fault > faulted lookup on /dashboard: refused AND does the cookie get cleared? 10ms
+ ✓ tests/unit/zz-r-proxy-blip-cookie.test.ts > R-1 proxy + DB fault > faulted lookup on /api/members: refused AND does the cookie get cleared? 10ms
+      Tests  4 passed (4)

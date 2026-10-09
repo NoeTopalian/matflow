@@ -1,0 +1,24 @@
+// Reviewer R scratch (not committed): planted bypass forms vs the per-call writer guard.
+import { describe, it, expect } from "vitest";
+import { scan } from "./login-identity-writers.test";
+
+const PLANTS: Record<string, string> = {
+  control_plain: "await tx.member.update({ where: { id }, data: { email: e } })",
+  computed_model_var: "const k = 'member' as const; await tx[k].update({ where: { id }, data: { email: e } })",
+  aliased_delegate: "const d = tx.member; await d.update({ where: { id }, data: { email: e } })",
+  optional_chain: "await tx.member?.update({ where: { id }, data: { email: e } })",
+  call_indirect: "await tx.member.update.call(tx.member, { where: { id }, data: { email: e } })",
+  raw_update_only: 'await tx.$executeRaw`UPDATE ONLY "Member" SET "email" = ${e} WHERE "id" = ${id}`',
+  raw_dynamic_ident: 'await tx.$executeRaw`UPDATE ${Prisma.raw(tbl)} SET "email" = ${e}`',
+  raw_unquoted_schema: 'await tx.$executeRaw`UPDATE public.\"Member\" SET email = ${e}`',
+};
+
+describe("R: planted writer forms", () => {
+  for (const [k, src] of Object.entries(PLANTS)) {
+    it(k, () => {
+      const f = scan("app/api/r-planted/route.ts", src, ["users", "members"]);
+      console.log(`PLANT ${k}: ${f.length ? "CAUGHT " + f.map((x) => x.why).join(",") : "MISSED"}`);
+      expect(true).toBe(true);
+    });
+  }
+});

@@ -38,10 +38,10 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
  * failed OPEN, on any request whose later queries happened to succeed (pool
  * exhaustion, a statement timeout, a policy rejection after the RLS cutover).
  * The old code before that was `catch { /* DB transient — keep token *\/ }`:
- * a silent, total, indefinite bypass, reported to nobody. A blip rarely signs
- * anyone out: the server-side auth() applies no Set-Cookie, so the browser
- * keeps its cookie and the next request is checked afresh; only a failure on
- * /api/auth/session itself clears the cookie (auth.ts).
+ * a silent, total, indefinite bypass, reported to nobody. A blip DOES sign
+ * people out: proxy.ts runs under the next-auth wrapper, which copies the
+ * cookie-clearing Set-Cookie of an `unknown` verdict onto the reply (review
+ * R-1, 9 Oct 2026). Accepted as an availability cost; see FINDINGS SF-44.
  *
  * **Malformed results are `unknown`, not `ok`.** A row whose `sessionVersion`
  * is not an integer cannot prove anything, so it cannot admit anything. A
