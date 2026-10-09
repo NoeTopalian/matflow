@@ -72,3 +72,31 @@ Before: 5 failed / 11 passed on each role. After: 16/16 owner, 16/16 matflow_app
 Fix: the three routes write their audit row with `logAudit({ tx })` inside the deletion transaction (a failure rolls
 the deletion back); the child route now records `releasedEmailSha256` for a non-synthesised address; member DELETE's
 row records `photosQueued` (files are removed after the commit; the response still reports `photosDeleted`).
+
+## D3 correction (lane D3, 9 Oct 2026, after review R4)
+
+§2 above says "forging that row needs AUTH_SECRET (prerequisite c)". That was wrong: the D2 digest was a keyed MAC over
+`import-source-key:v1:person` + the source key ONLY, so the attacker did not have to compute it — they copied it, onto
+a re-pointed mapping in the same club (R4 P1, database password only) or from a decision minted through the real
+decide route in their own club (R4 P2, password + an owner session anywhere). It also ran with an EMPTY key in every
+test run (the harness sets no secret).
+
+What the proof covers now (lib/attendance-import.ts, `provenanceCanonical` / `recordMappingChange` /
+`provenanceVouches`): each `import.mapping.changed` row carries `prev` and `proof`. `proof` = HMAC-SHA256 under a
+sub-key (HMAC(signing secret, `matflow.import-mapping-provenance.v2`); the signing secret is NEXTAUTH_SECRET, else
+AUTH_SECRET, as before) over the canonical JSON array (version, club id, mapping id, kind, keyed source-key digest,
+before {action, targetId}, after {action, targetId}, the row's own createdAt in ms, prev). `prev` is the previous row's
+proof for the same mapping (a fixed genesis constant for the first). The importer trusts a person decision only when
+the mapping's LATEST row (by createdAt; a tie at the top is refused) verifies under the current key, matches the
+mapping as stored (kind, source-key digest, after = the mapping's action and target), links to the row before it, and
+is not dated more than 5 s in the future. An empty signing secret mints no proof (`proof: null`) and verifies none.
+Copying a row to another mapping, another club, another date or another chain position breaks the MAC.
+
+What it still does not cover: (c) full app-environment compromise — whoever holds the signing secret mints any proof
+(the sec-d2 OPEN (c) cell now mints a D3 proof with the key and still binds, as it should be reported); (a) with
+AuditLog DELETE can remove the NEWEST rows and re-point the mapping to an EARLIER owner decision for that mapping
+(rollback, not forgery — OPEN cell in sec-d3-provenance-forgery-db, closed by SF-57 v2 append-only, not by a MAC);
+(a) can always make a decision untrusted (insert a newer or future-dated row, delete an earlier one) — denial only,
+the booking stays pending. Offering and venue decisions are still not checked against provenance when loaded. Rows
+written before D3 carry no proof: every saved person decision is held pending until the owner decides again (safe
+direction; production unverified). Evidence: docs/security/evidence/D3/.

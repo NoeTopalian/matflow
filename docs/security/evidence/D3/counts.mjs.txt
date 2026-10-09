@@ -1,0 +1,23 @@
+// D3 read-only TEST counts: orphan mapping-provenance audit rows, all orphan audit rows, and secd3 fixture leftovers.
+import pg from "file:///C:/Users/NoeTo/Desktop/matflow/node_modules/pg/esm/index.mjs";
+import { resolveDbTarget } from "file:///C:/Users/NoeTo/Desktop/matflow/scripts/readiness/db-target.mjs";
+import { readEnvFile, refuseConnectionEnv } from "file:///C:/Users/NoeTo/Desktop/matflow/scripts/readiness/restore-verify.mjs";
+refuseConnectionEnv();
+const url = readEnvFile("C:/Users/NoeTo/Desktop/matflow/.env.test").TEST_DATABASE_URL;
+const host = resolveDbTarget(url, { expectHost: "ep-hidden-salad", allowProduction: false });
+const c = new pg.Client({ connectionString: url, application_name: "secd3-count" });
+await c.connect();
+await c.query("BEGIN READ ONLY");
+await c.query("SELECT set_config('app.bypass_rls','on',true)");
+const q = async (s) => (await c.query(s)).rows;
+const out = {
+  host: host.split(".")[0], label: process.argv[2] ?? "",
+  orphanProvenanceRows: await q(`select a.metadata->>'via' as via, count(*)::int n from "AuditLog" a left join "Tenant" t on t.id = a."tenantId" where a.action = 'import.mapping.changed' and t.id is null group by 1 order by 1`),
+  provenanceRowsTotal: (await q(`select count(*)::int n from "AuditLog" where action = 'import.mapping.changed'`))[0].n,
+  orphanAuditRowsAll: (await q(`select count(*)::int n from "AuditLog" a left join "Tenant" t on t.id = a."tenantId" where a."tenantId" is not null and t.id is null`))[0].n,
+  fixtureTenants: (await q(`select count(*)::int n from "Tenant" where slug like 'secd3%'`))[0].n,
+  fixtureMembers: (await q(`select count(*)::int n from "Member" where email like 'secd3%'`))[0].n,
+  fixtureUsers: (await q(`select count(*)::int n from "User" where email like 'secd3%'`))[0].n,
+};
+await c.query("ROLLBACK"); await c.end();
+console.log(JSON.stringify(out));

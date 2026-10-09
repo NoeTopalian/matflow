@@ -26,7 +26,9 @@ const h = vi.hoisted(() => {
   function makeTx(tx: number) {
     return new Proxy({} as Record<string, unknown>, {
       get(_t, model: string) {
-        if (model === "$executeRaw" || model === "$queryRaw") return async () => 0;
+        if (model === "$executeRaw") return async () => 0;
+        // The erase re-reads the member under a row lock (lane D3): answer with the member row this fake holds.
+        if (model === "$queryRaw") return async () => { const m = impl.member?.findFirst?.(); return m ? [m] : []; };
         return new Proxy({} as Record<string, unknown>, {
           get(_m, method: string) {
             return async (...args: unknown[]) => {

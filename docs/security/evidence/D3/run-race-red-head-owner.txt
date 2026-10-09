@@ -1,0 +1,30 @@
+[secd3r] role neondb_owner RLS_ENFORCED=0
+[secd3r] member DELETE pre-tx: change applied=1 blockedInWindow=false released=NEW
+[secd3r] member DELETE in-tx: change applied=1 blockedInWindow=false released=NEW
+[secd3r] member DELETE cascade child in-tx: change applied=1 blockedInWindow=false released=NEW
+[secd3r] child DELETE in-tx: change applied=1 blockedInWindow=false released=NEW
+[secd3r] staff DELETE in-tx: change applied=1 blockedInWindow=false released=NEW
+[secd3r] DSAR erase in-tx: change applied=1 blockedInWindow=false released=NEW
+[secd3r] teardown: 8 clubs removed, 0 rows left
+     × member DELETE, pre-tx: an address change committed after the preflight read → the digest is of the NEW (released) address 3173ms
+     × member DELETE, in-tx: a change attempted inside the deletion transaction cannot slip in under the digest 2806ms
+     × member DELETE ?strategy=cascade, in-tx: a CHILD's address changed inside the transaction is digested as released 4321ms
+     × child DELETE, in-tx: a change attempted between the route's read and the delete cannot slip in under the digest 2983ms
+     × staff DELETE, in-tx: a change attempted between the route's read and the delete cannot slip in under the digest 1557ms
+     × DSAR erase, in-tx: a change attempted inside the erase transaction (before the scrub) cannot slip in under the digest 4218ms
+     × DSAR erase, pre-tx: an address change committed after the pre-erase read → refused (409), nothing erased, no stale digest 4131ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+AssertionError: member DELETE pre-tx: release digest must be of the released address: expected { releasedDigested: false, …(1) } to deeply equal { releasedDigested: true, …(1) }
+    149|   process.stderr.write(`[secd3r] ${label}: change applied=${applied} b…
+AssertionError: member DELETE in-tx: release digest must be of the released address: expected { releasedDigested: false, …(1) } to deeply equal { releasedDigested: true, …(1) }
+    149|   process.stderr.write(`[secd3r] ${label}: change applied=${applied} b…
+AssertionError: member DELETE cascade child in-tx: release digest must be of the released address: expected { releasedDigested: false, …(1) } to deeply equal { releasedDigested: true, …(1) }
+    149|   process.stderr.write(`[secd3r] ${label}: change applied=${applied} b…
+AssertionError: child DELETE in-tx: release digest must be of the released address: expected { releasedDigested: false, …(1) } to deeply equal { releasedDigested: true, …(1) }
+    149|   process.stderr.write(`[secd3r] ${label}: change applied=${applied} b…
+AssertionError: staff DELETE in-tx: release digest must be of the released address: expected { releasedDigested: false, …(1) } to deeply equal { releasedDigested: true, …(1) }
+    149|   process.stderr.write(`[secd3r] ${label}: change applied=${applied} b…
+AssertionError: DSAR erase in-tx: release digest must be of the released address: expected { releasedDigested: false, …(1) } to deeply equal { releasedDigested: true, …(1) }
+    149|   process.stderr.write(`[secd3r] ${label}: change applied=${applied} b…
+AssertionError: DSAR pre-tx: erased the new address under the old digest: expected { status: 200, email: 'other', …(2) } to deeply equal { status: 409, email: 'NEW', …(2) }
+      Tests  7 failed | 1 passed (8)

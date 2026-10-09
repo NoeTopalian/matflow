@@ -1,0 +1,26 @@
+[secd3] role neondb_owner RLS_ENFORCED=0 keyLen=58 STRICT=0
+[secd3] teardown: 19 clubs removed (60 provenance rows), 0 rows left
+     × CONTROL: a decision saved through the real decide route binds as decided; its row carries a chained proof 2452ms
+     × P1 (a) COPIED PROOF, same club: re-point by raw UPDATE + INSERT a row copied from the legitimate one (after → attacker) → pending 8025ms
+     × P2 (a)+(b) PROOF MINTED IN THE ATTACKER'S OWN CLUB through the real decide route, copied whole into the victim club → pending 8749ms
+     × X1 (a)+(b) CROSS-CLUB RE-HOME: a decision minted in club B moved whole into club A (mapping, its row and the target; only the club differs) does not verify in A 7999ms
+     × P3b WRONG KEY, CORRECT TUPLE: the row is right in every field (digest copied from a real decision, chain, date) but the proof is under another key → pending 2207ms
+     × E1 EMPTY KEY: a proof computed with an EMPTY signing key over the correct tuple is refused (process signs with a real key) 1472ms
+     × E2 EMPTY KEY IN THE PROCESS: with no signing secret the importer trusts no decision — not one it saved itself, not one proven under the empty key 2581ms
+     × P6 REPLAYED OLDER ROW: the older (mal) row copied as a new latest row → its proof is bound to its own date and chain → pending 7701ms
+     × F1 FUTURE-DATED ROW: a row right in every field and proven under the REAL key but dated a day ahead is refused 1718ms
+     × F1 CONTROL: the same row proven under the real key and dated now DOES bind (so F1 refuses on the date alone) 1489ms
+     × C1 CHAIN: deleting an earlier provenance row breaks the latest row's link → pending (history cannot be pruned silently) 2947ms
+⎯⎯⎯⎯⎯⎯ Failed Tests 11 ⎯⎯⎯⎯⎯⎯⎯
+TypeError: .toMatch() expects to receive a string, but got undefined
+AssertionError: P1: a copied proof vouched for a re-pointed decision: expected { attendance: 1, …(2) } to deeply equal { Object (attendance, memberId, ...) }
+AssertionError: P2: a proof minted in another club vouched for a forged decision: expected { attendance: 1, …(2) } to deeply equal { Object (attendance, memberId, ...) }
+AssertionError: expected [] to include 'cmv1gk4xc002e6ctgwcla7o2q'
+TypeError: provenanceCanonical is not a function
+TypeError: provenanceCanonical is not a function
+TypeError: provenanceCanonical is not a function
+AssertionError: P6: a replayed older row vouched: expected { attendance: 1, …(2) } to deeply equal { Object (attendance, memberId, ...) }
+TypeError: provenanceCanonical is not a function
+TypeError: provenanceCanonical is not a function
+AssertionError: expected { action: 'member', …(1) } to deeply equal { action: 'pending' }
+      Tests  11 failed | 5 passed | 1 expected fail (17)

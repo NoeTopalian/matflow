@@ -1,0 +1,47 @@
+// D3 mutant tool: node mutate.mjs apply <id> | restore <id>. Replaces one exact string (must occur exactly once).
+import fs from "node:fs";
+const ROOT = "C:/Users/NoeTo/Desktop/matflow/";
+const KEEP = "C:/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/D3/keep/";
+const AI = "lib/attendance-import.ts";
+const M = {
+  // M3: a proof under ANY key is accepted (the MAC is not compared).
+  M3: { file: AI, from: "return proofMatches(expected, md.proof);", to: "return typeof md.proof === \"string\" || !!expected;" },
+  // M4: an older matching row vouches (every row is tried as if it were the latest).
+  M4: { file: AI, from: "  const latest = sorted[sorted.length - 1];\n  const previous = sorted.length > 1 ? sorted[sorted.length - 2] : null;\n",
+        to: "  if (sorted.length > 1 && sorted.slice(0, -1).some((_, i) => provenanceVouches(tenantId, mapping, rows.filter((r) => Number(r.atMs) <= sorted[i].t), now))) return true;\n  const latest = sorted[sorted.length - 1];\n  const previous = sorted.length > 1 ? sorted[sorted.length - 2] : null;\n" },
+  // ME: the empty-key guards removed (sign and verify with an empty secret).
+  ME: { file: AI, multi: [["  if (!AUTH_SECRET_VALUE) return null;\n", ""], ["if (!rows.length || !AUTH_SECRET_VALUE) return false;", "if (!rows.length) return false;"]] },
+  // MF: the future-date check removed.
+  MF: { file: AI, from: "if (!Number.isFinite(latest.t) || latest.t > now + PROVENANCE_FUTURE_SKEW_MS) return false;", to: "if (!Number.isFinite(latest.t)) return false;" },
+  // MC: the chain check removed.
+  MC: { file: AI, from: "  if (md.prev !== (previous ? chainLinkOf(previous) : MAPPING_PROVENANCE_GENESIS)) return false;\n", to: "" },
+  // MT: the club dropped from the tuple.
+  MT: { file: AI, from: "JSON.stringify([PROVENANCE_VERSION, f.tenantId, f.mappingId,", to: "JSON.stringify([PROVENANCE_VERSION, \"any-club\", f.mappingId," },
+  // Deletion: the row lock removed (the read stays inside the transaction).
+  LM: { file: "app/api/members/[id]/route.ts", from: "        ORDER BY id\n        FOR UPDATE`;", to: "        ORDER BY id`;" },
+  LC: { file: "app/api/member/children/[id]/route.ts", from: " AND \"parentMemberId\" = ${parentMemberId} FOR UPDATE`;", to: " AND \"parentMemberId\" = ${parentMemberId}`;" },
+  LS: { file: "app/api/staff/[id]/route.ts", from: " AND role <> 'owner' FOR UPDATE`;", to: " AND role <> 'owner'`;" },
+  LD: { file: "app/api/admin/dsar/erase/route.ts", from: " AND \"tenantId\" = ${tenantId} FOR UPDATE`;\n    if (!locked", to: " AND \"tenantId\" = ${tenantId}`;\n    if (!locked" },
+};
+const [cmd, id] = process.argv.slice(2);
+const m = M[id];
+if (!m) { console.error("unknown mutant", id); process.exit(2); }
+const path = ROOT + m.file;
+const keep = KEEP + "mutant-" + id + ".orig";
+if (cmd === "apply") {
+  let t = fs.readFileSync(path, "utf8");
+  const eol = t.includes("\r\n") ? "\r\n" : "\n";
+  const pairs = m.multi ?? [[m.from, m.to]];
+  fs.writeFileSync(keep, t);
+  for (const [a0, b0] of pairs) {
+    const a = a0.replaceAll("\n", eol), b = b0.replaceAll("\n", eol);
+    const n = t.split(a).length - 1;
+    if (n !== 1) { console.error(`mutant ${id}: expected 1 occurrence, found ${n}`); process.exit(3); }
+    t = t.replace(a, b);
+  }
+  fs.writeFileSync(path, t);
+  console.log(`applied ${id} to ${m.file}`);
+} else if (cmd === "restore") {
+  fs.writeFileSync(path, fs.readFileSync(keep));
+  console.log(`restored ${m.file}`);
+} else { console.error("usage"); process.exit(2); }

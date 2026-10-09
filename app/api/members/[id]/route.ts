@@ -689,7 +689,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // legal hold when a member is deleted (see lib/member-delete.ts).
   let stripeSubscriptionsCancelled = 0;
   let doomedPhotos: Array<{ id: string; url: string }> = [];
-  let releasedEmails: string[] = [];
   try {
     const preflight = await withTenantContext(session.user.tenantId, async (tx) => {
       const target = await tx.member.findFirst({
@@ -738,7 +737,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     // `?? []` because nothing about cleaning up files may ever be load-bearing
     // for the delete itself — see deleteMemberPhotoBlobs.
     doomedPhotos = willBeDeleted.flatMap((m) => m.photos ?? []);
-    releasedEmails = willBeDeleted.map((m) => m.email).filter((e): e is string => !!e);
 
     for (const doomed of willBeDeleted) {
       if (!doomed.stripeSubscriptionId) continue;
@@ -778,6 +776,15 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
   try {
     const outcome = await withTenantContext(session.user.tenantId, async (tx) => {
+      // The release digest is taken from the rows this transaction deletes, read under a row lock (lane D3, review R4
+      // residual 1): the preflight read above runs in an earlier transaction, so an address changed in between used to
+      // be released with the OLD address digested. FOR UPDATE also blocks a concurrent address change (or a new child
+      // pointing here) until the deletion commits.
+      const lockedRows = await tx.$queryRaw<{ id: string; email: string | null; parentMemberId: string | null }[]>`
+        SELECT id, email, "parentMemberId" FROM "Member"
+        WHERE "tenantId" = ${session.user.tenantId} AND (id = ${id} OR "parentMemberId" = ${id})
+        ORDER BY id
+        FOR UPDATE`;
       const o = await deleteParentMemberWithKidsResolution(
         tx,
         { id, tenantId: session.user.tenantId },
@@ -788,6 +795,11 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       // A failure here rolls the deletion back. Photo files are removed after the commit, so the row records how many
       // were queued; the response reports how many went.
       if (o.kind === "ok") {
+        // Same membership as the preflight's willBeDeleted: the member, plus its children under ?strategy=cascade.
+        const releasedEmails = lockedRows
+          .filter((r) => r.id === id || (strategy?.kind === "cascade" && r.parentMemberId === id))
+          .map((r) => r.email)
+          .filter((e): e is string => !!e);
         await logAudit({
           tx,
           tenantId: session.user.tenantId,

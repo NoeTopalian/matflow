@@ -448,6 +448,17 @@ export async function POST(req: Request) {
   const erasedOk = await withTenantContext(tenantId, async (tx) => {
     await logAudit({ ...fulfilmentRecord, tx });
 
+    // Lane D3 (review R4 residual 1): every predicate and the release digest above were built from a read in an
+    // EARLIER transaction. Lock the row and re-read it before anything is scrubbed: if the address (or the source
+    // identity) changed in between, erasing now would release the NEW address with the OLD one digested and leave the
+    // new address's tokens and imported history behind — refuse instead; the throw rolls the fulfilment row back with
+    // everything else. The lock also holds off a concurrent change until the erasure commits.
+    const [locked] = await tx.$queryRaw<{ email: string; name: string; externalRef: string | null }[]>`
+      SELECT email, name, "externalRef" FROM "Member" WHERE id = ${memberId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+    if (!locked || locked.email !== originalEmail || locked.externalRef !== originalExternalRef || locked.name !== member.name) {
+      throw new ErasureSubjectChanged();
+    }
+
     // The children are resolved FIRST and inside the same transaction, so the
     // club can never end up with a scrubbed guardian and a child still pointing
     // at them. `orphan` is deliberately not offered: the database CHECK
@@ -599,12 +610,26 @@ export async function POST(req: Request) {
       data: { recipient: sentinelEmail },
     });
   }).then(
-    () => true,
+    () => true as const,
     (err: unknown) => {
+      if (err instanceof ErasureSubjectChanged) return "changed" as const;
       console.error("[dsar/erase] erase transaction failed; nothing was erased", err);
-      return false;
+      return false as const;
     },
   );
+  if (erasedOk === "changed") {
+    return NextResponse.json(
+      {
+        error:
+          "This member's details changed while the erasure was being prepared, so nothing was erased. " +
+          (stripeCancelOutcome.performed
+            ? "The member's Stripe subscription is already set to stop renewing. "
+            : "") +
+          "Review the member and try again.",
+      },
+      { status: 409 },
+    );
+  }
   if (!erasedOk) {
     return NextResponse.json(
       {
@@ -641,6 +666,13 @@ export async function POST(req: Request) {
       reassignedTo: reassignToParentId,
     },
   });
+}
+
+/** The member's address or source identity changed between the pre-erase read and the locked read in the erase. */
+class ErasureSubjectChanged extends Error {
+  constructor() {
+    super("erasure subject changed since it was read");
+  }
 }
 
 /**

@@ -237,7 +237,9 @@ export async function DELETE(req: Request, { params }: Params) {
 
   try {
     const deleted = await withTenantContext(session.user.tenantId, async (tx) => {
-      const row = await tx.user.findFirst({ where: { id, tenantId: session.user.tenantId, role: { not: "owner" } }, select: { email: true } });
+      // Read under a row lock (lane D3, review R4 residual 1): the release digest is of the address actually deleted.
+      const [row] = await tx.$queryRaw<{ email: string }[]>`
+        SELECT email FROM "User" WHERE id = ${id} AND "tenantId" = ${session.user.tenantId} AND role <> 'owner' FOR UPDATE`;
       const out = await tx.user.deleteMany({
         where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
       });

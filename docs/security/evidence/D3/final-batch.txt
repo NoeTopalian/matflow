@@ -1,0 +1,22 @@
+v24.21.0
+sec-d3-deletion-race-db | owner exit 0: Tests  8 passed (8) | restricted exit 0: Tests  8 passed (8)
+sec-d2-deletion-provenance-db | owner exit 0: Tests  16 passed (16) | restricted exit 0: Tests  16 passed (16)
+sec-d3-provenance-forgery-db | owner exit 0: Tests  16 passed | 1 expected fail (17) | restricted exit 0: Tests  16 passed | 1 expected fail (17)
+v24.21.0
+applied LD to app/api/admin/dsar/erase/route.ts
+MUTANT LD exit 1
+restored app/api/admin/dsar/erase/route.ts
+     × DSAR erase, in-tx: a change attempted inside the erase transaction (before the scrub) cannot slip in under the digest 3611ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 7 passed (8)
+sha256 of the five files identical before/after mutants
+engine without key owner exit 0
+      Tests  19 passed (19)
+d2 STRICT restricted exit 1
+     × OPEN (a) RAW TAKEOVER: victim removed and an old record renamed + re-addressed by raw SQL (no audit rows) → bound to the attacker [closed by
+     × OPEN (a) ACQUISITION ROW BACK-DATED: release row deleted and the attacker's own address-change row back-dated 400 days → bound [closed by SF
+     × OPEN (a) ACQUISITION ROW DELETED: release and acquisition rows both deleted → bound [closed by SF-57 v2] 8647ms
+     × OPEN (a) FORGED CREATION TIME: victim removed by raw SQL; a record inserted with a back-dated cuid at the address → bound [a Member.createdA
+     × OPEN (c) FORGED DECISION + FORGED PROVENANCE: with the signing key the provenance row can be forged → bound [needs append-only provenance ou
+     × OPEN (a) externalRef SET: an attacker-chosen member's externalRef set to the victim's source key → bound by external_ref [closed by SF-62 P2
+      Tests  6 failed | 12 passed (18)

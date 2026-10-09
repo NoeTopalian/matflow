@@ -1,0 +1,9 @@
+[secd3r] role matflow_app RLS_ENFORCED=1
+[secd3r] member DELETE pre-tx: change applied=1 blockedInWindow=false released=NEW
+[secd3r] member DELETE in-tx: change applied=0 blockedInWindow=true released=OLD
+[secd3r] member DELETE cascade child in-tx: change applied=0 blockedInWindow=true released=OLD
+[secd3r] child DELETE in-tx: change applied=0 blockedInWindow=true released=OLD
+[secd3r] staff DELETE in-tx: change applied=0 blockedInWindow=true released=OLD
+[secd3r] DSAR erase in-tx: change applied=0 blockedInWindow=true released=OLD
+[secd3r] teardown: 8 clubs removed, 0 rows left
+      Tests  8 passed (8)

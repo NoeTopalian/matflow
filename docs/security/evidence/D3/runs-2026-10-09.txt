@@ -1,0 +1,27 @@
+Lane D3 runs, 9 Oct 2026. Runtime: Node v24.21.0 (scratchpad node24). TEST branch only (ep-hidden-salad) via
+att/run-engine.sh (neondb_owner) and q78/run-restricted.sh (matflow_app, RLS_ENFORCED=1); role asserted in each file.
+Signing key: the D3/D2 test files set a synthetic NEXTAUTH_SECRET when none is set (keyLen logged); regress.sh exports a
+synthetic NEXTAUTH_SECRET for the other suites. No production, no migration, nothing pushed, staged or committed.
+
+Red at HEAD (968d7bc/17f4475 lib + routes), both roles:
+  sec-d3-provenance-forgery-db   11 failed / 5 passed / 1 expected-fail  (run-red-head-*.txt)
+    real-binding reds: P1, P2, P6 (attendance 1), X1 (decision trusted), C1 (decision trusted)
+    helper-absent reds (not meaningful at HEAD, proven by mutants instead): CONTROL x2 shape, P3b, E1, E2, F1, F1 CONTROL
+    green at HEAD and after: P3 (R4 form), P4, P5, F2, CONTROL2
+  sec-d3-deletion-race-db        7 failed / 1 passed (control)  (run-race-red-head-*.txt) - every in-tx change applied=1
+Green after the fix, both roles:
+  sec-d3-provenance-forgery-db   16 passed / 1 expected-fail (OPEN tail truncation), exit 0
+  sec-d3-deletion-race-db         8 passed, exit 0 - every in-tx change blockedInWindow=true, applied=0
+Mutants (restricted; mutate.mjs.txt / mutants.sh.txt; sha256 of the five files identical before/after): see mutants-summary.txt
+  M3 any-key proof accepted -> P2, X1, P3b, E1 red   M4 older row vouches -> P4, P6, F2 red
+  ME empty-key guards removed -> E2 red              MF future check removed -> F1 red
+  MC chain check removed -> C1 red                   MT club dropped from tuple -> X1 red
+  LM/LC/LS/LD FOR UPDATE removed -> the in-tx cell of that route red (member: 2 cells)
+Regression, both roles (regress-summary.txt, final-batch.txt):
+  sec-d2-import-attacker-model-db 12 passed + 6 expected-fail each; SEC_D2_STRICT=1 restricted: exactly the 6 OPEN cells
+    fail at "...bound the victim's history...: expected 1 to be +0" (the (c) cell now mints a D3 proof with the key)
+  sec-d2-deletion-provenance-db 16/16; attendance-import-engine 19/19; sec-d-attendance-misbinding-db 23/23;
+  contact-email-change-imports-db 7/7. Engine also 19/19 owner with NO signing key.
+Unit (no DB): 37 files 682/682 (unit-summary.txt). Gates: npx tsc --noEmit -p . exit 0; npm run lint exit 0.
+Orphan rows (orphan-counts.txt): before and after identical - 62 orphan provenance rows (decide 54, import.commit 6,
+  import.rollback 2), 198 orphan audit rows, 0 secd3 tenants/members/users. Every D3 teardown removed its provenance rows.

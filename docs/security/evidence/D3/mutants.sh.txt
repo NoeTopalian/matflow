@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# D3 mutants under the restricted role (matflow_app, RLS_ENFORCED=1). Each: apply, run, restore, byte-compare.
+SP="/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad"
+export PATH="$SP/security/node24/node-v24.21.0-win-x64:$PATH"
+cd /c/Users/NoeTo/Desktop/matflow || exit 1
+node --version
+sha256sum lib/attendance-import.ts "app/api/members/[id]/route.ts" "app/api/member/children/[id]/route.ts" "app/api/staff/[id]/route.ts" app/api/admin/dsar/erase/route.ts > "$SP/security/D3/logs/mutants-diff-before.txt"
+for M in "$@"; do
+  case "$M" in L*) FILE=tests/integration/sec-d3-deletion-race-db.test.ts ;; *) FILE=tests/integration/sec-d3-provenance-forgery-db.test.ts ;; esac
+  node "$SP/security/D3/mutate.mjs" apply "$M" || { echo "MUTANT $M not applied"; continue; }
+  bash "$SP/q78/run-restricted.sh" "$FILE" > "$SP/security/D3/logs/mutant-$M.log" 2>&1
+  echo "MUTANT $M exit $?"
+  node "$SP/security/D3/mutate.mjs" restore "$M"
+  grep -E "×|Tests " "$SP/security/D3/logs/mutant-$M.log" | cut -c1-140
+done
+sha256sum lib/attendance-import.ts "app/api/members/[id]/route.ts" "app/api/member/children/[id]/route.ts" "app/api/staff/[id]/route.ts" app/api/admin/dsar/erase/route.ts > "$SP/security/D3/logs/mutants-diff-after.txt"
+cmp "$SP/security/D3/logs/mutants-diff-before.txt" "$SP/security/D3/logs/mutants-diff-after.txt" && echo "sha256 of the five files identical before/after mutants"

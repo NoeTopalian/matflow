@@ -19,7 +19,14 @@
 // RLS); both refuse any host but the TEST branch. Fixture prefix secd2- (slugs, addresses) / secD2 (names);
 // count-checked teardown of this file's clubs only.
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
+
+// Lane D3: the importer signs and verifies mapping provenance only under a NON-EMPTY key (R4: the harness has none).
+// A synthetic value, set before any module reads lib/auth-secret.
+const SIGNING = vi.hoisted(() => {
+  if (!process.env.NEXTAUTH_SECRET && !process.env.AUTH_SECRET) process.env.NEXTAUTH_SECRET = `secd2-synthetic-signing-key-${Date.now()}-0123456789abcdef`;
+  return { root: process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET ?? "" };
+});
 
 vi.mock("next/server", () => ({
   NextResponse: {
@@ -58,7 +65,10 @@ vi.mock("@/lib/import-storage", async (importOriginal) => ({
 
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { teamupPersonKey } from "@/lib/importers/teamup";
-import { JOB_SOURCE, LEDGER_SOURCE, MAPPING_VERSION, buildPlan, loadClubInputs, planHashOf, saveDecisions } from "@/lib/attendance-import";
+import {
+  JOB_SOURCE, LEDGER_SOURCE, MAPPING_VERSION, MAPPING_PROVENANCE_GENESIS, PROVENANCE_KEY_CONTEXT,
+  buildPlan, loadClubInputs, planHashOf, provenanceCanonical, saveDecisions,
+} from "@/lib/attendance-import";
 import { POST } from "@/app/api/admin/import/attendance/route";
 import { PATCH as patchMember, DELETE as deleteMember } from "@/app/api/members/[id]/route";
 import { POST as membersCommit } from "@/app/api/admin/import/[id]/commit/route";
@@ -233,7 +243,8 @@ describe.skipIf(!HAS_DB)("SF-74 / SEC-053 — attendance import under an explici
     const who = await withRlsBypass((tx) => tx.$queryRaw<{ current_user: string }[]>`SELECT current_user`);
     if (process.env.RLS_ENFORCED === "1") expect(who[0]?.current_user).toBe("matflow_app");
     else expect(who[0]?.current_user).not.toBe("matflow_app");
-    process.stderr.write(`[sec-d2] role ${who[0]?.current_user} RLS_ENFORCED=${process.env.RLS_ENFORCED ?? "0"} STRICT=${STRICT ? 1 : 0}\n`);
+    expect(SIGNING.root.length, "the test process must sign with a non-empty key (D3)").toBeGreaterThan(0);
+    process.stderr.write(`[sec-d2] role ${who[0]?.current_user} RLS_ENFORCED=${process.env.RLS_ENFORCED ?? "0"} STRICT=${STRICT ? 1 : 0} keyLen=${SIGNING.root.length}\n`);
   });
 
   // ── Positive controls ────────────────────────────────────────────────────────
@@ -360,8 +371,12 @@ describe.skipIf(!HAS_DB)("SF-74 / SEC-053 — attendance import under an explici
     const key = teamupPersonKey(N(VIC), E("vic"));
     await withRlsBypass(async (tx) => {
       const m = await tx.importSourceMapping.create({ data: { tenantId: club.tenantId, source: LEDGER_SOURCE, kind: "person", sourceKey: key, action: "member", targetId: mal, decidedById: club.userId } });
-      await tx.auditLog.create({ data: { tenantId: club.tenantId, userId: club.userId, action: "import.mapping.changed", entityType: "ImportSourceMapping", entityId: m.id,
-        metadata: { kind: "person", source: LEDGER_SOURCE, sourceKeyDigest: provenanceDigest("person", key), before: null, after: { action: "member", targetId: mal }, via: "decide" } } });
+      // (c) holds the signing secret, so it mints the D3 proof exactly as the importer would (tuple, chain, date).
+      const at = new Date(Date.now() - 1000);
+      const fields = { tenantId: club.tenantId, mappingId: m.id, kind: "person", sourceKeyDigest: provenanceDigest("person", key), before: null, after: { action: "member", targetId: mal }, createdAtMs: at.getTime(), prev: MAPPING_PROVENANCE_GENESIS };
+      const subKey = createHmac("sha256", SIGNING.root).update(PROVENANCE_KEY_CONTEXT).digest();
+      await tx.auditLog.create({ data: { tenantId: club.tenantId, userId: club.userId, action: "import.mapping.changed", entityType: "ImportSourceMapping", entityId: m.id, createdAt: at,
+        metadata: { kind: "person", source: LEDGER_SOURCE, sourceKeyDigest: fields.sourceKeyDigest, before: null, after: fields.after, via: "decide", prev: fields.prev, proof: createHmac("sha256", subKey).update(provenanceCanonical(fields)).digest("hex") } } });
     });
     await importVictim(club, N(VIC), E("vic"));
     await expectNotBound(club, mal, "forged provenance bound the victim's history");

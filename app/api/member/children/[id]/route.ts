@@ -331,7 +331,10 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     // someone else's kid through this endpoint.
     const outcome = await withTenantContext(tenantId, async (tx) => {
       const where = { id: childId, tenantId, parentMemberId };
-      const doomed = await tx.member.findFirst({ where, select: { email: true } });
+      // Read under a row lock (lane D3, review R4 residual 1): the digest must be of the address this transaction
+      // deletes — an address change committed between a plain read and the delete used to be released undigested.
+      const [doomed] = await tx.$queryRaw<{ email: string | null }[]>`
+        SELECT email FROM "Member" WHERE id = ${childId} AND "tenantId" = ${tenantId} AND "parentMemberId" = ${parentMemberId} FOR UPDATE`;
       const o = await deleteMemberCascade(tx, where);
       // The release record commits WITH the deletion (security lane D2, SF-54 / SF-74). This path wrote no release
       // digest at all, and its audit row came after the commit: a child with a real address left it free for a

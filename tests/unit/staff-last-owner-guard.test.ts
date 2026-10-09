@@ -27,7 +27,7 @@ vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: (...a: unknown[]) => logAuditMock(...a) }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_t: string, fn: (tx: unknown) => unknown) =>
-    Promise.resolve(fn({ user: { updateMany: updateManyMock, deleteMany: deleteManyMock, findFirst: findFirstMock } })),
+    Promise.resolve(fn({ $queryRaw: async () => [], user: { updateMany: updateManyMock, deleteMany: deleteManyMock, findFirst: findFirstMock } })),
 }));
 
 const OWNER = { user: { id: "user-owner", tenantId: "tenant-A", role: "owner" } };

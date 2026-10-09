@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# D3 regression: DB suites under both roles (synthetic signing key in the environment), one file at a time.
+SP="/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad"
+export PATH="$SP/security/node24/node-v24.21.0-win-x64:$PATH"
+export NEXTAUTH_SECRET="secd3-regression-synthetic-key-0123456789abcdef0123456789"
+cd /c/Users/NoeTo/Desktop/matflow || exit 1
+node --version
+for F in "$@"; do
+  B=$(basename "$F" .test.ts)
+  bash "$SP/att/run-engine.sh" "$F" > "$SP/security/D3/logs/reg-owner-$B.log" 2>&1; E1=$?
+  bash "$SP/q78/run-restricted.sh" "$F" > "$SP/security/D3/logs/reg-restricted-$B.log" 2>&1; E2=$?
+  T1=$(grep -E "^ +Tests " "$SP/security/D3/logs/reg-owner-$B.log" | tail -1 | sed 's/^ *//')
+  T2=$(grep -E "^ +Tests " "$SP/security/D3/logs/reg-restricted-$B.log" | tail -1 | sed 's/^ *//')
+  echo "$B | owner exit $E1: $T1 | restricted exit $E2: $T2"
+done
