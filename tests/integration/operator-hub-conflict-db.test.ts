@@ -269,9 +269,11 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
     expect(r.body).toMatchObject({ free: true, sameAsOwner: false });
   });
 
+  let ownerGrant = "";
   it("7. owner login change with a SEPARATE grant: owner takes the address, provisional, signed out; members untouched", async () => {
     const before = await owner();
-    const { grant } = await issueStepUpGrant({ operatorId: OP_ID, action: "owner.login_email", targetId: `${ids.a}/${ids.owner}/change`, change: { newEmail: TARGET } });
+    ownerGrant = (await issueStepUpGrant({ operatorId: OP_ID, action: "owner.login_email", targetId: `${ids.a}/${ids.owner}/change`, change: { newEmail: TARGET } })).grant;
+    const grant = ownerGrant;
     const r = await read(
       await ownerRoute(req(`/api/admin/customers/${ids.a}/login-email`, { action: "change", reason: REASON, newEmail: TARGET }, { [STEP_UP_HEADER]: grant }), {
         params: Promise.resolve({ id: ids.a }),
@@ -287,6 +289,26 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
     expect(after.totpRecoveryCodes).toHaveLength(2); // the comparison is over real codes, not two empty lists
     expect((await member(ids.pat)).email).toBe(PAT_NEW);
     expect((await check(TARGET)).body).toMatchObject({ free: true, sameAsOwner: true });
+  });
+
+  it("7b. lost response on the OWNER step: the same grant re-sent is answered from the record; nothing changes (AH-G1)", async () => {
+    const before = await owner();
+    const r = await read(
+      await ownerRoute(req(`/api/admin/customers/${ids.a}/login-email`, { action: "change", reason: REASON, newEmail: TARGET }, { [STEP_UP_HEADER]: ownerGrant }), {
+        params: Promise.resolve({ id: ids.a }),
+      }),
+    );
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, alreadyApplied: true, recordedAction: "admin.owner.login_email.changed" });
+    expect(await owner()).toEqual(before); // same address, same sessionVersion, same credentials
+    expect(await rows("admin.owner.login_email.changed")).toHaveLength(1);
+    // Without a grant for this change the same request is still refused.
+    const bare = await read(
+      await ownerRoute(req(`/api/admin/customers/${ids.a}/login-email`, { action: "change", reason: REASON, newEmail: TARGET }), {
+        params: Promise.resolve({ id: ids.a }),
+      }),
+    );
+    expect(bare.status).toBe(400);
   });
 
   it("8. a link or code sent to the address before the change cannot set a password for its next holder", async () => {

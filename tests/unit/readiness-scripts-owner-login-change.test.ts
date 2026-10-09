@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import * as script from "../../scripts/readiness/owner-login-change-check.mjs";
 
 const { main, endpointIdOf, REPO_ROOT } = script as unknown as {
@@ -38,7 +38,11 @@ const ADDR = {
 const SECRET = "s".repeat(16) + randomBytes(16).toString("hex");
 const PASSWORD_HASH = "$2a$12$fixturefixturefixturefixtureHASH";
 const TOTP_SECRET = "FIXTURETOTPSECRETBASE32";
-const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+// The audit digests the routes write are KEYED (lib/login-email.ts emailDigest,
+// AH-E2): the fake env file carries the key, and the fixtures use the script's
+// own construction (parity with the library is pinned in a separate case).
+const DIGEST_KEY = "unit-test-auth-secret-0123456789";
+const sha = (s: string) => script.routeEmailDigest(s, DIGEST_KEY);
 
 const ALL_COLUMNS: Record<string, string[]> = {
   Tenant: ["id", "slug"],
@@ -160,7 +164,7 @@ let connects: number;
 function deps(extra: Record<string, unknown> = {}) {
   return {
     connect: async () => { connects++; return fakeClient(state); },
-    readEnv: async () => ({ DATABASE_URL: URL_OK }),
+    readEnv: async () => ({ DATABASE_URL: URL_OK, AUTH_SECRET: DIGEST_KEY }),
     stdout: (s: string) => outs.push(s),
     stderr: (s: string) => errs.push(s),
     ...extra,

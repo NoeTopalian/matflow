@@ -66,7 +66,11 @@ export async function probe(fetchImpl, url, init = {}) {
       status: res.status,
       contentType: res.headers?.get?.("content-type") ?? "",
       location: res.headers?.get?.("location") ? "present" : null,
-      bodyText: text.slice(0, 8192),
+      // The whole body is parsed (a real activity page is ~60 KB of valid JSON;
+      // cutting it at 8 KiB made operator.access fail — AH-G3). Only what is
+      // ever printed is bounded.
+      bodyText: text,
+      bodyPreview: text.slice(0, 512),
     };
   } catch (e) {
     return { error: e?.name === "TimeoutError" || e?.name === "AbortError" ? "timeout" : "network error" };

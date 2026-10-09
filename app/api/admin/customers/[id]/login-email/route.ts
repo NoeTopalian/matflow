@@ -31,12 +31,16 @@ import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import {
+  STEP_UP_HEADER,
   StepUpRefusedError,
   consumeStepUpGrant,
+  findAppliedGrant,
   refuseStepUp,
   requireStepUp,
   stepUpTarget,
+  verifyStepUpGrantToken,
 } from "@/lib/operator-step-up";
+import { sha256Hex } from "@/lib/operator-auth";
 import { emailField } from "@/lib/email-normalise";
 import {
   LOGIN_EMAIL_REASON_MIN,
@@ -48,6 +52,21 @@ import {
 } from "@/lib/login-email";
 
 export const runtime = "nodejs";
+
+const CHANGED_ACTION = "admin.owner.login_email.changed";
+
+/**
+ * The recorded result of THIS operator's change grant for THIS owner, if its
+ * change committed. The grant's signature binds the operator, action and
+ * target; its nonce hash is the outcome row's request id. Nothing is verified
+ * as spendable and nothing is spent.
+ */
+async function appliedOwnerOutcome(req: Request, operatorId: string, tenantId: string, target: string) {
+  const token = req.headers.get(STEP_UP_HEADER);
+  const payload = token ? verifyStepUpGrantToken(token) : null;
+  if (!payload || payload.op !== operatorId || payload.act !== "owner.login_email" || payload.tgt !== target) return null;
+  return withRlsBypass((tx) => findAppliedGrant(tx, { tenantId, actions: [CHANGED_ACTION], requestId: sha256Hex(payload.n) }));
+}
 
 const reason = z.string().trim().min(LOGIN_EMAIL_REASON_MIN).max(500);
 const bodySchema = z.discriminatedUnion("action", [
@@ -102,6 +121,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "The login email is not marked provisional." }, { status: 409 });
   }
   if (body.action === "change" && body.newEmail === owner.email) {
+    // A lost response: the change committed, the operator re-sends the SAME
+    // grant, and the address is now the owner's. Answered from the record —
+    // read only, nothing spent (browser rehearsal AH-G1; mirrors the member
+    // contact-email route). Without a grant for this change it stays a 400.
+    const applied = await appliedOwnerOutcome(req, ctx.operatorId, tenantId, stepUpTarget(tenantId, owner.id, "change"));
+    if (applied) return NextResponse.json({ ok: true, alreadyApplied: true, ...applied });
     return NextResponse.json({ error: "That is already the owner's login email." }, { status: 400 });
   }
 

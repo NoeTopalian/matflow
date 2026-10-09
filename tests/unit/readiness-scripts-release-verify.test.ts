@@ -195,6 +195,17 @@ describe("release-verify: production target", () => {
     expect(summary().checks.find((c: { name: string }) => c.name === "operator.access").detail).toBe("redirect 307");
   });
 
+  it("a large valid JSON activity page (~60 KB) is parsed whole — operator.access PASSES (AH-G3)", async () => {
+    // The real response is ~58 KB; a reader that cut the body at 8 KiB before
+    // JSON.parse called it "body not JSON" and failed a correct release.
+    const rows = Array.from({ length: 300 }, (_, k) => ({ id: `al_${k}`, action: "admin.something.happened", metadata: { note: "x".repeat(150) } }));
+    routes["GET /api/admin/activity"] = (i) =>
+      i.headers?.cookie?.startsWith("matflow_op_session") ? jsonRes(200, { rows }) : jsonRes(403, { error: "Forbidden" });
+    expect(JSON.stringify({ rows }).length).toBeGreaterThan(8192 * 6);
+    expect(await s.main(prodArgs(), deps())).toBe(0);
+    expect(statusOf("operator.access")).toBe("PASS");
+  });
+
   it("operator access is required evidence on production: absent → FAIL, not a pass", async () => {
     const a = prodArgs();
     a.splice(a.indexOf("--expect-operator-login"), 3);

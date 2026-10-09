@@ -57,7 +57,7 @@ Settings → Account → Login email → **Change login email**.
    a different club is allowed: sign-in resolves the club first, then the address.
 3. On success, in one database transaction: the email changes; it is marked provisional; every outstanding reset code and
    sign-in/activation link for the old **and** the new address is retired; `sessionVersion` is bumped; an audit row
-   `user.login_email.changed` records SHA-256 digests of both addresses (never the addresses).
+   `user.login_email.changed` records keyed digests of both addresses (HMAC under the app secret — never the addresses).
 4. **Every device is signed out, this one included** (the response also clears this browser's session cookie). The
    owner signs in again with the new address, the same password and the same authenticator. Chosen over re-issuing the
    session so the new identifier is proven at once and no live session carries the old address.
@@ -79,7 +79,9 @@ for "Mark provisional" cannot be spent on "Change login email"), and a reason of
   problem, but they are locked out of the dashboard). **Verify the owner first** exactly as in
   [SUPPORT-IDENTITY-VERIFICATION.md](SUPPORT-IDENTITY-VERIFICATION.md), and write how in the reason. An address typed by
   an operator proves nothing about who reads it, so the new address is provisional. Same guarantees as self-service
-  (collision rules, tokens retired, every session signed out). Audit `admin.owner.login_email.changed` with digests.
+  (collision rules, tokens retired, every session signed out). Audit `admin.owner.login_email.changed` with keyed digests.
+  A lost response (the change committed but the answer never arrived): re-send the SAME confirmation — the route
+  recognises its own spent grant and answers `alreadyApplied` from the record; nothing is applied twice.
   The change only applies if the owner's address is still the one the route read; if it changed in between (for
   example the owner changed it themselves), the answer is 409 and nothing changes — reload the page and check.
 - **Confirm mailbox** (clear provisional) — MatFlow has no verification-link flow (whether or not email is switched on),

@@ -80,6 +80,7 @@ export const REASON = {
   tickFoundRow: "They were already checked in when this was ticked, so the tick added nothing to undo.",
   importedRow: "This check-in is imported history. Undo the import with its own Rollback, or remove it on the register.",
   loginAddress: "A login address change can't be undone from here — change it again from the member's profile.",
+  selfEdit: "The member made this change themselves — ask them to change it back from their profile.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -285,6 +286,18 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
       }
     },
   }),
+  // A member's own profile edit (PATCH /api/member/me) is never undone by
+  // staff: the honest reason, not "recorded before snapshots" (AH-G Low).
+  "member.self_update": {
+    decide(row) {
+      const m = meta(row);
+      const addressChanged = "oldEmailSha256" in m || Boolean(asRecord(m.changes)?.email);
+      return { ok: false, reason: addressChanged ? REASON.loginAddress : REASON.selfEdit };
+    },
+    async apply() {
+      throw new UndoStale(REASON.selfEdit);
+    },
+  },
   "tenant.settings.update": snapshotHandler("Tenant", {
     after(row) {
       try {

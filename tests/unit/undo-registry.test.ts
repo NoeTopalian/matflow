@@ -82,6 +82,13 @@ describe("decideUndo — what the owner is told", () => {
       .toEqual({ ok: true });
   });
 
+  it("member.self_update: never undone by staff — the honest reason, and the login-address reason for an address change", () => {
+    expect(decideUndo(row("member.self_update", { source: "self", changes: { name: { from: "A", to: "B" } } }), false))
+      .toEqual({ ok: false, reason: REASON.selfEdit });
+    expect(decideUndo(row("member.self_update", { source: "self", oldEmailSha256: "a".repeat(64), newEmailSha256: "b".repeat(64), unverified: true }), false))
+      .toEqual({ ok: false, reason: REASON.loginAddress });
+  });
+
   it("a member.update with a diff is reversible; with a before snapshot too", () => {
     expect(decideUndo(row("member.update", { changes: { name: { from: "A", to: "B" } } }), false)).toEqual({ ok: true });
     expect(decideUndo(row("member.update", { before: { name: "A" }, after: { name: "B" } }), false)).toEqual({ ok: true });

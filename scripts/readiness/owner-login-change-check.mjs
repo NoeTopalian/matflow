@@ -41,7 +41,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createHash, createHmac } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -101,9 +101,16 @@ export function keyed(secret, value) {
   return createHmac("sha256", secret).update(s).digest("hex");
 }
 
-/** Plain SHA-256 as the routes write it (lib/login-email.ts emailDigest). */
-export function routeEmailDigest(email) {
-  return createHash("sha256").update(normaliseEmail(email)).digest("hex");
+/**
+ * The digest the routes write (lib/login-email.ts emailDigest, keyed since
+ * 9 Oct 2026 / AH-E2): HMAC-SHA256 under the auth secret over the prefixed,
+ * normalised address. A plain SHA-256 here made audit.owner_row_before_after
+ * fail on every correct change (browser rehearsal AH-G2).
+ */
+export const ROUTE_DIGEST_PREFIX = "login-email-digest:v1:";
+export function routeEmailDigest(email, key) {
+  if (typeof key !== "string" || key.length === 0) throw new Refusal("the env file carries no NEXTAUTH_SECRET/AUTH_SECRET, so audit digests cannot be compared");
+  return createHmac("sha256", key).update(ROUTE_DIGEST_PREFIX + normaliseEmail(email)).digest("hex");
 }
 
 export function parseArgs(argv) {
@@ -396,7 +403,7 @@ export function evaluateBaseline(snap, { secret, addresses, memberId }) {
   return checks;
 }
 
-export function evaluateVerify(base, cur, { secret, addresses, memberId, path: changePath, operatorId, memberContactAction }) {
+export function evaluateVerify(base, cur, { secret, digestKey, addresses, memberId, path: changePath, operatorId, memberContactAction }) {
   const { checks, add } = collector();
   add("baseline.secret_matches", base.secretCheck === keyed(secret, "matflow-readiness/v1"), "the private file's runSecret is not the one the baseline was taken with");
   add("schema.required_columns", !cur.schemaMissing, cur.schemaMissing ? `missing ${cur.schemaMissing.join(", ")}` : "");
@@ -470,7 +477,7 @@ export function evaluateVerify(base, cur, { secret, addresses, memberId, path: c
     add("audit.owner_row_request_id", !!r.requestId && cur.reqCounts[r.id] === 1,
       !r.requestId ? "no request id" : `${cur.reqCounts[r.id]} row(s) share it`);
     add("audit.owner_row_before_after",
-      r.oldEmailSha256 === routeEmailDigest(addresses.ownerOriginalEmail) && r.newEmailSha256 === routeEmailDigest(addresses.ownerTargetEmail),
+      r.oldEmailSha256 === routeEmailDigest(addresses.ownerOriginalEmail, digestKey) && r.newEmailSha256 === routeEmailDigest(addresses.ownerTargetEmail, digestKey),
       "old/new digests do not match the private addresses");
   }
   if (memberId) {
@@ -609,7 +616,10 @@ export async function main(argv, deps = {}) {
       return finish(0);
     }
 
-    summary.checks = evaluateVerify(base, snap, { secret, addresses, memberId, path: changePath, operatorId, memberContactAction });
+    // The audit digests are keyed with the app secret from the SAME env file
+    // the server runs with; the value never leaves this process.
+    const digestKey = env.NEXTAUTH_SECRET ?? env.AUTH_SECRET ?? "";
+    summary.checks = evaluateVerify(base, snap, { secret, digestKey, addresses, memberId, path: changePath, operatorId, memberContactAction });
     const failed = summary.checks.filter((c) => c.status !== "PASS");
     summary.result = failed.length ? "FAIL" : "PASS";
     summary.failed = failed.length;
