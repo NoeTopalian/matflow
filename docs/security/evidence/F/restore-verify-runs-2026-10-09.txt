@@ -1,0 +1,54 @@
+== positive (owner vs restricted, concurrent drift allowed)
+{
+ "verdict": "PASS",
+ "fails": [],
+ "notes": [
+  "row count AuditLog: 9861 -> 9865 (allowed drift)",
+  "row count Member: 3920 -> 3946 (allowed drift)",
+  "row count User: 592 -> 593 (allowed drift)"
+ ]
+}
+
+POST-RESTORE SECURITY ACTIONS (always required; the restored copy rewinds them):
+- Session versions rewind (restored sums user 251/member 307/operator 3 vs baseline 251/305/3): every revocation after the restore point is undone. Revoke all sessions (runbook §3.4).
+- 0 sign-in links and 0 reset codes are outstanding in the restored copy, including any consumed after the restore point. Cancel them (runbook §3.4).
+- Re-apply DSAR erasures and account removals made after the restore point (docs/runbooks/db-restore.md).
+
+== positive without allow-drift (shows concurrent lane writes)
+{
+ "verdict": "FAIL",
+ "fails": [
+  "row count AuditLog: 9861 -> 9865",
+  "row count Member: 3920 -> 3946",
+  "row count User: 592 -> 593"
+ ],
+ "notes": []
+}
+
+POST-RESTORE SECURITY ACTIONS (always required; the restored copy rewinds them):
+- Session versions rewind (restored sums user 251/member 307/operator 3 vs baseline 251/305/3): every revocation after the restore point is undone. Revoke all sessions (runbook §3.4).
+- 0 sign-in links and 0 reset codes are outstanding in the restored copy, including any consumed after the restore point. Cancel them (runbook §3.4).
+- Re-apply DSAR erasures and account removals made after the restore point (docs/runbooks/db-restore.md).
+
+== negative control (tampered fingerprint)
+{
+ "verdict": "FAIL",
+ "fails": [
+  "migrations differ (baseline 100, restored 99; restored head 20261007010000_login_email_provisional)",
+  "policies changed on AuditLog",
+  "row count AuditLog: 9861 -> 9865",
+  "triggers changed on Member: [Member_email_lowercase] -> []",
+  "row count Member: 3920 -> 3947",
+  "row count User: 592 -> 593",
+  "orphans in Announcement via Announcement_tenantId_fkey: 3"
+ ],
+ "notes": []
+}
+
+POST-RESTORE SECURITY ACTIONS (always required; the restored copy rewinds them):
+- Session versions rewind (restored sums user 251/member 307/operator 3 vs baseline 251/305/3): every revocation after the restore point is undone. Revoke all sessions (runbook §3.4).
+- 0 sign-in links and 0 reset codes are outstanding in the restored copy, including any consumed after the restore point. Cancel them (runbook §3.4).
+- Re-apply DSAR erasures and account removals made after the restore point (docs/runbooks/db-restore.md).
+
+== production guard
+REFUSED: production host; pass --production-read-only only for an authorised read-only baseline

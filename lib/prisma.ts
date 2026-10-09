@@ -17,6 +17,50 @@ import { PrismaPg } from "@prisma/adapter-pg";
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined };
 
+/**
+ * How long a query waits for a free pool connection before failing (security
+ * campaign SEC-076, lane F, 9 Oct 2026). node-postgres defaults this to 0 =
+ * WAIT FOR EVER: with all `max` connections held (a slow query, a burst, a
+ * stuck transaction), every non-transactional query on the instance queued
+ * with no deadline and each request held its function open until the
+ * platform's maxDuration killed it — an outage that bills duration on every
+ * waiting request. Interactive transactions were already bounded by their own
+ * maxWait (lib/prisma-tenant.ts, 10 s); this gives plain queries the same
+ * deadline, so exhaustion surfaces as a fast error instead of a hang.
+ * Measured by tests/integration/sec-f-pool-exhaustion-db.test.ts.
+ */
+export const POOL_CONNECTION_TIMEOUT_MS = 10_000;
+
+/**
+ * The pg Pool options PrismaPg forwards to `new pg.Pool(...)`. Exported so the
+ * pool-exhaustion test exercises exactly what production runs.
+ */
+export function prismaPoolConfig(nodeEnv: string | undefined = process.env.NODE_ENV) {
+  // `max` is a node-postgres Pool option; PrismaPg's first argument is a
+  // `pg.Pool | pg.PoolConfig` and is forwarded straight to the Pool
+  // constructor. Vercel Fluid can serve many concurrent requests per
+  // instance, so the pg default of 10 lets a handful of warm instances alone
+  // approach Neon's direct-connection ceiling. 5 per instance keeps
+  // worst-case (instance count × max) inside Neon's pooled limits while
+  // staying well above what a single request needs.
+  //
+  // That ceiling is a *production* calculation — it is about instance count ×
+  // max against Neon's limit. Outside production there is exactly ONE
+  // long-lived process, so 5 is not a safety margin, it is a bottleneck: every
+  // tenant-scoped read runs inside an interactive transaction that holds its
+  // connection for the whole aggregate (~5s for /api/member/me against a remote
+  // branch, ~15 round trips at ~207ms each). A handful of concurrent page loads
+  // therefore queue past withTenantContext's 10s maxWait, Prisma raises P2028,
+  // and routes surface it as HTTP 503 — observed under `playwright --workers=2`.
+  const max = nodeEnv === "production" ? 5 : 20;
+  // keepAlive: Neon (and NATs on the way to it) sever idle sockets; without
+  // TCP keepalive the pool only discovers the corpse when a route tries to
+  // open a transaction on it — surfacing as a 500 "Connection terminated
+  // unexpectedly" on an otherwise healthy request (observed 2026-09-21,
+  // reference MF-DFF20J). Keepalive probes retire dead peers between requests.
+  return { max, keepAlive: true, connectionTimeoutMillis: POOL_CONNECTION_TIMEOUT_MS };
+}
+
 function createPrismaClient(): PrismaClient {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is required");
@@ -54,29 +98,8 @@ function createPrismaClient(): PrismaClient {
       "and set that as DATABASE_URL in Vercel.",
     );
   }
-  // `max` is a node-postgres Pool option; PrismaPg's first argument is a
-  // `pg.Pool | pg.PoolConfig` and is forwarded straight to the Pool
-  // constructor. Vercel Fluid can serve many concurrent requests per
-  // instance, so the pg default of 10 lets a handful of warm instances alone
-  // approach Neon's direct-connection ceiling. 5 per instance keeps
-  // worst-case (instance count × max) inside Neon's pooled limits while
-  // staying well above what a single request needs.
-  //
-  // That ceiling is a *production* calculation — it is about instance count ×
-  // max against Neon's limit. Outside production there is exactly ONE
-  // long-lived process, so 5 is not a safety margin, it is a bottleneck: every
-  // tenant-scoped read runs inside an interactive transaction that holds its
-  // connection for the whole aggregate (~5s for /api/member/me against a remote
-  // branch, ~15 round trips at ~207ms each). A handful of concurrent page loads
-  // therefore queue past withTenantContext's 10s maxWait, Prisma raises P2028,
-  // and routes surface it as HTTP 503 — observed under `playwright --workers=2`.
-  const max = process.env.NODE_ENV === "production" ? 5 : 20;
-  // keepAlive: Neon (and NATs on the way to it) sever idle sockets; without
-  // TCP keepalive the pool only discovers the corpse when a route tries to
-  // open a transaction on it — surfacing as a 500 "Connection terminated
-  // unexpectedly" on an otherwise healthy request (observed 2026-09-21,
-  // reference MF-DFF20J). Keepalive probes retire dead peers between requests.
-  const adapter = new PrismaPg({ connectionString: url, max, keepAlive: true });
+  // Pool options (max, keepAlive, connection deadline): prismaPoolConfig() above.
+  const adapter = new PrismaPg({ connectionString: url, ...prismaPoolConfig() });
   return new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
