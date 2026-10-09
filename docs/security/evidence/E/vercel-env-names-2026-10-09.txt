@@ -1,0 +1,21 @@
+# vercel env ls (names only; value column removed by lane E). 9 Oct 2026
+name type environments created
+EMAIL_DELIVERY Sensitive Production 12h ago
+ALLOW_ADMIN_SECRET_HEADER Sensitive Production 4d ago
+LOGIN_THROTTLE_ENABLED Sensitive Preview 16d ago
+LOGIN_THROTTLE_ENABLED Sensitive Production 16d ago
+SENTRY_DSN Non-sensitive Production 24d ago
+NEXT_PUBLIC_SENTRY_DSN Non-sensitive Production 24d ago
+MATFLOW_ADMIN_SECRET Sensitive Production, Preview 50d ago
+STRIPE_WEBHOOK_SECRET Sensitive Preview, Production 50d ago
+STRIPE_CLIENT_ID Sensitive Preview, Production 155d ago
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY Sensitive Preview, Production 155d ago
+STRIPE_SECRET_KEY Sensitive Production, Preview 155d ago
+RESEND_FROM Sensitive Production, Preview 155d ago
+RESEND_API_KEY Sensitive Preview, Production 155d ago
+TESTING_MODE Sensitive Production, Preview 159d ago
+BLOB_READ_WRITE_TOKEN Non-sensitive Production, Preview, Development 162d ago
+DATABASE_URL Sensitive Production 163d ago
+AUTH_TRUST_HOST Sensitive Production 165d ago
+NEXTAUTH_URL Sensitive Production 165d ago
+NEXTAUTH_SECRET Sensitive Preview, Production 168d ago

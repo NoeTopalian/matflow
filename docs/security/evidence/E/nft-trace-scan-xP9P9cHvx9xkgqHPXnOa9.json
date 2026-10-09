@@ -1,0 +1,27 @@
+{
+ "nftFiles": 278,
+ "hits": {
+  "img": 24,
+  "wasm": 2,
+  "nodeBin": 2,
+  "sharp": 152
+ },
+ "nativeFiles": [
+  "node_modules/@img/colour/color.cjs",
+  "node_modules/@img/colour/index.cjs",
+  "node_modules/@img/colour/package.json",
+  "node_modules/@img/sharp-wasm32/index.cjs",
+  "node_modules/@img/sharp-wasm32/lib/sharp-wasm32-0.35.5.node.js",
+  "node_modules/@img/sharp-wasm32/lib/sharp-wasm32-0.35.5.node.wasm",
+  "node_modules/@img/sharp-wasm32/package.json",
+  "node_modules/@img/sharp-wasm32/versions.json",
+  "node_modules/@img/sharp-win32-x64/index.cjs",
+  "node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.5.node",
+  "node_modules/@img/sharp-win32-x64/package.json",
+  "node_modules/@img/sharp-win32-x64/versions.json"
+ ],
+ "tracesIncludingSharp": [
+  "next-server.js.nft.json",
+  "server/app/api/upload/route.js.nft.json"
+ ]
+}

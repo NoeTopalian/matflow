@@ -1,0 +1,84 @@
+# Supply-chain and secret gate (security campaign lane E, 9 Oct 2026). PROPOSAL.
+#
+# STATUS: this file exists only on the unpushed branch `security/assurance-2026-10`. It does NOT run anywhere
+# until it reaches the default branch on GitHub. A file on an unpushed branch is not a running schedule.
+#
+# What it gates (all read-only; no secrets; no install scripts executed):
+#   - lockfile policy: registry.npmjs.org + sha512 only, install scripts from a reviewed allowlist, build-chain-only
+#     packages (mysql2, prisma CLI, shadcn) never imported by shipped code   (scripts/readiness/supply-chain-check.mjs)
+#   - npm audit (production tree) with time-boxed exceptions that lapse on their expiry date
+#   - OSV correlation as a second advisory source (daily)
+#   - redacted secret scan of the tree on every PR/push, of the whole history daily (scripts/readiness/secret-scan.mjs)
+#   - the lane E unit tests that pin those rules
+# Cost control: no `npm ci` (the checks read package-lock.json and the source only), 10-minute cap, one run per ref.
+
+name: Security — supply chain and secrets
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * *" # daily advisory/KEV-style correlation against the lockfile
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-supply-chain-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  supply-chain:
+    name: Lockfile policy, advisories, secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Full history only for the scheduled scan; PRs scan the tree.
+          fetch-depth: ${{ github.event_name == 'schedule' && '0' || '1' }}
+          persist-credentials: false
+
+      # Node 24 = the Vercel production runtime (vercel project inspect, 9 Oct 2026).
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Lockfile and import policy + npm audit (production tree)
+        run: node scripts/readiness/supply-chain-check.mjs --audit
+
+      - name: OSV correlation (independent advisory source)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: node scripts/readiness/supply-chain-check.mjs --osv
+
+      - name: Secret scan — tracked tree (redacted output)
+        run: node scripts/readiness/secret-scan.mjs --tree
+
+      # History carries the documented 7 May 2026 incident values (docs/security/evidence/E/E-06-secret-scan.md),
+      # so the history scan reports but does not gate until those are confirmed revoked and baselined.
+      - name: Secret scan — full history (redacted output, report-only)
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        run: node scripts/readiness/secret-scan.mjs --history
+
+  policy-tests:
+    name: Lane E policy unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+      # --ignore-scripts: the policy tests need vitest only; no install script (prisma engines, sentry-cli) runs.
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Supply-chain and secret-scan policy tests
+        run: npx vitest run tests/unit/sec-e-supply-chain.test.ts tests/unit/sec-e-secret-scan.test.ts

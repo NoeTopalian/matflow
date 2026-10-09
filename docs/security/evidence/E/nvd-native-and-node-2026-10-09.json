@@ -1,0 +1,175 @@
+{
+ "queriedAt": "2026-10-09T11:01:38.476Z",
+ "out": {
+  "libvips": {
+   "cpe": "cpe:2.3:a:libvips:libvips:8.18.7",
+   "total": 1,
+   "cves": [
+    {
+     "id": "CVE-2026-2913",
+     "published": "2026-02-22",
+     "status": "Analyzed",
+     "score": 2.5,
+     "summary": "A vulnerability was determined in libvips up to 8.19.0. The affected element is the function vips_source_read_to_memory of the file libvips/iofuncs/source.c. Th"
+    }
+   ]
+  },
+  "libpng": {
+   "cpe": "cpe:2.3:a:libpng:libpng:1.6.58",
+   "total": 0,
+   "cves": []
+  },
+  "libwebp": {
+   "cpe": "cpe:2.3:a:webmproject:libwebp:1.6.0",
+   "total": 0,
+   "cves": []
+  },
+  "libexif": {
+   "cpe": "cpe:2.3:a:libexif_project:libexif:0.6.26",
+   "total": 0,
+   "cves": []
+  },
+  "little_cms": {
+   "cpe": "cpe:2.3:a:littlecms:little_cms:2.19.1",
+   "total": 0,
+   "cves": []
+  },
+  "libxml2": {
+   "cpe": "cpe:2.3:a:xmlsoft:libxml2:2.15.4",
+   "total": 0,
+   "cves": []
+  },
+  "expat": {
+   "cpe": "cpe:2.3:a:libexpat_project:libexpat:2.8.5",
+   "total": 0,
+   "cves": []
+  },
+  "libtiff": {
+   "cpe": "cpe:2.3:a:libtiff:libtiff:4.7.2",
+   "total": 0,
+   "cves": []
+  },
+  "libheif": {
+   "cpe": "cpe:2.3:a:struktur:libheif:1.23.5",
+   "total": 0,
+   "cves": []
+  },
+  "librsvg": {
+   "cpe": "cpe:2.3:a:gnome:librsvg:2.63.2",
+   "total": 0,
+   "cves": []
+  },
+  "glib": {
+   "cpe": "cpe:2.3:a:gnome:glib:2.90.0",
+   "total": 0,
+   "cves": []
+  },
+  "freetype": {
+   "cpe": "cpe:2.3:a:freetype:freetype:2.14.3",
+   "total": 0,
+   "cves": []
+  },
+  "harfbuzz": {
+   "cpe": "cpe:2.3:a:harfbuzz_project:harfbuzz:14.5.0",
+   "total": 0,
+   "cves": []
+  },
+  "cairo": {
+   "cpe": "cpe:2.3:a:cairographics:cairo:1.18.6",
+   "total": 0,
+   "cves": []
+  },
+  "fontconfig": {
+   "cpe": "cpe:2.3:a:fontconfig_project:fontconfig:2.18.3",
+   "total": 0,
+   "cves": []
+  },
+  "aom": {
+   "cpe": "cpe:2.3:a:aomedia:aomedia:3.15.1",
+   "total": 3,
+   "cves": [
+    {
+     "id": "CVE-2021-30473",
+     "published": "2021-05-06",
+     "status": "Modified",
+     "score": 9.8,
+     "summary": "aom_image.c in libaom in AOMedia before 2021-04-07 frees memory that is not located on the heap."
+    },
+    {
+     "id": "CVE-2021-30474",
+     "published": "2021-06-02",
+     "status": "Modified",
+     "score": 9.8,
+     "summary": "aom_dsp/grain_table.c in libaom in AOMedia before 2021-03-30 has a use-after-free."
+    },
+    {
+     "id": "CVE-2021-30475",
+     "published": "2021-06-04",
+     "status": "Modified",
+     "score": 9.8,
+     "summary": "aom_dsp/noise_model.c in libaom in AOMedia before 2021-03-24 has a buffer overflow."
+    }
+   ]
+  },
+  "libarchive": {
+   "cpe": "cpe:2.3:a:libarchive:libarchive:3.8.9",
+   "total": 0,
+   "cves": []
+  },
+  "pango": {
+   "cpe": "cpe:2.3:a:gnome:pango:1.58.2",
+   "total": 0,
+   "cves": []
+  },
+  "pixman": {
+   "cpe": "cpe:2.3:a:pixman:pixman:0.46.4",
+   "total": 0,
+   "cves": []
+  },
+  "zlib-ng": {
+   "cpe": "cpe:2.3:a:zlib-ng:zlib-ng:2.3.3",
+   "total": 0,
+   "cves": []
+  },
+  "node24": {
+   "cpe": "cpe:2.3:a:nodejs:node.js:24.18.1",
+   "total": 2,
+   "cves": [
+    {
+     "id": "CVE-2021-43803",
+     "published": "2021-12-10",
+     "status": "Modified",
+     "score": 7.5,
+     "summary": "Next.js is a React framework. In versions of Next.js prior to 12.0.5 or 11.1.3, invalid or malformed URLs could lead to a server crash. In order to be affected "
+    },
+    {
+     "id": "CVE-2022-36046",
+     "published": "2022-08-31",
+     "status": "Modified",
+     "score": 5.3,
+     "summary": "Next.js is a React framework that can provide building blocks to create web applications. All of the following must be true to be affected by this CVE: Next.js "
+    }
+   ]
+  },
+  "node25": {
+   "cpe": "cpe:2.3:a:nodejs:node.js:25.9.0",
+   "total": 2,
+   "cves": [
+    {
+     "id": "CVE-2021-43803",
+     "published": "2021-12-10",
+     "status": "Modified",
+     "score": 7.5,
+     "summary": "Next.js is a React framework. In versions of Next.js prior to 12.0.5 or 11.1.3, invalid or malformed URLs could lead to a server crash. In order to be affected "
+    },
+    {
+     "id": "CVE-2022-36046",
+     "published": "2022-08-31",
+     "status": "Modified",
+     "score": 5.3,
+     "summary": "Next.js is a React framework that can provide building blocks to create web applications. All of the following must be true to be affected by this CVE: Next.js "
+    }
+   ]
+  }
+ }
+}

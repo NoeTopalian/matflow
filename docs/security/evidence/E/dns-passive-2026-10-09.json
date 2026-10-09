@@ -1,0 +1,54 @@
+{
+ "matflow.studio": {
+  "A": [
+   "A:64.29.17.1",
+   "A:216.198.79.65"
+  ],
+  "CAA": [
+   "CAA:0 issue \"sectigo.com\"",
+   "CAA:0 issue \"pki.goog\"",
+   "CAA:0 issue \"letsencrypt.org\""
+  ],
+  "NS": [
+   "NS:ns1.vercel-dns.com.",
+   "NS:ns2.vercel-dns.com."
+  ]
+ },
+ "www.matflow.studio": {
+  "A": [
+   "A:216.198.79.65",
+   "A:64.29.17.1"
+  ]
+ },
+ "_dmarc.matflow.studio": {
+  "A": [
+   "A:216.198.79.1",
+   "A:64.29.17.65"
+  ]
+ },
+ "send.matflow.studio": {
+  "MX": [
+   "MX:10 feedback-smtp.eu-west-1.amazonses.com."
+  ],
+  "TXT": [
+   "TXT:v=spf1 include:amazonses.com ~all"
+  ]
+ },
+ "resend._domainkey.matflow.studio": {
+  "TXT": [
+   "TXT:p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC/90baT6EXCc0Jsx4pMN8c/y3kBMRXA6KH1mtx+4vJN5MGTZ2pA98l/oK3hgVzEoQ9UKgcXsO86EPwgXj0pQR8Cb5iK8exVTo9kufE+a5+5Cl4qcjSL1dop35poyCVALug+5+Gw+2dBf/1U9NWy+41oMqCl+VSoJ7g7BYiTRNXjQIDAQAB"
+  ]
+ },
+ "mail.matflow.studio": {
+  "A": [
+   "A:64.29.17.65",
+   "A:64.29.17.1"
+  ]
+ },
+ "app.matflow.studio": {
+  "A": [
+   "A:64.29.17.1",
+   "A:216.198.79.65"
+  ]
+ }
+}
