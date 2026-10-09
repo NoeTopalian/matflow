@@ -188,11 +188,18 @@ describe.each(DB_FAILURES)("revocation lookup fails: %s", (_label, makeError) =>
     h.userFindUnique.mockRejectedValue(makeError());
   });
 
-  it("answers this request as signed out: auth() is null, never a session", async () => {
+  it("answers this request as signed out: auth() is null, never a session — and the cookie is KEPT (SF-44)", async () => {
     const r = await sessionAction(coachToken());
-    // null, not a truthy session without a user: 57 call sites check only
-    // `if (!session)` before reading session.user.* (auth.ts comment).
-    expect(r.session).toBeNull();
+    // Lane A2 (SF-44): jwt() keeps the token, marked for revalidation, so the
+    // cookie is re-issued rather than cleared; session() carries no user and
+    // the exported auth() turns that into null for every caller.
+    expect(r.admitted).toBe(false);
+    expect(r.token, "token kept: a dependency failure does not sign anyone out").not.toBeNull();
+    expect(typeof r.token?.revalidateSince).toBe("number");
+    expect((r.session as { authUnavailable?: unknown }).authUnavailable).toBe(true);
+    h.authMock.mockResolvedValue(r.session);
+    const { auth } = await import("@/auth");
+    expect(await (auth as unknown as () => Promise<unknown>)()).toBeNull();
   });
 
   it("refuses the API gate (401), the page gate (/login) and a protected mutation, with no write", async () => {
@@ -216,7 +223,7 @@ describe.each(DB_FAILURES)("revocation lookup fails: %s", (_label, makeError) =>
   it("recovers on the next request once the lookup works (the cookie was never cleared server-side)", async () => {
     const cookie = coachToken();
     const first = await sessionAction({ ...cookie });
-    expect(first.session).toBeNull();
+    expect(first.admitted).toBe(false);
     h.userFindUnique.mockResolvedValue(ROW);
     const second = await sessionAction({ ...cookie });
     expect(second.session?.user?.id).toBe("u-secA-coach");
@@ -225,7 +232,7 @@ describe.each(DB_FAILURES)("revocation lookup fails: %s", (_label, makeError) =>
   it("a member session fails closed the same way", async () => {
     h.memberFindUnique.mockRejectedValue(makeError());
     const r = await sessionAction(coachToken({ id: "m-secA", role: "member", memberId: "m-secA", sessionVersion: 1 }));
-    expect(r.session).toBeNull();
+    expect(r.admitted).toBe(false);
   });
 });
 
@@ -233,7 +240,7 @@ describe.each(MALFORMED)("revocation lookup returns a malformed result: %s", (_l
   it("is not admitted", async () => {
     h.userFindUnique.mockResolvedValue(row);
     const r = await sessionAction(coachToken());
-    expect(r.session).toBeNull();
+    expect(r.admitted).toBe(false);
     h.authMock.mockResolvedValue(r.session);
     const { requireApiStaff } = await import("@/lib/api-authz");
     const gate = await requireApiStaff();
@@ -269,7 +276,7 @@ describe("the other fail-open paths in jwt()", () => {
     const legacy = coachToken();
     delete legacy.mustChangePassword;
     const r = await sessionAction({ ...legacy });
-    expect(r.session).toBeNull();
+    expect(r.admitted).toBe(false);
     // Positive control: the read works → stamped and admitted.
     h.userFindUnique.mockImplementation(async (args: { select?: Record<string, boolean> }) =>
       args?.select?.mustChangePassword ? { mustChangePassword: false } : ROW,
@@ -300,6 +307,6 @@ describe("the other fail-open paths in jwt()", () => {
     expect(t).not.toBeNull();
     expect(h.userFindUnique).not.toHaveBeenCalled();
     vi.unstubAllEnvs();
-    expect((await sessionAction(coachToken())).session).toBeNull();
+    expect((await sessionAction(coachToken())).admitted).toBe(false);
   });
 });

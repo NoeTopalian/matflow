@@ -241,7 +241,8 @@ describe.skipIf(!HAS_DB)("account editing on real rows", () => {
     expect(u?.id).toBe(ids.owner);
     expect(u?.totpPending).toBe(true);
     const { POST } = await import("@/app/api/auth/totp/verify/route");
-    state.jwt = { id: ids.owner, tenantId: ids.a, totpPending: true };
+    // SF-37 (lane A2): the verify route checks revocation; a real token carries the live version.
+    state.jwt = { id: ids.owner, tenantId: ids.a, totpPending: true, sessionVersion: (await withRlsBypass((tx) => tx.user.findUniqueOrThrow({ where: { id: ids.owner }, select: { sessionVersion: true } }))).sessionVersion };
     nextStep(); // the change spent the previous step's code
     const ok = await POST(req("POST", "http://localhost/api/auth/totp/verify", { code: generateSync({ secret: SECRET }) }) as never);
     expect(ok.status).toBe(200);

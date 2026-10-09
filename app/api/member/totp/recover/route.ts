@@ -98,6 +98,23 @@ export async function POST(req: Request) {
       if (!result.ok) {
         return { kind: "invalid" as const, memberId: member.id };
       }
+      // SINGLE WINNER (SF-27 residual, security campaign iteration 2, lane A2,
+      // 9 Oct 2026 — the staff route got the same fix in iteration 1). The one
+      // transaction above did not stop the race: two concurrent recoveries
+      // each read the same list and each wrote their own remainder, so both
+      // "succeeded" (sessionVersion bumped twice, two audit rows) and the
+      // later write put the earlier request's consumed code back. The effect
+      // itself — the second factor switched off — is claimed by a conditional
+      // update first: exactly one request matches; the other blocks on the row
+      // lock, then matches nothing. A recovery with no second factor to
+      // recover is refused too (it used to bump the version anyway).
+      const claimed = await tx.member.updateMany({
+        where: { id: member.id, totpEnabled: true },
+        data: { totpEnabled: false },
+      });
+      if (claimed.count !== 1) {
+        return { kind: "invalid" as const, memberId: member.id };
+      }
       await tx.member.update({
         where: { id: member.id },
         data: {

@@ -88,14 +88,16 @@ describe("Google sign-in and a provisional login email (behavioural)", () => {
     }));
   });
 
-  it("control: the same account, not provisional, is admitted (TOTP still owed)", async () => {
+  it("control: the same account, not provisional, reaches the explicit-link rule (SF-36) instead", async () => {
+    // Lane A2 (SF-36): a matching, verified email no longer signs anyone in;
+    // only an explicit link would, and none exists yet. The provisional
+    // refusal above still fires first and is still audited.
     h.userFindUnique.mockResolvedValue({ ...OWNER });
     const user: Record<string, unknown> = { email: "Owner@Club.example" };
     const result = await captured.signIn!({ user, account: { provider: "google" }, profile: { email_verified: true } });
     expect(result).not.toBe("/login?error=invalid_link");
-    expect(typeof result === "string" && result.startsWith("/login")).toBe(false);
-    expect(user.id).toBe("owner-1");
-    expect(user.totpPending).toBe(true);
+    expect(result).toBe("/login?error=google_link_required");
+    expect(user.id).toBeUndefined();
     expect(h.logAudit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "auth.external_signin.refused_provisional" }));
   });
 });

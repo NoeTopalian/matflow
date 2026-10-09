@@ -45,6 +45,15 @@ vi.mock("next-auth", () => ({
 }));
 vi.mock("next-auth/providers/credentials", () => ({ default: (c: unknown) => c }));
 vi.mock("next-auth/providers/google", () => ({ default: (c: unknown) => c }));
+// Lockout v2 (lane A2, SF-35/SF-59) keeps its counters in RateLimitHit; this
+// file is about something else, so the counters are stubbed open here.
+// tests/integration/sec-a2-lockout-oracle-db.test.ts drives them for real.
+vi.mock("@/lib/auth-lockout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth-lockout")>()),
+  lockoutState: async () => ({ blocked: false, addrCapped: false }),
+  recordFailure: async () => 1,
+  clearPairOnSuccess: async () => {},
+}));
 
 const { releaseBarrier, compareMock, captureException, logAudit } = vi.hoisted(() => {
   let waiting: (() => void)[] = [];
@@ -160,9 +169,13 @@ describe("overlapping wrong passwords each count", () => {
     const results = await Promise.all(flight);
 
     expect(results.every((r) => r === null), "every attempt is still refused").toBe(true);
-    // Ten increments: the tenth crosses the threshold, so the counter resets to
-    // 0 and the lock goes on. Either way the arithmetic reached ten.
-    expect(row.lockedUntil, "ACCOUNT_LOCKOUT_THRESHOLD is 10 — ten attempts must lock").not.toBeNull();
+    // Ten increments, all counted. Lockout v2 (lane A2, SF-35/SF-59): the row
+    // counter no longer LOCKS the account — that was a lockout anyone who knew
+    // the address could trigger, and an existence oracle. The address-keyed
+    // counters in lib/auth-lockout.ts refuse instead
+    // (tests/integration/sec-a2-lockout-oracle-db.test.ts).
+    expect(row.failedLoginCount, "one increment per attempt, however they interleave").toBe(10);
+    expect(row.lockedUntil, "failed passwords never lock the row").toBeNull();
   });
 
   it("three simultaneous refusals leave the counter at three", async () => {
@@ -211,7 +224,7 @@ describe("a counter that cannot be written is not silent", () => {
     expect(
       errorSpy.mock.calls.flat().join(" "),
       "while this is failing the lockout is not counting, and this line is how anyone finds out",
-    ).toMatch(/lockout is not counting/);
+    ).toMatch(/row counter NOT recorded/);
     expect(captureException, "and it reaches Sentry, like every other fail-open control").toHaveBeenCalled();
     errorSpy.mockRestore();
   });

@@ -182,6 +182,44 @@ export function unauthenticatedResponse(
   return NextResponse.redirect(new URL("/login", requestUrl));
 }
 
+/**
+ * What a request is answered with when its session could not be CHECKED
+ * (SF-44, security campaign iteration 2, lane A2, 9 Oct 2026): the revocation
+ * lookup failed, so auth.ts kept the token, marked it for revalidation and
+ * gave it no authority. Not "signed out" — nothing here clears the cookie, and
+ * the next request is checked afresh — and not admitted either.
+ *
+ * An `/api/*` request gets a retryable 503 in the API's refusal shape with
+ * Retry-After. A page gets a small 503 page that retries itself, so the person
+ * lands back where they were once the database answers, still signed in.
+ * Exported for tests/unit/sec-a2-proxy-outage-cookie.test.ts.
+ */
+export const AUTH_UNAVAILABLE_RETRY_AFTER_S = 15;
+export function authUnavailableResponse(pathname: string, requestId: string): NextResponse {
+  const headers = {
+    "retry-after": String(AUTH_UNAVAILABLE_RETRY_AFTER_S),
+    "cache-control": "private, no-store",
+    "x-request-id": requestId,
+  };
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.json(
+      { ok: false, error: "We couldn't confirm your sign-in just now. Please try again in a moment.", retryable: true },
+      { status: 503, headers },
+    );
+  }
+  const html =
+    '<!doctype html><html lang="en-GB"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    `<meta http-equiv="refresh" content="${AUTH_UNAVAILABLE_RETRY_AFTER_S}">` +
+    "<title>Temporarily unavailable</title>" +
+    "<style>body{margin:0;font-family:system-ui,sans-serif;background:#f7f7f8;color:#1a1a1a;display:grid;place-items:center;min-height:100vh;padding:16px}" +
+    "main{max-width:28rem}a{color:inherit}@media (prefers-color-scheme:dark){body{background:#111;color:#eee}}</style>" +
+    "</head><body><main><h1>We couldn't confirm your sign-in</h1>" +
+    "<p>MatFlow can't reach its database for a moment. You're still signed in. This page will try again automatically.</p>" +
+    '<p><a href="">Try again now</a></p></main></body></html>';
+  return new NextResponse(html, { status: 503, headers: { ...headers, "content-type": "text/html; charset=utf-8" } });
+}
+
 export default auth(async function proxy(req) {
   const { pathname } = req.nextUrl;
   const requestId = ensureRequestId(req);
@@ -305,6 +343,14 @@ export default auth(async function proxy(req) {
   // A session with no user id ({ user: undefined } — an invalidated token, or
   // an identity-less support carrier) is signed out, not a session (review of
   // lane I, 6 Oct 2026; lib/api-authz.ts already checks the user).
+  // Checked BEFORE the signed-out branch: a session awaiting revalidation has
+  // no user, and must not be answered as signed out (SF-44).
+  // (Read inline rather than through a helper imported from @/auth: the
+  // many tests that replace @/auth wholesale would otherwise lose this branch.)
+  if ((req.auth as { authUnavailable?: unknown } | null)?.authUnavailable === true) {
+    return authUnavailableResponse(pathname, requestId);
+  }
+
   if (!req.auth || !(req.auth.user as { id?: unknown } | undefined)?.id) {
     return unauthenticatedResponse(pathname, req.url, requestId);
   }

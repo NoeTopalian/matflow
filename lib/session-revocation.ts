@@ -38,10 +38,13 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
  * failed OPEN, on any request whose later queries happened to succeed (pool
  * exhaustion, a statement timeout, a policy rejection after the RLS cutover).
  * The old code before that was `catch { /* DB transient — keep token *\/ }`:
- * a silent, total, indefinite bypass, reported to nobody. A blip DOES sign
- * people out: proxy.ts runs under the next-auth wrapper, which copies the
- * cookie-clearing Set-Cookie of an `unknown` verdict onto the reply (review
- * R-1, 9 Oct 2026). Accepted as an availability cost; see FINDINGS SF-44.
+ * a silent, total, indefinite bypass, reported to nobody. The AH-G7 refusal
+ * (jwt() → null) then signed people OUT on a blip, because proxy.ts runs under
+ * the next-auth wrapper, which copies the cookie-clearing Set-Cookie onto the
+ * reply (review R-1). Since SF-44 (lane A2, 9 Oct 2026) auth.ts refuses
+ * `unknown` WITHOUT clearing the cookie: the token is kept, marked for
+ * revalidation, carries no authority, and proxy.ts answers a retryable 503;
+ * only `revoked` clears the cookie. See REVALIDATE_CLAIM in auth.ts.
  *
  * **Malformed results are `unknown`, not `ok`.** A row whose `sessionVersion`
  * is not an integer cannot prove anything, so it cannot admit anything. A
@@ -63,7 +66,7 @@ export type RevocationVerdict =
   | "ok"
   /** The row is gone, or its version moved. Kill the session. */
   | "revoked"
-  /** We could not find out. The caller REFUSES this request (as for `revoked`) and this is REPORTED. */
+  /** We could not find out. The caller REFUSES this request — retryable, cookie kept, revalidated next time (SF-44) — and this is REPORTED. */
   | "unknown";
 
 export interface SessionVersionCheck {
@@ -129,8 +132,13 @@ export async function checkSessionVersion(
  * here too, the one failure mode that must never be mistaken for a blip.
  */
 function unknownVerdict(memberId: string | null | undefined, err: unknown): RevocationVerdict {
-  console.error("[auth] session-revocation check failed — request REFUSED (fail closed)", {
+  const code = (err as { code?: unknown } | null)?.code;
+  console.error("[auth] session-revocation check failed — request REFUSED as unavailable (fail closed; session kept for revalidation)", {
     subject: memberId ? "member" : "user",
+    // The driver/server code (57014 timeout, 57P01 connection loss, 42501
+    // permission, P1001 unreachable…) so an incident can be told from a
+    // policy rejection after the RLS cutover without reading the message.
+    code: typeof code === "string" ? code : undefined,
     error: err instanceof Error ? err.message : String(err),
   });
   Sentry.captureException(err, {

@@ -12,6 +12,7 @@ import { verifySync } from "otplib";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
+import { refuseRevokedPendingToken } from "@/lib/auth-pending-gate";
 import { assertSameOrigin } from "@/lib/csrf";
 
 export async function POST(req: NextRequest) {
@@ -31,6 +32,11 @@ export async function POST(req: NextRequest) {
   if (!token?.id || !token.memberId || token.totpPending !== true) {
     return NextResponse.json({ error: "No pending TOTP session" }, { status: 401 });
   }
+
+  // Revoked since the password step? Ask before anything is spent (SF-37,
+  // lib/auth-pending-gate.ts). getToken() only decodes the cookie.
+  const revoked = await refuseRevokedPendingToken(token);
+  if (revoked) return revoked;
 
   const rl = await checkRateLimit(`totp-member:${token.id}`, 5, 10 * 60 * 1000);
   if (!rl.allowed) {
@@ -63,7 +69,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid code" }, { status: 400 });
   }
 
-  const newToken = { ...token, totpPending: false };
+  const newToken: Record<string, unknown> = { ...token, totpPending: false };
+  // Checked just now: nothing awaits revalidation (SF-44 marker, auth.ts).
+  delete newToken.revalidateSince;
   const encoded = await encode({
     token: newToken,
     secret: AUTH_SECRET_VALUE!,

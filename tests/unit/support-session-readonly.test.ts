@@ -108,6 +108,7 @@ const SESSIONLESS: Record<string, string> = {
   "app/api/auth/forgot-password/route.ts": "public; emails a link to the address on file, never to the caller",
   "app/api/auth/reset-password/route.ts": "credential is the emailed one-time token, not the session",
   "app/api/auth/totp/recover/route.ts": "public; credential is a recovery code",
+  "app/api/auth/disown-login/[token]/route.ts": "public; credential is the signed link from the new-sign-in email; acts on that link's subject, never on the session (POST since lane A2 SF-37)",
   "app/api/auth/totp/verify/route.ts": "acts only on a token with totpPending, which a support session never carries",
   "app/api/stripe/webhook/route.ts": "Stripe-signed webhook",
   "app/api/webhooks/resend/route.ts": "Resend-signed webhook",

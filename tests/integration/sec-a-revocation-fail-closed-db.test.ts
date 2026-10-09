@@ -86,9 +86,11 @@ const E = (who: string) => `${STAMP}-${who}@example.test`;
 async function sessionAction(token: Record<string, unknown>) {
   if (!h.jwt) await import("@/auth");
   const t = (await h.jwt!({ token })) as Record<string, unknown> | null;
-  // jwt() → null: the server-side auth() returns null and applies no
-  // Set-Cookie, so the browser keeps its cookie for the next request.
+  // jwt() → null: revoked (the cookie is cleared). An unknown verdict keeps the
+  // token, marked for revalidation (SF-44, lane A2): session() then carries no
+  // user, and the exported auth() returns null for it.
   if (t === null) return { session: null as null | { user?: Record<string, unknown> } };
+  if (typeof t.revalidateSince === "number") return { session: null as null | { user?: Record<string, unknown> }, marked: true };
   const session = (await h.session!({
     session: { user: { name: t.name, email: t.email }, expires: new Date(Date.now() + 3600_000).toISOString() },
     token: t,

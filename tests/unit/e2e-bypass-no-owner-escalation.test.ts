@@ -51,6 +51,15 @@ vi.mock("next-auth/providers/credentials", () => ({
   default: (cfg: { authorize?: Authorize }) => cfg,
 }));
 vi.mock("next-auth/providers/google", () => ({ default: (cfg: unknown) => cfg }));
+// Lockout v2 (lane A2, SF-35/SF-59) keeps its counters in RateLimitHit; this
+// file is about something else, so the counters are stubbed open here.
+// tests/integration/sec-a2-lockout-oracle-db.test.ts drives them for real.
+vi.mock("@/lib/auth-lockout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth-lockout")>()),
+  lockoutState: async () => ({ blocked: false, addrCapped: false }),
+  recordFailure: async () => 1,
+  clearPairOnSuccess: async () => {},
+}));
 
 const { tenantFindUnique, userFindUnique, memberFindUnique, userFindFirst } = vi.hoisted(() => ({
   tenantFindUnique: vi.fn(),
@@ -112,6 +121,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("E2E_BYPASS_TOKEN", BYPASS);
   vi.stubEnv("TESTING_MODE", "true");
+  // SF-37 (lane A2): the harness needs its explicit flag; no header turns it on.
+  vi.stubEnv("E2E_AUTH_BYPASS", "true");
   tenantFindUnique.mockResolvedValue(TENANT);
   userFindUnique.mockResolvedValue(null);
   memberFindUnique.mockResolvedValue(null);

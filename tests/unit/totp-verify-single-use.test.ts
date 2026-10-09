@@ -54,6 +54,11 @@ beforeEach(() => {
   h.row = { id: "u1", totpSecret: SECRET, totpEnabled: true, totpLastUsedStep: null };
 });
 
+// SF-37 (lane A2): the route now asks the revocation question first; this
+// file is about single use, so the session is live here.
+// tests/integration/sec-a2-verify-disown-db.test.ts drives the gate for real.
+vi.mock("@/lib/auth-pending-gate", () => ({ refuseRevokedPendingToken: async () => null }));
+
 describe("POST /api/auth/totp/verify — single-use codes", () => {
   it("accepts a valid code once", async () => {
     const res = await POST(req(generateSync({ secret: SECRET })));

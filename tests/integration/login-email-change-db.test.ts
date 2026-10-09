@@ -214,7 +214,8 @@ describe.skipIf(!HAS_DB)("login-email change + rollback on real rows", () => {
 
   it("after: the same authenticator completes the sign-in for the new address", async () => {
     const { POST } = await import("@/app/api/auth/totp/verify/route");
-    state.jwt = { id: ids.owner, tenantId: ids.a, totpPending: true };
+    // SF-37 (lane A2): the verify route checks revocation; a real token carries the live version.
+    state.jwt = { id: ids.owner, tenantId: ids.a, totpPending: true, sessionVersion: (await withRlsBypass((tx) => tx.user.findUniqueOrThrow({ where: { id: ids.owner }, select: { sessionVersion: true } }))).sessionVersion };
     // The change above spent this time-step's code (single use, shared with
     // /api/auth/totp/verify via totpLastUsedStep): the person waits for the
     // authenticator's NEXT code, exactly as the signed-out panel tells them.

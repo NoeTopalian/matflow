@@ -5,6 +5,7 @@ import { consumeUserTotp } from "@/lib/login-email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
+import { refuseRevokedPendingToken } from "@/lib/auth-pending-gate";
 
 export async function POST(req: NextRequest) {
   // Must pass cookieName + secureCookie explicitly — getToken's default
@@ -21,6 +22,11 @@ export async function POST(req: NextRequest) {
   if (!token?.id || token.totpPending !== true) {
     return NextResponse.json({ error: "No pending TOTP session" }, { status: 401 });
   }
+
+  // Revoked since the password step? Ask before anything is spent (SF-37,
+  // lib/auth-pending-gate.ts). getToken() only decodes the cookie.
+  const revoked = await refuseRevokedPendingToken(token);
+  if (revoked) return revoked;
 
   // Rate limit: 5 attempts per user per 10 min
   const rl = await checkRateLimit(`totp:${token.id}`, 5, 10 * 60 * 1000);
@@ -63,7 +69,9 @@ export async function POST(req: NextRequest) {
   // Re-encode JWT with totpPending cleared. NextAuth v5 cookie name (legacy
   // v4 name was used here previously and silently broke the JWT mutation —
   // see lib/auth-cookie.ts).
-  const newToken = { ...token, totpPending: false };
+  const newToken: Record<string, unknown> = { ...token, totpPending: false };
+  // Checked just now: nothing awaits revalidation (SF-44 marker, auth.ts).
+  delete newToken.revalidateSince;
   const encoded = await encode({
     token: newToken,
     secret: AUTH_SECRET_VALUE!,

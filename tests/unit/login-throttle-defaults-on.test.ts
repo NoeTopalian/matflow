@@ -69,6 +69,9 @@ describe("auth.ts wiring", () => {
   it("still guards the sign-in rate-limit block it is supposed to guard", () => {
     // Guards against the flag being made correct and then quietly unused.
     const src = authSource();
-    expect(src).toMatch(/if\s*\(\s*LOGIN_THROTTLE_ENABLED\s*&&\s*!skipRateLimit\s*\)/);
+    // Lane A2 (SF-59): the flag now feeds loginThrottleActive(), which also
+    // refuses "false" on Vercel and on the production database.
+    expect(src).toMatch(/if\s*\(\s*LOGIN_THROTTLE_ENABLED\s*\)\s*return true;/);
+    expect(src).toMatch(/if\s*\(\s*loginThrottleActive\(\)\s*&&\s*!harness\s*\)/);
   });
 });
