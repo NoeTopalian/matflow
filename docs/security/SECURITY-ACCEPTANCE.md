@@ -61,6 +61,12 @@ database file (39 files × 2 roles, 16:55–17:40 UK): 78/78 runs exit 0; `sec-b
 `tenant-restore-purge-race` under the restricted role failed to set up once (transient) and passed 5/5 on re-run; the three
 files lane D changed mid-sweep re-run on the final tree: 23/23, 19/19, 7/7 under both roles (TEST-EVIDENCE.md).
 
+### 5a. Iteration 2 — gates under the supported runtime (Node 24.21.0, npm 11.19.0; `evidence/lead/gates-node24-6043fed.log`)
+On `6043fed` (= `788d29a` source + docs + the reconciliation script), 9 Oct 2026 18:30 UK: `npm run lint` 0 errors / 68
+warnings; `tsc --noEmit` 0; full unit suite 436 files / 5938 tests; `npm run build` succeeded; `npm audit --omit=dev` 0;
+`sharp` 0.35.5 / libvips 8.18.7 load under Node 24. The iteration-1 gates above ran under Node 25.9.0 (end-of-life
+locally) and are superseded by this run for the same source. The Vercel build runtime is still to be confirmed (lane E2).
+
 ## 6. Evidence limitations
 No browser rehearsal of the campaign build (unit + both-role database only); the TEST branch stands in for
 production; both-roles results are local (CI runs as a superuser until SF-58 lands); the digest-based import rules

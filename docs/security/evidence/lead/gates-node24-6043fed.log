@@ -1,0 +1,24 @@
+sha=6043feddb8160d71a38fadbbb2fd7dfd8bd5ef94
+node=v24.21.0 npm=11.19.0
+=== lint
+  530:5  warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
+  93:5  warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
+  246:5  warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
+✖ 68 problems (0 errors, 68 warnings)
+All ratchets at baseline. No new UI-rule violations.
+exit=0
+=== tsc
+exit=0
+=== unit
+ Test Files  436 passed (436)
+      Tests  5938 passed (5938)
+exit=0
+=== build
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+exit=0
+=== audit
+found 0 vulnerabilities
+=== native
+sharp 0.35.5 libvips 8.18.7
