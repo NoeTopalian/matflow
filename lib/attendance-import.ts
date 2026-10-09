@@ -394,7 +394,7 @@ export async function createHistoricalClasses(
   }
   // A single-venue offering remembers its class for the next export of the club.
   for (const [label, ids] of perOffering) {
-    const d = inputs.decisions.offering[label];
+    const d = Object.hasOwn(inputs.decisions.offering, label) ? inputs.decisions.offering[label] : undefined;
     if (ids.length === 1 && d?.action === "new_class" && !d.targetId) {
       await tx.importSourceMapping.updateMany({ where: { tenantId, source: LEDGER_SOURCE, kind: "offering", sourceKey: label }, data: { targetId: ids[0] } });
     }

@@ -62,3 +62,6 @@ tests/e2e/.auth/
 
 # Contact-sheet PNGs (docs/readiness/sheets/<date>/ holds the committed notes)
 .omc/sheets/
+
+# OMC project memory is tool state (it records the session commands); never tracked (security campaign 9 Oct 2026)
+.omc/project-memory.json

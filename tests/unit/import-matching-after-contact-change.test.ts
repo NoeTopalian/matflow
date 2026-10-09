@@ -110,14 +110,15 @@ describe("attendance planner — a member whose address was corrected", () => {
     expect(who.candidates.map((c) => c.memberId).sort()).toEqual(["m_bea", "m_bea2"]);
   });
 
-  it("FALLBACK residual (documented): another member with the SAME name who now holds the released address is matched", () => {
-    // The fallback's definition of identity is name AND current address; with
-    // no externalRef there is no address history to consult. Pinned so a
-    // change here is deliberate; the preview shows the match before commit.
+  it("FALLBACK (closed by lane D, SEC-053): another member with the SAME name who now holds the released address is NOT matched", () => {
+    // Two members share the name, so name + address is ambiguous: pending, both
+    // offered as candidates, the owner decides. A preview is not a safeguard
+    // (tests/integration/sec-d-attendance-misbinding-db.test.ts proves the commit).
     const members = [...ROSTER(), { id: "m_bea_other", name: "Bea Lane", email: BEA_OLD, externalRef: null }];
     const who = personOf(planOf([aRow("Bea Lane", BEA_OLD)], { members }), "Bea Lane", BEA_OLD);
-    expect(who.memberId).toBe("m_bea_other");
-    expect(who.matchMethod).toBe("name_and_email");
+    expect(who.memberId).toBeNull();
+    expect(who.matchMethod).toBeNull();
+    expect(who.candidates.map((c) => c.memberId).sort()).toEqual(["m_bea", "m_bea_other"]);
   });
 
   it("an externalRef hit is never overridden by the fallback, even when another member holds the row's address now", () => {

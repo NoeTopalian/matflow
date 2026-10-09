@@ -23,9 +23,11 @@
  *    members import stored as `Member.externalRef` (lib/importers/teamup.ts
  *    `teamupPersonKey`). Matching order: the owner's saved decision; the
  *    member whose externalRef is that key (or the export's customer id); one
- *    member whose name AND email both equal the row's. Name alone, email
- *    alone, a shared address, a date of birth or an emergency contact never
- *    identify anyone — they are offered as candidates only.
+ *    member whose name AND email both equal the row's, when no other member
+ *    of the club has that name. Name alone, email alone, a shared address, a
+ *    date of birth or an emergency contact never identify anyone — they are
+ *    offered as candidates only. Once a commit starts, the resolutions it
+ *    started with are frozen (`PlanDecisions.frozenPeople`).
  *  - A session is (absolute start, offering mapping, venue mapping). Offerings
  *    sharing a start are different sessions unless the owner maps them to the
  *    same class. Nothing is deduplicated by start time alone.
@@ -439,13 +441,24 @@ export type PersonDecision = { action: "member"; targetId: string } | { action: 
 export type OfferingDecision = { action: "class"; targetId: string } | { action: "new_class"; targetId?: string | null } | { action: "pending" };
 export type VenueDecision = { action: "location"; targetId: string } | { action: "club" } | { action: "pending" };
 
+export type MatchMethod = "decision" | "external_ref" | "name_and_email";
+
+/**
+ * Who each person resolved to when the owner started the commit. A commit runs
+ * in steps that re-plan against the live roster; without this, a member added,
+ * renamed or re-addressed between steps could receive history the owner never
+ * previewed (security lane D, AH-D1 / SEC-053, 9 Oct 2026). When present, it is
+ * the ONLY source of person resolution: a person absent from it, or whose
+ * member no longer exists, is pending.
+ */
+export type FrozenPerson = { memberId: string | null; method: MatchMethod | null; decidedPending: boolean };
+
 export type PlanDecisions = {
   person: Record<string, PersonDecision>;
   offering: Record<string, OfferingDecision>;
   venue: Record<string, VenueDecision>;
+  frozenPeople?: Record<string, FrozenPerson>;
 };
-
-export type MatchMethod = "decision" | "external_ref" | "name_and_email";
 
 /** What a booking will become if committed now. */
 export type BookingIntent =
@@ -599,8 +612,15 @@ export function planAttendanceImport(
     const hit = resolved.get(r.personKey);
     if (hit) return hit;
     let out: Resolved = { memberId: null, method: null, decidedPending: false };
-    const d = decisions.person[r.personKey];
-    if (d?.action === "member" && memberById.has(d.targetId)) out = { memberId: d.targetId, method: "decision", decidedPending: false };
+    // Own keys only: a source label "constructor" / "__proto__" must not find an inherited value (SF-C2).
+    const d = Object.hasOwn(decisions.person, r.personKey) ? decisions.person[r.personKey] : undefined;
+    const frozen = decisions.frozenPeople;
+    if (frozen) {
+      // A commit in progress: only what the owner previewed and committed binds.
+      const f = Object.hasOwn(frozen, r.personKey) ? frozen[r.personKey] : undefined;
+      if (f?.memberId && memberById.has(f.memberId)) out = { memberId: f.memberId, method: f.method, decidedPending: false };
+      else out = { memberId: null, method: null, decidedPending: !!f?.decidedPending };
+    } else if (d?.action === "member" && memberById.has(d.targetId)) out = { memberId: d.targetId, method: "decision", decidedPending: false };
     // A decision whose member no longer exists, or "keep pending": pending — never re-matched behind the owner's back.
     else if (d) out = { memberId: null, method: null, decidedPending: true };
     else {
@@ -611,8 +631,13 @@ export function planAttendanceImport(
       const uniq = [...new Map(refHits.map((m) => [m.id, m])).values()];
       if (uniq.length === 1) out = { memberId: uniq[0].id, method: "external_ref", decidedPending: false };
       else if (uniq.length === 0 && r.email && r.personName) {
+        // Name AND address, and only when nobody else in the club carries the
+        // name: two members with one name (a same-name member on a released or
+        // shared address, a parent and child with one name) is ambiguity, so the
+        // row stays pending and both are offered as candidates (AH-D1 / SEC-053).
         const ne = byNameEmail.get(`${norm(r.personName)}|${r.email}`) ?? [];
-        if (ne.length === 1) out = { memberId: ne[0].id, method: "name_and_email", decidedPending: false };
+        const sameName = byName.get(norm(r.personName)) ?? [];
+        if (ne.length === 1 && sameName.length === 1) out = { memberId: ne[0].id, method: "name_and_email", decidedPending: false };
       }
     }
     resolved.set(r.personKey, out);
@@ -663,8 +688,8 @@ export function planAttendanceImport(
     const status = r.status as BookingStatus;
 
     // Offering and venue as the owner mapped them.
-    const od = decisions.offering[r.className] ?? null;
-    const vd = decisions.venue[r.venue] ?? null;
+    const od = Object.hasOwn(decisions.offering, r.className) ? decisions.offering[r.className] : null;
+    const vd = Object.hasOwn(decisions.venue, r.venue) ? decisions.venue[r.venue] : null;
     const venueKey = vd?.action === "location" && locationIds.has(vd.targetId) ? `loc:${vd.targetId}` : vd?.action === "club" ? "club" : null;
     let classKey: string | null = null;
     let venueConflict = false;

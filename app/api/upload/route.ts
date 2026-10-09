@@ -196,7 +196,9 @@ export async function POST(req: Request) {
     let processedDimensions: { width: number; height: number } | null = null;
 
     try {
-      const pipeline = sharp(uploadBuffer).rotate(); // honour EXIF orientation
+      // Decoding cost is bounded (security lane D F4, SEC-051): 50 MP, not sharp's 268 MP default — an 8 KB PNG
+      // decodes to 67 MP otherwise. A per-principal rate limit on this route is still owed (FINDINGS SF-40).
+      const pipeline = sharp(uploadBuffer, { limitInputPixels: 50_000_000 }).rotate(); // honour EXIF orientation
       const resized =
         purpose === "profile-pic"
           ? pipeline.resize(PROFILE_PIC_SIZE_PX, PROFILE_PIC_SIZE_PX, { fit: "cover" })
