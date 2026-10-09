@@ -49,8 +49,8 @@ Lane D: _(pending)_. Lanes E and F and the coordinator's cross-owner edits: NOT 
 iteration (stated).
 
 ## 5. Gates on the final candidate
-As of `bbaf401` (9 Oct 2026 16:40 UK; `scratchpad/security/gates-campaign-4.log`): `npm run lint` 0 errors / 68
-pre-existing warnings, UI ratchets at baseline; `tsc --noEmit` 0; full unit suite 435 files / 5935 tests passed; `npm run
+As of `788d29a` (9 Oct 2026 17:10 UK; `scratchpad/security/gates-campaign-5.log`): `npm run lint` 0 errors / 68
+pre-existing warnings, UI ratchets at baseline; `tsc --noEmit` 0; full unit suite 436 files / 5938 tests passed; `npm run
 build` succeeded; `npm audit --omit=dev` 0 vulnerabilities (mysql2 overridden to 3.24.5). Both-role integration sweep of
 every security database file on the final SHA: _(run after the last review lands; recorded in TEST-EVIDENCE.md)_.
 
