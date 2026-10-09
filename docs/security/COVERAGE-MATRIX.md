@@ -80,22 +80,22 @@ CAPEC) are filled only when a lane has looked the ID up — never invented.
 | SEC-070 | Hosting, database and control-plane access | E | DNS/dangling-domain takeover | see brief | C, passive | APPLICABLE | PASS (no dangling) / FAIL (no DMARC, no apex SPF) | E-07 (2a6487e) | — | — |
 | SEC-071 | Hosting, database and control-plane access | E | TLS/transport | see brief | C/I | APPLICABLE | PASS (config) / BLOCKED (live TLS) | E-07 (2a6487e) | — | — |
 | SEC-072 | Hosting, database and control-plane access | E | Debug/management surface exposure | see brief | I/C | APPLICABLE | PASS (surface) / FAIL (CRON_SECRET unset) | E-07 (2a6487e) | — | — |
-| SEC-073 | Availability and financial resource abuse | F | Auth/crypto resource exhaustion | see brief | U/I/L | UNKNOWN | NOT RUN | — | — | — |
-| SEC-074 | Availability and financial resource abuse | F | Regex/parser CPU exhaustion | see brief | U/Fuzz | UNKNOWN | NOT RUN | — | — | — |
-| SEC-075 | Availability and financial resource abuse | F | Unbounded DB queries | see brief | I/L | UNKNOWN | NOT RUN | — | — | — |
-| SEC-076 | Availability and financial resource abuse | F | Pool/lock exhaustion | see brief | I/L | UNKNOWN | NOT RUN | — | — | — |
-| SEC-077 | Availability and financial resource abuse | F | Queue floods/retry storms | see brief | I/L | UNKNOWN | NOT RUN | — | — | — |
-| SEC-078 | Availability and financial resource abuse | F | Serverless cost amplification | see brief | C/I/L | UNKNOWN | NOT RUN | — | — | — |
-| SEC-079 | Availability and financial resource abuse | F | DoS through lockout (U/I). SEC-080 Provider/dependency outage | no permissive fallback | I/C | UNKNOWN | NOT RUN | — | — | — |
-| SEC-080 | Availability and financial resource abuse | F | Provider/dependency outage — no permissive fallback | see brief | I/C | UNKNOWN | NOT RUN | — | — | — |
-| SEC-081 | Audit, destruction prevention and recovery | F | Audit omission/rollback confusion | see brief | I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-082 | Audit, destruction prevention and recovery | F | Log injection/secret disclosure | see brief | U/I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-083 | Audit, destruction prevention and recovery | F | Audit tampering/blind spots | see brief | I/C | UNKNOWN | NOT RUN | — | — | — |
-| SEC-084 | Audit, destruction prevention and recovery | F | Malicious bulk deletion/corruption | see brief | I | UNKNOWN | NOT RUN | — | — | — |
-| SEC-085 | Audit, destruction prevention and recovery | F | Backup compromise/ransomware | see brief | C/manual | UNKNOWN | NOT RUN | — | — | — |
-| SEC-086 | Audit, destruction prevention and recovery | F | Unrestorable backup | see brief | R | UNKNOWN | NOT RUN | — | — | — |
-| SEC-087 | Audit, destruction prevention and recovery | F | Rollback reintroduces vulnerabilities | see brief | R/I/C | UNKNOWN | NOT RUN | — | — | — |
-| SEC-088 | Audit, destruction prevention and recovery | F | Test-harness false assurance | see brief | U/I/C | UNKNOWN | NOT RUN | — | — | — |
+| SEC-073 | Availability and financial resource abuse | F | Auth/crypto resource exhaustion | see brief | U/I/L | APPLICABLE | PASS with residuals (C, measured: bcrypt ~504 ms/compare; every unauthenticated bcrypt path rate-limited first); upload rate limit still owed (SF-40/53) | evidence/F/LOG (2bdac83) | R pending | — |
+| SEC-074 | Availability and financial resource abuse | F | Regex/parser CPU exhaustion | see brief | U/Fuzz | APPLICABLE | PASS (U/Fuzz: 32 cells, deadlines, planted-quadratic control) | sec-f-parser-deadlines (2bdac83) | R pending | — |
+| SEC-075 | Availability and financial resource abuse | F | Unbounded DB queries | see brief | I/L | APPLICABLE | PASS by sample only (C); full census NOT RUN | evidence/F/LOG (2bdac83) | R pending | — |
+| SEC-076 | Availability and financial resource abuse | F | Pool/lock exhaustion | see brief | I/L | APPLICABLE | FAIL → FIXED AWAITING RETEST (SF-56; I/L both roles) | sec-f-pool-exhaustion-db (2bdac83) | R pending | — |
+| SEC-077 | Availability and financial resource abuse | F | Queue floods/retry storms | see brief | I/L | APPLICABLE | PASS (C; no internal retry loops) | evidence/F/LOG (2bdac83) | R pending | — |
+| SEC-078 | Availability and financial resource abuse | F | Serverless cost amplification | see brief | C/I/L | APPLICABLE | OPEN Low (C; no per-club quotas; load not authorised) | evidence/F/LOG (2bdac83) | R pending | — |
+| SEC-079 | Availability and financial resource abuse | F | DoS through lockout (U/I). SEC-080 Provider/dependency outage | no permissive fallback | I/C | APPLICABLE | FAIL Low–Medium (SF-59) | evidence/F/LOG (2bdac83) | R pending | — |
+| SEC-080 | Availability and financial resource abuse | F | Provider/dependency outage — no permissive fallback | see brief | I/C | APPLICABLE | PASS (U + I both roles; no permissive fallback) | sec-f-provider-outage; sec-a-revocation-fail-closed-db (2bdac83) | R pending | — |
+| SEC-081 | Audit, destruction prevention and recovery | F | Audit omission/rollback confusion | see brief | I | APPLICABLE | PASS for durable audit paths (U + I); best-effort sites warn on loss | evidence/F/LOG (2bdac83) | R pending | — |
+| SEC-082 | Audit, destruction prevention and recovery | F | Log injection/secret disclosure | see brief | U/I | APPLICABLE | FAIL Low (SF-60) | evidence/F/LOG (2bdac83) | R pending | — |
+| SEC-083 | Audit, destruction prevention and recovery | F | Audit tampering/blind spots | see brief | I/C | APPLICABLE | FAIL Medium (SF-57; I both roles) — migration proposed, not applied | evidence/F/audit-tamper-probe (2bdac83) | R pending | — |
+| SEC-084 | Audit, destruction prevention and recovery | F | Malicious bulk deletion/corruption | see brief | I | APPLICABLE | PASS (C + I both roles); DSAR erase without step-up noted (SF-61) | evidence/F/LOG (2bdac83) | R pending | — |
+| SEC-085 | Audit, destruction prevention and recovery | F | Backup compromise/ransomware | see brief | C/manual | APPLICABLE | FAIL (no backup exists — SF-19) | evidence/F/LOG (2bdac83) | R pending | — |
+| SEC-086 | Audit, destruction prevention and recovery | F | Unrestorable backup | see brief | R | APPLICABLE | BLOCKED (no restore run; verifier proved on TEST) | scripts/readiness/restore-verify.mjs; evidence/F/restore-* (2bdac83) | R pending | — |
+| SEC-087 | Audit, destruction prevention and recovery | F | Rollback reintroduces vulnerabilities | see brief | R/I/C | APPLICABLE | documented only (runbook §4); not run at R/I level | INCIDENT-AND-RESTORE-RUNBOOK.md (2bdac83) | R pending | — |
+| SEC-088 | Audit, destruction prevention and recovery | F | Test-harness false assurance | see brief | U/I/C | APPLICABLE | SF-26 FIXED AWAITING RETEST; SF-58 partially (skip gate built, CI steps proposed) | test-skip-gate.mjs; TEST-EVIDENCE.md (2bdac83) | R pending | — |
 | SEC-089 | Integrations, human access and emerging surfaces | D | Forged/replayed webhooks | see brief | U/I | APPLICABLE | PASS (U with the real Stripe library; signature check removal fails 4) | sec-d-stripe-webhook-signature (1e68155) | R: reviewed 9 Oct (evidence/R/REPORT-D.md) | — |
 | SEC-090 | Integrations, human access and emerging surfaces | D | Payment/entitlement manipulation | see brief | I/B if enabled | APPLICABLE | PASS at code review; Stripe test-mode NOT RUN (SF-43) | evidence/D/D-03 (1e68155) | R: reviewed 9 Oct (evidence/R/REPORT-D.md) | — |
 | SEC-091 | Integrations, human access and emerging surfaces | D | Email delivery/notification abuse | see brief | I/C | APPLICABLE | PASS (I: real send code vs interceptor, positive control first); SF-39 fixed | sec-d-mail-holds (1e68155) | R: reviewed 9 Oct (evidence/R/REPORT-D.md) | — |
