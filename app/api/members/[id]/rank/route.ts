@@ -9,6 +9,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { del } from "@vercel/blob";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { STAFF_ROLES } from "@/lib/authz";
+import { refuseSupportSession } from "@/lib/support-session";
 
 // Lane 1 iter-2 L1-I2-S-06 [High] fix: restrict photoUrl to safe origins.
 // Previous `z.string().min(1).max(3_500_000)` accepted ANY string including
@@ -50,6 +51,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // Symmetric with demote, which used ["owner", "manager", "admin"] — a

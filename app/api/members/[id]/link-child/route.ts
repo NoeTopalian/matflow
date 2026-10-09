@@ -7,6 +7,7 @@ import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { childAccountTypeFor } from "@/lib/kids-policy";
 import { CONFIRMED_BY } from "@/lib/guardianship";
+import { refuseSupportSession } from "@/lib/support-session";
 
 const bodySchema = z.object({
   childMemberId: z.string().min(1).max(50),
@@ -22,6 +23,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Coach and admin stay refused.
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023)
   const { tenantId, userId } = gate;
 
   const { id: parentId } = await params;

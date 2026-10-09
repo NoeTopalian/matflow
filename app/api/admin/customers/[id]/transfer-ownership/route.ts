@@ -130,14 +130,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (!currentOwner) throw new Refusal(404, "Tenant has no current owner");
       if (!target) throw new Refusal(404, "Target user not found on this tenant");
       if (target.id === currentOwner.id) throw new Refusal(400, "Target is already the owner");
-      await tx.user.update({
-        where: { id: currentOwner.id },
+      // Conditional on the roles just read (security lane B, SEC-032): a
+      // concurrent transfer — the owner's own, or another operator request —
+      // that already demoted this owner makes this one refuse and roll back
+      // (grant spend included) instead of leaving the club with two owners.
+      const demoted = await tx.user.updateMany({
+        where: { id: currentOwner.id, tenantId, role: "owner" },
         data: { role: "manager", sessionVersion: { increment: 1 } },
       });
-      await tx.user.update({
-        where: { id: target.id },
+      if (demoted.count !== 1) throw new Refusal(409, "Ownership changed while you were confirming. Reload the page and check who owns the club.");
+      const promoted = await tx.user.updateMany({
+        where: { id: target.id, tenantId, role: target.role },
         data: { role: "owner", sessionVersion: { increment: 1 } },
       });
+      if (promoted.count !== 1) throw new Refusal(409, "Ownership changed while you were confirming. Reload the page and check who owns the club.");
       await logAudit({
         tx,
         tenantId,

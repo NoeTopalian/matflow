@@ -26,6 +26,9 @@ export const runtime = "nodejs";
 
 const bodySchema = z.object({ password: z.string().min(1).max(200) });
 
+/** Thrown inside the transaction when the roles moved since they were read: rolls back the swap. */
+class OwnershipMoved extends Error {}
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
@@ -51,39 +54,67 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "You already own this club" }, { status: 400 });
   }
 
-  const result = await withTenantContext(tenantId, async (tx) => {
-    const me = await tx.user.findFirst({ where: { id: session.user.id, tenantId, role: "owner" }, select: { id: true, email: true, name: true, passwordHash: true } });
-    if (!me) return { ok: false as const, status: 403, error: "Only the owner can transfer ownership" };
-    // A password-less owner (magic link only) cannot prove it this way; the
-    // operator's transfer route is the path for them.
-    if (!me.passwordHash) return { ok: false as const, status: 409, error: "Your account has no password to confirm with — ask MatFlow support to transfer ownership" };
-    const ok = await bcrypt.compare(parsed.data.password, me.passwordHash);
-    if (!ok) return { ok: false as const, status: 403, error: "Password incorrect" };
+  // Security lane B (9 Oct 2026, SEC-032): the role swap is CONDITIONAL on the
+  // roles read above. Two transfers at once (two devices, or this route and the
+  // operator's) used to both commit — each read "I am the owner", each updated
+  // by id — and the club ended with TWO owners (reproduced on the database,
+  // tests/integration/sec-b-ownership-transfer-db.test.ts). Postgres re-checks
+  // an UPDATE's WHERE against the committed row after waiting for the other
+  // transaction's lock, so only one demotion of this owner can succeed; the
+  // loser rolls back whole. The audit row is written in the same transaction,
+  // so a transfer never commits without its record.
+  let result;
+  try {
+    result = await withTenantContext(tenantId, async (tx) => {
+      const me = await tx.user.findFirst({ where: { id: session.user.id, tenantId, role: "owner" }, select: { id: true, email: true, name: true, passwordHash: true } });
+      if (!me) return { ok: false as const, status: 403, error: "Only the owner can transfer ownership" };
+      // A password-less owner (magic link only) cannot prove it this way; the
+      // operator's transfer route is the path for them.
+      if (!me.passwordHash) return { ok: false as const, status: 409, error: "Your account has no password to confirm with — ask MatFlow support to transfer ownership" };
+      const ok = await bcrypt.compare(parsed.data.password, me.passwordHash);
+      if (!ok) return { ok: false as const, status: 403, error: "Password incorrect" };
 
-    const target = await tx.user.findFirst({ where: { id: targetId, tenantId }, select: { id: true, email: true, name: true, role: true } });
-    if (!target) return { ok: false as const, status: 404, error: "Staff member not found" };
-    if (target.role === "owner") return { ok: false as const, status: 400, error: "That person is already the owner" };
+      const target = await tx.user.findFirst({ where: { id: targetId, tenantId }, select: { id: true, email: true, name: true, role: true } });
+      if (!target) return { ok: false as const, status: 404, error: "Staff member not found" };
+      if (target.role === "owner") return { ok: false as const, status: 400, error: "That person is already the owner" };
 
-    await tx.user.update({ where: { id: me.id }, data: { role: "manager", sessionVersion: { increment: 1 } } });
-    await tx.user.update({ where: { id: target.id }, data: { role: "owner", sessionVersion: { increment: 1 } } });
-    return { ok: true as const, me, target };
-  });
+      const demoted = await tx.user.updateMany({
+        where: { id: me.id, tenantId, role: "owner" },
+        data: { role: "manager", sessionVersion: { increment: 1 } },
+      });
+      if (demoted.count !== 1) throw new OwnershipMoved();
+      const promoted = await tx.user.updateMany({
+        where: { id: target.id, tenantId, role: target.role },
+        data: { role: "owner", sessionVersion: { increment: 1 } },
+      });
+      if (promoted.count !== 1) throw new OwnershipMoved();
+      await logAudit({
+        tx,
+        tenantId,
+        userId: session.user.id,
+        action: "staff.ownership_transferred",
+        entityType: "User",
+        entityId: target.id,
+        metadata: {
+          previousOwnerId: me.id,
+          newOwnerId: target.id,
+          previousTargetRole: target.role,
+        },
+        req,
+      });
+      return { ok: true as const, me, target };
+    });
+  } catch (err) {
+    if (err instanceof OwnershipMoved) {
+      return NextResponse.json(
+        { error: "Ownership changed while you were confirming, so nothing was changed. Reload the page to see who owns the club." },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
 
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
-
-  await logAudit({
-    tenantId,
-    userId: session.user.id,
-    action: "staff.ownership_transferred",
-    entityType: "User",
-    entityId: result.target.id,
-    metadata: {
-      previousOwnerId: result.me.id,
-      newOwnerId: result.target.id,
-      previousTargetRole: result.target.role,
-    },
-    req,
-  });
 
   return NextResponse.json({
     ok: true,
