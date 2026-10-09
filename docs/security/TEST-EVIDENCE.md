@@ -276,3 +276,6 @@ Run files one at a time with a ceiling (`timeout 300`); a single vitest process 
 minutes on the shared branch and was killed with no report (lane F, 9 Oct 2026 — use per-file runs). For a claim of
 DB evidence add `--reporter=json --outputFile=x.json` and gate with `node scripts/readiness/test-skip-gate.mjs x.json
 --require-db --allow=tests/integration/rls-foundation.test.ts` (the allowance is for the owner role only).
+
+## Final both-role sweep (coordinator, 9 Oct 2026 16:55–17:40 UK) — `evidence/lead/final-sweep-2026-10-09.log`
+39 security-relevant database files × 2 roles (owner runner `neondb_owner`; restricted runner `matflow_app`, RLS enforced), one file at a time with a 300 s ceiling, on the working tree at `e5f4daf` when the sweep started (lane D's fifth pass `788d29a` landed mid-sweep; the three files it touches — sec-d-attendance-misbinding-db, attendance-import-engine, contact-email-change-imports-db — were re-run afterwards on `788d29a`, see the targeted line below). Result: 78/78 runs exit 0. Not counted as passes: `sec-b-fixture-sweep-db` (opt-in with SEC_B_SWEEP=1; skipped by design under both roles) and `tenant-restore-purge-race` under the restricted role (file reported failed with its 5 tests skipped — cause recorded below; the owner-role run passed). Every other file reports its tests passed under both roles.
