@@ -20,6 +20,9 @@ vi.hoisted(() => {
   // Production refuses every operator not named here (OPERATOR_ALLOWED_IDS,
   // admin hub lane B, 9 Oct 2026); this suite's operator is OP below.
   (process.env as Record<string, string>).OPERATOR_ALLOWED_IDS = "op-noe";
+  // The audit row now carries a keyed address digest (review D5, 9 Oct 2026);
+  // in production the digest refuses to run unkeyed, as the live app never is.
+  (process.env as Record<string, string>).AUTH_SECRET = "unit-test-secret-0123456789";
 });
 
 const SECRET = "unit-test-secret-0123456789";
