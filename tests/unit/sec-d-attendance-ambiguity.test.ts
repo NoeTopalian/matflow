@@ -202,3 +202,28 @@ describe("SEC-053 third pass (reviewer R): the name+address fallback only for a 
     for (const bad of ["", "x123", "c" + "z".repeat(24), "clh3am9vk0000qwer1234asdfZ", "550e8400-e29b-41d4-a716-446655440000"]) expect(cuidCreatedAt(bad)).toBeNull();
   });
 });
+
+describe("SEC-053 fourth pass (reviewer R, REPORT-D3): no recorded change of the member's OWN address after the earliest booking", () => {
+  const ola = (addressChangedAt: RosterMember["addressChangedAt"]): RosterMember => ({
+    id: "m_ola", name: "Ola Moved", email: "ola.new@example.test", externalRef: null, createdAt: "2025-01-01T00:00:00Z", addressChangedAt,
+  });
+  it("R15: an old member who changed (acquired) the address AFTER the earliest booking → pending, offered", () => {
+    const p = plan([row("Ola Moved", "ola.new@example.test")], [ola("2026-10-09T10:00:00Z")]);
+    expect(p.people[0].memberId).toBeNull();
+    expect(p.people[0].candidates.map((c) => c.memberId)).toEqual(["m_ola"]);
+  });
+  it("R16: the check uses the change's TIME, not a digest, so it holds after a key rotation (no release map at all)", () => {
+    const parsed = parseAttendanceCsv([HEADER, row("Ola Moved", "ola.new@example.test")].join("\n"));
+    const p = planAttendanceImport(parsed.rows, {
+      timezone: "Europe/London", now: new Date("2026-10-09T00:00:00Z"), members: [ola("2026-01-01T00:00:00Z")],
+      classes: [{ id: "cls_1", name: "Adults Gi", isActive: true, historical: false, locationId: null }],
+      locations: [{ id: "loc_1", name: "Main" }], decisions: DECISIONS(), isSynthesisedEmail,
+      releasedBy: () => undefined, // every recorded release unmatchable (rotated key)
+    } as Parameters<typeof planAttendanceImport>[1]);
+    expect(p.people[0].memberId).toBeNull();
+  });
+  it("R17 control: an address change BEFORE the earliest booking (or none) still matches", () => {
+    expect(plan([row("Ola Moved", "ola.new@example.test")], [ola("2025-06-01T00:00:00Z")]).people[0].matchMethod).toBe("name_and_email");
+    expect(plan([row("Ola Moved", "ola.new@example.test")], [ola(null)]).people[0].matchMethod).toBe("name_and_email");
+  });
+});

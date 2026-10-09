@@ -113,3 +113,26 @@ hand-back.
    look-alike can therefore pass the same-name check. It still has to pass created-before and no-release.
 4. **Strictness cost.** Hand-added members created after their own historical bookings now always need an owner
    decision. Members from the TeamUp import match by externalRef and are unaffected.
+
+## Fourth pass after reviewer R (REPORT-D3.md), HEAD 582dfce + lane D working tree
+R approved the third pass. Two new residuals still bound through the real route on both roles: (2) an OLD member
+acquired a never-held address through the audited owner PATCH after the bookings; (3) a keyed release, then a
+rotation of AUTH_SECRET/NEXTAUTH_SECRET before the import.
+**Added condition:** the candidate has NO recorded change of its OWN address after the person's earliest booking.
+This is read from audit rows with entityType=Member, entityId=the member, and metadata holding oldEmailSha256,
+oldEmailDigest or releasedEmailSha256, comparing the row's createdAt with the booking date. It uses the subject and
+the time, never a digest value, so a key rotation cannot hide it. That closes residuals 2 and 3.
+Red, real route, both roles: R15/R16 fail (2 failed / 19 passed). R17, the control (held all along, with a
+non-address edit), stays bound. Green and mutant results are in the hand-back.
+
+### Residual after the fourth pass (precise)
+1. **Raw SQL, unchanged.** An OLD member (created before the bookings) acquires the address through a writer that
+   writes no audit row (raw SQL, a script), and the previous holder's release was not audited either. The member
+   then has no recorded change and no recorded release, so the fallback binds. Only audited writers or an owner
+   decision close this. It is the SEC-029 trust boundary.
+2. **Audit rows deleted or lost.** If the audit rows for an own change were deleted (a tenant purge, a manual
+   cleanup), the change is no longer known. This is the same class as 1.
+3. **Rotation.** Rotation no longer matters for the acquirer: its own change is detected by subject and time. It
+   matters only for releases by members that no longer exist AND acquisitions by unaudited writers, which is case 1.
+4. **Cost.** A member who corrected their own address after their earliest booking needs an owner decision for
+   that person's rows, even when they are the same person.

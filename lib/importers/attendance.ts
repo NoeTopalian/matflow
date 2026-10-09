@@ -449,6 +449,12 @@ export type RosterMember = {
   id: string; name: string; email: string; externalRef: string | null; noLogin?: boolean;
   /** When the record was created (immutable; from the row id — see cuidCreatedAt). Unknown = never "held since". */
   createdAt?: Date | string | null;
+  /**
+   * The latest RECORDED change of this member's own login address (the audit row's time, not its digest, so it
+   * survives a key rotation). Null/absent = none recorded. An address change after the person's earliest booking
+   * means the member has not demonstrably held the address since then (R fourth pass, residuals 2 and 3).
+   */
+  addressChangedAt?: Date | string | null;
 };
 
 /**
@@ -657,7 +663,11 @@ export function planAttendanceImport(
   const heldSinceBefore = (m: RosterMember, personKey: string) => {
     const earliest = earliestOf.get(personKey);
     const created = m.createdAt ? new Date(m.createdAt) : null;
-    return earliest !== undefined && !!created && !isNaN(created.getTime()) && created.getTime() < earliest;
+    if (earliest === undefined || !created || isNaN(created.getTime()) || created.getTime() >= earliest) return false;
+    // Its own recorded address change after the earliest booking: it acquired (or re-acquired) the address since.
+    const changed = m.addressChangedAt ? new Date(m.addressChangedAt) : null;
+    if (changed && (isNaN(changed.getTime()) || changed.getTime() >= earliest)) return false;
+    return true;
   };
 
   const resolvePerson = (r: AttendanceRow): Resolved => {

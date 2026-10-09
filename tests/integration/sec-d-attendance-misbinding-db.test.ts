@@ -304,14 +304,52 @@ describe.skipIf(!HAS_DB)("SEC-053 / AH-D1 — attendance identity binding is nev
     await releasedAddressCase("zw", N("Be" + String.fromCharCode(0x200b) + "a Lane")); // zero-width space
   });
 
-  it("POSITIVE CONTROL: a member who moved to a NEW address (never held by anyone else) still matches on it", async () => {
+  // R cell 15 (REPORT-D3 residual 2): the address was never held in MatFlow; an OLD member (created before the
+  // bookings) acquired it through the audited owner PATCH AFTER the bookings. Its own address change is after the
+  // earliest booking, so it has not demonstrably held the address since then → pending. (This replaces the earlier
+  // "moved to a NEW address still matches" control: the same shape, now deliberately pending.)
+  it("R15 ACQUIRED AFTER BOOKINGS: an old member who took a never-held address through the owner PATCH after the bookings is not bound", async () => {
     const club = await mkClub("moved");
     const ola = await mkOldMember(club, N("Ola Moved"), E("ola-old"));
     await ownerPatch(club, ola, { email: E("ola-new") });
-    const { jobId, planHash } = await mkPreview(club, csvOf([{ name: N("Ola Moved"), email: E("ola-new") }]));
+    const { jobId, planHash, plan } = await mkPreview(club, csvOf([{ name: N("Ola Moved"), email: E("ola-new") }]));
+    await commitAndRun(club, jobId, planHash);
+    expect(await attendanceOf(club, ola), "attendance committed to a member who acquired the address after the bookings").toBe(0);
+    expect((await ledger(club))[0].disposition).toBe("pending_person");
+    expect(plan.people[0].candidates.map((c) => c.memberId)).toContain(ola);
+  });
+
+  // R cell 16 (REPORT-D3 residual 3): a keyed release, then the digest key (AUTH_SECRET / NEXTAUTH_SECRET) rotates
+  // before the import, so the release is no longer recognisable; an old member acquired the address after the bookings.
+  it("R16 KEY ROTATION: a keyed release made unmatchable by a rotated secret still does not let the acquirer bind", async () => {
+    const club = await mkClub("rotate");
+    const orig = await mkOldMember(club, N("Bea Lane"), E("rotate-old"));
+    await ownerPatch(club, orig, { email: E("rotate-new"), name: N("Beatrice Lane") });
+    const other = await mkOldMember(club, N("Bea Lane"), E("rotate-other"));
+    await ownerPatch(club, other, { email: E("rotate-old") });
+    const saved = { a: process.env.AUTH_SECRET, n: process.env.NEXTAUTH_SECRET };
+    process.env.AUTH_SECRET = "secd-rotated-secret-0123456789abcdef0123456789abcdef";
+    process.env.NEXTAUTH_SECRET = "secd-rotated-secret-0123456789abcdef0123456789abcdef";
+    try {
+      const { jobId, planHash } = await mkPreview(club, csvOf([{ name: N("Bea Lane"), email: E("rotate-old") }]));
+      await commitAndRun(club, jobId, planHash);
+    } finally {
+      if (saved.a === undefined) delete process.env.AUTH_SECRET; else process.env.AUTH_SECRET = saved.a;
+      if (saved.n === undefined) delete process.env.NEXTAUTH_SECRET; else process.env.NEXTAUTH_SECRET = saved.n;
+    }
+    expect(await attendanceOf(club, other), "attendance committed to the acquirer after a key rotation").toBe(0);
+    expect((await ledger(club))[0].disposition).toBe("pending_person");
+  });
+
+  // R cell 17 — CONTROL: an old member who has held the address all along (no change of its own) is still bound.
+  it("R17 CONTROL: an old member who has held the address all along still matches", async () => {
+    const club = await mkClub("allalong");
+    const ray = await mkOldMember(club, N("Ray Steady"), E("ray"));
+    await ownerPatch(club, ray, { phone: "07000000000" }); // an edit that is not an address change
+    const { jobId, planHash } = await mkPreview(club, csvOf([{ name: N("Ray Steady"), email: E("ray") }]));
     await commitAndRun(club, jobId, planHash);
     expect((await ledger(club))[0].matchMethod).toBe("name_and_email");
-    expect(await attendanceOf(club, ola)).toBe(1);
+    expect(await attendanceOf(club, ray)).toBe(1);
   });
 
   // Reviewer R third-pass variants (REPORT-D2.md): the release of the address is NOT in a keyed audit row.

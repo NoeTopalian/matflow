@@ -104,7 +104,7 @@ export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInpu
   const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
   // Every member, whatever their status: a cancelled member's history is still history.
   const memberRows = await tx.member.findMany({ where: { tenantId }, select: { id: true, name: true, email: true, externalRef: true } });
-  const members = memberRows.map((m) => ({ ...m, createdAt: cuidCreatedAt(m.id) }));
+  const members: RosterMember[] = memberRows.map((m) => ({ ...m, createdAt: cuidCreatedAt(m.id) }));
   const classes = await tx.class.findMany({
     where: { tenantId, deletedAt: null },
     select: { id: true, name: true, isActive: true, sourceImportJobId: true, locationId: true },
@@ -129,22 +129,33 @@ export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInpu
   // Plus the release paths (R third pass): member.delete, staff.delete, member.dsar_erase and import.rollback write
   // releasedEmailSha256 (a digest or a list); a DSAR erase also wrote originalEmailHash (the hashToken form).
   // Rows written before AH-E2 hold the UNKEYED SHA-256 form; buildPlan compares every form.
-  const releaseRows = await tx.$queryRaw<{ entityType: string; entityId: string; metadata: Record<string, unknown> | null }[]>`
-    SELECT "entityType", "entityId", metadata
+  const releaseRows = await tx.$queryRaw<{ entityType: string; entityId: string; metadata: Record<string, unknown> | null; createdAt: Date }[]>`
+    SELECT "entityType", "entityId", metadata, "createdAt"
     FROM "AuditLog"
     WHERE "tenantId" = ${tenantId}
       AND (metadata->>'oldEmailSha256' IS NOT NULL OR metadata->>'oldEmailDigest' IS NOT NULL
         OR metadata->'releasedEmailSha256' IS NOT NULL
         OR (action = 'member.dsar_erase' AND metadata->>'originalEmailHash' IS NOT NULL))`;
   const released: Record<string, string[]> = Object.create(null);
+  // Each member's latest recorded change of its OWN address: by subject and time, not by digest, so a key
+  // rotation cannot hide it (R fourth pass).
+  const ownChange = new Map<string, number>();
   for (const r of releaseRows) {
     const md = r.metadata ?? {};
+    if (r.entityType === "Member" && (md.oldEmailSha256 || md.oldEmailDigest || md.releasedEmailSha256)) {
+      const t = new Date(r.createdAt).getTime();
+      if (!isNaN(t) && t > (ownChange.get(r.entityId) ?? -Infinity)) ownChange.set(r.entityId, t);
+    }
     const many = Array.isArray(md.releasedEmailSha256) ? md.releasedEmailSha256 : [md.releasedEmailSha256];
     for (const d of [md.oldEmailSha256, md.oldEmailDigest, md.originalEmailHash, ...many]) {
       if (typeof d !== "string" || !d) continue;
       const list = (released[d] ??= []);
       if (r.entityType === "Member" && !list.includes(r.entityId)) list.push(r.entityId);
     }
+  }
+  for (const m of members) {
+    const t = ownChange.get(m.id);
+    if (t !== undefined) m.addressChangedAt = new Date(t);
   }
   return {
     timezone: usableTimezone(tenant?.timezone),
