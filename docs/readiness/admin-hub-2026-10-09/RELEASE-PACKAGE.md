@@ -82,6 +82,37 @@ old code runs: no Danger Zone actions, no support sessions, no restores of soft-
 remediation package §6 for the full reopened-doors table).
 
 ## 8. Candidate identity, gates and coverage
-Filled in at the end of the loop: candidate SHA; lint / tsc / full unit / build summaries; integration files run under
-both database roles; production-mode browser run build identity; independent review verdict; `npm audit` after fixes;
-matrix items not demonstrated.
+**Candidate: `c837e38ad26154570e0d52f5d736d97d0a87e693`** (`c837e38`, local main, 9 Oct 2026 ~09:30 UK) = `5ec434d`
++ the browser-rehearsal fixes (ledger AH-G1..G4: owner-step lost-response replay, keyed digests in the checker, whole-body
+parse in release-verify, honest undo reason) = `d52254e` + two test-only commits = `d405f83`
+(the reviewed build) + the review fixes (ledger AH-R1..R6: managed-record refusal in the contact-email route, hook
+timeouts, authenticator comparison, three audit digests, swap script deleted), on top of `48a9182` (wave 1) and the
+earlier unpushed handover/remediation commits. Independent review of `d405f83`: NOT APPROVED AS COMMITTED (D1, D2);
+both fixed in `d52254e`; the reviewer's re-check and the gates on `d52254e` are recorded below. Working tree clean apart from two unrelated
+files (`.omc/project-memory.json`, `docs/readiness/SEAN-HANDOVER-VERIFICATION-2026-10-03.md`) that are not part of it.
+
+Gates on the candidate `c837e38` (lead, `scratchpad/adminhub/gates-c837e38.log`): `npm run lint` 0 errors / 66 warnings,
+UI ratchets at baseline; `tsc --noEmit` 0; full unit 406 files / 4870 tests passed; `npm run build` succeeded.
+Earlier runs on `d405f83` (`gates.log`, `lint-final.log`) and `d52254e` (`gates-d52254e.log`) are kept for the record:
+- `npm run lint`: eslint 0 errors / 66 warnings (pre-existing unused-directive and unused-import warnings); UI ratchets
+  all at baseline (hex 718). The lint toolchain is pinned to the 16.3 line (`eslint-config-next ~16.3.8`,
+  `eslint-plugin-react-hooks 7.0.1`): the 16.4 config enables React-Compiler rules that flag 65 pre-existing sites.
+- `npx tsc --noEmit -p .`: 0 errors.
+- Full unit suite: 405 files / 4862 tests on `d405f83`; re-run on `70290f1` (= `5ec434d` minus an integration
+  fixture): 405 files / 4866 tests passed, exit 0 (`scratchpad/adminhub/unit-final.log`).
+- `npm run build`: production build succeeded on `d405f83` and again on `d52254e` (the last source change; the two
+  later commits are test-only), proxy/middleware present, routes compiled (`gates.log`, `gates-d52254e.log`).
+- Integration on the TEST branch, both database roles (engine + restricted/RLS): login-identity-race-db 7/7,
+  login-identity-claims-db 13/13 (both exit 0 on `d52254e` after the hook-timeout fix; on `d405f83` the assertions
+  passed but the files exited 1 — review D2), token-scoping-db 7/7, contact-email-change-imports-db 7/7, operator-step-up-db 10/10,
+  operator-hub-conflict-db 10/10, readiness-scripts fixtures (lane E) — see LEDGER rows for the per-file counts.
+- `npm audit --omit=dev` after fixes: 2 advisories, both the `mysql2`-via-`prisma` CLI chain (not applicable: Postgres
+  adapter, mysql2 never loaded; the only offered fix is a prisma 6 downgrade — declined).
+
+Browser rehearsal (lane G, `scratchpad/adminhub/report-G-browser.md`): owner-role pass on `d405f83`, restricted pass on
+`d52254e` (the lead's gate build replaced `.next` mid-run — recorded, not hidden); every control held in both passes;
+findings G1–G3 fixed in `c837e38`; the targeted re-run on `c837e38` (one build, BUILD_ID xP9P9cHvx9xkgqHPXnOa9, nothing
+else building; flows 4, 6b, 7 + release-verify under both roles, positive control first, zero sends) PASSED everything:
+owner lost-response re-send → `alreadyApplied` with "Conflict resolved"; checker `verify --path operator` exit 0, 38/38;
+`release-verify --target test` exit 0 with `operator.access` PASS; count-checked teardown clean. Independent review: NOT APPROVED on `d405f83` (D1, D2) → APPROVED on `d52254e` for
+D1/D2/D4/D5 (`report-review-final.md`). Matrix items not demonstrated are listed in the final report.
