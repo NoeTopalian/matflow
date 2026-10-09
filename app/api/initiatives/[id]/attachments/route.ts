@@ -5,6 +5,12 @@ import { randomBytes } from "crypto";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
+import { z } from "zod";
+import { checkUploadRateLimit, formFields, normaliseUploadFilename } from "@/lib/upload-guard";
+
+// Lane C2 (9 Oct 2026): the multipart body carries exactly one `file`; anything else is refused.
+const formSchema = z.strictObject({ file: z.unknown().optional() });
+const deleteQuerySchema = z.strictObject({ attachmentId: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/) });
 
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "application/pdf"];
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -58,6 +64,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "File too large (max 10MB)" }, { status: 400 });
   }
 
+  // Per-user and per-tenant upload budget before the body is read (lane C2; lib/upload-guard.ts says what backs it).
+  const limited = await checkUploadRateLimit("attachment", tenantId, userId);
+  if (limited) return limited;
+
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -66,6 +76,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       { error: "Could not read the uploaded file. Try again, or send a smaller file." },
       { status: 400 },
     );
+  }
+
+  const fields = formFields(formData);
+  const parsedForm = fields.ok ? formSchema.safeParse(fields.fields) : null;
+  if (!parsedForm || !parsedForm.success) {
+    return NextResponse.json({ error: "Invalid upload request" }, { status: 400 });
   }
 
   try {
@@ -77,7 +93,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // message, and it made the refusals unprovable in any environment. What
     // the caller sent is judged first; the storage config is our problem and
     // is reached only by a file that would otherwise have been stored.
-    const file = formData.get("file");
+    const file = parsedForm.data.file;
     if (!(file instanceof File)) return NextResponse.json({ error: "No file" }, { status: 400 });
     if (file.size > MAX_BYTES) return NextResponse.json({ error: "File too large (max 10MB)" }, { status: 400 });
     if (!ALLOWED_TYPES.includes(file.type)) return NextResponse.json({ error: "Invalid file type" }, { status: 400 });
@@ -107,7 +123,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         data: {
           initiativeId,
           blobUrl: blob.url,
-          filename: file.name.slice(0, 200),
+          filename: normaliseUploadFilename(file.name, "attachment"),
           mimeType: file.type,
           sizeBytes: file.size,
         },
@@ -142,8 +158,11 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { tenantId, userId } = gate;
   const { id: initiativeId } = await params;
   const { searchParams } = new URL(req.url);
-  const attachmentId = searchParams.get("attachmentId");
-  if (!attachmentId) return NextResponse.json({ error: "attachmentId required" }, { status: 400 });
+  const q = deleteQuerySchema.safeParse(Object.fromEntries(searchParams));
+  if (!q.success || searchParams.getAll("attachmentId").length !== 1) {
+    return NextResponse.json({ error: "attachmentId required" }, { status: 400 });
+  }
+  const { attachmentId } = q.data;
 
   const initiative = await withTenantContext(tenantId, (tx) =>
     tx.initiative.findFirst({ where: { id: initiativeId, tenantId } }),

@@ -6,6 +6,15 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { createUpload, UPLOAD_REFUSAL_STATUS } from "@/lib/import-upload";
+import { z } from "zod";
+
+// Lane C2 (9 Oct 2026): exactly what lib/import-upload-client.ts sends; createUpload still judges the values.
+const bodySchema = z.strictObject({
+  purpose: z.string().max(64),
+  fileName: z.string().max(1024),
+  bytes: z.number().finite(),
+  sha256: z.string().max(128),
+});
 
 /**
  * POST /api/admin/import/uploads — open a chunked import upload.
@@ -33,13 +42,15 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: { purpose?: unknown; fileName?: unknown; bytes?: unknown; sha256?: unknown };
+  let raw: unknown;
   try {
-    body = (await req.json()) as typeof body;
+    raw = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
-  if (!body || typeof body !== "object") return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  const parsedBody = bodySchema.safeParse(raw);
+  if (!parsedBody.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  const body = parsedBody.data;
 
   try {
     const out = await withTenantContext(tenantId, (tx) =>

@@ -22,3 +22,14 @@
 // it, so contributors and local dev need configure nothing. Setting that
 // variable in Vercel is the step that turns this on, and it is Noe's to do.
 import "./sentry.client.config";
+import { z } from "zod";
+
+// zod v4 probes `Function("")` the first time an object schema is built, to
+// decide whether it may JIT-compile parsers. Under any CSP without
+// 'unsafe-eval' — the static next.config.ts policy today, and the nonce policy
+// from lib/csp.ts — that probe raises a script-src violation on every page
+// that builds a schema (lane C2 browser pass, 9 Oct 2026: /login, /apply).
+// The probe is caught and zod falls back to its interpreter, so behaviour does
+// not change; jitless skips the probe and the violation noise with it. This
+// file runs before hydration, i.e. before any page chunk builds a schema.
+z.config({ jitless: true });

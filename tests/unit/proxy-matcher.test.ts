@@ -53,7 +53,9 @@ describe("proxy matcher", () => {
     "/api/cron/retention",
     "/api/health",
     "/api/kiosk/abc123/checkin",
-    "/leaderboard/abc123def456ghij", // public TV board — the HMAC display token is the credential, like /kiosk
+    // /leaderboard/<token> and /kiosk/<token> now ENTER the proxy (lane C2, 9 Oct 2026) to receive the
+    // per-request CSP nonce, but still skip the next-auth wrapper — pinned in tests/unit/sec-c2-csp.test.ts.
+    "/api/csp-report",
     "/api/magic-link/verify",
   ])("does not run middleware for %s", (path) => {
     expect(matches(path)).toBe(false);

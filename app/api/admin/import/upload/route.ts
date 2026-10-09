@@ -8,6 +8,18 @@ import { usableTimezone } from "@/lib/class-time";
 import { sniffCsvKind, WRONG_PATH_MESSAGE } from "@/lib/importers/sniff";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { z } from "zod";
+import { checkUploadRateLimit, formFields, normaliseUploadFilename } from "@/lib/upload-guard";
+
+// Lane C2 (9 Oct 2026): the six fields the import form sends (components/dashboard/ImportPanel.tsx); anything else is refused.
+const formSchema = z.strictObject({
+  file: z.unknown().optional(),
+  source: z.string().max(32).optional(),
+  mode: z.string().max(16).optional(),
+  sourceExportedAt: z.string().max(64).optional(),
+  sourceExportedAtLocal: z.string().max(64).optional(),
+  sourceExportedAtProvenance: z.string().max(32).optional(),
+});
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_SOURCES: ImportSource[] = ["generic", "mindbody", "glofox", "wodify", "teamup"];
@@ -79,6 +91,10 @@ export async function POST(req: Request) {
   if (declared > MAX_BYTES + 64 * 1024) {
     return NextResponse.json({ error: "File too large (max 10MB)" }, { status: 413 });
   }
+  // Per-user and per-tenant budget before the body is read (lane C2; lib/upload-guard.ts says what backs it).
+  const limited = await checkUploadRateLimit("importUpload", tenantId, userId);
+  if (limited) return limited;
+
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -86,8 +102,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Couldn't read the upload. Check the file is a CSV under 10MB and try again." }, { status: 400 });
   }
 
+  const fields = formFields(formData);
+  const parsedForm = fields.ok ? formSchema.safeParse(fields.fields) : null;
+  if (!parsedForm || !parsedForm.success) {
+    return NextResponse.json({ error: "Invalid upload request" }, { status: 400 });
+  }
+
   try {
-    const file = formData.get("file");
+    const file = parsedForm.data.file;
     const source = String(formData.get("source") ?? "generic") as ImportSource;
     if (!ALLOWED_SOURCES.includes(source)) return NextResponse.json({ error: "Invalid source" }, { status: 400 });
     if (!(file instanceof File)) return NextResponse.json({ error: "No file" }, { status: 400 });
@@ -196,7 +218,7 @@ export async function POST(req: Request) {
           createdById: userId,
           source,
           mode,
-          fileName: file.name.slice(0, 200),
+          fileName: normaliseUploadFilename(file.name, "import.csv"),
           fileBlobUrl: fileUrl,
           status: "pending",
           fileHash,

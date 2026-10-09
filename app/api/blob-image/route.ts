@@ -46,6 +46,9 @@ import { apiError } from "@/lib/api-error";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { STAFF_ROLES } from "@/lib/authz";
 
+/** The only types served inline (lane C2): raster formats a browser renders as an image, never as a document. */
+const INLINE_RASTER_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/avif"]);
+
 /**
  * One refusal for every "you may not read this blob" case.
  *
@@ -187,16 +190,25 @@ export async function GET(req: Request) {
     );
   }
 
+  // Only RASTER images render inline (security campaign SF-28 follow-up / SF-42,
+  // lane C2, 9 Oct 2026). `image/svg+xml` is a document that can carry script:
+  // opened directly from this origin it would be same-origin stored XSS, so it
+  // — and every other non-raster type — is served as an opaque attachment.
+  // No upload route accepts SVG (all re-encode to WebP or allow-list raster +
+  // PDF by magic bytes); this is the serving-side half for anything already in
+  // the store. The sandbox CSP makes even a mis-typed document inert.
   const declaredType = result.blob.contentType;
-  const isImage = declaredType.toLowerCase().startsWith("image/");
+  const baseType = declaredType.toLowerCase().split(";")[0].trim();
+  const isRaster = INLINE_RASTER_TYPES.has(baseType);
 
   return new NextResponse(result.stream, {
     status: 200,
     headers: {
-      "Content-Type": isImage ? declaredType : "application/octet-stream",
-      "Content-Disposition": isImage ? "inline" : "attachment",
+      "Content-Type": isRaster ? baseType : "application/octet-stream",
+      "Content-Disposition": isRaster ? "inline" : "attachment",
       "Cache-Control": IMAGE_CACHE_CONTROL,
       "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox",
     },
   });
 }

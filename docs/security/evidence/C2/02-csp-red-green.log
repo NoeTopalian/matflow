@@ -1,0 +1,25 @@
+# RED: HEAD af803d5 proxy.ts + app/layout.tsx, lane C2 lib/csp.ts present; node v24.21.0
+$ npx vitest run tests/unit/sec-c2-csp.test.ts
+     × public document /login: report-only nonce policy on the response AND forwarded to the renderer 122ms
+     × public document /: report-only nonce policy on the response AND forwarded to the renderer 1ms
+     × public document /apply: report-only nonce policy on the response AND forwarded to the renderer 0ms
+     × public document /legal/privacy: report-only nonce policy on the response AND forwarded to the renderer 1ms
+     × public document /waiver/tok-c2: report-only nonce policy on the response AND forwarded to the renderer 0ms
+     × public document /totalbjj: report-only nonce policy on the response AND forwarded to the renderer 0ms
+     × signed-in staff dashboard and member portal pages carry it too 0ms
+     × a fresh nonce per request 1ms
+     × a client-supplied CSP or x-nonce request header cannot choose the nonce Next renders with 1ms
+     × MATFLOW_CSP_ENFORCE=1 switches to the enforcing header (and only that one) 0ms
+     × /kiosk/tok-c2 receives the policy WITHOUT the next-auth wrapper running (no session work added) 0ms
+     × /leaderboard/tok-c2 receives the policy WITHOUT the next-auth wrapper running (no session work added) 0ms
+     × kiosk and leaderboard documents enter the proxy; their APIs and the report sink do not 1ms
+     × app/layout.tsx awaits connection() 24ms
+⎯⎯⎯⎯⎯⎯ Failed Tests 14 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  14 failed | 7 passed (21)
+exit=1
+
+# GREEN: lane C2 proxy.ts + app/layout.tsx restored
+ Test Files  3 passed (3)
+      Tests  67 passed (67)
+exit=0

@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { connection } from "next/server";
 import { Geist, Geist_Mono } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
 import { ToastProvider } from "@/components/ui/Toast";
@@ -44,7 +45,12 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({
+// Every page renders per request (security campaign iteration 2, lane C2 — SF-30):
+// the per-request CSP nonce minted by proxy.ts can only be stamped on the
+// framework's scripts during a dynamic render. A prerendered page would ship
+// scripts with no nonce, which the nonce policy reports (and, once enforced,
+// blocks). See lib/csp.ts and the Next 16 CSP guide ("Forcing dynamic rendering").
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
@@ -55,6 +61,7 @@ export default function RootLayout({
   // serif fallback (Times New Roman). Found by the 2026-08-17 aesthetics
   // interview; identical to the parallel session's main-tree fix so the
   // eventual merge converges.
+  await connection();
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="antialiased">

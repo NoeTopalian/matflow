@@ -1,7 +1,16 @@
 import { auth } from "@/auth";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
 import { isReservedSlug } from "@/lib/reserved-slugs";
 import { isSupportSession, supportRequestDecision } from "@/lib/support-session";
+import {
+  buildNonceCsp,
+  cspHeaderName,
+  cspMode,
+  isTokenDocumentPath,
+  newNonce,
+  reportingEndpointsHeader,
+  wantsDocumentCsp,
+} from "@/lib/csp";
 
 // Request-ID propagation. Read inbound x-request-id (Vercel sets one;
 // most uptime monitors do too) or mint a fresh UUID. Stamp on the
@@ -220,7 +229,44 @@ export function authUnavailableResponse(pathname: string, requestId: string): Ne
   return new NextResponse(html, { status: 503, headers: { ...headers, "content-type": "text/html; charset=utf-8" } });
 }
 
-export default auth(async function proxy(req) {
+/**
+ * A request this proxy lets through. Document requests (anything outside
+ * /api) carry the per-request nonce Content-Security-Policy (security campaign
+ * iteration 2, lane C2 — SF-30): a fresh nonce, forwarded on the REQUEST so
+ * Next stamps it on every framework script while rendering, and set on the
+ * RESPONSE so the browser applies it. Report-only unless MATFLOW_CSP_ENFORCE
+ * is "1"/"true" (lib/csp.ts). Any CSP header the client sent is dropped first,
+ * so the nonce Next renders with is always the one this proxy minted.
+ * Exported for tests/unit/sec-c2-csp.test.ts.
+ */
+export function passThrough(
+  req: { headers: Headers; nextUrl: { pathname: string } },
+  requestId: string,
+  env: Record<string, string | undefined> = process.env,
+): NextResponse {
+  if (!wantsDocumentCsp(req.nextUrl.pathname)) {
+    const res = NextResponse.next();
+    res.headers.set("x-request-id", requestId);
+    return res;
+  }
+  const mode = cspMode(env);
+  const nonce = newNonce();
+  const policy = buildNonceCsp(nonce, { isDev: env.NODE_ENV === "development", mode });
+  const headerName = cspHeaderName(mode);
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.delete("content-security-policy");
+  requestHeaders.delete("content-security-policy-report-only");
+  requestHeaders.delete("x-nonce");
+  requestHeaders.set(headerName, policy);
+  requestHeaders.set("x-nonce", nonce);
+  const res = NextResponse.next({ request: { headers: requestHeaders } });
+  res.headers.set(headerName, policy);
+  res.headers.set("Reporting-Endpoints", reportingEndpointsHeader());
+  res.headers.set("x-request-id", requestId);
+  return res;
+}
+
+const authProxy = auth(async function proxy(req) {
   const { pathname } = req.nextUrl;
   const requestId = ensureRequestId(req);
 
@@ -314,15 +360,11 @@ export default auth(async function proxy(req) {
   // Root is the public marketing landing page. Exact-match check because
   // pathname.startsWith("/") would be true for every request.
   if (pathname === "/") {
-    const res = NextResponse.next();
-    res.headers.set("x-request-id", requestId);
-    return res;
+    return passThrough(req, requestId);
   }
 
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
-    const res = NextResponse.next();
-    res.headers.set("x-request-id", requestId);
-    return res;
+    return passThrough(req, requestId);
   }
 
   // A BARE single non-reserved path segment (e.g. /totalbjj) is a club's short
@@ -335,9 +377,7 @@ export default auth(async function proxy(req) {
   // auth. Public prefixes (/login, /apply, …) already returned above.
   const slugMatch = /^\/([a-z0-9-]+)\/?$/.exec(pathname.toLowerCase());
   if (slugMatch && !isReservedSlug(slugMatch[1])) {
-    const res = NextResponse.next();
-    res.headers.set("x-request-id", requestId);
-    return res;
+    return passThrough(req, requestId);
   }
 
   // A session with no user id ({ user: undefined } — an invalidated token, or
@@ -442,10 +482,22 @@ export default auth(async function proxy(req) {
     return NextResponse.redirect(new URL("/dashboard", req.url));
   }
 
-  const res = NextResponse.next();
-  res.headers.set("x-request-id", requestId);
-  return res;
+  return passThrough(req, requestId);
 });
+
+// The proxy entry point. The kiosk tablet and the leaderboard TV authenticate
+// with a token in their URL and never had the session stack in front of them
+// (they were excluded by the matcher); they now enter the proxy only to receive
+// the document CSP, and still skip the next-auth wrapper — no session lookup,
+// no revocation query, no cookie written (lane C2, 9 Oct 2026). Line comments,
+// not a block comment: tests/unit/operator-allowlist.test.ts strips block
+// comments with a regex, and a path ending in slash-star in a line comment above opens one.
+export default async function proxy(req: NextRequest, ev: NextFetchEvent): Promise<Response> {
+  if (isTokenDocumentPath(req.nextUrl.pathname)) {
+    return passThrough(req, ensureRequestId(req));
+  }
+  return (authProxy as unknown as (r: NextRequest, e: NextFetchEvent) => Promise<Response>)(req, ev);
+}
 
 export const config = {
   // Skip middleware entirely for: Next internals, static assets, PWA manifest +
@@ -487,7 +539,13 @@ export const config = {
   // entirely by virtue of its name. `icons/` and `.well-known/` carry it for
   // the same reason. `tests/unit/proxy-matcher.test.ts` asserts both halves —
   // it is what caught this when the entry first went in bare.
+  // `kiosk` and `leaderboard` LEFT this exclusion on 9 Oct 2026 (lane C2): their
+  // pages need the per-request CSP nonce, which only this proxy can mint. The
+  // default export still skips the next-auth wrapper for them (isTokenDocumentPath),
+  // so no session work is added. `api/kiosk` stays excluded. `api/csp-report`
+  // joined it: browsers post violation reports without a session, and the route
+  // is anonymous by design (counts only, no storage).
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|apple-touch-icon.png|icon.png|manifest.webmanifest|icons/|robots.txt|sitemap.xml|\\.well-known/|api/webhooks|api/stripe/webhook|api/cron|api/health|api/kiosk|kiosk|leaderboard|api/magic-link|api/auth/).*)",
+    "/((?!_next/static|_next/image|favicon.ico|apple-touch-icon.png|icon.png|manifest.webmanifest|icons/|robots.txt|sitemap.xml|\\.well-known/|api/webhooks|api/stripe/webhook|api/cron|api/health|api/kiosk|api/csp-report$|api/magic-link|api/auth/).*)",
   ],
 };

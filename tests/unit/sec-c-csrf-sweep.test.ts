@@ -240,6 +240,7 @@ const EXEMPT: Record<string, string> = {
   "/api/auth/totp/disable": "always 403 (self-disable refused); no effect",
   "/api/account/pending-tenant": "sets the pre-OAuth tenant hint cookie only; 503 unless Google OAuth is enabled",
   "/api/auth/[...nextauth]": "NextAuth double-submit CSRF token on its own POSTs",
+  "/api/csp-report": "anonymous CSP violation sink (lane C2): no session authority, no write — counts only",
 };
 
 /**

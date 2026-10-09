@@ -19,6 +19,13 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { parseHoldUntil, pauseCollectionParams } from "@/lib/member-hold";
 import { refuseSupportSession } from "@/lib/support-session";
+import { z } from "zod";
+
+// Lane C2 (9 Oct 2026): a JSON object with at most { until } — an ISO date, or null/absent for an
+// open-ended hold (tests/unit/member-hold.test.ts pins `{}` as open-ended). A body that is missing,
+// unparsable, not an object, or carries any other key is refused: it used to be read as {} and so
+// placed an OPEN-ENDED hold that pauses Stripe collection.
+const bodySchema = z.strictObject({ until: z.union([z.string().max(64), z.null()]).optional() });
 
 export const runtime = "nodejs";
 
@@ -31,11 +38,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { tenantId, userId } = gate;
   const { id: memberId } = await params;
 
-  let body: { until?: unknown } = {};
-  try { body = await req.json(); } catch {}
-  if (typeof body !== "object" || body === null || Array.isArray(body)) body = {}; // SF-C5: a non-object body is treated as an empty one, not a 500
+  let raw: unknown;
+  try { raw = await req.json(); } catch { return NextResponse.json({ error: "Invalid request" }, { status: 400 }); }
+  const body = bodySchema.safeParse(raw); // SF-C5 shape kept: never a 500
+  if (!body.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   const now = new Date();
-  const parsed = parseHoldUntil(body.until, now);
+  const parsed = parseHoldUntil(body.data.until, now);
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
   const found = await withTenantContext(tenantId, async (tx) => {

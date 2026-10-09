@@ -27,6 +27,11 @@ import { sendEmail } from "@/lib/email";
 import { isEmailDeliveryOn } from "@/lib/email-delivery";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { z } from "zod";
+import { checkUploadRateLimit, formFields, normaliseUploadFilename } from "@/lib/upload-guard";
+
+// Lane C2 (9 Oct 2026): exactly `file` and an optional `notes`; anything else is refused.
+const formSchema = z.strictObject({ file: z.unknown().optional(), notes: z.string().max(4000).optional() });
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_NOTES_LEN = 500;
@@ -70,9 +75,14 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
   }
+  const fields = formFields(formData);
+  const parsedForm = fields.ok ? formSchema.safeParse(fields.fields) : null;
+  if (!parsedForm || !parsedForm.success) {
+    return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
+  }
 
-  const file = formData.get("file");
-  const notes = String(formData.get("notes") ?? "").trim().slice(0, MAX_NOTES_LEN);
+  const file = parsedForm.data.file;
+  const notes = (parsedForm.data.notes ?? "").trim().slice(0, MAX_NOTES_LEN);
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -87,6 +97,12 @@ export async function POST(req: Request) {
   if (!ok) {
     return NextResponse.json({ error: "Only CSV files are supported" }, { status: 400 });
   }
+
+  // Every accepted hand-off is stored AND emails the MatFlow team, so the
+  // budget is spent here — after the caller's own mistakes are refused, before
+  // anything is stored or sent (lane C2; lib/upload-guard.ts says what backs it).
+  const limited = await checkUploadRateLimit("csvHandoff", tenantId, userId);
+  if (limited) return limited;
 
   // Reached only by a file we would otherwise have stored — see the note above.
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
@@ -113,7 +129,7 @@ export async function POST(req: Request) {
           tenantId,
           createdById: userId,
           source: "generic",
-          fileName: file.name.slice(0, 200),
+          fileName: normaliseUploadFilename(file.name, "members.csv"),
           fileBlobUrl: blob.url,
           status: "pending_white_glove",
         },

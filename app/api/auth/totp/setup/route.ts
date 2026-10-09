@@ -13,6 +13,11 @@ import { logAudit } from "@/lib/audit-log";
 import { refuseSupportSession } from "@/lib/support-session";
 import { consumeUserTotp } from "@/lib/login-email";
 import { generateRecoveryCodes } from "@/lib/recovery-codes";
+import { z } from "zod";
+
+// Lane C2 (9 Oct 2026): exactly the two fields the enrolment UIs send
+// (components/dashboard/SettingsPage.tsx, components/onboarding/TotpEnrollmentStep.tsx).
+const postSchema = z.strictObject({ code: z.string().regex(/^\d{6}$/), issueRecoveryCodes: z.boolean().optional() });
 
 // Per-user rate limit on the POST verify endpoint to prevent brute-forcing
 // the 6-digit code during initial enrolment. Mirrors the limit on
@@ -108,10 +113,13 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   if (typeof body !== "object" || body === null || Array.isArray(body)) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); // SF-C5
 
-  const { code, issueRecoveryCodes } = body as { code?: string; issueRecoveryCodes?: unknown };
-  if (typeof code !== "string" || !/^\d{6}$/.test(code)) { // review R-4: a number or array must not coerce past the regex
+  // Strict (lane C2): unknown keys, a non-string or non-six-digit code (review R-4), or a
+  // non-boolean issueRecoveryCodes are all one 400 before anything is read or spent.
+  const parsedBody = postSchema.safeParse(body);
+  if (!parsedBody.success) {
     return NextResponse.json({ error: "Invalid code format" }, { status: 400 });
   }
+  const { code, issueRecoveryCodes } = parsedBody.data;
 
   // Atomic read-verify-enable to close the TOCTOU window between reading
   // totpSecret and writing totpEnabled. Without a single transaction, a

@@ -114,6 +114,7 @@ const SESSIONLESS: Record<string, string> = {
   "app/api/webhooks/resend/route.ts": "Resend-signed webhook",
   "app/api/kiosk/[token]/checkin/route.ts": "kiosk device token",
   "app/api/magic-link/request/route.ts": "public; emails the address on file",
+  "app/api/csp-report/route.ts": "anonymous CSP violation sink (lane C2): reads no session, writes nothing, logs counts only",
 };
 
 describe("1. the policy", () => {

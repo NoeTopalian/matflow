@@ -19,6 +19,11 @@ import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
+import { z } from "zod";
+
+// Lane C2 (9 Oct 2026): TotpEnrollmentStep posts { code, issueRecoveryCodes: true } to either base;
+// the member route ignores issueRecoveryCodes but must accept it.
+const postSchema = z.strictObject({ code: z.string().regex(/^\d{6}$/), issueRecoveryCodes: z.boolean().optional() });
 
 const VERIFY_LIMIT_MAX = 5;
 const VERIFY_LIMIT_WINDOW_MS = 10 * 60 * 1000;
@@ -98,10 +103,11 @@ export async function POST(req: NextRequest) {
   let body: unknown;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   if (typeof body !== "object" || body === null || Array.isArray(body)) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); // SF-C5
-  const { code } = body as { code?: string };
-  if (typeof code !== "string" || !/^\d{6}$/.test(code)) { // review R-4: a number or array must not coerce past the regex
+  const parsedBody = postSchema.safeParse(body); // strict (lane C2); review R-4 shape kept
+  if (!parsedBody.success) {
     return NextResponse.json({ error: "Invalid code format" }, { status: 400 });
   }
+  const { code } = parsedBody.data;
 
   // Audit iter-1-auth-boundary AH-2: atomic read-verify-enable inside one
   // withTenantContext transaction. The previous implementation did
