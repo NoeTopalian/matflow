@@ -1,0 +1,43 @@
+{
+ "observedUTC": "2026-10-09T17:37:02.964Z",
+ "ssoProtection": {
+  "deploymentType": "all_except_custom_domains"
+ },
+ "passwordProtection": "(absent)",
+ "trustedIps": "(absent)",
+ "optionsAllowlist": "(absent)",
+ "protectionBypassCount": "(absent)",
+ "protectionBypassScopes": "(absent)",
+ "deploymentExpiration": {
+  "expirationDays": 30,
+  "expirationDaysProduction": 30,
+  "expirationDaysCanceled": 30,
+  "expirationDaysErrored": 30,
+  "deploymentsToKeep": 10
+ },
+ "gitForkProtection": true,
+ "publicSource": "(absent)",
+ "autoExposeSystemEnvs": true,
+ "skewProtectionMaxAge": "(absent)",
+ "nodeVersion": "24.x",
+ "installCommand": null,
+ "buildCommand": null,
+ "commandForIgnoringBuildStep": "(none)",
+ "gitProviderOptions": {
+  "createDeployments": "enabled"
+ },
+ "link": {
+  "type": "github",
+  "repo": "matflow",
+  "productionBranch": "main",
+  "deployHooksCount": 0
+ },
+ "crons": {
+  "enabledAt": "2026-04-24T21:01:30.550Z",
+  "disabledAt": null,
+  "deploymentId": "dpl_BLsgpYdtDXe5TiNQmNEVwLdQQL2p",
+  "definitions": 3
+ },
+ "envEntries": 19,
+ "topKeys": "accountId,alias,autoAssignCustomDomains,autoAssignCustomDomainsUpdatedBy,autoExposeSystemEnvs,avatar,buildCommand,createdAt,crons,defaultResourceConfig,deploymentExpiration,devCommand,directoryListing,enableExternalRewriteCaching,env,features,framework,gitComments,gitForkProtection,gitLFS,gitProviderOptions,hasDeployments,id,installCommand,lastAliasRequest,lastRollbackTarget,latestDeployments,link,live,name,nodeVersion,oidcTokenConfig,outputDirectory,productionDeploymentsFastLane,protectedSourcemaps,resourceConfig,rootDirectory,serverlessFunctionRegion,sourceFilesOutsideRootDirectory,speedInsights,ssoProtection,targets,updatedAt,webAnalytics"
+}

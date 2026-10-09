@@ -49,3 +49,15 @@ the old deployments closes the version exposure.
 - `.github/workflows/security-supply-chain.yml` (PROPOSAL, **not running**: it exists only on the unpushed branch)
   runs it on every PR and daily.
 - Re-open any row when the lockfile, Node version, libvips bundle or upload path changes.
+
+## Iteration 2 addendum (lane E2, 9 Oct 2026, 17:30–17:50 UTC)
+- **ADV-12 update.** The serving build log (`vercel inspect --logs`, fetched 17:30 UTC; build of 2026-10-04T02:32) does
+  not print the Node patch version. Read-only observations: project Node `24.x`, functions `nodejs24.x`, build image
+  Vercel CLI 62.1.0 (`evidence/E2/build-log-extract-e8afb6a.txt`). Status stays **UNKNOWN** for the patch level; HEAD
+  now pins `engines.node ">=24.18.1 <25"`, so the next build is constrained to a patched 24 line. E2 test evidence ran on
+  Node v24.21.0.
+- **Install scripts (SEC-060 note).** In the serving build npm reported five dependency install scripts "not yet covered
+  by allowScripts" (@prisma/engines, @sentry/cli, msw, prisma, unrs-resolver) and did not run them; only the root
+  `postinstall` ran. This narrows, for that build, the "Vercel runs install scripts with production env" concern in E-03.
+  Earlier builds were not checked; the behaviour depends on the npm version in the build image and is not pinned.
+- No new package advisory was evaluated in this pass (no lockfile change by lane E2).

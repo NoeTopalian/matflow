@@ -1,0 +1,58 @@
+{
+  "purpose": "Prepared (NOT applied) mail-authentication DNS changes for matflow.studio. Checked by tests/unit/sec-e2-mail-records.test.ts. Applying them is Noe's action in Vercel DNS.",
+  "observed": {
+    "source": "Google DNS-over-HTTPS (dns.google/resolve), passive; no request to any MatFlow host",
+    "observedUTC": "2026-10-09T17:35:43Z",
+    "records": [
+      { "name": "matflow.studio", "type": "TXT", "values": [] },
+      { "name": "matflow.studio", "type": "MX", "values": [] },
+      { "name": "_dmarc.matflow.studio", "type": "TXT", "values": [] },
+      { "name": "send.matflow.studio", "type": "TXT", "values": ["v=spf1 include:amazonses.com ~all"] },
+      { "name": "send.matflow.studio", "type": "MX", "values": ["10 feedback-smtp.eu-west-1.amazonses.com."] },
+      { "name": "resend._domainkey.matflow.studio", "type": "TXT", "values": ["p=<RSA public key, 1024-bit DER prefix MIGfMA0G…>"] }
+    ],
+    "notes": [
+      "The wildcard * ALIAS (Vercel default) answers A for any label; TXT on any label is empty (NODATA).",
+      "No apex MX: nothing can receive mail at an @matflow.studio address, so a DMARC rua on matflow.studio would bounce."
+    ]
+  },
+  "assumptions": {
+    "fromDomain": "matflow.studio (RESEND_FROM is a Sensitive Vercel variable and was not read; Noe confirms from a received message header)",
+    "dkimDomain": "matflow.studio (selector resend, published at resend._domainkey.matflow.studio)",
+    "envelopeFrom": "send.matflow.studio (Resend return-path; SPF published there)"
+  },
+  "proposed": [
+    {
+      "stage": 0,
+      "when": "now (no effect on delivery)",
+      "name": "matflow.studio",
+      "type": "TXT",
+      "value": "v=spf1 -all",
+      "condition": "Only if no service sends with an envelope sender at the bare apex. Resend uses send.matflow.studio, a different name, so its SPF is unaffected. If a mailbox provider is later added for the apex, replace this single record with that provider's SPF (never add a second SPF record)."
+    },
+    {
+      "stage": 1,
+      "when": "now; hold at least 14 days of aggregate reports",
+      "name": "_dmarc.matflow.studio",
+      "type": "TXT",
+      "value": "v=DMARC1; p=none; rua=mailto:REPLACE-WITH-REPORT-ADDRESS; adkim=r; aspf=r",
+      "condition": "The rua address must be able to receive mail. An address on another domain is only honoured if that domain publishes matflow.studio._report._dmarc.<its-domain> (RFC 7489 §7.1) — hosted DMARC report services do this; a personal Gmail address does not."
+    },
+    {
+      "stage": 2,
+      "when": "after stage 1 reports show Resend mail passing DKIM and SPF aligned, and no unknown legitimate sender",
+      "name": "_dmarc.matflow.studio",
+      "type": "TXT",
+      "value": "v=DMARC1; p=quarantine; pct=25; rua=mailto:REPLACE-WITH-REPORT-ADDRESS; adkim=r; aspf=r",
+      "condition": "Raise pct to 100 after 7 clean days."
+    },
+    {
+      "stage": 3,
+      "when": "after at least 30 days at p=quarantine; pct=100 with clean reports",
+      "name": "_dmarc.matflow.studio",
+      "type": "TXT",
+      "value": "v=DMARC1; p=reject; rua=mailto:REPLACE-WITH-REPORT-ADDRESS; adkim=r; aspf=r",
+      "condition": "Rollback at any stage = edit the record back to the previous stage (TTL-bound)."
+    }
+  ]
+}
