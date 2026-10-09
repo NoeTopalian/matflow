@@ -69,6 +69,22 @@ try {
   manifest.functionGrants = await q(`select p.oid::regprocedure::text obj, case when a.grantee = 0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end grantee, a.privilege_type priv
                                        from pg_proc p join pg_namespace n on n.oid=p.pronamespace, aclexplode(p.proacl) a
                                       where n.nspname='public' and p.proacl is not null and a.grantee <> p.proowner order by 1,2,3`);
+  // F3 (SF-96): the "globals" the extended fingerprint now compares, in replayable form (raw values stay in the
+  // export directory, which is outside the repository; the fingerprint itself holds only digests of setting values).
+  manifest.roleSettings = await q(`select r.rolname "role", case when s.setdatabase = 0 then 'all' else 'this' end scope, s.setconfig config
+                                     from pg_db_role_setting s left join pg_roles r on r.oid = s.setrole
+                                    where s.setdatabase in (0, (select oid from pg_database where datname = current_database())) order by 1, 2`);
+  manifest.databaseAcl = await q(`select case when a.grantee = 0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end grantee, a.privilege_type priv, a.is_grantable grantable
+                                    from pg_database d, aclexplode(coalesce(d.datacl, acldefault('d', d.datdba))) a
+                                   where d.datname = current_database() and a.grantee <> d.datdba order by 1, 2`);
+  manifest.defaultPrivileges = await q(`select pg_get_userbyid(d.defaclrole) "role", n.nspname nsp, d.defaclobjtype::text objtype,
+                                               case when a.grantee = 0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end grantee, a.privilege_type priv, a.is_grantable grantable
+                                          from pg_default_acl d left join pg_namespace n on n.oid = d.defaclnamespace, aclexplode(d.defaclacl) a
+                                         order by 1, 2, 3, 4, 5`);
+  manifest.columnGrants = await q(`select c.relname obj, a.attname col, case when x.grantee = 0 then 'PUBLIC' else pg_get_userbyid(x.grantee) end grantee,
+                                          x.privilege_type priv, x.is_grantable grantable
+                                     from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace, aclexplode(a.attacl) x
+                                    where n.nspname = 'public' and a.attnum > 0 and not a.attisdropped and a.attacl is not null order by 1, 2, 3, 4`);
   manifest.sequences = await q(`select c.relname seq from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='S' order by 1`);
   for (const s of manifest.sequences) {
     const r = (await q(`select last_value::text v, is_called from public."${s.seq.replace(/"/g, "")}"`))[0];

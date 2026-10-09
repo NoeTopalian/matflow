@@ -1,0 +1,136 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/F3/wt
+
+ ❯ tests/unit/sec-f2-coverage-reconcile.test.ts (37 tests | 15 failed) 84ms
+     × a reviewer cell reading "not yet approved" is NOT an approval 10ms
+     × a reviewer cell reading "approved? no" is NOT an approval 1ms
+     × a reviewer cell reading "approved: no" is NOT an approval 1ms
+     × a reviewer cell reading "never approved" is NOT an approval 1ms
+     × a reviewer cell reading "**not** approved" is NOT an approval 1ms
+     × a reviewer cell reading "approved?" is NOT an approval 1ms
+     × a reviewer cell reading "R3: NOT APPROVED 9 Oct; R4: approved 10 Oct (re-review)" IS an approval (positive control) 1ms
+     × a FIXED row whose reviewer says 'not yet approved' or 'approved? no' is NOT counted as PASS 4ms
+     × a NOT APPLICABLE row with evidence cell "" fails the run 2ms
+     × a NOT APPLICABLE row with evidence cell "—" fails the run 1ms
+     × a NOT APPLICABLE row with evidence cell "-" fails the run 0ms
+     × a NOT APPLICABLE row with evidence cell "n/a" fails the run 0ms
+     × a NOT APPLICABLE row with evidence cell "TBD" fails the run 0ms
+     × a NOT APPLICABLE row with evidence cell "none" fails the run 0ms
+     × positive control: a NOT APPLICABLE row that names its evidence reconciles 1ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 15 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a reviewer cell reading "not yet approved" is NOT an approval
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a reviewer cell reading "approved? no" is NOT an approval
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a reviewer cell reading "approved: no" is NOT an approval
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a reviewer cell reading "never approved" is NOT an approval
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a reviewer cell reading "**not** approved" is NOT an approval
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a reviewer cell reading "approved?" is NOT an approval
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/unit/sec-f2-coverage-reconcile.test.ts:96:36
+     94|     "disapproved",
+     95|   ])("a reviewer cell reading %j is NOT an approval", (cell) => {
+     96|     expect(reviewerApproved(cell)).toBe(false);
+       |                                    ^
+     97|   });
+     98|   it.each([
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/15]⎯
+
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a reviewer cell reading "R3: NOT APPROVED 9 Oct; R4: approved 10 Oct (re-review)" IS an approval (positive control)
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/unit/sec-f2-coverage-reconcile.test.ts:105:36
+    103|     "**APPROVED** by R4",
+    104|   ])("a reviewer cell reading %j IS an approval (positive control)", (…
+    105|     expect(reviewerApproved(cell)).toBe(true);
+       |                                    ^
+    106|   });
+    107|   const header = "| ID | Area | Lane | Risk | Inv | Level | Applicabil…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/15]⎯
+
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a FIXED row whose reviewer says 'not yet approved' or 'approved? no' is NOT counted as PASS
+AssertionError: expected { 'FIXED AWAITING RETEST': 1, PASS: 2 } to deeply equal { 'FIXED AWAITING RETEST': 3 }
+
+- Expected
++ Received
+
+  {
+-   "FIXED AWAITING RETEST": 3,
++   "FIXED AWAITING RETEST": 1,
++   "PASS": 2,
+  }
+
+ ❯ tests/unit/sec-f2-coverage-reconcile.test.ts:116:28
+    114|       row("SEC-003", "APPLICABLE", "FIXED → PASS", "e", "NOT APPROVED …
+    115|     ]), { expectedCount: 3, requireReviewed: true }).summary;
+    116|     expect(s.verification).toEqual({ "FIXED AWAITING RETEST": 3 });
+       |                            ^
+    117|     expect(s.fixedCountedAsPass).toBe(0);
+    118|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/15]⎯
+
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a NOT APPLICABLE row with evidence cell "" fails the run
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a NOT APPLICABLE row with evidence cell "—" fails the run
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a NOT APPLICABLE row with evidence cell "-" fails the run
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a NOT APPLICABLE row with evidence cell "n/a" fails the run
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a NOT APPLICABLE row with evidence cell "TBD" fails the run
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > a NOT APPLICABLE row with evidence cell "none" fails the run
+AssertionError: expected 'RECONCILED' to be 'FAIL' // Object.is equality
+
+Expected: "FAIL"
+Received: "RECONCILED"
+
+ ❯ tests/unit/sec-f2-coverage-reconcile.test.ts:121:23
+    119|   it.each(["", "—", "-", "n/a", "TBD", "none"])("a NOT APPLICABLE row …
+    120|     const s = reconcileMatrix(doc([row("SEC-001", "NOT APPLICABLE WITH…
+    121|     expect(s.verdict).toBe("FAIL");
+       |                       ^
+    122|     expect(s.naWithoutEvidence).toEqual(["SEC-001: NOT APPLICABLE WITH…
+    123|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/15]⎯
+
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile SF-97 (lane F3) > positive control: a NOT APPLICABLE row that names its evidence reconciles
+AssertionError: expected undefined to deeply equal []
+
+- Expected:
+[]
+
++ Received:
+undefined
+
+ ❯ tests/unit/sec-f2-coverage-reconcile.test.ts:127:33
+    125|     const s = reconcileMatrix(doc([row("SEC-001", "NOT APPLICABLE WITH…
+    126|     expect(s.verdict).toBe("RECONCILED");
+    127|     expect(s.naWithoutEvidence).toEqual([]);
+       |                                 ^
+    128|   });
+    129| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/15]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  15 failed | 22 passed (37)
+   Start at  22:25:43
+   Duration  592ms (transform 111ms, setup 52ms, import 134ms, tests 84ms, environment 0ms)
+

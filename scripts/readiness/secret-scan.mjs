@@ -12,8 +12,11 @@
  * classified `placeholder` and do not fail the run. The placeholder test reads the CAPTURED value only (a URL's
  * password and host, an assignment's value), never the surrounding text, and a marker word downgrades a value only
  * when nothing random-looking remains without it (lane E3, review R2).
+ * Lane F3 (SF-82 residuals): names match case-insensitively; a generic *_PASSWORD / *_SECRET / *_TOKEN rule takes
+ * any non-empty literal, and its human-readable values in source files are classified `literal` (listed, counted,
+ * not failing) while random-looking values and anything in an env/config file are `candidate`.
  *
- * Exit codes: 0 = no non-placeholder finding; 1 = at least one; 2 = usage or I/O error.
+ * Exit codes: 0 = no `candidate` finding; 1 = at least one; 2 = usage or I/O error.
  * The scan is a pattern list, not proof of absence: a secret in an unknown format is not detected.
  */
 import { execFileSync, spawn } from "node:child_process";
@@ -47,15 +50,17 @@ export const RULES = [
   {
     id: "rls-context-signing-key",
     prefix: "RLS_CONTEXT_SIGNING_KEY=",
-    re: /(?:^|[^A-Za-z0-9_])RLS_CONTEXT_SIGNING_KEY["']?\s*[=:]\s*["'`]?([0-9A-Fa-f]{128})(?![0-9A-Fa-f])/g,
+    re: /(?:^|[^A-Za-z0-9_])RLS_CONTEXT_SIGNING_KEY["']?\s*[=:]\s*["'`]?([0-9A-Fa-f]{128})(?![0-9A-Fa-f])/gi,
     severity: "critical",
     valueGroup: 1,
   },
-  // Passwords have no format: any assigned literal of 8+ characters that is not an interpolation or a placeholder.
+  // Names in every NAME-based rule match case-insensitively (lane F3, SF-82 residual: a lower-case
+  // operator_password was missed). Passwords have no format: any assigned literal of 8+ characters that is not an
+  // interpolation or a placeholder.
   {
     id: "password-env-assignment",
     prefix: "NAME=",
-    re: /(?:^|[\s"'`{,])(?:export\s+)?(?:OPERATOR_PASSWORD|MATFLOW_PROD_PASSWORD|TEST_PASSWORD)["']?\s*[=:]\s*["'`]?([^\s"'`,;)}]{8,})/gm,
+    re: /(?:^|[\s"'`{,])(?:export\s+)?(?:OPERATOR_PASSWORD|MATFLOW_PROD_PASSWORD|TEST_PASSWORD)["']?\s*[=:]\s*["'`]?([^\s"'`,;)}]{8,})/gim,
     severity: "high",
     valueGroup: 1,
     minEntropy: 2,
@@ -64,7 +69,7 @@ export const RULES = [
   {
     id: "database-url-env-assignment",
     prefix: "NAME=postgres://",
-    re: /(?:^|[\s"'`{,])(?:export\s+)?(?:MIGRATION_DATABASE_URL|DATABASE_URL_DIRECT)["']?\s*[=:]\s*["'`]?(postgres(?:ql)?:\/\/[^\s:@/'"`<>]+:([^\s@'"`<>]+)@([^\s'"`<>/:?]+)[^\s'"`<>]*)/gm,
+    re: /(?:^|[\s"'`{,])(?:export\s+)?(?:MIGRATION_DATABASE_URL|DATABASE_URL_DIRECT)["']?\s*[=:]\s*["'`]?(postgres(?:ql)?:\/\/[^\s:@/'"`<>]+:([^\s@'"`<>]+)@([^\s'"`<>/:?]+)[^\s'"`<>]*)/gim,
     severity: "critical",
     valueGroup: 1,
     checkGroup: 2,
@@ -79,7 +84,7 @@ export const RULES = [
   {
     id: "secret-name-table-value",
     prefix: "NAME|",
-    re: /(?:AUTH_SECRET|NEXTAUTH_SECRET|MATFLOW_ADMIN_SECRET|CRON_SECRET|E2E_BYPASS_TOKEN|VAPID_PRIVATE_KEY|STRIPE_SECRET_KEY|RESEND_API_KEY|BLOB_READ_WRITE_TOKEN|ANTHROPIC_API_KEY|GOOGLE_CLIENT_SECRET|STRIPE_WEBHOOK_SECRET|RESEND_WEBHOOK_SECRET|AWS_SECRET_ACCESS_KEY)`?\s*\|\s*`([A-Za-z0-9+/_=.-]{16,})`/g,
+    re: /(?:AUTH_SECRET|NEXTAUTH_SECRET|MATFLOW_ADMIN_SECRET|CRON_SECRET|E2E_BYPASS_TOKEN|VAPID_PRIVATE_KEY|STRIPE_SECRET_KEY|RESEND_API_KEY|BLOB_READ_WRITE_TOKEN|ANTHROPIC_API_KEY|GOOGLE_CLIENT_SECRET|STRIPE_WEBHOOK_SECRET|RESEND_WEBHOOK_SECRET|AWS_SECRET_ACCESS_KEY)`?\s*\|\s*`([A-Za-z0-9+/_=.-]{16,})`/gi,
     severity: "high",
     valueGroup: 1,
     minEntropy: 3.5,
@@ -88,10 +93,31 @@ export const RULES = [
   {
     id: "secret-env-assignment",
     prefix: "NAME=",
-    re: /(?:^|[\s"'`{,])(?:export\s+)?(?:AUTH_SECRET|NEXTAUTH_SECRET|MATFLOW_ADMIN_SECRET|CRON_SECRET|E2E_BYPASS_TOKEN|VAPID_PRIVATE_KEY|STRIPE_SECRET_KEY|RESEND_API_KEY|BLOB_READ_WRITE_TOKEN|ANTHROPIC_API_KEY|GOOGLE_CLIENT_SECRET|STRIPE_WEBHOOK_SECRET|RESEND_WEBHOOK_SECRET|AUDIT_DIGEST_KEY|AWS_SECRET_ACCESS_KEY)["']?\s*[=:]\s*["']?([A-Za-z0-9+/_.~-]{16,})/gm,
+    re: /(?:^|[\s"'`{,])(?:export\s+)?(?:AUTH_SECRET|NEXTAUTH_SECRET|MATFLOW_ADMIN_SECRET|CRON_SECRET|E2E_BYPASS_TOKEN|VAPID_PRIVATE_KEY|STRIPE_SECRET_KEY|RESEND_API_KEY|BLOB_READ_WRITE_TOKEN|ANTHROPIC_API_KEY|GOOGLE_CLIENT_SECRET|STRIPE_WEBHOOK_SECRET|RESEND_WEBHOOK_SECRET|AUDIT_DIGEST_KEY|AWS_SECRET_ACCESS_KEY)["']?\s*[=:]\s*["']?([A-Za-z0-9+/_.~-]{16,})/gim,
     severity: "high",
     valueGroup: 1,
     minEntropy: 3.5,
+  },
+  // Lane F3 (SF-82 residual): ANY name ending _PASSWORD / _PASSWD / _SECRET / _TOKEN (SMTP_PASSWORD, smtp_secret …)
+  // assigned ANY non-empty literal. Three shapes, so code that merely names such a variable is not a finding:
+  //   a quoted literal anywhere — NAME = "v" / NAME: 'v' / "NAME": "v" / NAME=`v` (the ":" written against the name,
+  //     so a ternary "? NAME : 'text'" is not an assignment);
+  //   an unquoted value as a whole env/YAML line — NAME=v or NAME: v, nothing after it but a # comment, and not
+  //     ending in code punctuation (a TypeScript "NAME: string;" or "token: f(x)," is not a value);
+  //   an env pair written tight anywhere — NAME=v with no space around "=" (inside a string, a command line …).
+  // The placeholder test reads the captured value (as E3 built it); a dotted reference (tokens.refresh, env.X) or a
+  // shell / cmd variable ($X, %X%) is a reference, not a literal. A value a named rule already reported on the
+  // same line is not repeated. Classification (scanText): "candidate" when the value looks random or the file is an
+  // env/config file (where deployment secrets live); otherwise "literal" — a human-readable hard-coded value in
+  // source (test fixtures such as a THROWAWAY_PASSWORD): REPORTED and counted, listed by the CLI, but not failing.
+  {
+    id: "generic-secret-assignment",
+    prefix: "*_PASSWORD|*_SECRET|*_TOKEN=",
+    re: /(?:^|[^A-Za-z0-9_])[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*_(?:PASSWORD|PASSWD|SECRET|TOKEN)["']?(?:[ \t]*=|:)[ \t]*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`)|^[ \t]*(?:export[ \t]+)?[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*_(?:PASSWORD|PASSWD|SECRET|TOKEN)(?:[ \t]*=|:)[ \t]*([^\s"'`#]*[^\s"'`#,;(){}[\]])[ \t]*(?:#[^\r\n]*)?\r?$|(?:^|[^A-Za-z0-9_.$])[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*_(?:PASSWORD|PASSWD|SECRET|TOKEN)=([^\s"'`#;,)}\]=][^\s"'`#;,)}\]]*)/gim,
+    severity: "high",
+    valueGroups: [1, 2, 3, 4, 5],
+    referenceIsPlaceholder: true,
+    generic: true,
   },
 ];
 
@@ -148,8 +174,37 @@ export function isPlaceholder(value) {
     const next = rest.replace(re, " ");
     if (next !== rest) { marked = true; rest = next; }
   }
-  return marked && !hasRandomRun(rest);
+  // Lane F3 (SF-82 residual): a marker cut out of the MIDDLE of one token leaves the two halves of that token, which
+  // count as one stretch — `<8 random>example<8 random>` leaves two runs each below hasRandomRun's length, yet
+  // together they are a real password. A marker at a token's edge or between separators splits nothing.
+  return marked && !hasRandomRun(rest) && !embeddedMarkerRandom(v);
 }
+
+/**
+ * True when some single alphanumeric token of the value has a marker strictly inside it (letters or digits on both
+ * sides) and, with the markers removed, is 12+ characters with upper AND lower case and Shannon >= 3.0.
+ */
+export function embeddedMarkerRandom(v) {
+  for (const tok of String(v).split(/[^0-9A-Za-z]+/)) {
+    let rest = tok;
+    let embedded = false;
+    for (const re of PLACEHOLDER_MARKERS) {
+      re.lastIndex = 0;
+      rest = rest.replace(re, (m, off, s) => {
+        if (off > 0 && off + m.length < s.length) embedded = true;
+        return "";
+      });
+    }
+    if (embedded && rest.length >= 12 && /[a-z]/.test(rest) && /[A-Z]/.test(rest) && shannon(rest) >= 3.0) return true;
+  }
+  return false;
+}
+
+/** A dotted reference (tokens.refresh, env.SMTP_PASSWORD, this.secret) names a value rather than being one. */
+const REFERENCE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+[;,]?$|^\$[A-Za-z_]\w*$|^%\w+%$/;
+
+/** Env / config files, where any literal secret counts (a history location carries an "@blob:<id>" suffix). */
+const CONFIG_FILE = /(?:^|[\\/])(?:\.env[^\\/@]*|[^\\/@]*\.(?:env|ya?ml|toml|ini|properties|cfg|conf)|Dockerfile[^\\/@]*|\.npmrc|\.pypirc)(?:@blob:[0-9a-f]+)?$/i;
 
 /** Host of a URL rule that cannot be a real database (loopback, container name, reserved domain). */
 export function isPlaceholderHost(host) {
@@ -159,11 +214,13 @@ export function isPlaceholderHost(host) {
 /** Scan one text. Returns redacted findings only. */
 export function scanText(text, location = "<text>") {
   const findings = [];
+  const reported = []; // { line, value } of named-rule findings, local to this call (never returned or printed)
   for (const rule of RULES) {
     rule.re.lastIndex = 0;
     let m;
     while ((m = rule.re.exec(text))) {
-      const value = rule.valueGroup ? m[rule.valueGroup] : m[0];
+      const value = rule.valueGroups ? rule.valueGroups.map((g) => m[g]).find((v) => v !== undefined)
+        : rule.valueGroup ? m[rule.valueGroup] : m[0];
       if (!value) continue;
       if (rule.minEntropy && shannon(value) < rule.minEntropy) continue;
       const lead = m[0].length - m[0].trimStart().length;
@@ -181,7 +238,12 @@ export function scanText(text, location = "<text>") {
         try { check = decodeURIComponent(check); } catch { /* keep the raw form */ }
         check = check.replace(/^endpoint=[^;]*;/i, "");
       }
-      const placeholder = isPlaceholder(check) || (hostVal !== undefined && isPlaceholderHost(hostVal));
+      const placeholder = isPlaceholder(check) || (hostVal !== undefined && isPlaceholderHost(hostVal))
+        || (rule.referenceIsPlaceholder === true && REFERENCE.test(check));
+      // The generic rule does not repeat a value a named rule already reported on the same line (same fingerprint),
+      // nor one that sits inside a value already reported there (a URL whose password another rule judged).
+      if (rule.generic && reported.some((r) => r.line === line && r.value.includes(value))) continue;
+      if (!rule.generic) reported.push({ line, value });
       findings.push({
         rule: rule.id,
         severity: rule.severity,
@@ -191,7 +253,8 @@ export function scanText(text, location = "<text>") {
         prefix: rule.prefix,
         fingerprint: fingerprint(value),
         hostClass: host,
-        classification: placeholder ? "placeholder" : "candidate",
+        classification: placeholder ? "placeholder"
+          : rule.generic && !CONFIG_FILE.test(location) && !hasRandomRun(check) && !embeddedMarkerRandom(check) ? "literal" : "candidate",
       });
     }
   }
@@ -312,8 +375,8 @@ async function main() {
   }
   const summary = { mode, at: new Date().toISOString(), ...summarise(result) };
   console.log(JSON.stringify(summary, null, 1));
-  for (const f of result.findings.filter((x) => x.classification === "candidate")) {
-    console.log(`CANDIDATE ${f.severity} ${f.rule} ${f.location}:${f.line} len=${f.length} prefix=${f.prefix} fp=${f.fingerprint}${f.hostClass ? ` host=${f.hostClass}` : ""}`);
+  for (const f of result.findings.filter((x) => x.classification === "candidate" || x.classification === "literal")) {
+    console.log(`${f.classification.toUpperCase()} ${f.severity} ${f.rule} ${f.location}:${f.line} len=${f.length} prefix=${f.prefix} fp=${f.fingerprint}${f.hostClass ? ` host=${f.hostClass}` : ""}`);
   }
   if (jsonOut) fs.writeFileSync(jsonOut, JSON.stringify({ summary, findings: result.findings }, null, 1));
   process.exit(summary.candidates > 0 ? 1 : 0);

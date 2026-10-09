@@ -15,8 +15,10 @@
 // residual qualifiers are counted separately so they are not mistaken for clean passes.
 // --require-reviewed: a row whose final state is FIXED (or PASS reached through FIXED) counts as PASS only when the
 //   Reviewer column names an approval ("approved", not "not approved" / "reviewed"); otherwise it stays
-//   FIXED AWAITING RETEST. Without the flag FIXED rows are never counted as PASS.
-// Consistency: a "guard test" (N/A) verification must sit on a NOT APPLICABLE WITH EVIDENCE row, and vice versa.
+//   FIXED AWAITING RETEST. Without the flag FIXED rows are never counted as PASS. The approval check is
+//   negation-aware and the LAST approval word in the cell decides (reviewerApproved, SF-97).
+// Consistency: a "guard test" (N/A) verification must sit on a NOT APPLICABLE WITH EVIDENCE row, and vice versa;
+// a NOT APPLICABLE row with an empty (or dash / placeholder) Evidence cell fails the run (naWithoutEvidence, SF-97).
 // The findings ledger (FINDINGS.md) is checked for unique ids and well-formed rows (cell count = its table header);
 // those problems are reported and, with --findings-strict, fail the run.
 // Exit 1 on any missing / duplicated / malformed / UNPARSED / inconsistent matrix row. Prints one JSON line (and the
@@ -100,9 +102,34 @@ export function classifyApplicability(a) {
   return "UNPARSED";
 }
 
+// SF-97 (lane F3): negation-aware. Every approval word in the cell is read in order, each in its own clause context
+// (from the previous ";", line break or approval word up to the word, plus the few characters after it); the LAST
+// one decides, so "R: approved; R3: NOT APPROVED" is not approved and a later re-review approval counts. A word is
+// an approval only when it is exactly "approved", with no negator before it in its clause ("not", "never", "yet",
+// "pending", "awaiting", …) and no question or "no" straight after it ("approved? no", "approved: no").
+// "unapproved", "disapproved", "approval pending" and "awaiting approval" are never approvals. Ambiguity reads as
+// NOT approved — the flag only ever decides whether a FIXED row may count as PASS.
+const APPROVAL_WORD = /\b(?:un|dis)?approv(?:ed|al|e)\b/gi;
+const NEGATOR_BEFORE = /\b(?:not|never|no|yet|pending|awaiting|without|refused|withheld|rejected|isn't|wasn't|hasn't|haven't|cannot|can't)\b/i;
+const NEGATOR_AFTER = /^\s*(?:\?|[:=—–-]?\s*(?:no|false|pending|n\/a|refused|withheld)\b)/i;
 export function reviewerApproved(r) {
-  const R = String(r ?? "");
-  return /\bapproved\b/i.test(R) && !/\bnot approved\b/i.test(R);
+  const R = String(r ?? "").replace(/\*\*/g, "");
+  let last = null, prevEnd = 0;
+  for (const m of R.matchAll(APPROVAL_WORD)) {
+    const before = R.slice(prevEnd, m.index);
+    const cut = Math.max(before.lastIndexOf(";"), before.lastIndexOf("\n"), before.toLowerCase().lastIndexOf("<br"));
+    const clause = before.slice(cut + 1);
+    const after = R.slice(m.index + m[0].length, m.index + m[0].length + 16);
+    last = m[0].toLowerCase() === "approved" && !NEGATOR_BEFORE.test(clause) && !NEGATOR_AFTER.test(after);
+    prevEnd = m.index + m[0].length;
+  }
+  return last === true;
+}
+
+/** SF-97: a NOT APPLICABLE row must name its evidence; empty, a dash or a placeholder word is no evidence. */
+export function evidencePresent(cell) {
+  const e = String(cell ?? "").replace(/\*\*/g, "").trim();
+  return e.length > 0 && !/^(?:[—–\-.]+|n\/?a|none|tbd|todo|pending|unknown|\?+)$/i.test(e);
 }
 
 const cellsOf = (line) => line.replace(/^\|/, "").replace(/\|\s*$/, "").split("|").map((c) => c.trim());
@@ -120,7 +147,7 @@ export function reconcileMatrix(src, { requireReviewed = false, expectedCount = 
   const dups = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
   const unexpected = ids.filter((id) => !expected.includes(id));
   const malformed = cells.filter((c) => c.length !== width).map((c) => `${c[0]} (${c.length} cells, header ${width})`);
-  const app = {}, ver = {}, unparsed = [], inconsistent = [], perRow = [];
+  const app = {}, ver = {}, unparsed = [], inconsistent = [], naWithoutEvidence = [], perRow = [];
   let residualRows = 0, fixedCountedAsPass = 0, fixedAwaitingApproval = 0;
   for (const c of cells) {
     const a = classifyApplicability(c[6]);
@@ -134,14 +161,16 @@ export function reconcileMatrix(src, { requireReviewed = false, expectedCount = 
     app[a] = (app[a] ?? 0) + 1; ver[cls] = (ver[cls] ?? 0) + 1;
     if (a === "UNPARSED" || cls === "UNPARSED") unparsed.push(c[0]);
     if ((cls === "N/A (guard test)") !== (a === "NOT APPLICABLE WITH EVIDENCE")) inconsistent.push(`${c[0]}: applicability ${a} with verification ${cls}`);
+    if (a === "NOT APPLICABLE WITH EVIDENCE" && !evidencePresent(c[8])) naWithoutEvidence.push(`${c[0]}: NOT APPLICABLE WITH EVIDENCE but the evidence cell is empty`);
     if (v.residual && cls !== "UNPARSED") residualRows += 1;
     perRow.push({ id: c[0], applicability: a, verification: cls, viaFixed: v.viaFixed, reviewerApproved: approved, residual: v.residual });
   }
   const sortObj = (o) => Object.fromEntries(Object.entries(o).sort(([x], [y]) => x.localeCompare(y)));
-  const ok = missing.length === 0 && dups.length === 0 && unexpected.length === 0 && malformed.length === 0 && unparsed.length === 0 && inconsistent.length === 0;
+  const ok = missing.length === 0 && dups.length === 0 && unexpected.length === 0 && malformed.length === 0 && unparsed.length === 0 && inconsistent.length === 0
+    && naWithoutEvidence.length === 0;
   return {
     summary: {
-      rows: rows.length, missing, dups, unexpected, malformed, unparsed, inconsistent,
+      rows: rows.length, missing, dups, unexpected, malformed, unparsed, inconsistent, naWithoutEvidence,
       applicability: sortObj(app), verification: sortObj(ver), requireReviewed,
       ...(requireReviewed ? { fixedCountedAsPass, fixedAwaitingApproval } : {}),
       rowsWithResidualQualifiers: residualRows,

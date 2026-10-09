@@ -95,9 +95,14 @@ function prodArgs(extra: string[] = []) {
   return [
     "--target", "production", "--sha", SHA, "--base-url", PROD, "--tenant", "fixture-club",
     "--env-file-for-migrations", ".env.fixture", "--expect-host", EP, "--expect-migrations", MIGRATIONS.join(","),
-    "--expect-operator-login", "--operator-session-file", privateFile("session.txt", SESSION), ...extra,
+    "--expect-operator-login", "--operator-session-file", privateFile("session.txt", SESSION),
+    // SF-94 (lane F3): the project id is injected, never read from the untracked .vercel/project.json of whatever
+    // checkout runs the suite (absent in a clean checkout and in CI). The file-read path has its own cells below,
+    // each against a temporary repo root.
+    "--vercel-project", FIXTURE_PROJECT, ...extra,
   ];
 }
+const FIXTURE_PROJECT = "prj_fixture0123456789";
 function testArgs(extra: string[] = []) {
   return [
     "--target", "test", "--sha", SHA, "--base-url", LOCAL, "--tenant", "fixture-club",
@@ -151,6 +156,38 @@ describe("release-verify: production target", () => {
     expect(JSON.parse(String(login.init.body))).toEqual({ secret: sent });
     expect(login.init.headers?.origin).toBe(PROD);
     expect(seen.find((x) => x.init.headers?.cookie === `matflow_admin=${sent}`)).toBeTruthy();
+  });
+
+  describe("Vercel project id source (SF-94: hermetic, no dependency on the checkout's .vercel/)", () => {
+    const withoutFlag = () => { const a = prodArgs(); a.splice(a.indexOf("--vercel-project"), 2); return a; };
+    let root: string;
+    let asked: string[];
+    const spyVercel = async (id: string) => { asked.push(id); return vercel; };
+    beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "secf3-rv-root-")); asked = []; });
+    afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    it("--vercel-project is what the Vercel API is asked about", async () => {
+      expect(await s.main(prodArgs(), deps({ runVercel: spyVercel }))).toBe(0);
+      expect(asked).toEqual([FIXTURE_PROJECT]);
+    });
+    it("without the flag the id is read from <repo root>/.vercel/project.json (temporary root)", async () => {
+      fs.mkdirSync(path.join(root, ".vercel"));
+      fs.writeFileSync(path.join(root, ".vercel", "project.json"), JSON.stringify({ projectId: "prj_fromfile0123", orgId: "team_fixture" }));
+      expect(await s.main(withoutFlag(), deps({ runVercel: spyVercel, repoRoot: root }))).toBe(0);
+      expect(asked).toEqual(["prj_fromfile0123"]);
+      expect(statusOf("vercel.production_sha")).toBe("PASS");
+    });
+    it("without the flag and without .vercel/project.json the check FAILS closed and the API is never called", async () => {
+      expect(await s.main(withoutFlag(), deps({ runVercel: spyVercel, repoRoot: root }))).toBe(1);
+      expect(asked).toEqual([]);
+      expect(summary().checks.find((c: { name: string }) => c.name === "vercel.production_sha")).toMatchObject({ status: "FAIL" });
+    });
+    it("a malformed project id is refused the same way", async () => {
+      fs.mkdirSync(path.join(root, ".vercel"));
+      fs.writeFileSync(path.join(root, ".vercel", "project.json"), JSON.stringify({ projectId: "prj_x; rm -rf /" }));
+      expect(await s.main(withoutFlag(), deps({ runVercel: spyVercel, repoRoot: root }))).toBe(1);
+      expect(asked).toEqual([]);
+    });
   });
 
   it("reads migrations in a read-only transaction with a timeout", async () => {

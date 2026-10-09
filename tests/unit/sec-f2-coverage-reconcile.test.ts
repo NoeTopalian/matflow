@@ -73,3 +73,57 @@ describe("coverage-reconcile reconcileMatrix()", () => {
     expect(f.problems[0]).toMatch(/^SF-03/);
   });
 });
+
+/** Lane F3 (iteration 2, SF-97 / review R3-6): negation-aware approvals and evidence on N/A rows. */
+describe("coverage-reconcile SF-97 (lane F3)", () => {
+  it.each([
+    "not yet approved",
+    "approved? no",
+    "approved: no",
+    "not approved",
+    "unapproved",
+    "NOT APPROVED by R3",
+    "R: approved 9 Oct (evidence/R/REPORT.md); R3: NOT APPROVED 9 Oct (evidence/R3)",
+    "R: reviewed 9 Oct; R4: NOT APPROVED 9 Oct",
+    "approval pending",
+    "awaiting approval",
+    "never approved",
+    "R2: scanner NOT APPROVED 9 Oct",
+    "**not** approved",
+    "approved?",
+    "disapproved",
+  ])("a reviewer cell reading %j is NOT an approval", (cell) => {
+    expect(reviewerApproved(cell)).toBe(false);
+  });
+  it.each([
+    "R: approved 9 Oct (evidence/R/REPORT.md)",
+    "R: approved 9 Oct (evidence/R/REPORT.md); R3: approved 9 Oct (evidence/R3)",
+    "R: approved 9 Oct (evidence/R/REPORT.md); R5: approved with residuals 9 Oct (evidence/R5)",
+    "R3: NOT APPROVED 9 Oct; R4: approved 10 Oct (re-review)",
+    "**APPROVED** by R4",
+  ])("a reviewer cell reading %j IS an approval (positive control)", (cell) => {
+    expect(reviewerApproved(cell)).toBe(true);
+  });
+  const header = "| ID | Area | Lane | Risk | Inv | Level | Applicability | Verification | Evidence | Reviewer | Refs |";
+  const row = (id: string, app: string, ver: string, ev: string, rev: string) => `| ${id} | a | A | r | i | U | ${app} | ${ver} | ${ev} | ${rev} | — |`;
+  const doc = (rows: string[]) => [header, "|---|", ...rows].join("\n");
+  it("a FIXED row whose reviewer says 'not yet approved' or 'approved? no' is NOT counted as PASS", () => {
+    const s = reconcileMatrix(doc([
+      row("SEC-001", "APPLICABLE", "FIXED AWAITING RETEST", "e", "R: not yet approved"),
+      row("SEC-002", "APPLICABLE", "FAIL → FIXED", "e", "approved? no"),
+      row("SEC-003", "APPLICABLE", "FIXED → PASS", "e", "NOT APPROVED by R3"),
+    ]), { expectedCount: 3, requireReviewed: true }).summary;
+    expect(s.verification).toEqual({ "FIXED AWAITING RETEST": 3 });
+    expect(s.fixedCountedAsPass).toBe(0);
+  });
+  it.each(["", "—", "-", "n/a", "TBD", "none"])("a NOT APPLICABLE row with evidence cell %j fails the run", (ev) => {
+    const s = reconcileMatrix(doc([row("SEC-001", "NOT APPLICABLE WITH EVIDENCE", "guard test", ev, "—")]), { expectedCount: 1 }).summary;
+    expect(s.verdict).toBe("FAIL");
+    expect(s.naWithoutEvidence).toEqual(["SEC-001: NOT APPLICABLE WITH EVIDENCE but the evidence cell is empty"]);
+  });
+  it("positive control: a NOT APPLICABLE row that names its evidence reconciles", () => {
+    const s = reconcileMatrix(doc([row("SEC-001", "NOT APPLICABLE WITH EVIDENCE", "guard test", "sec-c-static-guards (ab5f928)", "—")]), { expectedCount: 1 }).summary;
+    expect(s.verdict).toBe("RECONCILED");
+    expect(s.naWithoutEvidence).toEqual([]);
+  });
+});

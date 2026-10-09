@@ -12,9 +12,10 @@
 // (flags copied; never passwords — the copy has no login path besides this process); 3 replay every finished
 // migration from prisma/migrations IN THE SOURCE'S ORDER as the source table owner, after checking each file's
 // sha256 against the source's _prisma_migrations checksum (a file edited after it ran is replayed in the committed
-// version whose checksum matches, and reported; no matching version — FAIL); 4 load rows with session_replication_role = replica (FK and user triggers off, as pg_restore
+// version whose checksum matches, and reported; no matching version — FAIL; the line-ending variant that matched —
+// as checked out, LF or CRLF — is the one replayed and is reported, SF-95); 4 load rows with session_replication_role = replica (FK and user triggers off, as pg_restore
 // --disable-triggers does; orphans are counted afterwards); 5 re-apply table/function/schema grants from the
-// manifest; 6 fingerprint the copy over a 127.0.0.1 socket as the table owner and compare with the baseline
+// manifest, then (5b, F3) column grants, the database ACL, role/database settings and default privileges; 6 fingerprint the copy over a 127.0.0.1 socket as the table owner and compare with the baseline
 // (restore-verify compareFingerprints: identical security state required); 7 hazard inventory; 8 revoke every
 // session/link/code (backup-post-restore.mjs) and compare again with --expect-revoked.
 // Writes <out>/restored-fingerprint.json, <out>/restored-revoked-fingerprint.json and prints one JSON summary line.
@@ -90,7 +91,21 @@ await T("roles", async () => {
 const migRows = fs.readFileSync(path.join(exportDir, "data", "_prisma_migrations.ndjson"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l))
   .filter((m) => m.finished_at && !m.rolled_back_at).sort((a, b) => a.migration_name.localeCompare(b.migration_name));
 const editedAfterApply = [];
-const checksumMatches = (text, sum) => [text, text.replace(/\r\n/g, "\n")].some((t) => crypto.createHash("sha256").update(t).digest("hex") === sum);
+// SF-95 (lane F3): the checksum the source recorded is over the bytes IT ran, with whatever line endings that
+// checkout had. A git checkout may hold the same file with the other ending (core.autocrlf), and a function body
+// replayed with different line endings has a different prosrc, so the verifier then (rightly) reports the function
+// as changed. Try the file as checked out, then LF-normalised, then CRLF, and replay EXACTLY the variant whose sha256
+// matched the source's checksum — never the raw bytes after matching a normalised text. The variant is reported.
+const sha256 = (t) => crypto.createHash("sha256").update(t).digest("hex");
+function lineEndingVariants(text) {
+  const lf = text.replace(/\r\n/g, "\n");
+  return [["as-checked-out", text], ["lf", lf], ["crlf", lf.replace(/\n/g, "\r\n")]];
+}
+function matchChecksumVariant(text, sum) {
+  const hit = lineEndingVariants(text).find(([, t]) => sha256(t) === sum);
+  return hit ? { variant: hit[0], text: hit[1] } : null;
+}
+const replayedVariant = {};
 await T("migrations", async () => {
   await db.exec(`SET ROLE ${ident(ownerRole)}`);
   await db.exec(`CREATE TABLE "_prisma_migrations" ("id" VARCHAR(36) PRIMARY KEY NOT NULL, "checksum" VARCHAR(64) NOT NULL,
@@ -99,18 +114,22 @@ await T("migrations", async () => {
   for (const m of migRows) {
     const file = path.join(REPO, "prisma", "migrations", m.migration_name, "migration.sql");
     if (!fs.existsSync(file)) die(`FAIL: migration ${m.migration_name} applied on the source is missing from the repository`, 1);
-    let sql = fs.readFileSync(file, "utf8");
-    if (!checksumMatches(sql, m.checksum)) {
+    let match = matchChecksumVariant(fs.readFileSync(file, "utf8"), m.checksum);
+    if (!match) {
       // Edited after it ran on the source. Replay the text the source actually ran, if git history has it, and record
       // the edit; otherwise FAIL (the repository cannot reproduce the source's schema history).
       const rel = `prisma/migrations/${m.migration_name}/migration.sql`;
       const shas = execFileSync("git", ["log", "--format=%H", "--", rel], { cwd: REPO, encoding: "utf8" }).split("\n").filter(Boolean);
-      const hit = shas.map((h) => ({ h, text: execFileSync("git", ["show", `${h}:${rel}`], { cwd: REPO, encoding: "utf8" }) })).find((v) => checksumMatches(v.text, m.checksum));
-      if (!hit) die(`FAIL: checksum of ${m.migration_name} differs from the source's record and no committed version matches`, 1);
-      editedAfterApply.push({ migration: m.migration_name, sourceRanCommit: hit.h.slice(0, 7), headCommit: shas[0].slice(0, 7) });
-      sql = hit.text;
+      let hitSha = null;
+      for (const h of shas) {
+        match = matchChecksumVariant(execFileSync("git", ["show", `${h}:${rel}`], { cwd: REPO, encoding: "utf8" }), m.checksum);
+        if (match) { hitSha = h; break; }
+      }
+      if (!match) die(`FAIL: checksum of ${m.migration_name} differs from the source's record and no committed version matches (any line ending)`, 1);
+      editedAfterApply.push({ migration: m.migration_name, sourceRanCommit: hitSha.slice(0, 7), headCommit: shas[0].slice(0, 7), variant: match.variant });
     }
-    try { await db.exec(sql); } catch (e) { die(`FAIL: migration ${m.migration_name} did not replay: ${e.message}`, 1); }
+    replayedVariant[m.migration_name] = match.variant;
+    try { await db.exec(match.text); } catch (e) { die(`FAIL: migration ${m.migration_name} did not replay: ${e.message}`, 1); }
   }
   await db.exec(`RESET ROLE`);
 });
@@ -143,13 +162,67 @@ await T("data", async () => {
 
 // 5. Grants (the part a --no-owner --no-privileges dump drops).
 await T("grants", async () => {
-  for (const g of manifest.tableGrants) await db.exec(`GRANT ${g.priv} ON TABLE public.${ident(g.obj)} TO ${ident(g.grantee)}`);
+  for (const g of manifest.tableGrants) await db.exec(`GRANT ${g.priv} ON ${g.kind === "S" ? "SEQUENCE" : "TABLE"} public.${ident(g.obj)} TO ${ident(g.grantee)}`);
   for (const g of manifest.functionGrants) await db.exec(`GRANT ${g.priv} ON FUNCTION ${g.obj} TO ${g.grantee === "PUBLIC" ? "PUBLIC" : ident(g.grantee)}`);
   const acl = (await db.query(`select (aclexplode($1::aclitem[])).* `, [manifest.schemaPublic.acl])).rows;
   for (const a of acl) {
     const who = a.grantee === 0 ? "PUBLIC" : (await db.query(`select rolname from pg_roles where oid = $1`, [a.grantee])).rows[0].rolname;
     if (who === "pg_database_owner") continue;
     await db.exec(`GRANT ${a.privilege_type} ON SCHEMA public TO ${who === "PUBLIC" ? "PUBLIC" : ident(who)}`);
+  }
+});
+
+// 5b. Globals the SF-96 fingerprint compares (lane F3): column grants, database ACL, role/database settings and —
+// last, so they never touch the objects replayed above, as pg_dump orders them — default privileges. An export
+// from before F3 has none of these keys and its baseline none of the sections: compare then reports the version
+// mismatch instead of passing. Roles named only here (e.g. a platform role that holds default privileges on Neon)
+// are created NOLOGIN; the restore reports which.
+const placeholderRoles = [];
+const PRIV = /^[A-Z ]+$/;
+const who = (g) => (g === "PUBLIC" ? "PUBLIC" : ident(g));
+const needRole = async (name) => {
+  if (!name || name === "PUBLIC" || name.startsWith("pg_")) return;
+  if ((await db.query(`select 1 from pg_roles where rolname = $1`, [name])).rows.length) return;
+  await db.exec(`CREATE ROLE ${ident(name)} NOLOGIN`);
+  placeholderRoles.push(name);
+};
+const settingValue = (name, value) => (name.toLowerCase() === "search_path"
+  // a list GUC: each element its own literal, exactly as pg_dump writes it
+  ? value.split(",").map((s) => s.trim().replace(/^"(.*)"$/, "$1")).map((s) => `'${s.replace(/'/g, "''")}'`).join(", ")
+  : `'${value.replace(/'/g, "''")}'`);
+await T("globals", async () => {
+  for (const g of manifest.columnGrants ?? []) {
+    if (!PRIV.test(g.priv)) die(`FAIL: unexpected privilege in manifest: ${g.priv}`, 1);
+    await needRole(g.grantee);
+    await db.exec(`GRANT ${g.priv} (${ident(g.col)}) ON TABLE public.${ident(g.obj)} TO ${who(g.grantee)}${g.grantable ? " WITH GRANT OPTION" : ""}`);
+  }
+  const dbname = (await db.query(`select current_database() d`)).rows[0].d;
+  if (manifest.databaseAcl) {
+    // Reproduce the effective ACL exactly: start from nothing for PUBLIC, then grant what the source had.
+    await db.exec(`REVOKE ALL ON DATABASE ${ident(dbname)} FROM PUBLIC`);
+    for (const g of manifest.databaseAcl) {
+      if (!PRIV.test(g.priv)) die(`FAIL: unexpected privilege in manifest: ${g.priv}`, 1);
+      await needRole(g.grantee);
+      await db.exec(`GRANT ${g.priv} ON DATABASE ${ident(dbname)} TO ${who(g.grantee)}${g.grantable ? " WITH GRANT OPTION" : ""}`);
+    }
+  }
+  for (const s of manifest.roleSettings ?? []) {
+    await needRole(s.role);
+    for (const kv of s.config ?? []) {
+      const i = kv.indexOf("=");
+      const name = kv.slice(0, i);
+      if (!/^[A-Za-z_][A-Za-z0-9_.]*$/.test(name)) die(`FAIL: unexpected setting name in manifest: ${name}`, 1);
+      const target = s.role ? `ROLE ${ident(s.role)}${s.scope === "this" ? ` IN DATABASE ${ident(dbname)}` : ""}`
+        : s.scope === "this" ? `DATABASE ${ident(dbname)}` : "ROLE ALL";
+      await db.exec(`ALTER ${target} SET ${name} = ${settingValue(name, kv.slice(i + 1))}`);
+    }
+  }
+  const OBJ = { r: "TABLES", S: "SEQUENCES", f: "FUNCTIONS", T: "TYPES", n: "SCHEMAS" };
+  for (const g of manifest.defaultPrivileges ?? []) {
+    if (!PRIV.test(g.priv) || !OBJ[g.objtype]) die(`FAIL: unexpected default privilege in manifest: ${g.objtype}/${g.priv}`, 1);
+    await needRole(g.role);
+    await needRole(g.grantee);
+    await db.exec(`ALTER DEFAULT PRIVILEGES FOR ROLE ${ident(g.role)}${g.nsp ? ` IN SCHEMA ${ident(g.nsp)}` : ""} GRANT ${g.priv} ON ${OBJ[g.objtype]} TO ${who(g.grantee)}${g.grantable ? " WITH GRANT OPTION" : ""}`);
   }
 });
 
@@ -191,6 +264,10 @@ const summary = {
   recoverableAgeAtVerifyMs: Date.parse(restoredFp.takenAt instanceof Date ? restoredFp.takenAt.toISOString() : restoredFp.takenAt) - Date.parse(manifest.recoveryPoint),
   migrationsReplayed: migRows.length,
   migrationsEditedAfterApply: editedAfterApply,
+  // SF-95: which line-ending variant of each migration matched the source's checksum (and was replayed).
+  migrationLineEndings: Object.values(replayedVariant).reduce((m, v) => ((m[v] = (m[v] ?? 0) + 1), m), {}),
+  migrationsReplayedAsVariant: Object.entries(replayedVariant).filter(([, v]) => v !== "as-checked-out").map(([migration, variant]) => ({ migration, variant })),
+  placeholderRoles,
   rowsLoaded: Object.values(loaded).reduce((s, n) => s + n, 0),
   compare: { verdict: cmp.verdict, fails: cmp.fails, notes: cmp.notes.length },
   hazards,

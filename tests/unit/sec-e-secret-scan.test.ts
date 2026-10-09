@@ -35,6 +35,8 @@ const SYNTHETIC: Array<[string, string]> = [
   ["rls-context-signing-key", join("RLS_CONTEXT", "_SIGNING_KEY=", randomBytes(64).toString("hex"))],
   ["password-env-assignment", join("OPERATOR", "_PASSWORD=", alnum(20))],
   ["database-url-env-assignment", join("MIGRATION_DATABASE", "_URL=postgresql://neondb_owner:", alnum(9), "@ep-sec-e-synthetic.eu-west-2.aws.neon.tech/neondb")],
+  // Lane F3 (SF-82 residual): the generic *_PASSWORD / *_SECRET / *_TOKEN rule; its own cells are in sec-f3-secret-scan-residuals.
+  ["generic-secret-assignment", join("SMTP", "_PASSWORD=", alnum(20))],
 ];
 
 const hex = (n: number) => randomBytes(n).toString("hex");
@@ -119,7 +121,14 @@ describe("placeholders are classified, not hidden", () => {
 describe("repository tree (tracked files at HEAD)", () => {
   // The only accepted non-placeholder values: the truncated Stripe key prefix and its sibling fixture, documented in
   // E-06 §Triage 2 as test fixtures (prefix only, cannot authenticate). Anything else is a new secret in the tree.
-  const KNOWN_FIXTURE_FINGERPRINTS = new Set(["7d3bddd6e499", "0895203bc15e"]);
+  // Lane F3 (generic *_PASSWORD / *_SECRET / *_TOKEN rule, SF-82 residual) triaged three more random-looking values:
+  //   a81bd20f7936 — TEMP_PASSWORD in tests/unit/pending-activation-enrolled-owner.test.ts (bcrypt cost 4, mocked
+  //                  routes): a fixture;
+  //   4e7cc8670768 — TOTP_SECRET in tests/unit/readiness-scripts-owner-login-change.test.ts: a fixture;
+  //   b94e8093ff12 — DEMO_PASSWORD in scripts/seed-demo-rich.mjs: NOT a fixture — the fixed login password the seed
+  //                  gives its demo accounts on whichever database it ran against (ledgered by F3; drop this entry
+  //                  once the seed takes the password from the environment and every seeded account's is changed).
+  const KNOWN_FIXTURE_FINGERPRINTS = new Set(["7d3bddd6e499", "0895203bc15e", "a81bd20f7936", "4e7cc8670768", "b94e8093ff12"]);
 
   // ~1 s alone; R2 saw it exceed the 30 s default with 7 files in parallel (lane E3: explicit 180 s budget).
   it("contains no candidate secret beyond the documented fixtures", { timeout: 180_000 }, () => {

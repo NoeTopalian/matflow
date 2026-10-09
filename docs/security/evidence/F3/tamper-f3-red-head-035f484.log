@@ -1,0 +1,45 @@
+{"group":"R3-listed","case":"positive control (no tamper)","got":"PASS","caught":true,"firstFail":null,"fails":0}
+{"group":"R3-listed","case":"policy expression","got":"FAIL","caught":true,"firstFail":"policies changed on Member (name, command, roles or expression)","fails":1}
+{"group":"R3-listed","case":"trigger definition (BEFORE INSERT only)","got":"FAIL","caught":true,"firstFail":"triggers changed on User (definition or enabled state)","fails":1}
+{"group":"R3-listed","case":"trigger enabled state","got":"FAIL","caught":true,"firstFail":"triggers changed on Member (definition or enabled state)","fails":1}
+{"group":"R3-listed","case":"function source","got":"FAIL","caught":true,"firstFail":"function changed: matflow_lowercase_email()","fails":1}
+{"group":"R3-listed","case":"function owner","got":"FAIL","caught":true,"firstFail":"function changed: matflow_lowercase_email()","fails":1}
+{"group":"R3-listed","case":"function SECURITY DEFINER","got":"FAIL","caught":true,"firstFail":"function changed: matflow_lowercase_email()","fails":1}
+{"group":"R3-listed","case":"function search_path config","got":"FAIL","caught":true,"firstFail":"function changed: matflow_lowercase_email()","fails":1}
+{"group":"R3-listed","case":"function ACL","got":"FAIL","caught":true,"firstFail":"function changed: matflow_lowercase_email()","fails":1}
+{"group":"R3-listed","case":"table owner","got":"FAIL","caught":true,"firstFail":"owner changed on Tenant: neondb_owner -> matflow_app","fails":2}
+{"group":"R3-listed","case":"table ACL","got":"FAIL","caught":true,"firstFail":"grants changed on Member: {neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner} -> {neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwdD/neondb_owner}","fails":1}
+{"group":"R3-listed","case":"role flag (BYPASSRLS)","got":"FAIL","caught":true,"firstFail":"role changed: matflow_app","fails":1}
+{"group":"R3-listed","case":"role membership","got":"ERROR","caught":null,"error":"role \"neondb_owner\" is a member of role \"matflow_app\""}
+{"group":"R3-listed","case":"schema ACL","got":"FAIL","caught":true,"firstFail":"schema public owner or grants changed","fails":1}
+{"group":"R3-listed","case":"extension (none available)","got":"PASS","caught":true,"firstFail":null,"fails":0}
+{"group":"R3-listed","case":"event trigger","got":"FAIL","caught":true,"firstFail":"unexpected function in restored copy: zz_r3_evt()","fails":3}
+{"group":"R3-listed","case":"migration checksum","got":"FAIL","caught":true,"firstFail":"migration checksum differs: 20260424205716_init","fails":2}
+{"group":"R3-listed","case":"content hash (row rewritten, count kept)","got":"FAIL","caught":true,"firstFail":"content of Member differs","fails":1}
+{"group":"R3-listed","case":"RLS flags (NO FORCE)","got":"FAIL","caught":true,"firstFail":"RLS flags changed on Member: true/true -> true/false","fails":1}
+{"group":"R3-listed","case":"foreign key dropped","got":"FAIL","caught":true,"firstFail":"foreign key missing in restored copy: Member_tenantId_fkey","fails":1}
+{"group":"R3-5","case":"column-level grant (UPDATE (action) on AuditLog)","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"R3-5","case":"rewrite rule (INSERT into AuditLog DO INSTEAD NOTHING)","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"R3-5","case":"role default setting (matflow_app: app.bypass_rls = on)","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"R3-5","case":"database default setting (app.bypass_rls = on)","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"R3-5","case":"default privileges for future tables","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"R3-5","case":"view over User granted to the runtime role","got":"FAIL","caught":true,"firstFail":"unexpected role in restored copy: postgres","fails":1}
+{"group":"R3-5","case":"sequence/other-schema function shadow (new schema + role search_path)","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"R3-followup","case":"role membership (pg_write_all_data granted to matflow_app)","got":"FAIL","caught":true,"firstFail":"role changed: matflow_app","fails":1}
+{"group":"R3-followup","case":"role membership (runtime role granted into a new role)","got":"FAIL","caught":true,"firstFail":"role changed: matflow_app","fails":1}
+{"group":"R3-followup","case":"view over User created BY THE OWNER, granted to the runtime role","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"other-schema function ALONE (no search_path change)","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"role search_path ALONE (pg_temp first)","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"role row_security setting","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"ALTER ROLE ALL SET app.bypass_rls","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"role setting IN DATABASE","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"role statement_timeout setting added","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"column grant SELECT (passwordHash) on User","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"rule on Member, created by the owner, DO ALSO","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"default privileges for FUNCTIONS (global)","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"default privileges REVOKED (matflow_app loses future-table DML)","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"materialised view by the owner, no grant","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"sequence by the owner granted to the runtime role","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"group":"F3","case":"database ACL: CREATE to the runtime role","got":"PASS","caught":false,"firstFail":null,"fails":0}
+{"cases":43,"R3-listed":{"caught":19,"errors":1,"total":20},"R3-5":{"caught":1,"errors":0,"total":7},"R3-followup":{"caught":2,"errors":0,"total":3},"F3":{"caught":0,"errors":0,"total":13},"node":"v24.21.0"}
+exit=1

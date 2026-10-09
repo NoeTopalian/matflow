@@ -16,6 +16,8 @@
 // failed to find the runner" error on every subsequent test file. Keep
 // this file env-only; any vi.mock shims belong in individual test files.
 
+import { randomBytes } from "node:crypto";
+
 const PROD_NEON_ENDPOINT = "ep-bold-wave-abt39t7x";
 
 // node-postgres applies PGOPTIONS (and PGHOST / PGHOSTADDR when a field is empty) from the environment, so an inherited
@@ -45,6 +47,19 @@ if (testUrl) {
   // skip via their describe.skipIf(!HAS_DB) guards rather than touching prod.
   // Unit tests that don't read DATABASE_URL are unaffected.
   delete process.env.DATABASE_URL;
+}
+
+// SF-102 (review R4; lane F3): the guarded TEST runners set neither NEXTAUTH_SECRET nor AUTH_SECRET, so every keyed
+// digest a database suite computed (import provenance, login-email digests, card tokens …) was an HMAC with an EMPTY
+// key and proved nothing about key secrecy. A database run with neither set gets a synthetic, random 64-hex
+// AUTH_SECRET for this process (never committed, never printed) and one line saying so; a configured secret is never
+// touched; a run without a test database (the plain unit suite) is left alone so unit cells about a missing secret
+// keep their meaning. An empty NEXTAUTH_SECRET is removed, because lib/auth-secret.ts reads it first with "??".
+if (process.env.TEST_DATABASE_URL && !process.env.NEXTAUTH_SECRET && !process.env.AUTH_SECRET) {
+  delete process.env.NEXTAUTH_SECRET;
+  process.env.AUTH_SECRET = randomBytes(32).toString("hex");
+  // stderr directly: Vitest swallows console output made by a setup file outside any test.
+  process.stderr.write("[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)\n");
 }
 
 // A module (lane E3: the guard test re-imports this file).

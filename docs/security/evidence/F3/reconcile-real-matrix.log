@@ -1,0 +1,8 @@
+# SF-97 real-matrix run, lane F3, Node v24.21.0: node scripts/readiness/coverage-reconcile.mjs --findings-strict --require-reviewed --list (matrix and ledger identical to HEAD 035f484)
+## F3
+{"rows":96,"missing":[],"dups":[],"unexpected":[],"malformed":[],"unparsed":[],"inconsistent":[],"naWithoutEvidence":[],"applicability":{"APPLICABLE":92,"NOT APPLICABLE WITH EVIDENCE":3,"UNKNOWN":1},"verification":{"BLOCKED":4,"FAIL":14,"FIXED AWAITING RETEST":6,"N/A (guard test)":3,"NOT RUN":6,"PASS":59,"UNKNOWN":4},"requireReviewed":true,"fixedCountedAsPass":13,"fixedAwaitingApproval":6,"rowsWithResidualQualifiers":31,"verdict":"RECONCILED","findings":{"rows":107,"dups":[],"gaps":[],"outOfOrder":[],"problems":[],"verdict":"RECONCILED"}}
+exit=0
+## HEAD 035f484 script on the same files
+{"rows":96,"missing":[],"dups":[],"unexpected":[],"malformed":[],"unparsed":[],"inconsistent":[],"applicability":{"APPLICABLE":92,"NOT APPLICABLE WITH EVIDENCE":3,"UNKNOWN":1},"verification":{"BLOCKED":4,"FAIL":14,"FIXED AWAITING RETEST":6,"N/A (guard test)":3,"NOT RUN":6,"PASS":59,"UNKNOWN":4},"requireReviewed":true,"fixedCountedAsPass":13,"fixedAwaitingApproval":6,"rowsWithResidualQualifiers":31,"verdict":"RECONCILED","findings":{"rows":107,"dups":[],"gaps":[],"outOfOrder":[],"problems":[],"verdict":"RECONCILED"}}
+exit=0
+## per-row diff (96 --list lines): none

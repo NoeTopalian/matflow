@@ -25,7 +25,13 @@
 //   Postgres major version; every migration in _prisma_migrations (name, finished/rolled-back state, checksum);
 //   every FK constraint with its validated flag and ORPHAN count;
 //   the security state a restore silently rewinds (outstanding sign-in/reset tokens, session-version sums, operators,
-//     newest audit row).
+//     newest audit row);
+//   (lane F3, SF-96 — seven classes review R3 planted and this list missed) role- and database-level settings for
+//     EVERY role (pg_db_role_setting: app.bypass_rls, search_path, row_security …; values digested), the database's
+//     owner and ACL, every non-system schema, views / materialised views (definition, owner, ACL, options),
+//     sequences, foreign tables and tables outside public, rewrite rules on every relation, column-level grants
+//     (pg_attribute.attacl), default privileges (pg_default_acl), and functions in every non-system schema. The
+//     fingerprint runs with search_path = public so object names never depend on the connecting role's own setting.
 // The production host (ep-bold-wave) is refused unless `--production-read-only` is passed explicitly; that flag is
 // for the lead or Noe taking a baseline, never for a lane. A PGOPTIONS / PGHOST / PGHOSTADDR environment variable
 // is refused (pg applies PGOPTIONS when the URL has no options=, which would let `endpoint=` route a TEST hostname
@@ -41,6 +47,7 @@
 // Operator session version raised by at least one (sum delta >= row count); content and AuditLog growth on the
 // revocation's own tables are then expected.
 import fs from "node:fs";
+import crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { resolveDbTarget, TargetRefused } from "./db-target.mjs";
@@ -65,6 +72,81 @@ export function readEnvFile(envFile) {
   );
 }
 
+/** SQL predicate: a schema that is not a system schema (pg_catalog, information_schema, pg_toast*, pg_temp_*). */
+const USER_SCHEMA = (col) => `(${col} not in ('pg_catalog','information_schema') and ${col} !~ '^pg_(toast|temp_)')`;
+
+/** SQL: an ACL rendered as sorted grantee=privilege[*]/grantor items, so insertion order never matters. */
+const ACL = (expr) => `coalesce((select string_agg(x, ',' order by x) from (
+    select case when a.grantee = 0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end || '=' || a.privilege_type
+           || case when a.is_grantable then '*' else '' end || '/' || pg_get_userbyid(a.grantor) x
+      from aclexplode(${expr}) a) s), '')`;
+
+/** One-way digest of a setting value (a custom GUC could carry a key; names stay readable). */
+const settingDigest = (v) => crypto.createHash("sha256").update(String(v)).digest("hex").slice(0, 16);
+
+/**
+ * Fingerprint sections added by lane F3 (iteration 2, SF-96 / review R3-5). Each closes a tamper class R3 planted in a
+ * restored copy that the SF-64 fingerprint passed. compareFingerprints fails on ANY difference in any of them, and
+ * fails when one side has a section the other lacks (fingerprints from different verifier versions).
+ */
+export const CATALOGUE_SECTIONS = {
+  roleSettings: "role/database setting", // ALTER ROLE … SET / ALTER DATABASE … SET (app.bypass_rls, search_path, row_security …)
+  database: "database", // owner and effective ACL of the current database
+  schemas: "schema", // every non-system schema: owner and effective ACL
+  relations: "relation", // views, materialised views, sequences, foreign tables, and tables outside public
+  rules: "rewrite rule", // pg_rewrite on every relation (DO INSTEAD NOTHING on AuditLog)
+  columnPrivileges: "column grant", // pg_attribute.attacl (UPDATE (action) ON "AuditLog")
+  defaultPrivileges: "default privileges", // pg_default_acl (ALTER DEFAULT PRIVILEGES … GRANT … TO matflow_app)
+};
+
+async function catalogueSections(q) {
+  const out = {};
+  // pg_db_role_setting is readable by every role. Rows for OTHER databases do not apply to connections to this one
+  // and are left out; rows for "all databases" and for this database are kept, keyed by scope, so a restore into a
+  // database with a different name compares equal. Values are digested (names readable).
+  const rs = await q(`select coalesce(r.rolname, case when s.setrole = 0 then '<ALL ROLES>' else '<unknown role ' || s.setrole || '>' end) who,
+                             case when s.setdatabase = 0 then 'ALL DATABASES' else 'THIS DATABASE' end scope, s.setconfig cfg
+                        from pg_db_role_setting s left join pg_roles r on r.oid = s.setrole
+                       where s.setdatabase in (0, (select oid from pg_database where datname = current_database()))`);
+  out.roleSettings = {};
+  for (const r of rs) {
+    const items = pgArr(r.cfg ?? []).filter(Boolean).map((kv) => {
+      const i = kv.indexOf("=");
+      return `${kv.slice(0, i).toLowerCase()}=${settingDigest(kv.slice(i + 1))}`;
+    }).sort();
+    out.roleSettings[`${r.who} @ ${r.scope}`] = items;
+  }
+  const d = (await q(`select pg_get_userbyid(datdba) owner, ${ACL("coalesce(datacl, acldefault('d', datdba))")} acl
+                        from pg_database where datname = current_database()`))[0];
+  out.database = { owner: d.owner, acl: d.acl };
+  out.schemas = Object.fromEntries((await q(`select nspname, pg_get_userbyid(nspowner) owner, ${ACL("coalesce(nspacl, acldefault('n', nspowner))")} acl
+                                               from pg_namespace where ${USER_SCHEMA("nspname")} order by 1`))
+    .map((s) => [s.nspname, { owner: s.owner, acl: s.acl }]));
+  out.relations = Object.fromEntries((await q(`select n.nspname || '.' || c.relname k, c.relkind::text kind, pg_get_userbyid(c.relowner) owner,
+                                                      ${ACL("c.relacl")} acl, coalesce(array_to_string(c.reloptions, ','), '') options,
+                                                      c.relrowsecurity rls, c.relforcerowsecurity force,
+                                                      case when c.relkind in ('v','m') then md5(pg_get_viewdef(c.oid)) else '' end def
+                                                 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                                                where ${USER_SCHEMA("n.nspname")} and c.relkind in ('r','p','v','m','S','f')
+                                                  and not (n.nspname = 'public' and c.relkind in ('r','p')) order by 1`))
+    .map((r) => [r.k, { kind: r.kind, owner: r.owner, acl: r.acl, options: r.options, rls: r.rls, force: r.force, defMd5: r.def }]));
+  out.rules = Object.fromEntries((await q(`select n.nspname || '.' || c.relname || '.' || r.rulename k, r.ev_enabled::text enabled, md5(pg_get_ruledef(r.oid)) def
+                                             from pg_rewrite r join pg_class c on c.oid = r.ev_class join pg_namespace n on n.oid = c.relnamespace
+                                            where ${USER_SCHEMA("n.nspname")} and r.rulename <> '_RETURN' order by 1`))
+    .map((r) => [r.k, `enabled=${r.enabled}|${r.def}`]));
+  // pg_attribute.attacl, not information_schema.column_privileges: the latter only lists columns the CURRENT role
+  // holds or granted, so a grant made by another role to matflow_app would be invisible to the fingerprinting role.
+  out.columnPrivileges = Object.fromEntries((await q(`select n.nspname || '.' || c.relname || '.' || a.attname k, ${ACL("a.attacl")} acl
+                                                        from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
+                                                       where ${USER_SCHEMA("n.nspname")} and a.attnum > 0 and not a.attisdropped and a.attacl is not null order by 1`))
+    .map((r) => [r.k, r.acl]));
+  out.defaultPrivileges = Object.fromEntries((await q(`select pg_get_userbyid(d.defaclrole) || '|' || coalesce(n.nspname, '<all schemas>') || '|' || d.defaclobjtype::text k,
+                                                             ${ACL("d.defaclacl")} acl
+                                                        from pg_default_acl d left join pg_namespace n on n.oid = d.defaclnamespace order by 1`))
+    .map((r) => [r.k, r.acl]));
+  return out;
+}
+
 /**
  * Fingerprint the database the client is connected to. The caller owns the transaction (READ ONLY, or the export's
  * REPEATABLE READ READ ONLY). Sets transaction-local formatting so content hashes are comparable across servers.
@@ -76,6 +158,9 @@ export async function takeFingerprint(client, { contentHash = false } = {}) {
   await client.query("SET LOCAL IntervalStyle = 'postgres'");
   await client.query("SET LOCAL extra_float_digits = 1");
   await client.query("SET LOCAL bytea_output = 'hex'");
+  // Object names (regprocedure text) must not depend on the connecting role's search_path, which is itself part of
+  // what is fingerprinted (F3, SF-96): public objects print unqualified, every other schema qualified.
+  await client.query("SET LOCAL search_path = public");
   // Counts must not depend on the connecting role: the policies honour this transaction-local flag.
   await client.query("SELECT set_config('app.bypass_rls','on',true)");
   const fp = { takenAt: (await q("select now() as t"))[0].t };
@@ -115,16 +200,19 @@ export async function takeFingerprint(client, { contentHash = false } = {}) {
     }
     await client.query("SET LOCAL statement_timeout = '15s'");
   }
+  // F3 (SF-96): every non-system schema, not only public — a function planted in another schema plus a role
+  // search_path naming that schema shadows a built-in for every session of that role.
   const fns = await q(`select p.oid::regprocedure::text sig, pg_get_userbyid(p.proowner) owner, p.prosecdef secdef,
                               coalesce(array_to_string(p.proconfig, ';'),'') config, l.lanname lang,
                               coalesce(p.proacl::text,'') acl, md5(coalesce(p.prosrc,'')) src
                          from pg_proc p join pg_namespace n on n.oid=p.pronamespace join pg_language l on l.oid=p.prolang
-                        where n.nspname='public' order by 1`);
+                        where ${USER_SCHEMA("n.nspname")} order by 1`);
   fp.functions = Object.fromEntries(fns.map((f) => [f.sig, { owner: f.owner, secdef: f.secdef, config: f.config, lang: f.lang, acl: f.acl, srcMd5: f.src }]));
   const ns = (await q(`select pg_get_userbyid(nspowner) owner, coalesce(nspacl::text,'') acl from pg_namespace where nspname='public'`))[0];
   fp.schemaPublic = { owner: ns.owner, acl: ns.acl };
   fp.extensions = (await q(`select extname||'@'||extversion e from pg_extension order by 1`)).map((r) => r.e);
   fp.eventTriggers = (await q(`select evtname||'|'||evtevent||'|'||evtenabled::text e from pg_event_trigger order by 1`)).map((r) => r.e);
+  Object.assign(fp, await catalogueSections(q));
   // Roles that matter for this schema: owners, grantees of tables/functions/schema, and the connecting role.
   const roleNames = await q(`
     with g as (
@@ -220,6 +308,11 @@ export function compareFingerprints(A, B, { allowDrift = [], expectRevoked = fal
   if (JSON.stringify(A.schemaPublic) !== JSON.stringify(B.schemaPublic)) fails.push("schema public owner or grants changed");
   if (JSON.stringify(A.extensions) !== JSON.stringify(B.extensions)) fails.push(`extensions differ: [${A.extensions}] -> [${B.extensions}]`);
   if (JSON.stringify(A.eventTriggers) !== JSON.stringify(B.eventTriggers)) fails.push(`event triggers differ: [${A.eventTriggers}] -> [${B.eventTriggers}]`);
+  for (const [k, label] of Object.entries(CATALOGUE_SECTIONS)) {
+    const inA = A[k] !== undefined, inB = B[k] !== undefined;
+    if (inA !== inB) fails.push(`${k} recorded on one side only (fingerprints from different verifier versions: re-take both)`);
+    else if (inA) diffMap(label, A[k], B[k]);
+  }
   for (const [k, f] of Object.entries(B.foreignKeys)) {
     if (f.orphans > 0) fails.push(`orphans in ${f.child} via ${k}: ${f.orphans}`);
     if (!f.validated) fails.push(`foreign key not validated: ${k}`);
