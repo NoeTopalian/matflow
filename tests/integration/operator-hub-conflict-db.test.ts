@@ -153,7 +153,7 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
       ids.a = a.id; ids.aSlug = a.slug; ids.b = b.id;
       ids.owner = (
         await tx.user.create({
-          data: { tenantId: a.id, email: E("owner-placeholder"), name: "Synthetic Owner", role: "owner", passwordHash: "owner-hash-unchanged", totpEnabled: true, totpSecret: "synthetic" },
+          data: { tenantId: a.id, email: E("owner-placeholder"), name: "Synthetic Owner", role: "owner", passwordHash: "owner-hash-unchanged", totpEnabled: true, totpSecret: "synthetic", totpRecoveryCodes: ["synthetic-code-hash-1", "synthetic-code-hash-2"] },
         })
       ).id;
       // Imported, passwordless, holds the owner's intended address.
@@ -284,6 +284,7 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
     // Authenticator and recovery codes byte-identical on the database (review D4).
     expect(after.totpSecret).toBe(before.totpSecret);
     expect(after.totpRecoveryCodes).toEqual(before.totpRecoveryCodes);
+    expect(after.totpRecoveryCodes).toHaveLength(2); // the comparison is over real codes, not two empty lists
     expect((await member(ids.pat)).email).toBe(PAT_NEW);
     expect((await check(TARGET)).body).toMatchObject({ free: true, sameAsOwner: true });
   });
