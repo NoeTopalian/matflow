@@ -57,7 +57,7 @@ not independently reviewed (stated).
 `788d29a` (9 Oct 2026 17:10 UK; `scratchpad/security/gates-campaign-5.log`): `npm run lint` 0 errors / 68
 pre-existing warnings, UI ratchets at baseline; `tsc --noEmit` 0; full unit suite 436 files / 5938 tests passed;
 `npm run build` succeeded; `npm audit --omit=dev` 0 vulnerabilities. Both-role integration sweep of every security
-database file (39 files × 2 roles, 16:55–17:40 UK): 78/78 runs exit 0; `sec-b-fixture-sweep-db` skipped by design (opt-in);
+database file (39 files × 2 roles, 16:55–17:40 UK): every run printed its `Tests N passed` line with 0 failed — **the `exit=0` column in that log is NOT evidence** (SF-76: the script recorded the exit status of `tr`, not vitest; fixed in the script, re-run owed on the final candidate); `sec-b-fixture-sweep-db` is excluded from the expected list (maintenance tool, asserts nothing — F2);
 `tenant-restore-purge-race` under the restricted role failed to set up once (transient) and passed 5/5 on re-run; the three
 files lane D changed mid-sweep re-run on the final tree: 23/23, 19/19, 7/7 under both roles (TEST-EVIDENCE.md).
 
