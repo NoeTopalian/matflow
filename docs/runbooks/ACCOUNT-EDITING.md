@@ -15,7 +15,9 @@ have their own profile routes and are out of scope. The login-email detail lives
   row reads "MatFlow did this to the owner", never "the owner did this". Support (impersonation) sessions are
   read-only and are refused by every route below (proxy.ts and an in-route guard).
 - **Audit rows never hold secrets.** No password, hash, authenticator secret, recovery code, grant or token. Login
-  addresses appear only as SHA-256 digests. A display name change records the name before and after.
+  addresses appear only as digests — keyed (HMAC under the server secret) since 9 Oct 2026, because a plain SHA-256 of a
+  predictable address can be reversed from a candidate list; older rows hold the plain form. A display name change
+  records the name before and after.
 - **Credential changes sign out everywhere.** Password and login-email changes bump `sessionVersion`: every device,
   the one making the change included, signs in again. A display name is not a credential and signs nobody out.
 - **The owner can take over a staff account — by design.** An owner can set a staff member's temporary password and
@@ -41,6 +43,8 @@ have their own profile routes and are out of scope. The login-email detail lives
 | Role | Never by self. Ownership moves only by transfer (password re-entered) | Never by self | Settings → Staff (manager/coach/admin only; never makes an owner) | Transfer ownership (step-up) |
 | Club (tenant) | Never | Never | Never | Never |
 | Provisional / verified mark | Never | Never | Set automatically when they change the address; never cleared | Mark or confirm (attestation) on the Login email card |
+| Who holds a login address (check) | — (club routes answer a collision with an opaque 409 that never says whose) | — | — | **Login email** card → **Check address**. `POST /api/admin/customers/[id]/login-email/check`, body `{ email }` (strict). Club and owner resolved on the server. Answers free, or the holder: kind (staff / member), id, name, status or role, `canSignIn` (password, or a live invite / sign-in / reset credential for that address in this club), an internal link, and for a member an opaque version; `many` for a legacy duplicate (count only). Durable audit `admin.login_email.checked` with the keyed digest only; `Cache-Control: private, no-store`; 60 / hour per operator; refused to support sessions and non-allow-listed operators |
+| A member's contact email (to free an address for the owner) | — (members and owners use the member routes) | — | — (the owner's member edit has its own rules) | Conflict panel → **Change this member's contact address**. `POST /api/admin/customers/[id]/members/[memberId]/contact-email`, body `{ newEmail, reason (10–500), version }` (strict). Step-up `member.contact_email` bound to club / member / "change", the normalised new address and the member's version. Member must be in this club (404 otherwise). Preflight (same address 400, held 409 with the holder, stale version 409) spends nothing. One transaction: grant spent, version re-checked, claim lock, `email` only (conditional on the address read), sign-in tokens for old and new retired in this club (waiver kept), `sessionVersion` +1 and `unverified: true` only if the member has a password, audit `admin.member.contact_email.changed` with keyed digests. Replay of the same grant → `alreadyApplied`. Never: `externalRef`, status, password, authenticator, recovery codes, memberships, family links, attendance, ledger rows; no merge |
 
 Refused on every self-service CHANGE (PATCH/POST): signed out (401), a member (403), a sign-in still owing its code
 (403), a temporary-password session (403 — use `/set-password`), an elevated role not yet enrolled (403), a support
@@ -137,9 +141,14 @@ guard. Pinned under real concurrency (two connections, both DB roles) by
 `tests/integration/login-identity-race-db.test.ts`, and per writer by `tests/integration/login-identity-claims-db.test.ts`.
 
 **When a member's login address changes** (staff edit or self-service): reset codes and sign-in/activation links for the
-old and new address in that club are retired (a waiver link is kept; another club is untouched). A staff edit of a
-member who has a password also signs that member out everywhere (`sessionVersion` +1) and the audit row records
-`unverified: true` — there is no member verification flow, so the new address is a login nobody has proved they read.
+old and new address in that club are retired (a waiver link is kept; another club is untouched). A staff edit OR a
+self-service change by a member who has a password also signs that member out everywhere (`sessionVersion` +1; the
+self-service response says `signInAgain` and clears that device's cookie). The audit row — written in the same
+transaction as the change, so a failed audit write is a failed change — records `unverified: true` and whether
+sessions were revoked, with the addresses as keyed digests only (`oldEmailSha256`/`newEmailSha256`), never in clear.
+There is no member verification flow, so the new address is a login nobody has proved they read. The Activity page's
+Undo never restores a login address (an email-only change is refused with its reason; other fields in the same edit
+are still put back) — change it again through the member's profile instead.
 
 **Legacy duplicates.** `node scripts/readiness/login-identity-duplicates.mjs --env <file> [--tenant <slug>]` is read-only
 and prints, per club, cross-table / user-user / member-member duplicate groups with record ids and a per-run keyed
@@ -160,6 +169,17 @@ Reset codes and sign-in/activation links sent to the old (or new) address in tha
 changes; a waiver link is kept, and the same address in another club is untouched. Pinned by
 `tests/integration/contact-email-change-imports-db.test.ts`, `tests/integration/token-scoping-db.test.ts` and
 `tests/unit/import-matching-after-contact-change.test.ts`.
+
+## Audit history
+
+The application never updates or deletes an `AuditLog` row: no route edits history, and
+`tests/unit/audit-actor-columns-immutability.test.ts` fails the build if an `auditLog` update or delete appears anywhere
+except the retention cron. Retention is by age only: 12 months for ordinary rows, 6 years for `admin.*`, DSAR and
+support rows (`auditLogRetentionWhere`). Operator rows carry `operatorId` and `requestId` columns (the step-up grant's
+request id for a step-up action; the platform request id or a UUID otherwise). The database reality is different: the
+database owner role and anyone with Neon console access can edit or delete history, and deleting a User or Operator sets
+its attribution columns to null (`ON DELETE SET NULL`) while `metadata.actingAs` keeps the id. The log is therefore
+**not tamper-evident**; it is a record kept by the application, not a proof against the database's administrators.
 
 ## Known gaps (not built here)
 
@@ -187,6 +207,11 @@ changes; a waiver link is kept, and the same address in another club is untouche
   owner; `/dashboard/account` "My account" for every staff role).
 - Operator: `app/api/admin/customers/[id]/owner-profile/route.ts` + `app/admin/tenants/[id]/OwnerProfileCard.tsx`;
   step-up action `owner.profile` in `lib/operator-step-up.ts`.
+- Operator conflict resolution (9 Oct 2026): `app/api/admin/customers/[id]/login-email/check/route.ts`,
+  `app/api/admin/customers/[id]/members/[memberId]/contact-email/route.ts`, `components/admin/ConflictPanel.tsx` (opened
+  from `app/admin/tenants/[id]/LoginEmailCard.tsx`); step-up action `member.contact_email`. Tests
+  `tests/unit/operator-hub-conflict-routes.test.ts`, `tests/unit/conflict-panel.test.tsx`,
+  `tests/integration/operator-hub-conflict-db.test.ts`.
 - Tests: `tests/unit/account-profile.test.ts`, `tests/unit/account-password.test.ts`,
   `tests/unit/operator-owner-profile.test.ts`, `tests/unit/staff-edit-account-rules.test.ts`,
   `tests/unit/password-policy-doors.test.ts`, `tests/integration/account-editing-db.test.ts`.

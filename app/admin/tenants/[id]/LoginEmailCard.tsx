@@ -11,8 +11,16 @@
 // review defect 7), sent in the x-matflow-step-up header. Copy that mentions
 // email follows the real mail switch (emailDelivery prop — review defect 3).
 
-import { useState } from "react";
+//
+// Conflict resolution (admin hub lane F, 9 Oct 2026): "Check address" asks
+// the operator-only check route who holds an address in this club; when a
+// member holds it, the guided ConflictPanel moves that member's contact
+// address and then changes the owner's login address (two step-ups). A
+// half-finished resolution is resumed from the URL after a reload.
+
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import ConflictPanel, { checkLoginAddress, loadResume, type CheckResult, type ResumeState } from "@/components/admin/ConflictPanel";
 import { adminCard, adminPalette, adminPill } from "../../admin-theme";
 
 const STEP_UP_HEADER = "x-matflow-step-up";
@@ -44,6 +52,52 @@ export default function LoginEmailCard(props: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checked, setChecked] = useState<{ address: string; result: CheckResult } | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const [resolving, setResolving] = useState<{ address: string; check: CheckResult; resume: ResumeState | null } | null>(null);
+  const [resumeNotice, setResumeNotice] = useState<string | null>(null);
+
+  // A resolution interrupted after step 1 (reload, closed tab): resume at the
+  // owner step with a FRESH check. Reads only; never repeats a change.
+  useEffect(() => {
+    const { urlMemberId, state } = loadResume(tenantId);
+    if (!urlMemberId) return;
+    if (!state) {
+      setResumeNotice(
+        `A conflict resolution was interrupted after step 1 (member ${urlMemberId}): that member's contact address was changed, the owner's login address was not. Check the owner's new address again to finish.`,
+      );
+      return;
+    }
+    let cancelled = false;
+    void checkLoginAddress(tenantId, state.address).then((r) => {
+      if (cancelled) return;
+      if (!r.ok) {
+        setResumeNotice(`Step 1 is done but the address could not be checked again: ${r.error}`);
+        return;
+      }
+      setResolving({ address: state.address, check: r.data, resume: state });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
+
+  async function checkAddress() {
+    const address = newEmail.trim();
+    if (!address || checking) return;
+    setChecking(true);
+    setCheckError(null);
+    setChecked(null);
+    const r = await checkLoginAddress(tenantId, address);
+    setChecking(false);
+    if (!r.ok) {
+      setCheckError(r.error);
+      return;
+    }
+    setChecked({ address, result: r.data });
+    if (!r.data.free) setResolving({ address, check: r.data, resume: null });
+  }
 
   function choose(next: Mode) {
     setMode(next);
@@ -99,7 +153,8 @@ export default function LoginEmailCard(props: Props) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data?.error ?? "The change was not made.");
+        const msg = data?.error ?? "The change was not made.";
+        setError(res.status === 409 && mode === "change" ? `${msg} Use "Check address" to see who holds it.` : msg);
         return;
       }
       setEmail(String(data.email));
@@ -155,12 +210,55 @@ export default function LoginEmailCard(props: Props) {
 
       {done && <p role="status" style={{ fontSize: 13, color: adminPalette.green, margin: "12px 0 0" }}>{done}</p>}
 
+      {resumeNotice && !resolving && (
+        <p role="status" style={{ fontSize: 13, color: adminPalette.amber, margin: "12px 0 0", lineHeight: 1.5 }}>{resumeNotice}</p>
+      )}
+
+      {resolving && (
+        <ConflictPanel
+          tenantId={tenantId}
+          ownerUserId={ownerUserId}
+          address={resolving.address}
+          check={resolving.check}
+          resume={resolving.resume}
+          onOwnerChanged={(address) => {
+            setEmail(address);
+            setProvisionalSince(new Date().toISOString());
+            setResumeNotice(null);
+            setMode(null);
+            setDone(`Login email changed to the resolved address. It is provisional (unverified). ${ownerName} has been signed out everywhere.`);
+          }}
+          onClose={() => {
+            setResolving(null);
+            setChecked(null);
+          }}
+        />
+      )}
+
       {mode && (
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${adminPalette.borderSoft}` }}>
           {mode === "change" && (
             <>
               <label htmlFor="login-email-new" style={label}>New login email</label>
-              <input id="login-email-new" type="email" autoComplete="off" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} style={field} />
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  id="login-email-new"
+                  type="email"
+                  autoComplete="off"
+                  value={newEmail}
+                  onChange={(e) => { setNewEmail(e.target.value); setChecked(null); setCheckError(null); }}
+                  style={field}
+                />
+                <Button variant="secondary" size="compact" onClick={checkAddress} loading={checking} disabled={checking || !/\S+@\S+\.\S+/.test(newEmail.trim())}>
+                  Check address
+                </Button>
+              </div>
+              {checked && checked.address === newEmail.trim() && checked.result.free && (
+                <p role="status" style={{ ...hint, color: adminPalette.green }}>
+                  {checked.result.sameAsOwner ? "That is already the owner's login email." : "Free in this club."}
+                </p>
+              )}
+              {checkError && <p role="alert" style={{ ...hint, color: adminPalette.red }}>{checkError}</p>}
               <p style={hint}>Typing an address proves nothing about who reads it, so it is saved as provisional. Same account, role, password and authenticator.</p>
             </>
           )}

@@ -96,6 +96,57 @@ Note: "email from the address on file" is **not** a verification channel while t
 API: `POST /api/admin/customers/[id]/login-email` with `{ action: "mark_provisional" | "clear_provisional" | "change", reason, attestMailboxVerified?, newEmail? }`
 and the step-up grant in `x-matflow-step-up` (`app/api/admin/customers/[id]/login-email/route.ts`).
 
+## Resolving a conflict (the address belongs to a member record)
+
+Typical case: the owner should sign in with an address that an **imported member** of the same club already holds (the
+import created a member row for the owner's own address, or the club typed it onto someone else). Club screens and the
+owner's self-service answer "That email address is already in use at this club" and never say whose — on purpose. Only
+the operator console says who holds it.
+
+1. **Check.** Login email card → Change login email → type the address → **Check address**. The answer is "Free in this
+   club", or the conflict panel: club, owner, and the holder (member or staff; name; status; whether they can sign in —
+   a password, or a live invite / sign-in / reset link for that address; a link to the record; its id). A legacy
+   duplicate (two rows on one address) shows only a count: stop and review those records with the club; nothing here
+   resolves it. A **staff** holder is the club's to change in Settings → Staff; this workflow moves members only.
+2. **Verify the relationship independently.** A matching name is **not** proof that the member row is the owner, nor
+   that the address is really the owner's. Call the club back on the number you already hold (never a number given in
+   the request) or verify in person, exactly as in [SUPPORT-IDENTITY-VERIFICATION.md](SUPPORT-IDENTITY-VERIFICATION.md).
+   Establish: whose address it is; which address the member should have instead; whether the member is the owner
+   themselves, a family member, or someone else. Tick "I verified independently" and write how — that note becomes the
+   audit reason. **Shared-family exception:** a family that shares one inbox is legitimate. If the member is (say) the
+   owner's child or partner and the family wants to keep the shared address as the member's **contact**, do not move it
+   through this workflow: give the owner a different login address instead. A shared payer address imported as
+   `unverifiedEmail` is not a login and is never a conflict.
+3. **Change the member's contact address** (dialog: the member's new address, reason, an authenticator code). What it
+   changes: the member's `email` only. If the member had no password, every outstanding invite, sign-in link and reset
+   code for the old and the new address in this club is retired (a waiver link is kept) — they stay unable to sign in
+   until the club invites them at the new address. If the member could sign in, they are signed out everywhere and the
+   new address is recorded as unverified. What it never changes: the import identity (`externalRef`, so refresh and
+   attendance imports still find the same person), status, password, authenticator and recovery codes, memberships,
+   family links, attendance and payment history. Nothing is merged.
+4. **Re-check** happens automatically. If the address is still held (someone else took it, or another row holds it too),
+   stop and look again.
+5. **Change the owner's login address** with a **separate, fresh** code ("your authenticator code works once; wait for
+   the next code"). This is the ordinary operator change above: provisional, tokens retired, owner signed out everywhere.
+6. The panel lists each step with its outcome and ids. Tell the club to re-invite the member at their new address if
+   they need app access.
+
+**Half-done is stated honestly.** Steps 3 and 5 are separate transactions. If step 3 succeeded and step 5 did not, the
+panel says "Step 1 done, step 2 not done" and offers to resume; a reload of the page resumes at step 5 with a fresh
+check (the page address carries the member id, never a code or an address). A request is never retried automatically.
+If a response is lost (network drop after you pressed the button), **Re-send the same confirmation**: the route answers
+"already applied" from its record instead of changing anything twice. A confirmation is spent once; a used one is never
+accepted again.
+
+**Undoing step 3** is a new, separately authorised operation: run the member change again back to the old address (it is
+free again only if the owner has not taken it). It is not undoable from the Activity log.
+
+APIs: `POST /api/admin/customers/[id]/login-email/check` `{ email }`;
+`POST /api/admin/customers/[id]/members/[memberId]/contact-email` `{ newEmail, reason, version }` with a grant for
+`member.contact_email` (target `<club>/<member>/change`, change `{ newEmail }`). Audit `admin.login_email.checked`
+(keyed digest only) and `admin.member.contact_email.changed`. Pinned by `tests/unit/operator-hub-conflict-routes.test.ts`,
+`tests/unit/conflict-panel.test.tsx` and, on the test branch, `tests/integration/operator-hub-conflict-db.test.ts`.
+
 ## Recovery while provisional
 
 There is no reset by email. If the owner loses the password, the operator uses **Force password reset** (temporary

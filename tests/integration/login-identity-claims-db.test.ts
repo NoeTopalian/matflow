@@ -237,7 +237,12 @@ describe.skipIf(!HAS_DB)("login identity claims on real rows", () => {
     expect(now(passwordless.id).sessionVersion).toBe(sv(passwordless.id));
     const rows = vi.mocked(logAudit).mock.calls.map((call) => call[0] as { action: string; entityId: string; metadata: Record<string, unknown> }).filter((a) => a.action === "member.update");
     expect(rows.find((a) => a.entityId === c.memberId)?.metadata).toMatchObject({ unverified: true, sessionsRevoked: true });
-    expect(rows.find((a) => a.entityId === passwordless.id)?.metadata).not.toHaveProperty("sessionsRevoked");
+    // AH-H2 (9 Oct 2026): every address change is recorded unverified, with
+    // digests only; a passwordless member's row says no session was revoked.
+    const passwordlessRow = rows.find((a) => a.entityId === passwordless.id)?.metadata;
+    expect(passwordlessRow).toMatchObject({ unverified: true, sessionsRevoked: false });
+    expect(passwordlessRow?.oldEmailSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(passwordlessRow)).not.toContain("@");
   });
 
   it("retireEmailBoundTokens: default purposes leave waiver links; naming waiver_open retires them; tenant-scoped", async () => {

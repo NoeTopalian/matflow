@@ -17,7 +17,7 @@ import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tie
 import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
 import { refuseSupportSession } from "@/lib/support-session";
-import { LoginIdentityTaken, claimLoginIdentity, retireEmailBoundTokens } from "@/lib/login-email";
+import { LoginIdentityTaken, claimLoginIdentity, emailDigest, retireEmailBoundTokens } from "@/lib/login-email";
 
 // feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
 // compromised staff session (or a script) can't carpet-bomb every member row
@@ -335,6 +335,26 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         // problem in Stripe directly).
       }
     }
+    // from→to diff over every editable scalar that CHANGED — feeds the
+    // owner-side "Details history" panel and the Activity page's Undo
+    // (lib/undo-registry.ts). Fields the server derives from a sent one
+    // (membershipType / nextDueAt from a tier) are diffed too, so an undo puts
+    // the whole change back, not just the field that was typed. Notes and
+    // medical conditions are deliberately NOT here: audit rows outlive an
+    // Article-17 erasure and must never carry health data or free text. The
+    // login address is not here either (AH-H2, 9 Oct 2026): it is recorded as
+    // keyed digests, as the staff route does, and is not restorable by Undo.
+    const DIFFABLE = [
+      "name", "phone", "membershipType", "status", "paymentStatus",
+      "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth",
+      "accountType", "membershipTierId", "nextDueAt", "preferredPaymentMethod",
+      "leaderboardOptOut", "holdUntil",
+    ] as const;
+    // DateTimes are full ISO; dateOfBirth stays date-only as the history
+    // panel shows it. Nothing is cut short (an undo restores `from` verbatim).
+    const norm = (v: unknown) => (v instanceof Date ? v.toISOString() : v ?? null);
+    const isoDate = (d: unknown) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ?? null);
+
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
       // Version history (2026-08-17): before-values for the from→to diff in
       // the audit row — previously member.update logged field NAMES only,
@@ -468,7 +488,44 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           changedById: session.user.id,
         });
       }
-      return { updated: fresh, existing: null, beforeRow, sessionsRevoked };
+      const changes: Record<string, { from: unknown; to: unknown }> = {};
+      if (beforeRow && fresh) {
+        for (const f of DIFFABLE) {
+          const from = f === "dateOfBirth" ? isoDate(beforeRow[f]) : norm(beforeRow[f]);
+          const to = f === "dateOfBirth" ? isoDate((fresh as Record<string, unknown>)[f]) : norm((fresh as Record<string, unknown>)[f]);
+          if (JSON.stringify(from) !== JSON.stringify(to)) changes[f] = { from, to };
+        }
+      }
+      // In the same transaction (AH-H1, 9 Oct 2026; the staff route's S-1
+      // rule): if the audit row cannot be written, the change rolls back too.
+      await logAudit({
+        tx,
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "member.update",
+        entityType: "Member",
+        entityId: id,
+        metadata: {
+          fields: Object.keys(parsed.data),
+          ...(Object.keys(changes).length > 0 ? { source: "staff", changes } : {}),
+          // A3H-6: surface the Stripe outcome in the audit row so the gym
+          // owner can trace any billing-state side-effects of this PATCH.
+          ...(stripeCancelMetadata ? { stripe: stripeCancelMetadata } : {}),
+          // A changed login address: digests only (never the addresses), the
+          // new address is unverified, and whether every session of theirs
+          // was revoked (sessionVersion +1 — only members with a password).
+          ...(emailChange && beforeRow
+            ? {
+                oldEmailSha256: emailDigest(beforeRow.email),
+                newEmailSha256: emailDigest(rest.email!),
+                unverified: true,
+                sessionsRevoked,
+              }
+            : {}),
+        },
+        req,
+      });
+      return { updated: fresh, existing: null };
     });
 
     if (!result.updated) {
@@ -483,50 +540,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
 
     const updated = result.updated;
-    // from→to diff over every editable scalar that CHANGED — feeds the
-    // owner-side "Details history" panel and the Activity page's Undo
-    // (lib/undo-registry.ts). Fields the server derives from a sent one
-    // (membershipType / nextDueAt from a tier) are diffed too, so an undo puts
-    // the whole change back, not just the field that was typed. Notes and
-    // medical conditions are deliberately NOT here: audit rows outlive an
-    // Article-17 erasure and must never carry health data or free text.
-    const DIFFABLE = [
-      "name", "email", "phone", "membershipType", "status", "paymentStatus",
-      "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth",
-      "accountType", "membershipTierId", "nextDueAt", "preferredPaymentMethod",
-      "leaderboardOptOut", "holdUntil",
-    ] as const;
-    // DateTimes are full ISO; dateOfBirth stays date-only as the history
-    // panel shows it. Nothing is cut short (an undo restores `from` verbatim).
-    const norm = (v: unknown) => (v instanceof Date ? v.toISOString() : v ?? null);
-    const isoDate = (d: unknown) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ?? null);
-    const changes: Record<string, { from: unknown; to: unknown }> = {};
-    const beforeRow = "beforeRow" in result ? result.beforeRow : null;
-    if (beforeRow) {
-      for (const f of DIFFABLE) {
-        const from = f === "dateOfBirth" ? isoDate(beforeRow[f]) : norm(beforeRow[f]);
-        const to = f === "dateOfBirth" ? isoDate((updated as Record<string, unknown>)[f]) : norm((updated as Record<string, unknown>)[f]);
-        if (JSON.stringify(from) !== JSON.stringify(to)) changes[f] = { from, to };
-      }
-    }
-    await logAudit({
-      tenantId: session.user.tenantId,
-      userId: session.user.id,
-      action: "member.update",
-      entityType: "Member",
-      entityId: id,
-      metadata: {
-        fields: Object.keys(parsed.data),
-        ...(Object.keys(changes).length > 0 ? { source: "staff", changes } : {}),
-        // A3H-6: surface the Stripe outcome in the audit row so the gym
-        // owner can trace any billing-state side-effects of this PATCH.
-        ...(stripeCancelMetadata ? { stripe: stripeCancelMetadata } : {}),
-        // A changed login address on a password-holding member: unverified,
-        // and every session of theirs was revoked (sessionVersion +1).
-        ...("sessionsRevoked" in result && result.sessionsRevoked ? { unverified: true, sessionsRevoked: true } : {}),
-      },
-      req,
-    });
     // Attribution (M1): a dedicated audit row when the who-ran-the-trial /
     // who-gets-credit fields were touched, so an attribution change is
     // traceable on its own rather than buried in the generic field list.

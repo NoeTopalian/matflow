@@ -244,8 +244,12 @@ describe("route inventory", () => {
       "app/api/admin/auth/step-up/route.ts",
       "app/api/admin/create-tenant/route.ts",
       "app/api/admin/customers/[id]/force-password-reset/route.ts",
+      // Admin hub lane F (9 Oct 2026): the address check (read, names the
+      // holder to operators only) and the member contact-address change.
+      "app/api/admin/customers/[id]/login-email/check/route.ts",
       "app/api/admin/customers/[id]/login-email/route.ts",
       "app/api/admin/customers/[id]/member-totp-reset/route.ts",
+      "app/api/admin/customers/[id]/members/[memberId]/contact-email/route.ts",
       "app/api/admin/customers/[id]/owner-profile/route.ts",
       "app/api/admin/customers/[id]/review-lock/route.ts",
       "app/api/admin/customers/[id]/soft-delete/route.ts",

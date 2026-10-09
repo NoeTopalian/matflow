@@ -6,11 +6,15 @@ import { addLoginClaimSql } from "./login-claim-fake";
 
 vi.mock("next/server", () => ({
   NextResponse: {
-    json: (body: unknown, init?: { status?: number }) => ({
-      status: init?.status ?? 200,
-      json: async () => body,
-      headers: new Headers(),
-    }),
+    json: (body: unknown, init?: { status?: number }) => {
+      const cookies: Array<{ name: string; value: string; opts: Record<string, unknown> }> = [];
+      return {
+        status: init?.status ?? 200,
+        json: async () => body,
+        headers: new Headers(),
+        cookies: { set: (name: string, value: string, opts: Record<string, unknown>) => cookies.push({ name, value, opts }), list: cookies },
+      };
+    },
   },
 }));
 
@@ -147,8 +151,63 @@ describe("PATCH /api/member/me — version history", () => {
     expect(call.entityId).toBe("member-1");
     const changes = (call.metadata as { changes: Record<string, { from: unknown; to: unknown }> }).changes;
     expect(changes.name).toEqual({ from: "Reese Hall", to: "Reese H" });
-    expect(changes.email).toEqual({ from: "reese@example.com", to: "new@example.com" });
     expect(changes.phone).toEqual({ from: null, to: "+447700900123" });
+    // AH-H2/H3 (9 Oct 2026): the login address appears only as keyed digests,
+    // and the row is written inside the transaction with the change.
+    expect(changes.email).toBeUndefined();
+    const meta = call.metadata as Record<string, unknown>;
+    expect(meta.oldEmailSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(meta.newEmailSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(meta)).not.toContain("@example.com");
+    expect(call.tx, "audit row shares the transaction").toBe(prisma);
+  });
+
+  it("an audit failure fails the request", async () => {
+    mockLogAudit.mockRejectedValueOnce(new Error("audit insert refused"));
+    const res = await PATCH(req({ name: "Reese H" }));
+    expect(res.status).toBe(500);
+  });
+});
+
+describe("PATCH /api/member/me — a changed login address signs the member out (AH-H3)", () => {
+  type Res = { status: number; json: () => Promise<Record<string, unknown>>; cookies: { list: Array<{ name: string; value: string; opts: Record<string, unknown> }> } };
+  const bumpCall = () =>
+    mockUpdateMany.mock.calls.find((c) => "passwordHash" in ((c as [{ where: Record<string, unknown> }])[0].where));
+
+  const bumpAnswers = (count: number) =>
+    mockUpdateMany.mockImplementation(async (...a: unknown[]) =>
+      "passwordHash" in (a[0] as { where: Record<string, unknown> }).where ? { count } : { count: 1 });
+
+  it("member with a password: sessionVersion +1 in the transaction, this device's cookie cleared, signInAgain", async () => {
+    bumpAnswers(1);
+    const res = (await PATCH(req({ email: "new@example.com" }))) as unknown as Res;
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, signInAgain: true });
+    const bump = bumpCall() as [{ where: Record<string, unknown>; data: Record<string, unknown> }] | undefined;
+    expect(bump?.[0].where).toMatchObject({ id: "member-1", tenantId: "tenant-1", passwordHash: { not: null } });
+    expect(bump?.[0].data).toEqual({ sessionVersion: { increment: 1 } });
+    expect(res.cookies.list.map((c) => [c.name, c.value, c.opts.maxAge])).toEqual([[expect.stringMatching(/authjs\.session-token$/), "", 0]]);
+    const meta = mockLogAudit.mock.calls[0][0].metadata as Record<string, unknown>;
+    expect(meta.unverified).toBe(true);
+    expect(meta.sessionsRevoked).toBe(true);
+  });
+
+  it("member without a password: contact change only — no sign-out, no signInAgain", async () => {
+    bumpAnswers(0);
+    const res = (await PATCH(req({ email: "new@example.com" }))) as unknown as Res;
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(res.cookies.list).toEqual([]);
+    const meta = mockLogAudit.mock.calls[0][0].metadata as Record<string, unknown>;
+    expect(meta.unverified).toBe(true);
+    expect(meta.sessionsRevoked).toBe(false);
+  });
+
+  it("a name-only edit never touches sessionVersion", async () => {
+    const res = (await PATCH(req({ name: "Reese H" }))) as unknown as Res;
+    expect(res.status).toBe(200);
+    expect(bumpCall()).toBeUndefined();
+    expect(res.cookies.list).toEqual([]);
   });
 
   it("writes NO audit row when only notification prefs change", async () => {

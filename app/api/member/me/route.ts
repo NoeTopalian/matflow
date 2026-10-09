@@ -13,7 +13,9 @@ import { computeMemberStats } from "@/lib/member-stats";
 import { buildRankTimeline } from "@/lib/member-home";
 import { memberSelfUpdateSchema } from "@/lib/schemas/member";
 import { demoBadges } from "@/lib/demo-member";
-import { LoginIdentityTaken, claimLoginIdentity, retireEmailBoundTokens } from "@/lib/login-email";
+import { LoginIdentityTaken, claimLoginIdentity, emailDigest, retireEmailBoundTokens } from "@/lib/login-email";
+import { logAudit } from "@/lib/audit-log";
+import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 
 const DEMO_RESPONSE = {
   id: "demo-member",
@@ -494,9 +496,11 @@ export async function PATCH(req: Request) {
       }
     }
 
+    // True when this device's session was revoked by the change below.
+    let signInAgain = false;
     if (Object.keys(updateData).length > 0) {
       try {
-        await withTenantContext(session.user.tenantId, async (tx) => {
+        signInAgain = await withTenantContext(session.user.tenantId, async (tx) => {
           const newEmail = typeof updateData.email === "string" ? updateData.email : null;
           // A new login address is claimed across staff AND members of this
           // club before the write (AH-01, 9 Oct 2026); lock held to commit.
@@ -514,10 +518,66 @@ export async function PATCH(req: Request) {
           });
           // Reset codes and sign-in links minted for either address in this
           // club are retired, so a link to the old mailbox cannot reach
-          // whoever holds that address next.
+          // whoever holds that address next. A member who can sign in with a
+          // password is signed out everywhere (AH-H3, 9 Oct 2026): the new
+          // address is a login nobody has proved they read, as on the staff
+          // self-service route. Decided by a conditional update on THIS row
+          // in the transaction; the password, authenticator and recovery
+          // codes are untouched. A member without a password: contact change only.
+          let sessionsRevoked = false;
           if (newEmail !== null && before) {
             await retireEmailBoundTokens(tx, { tenantId: session.user.tenantId, emails: [before.email, newEmail] });
+            const bumped = await tx.member.updateMany({
+              where: { id: memberId, tenantId: session.user.tenantId, passwordHash: { not: null } },
+              data: { sessionVersion: { increment: 1 } },
+            });
+            sessionsRevoked = bumped.count === 1;
           }
+
+          // Owner-side version history: from→to for every identity/contact
+          // field that actually changed. Notification prefs and onboarding
+          // flags are excluded (noise, not identity). The login address is
+          // recorded as keyed digests only. Written in the same transaction:
+          // if the audit row cannot be written, the change rolls back too.
+          if (before) {
+            const iso = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+            const candidates: Array<[string, unknown, unknown]> = [
+              ["name", before.name, updateData.name],
+              ["phone", before.phone, updateData.phone],
+              ["emergencyContactName", before.emergencyContactName, updateData.emergencyContactName],
+              ["emergencyContactPhone", before.emergencyContactPhone, updateData.emergencyContactPhone],
+              ["emergencyContactRelation", before.emergencyContactRelation, updateData.emergencyContactRelation],
+              ["dateOfBirth", iso(before.dateOfBirth), updateData.dateOfBirth instanceof Date ? iso(updateData.dateOfBirth) : undefined],
+            ];
+            const changes: Record<string, { from: unknown; to: unknown }> = {};
+            for (const [field, from, to] of candidates) {
+              if (to !== undefined && to !== from) changes[field] = { from: from ?? null, to };
+            }
+            if (Object.keys(changes).length > 0 || newEmail !== null) {
+              await logAudit({
+                tx,
+                tenantId: session.user.tenantId,
+                userId: session.user.id ?? null,
+                action: "member.self_update",
+                entityType: "Member",
+                entityId: memberId,
+                metadata: {
+                  source: "self",
+                  ...(Object.keys(changes).length > 0 ? { changes } : {}),
+                  ...(newEmail !== null
+                    ? {
+                        oldEmailSha256: emailDigest(before.email),
+                        newEmailSha256: emailDigest(newEmail),
+                        unverified: true,
+                        sessionsRevoked,
+                      }
+                    : {}),
+                },
+                req,
+              });
+            }
+          }
+          return sessionsRevoked;
         });
       } catch (e: unknown) {
         // @@unique([tenantId, email]) or the cross-table claim — another
@@ -530,39 +590,6 @@ export async function PATCH(req: Request) {
           );
         }
         throw e;
-      }
-
-      // Owner-side version history: record from→to for every identity/contact
-      // field that actually changed. Notification prefs and onboarding flags
-      // are deliberately excluded (noise, not identity). Fire-and-forget —
-      // logAudit never fails the request.
-      if (before) {
-        const iso = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
-        const candidates: Array<[string, unknown, unknown]> = [
-          ["name", before.name, updateData.name],
-          ["email", before.email, updateData.email],
-          ["phone", before.phone, updateData.phone],
-          ["emergencyContactName", before.emergencyContactName, updateData.emergencyContactName],
-          ["emergencyContactPhone", before.emergencyContactPhone, updateData.emergencyContactPhone],
-          ["emergencyContactRelation", before.emergencyContactRelation, updateData.emergencyContactRelation],
-          ["dateOfBirth", iso(before.dateOfBirth), updateData.dateOfBirth instanceof Date ? iso(updateData.dateOfBirth) : undefined],
-        ];
-        const changes: Record<string, { from: unknown; to: unknown }> = {};
-        for (const [field, from, to] of candidates) {
-          if (to !== undefined && to !== from) changes[field] = { from: from ?? null, to };
-        }
-        if (Object.keys(changes).length > 0) {
-          const { logAudit } = await import("@/lib/audit-log");
-          await logAudit({
-            tenantId: session.user.tenantId,
-            userId: session.user.id ?? null,
-            action: "member.self_update",
-            entityType: "Member",
-            entityId: memberId,
-            metadata: { source: "self", changes },
-            req,
-          });
-        }
       }
     }
 
@@ -587,7 +614,6 @@ export async function PATCH(req: Request) {
             },
           });
         });
-        const { logAudit } = await import("@/lib/audit-log");
         await logAudit({
           tenantId: session.user.tenantId,
           userId: null,
@@ -624,7 +650,18 @@ export async function PATCH(req: Request) {
       });
     }
 
-    return NextResponse.json({ ok: true });
+    if (!signInAgain) return NextResponse.json({ ok: true });
+    // Every session is already dead (sessionVersion +1); clear this device's
+    // cookie too so the next request is a clean sign-in with the new address.
+    const res = NextResponse.json({ ok: true, signInAgain: true });
+    res.cookies.set(SESSION_COOKIE_NAME, "", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: SESSION_COOKIE_SECURE,
+      path: "/",
+      maxAge: 0,
+    });
+    return res;
   } catch {
     return NextResponse.json({ error: "Update failed" }, { status: 500 });
   }

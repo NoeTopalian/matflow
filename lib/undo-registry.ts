@@ -79,6 +79,7 @@ export const REASON = {
   emailAdopted: "Confirming also made the payer's address their login; change that from the guardian's profile.",
   tickFoundRow: "They were already checked in when this was ticked, so the tick added nothing to undo.",
   importedRow: "This check-in is imported history. Undo the import with its own Rollback, or remove it on the register.",
+  loginAddress: "A login address change can't be undone from here — change it again from the member's profile.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -89,8 +90,11 @@ const asRecord = (v: unknown): Record<string, unknown> | null =>
 
 /** Fields a `before` snapshot may legitimately restore per entity — never ids, tenancy, secrets, money or health data. */
 const RESTORABLE: Record<string, readonly string[]> = {
+  // "email" removed (9 Oct 2026, AH-H2): the member PATCH records a
+  // login-address change as digests only; an undo would restore an address
+  // without the cross-table claim, the token retirement or the sign-out.
   Member: [
-    "name", "email", "phone", "membershipType", "status", "paymentStatus",
+    "name", "phone", "membershipType", "status", "paymentStatus",
     "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth",
     "accountType", "membershipTierId", "nextDueAt", "holdUntil", "holdPriorStatus",
     "leaderboardOptOut", "preferredPaymentMethod",
@@ -254,6 +258,11 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
       if (fields.length === 0 && sent.length > 0 && sent.every((f) => f === "notes" || f === "medicalConditions")) {
         return { ok: false, reason: REASON.privateText };
       }
+      // A login-address change is never restored from here (RESTORABLE.Member
+      // omits it). Email-only: say so. Alongside other fields: those go back,
+      // the address stays as it is.
+      const addressChanged = sent.includes("email") || "oldEmailSha256" in m || Boolean(asRecord(m.changes)?.email);
+      if (fields.length === 0 && addressChanged) return { ok: false, reason: REASON.loginAddress };
       // A PATCH that cancelled (or reactivated) a member also cancels the
       // Stripe subscription and stamps cancelledAt; restoring `status` alone
       // would show them active while Stripe stays cancelled.

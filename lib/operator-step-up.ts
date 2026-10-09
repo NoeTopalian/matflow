@@ -94,6 +94,10 @@ export const STEP_UP_ACTIONS = [
   // Owner display-name correction (8 Oct 2026, account-editing lane R).
   // Target = stepUpTarget(tenantId, ownerUserId, "name").
   "owner.profile",
+  // A member's contact address, moved by the operator to free a login address
+  // for the owner (admin hub lane F, 9 Oct 2026). Target =
+  // stepUpTarget(tenantId, memberId, "change"); change = { newEmail }.
+  "member.contact_email",
 ] as const;
 export type StepUpAction = (typeof STEP_UP_ACTIONS)[number];
 
@@ -136,6 +140,7 @@ const CHANGE_SCHEMAS: Record<StepUpAction, z.ZodType<StepUpChange>> = {
   "support.impersonate": EMPTY_CHANGE,
   "owner.login_email": z.union([z.object({ newEmail: emailField(120) }).strict(), EMPTY_CHANGE]),
   "owner.profile": z.object({ name: displayNameSchema }).strict(),
+  "member.contact_email": z.object({ newEmail: emailField(120) }).strict(),
 };
 
 /** Normalise a declared change for `action`; null when it is not a valid change for it. */
@@ -211,6 +216,18 @@ export async function stepUpVersion(
       });
       return m ? `member:${m.id}:sv${m.sessionVersion}:totp${m.totpEnabled}` : null;
     }
+    case "member.contact_email": {
+      // What the operator decided on: this member, at this address, with this
+      // import identity, able (or not) to sign in, at this session version.
+      // Never updatedAt (it moves for reasons unrelated to the address).
+      if (!subjectId) return null;
+      const m = await tx.member.findFirst({
+        where: { id: subjectId, tenantId },
+        select: { id: true, sessionVersion: true, email: true, externalRef: true, passwordHash: true },
+      });
+      if (!m) return null;
+      return `member:${m.id}:sv${m.sessionVersion}:email=${m.email.trim().toLowerCase()}:ext=${m.externalRef ?? "-"}:pw=${m.passwordHash != null}`;
+    }
     case "tenant.transfer_ownership": {
       if (!subjectId) return null;
       const o = await firstOwner();
@@ -243,6 +260,21 @@ export async function stepUpVersion(
 
 function versionDigest(version: string): string {
   return keyed(VERSION_HMAC_DOMAIN, version);
+}
+
+/**
+ * The keyed version digest read with the caller's transaction client, or null
+ * when the subject does not exist. Lets a route hand the operator an OPAQUE
+ * version of what they looked at (the hub's address check) and compare it
+ * again inside the mutation — the digest carries no address.
+ */
+export async function stepUpVersionDigestIn(
+  tx: Prisma.TransactionClient,
+  action: StepUpAction,
+  targetId: string,
+): Promise<string | null> {
+  const v = await stepUpVersion(tx, action, targetId);
+  return v === null ? null : versionDigest(v);
 }
 
 /** The keyed version digest, read in its own transaction (for issuing). */

@@ -14,7 +14,7 @@ needs. Candidate SHA: filled in at the end of the loop (§8).
 | Hub workflow | Check address; member contact-email change (step-up, reason, audited); guided Resolve-conflict sequence on the owner Login email card. |
 | Operator plane | `private, no-store` on every `/api/admin/*` and `/admin/*` response; a de-listed operator loses a live support session on the next request. |
 | Scripts | `scripts/readiness/owner-login-change-check.mjs`, `scripts/readiness/release-verify.mjs` (machine-enforced; nonzero exit on any failure). |
-| Dependencies | `npm audit fix` (non-breaking): `next` ≥ 16.3.8, `undici`, `sharp`, `source-map-js`, `brace-expansion`; `shadcn` moved to devDependencies. See LEDGER AH-09. |
+| Dependencies | `next` 16.3.3 → 16.3.8 (pinned `~16.3.8`, patch line only), `undici` 6.28.0 → 6.29.0, `sharp` 0.35.4 → 0.35.5, plus the non-breaking transitive fixes from `npm audit fix`; `shadcn` moved to devDependencies. Remaining production advisories: the `mysql2`-via-`prisma` CLI chain only (not applicable — Postgres adapter). See LEDGER AH-09. |
 
 Migrations applied by the build (`scripts/maybe-migrate.mjs`), all additive/nullable, in order:
 `20261006010000_operator_auth_hardening`, `20261006020000_tenant_lifecycle_safety`, `20261006040000_support_session_binding`,

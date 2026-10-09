@@ -150,7 +150,12 @@ describe("1. the policy", () => {
     expect(supportRequestDecision("GET", p)).toMatchObject({ allowed: false, reason: "export" });
   });
 
-  it.each(["/admin", "/admin/tenants", "/api/admin/activity", "/api/admin/customers/t1/force-password-reset", "/api/admin/impersonate"])(
+  it.each([
+    "/admin", "/admin/tenants", "/api/admin/activity", "/api/admin/customers/t1/force-password-reset", "/api/admin/impersonate",
+    // Admin hub lane F (9 Oct 2026): the address check names who holds an
+    // address, and the contact change moves a member — neither from support.
+    "/api/admin/customers/t1/login-email/check", "/api/admin/customers/t1/members/m1/contact-email",
+  ])(
     "refuses the operator plane %s to a support session (no nesting), whatever the method",
     (p) => {
       expect(supportRequestDecision("GET", p)).toMatchObject({ allowed: false, reason: "operator_plane" });
