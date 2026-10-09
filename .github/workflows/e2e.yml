@@ -1,5 +1,10 @@
 name: E2E (Playwright)
 
+# Least-privilege token for every job (security campaign SF-21, 9 Oct 2026): nothing here
+# writes to the repository, so the default read-write GITHUB_TOKEN is withdrawn.
+permissions:
+  contents: read
+
 # Deliberately NOT on pull_request. The suite takes ~10 minutes against a live
 # dev server and a seeded database; gating every PR on it would trade a real
 # blocker for a flaky one. It runs nightly and on demand, so regressions surface
@@ -87,7 +92,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: 24 # matches the Vercel runtime line (SF-21); local Node 25 is EOL
           cache: npm
 
       - name: Install dependencies
