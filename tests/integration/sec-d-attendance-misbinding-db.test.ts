@@ -45,6 +45,10 @@ vi.mock("@/lib/api-authz", async (importOriginal) => ({
     if (!gate.current) throw new Error("no club in scope");
     return { ok: true, tenantId: gate.current.tenantId, userId: gate.current.userId, session: { user: { id: gate.current.userId, tenantId: gate.current.tenantId, role: "owner" } } };
   }),
+  requireApiOwnerOrManager: vi.fn(async () => {
+    if (!gate.current) throw new Error("no club in scope");
+    return { ok: true, tenantId: gate.current.tenantId, userId: gate.current.userId, session: { user: { id: gate.current.userId, tenantId: gate.current.tenantId, role: "owner" } } };
+  }),
 }));
 const FILES = vi.hoisted(() => new Map<string, string>());
 vi.mock("@/lib/import-storage", async (importOriginal) => ({
@@ -59,6 +63,8 @@ import { JOB_SOURCE, LEDGER_SOURCE, MAPPING_VERSION, buildPlan, loadClubInputs, 
 import { POST } from "@/app/api/admin/import/attendance/route";
 import { PATCH as patchMember, DELETE as deleteMember } from "@/app/api/members/[id]/route";
 import { emailDigest } from "@/lib/login-email";
+import { POST as guardianPost } from "@/app/api/members/[id]/guardian/route";
+import { synthesiseMemberEmail } from "@/lib/synthesise-kid-email";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = `secd-${Date.now().toString(36)}`;
@@ -342,6 +348,47 @@ describe.skipIf(!HAS_DB)("SEC-053 / AH-D1 — attendance identity binding is nev
   });
 
   // R cell 17 — CONTROL: an old member who has held the address all along (no change of its own) is still bound.
+  // R fifth pass (REPORT-D4): an OLD guardian draft (synthesised login, payer address held as unverifiedEmail)
+  // ADOPTS the payer address through the REAL guardian confirm route after the bookings. The route used to record
+  // only a child-subject row (emailAdopted: true), nothing on the parent, so the parent bound.
+  it("R18 GUARDIAN ADOPTION: an old parent who adopted the address through guardian confirm after the bookings is not bound", async () => {
+    const club = await mkClub("guardian");
+    const parent = await withRlsBypass((tx) => tx.member.create({
+      data: { id: idCreatedAt(OLD_MEMBER), tenantId: club.tenantId, name: N("Gwen Payer"), email: synthesiseMemberEmail("adult"), unverifiedEmail: E("gwen-pay"), accountType: "parent" },
+      select: { id: true },
+    })).then((r) => r.id);
+    const child = await withRlsBypass((tx) => tx.member.create({
+      data: { tenantId: club.tenantId, name: N("Gus Payer"), email: synthesiseMemberEmail("adult"), accountType: "junior", parentMemberId: parent, guardianConfirmedAt: null, guardianSuggestedBy: "emergency_contact" },
+      select: { id: true },
+    })).then((r) => r.id);
+    gate.current = { tenantId: club.tenantId, userId: club.userId };
+    const res = (await guardianPost(
+      new Request(`https://test.local/api/members/${child}/guardian`, { method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: JSON.stringify({ action: "confirm", adoptUnverifiedEmail: true }) }),
+      { params: Promise.resolve({ id: child }) },
+    )) as unknown as { status: number; json: () => Promise<unknown> };
+    expect(res.status, JSON.stringify(await res.json())).toBe(200);
+    expect((await withRlsBypass((tx) => tx.member.findUniqueOrThrow({ where: { id: parent }, select: { email: true } }))).email).toBe(E("gwen-pay"));
+    const { jobId, planHash } = await mkPreview(club, csvOf([{ name: N("Gwen Payer"), email: E("gwen-pay") }]));
+    await commitAndRun(club, jobId, planHash);
+    expect(await attendanceOf(club, parent), "attendance committed to a parent who adopted the address after the bookings").toBe(0);
+    expect((await ledger(club))[0].disposition).toBe("pending_person");
+  });
+
+  // R fifth pass: an address change recorded only in the OLD audit format ({ changes: { email } }, no digest keys).
+  it("R19 OLD-FORMAT ROW: an old member whose address change is recorded only as changes.email is not bound", async () => {
+    const club = await mkClub("oldfmt");
+    const olaf = await mkOldMember(club, N("Olaf Format"), E("olaf-before"));
+    await withRlsBypass(async (tx) => {
+      await tx.member.update({ where: { id: olaf }, data: { email: E("olaf-after") } });
+      await tx.auditLog.create({ data: { tenantId: club.tenantId, userId: club.userId, action: "member.update", entityType: "Member", entityId: olaf,
+        metadata: { fields: ["email"], source: "staff", changes: { email: { from: "[redacted]", to: "[redacted]" } } } } });
+    });
+    const { jobId, planHash } = await mkPreview(club, csvOf([{ name: N("Olaf Format"), email: E("olaf-after") }]));
+    await commitAndRun(club, jobId, planHash);
+    expect(await attendanceOf(club, olaf), "attendance committed to a member whose old-format address change was invisible").toBe(0);
+    expect((await ledger(club))[0].disposition).toBe("pending_person");
+  });
+
   it("R17 CONTROL: an old member who has held the address all along still matches", async () => {
     const club = await mkClub("allalong");
     const ray = await mkOldMember(club, N("Ray Steady"), E("ray"));

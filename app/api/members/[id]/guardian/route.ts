@@ -21,7 +21,7 @@ import { apiError } from "@/lib/api-error";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
-import { claimLoginIdentity } from "@/lib/login-email";
+import { claimLoginIdentity, emailDigest } from "@/lib/login-email";
 import { refuseSupportSession } from "@/lib/support-session";
 
 export const runtime = "nodejs";
@@ -78,6 +78,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (claim.kind !== "none") return { kind: "email-taken" as const, email: parent.unverifiedEmail };
       await tx.member.update({ where: { id: parent.id }, data: { email: parent.unverifiedEmail, unverifiedEmail: null } });
       emailAdopted = parent.unverifiedEmail;
+      // The PARENT's login address changed: record it on the parent, in the same format and transaction as every
+      // other address change (oldEmailSha256/newEmailSha256), so the attendance import sees the acquisition
+      // (R fifth pass, SF-67). The child row below is kept.
+      await logAudit({
+        tx, tenantId, userId, action: "member.update", entityType: "Member", entityId: parent.id,
+        metadata: { fields: ["email"], source: "guardian_adopt", oldEmailSha256: emailDigest(parent.email), newEmailSha256: emailDigest(parent.unverifiedEmail), unverified: true },
+        req,
+      });
     }
     const r = await tx.member.updateMany({
       where: { id: child.id, tenantId, parentMemberId: parent.id },

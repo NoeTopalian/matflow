@@ -129,22 +129,33 @@ export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInpu
   // Plus the release paths (R third pass): member.delete, staff.delete, member.dsar_erase and import.rollback write
   // releasedEmailSha256 (a digest or a list); a DSAR erase also wrote originalEmailHash (the hashToken form).
   // Rows written before AH-E2 hold the UNKEYED SHA-256 form; buildPlan compares every form.
-  const releaseRows = await tx.$queryRaw<{ entityType: string; entityId: string; metadata: Record<string, unknown> | null; createdAt: Date }[]>`
-    SELECT "entityType", "entityId", metadata, "createdAt"
+  const releaseRows = await tx.$queryRaw<{ action: string; entityType: string; entityId: string; metadata: Record<string, unknown> | null; createdAt: Date }[]>`
+    SELECT action, "entityType", "entityId", metadata, "createdAt"
     FROM "AuditLog"
     WHERE "tenantId" = ${tenantId}
       AND (metadata->>'oldEmailSha256' IS NOT NULL OR metadata->>'oldEmailDigest' IS NOT NULL
         OR metadata->'releasedEmailSha256' IS NOT NULL
-        OR (action = 'member.dsar_erase' AND metadata->>'originalEmailHash' IS NOT NULL))`;
+        OR (action = 'member.dsar_erase' AND metadata->>'originalEmailHash' IS NOT NULL)
+        OR metadata->'changes'->'email' IS NOT NULL
+        OR (action = 'member.guardian.confirmed' AND metadata->>'emailAdopted' = 'true'))`;
   const released: Record<string, string[]> = Object.create(null);
   // Each member's latest recorded change of its OWN address: by subject and time, not by digest, so a key
   // rotation cannot hide it (R fourth pass).
   const ownChange = new Map<string, number>();
   for (const r of releaseRows) {
     const md = r.metadata ?? {};
-    if (r.entityType === "Member" && (md.oldEmailSha256 || md.oldEmailDigest || md.releasedEmailSha256)) {
+    // The subject whose own address changed: the row's member for a digest row or an old-format row
+    // ({ changes: { email } }, R fifth pass); the PARENT for a guardian confirm that adopted the payer address.
+    const changes = md.changes && typeof md.changes === "object" ? (md.changes as Record<string, unknown>) : null;
+    const subject =
+      r.action === "member.guardian.confirmed" && md.emailAdopted === true
+        ? (typeof md.parentMemberId === "string" ? md.parentMemberId : null)
+        : r.entityType === "Member" && (md.oldEmailSha256 || md.oldEmailDigest || md.releasedEmailSha256 || changes?.email)
+          ? r.entityId
+          : null;
+    if (subject) {
       const t = new Date(r.createdAt).getTime();
-      if (!isNaN(t) && t > (ownChange.get(r.entityId) ?? -Infinity)) ownChange.set(r.entityId, t);
+      if (!isNaN(t) && t > (ownChange.get(subject) ?? -Infinity)) ownChange.set(subject, t);
     }
     const many = Array.isArray(md.releasedEmailSha256) ? md.releasedEmailSha256 : [md.releasedEmailSha256];
     for (const d of [md.oldEmailSha256, md.oldEmailDigest, md.originalEmailHash, ...many]) {

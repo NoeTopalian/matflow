@@ -136,3 +136,16 @@ non-address edit), stays bound. Green and mutant results are in the hand-back.
    matters only for releases by members that no longer exist AND acquisitions by unaudited writers, which is case 1.
 4. **Cost.** A member who corrected their own address after their earliest booking needs an owner decision for
    that person's rows, even when they are the same person.
+
+## Fifth pass after reviewer R (REPORT-D4), HEAD e5f4daf + lane D working tree
+R found one in-app evasion. Guardian confirm with `adoptUnverifiedEmail` changed the PARENT's address but recorded
+only a child-subject `member.guardian.confirmed` row (`emailAdopted: true`). As a result, an old parent who adopted
+the address after the bookings was bound. Rows in the old `{ changes: { email } }` format were also invisible.
+Fixes:
+- **Guardian route.** It now also writes, inside the adoption's transaction, a parent-subject `member.update` row with
+  `oldEmailSha256` and `newEmailSha256` (`source: "guardian_adopt"`). The child row is kept.
+- **Own-change reader.** `addressChangedAt` now also comes from old-format `changes.email` rows, and from
+  `member.guardian.confirmed` rows that carry `emailAdopted: true`, with the parent taken from `metadata.parentMemberId`.
+Red, the two new cells only, on each role: R18 and R19 failed (2 failed / 21 skipped). Final whole-file results are in the hand-back.
+Documented, not fixed (SF-57): an audit row back-dated before the earliest booking passes the time check. It is
+reachable only through a direct UPDATE of AuditLog (audit tampering, SEC-083).
