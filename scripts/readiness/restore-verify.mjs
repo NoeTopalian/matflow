@@ -22,6 +22,7 @@
 // docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md §3).
 import fs from "node:fs";
 import pg from "pg";
+import { resolveDbTarget, TargetRefused } from "./db-target.mjs";
 
 const [mode, a, b, c4] = process.argv.slice(2);
 const flags = process.argv.slice(2).filter((x) => x.startsWith("--"));
@@ -40,10 +41,14 @@ async function snapshot(envFile, expectHost, varName) {
   );
   const url = env[varName];
   if (!url) die(`no ${varName} in ${envFile}`);
-  const host = new URL(url).hostname;
-  if (!host.includes(expectHost)) die(`REFUSED: host does not contain ${expectHost}`);
-  if (host.includes("ep-bold-wave") && !flags.includes("--production-read-only")) {
-    die("REFUSED: production host; pass --production-read-only only for an authorised read-only baseline");
+  // Shared guard (review of lane F, 9 Oct 2026): resolves the EFFECTIVE host the way pg does, refuses
+  // host= / hostaddr= / options= overrides outright, compares case-insensitively, and admits the production
+  // endpoint only behind the explicit flag.
+  let host;
+  try {
+    host = resolveDbTarget(url, { expectHost, allowProduction: flags.includes("--production-read-only") });
+  } catch (e) {
+    die(e instanceof TargetRefused ? e.message : `REFUSED: ${String(e)}`);
   }
   const killer = setTimeout(() => die("ABORTED: 180 s ceiling reached", 3), 180_000);
   const client = new pg.Client({ connectionString: url, application_name: "matflow-restore-verify-readonly" });

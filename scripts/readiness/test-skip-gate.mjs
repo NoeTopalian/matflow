@@ -19,6 +19,10 @@ if (!file) { console.error("usage: test-skip-gate.mjs <vitest.json> [--allow=a,b
 const args = process.argv.slice(3);
 const requireDb = args.includes("--require-db");
 const allow = new Set((args.find((a) => a.startsWith("--allow=")) ?? "--allow=").slice(8).split(",").filter(Boolean));
+// --expect=<glob[,glob]>: every file matching the globs MUST be present in the results. A run that simply leaves
+// the database files out is otherwise indistinguishable from one that ran them (review of lane F, 9 Oct 2026).
+const expectGlobs = (args.find((a) => a.startsWith("--expect=")) ?? "--expect=").slice(9).split(",").filter(Boolean);
+const expected = new Set(expectGlobs.flatMap((g) => fs.globSync(g).map((p) => p.split(path.sep).join("/"))));
 const j = JSON.parse(fs.readFileSync(file, "utf8"));
 const rel = (p) => path.relative(process.cwd(), p).split(path.sep).join("/");
 
@@ -37,6 +41,8 @@ for (const f of j.testResults ?? []) {
   if (a.length === 0) problems.push(`${name}: zero tests`);
   if (requireDb && sk > 0 && !allow.has(name)) problems.push(`${name}: ${sk} of ${a.length} skipped (not on the allow list)`);
 }
-console.log(JSON.stringify({ files: (j.testResults ?? []).length, total, passed, skipped, requireDb, allowed: [...allow], verdict: problems.length ? "FAIL" : "PASS" }));
+const present = new Set((j.testResults ?? []).map((f) => rel(f.name)));
+for (const e of expected) if (!present.has(e)) problems.push(`${e}: expected in this run but absent`);
+console.log(JSON.stringify({ files: (j.testResults ?? []).length, total, passed, skipped, requireDb, allowed: [...allow], expected: expected.size, verdict: problems.length ? "FAIL" : "PASS" }));
 for (const p of problems) console.log(" -", p);
 process.exit(problems.length ? 1 : 0);

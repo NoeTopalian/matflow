@@ -3,6 +3,7 @@
 // memberships, grants, policy settings, table ownership and pooling context. Prints no credentials and no row data.
 import fs from "node:fs";
 import pg from "pg";
+import { resolveDbTarget, TargetRefused } from "./db-target.mjs";
 
 const envFile = process.argv[2];
 const varName = process.argv[4] ?? "DATABASE_URL";
@@ -15,8 +16,10 @@ const env = Object.fromEntries(
 );
 const url = env[varName];
 if (!url) { console.error(`no ${varName} in env file`); process.exit(2); }
-const host = new URL(url).hostname;
-if (!host.includes(expectHost)) { console.error(`REFUSED: host does not contain ${expectHost}`); process.exit(2); }
+// Shared guard (review of lane F): effective host as pg resolves it; overrides refused; case-insensitive.
+// Production is admissible here because this script exists for the read-only production baseline (SF-02).
+let host;
+try { host = resolveDbTarget(url, { expectHost, allowProduction: true }); } catch (e) { console.error(e instanceof TargetRefused ? e.message : String(e)); process.exit(2); }
 console.log(JSON.stringify({ host, pooler: host.includes("-pooler"), sslmode: new URL(url).searchParams.get("sslmode") }));
 
 const client = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: true }, application_name: "matflow-security-readonly" });

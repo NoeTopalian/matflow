@@ -21,7 +21,7 @@ const PROD_NEON_ENDPOINT = "ep-bold-wave-abt39t7x";
 const testUrl = process.env.TEST_DATABASE_URL;
 
 if (testUrl) {
-  if (testUrl.includes(PROD_NEON_ENDPOINT)) {
+  if (testUrl.toLowerCase().includes(PROD_NEON_ENDPOINT)) {
     throw new Error(
       `TEST_DATABASE_URL points at the production Neon project (${PROD_NEON_ENDPOINT}). ` +
       `Integration tests must run against a Neon branch, not main. ` +
@@ -30,7 +30,7 @@ if (testUrl) {
   }
   // Mirror to DATABASE_URL so lib/prisma.ts picks up the safe URL.
   process.env.DATABASE_URL = testUrl;
-} else if (process.env.DATABASE_URL?.includes(PROD_NEON_ENDPOINT)) {
+} else if (process.env.DATABASE_URL?.toLowerCase().includes(PROD_NEON_ENDPOINT)) {
   // The user has DATABASE_URL=production set (e.g. from .env) but no
   // TEST_DATABASE_URL override. Strip DATABASE_URL so integration tests
   // skip via their describe.skipIf(!HAS_DB) guards rather than touching prod.
