@@ -1,0 +1,31 @@
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+stdout | tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > records the connected role and that the connection is direct (not the shared pooler)
+{"lane":"B2","currentUser":"matflow_app","rlsInForce":true,"pooler":false}
+ ✓ tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > records the connected role and that the connection is direct (not the shared pooler) 3ms
+ ✓ tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > positive control: on a clean connection, club A's context sees A's member and not B's 317ms
+ × tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > a SESSION-level app.bypass_rls = 'on' left on the connection does not widen the next tenant-scoped transaction 362ms
+   → expected 1 to be +0 // Object.is equality
+stdout | tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > a SESSION-level tenant B left on the connection is overridden inside club A's transaction
+{"lane":"B2","residual":"session-level tenant visible to a plain query outside a transaction","visible":1}
+ ✓ tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > a SESSION-level tenant B left on the connection is overridden inside club A's transaction 494ms
+ ✓ tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > a failed tenant transaction leaves no context behind on the connection 315ms
+ ✓ tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > positive control: withRlsBypass still crosses clubs after the fix (the escape hatch is unchanged) 222ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > a SESSION-level app.bypass_rls = 'on' left on the connection does not widen the next tenant-scoped transaction
+AssertionError: expected 1 to be +0 // Object.is equality
+- Expected
++ Received
+- 0
++ 1
+ ❯ tests/integration/sec-b2-stale-bypass-db.test.ts:92:19
+     90|       expect(r.a).toBe(1);
+     91|       if (!enforced) return;
+     92|       expect(r.b).toBe(0);
+       |                   ^
+     93|     } finally {
+     94|       await prisma.$executeRaw`SELECT set_config('app.bypass_rls', '',…
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+ Test Files  1 failed (1)
+      Tests  1 failed | 5 passed (6)
+   Start at  18:44:04
+   Duration  3.94s (transform 73ms, setup 24ms, import 214ms, tests 3.49s, environment 0ms)

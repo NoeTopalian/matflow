@@ -1,0 +1,19 @@
+node v24.21.0
+rls-foundation restricted exit=0  Tests 9 passed (9)
+rls-foundation owner exit=0  Tests 3 passed | 6 skipped (9)
+sec-b-rls-identity-db restricted exit=1  Tests 6 skipped (6)
+sec-b-rls-identity-db owner exit=0  Tests 6 passed (6)
+tenant-isolation restricted exit=0  Tests 2 passed (2)
+tenant-isolation owner exit=0  Tests 2 passed (2)
+cross-tenant-authorisation-matrix restricted exit=0  Tests 54 passed (54)
+cross-tenant-authorisation-matrix owner exit=0  Tests 54 passed (54)
+rls-coverage restricted exit=0  Tests 1 passed (1)
+rls-coverage owner exit=0  Tests 1 passed (1)
+sec-b2-stale-bypass-db restricted exit=0  Tests 6 passed (6)
+sec-b2-stale-bypass-db owner exit=0  Tests 6 passed (6)
+sec-b2-signed-context-db restricted exit=0  Tests 1 passed (1)
+sec-b2-signed-context-db owner exit=0  Tests 1 passed (1)
+unit-all exit=0  Tests 5988 passed (5988)
+DONE
+sec-b-rls-identity-db restricted RERUN exit=0 Tests 6 passed (6) (first run: beforeAll's first query failed with an empty Prisma error, 6 skipped — transient, see transient-sec-b-rls-identity-restricted.log)
+lane unit files after type fixes: 21/21; tsc --noEmit -p . exit 0 (0 errors); eslint on lane files exit 0

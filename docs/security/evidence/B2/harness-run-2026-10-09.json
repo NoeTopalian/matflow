@@ -1,0 +1,808 @@
+{
+  "stamp": "secb2_mv19lip8689bb4",
+  "node": "v24.21.0",
+  "startedAt": "2026-10-09T17:54:09.262Z",
+  "targets": {
+    "ownerPooled": {
+      "host": "ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech",
+      "user": "neondb_owner",
+      "pooler": true
+    },
+    "ownerDirect": {
+      "host": "ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech",
+      "user": "neondb_owner",
+      "pooler": false
+    },
+    "appPooled": {
+      "host": "ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech",
+      "user": "matflow_app",
+      "pooler": true
+    },
+    "appDirect": {
+      "host": "ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech",
+      "user": "matflow_app",
+      "pooler": false
+    }
+  },
+  "publicProbe": {
+    "identity": {
+      "u": "matflow_app",
+      "bypassrls": false,
+      "super": false
+    },
+    "noContext_tenants": 0,
+    "bypassGuc_tenants": 141,
+    "bypassGuc_auditTenants": 132,
+    "afterClearingBypass_tenants": 0,
+    "forgedTenantGuc_membersVisible": 894,
+    "forgedTenantGuc_otherTenantsVisible": 0,
+    "rowSecurityOff": {
+      "ok": false,
+      "code": "42501",
+      "error": "query would be affected by row-level security policy for table \"Member\""
+    },
+    "runtimePrivileges": {
+      "migrations_insert": true,
+      "migrations_update": true,
+      "migrations_delete": true,
+      "audit_update": true,
+      "audit_delete": true,
+      "audit_truncate": false,
+      "operator_insert": true,
+      "public_create": false,
+      "temp": true,
+      "app_gucs_defined": 0
+    },
+    "writerBoundary": {
+      "operatorCredentialUpdate": "PERMITTED (rows=0)",
+      "migrationLedgerUpdate": "PERMITTED (rows=0)",
+      "platformConfigUpdate": "PERMITTED (rows=0)"
+    },
+    "setRoleOwner": "42501"
+  },
+  "variants": {
+    "CURRENT": {
+      "C01": {
+        "desc": "runtime login is matflow_app: no BYPASSRLS/superuser, not a member of system/ops/owner",
+        "holds": true,
+        "observed": {
+          "u": "matflow_app",
+          "bypass": false,
+          "super": false,
+          "in_sys": false,
+          "in_ops": false,
+          "in_owner": false
+        }
+      },
+      "C02": {
+        "desc": "positive control: in A's context A's row is visible and A can insert data and audit rows",
+        "holds": true,
+        "observed": {
+          "seen": 1,
+          "insert": true,
+          "auditInsert": true
+        }
+      },
+      "C03": {
+        "desc": "no tenant context: nothing visible, insert refused",
+        "holds": true,
+        "observed": {
+          "seen": 0,
+          "insert": false
+        }
+      },
+      "C04": {
+        "desc": "in A's context B is invisible; UPDATE/DELETE of B match 0; INSERT into B and moving A's row to B refused",
+        "holds": true,
+        "observed": {
+          "seenB": 0,
+          "updB": 0,
+          "delB": 0,
+          "insB": false,
+          "moveToB": false
+        }
+      },
+      "C05": {
+        "desc": "runtime role sets app.bypass_rls=on itself: must see/modify nothing",
+        "holds": false,
+        "observed": {
+          "tenants": 2,
+          "items": 2,
+          "updB": 1
+        }
+      },
+      "C06": {
+        "desc": "runtime role cannot SET ROLE / SET SESSION AUTHORIZATION to system, ops or owner, nor grant itself the system role",
+        "holds": true,
+        "observed": {
+          "setRoleSys": "42501",
+          "setRoleOps": "42501",
+          "setRoleOwner": "42501",
+          "sessionAuthOwner": "42501",
+          "grantSysToSelf": "42501"
+        }
+      },
+      "C07": {
+        "desc": "SET row_security = off raises (42501) instead of bypassing",
+        "holds": true,
+        "observed": {
+          "ok": false,
+          "code": "42501"
+        }
+      },
+      "C08": {
+        "desc": "forged app.current_tenant_id (no signature): B must stay invisible",
+        "holds": false,
+        "observed": {
+          "seenB": 1
+        }
+      },
+      "C09": {
+        "desc": "random MAC, MAC replayed in a later transaction or on another connection, A's MAC with the tenant switched to B: B invisible (positive control: the captured context did work in its own transaction)",
+        "holds": false,
+        "observed": {
+          "randomMac": 1,
+          "replayedMacNextTx": 1,
+          "replayedMacOtherConnection": 1,
+          "macForASwitchedToB": 1,
+          "positiveControl_capturedContextWorksInItsOwnTx": 1
+        }
+      },
+      "C10": {
+        "desc": "tenant context is gone after COMMIT, after an error + ROLLBACK, and after ROLLBACK TO SAVEPOINT",
+        "holds": true,
+        "observed": {
+          "afterCommit": 0,
+          "afterError": 0,
+          "settingAfterError": "cleared",
+          "afterSavepointRollback": 0
+        }
+      },
+      "C11": {
+        "desc": "two concurrent pooled transactions (A and B) each see only their own tenant; a third with no context sees nothing",
+        "holds": true,
+        "observed": {
+          "y_noContext": 0,
+          "x_seesOnlyA": [
+            "secb2_mv19lip8689bb4-a"
+          ],
+          "y_seesOnlyB": [
+            "secb2_mv19lip8689bb4-b"
+          ]
+        }
+      },
+      "C12": {
+        "desc": "a session-level tenant or bypass setting left on a connection grants nothing to the next transaction",
+        "holds": false,
+        "observed": {
+          "sessionTenantLeaksIntoNextTx": 1,
+          "sessionBypassThenContextA_seesB": 1
+        }
+      },
+      "C13": {
+        "desc": "definer functions (not present in CURRENT)",
+        "holds": null,
+        "observed": "n/a"
+      },
+      "C14": {
+        "desc": "runtime role cannot disable RLS, drop/create policies, replace functions, create objects, read the key, TRUNCATE audit or grant itself purge",
+        "holds": true,
+        "observed": {
+          "disableRls": "42501",
+          "dropPolicy": "42501",
+          "createPolicy": "42501",
+          "replaceFn": "42501",
+          "createInSchema": "42501",
+          "createInPublic": "42501",
+          "readKey": "42501",
+          "truncateAudit": "42501",
+          "grantSelfPurge": "no-privilege"
+        }
+      },
+      "C15": {
+        "desc": "in its own (or a forged) tenant context the runtime role cannot UPDATE or DELETE audit rows, and cannot back-date an INSERT",
+        "holds": false,
+        "observed": {
+          "update": "ALLOWED rows=1",
+          "delete": "ALLOWED rows=1",
+          "backdatedInsertForcedToNow": false
+        }
+      },
+      "C16": {
+        "desc": "without a valid context for B, B's import source mapping cannot be re-pointed (bypass GUC + forged tenant GUC)",
+        "holds": false,
+        "observed": {
+          "rewriteB": 1
+        }
+      },
+      "R1": {
+        "desc": "RESIDUAL (expected): with a valid context for B (app holds the key) B's mutable rows can be changed — RLS is not an integrity control",
+        "holds": null,
+        "observed": {
+          "rewriteBWithValidContext": 1
+        }
+      }
+    },
+    "P1": {
+      "C01": {
+        "desc": "runtime login is matflow_app: no BYPASSRLS/superuser, not a member of system/ops/owner",
+        "holds": true,
+        "observed": {
+          "u": "matflow_app",
+          "bypass": false,
+          "super": false,
+          "in_sys": false,
+          "in_ops": false,
+          "in_owner": false
+        }
+      },
+      "C02": {
+        "desc": "positive control: in A's context A's row is visible and A can insert data and audit rows",
+        "holds": true,
+        "observed": {
+          "seen": 1,
+          "insert": true,
+          "auditInsert": true
+        }
+      },
+      "C03": {
+        "desc": "no tenant context: nothing visible, insert refused",
+        "holds": true,
+        "observed": {
+          "seen": 0,
+          "insert": false
+        }
+      },
+      "C04": {
+        "desc": "in A's context B is invisible; UPDATE/DELETE of B match 0; INSERT into B and moving A's row to B refused",
+        "holds": true,
+        "observed": {
+          "seenB": 0,
+          "updB": 0,
+          "delB": 0,
+          "insB": false,
+          "moveToB": false
+        }
+      },
+      "C05": {
+        "desc": "runtime role sets app.bypass_rls=on itself: must see/modify nothing",
+        "holds": true,
+        "observed": {
+          "tenants": 0,
+          "items": 0,
+          "updB": 0
+        }
+      },
+      "C06": {
+        "desc": "runtime role cannot SET ROLE / SET SESSION AUTHORIZATION to system, ops or owner, nor grant itself the system role",
+        "holds": true,
+        "observed": {
+          "setRoleSys": "42501",
+          "setRoleOps": "42501",
+          "setRoleOwner": "42501",
+          "sessionAuthOwner": "42501",
+          "grantSysToSelf": "42501"
+        }
+      },
+      "C07": {
+        "desc": "SET row_security = off raises (42501) instead of bypassing",
+        "holds": true,
+        "observed": {
+          "ok": false,
+          "code": "42501"
+        }
+      },
+      "C08": {
+        "desc": "forged app.current_tenant_id (no signature): B must stay invisible",
+        "holds": false,
+        "observed": {
+          "seenB": 1
+        }
+      },
+      "C09": {
+        "desc": "random MAC, MAC replayed in a later transaction or on another connection, A's MAC with the tenant switched to B: B invisible (positive control: the captured context did work in its own transaction)",
+        "holds": false,
+        "observed": {
+          "randomMac": 1,
+          "replayedMacNextTx": 1,
+          "replayedMacOtherConnection": 1,
+          "macForASwitchedToB": 1,
+          "positiveControl_capturedContextWorksInItsOwnTx": 1
+        }
+      },
+      "C10": {
+        "desc": "tenant context is gone after COMMIT, after an error + ROLLBACK, and after ROLLBACK TO SAVEPOINT",
+        "holds": true,
+        "observed": {
+          "afterCommit": 0,
+          "afterError": 0,
+          "settingAfterError": "cleared",
+          "afterSavepointRollback": 0
+        }
+      },
+      "C11": {
+        "desc": "two concurrent pooled transactions (A and B) each see only their own tenant; a third with no context sees nothing",
+        "holds": true,
+        "observed": {
+          "y_noContext": 0,
+          "x_seesOnlyA": [
+            "secb2_mv19lip8689bb4-a"
+          ],
+          "y_seesOnlyB": [
+            "secb2_mv19lip8689bb4-b"
+          ]
+        }
+      },
+      "C12": {
+        "desc": "a session-level tenant or bypass setting left on a connection grants nothing to the next transaction",
+        "holds": false,
+        "observed": {
+          "sessionTenantLeaksIntoNextTx": 1,
+          "sessionBypassThenContextA_seesB": 0
+        }
+      },
+      "C13": {
+        "desc": "slug lookup returns exactly one (id, name) for an exact slug, nothing for wildcard/NULL, grants no table access; purge not executable by the runtime role; search_path hijack ineffective",
+        "holds": true,
+        "observed": {
+          "resolveB": 1,
+          "resolveWildcard": 0,
+          "resolveNull": 0,
+          "resolveThenReadB": 0,
+          "purgeByRuntime": "42501",
+          "hijack": "real-row"
+        }
+      },
+      "C14": {
+        "desc": "runtime role cannot disable RLS, drop/create policies, replace functions, create objects, read the key, TRUNCATE audit or grant itself purge",
+        "holds": true,
+        "observed": {
+          "disableRls": "42501",
+          "dropPolicy": "42501",
+          "createPolicy": "42501",
+          "replaceFn": "42501",
+          "createInSchema": "42501",
+          "createInPublic": "42501",
+          "readKey": "42501",
+          "truncateAudit": "42501",
+          "grantSelfPurge": "no-privilege"
+        }
+      },
+      "C15": {
+        "desc": "in its own (or a forged) tenant context the runtime role cannot UPDATE or DELETE audit rows, and cannot back-date an INSERT",
+        "holds": true,
+        "observed": {
+          "update": "42501",
+          "delete": "42501",
+          "backdatedInsertForcedToNow": true
+        }
+      },
+      "C16": {
+        "desc": "without a valid context for B, B's import source mapping cannot be re-pointed (bypass GUC + forged tenant GUC)",
+        "holds": false,
+        "observed": {
+          "rewriteB": 1
+        }
+      },
+      "R1": {
+        "desc": "RESIDUAL (expected): with a valid context for B (app holds the key) B's mutable rows can be changed — RLS is not an integrity control",
+        "holds": null,
+        "observed": {
+          "rewriteBWithValidContext": 1
+        }
+      },
+      "C17": {
+        "desc": "operator credential (separate login): cross-tenant by role; purge removes exactly the row past the 365-day floor (positive control) and nothing younger; no DDL; no BYPASSRLS",
+        "holds": true,
+        "observed": {
+          "who": "ops",
+          "tenantsVisible": 2,
+          "agedRowsPrepared": 1,
+          "purgedRows": "1",
+          "recentRowsLeft": 1,
+          "ddl": "refused",
+          "bypassAttr": false
+        }
+      }
+    },
+    "P2": {
+      "C01": {
+        "desc": "runtime login is matflow_app: no BYPASSRLS/superuser, not a member of system/ops/owner",
+        "holds": true,
+        "observed": {
+          "u": "matflow_app",
+          "bypass": false,
+          "super": false,
+          "in_sys": false,
+          "in_ops": false,
+          "in_owner": false
+        }
+      },
+      "C02": {
+        "desc": "positive control: in A's context A's row is visible and A can insert data and audit rows",
+        "holds": true,
+        "observed": {
+          "seen": 1,
+          "insert": true,
+          "auditInsert": true
+        }
+      },
+      "C03": {
+        "desc": "no tenant context: nothing visible, insert refused",
+        "holds": true,
+        "observed": {
+          "seen": 0,
+          "insert": false
+        }
+      },
+      "C04": {
+        "desc": "in A's context B is invisible; UPDATE/DELETE of B match 0; INSERT into B and moving A's row to B refused",
+        "holds": true,
+        "observed": {
+          "seenB": 0,
+          "updB": 0,
+          "delB": 0,
+          "insB": false,
+          "moveToB": false
+        }
+      },
+      "C05": {
+        "desc": "runtime role sets app.bypass_rls=on itself: must see/modify nothing",
+        "holds": true,
+        "observed": {
+          "tenants": 0,
+          "items": 0,
+          "updB": 0
+        }
+      },
+      "C06": {
+        "desc": "runtime role cannot SET ROLE / SET SESSION AUTHORIZATION to system, ops or owner, nor grant itself the system role",
+        "holds": true,
+        "observed": {
+          "setRoleSys": "42501",
+          "setRoleOps": "42501",
+          "setRoleOwner": "42501",
+          "sessionAuthOwner": "42501",
+          "grantSysToSelf": "42501"
+        }
+      },
+      "C07": {
+        "desc": "SET row_security = off raises (42501) instead of bypassing",
+        "holds": true,
+        "observed": {
+          "ok": false,
+          "code": "42501"
+        }
+      },
+      "C08": {
+        "desc": "forged app.current_tenant_id (no signature): B must stay invisible",
+        "holds": true,
+        "observed": {
+          "seenB": 0
+        }
+      },
+      "C09": {
+        "desc": "random MAC, MAC replayed in a later transaction or on another connection, A's MAC with the tenant switched to B: B invisible (positive control: the captured context did work in its own transaction)",
+        "holds": true,
+        "observed": {
+          "randomMac": 0,
+          "replayedMacNextTx": 0,
+          "replayedMacOtherConnection": 0,
+          "macForASwitchedToB": 0,
+          "positiveControl_capturedContextWorksInItsOwnTx": 1
+        }
+      },
+      "C10": {
+        "desc": "tenant context is gone after COMMIT, after an error + ROLLBACK, and after ROLLBACK TO SAVEPOINT",
+        "holds": true,
+        "observed": {
+          "afterCommit": 0,
+          "afterError": 0,
+          "settingAfterError": "cleared",
+          "afterSavepointRollback": 0
+        }
+      },
+      "C11": {
+        "desc": "two concurrent pooled transactions (A and B) each see only their own tenant; a third with no context sees nothing",
+        "holds": true,
+        "observed": {
+          "y_noContext": 0,
+          "x_seesOnlyA": [
+            "secb2_mv19lip8689bb4-a"
+          ],
+          "y_seesOnlyB": [
+            "secb2_mv19lip8689bb4-b"
+          ]
+        }
+      },
+      "C12": {
+        "desc": "a session-level tenant or bypass setting left on a connection grants nothing to the next transaction",
+        "holds": true,
+        "observed": {
+          "sessionTenantLeaksIntoNextTx": 0,
+          "sessionBypassThenContextA_seesB": 0
+        }
+      },
+      "C13": {
+        "desc": "slug lookup returns exactly one (id, name) for an exact slug, nothing for wildcard/NULL, grants no table access; purge not executable by the runtime role; search_path hijack ineffective",
+        "holds": true,
+        "observed": {
+          "resolveB": 1,
+          "resolveWildcard": 0,
+          "resolveNull": 0,
+          "resolveThenReadB": 0,
+          "purgeByRuntime": "42501",
+          "hijack": "real-row"
+        }
+      },
+      "C14": {
+        "desc": "runtime role cannot disable RLS, drop/create policies, replace functions, create objects, read the key, TRUNCATE audit or grant itself purge",
+        "holds": true,
+        "observed": {
+          "disableRls": "42501",
+          "dropPolicy": "42501",
+          "createPolicy": "42501",
+          "replaceFn": "42501",
+          "createInSchema": "42501",
+          "createInPublic": "42501",
+          "readKey": "42501",
+          "truncateAudit": "42501",
+          "grantSelfPurge": "no-privilege"
+        }
+      },
+      "C15": {
+        "desc": "in its own (or a forged) tenant context the runtime role cannot UPDATE or DELETE audit rows, and cannot back-date an INSERT",
+        "holds": true,
+        "observed": {
+          "update": "42501",
+          "delete": "42501",
+          "backdatedInsertForcedToNow": true
+        }
+      },
+      "C16": {
+        "desc": "without a valid context for B, B's import source mapping cannot be re-pointed (bypass GUC + forged tenant GUC)",
+        "holds": true,
+        "observed": {
+          "rewriteB": 0
+        }
+      },
+      "R1": {
+        "desc": "RESIDUAL (expected): with a valid context for B (app holds the key) B's mutable rows can be changed — RLS is not an integrity control",
+        "holds": null,
+        "observed": {
+          "rewriteBWithValidContext": 1
+        }
+      },
+      "C17": {
+        "desc": "operator credential (separate login): cross-tenant by role; purge removes exactly the row past the 365-day floor (positive control) and nothing younger; no DDL; no BYPASSRLS",
+        "holds": true,
+        "observed": {
+          "who": "ops",
+          "tenantsVisible": 2,
+          "agedRowsPrepared": 1,
+          "purgedRows": "1",
+          "recentRowsLeft": 1,
+          "ddl": "refused",
+          "bypassAttr": false
+        }
+      }
+    },
+    "MUTANT": {
+      "C01": {
+        "desc": "runtime login is matflow_app: no BYPASSRLS/superuser, not a member of system/ops/owner",
+        "holds": true,
+        "observed": {
+          "u": "matflow_app",
+          "bypass": false,
+          "super": false,
+          "in_sys": false,
+          "in_ops": false,
+          "in_owner": false
+        }
+      },
+      "C02": {
+        "desc": "positive control: in A's context A's row is visible and A can insert data and audit rows",
+        "holds": true,
+        "observed": {
+          "seen": 1,
+          "insert": true,
+          "auditInsert": true
+        }
+      },
+      "C03": {
+        "desc": "no tenant context: nothing visible, insert refused",
+        "holds": true,
+        "observed": {
+          "seen": 0,
+          "insert": false
+        }
+      },
+      "C04": {
+        "desc": "in A's context B is invisible; UPDATE/DELETE of B match 0; INSERT into B and moving A's row to B refused",
+        "holds": true,
+        "observed": {
+          "seenB": 0,
+          "updB": 0,
+          "delB": 0,
+          "insB": false,
+          "moveToB": false
+        }
+      },
+      "C05": {
+        "desc": "runtime role sets app.bypass_rls=on itself: must see/modify nothing",
+        "holds": false,
+        "observed": {
+          "tenants": 2,
+          "items": 2,
+          "updB": 1
+        }
+      },
+      "C06": {
+        "desc": "runtime role cannot SET ROLE / SET SESSION AUTHORIZATION to system, ops or owner, nor grant itself the system role",
+        "holds": true,
+        "observed": {
+          "setRoleSys": "42501",
+          "setRoleOps": "42501",
+          "setRoleOwner": "42501",
+          "sessionAuthOwner": "42501",
+          "grantSysToSelf": "42501"
+        }
+      },
+      "C07": {
+        "desc": "SET row_security = off raises (42501) instead of bypassing",
+        "holds": true,
+        "observed": {
+          "ok": false,
+          "code": "42501"
+        }
+      },
+      "C08": {
+        "desc": "forged app.current_tenant_id (no signature): B must stay invisible",
+        "holds": true,
+        "observed": {
+          "seenB": 0
+        }
+      },
+      "C09": {
+        "desc": "random MAC, MAC replayed in a later transaction or on another connection, A's MAC with the tenant switched to B: B invisible (positive control: the captured context did work in its own transaction)",
+        "holds": true,
+        "observed": {
+          "randomMac": 0,
+          "replayedMacNextTx": 0,
+          "replayedMacOtherConnection": 0,
+          "macForASwitchedToB": 0,
+          "positiveControl_capturedContextWorksInItsOwnTx": 1
+        }
+      },
+      "C10": {
+        "desc": "tenant context is gone after COMMIT, after an error + ROLLBACK, and after ROLLBACK TO SAVEPOINT",
+        "holds": true,
+        "observed": {
+          "afterCommit": 0,
+          "afterError": 0,
+          "settingAfterError": "cleared",
+          "afterSavepointRollback": 0
+        }
+      },
+      "C11": {
+        "desc": "two concurrent pooled transactions (A and B) each see only their own tenant; a third with no context sees nothing",
+        "holds": true,
+        "observed": {
+          "y_noContext": 0,
+          "x_seesOnlyA": [
+            "secb2_mv19lip8689bb4-a"
+          ],
+          "y_seesOnlyB": [
+            "secb2_mv19lip8689bb4-b"
+          ]
+        }
+      },
+      "C12": {
+        "desc": "a session-level tenant or bypass setting left on a connection grants nothing to the next transaction",
+        "holds": false,
+        "observed": {
+          "sessionTenantLeaksIntoNextTx": 0,
+          "sessionBypassThenContextA_seesB": 1
+        }
+      },
+      "C13": {
+        "desc": "slug lookup returns exactly one (id, name) for an exact slug, nothing for wildcard/NULL, grants no table access; purge not executable by the runtime role; search_path hijack ineffective",
+        "holds": true,
+        "observed": {
+          "resolveB": 1,
+          "resolveWildcard": 0,
+          "resolveNull": 0,
+          "resolveThenReadB": 0,
+          "purgeByRuntime": "42501",
+          "hijack": "real-row"
+        }
+      },
+      "C14": {
+        "desc": "runtime role cannot disable RLS, drop/create policies, replace functions, create objects, read the key, TRUNCATE audit or grant itself purge",
+        "holds": true,
+        "observed": {
+          "disableRls": "42501",
+          "dropPolicy": "42501",
+          "createPolicy": "42501",
+          "replaceFn": "42501",
+          "createInSchema": "42501",
+          "createInPublic": "42501",
+          "readKey": "42501",
+          "truncateAudit": "42501",
+          "grantSelfPurge": "no-privilege"
+        }
+      },
+      "C15": {
+        "desc": "in its own (or a forged) tenant context the runtime role cannot UPDATE or DELETE audit rows, and cannot back-date an INSERT",
+        "holds": true,
+        "observed": {
+          "update": "42501",
+          "delete": "42501",
+          "backdatedInsertForcedToNow": true
+        }
+      },
+      "C16": {
+        "desc": "without a valid context for B, B's import source mapping cannot be re-pointed (bypass GUC + forged tenant GUC)",
+        "holds": false,
+        "observed": {
+          "rewriteB": 1
+        }
+      },
+      "R1": {
+        "desc": "RESIDUAL (expected): with a valid context for B (app holds the key) B's mutable rows can be changed — RLS is not an integrity control",
+        "holds": null,
+        "observed": {
+          "rewriteBWithValidContext": 1
+        }
+      },
+      "C17": {
+        "desc": "operator credential (separate login): cross-tenant by role; purge removes exactly the row past the 365-day floor (positive control) and nothing younger; no DDL; no BYPASSRLS",
+        "holds": true,
+        "observed": {
+          "who": "ops",
+          "tenantsVisible": 2,
+          "agedRowsPrepared": 1,
+          "purgedRows": "1",
+          "recentRowsLeft": 1,
+          "ddl": "refused",
+          "bypassAttr": false
+        }
+      }
+    }
+  },
+  "teardown": {
+    "schemasLeft": 0,
+    "rolesLeft": 0
+  },
+  "ownerIdentity": {
+    "user": "neondb_owner",
+    "bypassrls": true
+  },
+  "verdict": {
+    "redReproducedOnCurrent": true,
+    "p2HoldsEverywhere": true,
+    "p2Failures": [],
+    "p1Failures": [
+      "C08",
+      "C09",
+      "C12",
+      "C16"
+    ],
+    "currentFailures": [
+      "C05",
+      "C08",
+      "C09",
+      "C12",
+      "C15",
+      "C16"
+    ],
+    "mutantCaught": true,
+    "mutantFailures": [
+      "C05",
+      "C12",
+      "C16"
+    ]
+  },
+  "finishedAt": "2026-10-09T17:55:40.463Z",
+  "exit": 0
+}

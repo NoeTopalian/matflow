@@ -3,10 +3,14 @@
 // Host-guarded — refuses production.
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { vetTestUrl } from "./readiness/rls-test-target.mjs";
 
+// SF-62 / security campaign iteration 2 (lane B): the old guard was substring matching on the raw URL, which an
+// upper-case host, a ?host= / ?options=endpoint= parameter or an inherited PGHOST/PGOPTIONS defeats while pg still
+// connects elsewhere. vetTestUrl resolves the target the way pg does, refuses every override, requires the exact
+// TEST endpoint pattern and returns an explicit config (no URL parameter reaches the driver). Nothing is printed.
 const url = process.env.DATABASE_URL ?? "";
-if (url.includes("ep-bold-wave")) throw new Error("Refusing prod — create the role manually on prod when you cut over");
-if (!url.includes("ep-hidden-salad")) throw new Error("Not the known test-branch host; aborting");
+const target = vetTestUrl(url);
 
 const ROLE = "matflow_app";
 const PW = process.env.RESTRICTED_ROLE_PW;
@@ -27,7 +31,7 @@ if (!/^[A-Za-z0-9_\-+!@#%^&*=.]{8,}$/.test(PW)) {
   process.exit(1);
 }
 
-const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+const prisma = new PrismaClient({ adapter: new PrismaPg(target) });
 
 async function main() {
   const stmts = [
@@ -43,6 +47,9 @@ async function main() {
     `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${ROLE};`,
     `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${ROLE};`,
     `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${ROLE};`,
+    // SF-62 writer boundary: the runtime role has no business with the migration ledger (a forged "applied" row makes
+    // prisma migrate deploy skip a pending security migration).
+    `REVOKE ALL ON public._prisma_migrations FROM ${ROLE};`,
   ];
   for (const s of stmts) { await prisma.$executeRawUnsafe(s); }
 

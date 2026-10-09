@@ -1,0 +1,15 @@
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+stdout | tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > records the connected role and that the connection is direct (not the shared pooler)
+{"lane":"B2","currentUser":"neondb_owner","rlsInForce":false,"pooler":false}
+ ✓ tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > records the connected role and that the connection is direct (not the shared pooler) 4ms
+ ✓ tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > positive control: on a clean connection, club A's context sees A's member and not B's 376ms
+ ✓ tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > a SESSION-level app.bypass_rls = 'on' left on the connection does not widen the next tenant-scoped transaction 452ms
+stdout | tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > a SESSION-level tenant B left on the connection is overridden inside club A's transaction
+{"lane":"B2","residual":"session-level tenant visible to a plain query outside a transaction","visible":1}
+ ✓ tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > a SESSION-level tenant B left on the connection is overridden inside club A's transaction 524ms
+ ✓ tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > a failed tenant transaction leaves no context behind on the connection 331ms
+ ✓ tests/integration/sec-b2-stale-bypass-db.test.ts > SF-62: stale or leaked session context on a reused connection > positive control: withRlsBypass still crosses clubs after the fix (the escape hatch is unchanged) 228ms
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  18:44:23
+   Duration  4.55s (transform 102ms, setup 36ms, import 299ms, tests 3.94s, environment 0ms)

@@ -1,0 +1,26 @@
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > withTenantContext statement shape (SF-62) > sets the tenant AND switches app.bypass_rls off for the transaction, in one statement, tenant as a bind parameter 2ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > withTenantContext statement shape (SF-62) > with a signing key, binds a MAC to the transaction's backend pid and start time 1ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > withTenantContext statement shape (SF-62) > a malformed key fails closed before any transaction opens 1ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > withTenantContext statement shape (SF-62) > still refuses an empty tenant id 0ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > signed context maths agrees with the SQL formula in ctx_tenant() > tenantContextMac == sha256(k^opad || sha256(k^ipad || msg)) for a 64-byte key (the pads the database stores) 0ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > signed context maths agrees with the SQL formula in ctx_tenant() > tenantContextKey: unset -> null, 64 bytes hex -> buffer, anything else throws 0ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > source invariant: no SESSION-level app.* setting in application code > scans a non-trivial number of files 0ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > source invariant: no SESSION-level app.* setting in application code > every set_config of an app.* setting is transaction-local and there is no SET/SET SESSION of app.* 58ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > source invariant: no SESSION-level app.* setting in application code > the detector itself flags a planted session-level setting (mutation check) 0ms
+ ✓ tests/unit/sec-b2-rls-test-target.test.ts > rls-test-target guard > accepts the TEST endpoint (pooled and direct) and returns an explicit config with no URL parameters 5ms
+ ✓ tests/unit/sec-b2-rls-test-target.test.ts > rls-test-target guard > refuses production 1ms
+ ✓ tests/unit/sec-b2-rls-test-target.test.ts > rls-test-target guard > refuses production, upper-case host 0ms
+ ✓ tests/unit/sec-b2-rls-test-target.test.ts > rls-test-target guard > refuses TEST host with ?host= pointing at production 0ms
+ ✓ tests/unit/sec-b2-rls-test-target.test.ts > rls-test-target guard > refuses TEST host with ?options=endpoint=production 0ms
+ ✓ tests/unit/sec-b2-rls-test-target.test.ts > rls-test-target guard > refuses TEST host with ?hostaddr= 0ms
+ ✓ tests/unit/sec-b2-rls-test-target.test.ts > rls-test-target guard > refuses another Neon endpoint 0ms
+ ✓ tests/unit/sec-b2-rls-test-target.test.ts > rls-test-target guard > refuses look-alike host containing the TEST id 0ms
+ ✓ tests/unit/sec-b2-rls-test-target.test.ts > rls-test-target guard > refuses not a URL 0ms
+ ✓ tests/unit/sec-b2-rls-test-target.test.ts > rls-test-target guard > refuses an inherited PGOPTIONS / PGHOST (node-postgres falls back to them when a field is empty) 1ms
+ ✓ tests/unit/sec-b2-rls-test-target.test.ts > rls-test-target guard > refuses the wrong login role when one is expected 0ms
+ ✓ tests/unit/sec-b2-rls-test-target.test.ts > rls-test-target guard > the allowlist pattern is anchored 0ms
+ Test Files  2 passed (2)
+      Tests  21 passed (21)
+   Start at  18:56:31
+   Duration  841ms (transform 112ms, setup 53ms, import 239ms, tests 77ms, environment 0ms)

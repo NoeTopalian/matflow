@@ -1,0 +1,163 @@
+{
+  "stamp": "secb2v_mv19r4w7d08c58",
+  "node": "v24.21.0",
+  "startedAt": "2026-10-09T17:58:31.305Z",
+  "targets": {
+    "owner": {
+      "host": "ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech",
+      "user": "neondb_owner",
+      "pooler": false
+    },
+    "app": {
+      "host": "ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech",
+      "user": "matflow_app",
+      "pooler": true
+    }
+  },
+  "checks": {
+    "B0-clone-reproduces-bypass": {
+      "pass": true,
+      "observed": "runtime bypass GUC sees both clone tenants"
+    },
+    "P1-applies": {
+      "pass": true,
+      "observed": "ok"
+    },
+    "P1-compatible-with-deployed-app": {
+      "pass": true,
+      "observed": {
+        "bypassTenants": 2,
+        "plainTenantB": 1
+      }
+    },
+    "P2-refuses-without-key": {
+      "pass": true,
+      "observed": "SF-62 phase 2: provision secb2v_mv19r4w7d08c58_sec.context_key first — without a key every tenant query would see nothing"
+    },
+    "P2-applies": {
+      "pass": true,
+      "observed": "ok"
+    },
+    "K1-no-policy-trusts-a-plain-setting": {
+      "pass": true,
+      "observed": {
+        "policies": 94
+      }
+    },
+    "K2-every-tenant-policy-uses-signed-context": {
+      "pass": true,
+      "observed": {
+        "rewritten": 47,
+        "deployed": 47
+      }
+    },
+    "K3-system-policy-on-every-rls-table-role-keyed": {
+      "pass": true,
+      "observed": {
+        "rlsTables": 47,
+        "systemPolicies": 47
+      }
+    },
+    "K4-definer-functions-hardened": {
+      "pass": true,
+      "observed": [
+        "tenant_id_by_kiosk_token_hash:sys:named",
+        "tenant_id_by_reset_token_hash:sys:named",
+        "tenant_id_by_display_token_hash:sys:named",
+        "tenant_id_by_stripe_account:sys:named",
+        "tenant_id_by_magic_link_hash:sys:named",
+        "ctx_tenant:sys:named",
+        "tenant_id_by_slug:sys:named"
+      ]
+    },
+    "K5-system-role-nologin-nobypass-not-granted-to-runtime": {
+      "pass": true,
+      "observed": {
+        "rolbypassrls": false,
+        "rolcanlogin": false,
+        "app_member": false
+      }
+    },
+    "K6-runtime-has-no-migration-ledger-privileges": {
+      "pass": true,
+      "observed": {
+        "i": false,
+        "u": false,
+        "d": false
+      }
+    },
+    "A1-bypass-guc-sees-nothing": {
+      "pass": true,
+      "observed": "bypass GUC"
+    },
+    "A2-forged-tenant-sees-nothing": {
+      "pass": true,
+      "observed": "forged tenant GUC"
+    },
+    "A3-signed-context-own-club-only-incl-child-table": {
+      "pass": true,
+      "observed": {
+        "ownMember": 1,
+        "otherMember": 0,
+        "otherChildRow": 0,
+        "plantMemberInB": "42501"
+      }
+    },
+    "A4-signed-context-B-sees-B-child-row (positive control)": {
+      "pass": true,
+      "observed": "child policy rewritten correctly"
+    },
+    "A5-resolvers-narrow-key-unreadable-no-role-assumption": {
+      "pass": true,
+      "observed": {
+        "bySlug": true,
+        "emptySlug": null,
+        "nullKiosk": null,
+        "readKey": "42501",
+        "setRoleSys": "42501"
+      }
+    },
+    "A6-system-role-crosses-clubs (control, owner session SET ROLE)": {
+      "pass": true,
+      "observed": {
+        "tenants": 2
+      }
+    },
+    "R1-rollback-phase2-applies": {
+      "pass": true,
+      "observed": "ok"
+    },
+    "R2-deployed-semantics-restored": {
+      "pass": true,
+      "observed": {
+        "bypassTenants": 2,
+        "plainTenantB": 1
+      }
+    },
+    "R3-rollback-phase1-applies": {
+      "pass": true,
+      "observed": "ok"
+    },
+    "R4-phase1-objects-gone": {
+      "pass": true,
+      "observed": {
+        "sec": 0,
+        "sys": 0,
+        "pols": 0
+      }
+    }
+  },
+  "ok": {},
+  "mutant": null,
+  "clone": {
+    "tables": 53,
+    "rlsTables": 47,
+    "policies": 47
+  },
+  "teardown": {
+    "schemas": 0,
+    "roles": 0
+  },
+  "exit": 0,
+  "finishedAt": "2026-10-09T17:58:54.541Z"
+}

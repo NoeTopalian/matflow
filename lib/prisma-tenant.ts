@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { attachErrorContext } from "./error-context";
@@ -31,6 +32,25 @@ type TxClient = Prisma.TransactionClient;
 // "commit cannot be executed on an expired transaction" on /dashboard/reports.
 // Heavy read paths (reports) pass a larger explicit budget.
 export type TenantTxOptions = { maxWait?: number; timeout?: number };
+
+/**
+ * Signed tenant context (SF-62 proposed design P2). The key is 64 random bytes as 128 hex characters; the database
+ * holds the same key as precomputed HMAC pads in a table only the system role can read. Unset = feature off.
+ */
+export const TENANT_CONTEXT_KEY_ENV = "RLS_CONTEXT_SIGNING_KEY";
+
+export function tenantContextKey(raw: string | undefined = process.env[TENANT_CONTEXT_KEY_ENV]): Buffer | null {
+  if (!raw) return null;
+  if (!/^[0-9a-fA-F]{128}$/.test(raw)) {
+    throw new Error(`${TENANT_CONTEXT_KEY_ENV} must be exactly 64 bytes of hex`);
+  }
+  return Buffer.from(raw, "hex");
+}
+
+/** HMAC-SHA256 over `tenant|backendPid|transactionStartMicros`, hex — the message ctx_tenant() recomputes in SQL. */
+export function tenantContextMac(key: Buffer, tenantId: string, backendPid: string, xactStartMicros: string): string {
+  return createHmac("sha256", key).update(`${tenantId}|${backendPid}|${xactStartMicros}`, "utf8").digest("hex");
+}
 const TX_DEFAULTS: Required<TenantTxOptions> = { maxWait: 10_000, timeout: 15_000 };
 
 export async function withTenantContext<T>(
@@ -41,9 +61,24 @@ export async function withTenantContext<T>(
   if (!tenantId || typeof tenantId !== "string") {
     throw new Error("withTenantContext requires a non-empty tenantId");
   }
+  // Read before the transaction opens so a malformed key fails closed without holding a pool connection.
+  const key = tenantContextKey();
   try {
     return await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`;
+      // SF-62 (security campaign iteration 2, lane B): `app.bypass_rls` is switched OFF for this transaction in the
+      // same statement. A session-level `app.bypass_rls = 'on'` left on a pooled server connection (a script or a
+      // compromised path calling set_config(..., false); the Neon pooler hands that connection to other clients)
+      // otherwise turned every tenant-scoped transaction on it into an all-clubs one under the deployed policies.
+      // Measured by tests/integration/sec-b2-stale-bypass-db.test.ts.
+      await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true), set_config('app.bypass_rls', 'off', true)`;
+      if (key) {
+        // Proposed design P2 (docs/security/evidence/B2): the policies accept the tenant only with a MAC bound to
+        // this transaction (backend pid + transaction start), so a forged or replayed tenant setting grants nothing.
+        // Inert under the deployed policies; enabled by RLS_CONTEXT_SIGNING_KEY once the migration is applied.
+        const [t] = await tx.$queryRaw<Array<{ pid: string; ts: string }>>`
+          SELECT pg_backend_pid()::text AS pid, floor(extract(epoch FROM transaction_timestamp()) * 1000000)::bigint::text AS ts`;
+        await tx.$executeRaw`SELECT set_config('app.ctx_mac', ${tenantContextMac(key, tenantId, t.pid, t.ts)}, true)`;
+      }
       return fn(tx);
     }, { ...TX_DEFAULTS, ...options });
   } catch (e) {
@@ -63,6 +98,11 @@ export async function withTenantContext<T>(
  *
  * Do NOT use in routine API handlers — those should resolve the tenant from
  * the session and use `withTenantContext`.
+ *
+ * SF-62: this is NOT a database boundary. `app.bypass_rls` is an ordinary custom setting, so any session holding the
+ * runtime credential (a leaked DATABASE_URL, an injected statement, a compromised dependency) can set it and read or
+ * change every club. The replacement — role-keyed system access, narrow SECURITY DEFINER lookups and a signed tenant
+ * context — is specified and measured in docs/security/evidence/B2/; the call sites are classified there.
  */
 export async function withRlsBypass<T>(
   fn: (tx: TxClient) => Promise<T>,
