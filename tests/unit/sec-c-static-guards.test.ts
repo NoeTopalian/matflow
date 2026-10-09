@@ -46,6 +46,7 @@ describe("SEC-033 raw SQL is parameterised", () => {
     expect(hits(/\$(queryRaw|executeRaw)\s*(<[^`]*>)?\s*`/).sort()).toEqual([
       "app/api/health/route.ts",
       "app/api/member/class-subscriptions/[classId]/route.ts",
+      "lib/attendance-import.ts", // release-digest read (lane D third pass): only tenantId is interpolated, as a bind parameter
       "lib/checkin.ts",
       "lib/login-email.ts",
       "lib/prisma-tenant.ts",

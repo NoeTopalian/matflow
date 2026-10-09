@@ -689,6 +689,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // legal hold when a member is deleted (see lib/member-delete.ts).
   let stripeSubscriptionsCancelled = 0;
   let doomedPhotos: Array<{ id: string; url: string }> = [];
+  let releasedEmails: string[] = [];
   try {
     const preflight = await withTenantContext(session.user.tenantId, async (tx) => {
       const target = await tx.member.findFirst({
@@ -696,12 +697,14 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
         select: {
           id: true,
           name: true,
+          email: true,
           stripeSubscriptionId: true,
           photos: { select: { id: true, url: true } },
           children: {
             select: {
               id: true,
               name: true,
+              email: true,
               stripeSubscriptionId: true,
               photos: { select: { id: true, url: true } },
             },
@@ -735,6 +738,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     // `?? []` because nothing about cleaning up files may ever be load-bearing
     // for the delete itself — see deleteMemberPhotoBlobs.
     doomedPhotos = willBeDeleted.flatMap((m) => m.photos ?? []);
+    releasedEmails = willBeDeleted.map((m) => m.email).filter((e): e is string => !!e);
 
     for (const doomed of willBeDeleted) {
       if (!doomed.stripeSubscriptionId) continue;
@@ -824,9 +828,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       action: "member.delete",
       entityType: "Member",
       entityId: id,
-      metadata: strategy
-        ? { kidsAffected: outcome.kidsAffected, strategy: strategy.kind, stripeSubscriptionsCancelled, photosDeleted }
-        : { kidsAffected: 0, stripeSubscriptionsCancelled, photosDeleted },
+      metadata: {
+        ...(strategy
+          ? { kidsAffected: outcome.kidsAffected, strategy: strategy.kind, stripeSubscriptionsCancelled, photosDeleted }
+          : { kidsAffected: 0, stripeSubscriptionsCancelled, photosDeleted }),
+        // The addresses this delete releases (keyed digest; the attendance import refuses a released address — SF-54).
+        releasedEmailSha256: releasedEmails.length === 1 ? emailDigest(releasedEmails[0]) : releasedEmails.map((e) => emailDigest(e)),
+      },
       req,
     });
     return NextResponse.json({

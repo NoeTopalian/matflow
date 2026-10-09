@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { teamupPersonKey } from "@/lib/importers/teamup";
-import { parseAttendanceCsv, planAttendanceImport, type PlanDecisions, type RosterMember } from "@/lib/importers/attendance";
+import { cuidCreatedAt, parseAttendanceCsv, planAttendanceImport, type PlanDecisions, type RosterMember } from "@/lib/importers/attendance";
 import { isSynthesisedEmail, synthesiseKidEmail } from "@/lib/synthesise-kid-email";
 
 const HEADER = "Customer Name,Customer Email,Event Starts At,Offering Type Name,Venue Name,Status";
@@ -26,7 +26,8 @@ function plan(lines: string[], members: RosterMember[], decisions: PlanDecisions
   return planAttendanceImport(parsed.rows, {
     timezone: "Europe/London",
     now: new Date("2026-10-09T00:00:00Z"),
-    members,
+    // Members exist since before the bookings unless a case says otherwise (the inverted rule needs it).
+    members: members.map((m) => (m.createdAt === undefined ? { ...m, createdAt: "2025-01-01T00:00:00Z" } : m)),
     classes: [{ id: "cls_1", name: "Adults Gi", isActive: true, historical: false, locationId: null }],
     locations: [{ id: "loc_1", name: "Main" }],
     decisions,
@@ -126,7 +127,7 @@ describe("SEC-053 retest (reviewer R): folded names and released addresses", () 
   const COMBINING_ACUTE = String.fromCharCode(0x301);
   const ZWSP = String.fromCharCode(0x200b);
   const BOM = String.fromCharCode(0xfeff);
-  const other: RosterMember = { id: "m_other", name: "Bea Lane", email: "bea.old@example.test", externalRef: null };
+  const other: RosterMember = { id: "m_other", name: "Bea Lane", email: "bea.old@example.test", externalRef: null, createdAt: "2025-01-01T00:00:00Z" };
   for (const [label, name] of [
     ["precomposed accent", `B${E_ACUTE}a Lane`],
     ["combining accent", `Be${COMBINING_ACUTE}a Lane`],
@@ -174,5 +175,30 @@ describe("SEC-053 retest (reviewer R): folded names and released addresses", () 
       releasedBy: () => undefined,
     } as Parameters<typeof planAttendanceImport>[1]);
     expect(p.people[0]).toMatchObject({ memberId: "m_other", matchMethod: "name_and_email" });
+  });
+});
+
+describe("SEC-053 third pass (reviewer R): the name+address fallback only for a member who held the address since before the bookings", () => {
+  const dana = (createdAt: RosterMember["createdAt"]): RosterMember => ({ id: "m_dana", name: "Dana Solo", email: "dana@example.test", externalRef: null, createdAt });
+  it("created before the first booking → name_and_email (positive control)", () => {
+    expect(plan([row("Dana Solo", "dana@example.test")], [dana("2025-10-01T00:00:00Z")]).people[0].matchMethod).toBe("name_and_email");
+  });
+  it("created AFTER the first booking → pending, offered as a candidate", () => {
+    const p = plan([row("Dana Solo", "dana@example.test")], [dana("2025-11-04T00:00:00Z")]);
+    expect(p.people[0].memberId).toBeNull();
+    expect(p.people[0].candidates.map((c) => c.memberId)).toEqual(["m_dana"]);
+  });
+  it("creation time unknown → pending (never assumed)", () => {
+    expect(plan([row("Dana Solo", "dana@example.test")], [dana(null)]).people[0].memberId).toBeNull();
+  });
+  it("the EARLIEST booking of the person decides (created between two bookings → pending)", () => {
+    const early = ["Dana Solo", "dana@example.test", "2025-09-01T18:00:00+00:00", "Adults Gi", "Main", "Attended"].join(",");
+    expect(plan([row("Dana Solo", "dana@example.test"), early], [dana("2025-10-01T00:00:00Z")]).people[0].memberId).toBeNull();
+  });
+  it("cuidCreatedAt reads a cuid v1 id; anything else is unknown", () => {
+    const at = new Date("2025-01-15T10:00:00Z");
+    const id = "c" + at.getTime().toString(36).padStart(8, "0") + "abcdefghijklmnop";
+    expect(cuidCreatedAt(id)?.toISOString()).toBe(at.toISOString());
+    for (const bad of ["", "x123", "c" + "z".repeat(24), "clh3am9vk0000qwer1234asdfZ", "550e8400-e29b-41d4-a716-446655440000"]) expect(cuidCreatedAt(bad)).toBeNull();
   });
 });

@@ -236,11 +236,13 @@ export async function DELETE(req: Request, { params }: Params) {
   }
 
   try {
-    const deleted = await withTenantContext(session.user.tenantId, (tx) =>
-      tx.user.deleteMany({
+    const deleted = await withTenantContext(session.user.tenantId, async (tx) => {
+      const row = await tx.user.findFirst({ where: { id, tenantId: session.user.tenantId, role: { not: "owner" } }, select: { email: true } });
+      const out = await tx.user.deleteMany({
         where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
-      }),
-    );
+      });
+      return { count: out.count, email: row?.email ?? null };
+    });
     if (deleted.count === 0) return NextResponse.json({ error: "Not found or cannot delete owner" }, { status: 404 });
     await logAudit({
       tenantId: session.user.tenantId,
@@ -248,6 +250,8 @@ export async function DELETE(req: Request, { params }: Params) {
       action: "staff.delete",
       entityType: "User",
       entityId: id,
+      // The address this delete releases (keyed digest; the attendance import refuses a released address — SF-54).
+      metadata: deleted.email ? { releasedEmailSha256: emailDigest(deleted.email) } : {},
       req,
     });
     return NextResponse.json({ success: true });

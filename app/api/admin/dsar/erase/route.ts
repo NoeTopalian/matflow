@@ -52,6 +52,7 @@ import { requireApiRole } from "@/lib/api-authz";
 import { refuseSupportSession } from "@/lib/support-session";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
+import { emailDigest } from "@/lib/login-email";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
@@ -417,6 +418,9 @@ export async function POST(req: Request) {
       // hashSnippet — that one was brute-forceable over the email space,
       // i.e. weak pseudonymisation in the fulfilment record itself.
       originalEmailHash: member.email ? hashToken(member.email) : null,
+      // The address the erasure releases, in the keyed login-email digest every release path writes (the attendance
+      // import refuses a released address — SF-54). A keyed digest, like originalEmailHash: no address is kept.
+      releasedEmailSha256: member.email ? emailDigest(member.email) : null,
       gdprBasis: "Article 17 right to erasure",
       // Audit iter-1-member-lifecycle A3H-7: capture the Stripe-side
       // outcome so the fulfilment record proves the card stopped being

@@ -33,9 +33,11 @@ import { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { emailDigest } from "@/lib/login-email";
+import { hashToken } from "@/lib/token-hash";
 import { usableTimezone } from "@/lib/class-time";
 import {
   attendanceControls,
+  cuidCreatedAt,
   dayMarkerFor,
   parseAttendanceCsv,
   planAttendanceImport,
@@ -101,7 +103,8 @@ export type ClubInputs = {
 export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInputs> {
   const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
   // Every member, whatever their status: a cancelled member's history is still history.
-  const members = await tx.member.findMany({ where: { tenantId }, select: { id: true, name: true, email: true, externalRef: true } });
+  const memberRows = await tx.member.findMany({ where: { tenantId }, select: { id: true, name: true, email: true, externalRef: true } });
+  const members = memberRows.map((m) => ({ ...m, createdAt: cuidCreatedAt(m.id) }));
   const classes = await tx.class.findMany({
     where: { tenantId, deletedAt: null },
     select: { id: true, name: true, isActive: true, sourceImportJobId: true, locationId: true },
@@ -123,16 +126,25 @@ export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInpu
   // Every address change in this club writes its OLD address's digest: member.update / member.self_update
   // (oldEmailSha256), admin.member.contact_email.changed (oldEmailDigest), staff.update /
   // user.login_email.changed / admin.owner.login_email.changed (oldEmailSha256, entityType User).
-  const releasedRows = await tx.$queryRaw<{ entityType: string; entityId: string; d: string }[]>`
-    SELECT "entityType", "entityId", COALESCE(metadata->>'oldEmailSha256', metadata->>'oldEmailDigest') AS d
+  // Plus the release paths (R third pass): member.delete, staff.delete, member.dsar_erase and import.rollback write
+  // releasedEmailSha256 (a digest or a list); a DSAR erase also wrote originalEmailHash (the hashToken form).
+  // Rows written before AH-E2 hold the UNKEYED SHA-256 form; buildPlan compares every form.
+  const releaseRows = await tx.$queryRaw<{ entityType: string; entityId: string; metadata: Record<string, unknown> | null }[]>`
+    SELECT "entityType", "entityId", metadata
     FROM "AuditLog"
     WHERE "tenantId" = ${tenantId}
-      AND (metadata->>'oldEmailSha256' IS NOT NULL OR metadata->>'oldEmailDigest' IS NOT NULL)`;
+      AND (metadata->>'oldEmailSha256' IS NOT NULL OR metadata->>'oldEmailDigest' IS NOT NULL
+        OR metadata->'releasedEmailSha256' IS NOT NULL
+        OR (action = 'member.dsar_erase' AND metadata->>'originalEmailHash' IS NOT NULL))`;
   const released: Record<string, string[]> = Object.create(null);
-  for (const r of releasedRows) {
-    if (!r.d) continue;
-    const list = (released[r.d] ??= []);
-    if (r.entityType === "Member" && !list.includes(r.entityId)) list.push(r.entityId);
+  for (const r of releaseRows) {
+    const md = r.metadata ?? {};
+    const many = Array.isArray(md.releasedEmailSha256) ? md.releasedEmailSha256 : [md.releasedEmailSha256];
+    for (const d of [md.oldEmailSha256, md.oldEmailDigest, md.originalEmailHash, ...many]) {
+      if (typeof d !== "string" || !d) continue;
+      const list = (released[d] ??= []);
+      if (r.entityType === "Member" && !list.includes(r.entityId)) list.push(r.entityId);
+    }
   }
   return {
     timezone: usableTimezone(tenant?.timezone),
@@ -161,9 +173,12 @@ export function buildPlan(text: string, inputs: ClubInputs, now: Date, createdCl
     isSynthesisedEmail,
     createdClasses,
     releasedBy: (email: string) => {
-      const d = emailDigest(email);
+      // Keyed (AH-E2), unkeyed (before AH-E2) and the DSAR hashToken form, all compared.
       const map = inputs.released ?? {};
-      return Object.hasOwn(map, d) ? map[d] : undefined;
+      const normalised = email.trim().toLowerCase();
+      const forms = [emailDigest(email), createHash("sha256").update(normalised).digest("hex"), hashToken(normalised)];
+      const known = forms.filter((d) => Object.hasOwn(map, d));
+      return known.length ? [...new Set(known.flatMap((d) => map[d]))] : undefined;
     },
   });
   return { parsed, plan, controls: attendanceControls(parsed.rows) };

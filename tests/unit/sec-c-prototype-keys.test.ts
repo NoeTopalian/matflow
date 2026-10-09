@@ -80,7 +80,7 @@ function plan(csv: string, decisions: PlanDecisions = DECISIONS) {
     plan: planAttendanceImport(parsed.rows, {
       timezone: "Europe/London",
       now: new Date("2025-11-01T00:00:00Z"),
-      members: MEMBERS,
+      members: MEMBERS.map((m) => ({ createdAt: "2020-01-01T00:00:00Z", ...m })),
       classes: CLASSES,
       locations: LOCATIONS,
       decisions,

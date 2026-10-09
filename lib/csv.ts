@@ -39,7 +39,9 @@ export function csvCell(v: string | number | null | undefined): string {
   // evaluating; the small equals sign ﹦ (U+FE66) and a pipe (DDE `|cmd`) are
   // triggers too. The apostrophe goes in front of the whole value, so nothing
   // of the value is lost.
-  if (/^[\p{Zs}\p{Cf}]*[=+\-@|\t\r\n＝＋－＠﹦]/u.test(s)) s = `'${s}`;
+  // Third pass: the small ﹢ ﹣ and full-width ｜ forms, vertical tab, form feed and the line/paragraph separators
+  // (\p{Zl}, \p{Zp}: U+2028, U+2029) too.
+  if (/^[\p{Zs}\p{Cf}]*[=+\-@|\t\r\n\v\f\p{Zl}\p{Zp}＝＋－＠﹦﹢﹣｜]/u.test(s)) s = `'${s}`;
   // (1) RFC-4180 quoting — plus ";", so a semicolon-locale reader cannot
   // split the cell and evaluate its tail.
   if (/[",;\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;

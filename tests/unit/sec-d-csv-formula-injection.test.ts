@@ -140,3 +140,18 @@ describe("SEC-052 retest (reviewer R): invisible leading characters, ﹦ and |, 
     expect(csvCell(-5)).toBe("-5");
   });
 });
+
+describe("SEC-052 third pass (reviewer R): remaining leading characters", () => {
+  const C = (n: number) => String.fromCharCode(n);
+  for (const [label, ch] of [
+    ["small plus U+FE62", C(0xfe62)], ["small hyphen-minus U+FE63", C(0xfe63)], ["full-width vertical line U+FF5C", C(0xff5c)],
+    ["line separator U+2028", C(0x2028)], ["vertical tab", C(0x0b)], ["form feed", C(0x0c)],
+  ] as const) {
+    it(`a cell starting with ${label} is prefixed with an apostrophe`, () => {
+      const v = `${ch}1+1`;
+      const out = decode(csvCell(v));
+      expect(out.startsWith("'")).toBe(true);
+      expect(out.slice(1)).toBe(v);
+    });
+  }
+});

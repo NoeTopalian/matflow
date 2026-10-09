@@ -15,6 +15,7 @@ import { requireApiOwner } from "@/lib/api-authz";
 import { refuseSupportSession } from "@/lib/support-session";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
+import { emailDigest } from "@/lib/login-email";
 import { apiError } from "@/lib/api-error";
 import { recordStatusEventsBulk } from "@/lib/member-status";
 import {
@@ -74,6 +75,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         select: {
           id: true,
           name: true,
+          email: true,
           parentMemberId: true,
           passwordHash: true,
           stripeCustomerId: true,
@@ -216,7 +218,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         action: "import.rollback",
         entityType: "ImportJob",
         entityId: job.id,
-        metadata: { fileName: job.fileName, removed: removeIds.length, kept: kept.length, attendanceRemoved: attendance.count, ledgerRemoved: ledger.count },
+        metadata: {
+          fileName: job.fileName, removed: removeIds.length, kept: kept.length, attendanceRemoved: attendance.count, ledgerRemoved: ledger.count,
+          // The addresses this rollback releases (keyed digests; the attendance import refuses a released address — SF-54).
+          releasedEmailSha256: removable.map((c) => c.email).filter((e): e is string => !!e).map((e) => emailDigest(e)),
+        },
         req,
       });
       return { removed: removeIds, kept, attendanceRemoved: attendance.count, ledgerRemoved: ledger.count };

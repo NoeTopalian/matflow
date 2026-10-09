@@ -55,7 +55,7 @@ function planOf(lines: string[], over: { members?: RosterMember[]; decisions?: P
   return planAttendanceImport(parsed.rows, {
     timezone: "Europe/London",
     now: new Date("2026-10-09T00:00:00Z"),
-    members: over.members ?? ROSTER(),
+    members: (over.members ?? ROSTER()).map((m) => ({ createdAt: "2020-01-01T00:00:00Z", ...m })),
     classes: CLASSES,
     locations: LOCATIONS,
     decisions: over.decisions ?? BASE_DECISIONS(),

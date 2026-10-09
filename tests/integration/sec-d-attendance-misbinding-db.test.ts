@@ -57,7 +57,8 @@ import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { teamupPersonKey } from "@/lib/importers/teamup";
 import { JOB_SOURCE, LEDGER_SOURCE, MAPPING_VERSION, buildPlan, loadClubInputs, planHashOf, saveDecisions } from "@/lib/attendance-import";
 import { POST } from "@/app/api/admin/import/attendance/route";
-import { PATCH as patchMember } from "@/app/api/members/[id]/route";
+import { PATCH as patchMember, DELETE as deleteMember } from "@/app/api/members/[id]/route";
+import { emailDigest } from "@/lib/login-email";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = `secd-${Date.now().toString(36)}`;
@@ -93,6 +94,16 @@ async function mkClub(label: string): Promise<Club> {
   if (err) throw new Error(`fixture decisions refused: ${err}`);
   return club;
 }
+
+/**
+ * A member id whose embedded creation time (cuid v1: ms since epoch, base36, chars 1-8) is `at`: a record that has
+ * existed since before the bookings in the file, which is what the name+address fallback now requires.
+ */
+const idCreatedAt = (at: string) =>
+  `c${new Date(at).getTime().toString(36).padStart(8, "0")}${Array.from({ length: 16 }, () => "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("")}`;
+const OLD_MEMBER = "2025-01-15T10:00:00Z";
+const mkOldMember = (club: Club, name: string, email: string) =>
+  withRlsBypass((tx) => tx.member.create({ data: { id: idCreatedAt(OLD_MEMBER), tenantId: club.tenantId, name, email, externalRef: null }, select: { id: true } })).then((r) => r.id);
 
 const mkMember = (club: Club, name: string, email: string, externalRef: string | null) =>
   withRlsBypass((tx) => tx.member.create({ data: { tenantId: club.tenantId, name, email, externalRef }, select: { id: true } })).then((r) => r.id);
@@ -202,7 +213,7 @@ describe.skipIf(!HAS_DB)("SEC-053 / AH-D1 — attendance identity binding is nev
 
   it("POSITIVE CONTROL: a unique name+email and an externalRef still import as attendance", async () => {
     const club = await mkClub("pos");
-    const dana = await mkMember(club, N("Dana Solo"), E("dana"), null);
+    const dana = await mkOldMember(club, N("Dana Solo"), E("dana"));
     const eli = await mkMember(club, N("Eli Ref"), E("eli"), teamupPersonKey(N("Eli Ref"), E("eli")));
     const { jobId, planHash } = await mkPreview(club, csvOf([{ name: N("Dana Solo"), email: E("dana") }, { name: N("Eli Ref"), email: E("eli") }]));
     await commitAndRun(club, jobId, planHash);
@@ -248,7 +259,7 @@ describe.skipIf(!HAS_DB)("SEC-053 / AH-D1 — attendance identity binding is nev
 
   it("ROSTER DRIFT (re-point): a previewed match is not moved to another member by an address swap mid-commit", async () => {
     const club = await mkClub("swap");
-    const fin = await mkMember(club, N("Fin Swap"), E("fin"), null);
+    const fin = await mkOldMember(club, N("Fin Swap"), E("fin"));
     const { jobId, planHash, plan } = await mkPreview(club, csvOf([{ name: N("Fin Swap"), email: E("fin") }]));
     expect(plan.people[0].memberId).toBe(fin);
     let other = "";
@@ -295,12 +306,72 @@ describe.skipIf(!HAS_DB)("SEC-053 / AH-D1 — attendance identity binding is nev
 
   it("POSITIVE CONTROL: a member who moved to a NEW address (never held by anyone else) still matches on it", async () => {
     const club = await mkClub("moved");
-    const ola = await mkMember(club, N("Ola Moved"), E("ola-old"), null);
+    const ola = await mkOldMember(club, N("Ola Moved"), E("ola-old"));
     await ownerPatch(club, ola, { email: E("ola-new") });
     const { jobId, planHash } = await mkPreview(club, csvOf([{ name: N("Ola Moved"), email: E("ola-new") }]));
     await commitAndRun(club, jobId, planHash);
     expect((await ledger(club))[0].matchMethod).toBe("name_and_email");
     expect(await attendanceOf(club, ola)).toBe(1);
+  });
+
+  // Reviewer R third-pass variants (REPORT-D2.md): the release of the address is NOT in a keyed audit row.
+  const unauditedReleaseCase = async (label: string, release: (club: Club, origId: string) => Promise<void>) => {
+    const club = await mkClub(label);
+    const orig = await mkOldMember(club, N("Bea Lane"), E(`${label}-old`));
+    await release(club, orig);
+    const other = await mkMember(club, N("Bea Lane"), E(`${label}-old`), null);
+    const { jobId, planHash, plan } = await mkPreview(club, csvOf([{ name: N("Bea Lane"), email: E(`${label}-old`) }]));
+    await commitAndRun(club, jobId, planHash);
+    expect(await attendanceOf(club, other), "attendance committed to the member who took the released address").toBe(0);
+    const rows = await ledger(club);
+    expect(rows[0].memberId).toBeNull();
+    expect(rows[0].disposition).toBe("pending_person");
+    expect(plan.people[0].candidates.map((c) => c.memberId)).toContain(other);
+    return { club, orig };
+  };
+
+  it("VARIANT raw SQL: the original renamed and re-addressed by raw SQL (no audit row) → the new same-name holder is not bound", async () => {
+    await unauditedReleaseCase("rawsql", (club, orig) =>
+      withRlsBypass((tx) => tx.$executeRaw`UPDATE "Member" SET email = ${E("rawsql-new")}, name = ${N("Beatrice Lane")} WHERE id = ${orig} AND "tenantId" = ${club.tenantId}`).then(() => undefined));
+  });
+
+  it("VARIANT unkeyed: the move recorded before AH-E2 with the UNKEYED SHA-256 form → not bound", async () => {
+    await unauditedReleaseCase("unkeyed", async (club, orig) => {
+      await withRlsBypass(async (tx) => {
+        await tx.member.update({ where: { id: orig }, data: { email: E("unkeyed-new"), name: N("Beatrice Lane") } });
+        await tx.auditLog.create({ data: { tenantId: club.tenantId, userId: club.userId, action: "member.update", entityType: "Member", entityId: orig,
+          metadata: { oldEmailSha256: createHash("sha256").update(E("unkeyed-old").trim().toLowerCase()).digest("hex") } } });
+      });
+    });
+  });
+
+  it("VARIANT deleted: the original deleted through the REAL member DELETE, a different Bea Lane created at the address → not bound; the delete records the released address", async () => {
+    const { club, orig } = await unauditedReleaseCase("deleted", async (club, origId) => {
+      gate.current = { tenantId: club.tenantId, userId: club.userId };
+      const req = new Request(`https://test.local/api/members/${origId}?confirm=1`, { method: "DELETE", headers: { origin: "https://test.local", host: "test.local" } });
+      const res = (await deleteMember(req, { params: Promise.resolve({ id: origId }) })) as unknown as { status: number; json: () => Promise<unknown> };
+      expect(res.status, JSON.stringify(await res.json())).toBe(200);
+    });
+    const audit = await withRlsBypass((tx) => tx.auditLog.findFirst({ where: { tenantId: club.tenantId, action: "member.delete", entityId: orig }, select: { metadata: true } }));
+    expect((audit?.metadata as Record<string, unknown> | null)?.releasedEmailSha256).toBe(emailDigest(E("deleted-old")));
+  });
+
+  it("POSITIVE CONTROL (inverted rule): a member who has held the address since before the bookings still matches", async () => {
+    const club = await mkClub("heldsince");
+    const pia = await mkOldMember(club, N("Pia Held"), E("pia"));
+    const { jobId, planHash } = await mkPreview(club, csvOf([{ name: N("Pia Held"), email: E("pia") }]));
+    await commitAndRun(club, jobId, planHash);
+    expect((await ledger(club))[0].matchMethod).toBe("name_and_email");
+    expect(await attendanceOf(club, pia)).toBe(1);
+  });
+
+  it("INVERTED RULE: a member created AFTER the bookings is not bound by name+address (offered as a candidate instead)", async () => {
+    const club = await mkClub("newcomer");
+    const neo = await mkMember(club, N("Neo New"), E("neo"), null);
+    const { jobId, planHash, plan } = await mkPreview(club, csvOf([{ name: N("Neo New"), email: E("neo") }]));
+    await commitAndRun(club, jobId, planHash);
+    expect(await attendanceOf(club, neo)).toBe(0);
+    expect(plan.people[0].candidates.map((c) => c.memberId)).toContain(neo);
   });
 
   it("MISSING REFERENCES: a row with no email, or with no name, never binds by the fallback", async () => {
@@ -331,7 +402,7 @@ describe.skipIf(!HAS_DB)("SEC-053 / AH-D1 — attendance identity binding is nev
 
   it("SHARED CONTACTS: two people on one address — only the one whose NAME and address match is bound; the other stays pending", async () => {
     const club = await mkClub("shared");
-    const jan = await mkMember(club, N("Jan Share"), E("family"), null);
+    const jan = await mkOldMember(club, N("Jan Share"), E("family"));
     const { jobId, planHash } = await mkPreview(club, csvOf([{ name: N("Jan Share"), email: E("family") }, { name: N("Kai Share"), email: E("family") }]));
     await commitAndRun(club, jobId, planHash);
     const rows = await ledger(club);

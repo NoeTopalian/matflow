@@ -412,9 +412,10 @@ describe.skipIf(!HAS_DB)("contact-email change → imports keep the person (AH-0
       return b[0];
     };
     expect(by("Alex Moss", E("alex"))).toMatchObject({ memberId: id.alex, matchMethod: "external_ref", disposition: "attendance_created", sourcePersonKey: teamupPersonKey("Alex Moss", E("alex")) });
-    expect(by("Alex Moss", E("alex-new"))).toMatchObject({ memberId: id.alex, matchMethod: "name_and_email" });
+    // SF-54 (inverted rule): Alex's record was created after these bookings, so the corrected address alone does not bind.
+    expect(by("Alex Moss", E("alex-new"))).toMatchObject({ memberId: null, disposition: "pending_person" });
     expect(by("Bea Lane", E("bea-old"))).toMatchObject({ memberId: null, disposition: "pending_person" });
-    expect(by("Bea Lane", E("bea-new"))).toMatchObject({ memberId: id.bea, matchMethod: "name_and_email" });
+    expect(by("Bea Lane", E("bea-new"))).toMatchObject({ memberId: null, disposition: "pending_person" });
     expect(by("A. Moss", E("alias"))).toMatchObject({ memberId: id.alex, matchMethod: "decision" });
     expect(by("Dee Holt", E("dee-new"))).toMatchObject({ memberId: null, disposition: "pending_person" });
     expect(by("Kit Moss", E("alex"))).toMatchObject({ memberId: id.kit, matchMethod: "external_ref" });
@@ -424,7 +425,7 @@ describe.skipIf(!HAS_DB)("contact-email change → imports keep the person (AH-0
     // History preserved: the live check-in is still Alex's, alongside the imported ones.
     const alexAttendance = await withRlsBypass((tx) => tx.attendanceRecord.findMany({ where: { tenantId: A.tenantId, memberId: id.alex }, select: { id: true } }));
     expect(alexAttendance.map((r) => r.id)).toContain(liveAttendanceId);
-    expect(alexAttendance.length).toBe(4); // live + original row + corrected-address row + alias decision
+    expect(alexAttendance.length).toBe(3); // live + original row + alias decision (the corrected-address row is pending, SF-54)
     const alex = await memberRow(id.alex);
     expect(alex.email).toBe(E("alex-new"));
     expect(Buffer.compare(Buffer.from(alex.externalRef ?? "", "utf8"), before.alex.ref)).toBe(0);

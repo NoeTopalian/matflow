@@ -445,7 +445,23 @@ export function dayMarkerFor(localDate: string): Date {
 
 // ── Plan ───────────────────────────────────────────────────────────────────
 
-export type RosterMember = { id: string; name: string; email: string; externalRef: string | null; noLogin?: boolean };
+export type RosterMember = {
+  id: string; name: string; email: string; externalRef: string | null; noLogin?: boolean;
+  /** When the record was created (immutable; from the row id — see cuidCreatedAt). Unknown = never "held since". */
+  createdAt?: Date | string | null;
+};
+
+/**
+ * The creation time embedded in a Prisma cuid (v1: "c" + 8 base36 chars of epoch ms + 16 more). Member has no
+ * createdAt column; the id is immutable and set once at insert, so it is the record's creation time. Anything that is
+ * not a plausible cuid (cuid2, a hand-set id, a time outside 2015..now+1 day) returns null, which never qualifies.
+ */
+export function cuidCreatedAt(id: string, now: Date = new Date()): Date | null {
+  if (!/^c[0-9a-z]{24}$/.test(id)) return null;
+  const ms = parseInt(id.slice(1, 9), 36);
+  if (!Number.isFinite(ms) || ms < Date.UTC(2015, 0, 1) || ms > now.getTime() + 86_400_000) return null;
+  return new Date(ms);
+}
 export type RosterClass = { id: string; name: string; isActive: boolean; historical: boolean; locationId: string | null };
 export type RosterLocation = { id: string; name: string };
 
@@ -628,6 +644,22 @@ export function planAttendanceImport(
   // Who is each person? Resolved once per person key.
   type Resolved = { memberId: string | null; method: MatchMethod | null; decidedPending: boolean };
   const resolved = new Map<string, Resolved>();
+  // The earliest booking of each person in this file: the name+address fallback needs the member to have
+  // existed (and held the address) since before it.
+  const earliestOf = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.personKey) continue;
+    const t = r.startInstant ? new Date(r.startInstant) : r.startLocal ? localToUtc(r.startLocal, timezone) : null;
+    if (!t || isNaN(t.getTime())) continue;
+    const cur = earliestOf.get(r.personKey);
+    if (cur === undefined || t.getTime() < cur) earliestOf.set(r.personKey, t.getTime());
+  }
+  const heldSinceBefore = (m: RosterMember, personKey: string) => {
+    const earliest = earliestOf.get(personKey);
+    const created = m.createdAt ? new Date(m.createdAt) : null;
+    return earliest !== undefined && !!created && !isNaN(created.getTime()) && created.getTime() < earliest;
+  };
+
   const resolvePerson = (r: AttendanceRow): Resolved => {
     const hit = resolved.get(r.personKey);
     if (hit) return hit;
@@ -658,7 +690,12 @@ export function planAttendanceImport(
         const ne = byNameEmail.get(`${norm(r.personName)}|${r.email}`) ?? [];
         const sameName = byName.get(foldName(r.personName)) ?? [];
         const released = opts.releasedBy?.(r.email);
-        if (ne.length === 1 && sameName.length === 1 && !released) out = { memberId: ne[0].id, method: "name_and_email", decidedPending: false };
+        // INVERTED (R third pass): allowed ONLY when the one fold-match holding the address demonstrably held it
+        // since before this person's first booking: created before it, and no release of the address recorded
+        // for anyone (keyed or unkeyed digest). Anything else is pending with the candidates offered.
+        if (ne.length === 1 && sameName.length === 1 && !released && heldSinceBefore(ne[0], r.personKey)) {
+          out = { memberId: ne[0].id, method: "name_and_email", decidedPending: false };
+        }
       }
     }
     resolved.set(r.personKey, out);

@@ -80,3 +80,36 @@ Mutants: fold reverted → 3 failed; release check removed → 2 failed. Both re
 Residual: a release is recognised only through the audit trail. An address change made outside the audited writers
 (raw SQL, a script) or before digests existed, or a rotated AUTH_SECRET (digest key), is not seen. Rows are then
 caught only by the fold test.
+
+## Third pass after reviewer R (REPORT-D2.md), HEAD 71cfe54 + lane D working tree
+R showed that a release with no keyed audit row still let a false match commit: a raw-SQL move, a move recorded
+before AH-E2 with the unkeyed SHA-256, and the original deleted with a different Bea Lane created at the address.
+**The rule is now inverted.** The name+address fallback binds ONLY when all of these hold:
+- the member holding the address is the only fold-match for the name;
+- the member was created before the person's EARLIEST booking in the file;
+- no release of that address is recorded for anyone, in any of these forms: the keyed `emailDigest`, the unkeyed
+  `sha256(lower(trim(address)))` (rows before AH-E2), or the DSAR `hashToken` (`originalEmailHash`).
+Anything else is pending, with the candidates offered.
+Member has no `createdAt` column. Creation time is read from the immutable cuid v1 id (`cuidCreatedAt`). An id that
+is not a plausible cuid gives "unknown", which never qualifies. Proposed migration (lead):
+`Member.createdAt DateTime @default(now())`, backfilled from the id, then read that column instead.
+Every in-app release path now writes `releasedEmailSha256 = emailDigest(address)` in its audit metadata, and
+`loadClubInputs` reads it: member DELETE (target plus cascaded children), staff DELETE, DSAR erase, import rollback.
+Red, real route, both roles: 4 failed / 15 passed (raw SQL, unkeyed, deleted, created-after-bookings). Green: see the
+hand-back.
+
+### Remaining residual (precise)
+1. **Unaudited change on an old member.** A member that existed BEFORE the person's first booking, whose address
+   was changed by raw SQL, a script or any other unaudited writer to an address that previously belonged to
+   someone else, and the old holder's release was never audited. Created-before plus no-release is then satisfied, so
+   the fallback binds. Only an audited writer, or an owner decision, closes this case. This is the same trust
+   boundary as SEC-029 (writer bypass).
+2. **Key rotation.** Keyed digests (`emailDigest`, `hashToken`) are HMACs under the auth secret. After a rotation,
+   every release recorded under the old key is unmatchable. Unkeyed rows from before AH-E2 still match, because they
+   carry no key. The created-before rule does not depend on a key, so a member created AFTER the bookings stays
+   pending regardless. The residual is therefore limited to case 1 combined with a rotation. Mitigation: re-key the
+   recorded digests during a rotation, or record a key id per row.
+3. **Fold gaps (from R).** Cyrillic а/е, Greek ο, dotless ı and ß/ss do not fold together. A different-script
+   look-alike can therefore pass the same-name check. It still has to pass created-before and no-release.
+4. **Strictness cost.** Hand-added members created after their own historical bookings now always need an owner
+   decision. Members from the TeamUp import match by externalRef and are unaffected.
