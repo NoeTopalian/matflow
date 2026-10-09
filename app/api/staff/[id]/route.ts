@@ -241,19 +241,24 @@ export async function DELETE(req: Request, { params }: Params) {
       const out = await tx.user.deleteMany({
         where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
       });
+      // The release record commits WITH the deletion (security lane D2, SF-54 / SF-74): a crash between the two used
+      // to leave the address free with no digest; a failure here now rolls the deletion back.
+      if (out.count > 0) {
+        await logAudit({
+          tx,
+          tenantId: session.user.tenantId,
+          userId: session.user.id,
+          action: "staff.delete",
+          entityType: "User",
+          entityId: id,
+          // The address this delete releases (keyed digest; the attendance import refuses a released address — SF-54).
+          metadata: row?.email ? { releasedEmailSha256: emailDigest(row.email) } : {},
+          req,
+        });
+      }
       return { count: out.count, email: row?.email ?? null };
     });
     if (deleted.count === 0) return NextResponse.json({ error: "Not found or cannot delete owner" }, { status: 404 });
-    await logAudit({
-      tenantId: session.user.tenantId,
-      userId: session.user.id,
-      action: "staff.delete",
-      entityType: "User",
-      entityId: id,
-      // The address this delete releases (keyed digest; the attendance import refuses a released address — SF-54).
-      metadata: deleted.email ? { releasedEmailSha256: emailDigest(deleted.email) } : {},
-      req,
-    });
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "Failed to remove staff member" }, { status: 500 });

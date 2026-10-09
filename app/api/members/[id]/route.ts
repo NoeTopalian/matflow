@@ -777,13 +777,36 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   }
 
   try {
-    const outcome = await withTenantContext(session.user.tenantId, (tx) =>
-      deleteParentMemberWithKidsResolution(
+    const outcome = await withTenantContext(session.user.tenantId, async (tx) => {
+      const o = await deleteParentMemberWithKidsResolution(
         tx,
         { id, tenantId: session.user.tenantId },
         strategy,
-      ),
-    );
+      );
+      // The release record commits WITH the deletion (security lane D2, SF-54 / SF-74): written after the commit, a
+      // crash in between left the address free with no digest telling the attendance import it had been released.
+      // A failure here rolls the deletion back. Photo files are removed after the commit, so the row records how many
+      // were queued; the response reports how many went.
+      if (o.kind === "ok") {
+        await logAudit({
+          tx,
+          tenantId: session.user.tenantId,
+          userId: session.user.id,
+          action: "member.delete",
+          entityType: "Member",
+          entityId: id,
+          metadata: {
+            ...(strategy
+              ? { kidsAffected: o.kidsAffected, strategy: strategy.kind, stripeSubscriptionsCancelled, photosQueued: doomedPhotos.length }
+              : { kidsAffected: 0, stripeSubscriptionsCancelled, photosQueued: doomedPhotos.length }),
+            // The addresses this delete releases (keyed digest; the attendance import refuses a released address — SF-54).
+            releasedEmailSha256: releasedEmails.length === 1 ? emailDigest(releasedEmails[0]) : releasedEmails.map((e) => emailDigest(e)),
+          },
+          req,
+        });
+      }
+      return o;
+    });
     if (outcome.kind === "not-found") {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
@@ -822,21 +845,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     // the warning names the photo id so it can be cleaned up by hand.
     const photosDeleted = await deleteMemberPhotoBlobs(doomedPhotos);
 
-    await logAudit({
-      tenantId: session.user.tenantId,
-      userId: session.user.id,
-      action: "member.delete",
-      entityType: "Member",
-      entityId: id,
-      metadata: {
-        ...(strategy
-          ? { kidsAffected: outcome.kidsAffected, strategy: strategy.kind, stripeSubscriptionsCancelled, photosDeleted }
-          : { kidsAffected: 0, stripeSubscriptionsCancelled, photosDeleted }),
-        // The addresses this delete releases (keyed digest; the attendance import refuses a released address — SF-54).
-        releasedEmailSha256: releasedEmails.length === 1 ? emailDigest(releasedEmails[0]) : releasedEmails.map((e) => emailDigest(e)),
-      },
-      req,
-    });
     return NextResponse.json({
       success: true,
       kidsAffected: outcome.kidsAffected,

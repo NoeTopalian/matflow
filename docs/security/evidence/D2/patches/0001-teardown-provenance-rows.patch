@@ -1,0 +1,24 @@
+diff -ru a/tests/integration/attendance-import-engine.test.ts b/tests/integration/attendance-import-engine.test.ts
+--- a/tests/integration/attendance-import-engine.test.ts	2026-10-09 20:41:50.061016600 +0100
++++ b/tests/integration/attendance-import-engine.test.ts	2026-10-09 20:41:50.302008200 +0100
+@@ -318,6 +318,8 @@
+         await tx.classInstance.deleteMany({ where: { class: { tenantId } } });
+         await tx.classSchedule.deleteMany({ where: { class: { tenantId } } });
+         await tx.importSourceMapping.deleteMany({ where: { tenantId } });
++        // Mapping-provenance rows (lane D2, SF-74) are written by saveDecisions in the club's audit trail.
++        await tx.auditLog.deleteMany({ where: { tenantId, action: "import.mapping.changed" } });
+         await tx.class.deleteMany({ where: { tenantId } });
+         await tx.importJob.deleteMany({ where: { tenantId } });
+         await tx.member.deleteMany({ where: { tenantId, parentMemberId: { not: null } } });
+diff -ru a/tests/integration/contact-email-change-imports-db.test.ts b/tests/integration/contact-email-change-imports-db.test.ts
+--- a/tests/integration/contact-email-change-imports-db.test.ts	2026-10-09 20:41:50.410575500 +0100
++++ b/tests/integration/contact-email-change-imports-db.test.ts	2026-10-09 20:41:50.619265500 +0100
+@@ -296,6 +296,8 @@
+         await tx.classInstance.deleteMany({ where: { class: { tenantId } } });
+         await tx.classSchedule.deleteMany({ where: { class: { tenantId } } });
+         await tx.importSourceMapping.deleteMany({ where: { tenantId } });
++        // Mapping-provenance rows (lane D2, SF-74) are written by saveDecisions in the club's audit trail.
++        await tx.auditLog.deleteMany({ where: { tenantId, action: "import.mapping.changed" } });
+         await tx.class.deleteMany({ where: { tenantId } });
+         await tx.memberStatusEvent.deleteMany({ where: { tenantId } });
+         await tx.magicLinkToken.deleteMany({ where: { tenantId } });

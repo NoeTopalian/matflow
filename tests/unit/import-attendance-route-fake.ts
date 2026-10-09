@@ -20,6 +20,8 @@ export type Row = Record<string, unknown> & { id: string };
 const MODELS = [
   "tenant", "member", "class", "location", "importSourceMapping", "importUpload", "importUploadChunk",
   "importJob", "importedBooking", "classInstance", "attendanceRecord",
+  // Mapping-provenance rows (lane D2, SF-74): saveDecisions writes one per decision in its transaction.
+  "auditLog",
 ] as const;
 export type Model = (typeof MODELS)[number];
 

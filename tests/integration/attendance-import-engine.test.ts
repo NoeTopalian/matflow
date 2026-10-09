@@ -318,6 +318,8 @@ describe.skipIf(!HAS_DB)("attendance-import engine on the test database", () => 
         await tx.classInstance.deleteMany({ where: { class: { tenantId } } });
         await tx.classSchedule.deleteMany({ where: { class: { tenantId } } });
         await tx.importSourceMapping.deleteMany({ where: { tenantId } });
+        // Mapping-provenance rows (lane D2, SF-74) are written by saveDecisions in the club's audit trail.
+        await tx.auditLog.deleteMany({ where: { tenantId, action: "import.mapping.changed" } });
         await tx.class.deleteMany({ where: { tenantId } });
         await tx.importJob.deleteMany({ where: { tenantId } });
         await tx.member.deleteMany({ where: { tenantId, parentMemberId: { not: null } } });

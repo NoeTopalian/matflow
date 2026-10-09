@@ -69,6 +69,51 @@ const LEASE_MS = 120_000;
 /** Pending-people rows embedded in a preview; the rest are paged. */
 const PREVIEW_PEOPLE_CAP = 200;
 
+// ── Mapping provenance (security lane D2, 9 Oct 2026; SF-74) ─────────────────
+//
+// ImportSourceMapping rows are mutable: an upsert used to overwrite a decision with nothing left of the prior one,
+// and a row re-pointed or inserted with the runtime database password alone (SF-62) was trusted like an owner's
+// decision. Every change the importer or an owner makes to a mapping now writes an append-only AuditLog row IN THE
+// SAME TRANSACTION, carrying the state before and after and a KEYED digest of the source key (no address or name in
+// the audit trail). loadClubInputs trusts a person -> member decision only when its latest provenance row names the
+// same key and the same target: a raw re-point or a forged row without the signing key stays pending. With the
+// signing key (full app compromise) the row can be forged — that residual needs provenance outside the runtime's reach.
+
+/** AuditLog.action of a mapping-provenance row. */
+export const MAPPING_PROVENANCE_ACTION = "import.mapping.changed";
+
+type MappingState = { action: string; targetId: string | null } | null;
+
+/** Keyed digest of a mapping's (kind, source key): proves which key a provenance row is about without storing it. */
+export function sourceKeyDigest(kind: string, sourceKey: string): string {
+  return hashToken(`import-source-key:v1:${kind}\u0001${sourceKey}`);
+}
+
+/** Append the provenance row for one mapping change, with the caller's transaction (it commits or rolls back with it). */
+export async function recordMappingChange(
+  tx: Tx,
+  args: { tenantId: string; userId: string | null; mappingId: string; kind: string; sourceKey: string; before: MappingState; after: MappingState; via: string; jobId?: string },
+) {
+  await tx.auditLog.create({
+    data: {
+      tenantId: args.tenantId,
+      userId: args.userId,
+      action: MAPPING_PROVENANCE_ACTION,
+      entityType: "ImportSourceMapping",
+      entityId: args.mappingId,
+      metadata: {
+        kind: args.kind,
+        source: LEDGER_SOURCE,
+        sourceKeyDigest: sourceKeyDigest(args.kind, args.sourceKey),
+        before: args.before,
+        after: args.after,
+        via: args.via,
+        ...(args.jobId ? { jobId: args.jobId } : {}),
+      } as Prisma.InputJsonValue,
+    },
+  });
+}
+
 export type Disposition =
   | "attendance_created"
   | "attendance_existing"
@@ -98,6 +143,8 @@ export type ClubInputs = {
    * the members who released them (AH-D1 retest).
    */
   released?: Record<string, string[]>;
+  /** Person -> member decisions held pending because no provenance row vouches for them (SF-74): mapping ids. */
+  unprovenDecisions?: string[];
 };
 
 export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInputs> {
@@ -111,9 +158,36 @@ export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInpu
   });
   const locations = await tx.location.findMany({ where: { tenantId }, select: { id: true, name: true } });
   const mappings = await tx.importSourceMapping.findMany({ where: { tenantId, source: LEDGER_SOURCE } });
+  // Provenance of person -> member decisions (SF-74): the latest provenance row(s) of each mapping.
+  const provenance = await tx.$queryRaw<{ entityId: string; metadata: Record<string, unknown> | null; createdAt: Date }[]>`
+    SELECT "entityId", metadata, "createdAt"
+    FROM "AuditLog"
+    WHERE "tenantId" = ${tenantId} AND action = ${MAPPING_PROVENANCE_ACTION} AND "entityType" = 'ImportSourceMapping'
+      AND metadata->>'kind' = 'person'`;
+  const latestOf = new Map<string, { t: number; rows: Record<string, unknown>[] }>();
+  for (const p of provenance) {
+    const t = new Date(p.createdAt).getTime();
+    const cur = latestOf.get(p.entityId);
+    if (!cur || t > cur.t) latestOf.set(p.entityId, { t, rows: [p.metadata ?? {}] });
+    else if (t === cur.t) cur.rows.push(p.metadata ?? {});
+  }
+  const proven = (m: { id: string; sourceKey: string; targetId: string | null }) => {
+    const digest = sourceKeyDigest("person", m.sourceKey);
+    return (latestOf.get(m.id)?.rows ?? []).some((md) => {
+      const after = md.after as { action?: unknown; targetId?: unknown } | null | undefined;
+      return md.sourceKeyDigest === digest && after?.action === "member" && after.targetId === m.targetId;
+    });
+  };
+  const unprovenDecisions: string[] = [];
   const decisions: PlanDecisions = { person: {}, offering: {}, venue: {} };
   for (const m of mappings) {
-    if (m.kind === "person") decisions.person[m.sourceKey] = (m.action === "member" && m.targetId ? { action: "member", targetId: m.targetId } : { action: "pending" }) as PersonDecision;
+    if (m.kind === "person") {
+      // A decision with no matching provenance (re-pointed, inserted or re-keyed outside saveDecisions) binds nobody:
+      // it is held pending and counted, so the owner sees it and decides again.
+      const trusted = m.action === "member" && m.targetId && proven(m);
+      if (m.action === "member" && !trusted) unprovenDecisions.push(m.id);
+      decisions.person[m.sourceKey] = (trusted ? { action: "member", targetId: m.targetId } : { action: "pending" }) as PersonDecision;
+    }
     if (m.kind === "offering") {
       decisions.offering[m.sourceKey] = (m.action === "class" && m.targetId ? { action: "class", targetId: m.targetId }
         : m.action === "new_class" ? { action: "new_class", targetId: m.targetId } : { action: "pending" }) as OfferingDecision;
@@ -172,6 +246,7 @@ export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInpu
     timezone: usableTimezone(tenant?.timezone),
     members,
     released,
+    unprovenDecisions,
     classes: classes.map((c) => ({ id: c.id, name: c.name, isActive: c.isActive, historical: !!c.sourceImportJobId, locationId: c.locationId })),
     locations,
     decisions,
@@ -319,6 +394,8 @@ export async function previewSummary(
         candidates: p.candidates.map((c) => ({ ...c, name: memberName.get(c.memberId) ?? "" })),
       })),
       pendingListTruncated: pendingPeople.length > PREVIEW_PEOPLE_CAP,
+      // Saved decisions held pending because their provenance does not vouch for them (SF-74).
+      unprovenDecisions: inputs.unprovenDecisions?.length ?? 0,
     },
     offerings: plan.offerings.map((o) => ({
       label: o.label, bookings: o.bookings, attended: o.attended, decision: o.decision,
@@ -378,12 +455,23 @@ export async function saveDecisions(tx: Tx, tenantId: string, userId: string, li
       if (!ok) return "That location is not in this club.";
     }
   }
-  for (const d of list) {
+  // One write per mapping: the last decision for a key in this list is the one that stands (as the upserts always did).
+  const last = new Map<string, DecisionInput>();
+  for (const d of list) last.set(`${d.kind}\u0001${d.sourceKey}`, d);
+  for (const d of last.values()) {
     const targetId = d.action === "member" || d.action === "class" || d.action === "location" ? d.targetId! : null;
-    await tx.importSourceMapping.upsert({
-      where: { tenantId_source_kind_sourceKey: { tenantId, source: LEDGER_SOURCE, kind: d.kind, sourceKey: d.sourceKey } },
+    const where = { tenantId_source_kind_sourceKey: { tenantId, source: LEDGER_SOURCE, kind: d.kind, sourceKey: d.sourceKey } };
+    const prior = await tx.importSourceMapping.findUnique({ where, select: { action: true, targetId: true } });
+    const saved = await tx.importSourceMapping.upsert({
+      where,
       create: { tenantId, source: LEDGER_SOURCE, kind: d.kind, sourceKey: d.sourceKey, action: d.action, targetId, decidedById: userId },
       update: { action: d.action, targetId, decidedById: userId, decidedAt: new Date() },
+      select: { id: true },
+    });
+    // The prior decision stays recoverable, in the same transaction (SF-74).
+    await recordMappingChange(tx, {
+      tenantId, userId, mappingId: saved.id, kind: d.kind, sourceKey: d.sourceKey,
+      before: prior ? { action: prior.action, targetId: prior.targetId } : null, after: { action: d.action, targetId }, via: "decide",
     });
   }
   return null;
@@ -461,7 +549,14 @@ export async function createHistoricalClasses(
   for (const [label, ids] of perOffering) {
     const d = Object.hasOwn(inputs.decisions.offering, label) ? inputs.decisions.offering[label] : undefined;
     if (ids.length === 1 && d?.action === "new_class" && !d.targetId) {
-      await tx.importSourceMapping.updateMany({ where: { tenantId, source: LEDGER_SOURCE, kind: "offering", sourceKey: label }, data: { targetId: ids[0] } });
+      const rows = await tx.importSourceMapping.findMany({ where: { tenantId, source: LEDGER_SOURCE, kind: "offering", sourceKey: label }, select: { id: true, action: true, targetId: true } });
+      for (const m of rows) {
+        await tx.importSourceMapping.update({ where: { id: m.id }, data: { targetId: ids[0] } });
+        await recordMappingChange(tx, {
+          tenantId, userId: null, mappingId: m.id, kind: "offering", sourceKey: label, jobId,
+          before: { action: m.action, targetId: m.targetId }, after: { action: m.action, targetId: ids[0] }, via: "import.commit",
+        });
+      }
     }
   }
 }
@@ -932,7 +1027,14 @@ export async function rollbackJob(tx: Tx, tenantId: string, jobId: string) {
   for (const c of classes) {
     // Anything staff have since attached (a session, a schedule, a subscriber, a roster) keeps the class.
     if (c._count.instances + c._count.schedules + c._count.subscriptions + c._count.rosterMembers > 0) { report.classesKept += 1; continue; }
-    await tx.importSourceMapping.updateMany({ where: { tenantId, source: LEDGER_SOURCE, kind: "offering", targetId: c.id }, data: { targetId: null } });
+    const pointing = await tx.importSourceMapping.findMany({ where: { tenantId, source: LEDGER_SOURCE, kind: "offering", targetId: c.id }, select: { id: true, action: true, sourceKey: true } });
+    for (const m of pointing) {
+      await tx.importSourceMapping.update({ where: { id: m.id }, data: { targetId: null } });
+      await recordMappingChange(tx, {
+        tenantId, userId: null, mappingId: m.id, kind: "offering", sourceKey: m.sourceKey, jobId,
+        before: { action: m.action, targetId: c.id }, after: { action: m.action, targetId: null }, via: "import.rollback",
+      });
+    }
     await tx.class.delete({ where: { id: c.id } });
     report.classesRemoved += 1;
   }

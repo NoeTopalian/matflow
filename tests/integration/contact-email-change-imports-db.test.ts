@@ -296,6 +296,8 @@ describe.skipIf(!HAS_DB)("contact-email change → imports keep the person (AH-0
         await tx.classInstance.deleteMany({ where: { class: { tenantId } } });
         await tx.classSchedule.deleteMany({ where: { class: { tenantId } } });
         await tx.importSourceMapping.deleteMany({ where: { tenantId } });
+        // Mapping-provenance rows (lane D2, SF-74) are written by saveDecisions in the club's audit trail.
+        await tx.auditLog.deleteMany({ where: { tenantId, action: "import.mapping.changed" } });
         await tx.class.deleteMany({ where: { tenantId } });
         await tx.memberStatusEvent.deleteMany({ where: { tenantId } });
         await tx.magicLinkToken.deleteMany({ where: { tenantId } });
