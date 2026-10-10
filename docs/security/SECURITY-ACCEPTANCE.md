@@ -67,6 +67,16 @@ warnings; `tsc --noEmit` 0; full unit suite 436 files / 5938 tests; `npm run bui
 `sharp` 0.35.5 / libvips 8.18.7 load under Node 24. The iteration-1 gates above ran under Node 25.9.0 (end-of-life
 locally) and are superseded by this run for the same source. The Vercel build runtime is still to be confirmed (lane E2).
 
+### 5b. Iteration 2 — gates on the candidate `5259d3b` (Node v24.21.0, npm 11.19.0; `evidence/lead/gates-node24-5259d3b.log`, 10 Oct 2026 02:41–02:59 UTC)
+`npm run lint` exit 0 (eslint clean, UI-RULES ratchet at baseline); `tsc --noEmit` exit 0; full unit suite 462 files / 6405 tests passed
+(exit 0); `npm audit --omit=dev` 0 vulnerabilities; `npm run build` exit 0 from an empty `.next`, BUILD_ID `CnN85vQ4c8v5zNeojjE5P`.
+Two defects were found by these gates on the way and are fixed in the candidate: a tree secret-scan failure caused by literal
+fixture strings in a new F3 test (34a7749) and a production-build failure caused by committed evidence records that Tailwind's
+source scan parsed as a CSS escape (SF-110; a49925b + 83decf3, `@source not "../docs"`). The gates ran in the main tree
+concurrently with reviewer R6's worktree run; R6's own gate results are recorded separately in `evidence/R6/`.
+The both-role database sweep of the security files on the final candidate is R6's (`evidence/R6/sweep.txt`), run with real
+vitest exit codes (the iteration-1 sweep's exit column was not — SF-76).
+
 ## 6. Evidence limitations
 No browser rehearsal of the campaign build (unit + both-role database only); the TEST branch stands in for
 production; both-roles results are local (CI runs as a superuser until SF-58 lands); the digest-based import rules

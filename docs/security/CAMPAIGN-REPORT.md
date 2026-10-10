@@ -1,5 +1,7 @@
 # Security campaign report — 9 Oct 2026 (iteration 1 of the bounded loop)
 
+> **Iteration 2 (9–10 Oct 2026) is reported in [`ITERATION-2-REPORT.md`](ITERATION-2-REPORT.md)** — production containment package, SF-62 root cause and boundary proposal, SF-57 v2 validation, fail-closed refinement, lockout oracle, import attacker model, backup/restore drills, CSP, standards mapping, and the reviews R2–R6. The verdict and statuses there supersede the ones below.
+
 ## Exact candidate / source / build / environment
 Branch `security/assurance-2026-10`, final source SHA **`788d29a4388fdb86c5767bc2537e99eb9b44301d`** (documentation
 commits follow it), built from the admin-hub candidate `2a6487e` (source build `c837e38`, BUILD_ID
