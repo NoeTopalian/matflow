@@ -150,6 +150,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   process.env.CRON_SECRET = SECRET;
+  // Lane M1 (10 Oct 2026): the live sweep runs only with RETENTION_CRON_ENABLED exactly "true" (default OFF;
+  // tests/unit/sec-m1-retention-cron-gate.test.ts). These tests pin the sweep itself, so the gate is open.
+  process.env.RETENTION_CRON_ENABLED = "true";
   // vi.clearAllMocks() wipes the mockResolvedValue defaults too.
   for (const model of Object.values(prisma as unknown as Record<string, Record<string, unknown>>)) {
     const m = model as { findMany?: ReturnType<typeof vi.fn>; deleteMany?: ReturnType<typeof vi.fn>; updateMany?: ReturnType<typeof vi.fn>; create?: ReturnType<typeof vi.fn>; delete?: ReturnType<typeof vi.fn>; findUnique?: ReturnType<typeof vi.fn> };

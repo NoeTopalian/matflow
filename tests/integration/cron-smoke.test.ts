@@ -108,10 +108,12 @@ describe.skipIf(!HAS_DB)("Vercel cron entrypoints", () => {
   const saved: Record<string, string | undefined> = {};
 
   beforeAll(() => {
-    for (const name of ["CRON_SECRET", "ANTHROPIC_API_KEY", "STRIPE_SECRET_KEY"]) {
+    for (const name of ["CRON_SECRET", "ANTHROPIC_API_KEY", "STRIPE_SECRET_KEY", "RETENTION_CRON_ENABLED"]) {
       saved[name] = process.env[name];
     }
     process.env.CRON_SECRET = SECRET;
+    // Lane M1 (10 Oct 2026): the retention sweep is gated, default OFF; this smoke drives the live sweep.
+    process.env.RETENTION_CRON_ENABLED = "true";
     // Both are presence-checked by their routes and never used here: the
     // libraries that would consume them are mocked above. Placeholder values,
     // not credentials.

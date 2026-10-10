@@ -1,0 +1,57 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-m1-rate-limit-log-family.test.ts (5 tests | 2 failed) 70ms
+     × a 120-request burst on an e-mail-keyed (forgot-password) bucket: 5 allowed, 115 refusals logged by family, no piece of the key 61ms
+     × a 120-request burst on an IP-keyed (login) bucket: 5 allowed, 115 refusals logged by family, no piece of the key 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-m1-rate-limit-log-family.test.ts > SF-120: rate-limit log lines carry the family and counts only > a 120-request burst on an e-mail-keyed (forgot-password) bucket: 5 allowed, 115 refusals logged by family, no piece of the key
+AssertionError: no 8-character piece of the address/IP, the key, or their digests: expected 24 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 24
+
+ ❯ tests/unit/sec-m1-rate-limit-log-family.test.ts:104:98
+    102|       const joined = lines.join("\n");
+    103|       const leaked = forbiddenPieces(b.secret, b.bucket).filter((p) =>…
+    104|       expect(leaked.length, "no 8-character piece of the address/IP, t…
+       |                                                                                                  ^
+    105|
+    106|       // Positive control: the refusals are still visible, with the fa…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/unit/sec-m1-rate-limit-log-family.test.ts > SF-120: rate-limit log lines carry the family and counts only > a 120-request burst on an IP-keyed (login) bucket: 5 allowed, 115 refusals logged by family, no piece of the key
+AssertionError: no 8-character piece of the address/IP, the key, or their digests: expected 6 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 6
+
+ ❯ tests/unit/sec-m1-rate-limit-log-family.test.ts:104:98
+    102|       const joined = lines.join("\n");
+    103|       const leaked = forbiddenPieces(b.secret, b.bucket).filter((p) =>…
+    104|       expect(leaked.length, "no 8-character piece of the address/IP, t…
+       |                                                                                                  ^
+    105|
+    106|       // Positive control: the refusals are still visible, with the fa…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 3 passed (5)
+   Start at  21:20:26
+   Duration  467ms (transform 79ms, setup 60ms, import 66ms, tests 70ms, environment 0ms)
+
+M1a exit=1

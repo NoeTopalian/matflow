@@ -1,0 +1,49 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-m1-retention-cron-gate.test.ts (14 tests | 7 failed) 48ms
+     × gate "false" is not exactly "true" → 503, zero deletes 13ms
+     × gate "TRUE" is not exactly "true" → 503, zero deletes 2ms
+     × gate "True" is not exactly "true" → 503, zero deletes 2ms
+     × gate "1" is not exactly "true" → 503, zero deletes 2ms
+     × gate "yes" is not exactly "true" → 503, zero deletes 2ms
+     × gate " true" is not exactly "true" → 503, zero deletes 1ms
+     × gate "true " is not exactly "true" → 503, zero deletes 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "false" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "TRUE" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "True" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "1" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "yes" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate " true" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "true " is not exactly "true" → 503, zero deletes
+AssertionError: expected 200 to be 503 // Object.is equality
+
+- Expected
++ Received
+
+- 503
++ 200
+
+ ❯ tests/unit/sec-m1-retention-cron-gate.test.ts:118:26
+    116|       process.env.RETENTION_CRON_ENABLED = v;
+    117|       const res = await GET(req());
+    118|       expect(res.status).toBe(503);
+       |                          ^
+    119|       expect(writes()).toBe(0);
+    120|       expect(m.purge).not.toHaveBeenCalled();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  7 failed | 7 passed (14)
+   Start at  21:23:23
+   Duration  970ms (transform 270ms, setup 74ms, import 650ms, tests 48ms, environment 0ms)
+
+M2a exit=1

@@ -247,6 +247,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   process.env.CRON_SECRET = SECRET;
+  // Lane M1 (10 Oct 2026): the live sweep runs only with RETENTION_CRON_ENABLED exactly "true" (default OFF;
+  // tests/unit/sec-m1-retention-cron-gate.test.ts). These tests pin the sweep itself, so the gate is open.
+  process.env.RETENTION_CRON_ENABLED = "true";
   process.env.ANTHROPIC_API_KEY = "test-not-a-real-key";
   tenants = [];
   installTenantTable();

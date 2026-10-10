@@ -1,0 +1,37 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-m1-retention-cron-gate.test.ts (14 tests | 1 failed) 32ms
+     × gate off + ?dryRun=1 → counts, zero deletes, and the response says the gate is off 8ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate off + ?dryRun=1 → counts, zero deletes, and the response says the gate is off
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/unit/sec-m1-retention-cron-gate.test.ts:133:25
+    131|       results: Array<{ rule: string; deleted?: number; details?: Recor…
+    132|     };
+    133|     expect(body.dryRun).toBe(true);
+       |                         ^
+    134|     expect(body.retentionEnabled).toBe(false);
+    135|     expect(body.note).toMatch(/retention cron disabled/i);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 13 passed (14)
+   Start at  21:23:30
+   Duration  980ms (transform 234ms, setup 74ms, import 553ms, tests 32ms, environment 0ms)
+
+M2c exit=1

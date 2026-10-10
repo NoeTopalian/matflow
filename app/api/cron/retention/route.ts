@@ -127,7 +127,40 @@ type BatchDeletable = {
 };
 type PickModel = (tx: Prisma.TransactionClient) => BatchDeletable;
 
+/**
+ * RETENTION_CRON_ENABLED — default OFF (security campaign iteration 2, lane M1,
+ * 10 Oct 2026; authorised by Noe the same day).
+ *
+ * The first live run of this sweep is a one-way door, and the scheduler entry
+ * in vercel.json would take it the moment a CRON_SECRET is set. So the live
+ * sweep runs only when this variable is EXACTLY the string "true"; anything
+ * else (unset, "1", "TRUE", " true") answers 503 `retention cron disabled`
+ * after the bearer check and BEFORE any work — no reconcile, no count, no
+ * delete. `?dryRun=1` is still allowed with the gate off: counts only, zero
+ * deletes, and the response says the gate is off.
+ */
+function retentionEnabled(): boolean {
+  return process.env.RETENTION_CRON_ENABLED === "true";
+}
+
+/**
+ * One line per call: the gate, the mode and the status. Never the payload
+ * (counts name what a club holds; reconcile carries Stripe ids).
+ */
 export async function GET(req: Request) {
+  const gate = retentionEnabled() ? "on" : "off";
+  const dryRun = new URL(req.url).searchParams.get("dryRun") === "1" ? 1 : 0;
+  let status: number | "threw" = "threw";
+  try {
+    const res = await handle(req);
+    status = res.status;
+    return res;
+  } finally {
+    console.info(`[cron/retention] call gate=${gate} dryRun=${dryRun} status=${status}`);
+  }
+}
+
+async function handle(req: Request) {
   // Vercel cron sends Authorization: Bearer ${CRON_SECRET}
   const authHeader = req.headers.get("authorization");
   const expected = process.env.CRON_SECRET;
@@ -150,6 +183,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // The gate (see retentionEnabled): before any work, after the bearer — an
+  // unauthenticated caller learns nothing about the configuration.
+  const enabled = retentionEnabled();
+  const dryRunRequested = new URL(req.url).searchParams.get("dryRun") === "1";
+  if (!enabled && !dryRunRequested) {
+    return NextResponse.json({ error: "retention cron disabled" }, { status: 503 });
+  }
+
   const startedAt = Date.now();
   const elapsed = () => Date.now() - startedAt;
   const now = new Date();
@@ -161,7 +202,7 @@ export async function GET(req: Request) {
   // soft-delete grace in one pass — so the counts get read by a human before
   // the scheduler is allowed to run it for real. Reconcile still runs (it is
   // read-only). The bearer is still required: counts name tenants.
-  const dryRun = new URL(req.url).searchParams.get("dryRun") === "1";
+  const dryRun = dryRunRequested;
   const sweep = (pick: PickModel, where: object) =>
     dryRun ? countOnly(pick, where) : deleteInBatches(pick, where, elapsed);
 
@@ -289,6 +330,10 @@ export async function GET(req: Request) {
     {
       ok,
       dryRun,
+      retentionEnabled: enabled,
+      ...(enabled
+        ? {}
+        : { note: "retention cron disabled (RETENTION_CRON_ENABLED is not \"true\"): dry run only, nothing deleted" }),
       ranAt: now.toISOString(),
       elapsedMs: elapsed(),
       reconcile,

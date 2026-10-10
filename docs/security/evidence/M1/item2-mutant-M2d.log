@@ -1,0 +1,37 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-m1-retention-cron-gate.test.ts (14 tests | 1 failed) 25ms
+     × one log line per call, carrying the gate, the mode and the status — never the payload 7ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > one log line per call, carrying the gate, the mode and the status — never the payload
+AssertionError: expected [ …(2) ] to have a length of 4 but got 2
+
+- Expected
++ Received
+
+- 4
++ 2
+
+ ❯ tests/unit/sec-m1-retention-cron-gate.test.ts:182:19
+    180|     await GET(req());
+    181|     const calls = callLines();
+    182|     expect(calls).toHaveLength(4);
+       |                   ^
+    183|     expect(calls[0]).toMatch(/gate=off dryRun=0 status=503/);
+    184|     expect(calls[1]).toMatch(/gate=off dryRun=1 status=200/);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 13 passed (14)
+   Start at  21:23:34
+   Duration  933ms (transform 234ms, setup 65ms, import 563ms, tests 25ms, environment 0ms)
+
+M2d exit=1

@@ -1,0 +1,12 @@
+node v24.21.0
+HEAD d1de652 (lead docs-only commits since 9e9a4f9; no code paths changed)
+tsc exit=0
+lint exit=0
+unit exit=0
+ Test Files  15 passed (15)
+      Tests  252 passed (252)
+db owner exit=0
+      Tests  6 passed (6)
+db restricted exit=0
+      Tests  6 passed (6)
+DONE

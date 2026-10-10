@@ -268,16 +268,17 @@ export async function checkRateLimit(
       };
     }
     // The store-failure line stands for any refusal the memory store gives
-    // here; the per-call warning below is for database answers (it carries the
-    // bucket, so it would log the key).
+    // here; the per-call warning below is for database answers only.
     logStoreFailure(cls, bucket, windowMs, reason, "memory-fallback");
     return checkMemoryRateLimit(bucket, max, windowMs);
   }
   // Surface every rate-limit hit so they show up in Vercel logs + Sentry.
   // Without this, attacks against /api/auth/* or /api/apply are silent.
+  // SF-120 (lane M1, 10 Oct 2026): the FAMILY only, never the bucket — the key
+  // after the family is an e-mail address, an IP, a user id or a token hash.
   if (!result.allowed) {
     console.warn(
-      `[rate-limit] bucket=${bucket} max=${max} windowMs=${windowMs} ` +
+      `[rate-limit] over-limit family=${bucketFamily(bucket)} max=${max} windowMs=${windowMs} ` +
         `retryAfter=${result.retryAfterSeconds}s`,
     );
   }
