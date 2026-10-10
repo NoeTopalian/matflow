@@ -1,0 +1,13 @@
+{
+ "R8-M3a": {"file": "scripts/readiness/demo-accounts-rotate.mjs", "edits": [
+   {"find": "WHERE \"tenantId\" = $1 AND right(lower(email)", "replace": "WHERE ($1::text IS NOT NULL) AND right(lower(email)"},
+   {"find": "WHERE id = $2 AND \"tenantId\" = $3 AND right(", "replace": "WHERE id = $2 AND ($3::text IS NOT NULL) AND right("}]},
+ "R8-M3b": {"file": "scripts/readiness/demo-accounts-rotate.mjs", "edits": [
+   {"find": "\"passwordHash\" = $1, \"sessionVersion\" = \"sessionVersion\" + 1, ", "replace": "\"passwordHash\" = $1, "},
+   {"find": "if (c.sessionVersion !== was.sessionVersion + 1) throw", "replace": "if (false) throw"}]},
+ "R8-M3c": {"file": "scripts/readiness/demo-accounts-rotate.mjs", "edits": [
+   {"find": "if (after.get(id) !== h) throw new Refused(\"ABORTED: a User row outside the listed ids changed\");", "replace": "void 0;"},
+   {"find": "    const xid = (await client.query(", "replace": "    await client.query(`UPDATE \"User\" SET \"updatedAt\" = now() WHERE \"tenantId\" = $1 AND right(lower(email), 13) <> '@demo.matflow'`, [t.id]);\n    await client.query(`UPDATE \"Member\" SET \"updatedAt\" = now() WHERE \"tenantId\" = $1`, [t.id]);\n    const xid = (await client.query("}]},
+ "R8-M3d": {"file": "scripts/readiness/demo-accounts-rotate.mjs", "edits": [
+   {"find": "local=${maskEmail(c.email)}", "replace": "local=${c.email}"}]}
+}

@@ -1,0 +1,19 @@
+Review R8 — commands, runtime, exit codes (10 Oct 2026, UTC). Node v24.21.0 (<scratchpad>/security/node24) on every run.
+Review SHA 1f16afd (code at ed567c4). Two detached scratch worktrees: wt (gates + sweep, clean tree), wtm (probes + mutants).
+node_modules robocopied (exit 1 = files copied), .env.test copied. TEST (ep-hidden-salad) only via R8 copies of the guarded
+runners (run-owner*.sh = neondb_owner; run-restricted*.sh = matflow_app, RLS_ENFORCED=1). Fixture prefix secr8-.
+
+Item 1 SF-120
+  vitest sec-m1-rate-limit-log-family + zz-r8-sf120-probe (unmutated)            exit 0, 13/13 (item1-probe-green.jsonl)
+  mutants R8-MA key after family / R8-MB sha256 digest / R8-MC bucket on store-failure path / R8-MC2 key on store-failure path
+    without the literal ${bucket} token: all exit 1 (mutants-summary.txt); restored, sha256 verified each time
+  node callsites.mjs: 82 checkRateLimit call sites, every one with a literal family (1 hit = the declaration itself)
+Item 2 SF-127
+  vitest sec-m1-retention-cron-gate + retention-cron + zz-r8-retention-gate-probe (unmutated)   exit 0, 63/63
+  run-owner-m.sh / run-restricted-m.sh zz-r8-retention-db                         exit 0 both (1 passed, 1 skipped = D2 NOT RUN)
+  mutants R8-M2a/b/c/d: all exit 1 (unit only; never against TEST — M2c would run a live sweep)
+Item 3 SF-109 tool
+  vitest zz-r8-rotate-guard-probe + sec-m1-demo-rotate-guard                       exit 0, 30/30 (item3-guard-probe.jsonl)
+  run-owner-m.sh / run-restricted-m.sh zz-r8-rotate-db                             exit 0, 3/3 each, twice (item3-db-*.jsonl)
+  mutants (owner): R8-M3a widened scope (T1 only: dry run, no writes possible) exit 1; R8-M3b exit 1; R8-M3c exit 1; R8-M3d exit 1
+Item 4 gates on wt (clean 1f16afd): gates.sh.txt -> item4-gates.txt; sweep.sh.txt -> item4-sweep.txt (+ sec-c4 re-runs)

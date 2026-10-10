@@ -1,0 +1,41 @@
+// R8: classify every checkRateLimit( call site outside tests/docs: does the bucket start with a literal family?
+import fs from "node:fs";
+import path from "node:path";
+const root = process.argv[2];
+const out = [];
+function walk(d) {
+  for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    if (["node_modules", ".next", "tests", "docs", ".git"].includes(e.name)) continue;
+    const p = path.join(d, e.name);
+    if (e.isDirectory()) walk(p);
+    else if (/\.(ts|tsx|mjs)$/.test(e.name)) scan(p);
+  }
+}
+function scan(p) {
+  const s = fs.readFileSync(p, "utf8");
+  const re = /checkRateLimit\(\s*([`'"A-Za-z_])/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const rest = s.slice(m.index + m[0].length - 1, m.index + m[0].length + 200);
+    let kind;
+    let family = null;
+    if (rest[0] === "`") {
+      const lit = rest.slice(1).split("${")[0];
+      const i = lit.indexOf(":");
+      kind = i > 0 ? "template-literal-prefix" : "TEMPLATE-NO-LITERAL-FAMILY";
+      if (i > 0) family = lit.slice(0, i);
+    } else if (/^[A-Za-z_]/.test(rest)) {
+      const id = rest.match(/^[A-Za-z_][A-Za-z0-9_]*/)[0];
+      const def = new RegExp(id + "\\s*=\\s*`([^`$]*)").exec(s);
+      const lit = def ? def[1] : "";
+      const i = lit.indexOf(":");
+      kind = def && i > 0 ? `variable:${id}` : `VARIABLE-UNRESOLVED:${id}`;
+      if (i > 0) family = lit.slice(0, i);
+    } else kind = "OTHER";
+    out.push({ file: path.relative(root, p).split(path.sep).join("/"), kind, family });
+  }
+}
+walk(root);
+const bad = out.filter((o) => !o.family);
+console.log(JSON.stringify({ callSites: out.length, families: [...new Set(out.map((o) => o.family))].length, bad }));
+fs.writeFileSync(process.argv[3], out.map((o) => JSON.stringify(o)).join("\n") + "\n");

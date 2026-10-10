@@ -1,0 +1,3 @@
+{"cell":"setup","role":"owner","stamp":"secr8-mv2vr2iach3","usersInDb":607,"membersInDb":3950,"demoUsersInDbBeforeFixtures":4}
+{"cell":"T1","role":"owner","exit":0,"would4":false,"listed":4,"listedOthers":1,"mineChanged":0,"dbUserChangedByOthers":0,"dbMemberChangedByOthers":0,"audits":0,"leak":{"fullAddress":0,"wholeLocalPart":0,"local6":0,"bcrypt":false,"storedHash":0,"longToken":false},"outputLines":23}
+{"cell":"teardown","role":"owner","left":{"tenants":0,"users":0,"members":0,"audits":0}}

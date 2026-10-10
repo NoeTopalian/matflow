@@ -1,0 +1,52 @@
+{"cell":"P1 <PROD>.eu-west-2.aws.neon.tech","outcome":"REFUSED","msg":"REFUSED: host does not contain ep-hidden-salad-abom7cg4"}
+{"cell":"P1 <PROD>-pooler.eu-west-2.aws.neon.tech","outcome":"REFUSED","msg":"REFUSED: host does not contain ep-hidden-salad-abom7cg4"}
+{"cell":"P1 <PROD-UC>-POOLER.EU-WEST-2.AWS.NEON.TECH","outcome":"REFUSED","msg":"REFUSED: host does not contain ep-hidden-salad-abom7cg4"}
+{"cell":"P2 upper-case TEST host","outcome":"ACCEPTED","value":"ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech"}
+{"cell":"P3 ep-hidden-salad-xxxxxxxx.eu-west-2.aws.neon.tech","outcome":"REFUSED","msg":"REFUSED: host does not contain ep-hidden-salad-abom7cg4"}
+{"cell":"P3 ep-hidden-salad-abom7cg5.eu-west-2.aws.neon.tech","outcome":"REFUSED","msg":"REFUSED: host does not contain ep-hidden-salad-abom7cg4"}
+{"cell":"P3 ep-hidden-salad-abom7cg4x.eu-west-2.aws.neon.tech","outcome":"REFUSED","msg":"REFUSED: host is not the allowlisted endpoint for expectHost"}
+{"cell":"P3 ep-hidden-salad-abom7cg4.evil.example","outcome":"REFUSED","msg":"REFUSED: host is not the allowlisted endpoint for expectHost"}
+{"cell":"P3 ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech.invalid","outcome":"REFUSED","msg":"REFUSED: host is not the allowlisted endpoint for expectHost"}
+{"cell":"P3 ep-hidden-salad-abom7cg4-pooler.us-east-2.aws.neon.tech","outcome":"REFUSED","msg":"REFUSED: host is not the allowlisted endpoint for expectHost"}
+{"cell":"P3 xxep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech","outcome":"REFUSED","msg":"REFUSED: host is not the allowlisted endpoint for expectHost"}
+{"cell":"P4 &options=endpoint%3D<PROD>","outcome":"REFUSED","msg":"REFUSED: connection string carries a options= parameter"}
+{"cell":"P4 &options=endpoint=<PROD>","outcome":"REFUSED","msg":"REFUSED: connection string carries a options= parameter"}
+{"cell":"P4 &host=<PROD>.eu-west-2.aws.neon.tech","outcome":"REFUSED","msg":"REFUSED: connection string carries a host= parameter"}
+{"cell":"P4 &hostaddr=10.0.0.1","outcome":"REFUSED","msg":"REFUSED: connection string carries a hostaddr= parameter"}
+{"cell":"P4 &endpoint=<PROD>","outcome":"REFUSED","msg":"REFUSED: connection string carries a endpoint= parameter"}
+{"cell":"P4 &OPTIONS=endpoint%3D<PROD>","outcome":"ACCEPTED","value":"ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech"}
+{"cell":"P4 note","text":"upper-case OPTIONS key: pg-connection-string keys are case-sensitive, so pg ignores it too"}
+{"cell":"P5 double-@ userinfo","outcome":"REFUSED","msg":"REFUSED: host does not contain ep-hidden-salad-abom7cg4"}
+{"cell":"P5 endpoint= in the password","outcome":"ACCEPTED","value":"ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech"}
+{"cell":"P5 clientConfig","host":"ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech","ssl":{"rejectUnauthorized":true},"passwordCarriesEndpoint":true,"hasOptions":false}
+{"cell":"P6 --allow-production","outcome":"REFUSED","msg":"REFUSED: unknown option --allow-production (this tool has no production mode)"}
+{"cell":"P6 --confirm --allow-production","outcome":"REFUSED","msg":"REFUSED: unknown option --allow-production (this tool has no production mode)"}
+{"cell":"P6 --env-file .env","outcome":"REFUSED","msg":"REFUSED: .env holds the production credentials; use .env.test"}
+{"cell":"P6 --env-file sub/.env","outcome":"REFUSED","msg":"REFUSED: .env holds the production credentials; use .env.test"}
+{"cell":"P6 --env-file C:\\x\\.env","outcome":"REFUSED","msg":"REFUSED: .env holds the production credentials; use .env.test"}
+{"cell":"P6 --var DATABASE_URL","outcome":"REFUSED","msg":"REFUSED: --var must be one of TEST_DATABASE_URL, RESTRICTED_DATABASE_URL"}
+{"cell":"P6 --var test_database_url","outcome":"REFUSED","msg":"REFUSED: --var must be one of TEST_DATABASE_URL, RESTRICTED_DATABASE_URL"}
+{"cell":"P6 --production","outcome":"REFUSED","msg":"REFUSED: unknown option --production (this tool has no production mode)"}
+{"cell":"P6 --slug Prod","outcome":"REFUSED","msg":"REFUSED: --slug <tenant-slug> is required (lower-case letters, digits, hyphens)"}
+{"cell":"P6-alias \".ENV\"","outcome":"ACCEPTED","value":"obj"}
+{"cell":"P6-alias \".env.\"","outcome":"ACCEPTED","value":"obj"}
+{"cell":"P6-alias \".env \"","outcome":"ACCEPTED","value":"obj"}
+{"cell":"P6-alias \"./.Env\"","outcome":"ACCEPTED","value":"obj"}
+{"cell":"P7 PGOPTIONS","outcome":"REFUSED","msg":"REFUSED: libpq environment variable(s) set: PGOPTIONS"}
+{"cell":"P7 PGHOST","outcome":"REFUSED","msg":"REFUSED: libpq environment variable(s) set: PGHOST"}
+{"cell":"P7 pgoptions (lower-case)","outcome":"ACCEPTED","value":"obj"}
+{"cell":"P7 PgHost (mixed)","outcome":"ACCEPTED","value":"obj"}
+{"cell":"S1 production id (.invalid)","exit":2,"out":"REFUSED: host does not contain ep-hidden-salad-abom7cg4"}
+{"cell":"S1b production id, --confirm","exit":2,"out":"REFUSED: host does not contain ep-hidden-salad-abom7cg4"}
+{"cell":"S2 upper-cased TEST host (.invalid)","exit":2,"out":"REFUSED: host is not the allowlisted endpoint for expectHost"}
+{"cell":"S3 look-alike ep-hidden-salad-xxxx (.invalid)","exit":2,"out":"REFUSED: host does not contain ep-hidden-salad-abom7cg4"}
+{"cell":"S4 ?options=endpoint= (.invalid)","exit":2,"out":"REFUSED: connection string carries a options= parameter"}
+{"cell":"S5 PGOPTIONS set","exit":2,"out":"REFUSED: libpq environment variable(s) set: PGOPTIONS"}
+{"cell":"S5b PGHOST set","exit":2,"out":"REFUSED: libpq environment variable(s) set: PGHOST"}
+{"cell":"S5c pgoptions (lower-case) set","exit":2,"out":"REFUSED: PGOPTIONS is set in the environment"}
+{"cell":"S6 --allow-production","exit":2,"out":"REFUSED: unknown option --allow-production (this tool has no production mode)"}
+{"cell":"S7 --env-file <dir>/.env","exit":2,"out":"REFUSED: .env holds the production credentials; use .env.test"}
+{"cell":"S7b --env-file <dir>/.ENV (file on disk is .env)","exit":2,"out":"REFUSED: host does not contain ep-hidden-salad-abom7cg4"}
+{"cell":"S7c --env-file <dir>/.env. (file on disk is .env)","exit":1,"out":"ABORTED: Error ENOENT; rolled back"}
+{"cell":"S8 --var DATABASE_URL","exit":2,"out":"REFUSED: --var must be one of TEST_DATABASE_URL, RESTRICTED_DATABASE_URL"}
+{"cell":"S9 default env file (cwd has none)","exit":1,"out":"ABORTED: Error ENOENT; rolled back"}

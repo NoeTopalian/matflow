@@ -1,0 +1,132 @@
+/**
+ * Review R8 probe (SF-127): the REAL retention route handler (real next/server, real lib/rate-limit, real
+ * lib/prisma-tenant, real tenant-purge and Stripe reconcile wrapped in pass-through spies) over a RECORDING Prisma
+ * client: every property access on `prisma` at any depth and every call is recorded. Only the RateLimitHit store
+ * (reached solely on a failed bearer) answers; everything else rejects, so any unexpected work also shows as a call.
+ */
+import fs from "node:fs";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+const rec = vi.hoisted(() => {
+  const log: string[] = [];
+  function make(pathParts: string[]): unknown {
+    const fn = function () {};
+    return new Proxy(fn, {
+      get(_t, prop) {
+        if (prop === "then" || typeof prop === "symbol") return undefined;
+        const p = [...pathParts, String(prop)];
+        log.push(`get ${p.join(".")}`);
+        return make(p);
+      },
+      apply(_t, _this, args) {
+        const p = pathParts.join(".");
+        log.push(`call ${p}`);
+        if (p === "rateLimitHit.groupBy") return Promise.resolve([]);
+        if (p === "$executeRaw" || p === "$queryRaw") return { tagged: p, args: args.length };
+        if (p === "$transaction") return Promise.resolve([1, [{ count: 0, inserted: 1, oldestAgeMs: 0 }]]);
+        return Promise.reject(Object.assign(new Error(`secr8 recorder: unexpected ${p}`), { code: "SECR8" }));
+      },
+    });
+  }
+  return { log, root: make([]) };
+});
+
+vi.mock("@/lib/prisma", () => ({ prisma: rec.root, default: rec.root }));
+const spies = vi.hoisted(() => ({ reconcile: 0, purge: 0, del: 0 }));
+vi.mock("@/lib/stripe/reconcile", async (orig) => {
+  const real = (await orig()) as Record<string, unknown>;
+  return { ...real, runStripeReconciliation: async (...a: unknown[]) => { spies.reconcile++; return (real.runStripeReconciliation as (...x: unknown[]) => unknown)(...a); } };
+});
+vi.mock("@/lib/tenant-purge", async (orig) => {
+  const real = (await orig()) as Record<string, unknown>;
+  return { ...real, purgeSoftDeletedTenants: async (...a: unknown[]) => { spies.purge++; return (real.purgeSoftDeletedTenants as (...x: unknown[]) => unknown)(...a); } };
+});
+vi.mock("@vercel/blob", () => ({ del: async () => { spies.del++; } }));
+
+import { GET } from "@/app/api/cron/retention/route";
+
+const SECRET = "secr8-cron-bearer-synthetic-0000000000";
+const out: Array<Record<string, unknown>> = [];
+let lines: string[] = [];
+
+function req(query = "", auth: string | null = `Bearer ${SECRET}`) {
+  return new Request(`https://matflow.test/api/cron/retention${query}`, auth ? { headers: { authorization: auth } } : {});
+}
+
+beforeEach(() => {
+  rec.log.length = 0;
+  spies.reconcile = spies.purge = spies.del = 0;
+  lines = [];
+  process.env.CRON_SECRET = SECRET;
+  delete process.env.RETENTION_CRON_ENABLED;
+  for (const k of ["log", "info", "warn", "error"] as const) {
+    vi.spyOn(console, k).mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(" ")); });
+  }
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  delete process.env.RETENTION_CRON_ENABLED;
+  if (process.env.R8_OUT) fs.writeFileSync(process.env.R8_OUT, out.map((o) => JSON.stringify(o)).join("\n") + "\n");
+});
+
+async function run(label: string, gate: string | undefined, r: Request) {
+  if (gate === undefined) delete process.env.RETENTION_CRON_ENABLED;
+  else process.env.RETENTION_CRON_ENABLED = gate;
+  const res = await GET(r);
+  const body = await res.json();
+  const row = { cell: label, gate: gate === undefined ? "<unset>" : JSON.stringify(gate), status: res.status, body, prismaTouches: rec.log.length, touched: [...new Set(rec.log)].slice(0, 12), reconcile: spies.reconcile, purge: spies.purge, del: spies.del, callLines: lines.filter((l) => l.startsWith("[cron/retention] call ")) };
+  out.push(row);
+  return row;
+}
+
+describe("R8 SF-127 probe: real handler, recording client", () => {
+  it("R8-G1 gate unset + real bearer → 503 'retention cron disabled', ZERO prisma touches, no reconcile/purge/blob", async () => {
+    const r = await run("G1", undefined, req());
+    expect(r.status).toBe(503);
+    expect(r.body).toEqual({ error: "retention cron disabled" });
+    expect(r.prismaTouches).toBe(0);
+    expect([r.reconcile, r.purge, r.del]).toEqual([0, 0, 0]);
+    expect(r.callLines).toEqual(["[cron/retention] call gate=off dryRun=0 status=503"]);
+  });
+
+  for (const v of ["", "false", "TRUE", "1", " true", "true\n", "true ", "True", "yes", "on"]) {
+    it(`R8-G2 gate ${JSON.stringify(v)} → 503, zero prisma touches`, async () => {
+      const r = await run(`G2 ${JSON.stringify(v)}`, v, req());
+      expect(r.status).toBe(503);
+      expect(r.body).toEqual({ error: "retention cron disabled" });
+      expect(r.prismaTouches).toBe(0);
+      expect([r.reconcile, r.purge, r.del]).toEqual([0, 0, 0]);
+    });
+  }
+
+  it("R8-G3 ?dryRun=true / ?dryrun=1 / ?dryRun=1&dryRun=0 with gate off are NOT dry runs → 503, zero touches", async () => {
+    for (const q of ["?dryRun=true", "?dryrun=1", "?dryRun=0&dryRun=1"]) {
+      rec.log.length = 0;
+      const r = await run(`G3 ${q}`, undefined, req(q));
+      expect(r.status, q).toBe(503);
+      expect(r.prismaTouches, q).toBe(0);
+    }
+  });
+
+  it("R8-G4 no bearer → 401, wrong bearer → 401: only the RateLimitHit brake is touched; gate never consulted for work", async () => {
+    const a = await run("G4 none", undefined, req("", null));
+    expect(a.status).toBe(401);
+    const touchedModels = new Set(rec.log.filter((l) => l.startsWith("call ")).map((l) => l.slice(5).split(".")[0]));
+    expect([...touchedModels].every((m) => ["rateLimitHit", "$transaction", "$executeRaw", "$queryRaw"].includes(m))).toBe(true);
+    rec.log.length = 0;
+    const b = await run("G4 wrong", "true", req("?dryRun=1", "Bearer secr8-wrong"));
+    expect(b.status).toBe(401);
+    expect([b.reconcile, b.purge, b.del]).toEqual([0, 0, 0]);
+  });
+
+  it("R8-G5 CRON_SECRET unset → 503 'CRON_SECRET not configured', zero touches (gate on or off)", async () => {
+    delete process.env.CRON_SECRET;
+    for (const g of [undefined, "true"]) {
+      rec.log.length = 0;
+      const r = await run(`G5 gate=${g}`, g, req());
+      expect(r.status).toBe(503);
+      expect(r.body).toEqual({ error: "CRON_SECRET not configured" });
+      expect(r.prismaTouches).toBe(0);
+    }
+  });
+});

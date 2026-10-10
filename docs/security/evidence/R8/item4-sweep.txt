@@ -1,0 +1,16 @@
+sha=1f16afd0a433ae7997230b36377000ecf468c1ef start=2026-10-10T21:04:15Z
+sec-m1-demo-rotate-db owner exit=0 Tests  6 passed (6) 21:04:44
+sec-m1-demo-rotate-db restricted exit=0 Tests  6 passed (6) 21:05:10
+sec-c3-rate-limit-atomic-db owner exit=0 Tests  6 passed (6) 21:05:34
+sec-c3-rate-limit-atomic-db restricted exit=0 Tests  6 passed (6) 21:05:59
+sec-c4-rate-limit-saturation-db owner exit=1 Tests  2 failed | 3 passed (5) 21:06:29
+sec-c4-rate-limit-saturation-db restricted exit=1 Tests  1 failed | 4 passed (5) 21:06:55
+sec-a4-lockout-burst-db owner exit=0 Tests  5 passed (5) 21:08:19
+sec-a4-lockout-burst-db restricted exit=0 Tests  5 passed (5) 21:09:33
+attendance-import-engine owner exit=0 Tests  19 passed (19) 21:13:10
+attendance-import-engine restricted exit=0 Tests  19 passed (19) 21:17:01
+done 2026-10-10T21:17:01Z
+c4 owner rerun1 exit=0 Tests  5 passed (5) 21:17:38
+c4 owner rerun2 exit=0 Tests  5 passed (5) 21:18:00
+c4 restricted rerun1 exit=0 Tests  5 passed (5) 21:18:22
+c4 restricted rerun2 exit=0 Tests  5 passed (5) 21:18:43

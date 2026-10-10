@@ -1,0 +1,35 @@
+// R8 mutant helper: node mut.mjs apply|restore <spec.json> <id>
+// apply: checks the file's sha256 equals the recorded original, applies every {find, replace} edit exactly once
+// (each find must occur exactly once), prints the new sha256. restore: writes the original bytes back from the backup
+// and verifies the sha256.
+import fs from "node:fs";
+import crypto from "node:crypto";
+import path from "node:path";
+
+const [, , cmd, specPath, id] = process.argv;
+const WT = "<scratchpad>/security/R8/wtm";
+const spec = JSON.parse(fs.readFileSync(specPath, "utf8"))[id];
+if (!spec) { console.error(`no mutant ${id}`); process.exit(2); }
+const file = path.join(WT, spec.file);
+const backup = `${specPath}.${id}.orig`;
+const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
+
+if (cmd === "apply") {
+  const orig = fs.readFileSync(file);
+  fs.writeFileSync(backup, orig);
+  let text = orig.toString("utf8");
+  for (const e of spec.edits) {
+    const n = text.split(e.find).length - 1;
+    if (n !== 1) { console.error(`${id}: find occurs ${n} times: ${e.find.slice(0, 80)}`); process.exit(3); }
+    text = text.replace(e.find, () => e.replace);
+  }
+  fs.writeFileSync(file, text);
+  console.log(`${id} applied ${spec.file} orig=${sha(orig).slice(0, 16)} mutated=${sha(Buffer.from(text)).slice(0, 16)}`);
+} else if (cmd === "restore") {
+  const orig = fs.readFileSync(backup);
+  fs.writeFileSync(file, orig);
+  const now = fs.readFileSync(file);
+  if (sha(now) !== sha(orig)) { console.error(`${id}: restore mismatch`); process.exit(4); }
+  fs.unlinkSync(backup);
+  console.log(`${id} restored ${spec.file} sha=${sha(now).slice(0, 16)}`);
+} else { console.error("usage"); process.exit(2); }

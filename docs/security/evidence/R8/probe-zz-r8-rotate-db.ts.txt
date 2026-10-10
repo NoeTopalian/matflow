@@ -1,0 +1,233 @@
+/**
+ * Review R8 probe (SF-109 tool) on the Neon TEST branch, both roles. Own fixtures (prefix secr8-):
+ *   tenant A: four @demo.matflow staff (owner/manager/coach/admin), one non-demo staff, one MEMBER with a
+ *             @demo.matflow address; tenant B: one @demo.matflow staff.
+ * The reviewer's own evidence, not the tool's: md5 of EVERY User row and EVERY Member row in the database (id -> md5,
+ * xmin) before and after; any row that differs must carry the tool's xid only if it is one of the four, and a row that
+ * differs under ANOTHER xid is reported as concurrent activity (other sessions on the shared branch), never ignored.
+ * Every --confirm in this file is bound with --ids (a mutant that widens the scope therefore aborts, never writes).
+ */
+import fs from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+
+vi.mock("@sentry/nextjs", () => ({ captureException: () => {}, captureMessage: () => {} }));
+
+import { withRlsBypass } from "@/lib/prisma-tenant";
+import { checkSessionVersion } from "@/lib/session-revocation";
+
+const HAS_DB = !!process.env.DATABASE_URL;
+const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
+const ROLE_VAR = ROLE === "restricted" ? "RESTRICTED_DATABASE_URL" : "TEST_DATABASE_URL";
+const STAMP = `secr8-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+const SCRIPT = path.join(process.cwd(), "scripts/readiness/demo-accounts-rotate.mjs");
+const ACTION = "admin.demo_account.rotated";
+const out: Array<Record<string, unknown>> = [];
+const emit = () => { if (process.env.R8_OUT) fs.writeFileSync(process.env.R8_OUT, out.map((o) => JSON.stringify(o)).join("\n") + "\n"); };
+
+type Seed = { id: string; email: string; kind: "demo" | "nondemo" | "otherTenant" | "member"; v0: number };
+const seeds: Seed[] = [];
+const ids = { A: "", B: "", slugA: `${STAMP}-a`, slugB: `${STAMP}-b` };
+const demo = () => seeds.filter((s) => s.kind === "demo");
+const others = () => seeds.filter((s) => s.kind !== "demo");
+
+type Snap = Map<string, { h: string; xmin: string }>;
+async function snap(table: "User" | "Member"): Promise<Snap> {
+  const rows = await withRlsBypass((tx) =>
+    table === "User"
+      ? tx.$queryRaw<Array<{ id: string; h: string; xmin: string }>>`SELECT id, md5(u::text) AS h, xmin::text AS xmin FROM "User" u`
+      : tx.$queryRaw<Array<{ id: string; h: string; xmin: string }>>`SELECT id, md5(m::text) AS h, xmin::text AS xmin FROM "Member" m`,
+    { timeout: 60_000 },
+  );
+  return new Map(rows.map((r) => [r.id, { h: r.h, xmin: r.xmin }]));
+}
+function diff(a: Snap, b: Snap) {
+  const changed: string[] = [];
+  const removed: string[] = [];
+  for (const [id, v] of a) { const w = b.get(id); if (!w) removed.push(id); else if (w.h !== v.h) changed.push(id); }
+  const added = [...b.keys()].filter((id) => !a.has(id));
+  return { changed, removed, added };
+}
+async function mine() {
+  return withRlsBypass((tx) => tx.$queryRaw<Array<{ id: string; ph: string | null; sv: number }>>`
+    SELECT id, "passwordHash" AS ph, "sessionVersion" AS sv FROM "User" WHERE "tenantId" IN (${ids.A}, ${ids.B})`);
+}
+async function audits() {
+  return withRlsBypass((tx) => tx.auditLog.findMany({ where: { tenantId: { in: [ids.A, ids.B] }, action: ACTION }, select: { userId: true, tenantId: true, metadata: true } }));
+}
+function tool(args: string[]) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG[A-Z]/i.test(k))) as unknown as NodeJS.ProcessEnv;
+  const r = spawnSync(process.execPath, [SCRIPT, "--slug", ids.slugA, "--var", ROLE_VAR, ...args], { env, encoding: "utf8", timeout: 180_000 });
+  return { status: r.status, out: `${r.stdout}\n${r.stderr}` };
+}
+/** What the output reveals about each seeded address (reported, and the hard rules asserted). */
+function leakage(o: string, hashes: string[]) {
+  const low = o.toLowerCase();
+  const r = { fullAddress: 0, wholeLocalPart: 0, local6: 0, bcrypt: /\$2[aby]\$/.test(o), storedHash: hashes.filter((x) => x && o.includes(x)).length, longToken: /[A-Za-z0-9_-]{32,}/.test(o) };
+  for (const s of seeds) {
+    const e = s.email.toLowerCase();
+    const local = e.split("@")[0];
+    if (low.includes(e)) r.fullAddress++;
+    if (low.includes(local)) r.wholeLocalPart++;
+    // The stamp is also the tenant slug the tool prints by design; windows are taken over the distinctive tail.
+    const tail = local.slice(STAMP.length);
+    for (let i = 0; i + 6 <= tail.length; i++) if (low.includes(tail.slice(i, i + 6))) { r.local6++; break; }
+  }
+  return r;
+}
+
+describe.skipIf(!HAS_DB)(`R8 SF-109 rotation tool on TEST (${ROLE})`, () => {
+  let u0: Snap; let m0: Snap;
+  let hashes0: string[] = [];
+
+  beforeAll(async () => {
+    const url = process.env.DATABASE_URL ?? "";
+    if (!url.includes("ep-hidden-salad") || url.includes("ep-bold-wave")) throw new Error("REFUSED: not the TEST branch");
+    const foreignDemo = await withRlsBypass((tx) => tx.user.count({ where: { email: { endsWith: "@demo.matflow", mode: "insensitive" } } }));
+    await withRlsBypass(async (tx) => {
+      ids.A = (await tx.tenant.create({ data: { name: `${STAMP} A`, slug: ids.slugA, onboardingCompleted: true } })).id;
+      ids.B = (await tx.tenant.create({ data: { name: `${STAMP} B`, slug: ids.slugB, onboardingCompleted: true } })).id;
+      const plan: Array<Omit<Seed, "id"> & { role: string; tenant: string }> = [
+        { email: `${STAMP}-xq1vbnd@demo.matflow`, kind: "demo", v0: 0, role: "owner", tenant: ids.A },
+        { email: `${STAMP}-zp4wtyq@DEMO.matflow`, kind: "demo", v0: 4, role: "manager", tenant: ids.A },
+        { email: `${STAMP}-kd8rmcu@demo.matflow`, kind: "demo", v0: 0, role: "coach", tenant: ids.A },
+        { email: `${STAMP}-jh2fslo@demo.matflow`, kind: "demo", v0: 9, role: "admin", tenant: ids.A },
+        { email: `${STAMP}-yt6pwei@example.test`, kind: "nondemo", v0: 2, role: "manager", tenant: ids.A },
+        { email: `${STAMP}-nb3gxar@demo.matflow`, kind: "otherTenant", v0: 1, role: "owner", tenant: ids.B },
+      ];
+      for (const [i, p] of plan.entries()) {
+        const u = await tx.user.create({ data: { tenantId: p.tenant, email: p.email, name: `secr8 ${p.role}`, role: p.role, passwordHash: `synthetic-secr8-not-a-hash-${i}`, sessionVersion: p.v0 } });
+        seeds.push({ id: u.id, email: p.email, kind: p.kind, v0: p.v0 });
+      }
+      const m = await tx.member.create({ data: { tenantId: ids.A, email: `${STAMP}-uf5ckzt@demo.matflow`, name: "secr8 member", sessionVersion: 3 } });
+      seeds.push({ id: m.id, email: `${STAMP}-uf5ckzt@demo.matflow`, kind: "member", v0: 3 });
+    }, { timeout: 60_000 });
+    u0 = await snap("User"); m0 = await snap("Member");
+    hashes0 = (await mine()).map((r) => r.ph ?? "");
+    out.push({ cell: "setup", role: ROLE, stamp: STAMP, usersInDb: u0.size, membersInDb: m0.size, demoUsersInDbBeforeFixtures: foreignDemo });
+    emit();
+  }, 180_000);
+
+  afterAll(async () => {
+    const t = [ids.A, ids.B].filter(Boolean);
+    if (!t.length) return;
+    await withRlsBypass(async (tx) => {
+      await tx.auditLog.deleteMany({ where: { tenantId: { in: t } } });
+      await tx.member.deleteMany({ where: { tenantId: { in: t } } });
+      await tx.user.deleteMany({ where: { tenantId: { in: t } } });
+      await tx.tenant.deleteMany({ where: { id: { in: t }, slug: { startsWith: "secr8-" } } });
+    }, { timeout: 60_000 });
+    const left = await withRlsBypass(async (tx) => ({
+      tenants: await tx.tenant.count({ where: { id: { in: t } } }),
+      users: await tx.user.count({ where: { tenantId: { in: t } } }),
+      members: await tx.member.count({ where: { tenantId: { in: t } } }),
+      audits: await tx.auditLog.count({ where: { tenantId: { in: t } } }),
+    }));
+    out.push({ cell: "teardown", role: ROLE, left });
+    emit();
+    expect(left).toEqual({ tenants: 0, users: 0, members: 0, audits: 0 });
+  }, 180_000);
+
+  it("R8-T1 dry run: exit 0, exactly the four ids, nothing changed anywhere, no address/local part/hash printed", async () => {
+    const r = tool([]);
+    const u1 = await snap("User"); const m1 = await snap("Member");
+    const du = diff(u0, u1); const dm = diff(m0, m1);
+    const mineChanged = [...du.changed, ...dm.changed].filter((id) => seeds.some((s) => s.id === id));
+    const listed = demo().filter((s) => r.out.includes(s.id)).length;
+    const listedOthers = others().filter((s) => r.out.includes(s.id)).length;
+    const leak = leakage(r.out, hashes0);
+    const toolRole = /\) role=(\S+)/.exec(r.out)?.[1];
+    expect(toolRole).toBe(ROLE === "restricted" ? "matflow_app" : "neondb_owner");
+    out.push({ cell: "T1", role: ROLE, toolRole, exit: r.status, would4: r.out.includes("would rotate 4 accounts"), listed, listedOthers, mineChanged: mineChanged.length, dbUserChangedByOthers: du.changed.length, dbMemberChangedByOthers: dm.changed.length, audits: (await audits()).length, leak, outputLines: r.out.trim().split("\n").length });
+    emit();
+    expect(r.status).toBe(0);
+    expect(r.out).toContain("would rotate 4 accounts");
+    expect(listed).toBe(4);
+    expect(listedOthers).toBe(0);
+    expect(mineChanged).toEqual([]);
+    expect(await audits()).toHaveLength(0);
+    expect([leak.fullAddress, leak.wholeLocalPart, leak.local6, leak.storedHash]).toEqual([0, 0, 0, 0]);
+    expect(leak.bcrypt).toBe(false);
+  }, 240_000);
+
+  it("R8-T2 --ids with a wrong set (3 of 4; 4 + the non-demo; 3 + the other tenant's) exits non-zero and changes nothing", async () => {
+    const d = demo().map((s) => s.id);
+    const nd = seeds.find((s) => s.kind === "nondemo")!.id;
+    const ot = seeds.find((s) => s.kind === "otherTenant")!.id;
+    const sets = [d.slice(0, 3), [...d, nd], [...d.slice(0, 3), ot]];
+    const res: Array<{ exit: number | null; aborted: boolean }> = [];
+    for (const s of sets) {
+      const r = tool(["--confirm", "--ids", s.join(",")]);
+      res.push({ exit: r.status, aborted: /ABORTED: --ids does not match/.test(r.out) });
+    }
+    const u1 = await snap("User"); const m1 = await snap("Member");
+    const mineChanged = [...diff(u0, u1).changed, ...diff(m0, m1).changed].filter((id) => seeds.some((s) => s.id === id));
+    out.push({ cell: "T2", role: ROLE, res, mineChanged: mineChanged.length, audits: (await audits()).length });
+    emit();
+    for (const x of res) { expect(x.exit).not.toBe(0); expect(x.aborted).toBe(true); }
+    expect(mineChanged).toEqual([]);
+    expect(await audits()).toHaveLength(0);
+  }, 400_000);
+
+  it("R8-T3 --confirm --ids <the four>: exactly four User hashes (bcrypt 12) and versions (+1), four audit rows; every other User and every Member byte-identical; old sessions revoked", async () => {
+    const before = { u: await snap("User"), m: await snap("Member") };
+    const r = tool(["--confirm", "--ids", demo().map((s) => s.id).join(",")]);
+    const xid = /xid=(\d+)/.exec(r.out)?.[1] ?? "none";
+    const after = { u: await snap("User"), m: await snap("Member") };
+    const du = diff(before.u, after.u); const dm = diff(before.m, after.m);
+    const byToolU = [...after.u].filter(([, v]) => v.xmin === xid).map(([id]) => id).sort();
+    const byToolM = [...after.m].filter(([, v]) => v.xmin === xid).map(([id]) => id);
+    const demoIds = demo().map((s) => s.id).sort();
+    const changedNotOurs = du.changed.filter((id) => !demoIds.includes(id));
+    const changedNotOursByTool = changedNotOurs.filter((id) => after.u.get(id)?.xmin === xid);
+    const rows = new Map((await mine()).map((x) => [x.id, x]));
+    const a = await audits();
+    const revocation: Array<{ kind: string; old: string; fresh: string }> = [];
+    for (const s of seeds.filter((x) => x.kind !== "member")) {
+      const tenantId = s.kind === "otherTenant" ? ids.B : ids.A;
+      const old = await checkSessionVersion({ userId: s.id, tokenVersion: s.v0, tenantId });
+      const fresh = await checkSessionVersion({ userId: s.id, tokenVersion: s.kind === "demo" ? s.v0 + 1 : s.v0, tenantId });
+      revocation.push({ kind: s.kind, old, fresh });
+    }
+    const mem = seeds.find((s) => s.kind === "member")!;
+    const memberCheck = await checkSessionVersion({ memberId: mem.id, tokenVersion: mem.v0, tenantId: ids.A });
+    const leak = leakage(r.out, [...hashes0, ...[...rows.values()].map((x) => x.ph ?? "")]);
+    out.push({
+      cell: "T3", role: ROLE, exit: r.status, xidPrinted: xid !== "none",
+      userRowsWrittenByToolXid: byToolU.length, userRowsWrittenAreTheFour: JSON.stringify(byToolU) === JSON.stringify(demoIds),
+      memberRowsWrittenByToolXid: byToolM.length,
+      dbUserChanged: du.changed.length, dbUserChangedNotOurs: changedNotOurs.length, dbUserChangedNotOursByToolXid: changedNotOursByTool.length,
+      dbMemberChanged: dm.changed.length, dbUserAddedRemoved: [du.added.length, du.removed.length], dbMemberAddedRemoved: [dm.added.length, dm.removed.length],
+      bcrypt12: demo().filter((s) => /^\$2[aby]\$12\$/.test(rows.get(s.id)?.ph ?? "")).length,
+      versionsPlusOne: demo().filter((s) => rows.get(s.id)?.sv === s.v0 + 1).length,
+      othersIdentical: others().filter((s) => s.kind !== "member").every((s) => before.u.get(s.id)?.h === after.u.get(s.id)?.h),
+      memberIdentical: before.m.get(mem.id)?.h === after.m.get(mem.id)?.h,
+      audits: a.length, auditUsers: a.filter((x) => demoIds.includes(x.userId ?? "") && x.tenantId === ids.A).length,
+      revocation, memberCheck, leak,
+    });
+    emit();
+    expect(r.status).toBe(0);
+    expect(byToolU).toEqual(demoIds);
+    expect(byToolM).toEqual([]);
+    expect(changedNotOursByTool).toEqual([]);
+    for (const s of others()) {
+      const m = s.kind === "member" ? [before.m, after.m] : [before.u, after.u];
+      expect(m[1].get(s.id)?.h, `${s.kind} byte-identical`).toBe(m[0].get(s.id)?.h);
+    }
+    for (const s of demo()) {
+      expect(/^\$2[aby]\$12\$/.test(rows.get(s.id)?.ph ?? "")).toBe(true);
+      expect(rows.get(s.id)?.sv).toBe(s.v0 + 1);
+    }
+    expect(a).toHaveLength(4);
+    expect(new Set(a.map((x) => x.userId))).toEqual(new Set(demoIds));
+    for (const v of revocation) {
+      if (v.kind === "demo") expect([v.old, v.fresh]).toEqual(["revoked", "ok"]);
+      else expect([v.old, v.fresh]).toEqual(["ok", "ok"]);
+    }
+    expect(memberCheck).toBe("ok");
+    expect([leak.fullAddress, leak.wholeLocalPart, leak.local6, leak.storedHash]).toEqual([0, 0, 0, 0]);
+    expect(leak.bcrypt).toBe(false);
+  }, 400_000);
+});

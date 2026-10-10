@@ -1,0 +1,27 @@
+sha=1f16afd0a433ae7997230b36377000ecf468c1ef node=v24.21.0 start=2026-10-10T20:46:43Z
+lint exit=0 20:48:33
+tsc exit=0 20:50:38
+unit exit=1 20:58:47
+build exit=0 21:00:31
+audit exit=0 21:00:33
+done 2026-10-10T21:00:33Z
+BUILD_ID=eRmttob0-Ud7tSqefSzGF
+--- unit (full suite, tests/unit)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/unit/sec-c-csrf-sweep.test.ts > SEC-042 every mutating route refuses a cross-site request before any effect > /api/account/login-email as owner
+ FAIL  tests/unit/sec-e-secret-scan.test.ts > repository tree (tracked files at HEAD) > contains no candidate secret beyond the documented fixtures
+ Test Files  2 failed | 469 passed (471)
+      Tests  2 failed | 6501 passed (6503)
+--- re-run of the two failing files alone
+     × contains no candidate secret beyond the documented fixtures 1423ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/unit/sec-e-secret-scan.test.ts > repository tree (tracked files at HEAD) > contains no candidate secret beyond the documented fixtures
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 467 passed (468)
+--- secret-scan finding (line only; value not reproduced)
+"postgres-url-with-password tests/unit/sec-m1-demo-rotate-guard.test.ts:29 fp=c94df80548e7"
+--- audit
+found 0 vulnerabilities
+--- lint
+Lint passed: eslint clean, UI-RULES ratchet at or below baseline.
+--- tsc output lines: 0
