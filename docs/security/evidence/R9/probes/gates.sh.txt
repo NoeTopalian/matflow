@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -u
+export PATH="/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/node24/node-v24.21.0-win-x64:$PATH"
+WT=/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/R9/wt
+L=/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/R9/logs/gates
+cd "$WT" || exit 1
+unset DATABASE_URL TEST_DATABASE_URL RESTRICTED_DATABASE_URL
+S="$L/gates-summary.txt"
+echo "sha=$(git rev-parse HEAD) node=$(node --version) start=$(date -u +%FT%TZ)" > "$S"
+npm run lint > "$L/lint.log" 2>&1; echo "lint exit=$? $(date -u +%T)" >> "$S"
+npx tsc --noEmit -p . > "$L/tsc.log" 2>&1; echo "tsc exit=$? $(date -u +%T)" >> "$S"
+npx vitest run tests/unit > "$L/unit.log" 2>&1; echo "unit exit=$? $(date -u +%T)" >> "$S"
+rm -rf .next
+npm run build > "$L/build.log" 2>&1; echo "build exit=$? $(date -u +%T)" >> "$S"
+npm audit --omit=dev > "$L/audit.log" 2>&1; echo "audit exit=$? $(date -u +%T)" >> "$S"
+echo "done $(date -u +%FT%TZ)" >> "$S"

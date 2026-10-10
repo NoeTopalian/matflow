@@ -1,0 +1,28 @@
+{
+ "role": "owner",
+ "result": {
+  "dryExit": 0,
+  "confirmExit": 0,
+  "auditRows": 3,
+  "metadataKeys": [
+   "addressTag,runId,sessionVersionBumped,target,tool"
+  ],
+  "runIdMatches": true,
+  "tagsDifferBetweenRuns": true,
+  "forbiddenPatternsChecked": 336,
+  "hits": [],
+  "dryLines": [
+   "target: TEST ep-hidden-salad-abom7cg4 (pooled) role=neondb_owner",
+   "run: <redacted> (address tags are keyed for this run only; the key is never shown or stored)",
+   "  <id>  role=owner  local=***@demo.matflow  tag=<redacted>",
+   "  <id>  role=coach  local=***@demo.matflow  tag=<redacted>",
+   "  <id>  role=manager  local=***@demo.matflow  tag=<redacted>",
+   "mode: dry run — would rotate 3 accounts (nothing changed)"
+  ]
+ },
+ "teardown": {
+  "tenants": 0,
+  "users": 0,
+  "audits": 0
+ }
+}

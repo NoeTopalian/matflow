@@ -1,0 +1,19 @@
+Review R9 — commands, runtime, exit codes (10 Oct 2026, UTC). Node v24.21.0 (<scratchpad>/security/node24) on every run.
+Review SHA 704ab57. Worktrees: git worktree add --detach <scratchpad>/security/R9/{wt,wtm} 704ab57; robocopy node_modules
+(/E /MT:16, exit 1 both = copied); .env.test copied. Schema/package files identical between 704ab57 and the main tree HEAD.
+Runners: probes/run-*.sh.txt (copies of R8's guarded runners re-pointed at R9 worktrees; ep-hidden-salad only).
+
+Item 1  bash run-unit-wtm.sh zz-r9-sf128-probe + sec-m2-lg3-retention-matcher + sec-m2-retention-log-reason   exit 0, 19/19
+Item 2  bash run-unit-wtm.sh zz-r9-sf129-probe (R9_OUT)                                                       exit 0, 6/6
+        bash run-unit-wtm.sh zz-r9-sf129-probe + sec-m2-demo-rotate-hardening + sec-m1-demo-rotate-guard       exit 0, 28 passed 1 skipped
+        bash run-unit-wtm.sh sec-r-db-target-guard sec-e3-ops-guards sec-b2-rls-test-target sec-f2-restore-verify-compare  exit 0, 65/65
+        bash run-{owner,restricted}-wtm.sh tests/integration/zz-r9-rotate-db.test.ts                         exit 0 / 0, 1/1 each
+        bash run-{owner,restricted}-wtm.sh tests/integration/sec-m1-demo-rotate-db.test.ts                   exit 0 / 0, 6/6 each
+        node show.mjs --env-file <missing|deny-read> (Node 24 argv scan, R9-F2)                               exit 9 both; marker not applied
+Mutants node mut.mjs (probes/mut.mjs.txt) → mutants.jsonl: 18 mutants/plants, 14 killed, 4 survived (R9-M4, R9-M5, R9-P3,
+        R9-P4 — scanner gaps, see review.txt); every one restored, sha256 equal, git clean.
+Item 4  bash gates.sh (wt): lint 0, tsc 0, unit 1 (csrf-sweep timeout; alone 426/426 exit 0), build 0, audit 0
+        bash sweep.sh (wt) + two reruns of c3/a4 → item4-db-sweep-summary.txt
+Leftovers bash run-{owner,restricted}-wtm.sh zz-r9-leftovers                                                   exit 0 / 0 (0 secr9-/secm1- tenants, users)
+Evidence secret scan: scripts/readiness/secret-scan.mjs over probes/ → 1 finding, classification placeholder (the runtime-built
+        fixture URL, same form as M2's own test); 0 candidates.

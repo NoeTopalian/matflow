@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Same guards as att/run-engine.sh, but connects as the restricted role (RESTRICTED_DATABASE_URL) with RLS_ENFORCED=1.
+export PATH="/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/node24/node-v24.21.0-win-x64:$PATH"
+set -u
+cd /c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/R9/wt || exit 1
+URL=$(grep -E '^RESTRICTED_DATABASE_URL=' .env.test | head -1 | cut -d= -f2- | tr -d '"' | tr -d '\r')
+case "$URL" in *ep-hidden-salad*) ;; *) echo "REFUSED: not the test branch"; exit 2 ;; esac
+case "$URL" in *ep-bold-wave*) echo "REFUSED: production endpoint"; exit 2 ;; esac
+FILE="$1"; shift || true
+RLS_ENFORCED=1 TEST_DATABASE_URL="$URL" DATABASE_URL="$URL" npx vitest run "$FILE" "$@"

@@ -1,0 +1,49 @@
+{
+ "off": {
+  "notConfigured": "gate OFF expects 503 \"retention cron disabled\", got 503 \"CRON_SECRET not configured\"",
+  "disabled": null,
+  "disabledUpper": "gate OFF expects 503 \"retention cron disabled\", got 503 \"Retention cron disabled\"",
+  "disabled200": "gate believed OFF but the server ran a live sweep (its RETENTION_CRON_ENABLED differs)",
+  "liveSweep200": "gate believed OFF but the server ran a live sweep (its RETENTION_CRON_ENABLED differs)",
+  "dryRunShaped200": "gate believed OFF but the server ran a live sweep (its RETENTION_CRON_ENABLED differs)",
+  "s401": "gate OFF expects 503 \"retention cron disabled\", got 401 \"Unauthorized\"",
+  "s500": "gate OFF expects 503 \"retention cron disabled\", got 500 null",
+  "nullBody": "gate OFF expects 503 \"retention cron disabled\", got 503 null"
+ },
+ "on": {
+  "live": null,
+  "disabled": "gate believed ON but the server answered disabled (its RETENTION_CRON_ENABLED differs)",
+  "notConfigured": "gate ON expects a 200 sweep, got 503",
+  "dryRun200": "gate ON: the sweep must report dryRun false and retentionEnabled true",
+  "gateFalse200": "gate ON: the sweep must report dryRun false and retentionEnabled true",
+  "noRules": "gate ON: the sweep reported no rules",
+  "s500": "gate ON expects a 200 sweep, got 500"
+ },
+ "dry": {
+  "realOffDry": null,
+  "realOnDry": null,
+  "realOffDryBelievedOn": "dry run: retentionEnabled false but the gate is on",
+  "notConfigured": "dry run expects 200, got 503",
+  "disabled": "dry run expects 200, got 503",
+  "deleted": "dry run: rule(s) deleted rows: x"
+ },
+ "lines": {
+  "disabled": {
+   "status": 503,
+   "line": "[cron/retention] call gate=off dryRun=0 status=503 reason=disabled"
+  },
+  "notConfigured": {
+   "status": 503,
+   "line": "[cron/retention] call gate=off dryRun=0 status=503 reason=not_configured"
+  }
+ },
+ "env": {
+  "trackedEnvFiles": [
+   ".env.example",
+   ".env.test.example"
+  ],
+  "trackedWithGate": [],
+  "worktreeEnvTestHasGate": false,
+  "mainTreeEnvTestHasGate": false
+ }
+}

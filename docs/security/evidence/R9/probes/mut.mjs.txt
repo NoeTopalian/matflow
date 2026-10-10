@@ -1,0 +1,131 @@
+// R9 mutant harness: apply one text mutation (or plant a file) in the wtm worktree, run tests, restore, verify.
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { spawnSync, execSync } from "node:child_process";
+
+const B = "C:/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/R9";
+const WT = `${B}/wtm`;
+const LOG = `${B}/logs/mutants`;
+fs.mkdirSync(LOG, { recursive: true });
+const sha = (f) => crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
+
+const U = "unit", O = "owner";
+const MUTANTS = [
+  // SF-128
+  { id: "R9-M1", what: "route: not_configured logs the same reason as disabled", file: "app/api/cron/retention/route.ts",
+    find: 'call.reason = "not_configured";', repl: 'call.reason = "disabled";',
+    runs: [[U, "tests/unit/sec-m2-retention-log-reason.test.ts", "tests/unit/zz-r9-sf128-probe.test.ts"]] },
+  { id: "R9-M2", what: "matcher: gate-off accepts any 503 naming not configured (HEAD's loop)", file: "tests/e2e/campaign/assess/lg-3-retention-gate.ts",
+    find: 'if (a.status === 503 && b.error === RETENTION_DISABLED_ERROR) return null;\n    if (a.status === 200)',
+    repl: 'if (a.status === 503 && /not configured|retention cron disabled/i.test(String(b.error))) return null;\n    if (a.status === 200)',
+    runs: [[U, "tests/unit/sec-m2-lg3-retention-matcher.test.ts", "tests/unit/zz-r9-sf128-probe.test.ts"]] },
+  { id: "R9-M3", what: "matcher: gate-off accepts a 200 live sweep", file: "tests/e2e/campaign/assess/lg-3-retention-gate.ts",
+    find: 'if (a.status === 200) return "gate believed OFF', repl: 'if (a.status === 200) return null; if (a.status === 299) return "gate believed OFF',
+    runs: [[U, "tests/unit/sec-m2-lg3-retention-matcher.test.ts", "tests/unit/zz-r9-sf128-probe.test.ts"]] },
+  { id: "R9-M4", what: "spec opens the gate itself via process.env[\"…\"] (bracket form)", file: "tests/e2e/campaign/assess/lg-3-machines-and-sweep.spec.ts",
+    find: "const RETENTION_GATE_ON = retentionGateOn();", repl: 'process.env["RETENTION_CRON_ENABLED"] = "true";\nconst RETENTION_GATE_ON = retentionGateOn();',
+    runs: [[U, "tests/unit/sec-m2-lg3-retention-matcher.test.ts"]] },
+  { id: "R9-M5", what: "spec opens the gate itself via Object.assign", file: "tests/e2e/campaign/assess/lg-3-machines-and-sweep.spec.ts",
+    find: "const RETENTION_GATE_ON = retentionGateOn();", repl: 'Object.assign(process.env, { RETENTION_CRON_ENABLED: "true" });\nconst RETENTION_GATE_ON = retentionGateOn();',
+    runs: [[U, "tests/unit/sec-m2-lg3-retention-matcher.test.ts"]] },
+  { id: "R9-M6", what: "spec opens the gate itself via the literal assignment (control: M2's regex should catch)", file: "tests/e2e/campaign/assess/lg-3-machines-and-sweep.spec.ts",
+    find: "const RETENTION_GATE_ON = retentionGateOn();", repl: 'process.env.RETENTION_CRON_ENABLED = "true";\nconst RETENTION_GATE_ON = retentionGateOn();',
+    runs: [[U, "tests/unit/sec-m2-lg3-retention-matcher.test.ts"]] },
+  // SF-129
+  { id: "R9-M7", what: "env-file basename compared case-sensitively (R8's residual restored)", file: "scripts/readiness/demo-accounts-rotate.mjs",
+    find: '.replace(/[. ]+$/, "").toLowerCase();', repl: '.replace(/[. ]+$/, "");',
+    runs: [[U, "tests/unit/sec-m2-demo-rotate-hardening.test.ts", "tests/unit/zz-r9-sf129-probe.test.ts"]] },
+  { id: "R9-M8", what: "--ids optional with --confirm (both checks removed)", file: "scripts/readiness/demo-accounts-rotate.mjs",
+    find: "if (out.confirm && !out.ids) {", repl: "if (false && out.confirm && !out.ids) {",
+    find2: 'if (!opts.ids) throw new Refused("ABORTED: --confirm without --ids; nothing changed");', repl2: "if (false) throw new Refused(\"x\");",
+    runs: [[U, "tests/unit/sec-m2-demo-rotate-hardening.test.ts", "tests/unit/zz-r9-sf129-probe.test.ts"], [O, "tests/integration/sec-m1-demo-rotate-db.test.ts"]] },
+  { id: "R9-M9", what: "db-target endpoint= password refusal removed", file: "scripts/readiness/db-target.mjs",
+    find: 'if (/^\\s*endpoint=/i.test(String(parsed.password ?? ""))) {', repl: "if (false) {",
+    runs: [[U, "tests/unit/sec-m2-demo-rotate-hardening.test.ts", "tests/unit/sec-r-db-target-guard.test.ts", "tests/unit/zz-r9-sf129-probe.test.ts"]] },
+  { id: "R9-M10", what: "unsalted SHA-256 digest restored (no key, no label)", file: "scripts/readiness/demo-accounts-rotate.mjs",
+    find: '.createHmac("sha256", key)\n    .update(`${ADDRESS_TAG_LABEL}${String(email).trim().toLowerCase()}`)',
+    repl: '.createHash("sha256")\n    .update(`${String(email).trim().toLowerCase()}`)',
+    runs: [[U, "tests/unit/sec-m2-demo-rotate-hardening.test.ts"], [O, "tests/integration/sec-m1-demo-rotate-db.test.ts", "tests/integration/zz-r9-rotate-db.test.ts"]] },
+  { id: "R9-M11", what: "keyed in name only: HMAC under a constant all-zero key (guessable)", file: "scripts/readiness/demo-accounts-rotate.mjs",
+    find: '.createHmac("sha256", key)', repl: '.createHmac("sha256", Buffer.alloc(32))',
+    runs: [[U, "tests/unit/sec-m2-demo-rotate-hardening.test.ts"]] },
+  // SF-130 (M1 static, widened)
+  { id: "R9-M12", what: "R8-MC2: key on the store-failure path without a literal ${bucket}", file: "lib/rate-limit.ts",
+    find: "family=${family} outcome=${outcome} ", repl: 'family=${family} k=${bucket.split(":").slice(1).join(":")} outcome=${outcome} ',
+    runs: [[U, "tests/unit/sec-m1-rate-limit-log-family.test.ts"]] },
+  { id: "R9-M13", what: "key via a helper call on the store-failure path", file: "lib/rate-limit.ts",
+    find: "family=${family} outcome=${outcome} ", repl: "family=${family} k=${r9tail(bucket)} outcome=${outcome} ",
+    find2: "function bucketFamily(bucket: string): string {", repl2: 'function r9tail(s: string): string { return s.slice(s.indexOf(":") + 1); }\nfunction bucketFamily(bucket: string): string {',
+    runs: [[U, "tests/unit/sec-m1-rate-limit-log-family.test.ts"]] },
+  { id: "R9-M14", what: "key via a derived local variable (static check cannot follow; dynamic cells should)", file: "lib/rate-limit.ts",
+    find: "family=${family} outcome=${outcome} ", repl: "family=${family} k=${r9rest} outcome=${outcome} ",
+    find2: "  const family = bucketFamily(bucket);\n  const k = `${cls}|${family}`;", repl2: "  const family = bucketFamily(bucket);\n  const r9rest = bucket.slice(family.length + 1);\n  const k = `${cls}|${family}`;",
+    runs: [[U, "tests/unit/sec-m1-rate-limit-log-family.test.ts"]] },
+  // SF-130 planted call sites (new file under app/, removed afterwards)
+  { id: "R9-P1", what: "planted checkRateLimit(req, key)", plant: "lib/zz-r9-planted.ts",
+    body: 'import { checkRateLimit } from "@/lib/rate-limit";\nexport async function r9(req: string, key: string) { return checkRateLimit(req, key as never); }\n',
+    runs: [[U, "tests/unit/sec-m2-rate-limit-family-literal.test.ts"]] },
+  { id: "R9-P2", what: 'planted "x" + id + ":" concatenation', plant: "lib/zz-r9-planted.ts",
+    body: 'import { checkRateLimit } from "@/lib/rate-limit";\nexport async function r9(id: string) { return checkRateLimit("x" + id + ":", 5, 60_000); }\n',
+    runs: [[U, "tests/unit/sec-m2-rate-limit-family-literal.test.ts"]] },
+  { id: "R9-P3", what: "planted aliased import: rl(email, …) — bypass probe", plant: "lib/zz-r9-planted.ts",
+    body: 'import { checkRateLimit as rl } from "@/lib/rate-limit";\nexport async function r9(email: string) { return rl(email, 5, 60_000); }\n',
+    runs: [[U, "tests/unit/sec-m2-rate-limit-family-literal.test.ts"]] },
+  { id: "R9-P4", what: "planted shadowed const: module const b = `login:…`, call uses parameter b — bypass probe", plant: "lib/zz-r9-planted.ts",
+    body: 'import { checkRateLimit } from "@/lib/rate-limit";\nconst ip = "x";\nconst b = `login:${ip}`;\nexport const z = b;\nexport async function r9(b: string) { return checkRateLimit(b, 5, 60_000); }\n',
+    runs: [[U, "tests/unit/sec-m2-rate-limit-family-literal.test.ts"]] },
+];
+
+function run(kind, files) {
+  const runner = kind === U ? `${B}/run-unit-wtm.sh` : `${B}/run-owner-wtm.sh`;
+  const r = spawnSync("bash", [runner, ...files], { encoding: "utf8", timeout: 900_000 });
+  const out = `${r.stdout}\n${r.stderr}`;
+  const tests = (out.match(/^\s+Tests\s+.*$/m) ?? [""])[0].trim();
+  const fails = [...new Set([...out.matchAll(/FAIL\s+(.+?)(?:\s\[|$)/gm)].map((m) => m[1].trim()))].slice(0, 12);
+  return { kind, files, exit: r.status, tests, fails, out };
+}
+
+const only = process.argv.slice(2);
+const results = [];
+for (const m of MUTANTS.filter((x) => only.length === 0 || only.includes(x.id))) {
+  const rec = { id: m.id, what: m.what, file: m.file ?? m.plant, runs: [] };
+  let orig = null, before = null;
+  if (m.plant) {
+    const p = path.join(WT, m.plant);
+    if (fs.existsSync(p)) throw new Error(`plant exists: ${p}`);
+    fs.writeFileSync(p, m.body);
+  } else {
+    const p = path.join(WT, m.file);
+    orig = fs.readFileSync(p, "utf8");
+    before = sha(p);
+    let t = orig;
+    const eol = orig.includes("\r\n") ? "\r\n" : "\n";
+    for (let [f, r] of [[m.find, m.repl], [m.find2, m.repl2]]) {
+      if (!f) continue;
+      f = f.replace(/\n/g, eol);
+      r = r.replace(/\n/g, eol);
+      const n = t.split(f).length - 1;
+      if (n !== 1) throw new Error(`${m.id}: anchor found ${n} times`);
+      t = t.replace(f, () => r);
+    }
+    fs.writeFileSync(p, t);
+  }
+  try {
+    for (const [kind, ...files] of m.runs) {
+      const r = run(kind, files);
+      fs.writeFileSync(`${LOG}/${m.id}-${kind}.log`, r.out);
+      delete r.out;
+      rec.runs.push(r);
+    }
+  } finally {
+    if (m.plant) fs.rmSync(path.join(WT, m.plant));
+    else fs.writeFileSync(path.join(WT, m.file), orig);
+  }
+  rec.restored = m.plant ? !fs.existsSync(path.join(WT, m.plant)) : sha(path.join(WT, m.file)) === before;
+  rec.gitClean = execSync("git status --porcelain --untracked-files=no", { cwd: WT, encoding: "utf8" }).trim() === "";
+  rec.verdict = rec.runs.some((r) => r.exit !== 0) ? "KILLED (red)" : "SURVIVED (green)";
+  results.push(rec);
+  console.log(JSON.stringify({ id: rec.id, verdict: rec.verdict, runs: rec.runs.map((r) => `${r.kind} exit=${r.exit} ${r.tests} fails=${r.fails.length}`), restored: rec.restored, gitClean: rec.gitClean }));
+  fs.appendFileSync(`${B}/out/mutants.jsonl`, JSON.stringify(rec) + "\n");
+}
