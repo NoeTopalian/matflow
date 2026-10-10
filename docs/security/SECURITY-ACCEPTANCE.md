@@ -80,6 +80,11 @@ concurrently with reviewer R6's worktree run; R6's own gate results are recorded
 The both-role database sweep of the security files on the final candidate is R6's (`evidence/R6/sweep.txt`), run with real
 vitest exit codes (the iteration-1 sweep's exit column was not — SF-76).
 
+### 5c. Final candidate `a2bc56a` (code `03ef584`; `evidence/lead/gates-node24-a2bc56a.log`, 10 Oct 2026 06:00–06:08 UTC, Node v24.21.0)
+`npm run lint` exit 0; `tsc --noEmit` exit 0; full unit suite 467 files / 6468 tests passed; `npm audit --omit=dev` 0 vulnerabilities;
+`npm run build` exit 0 from an empty `.next`, BUILD_ID `HidgoSvinSIjTV6RbsjJ_`. Lanes A4 (`03ef584`) and C4 (`9f573ff`) are inside this
+candidate; their independent review is R7 (`evidence/R7/`).
+
 ## 6. Evidence limitations
 No browser rehearsal of the campaign build (unit + both-role database only); the TEST branch stands in for
 production; both-roles results are local (CI runs as a superuser until SF-58 lands); the digest-based import rules
