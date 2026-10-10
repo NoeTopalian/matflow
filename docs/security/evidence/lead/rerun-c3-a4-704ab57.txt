@@ -1,0 +1,6 @@
+sha=6e28d2fe522f70e239ca54054c642906ac6af01a node=v24.21.0 started=2026-10-10T22:47:41Z (quiet branch: no other lane running)
+owner tests/integration/sec-c3-rate-limit-atomic-db.test.ts exit=1 Tests  6 passed (6) connclosed_lines=1
+restricted tests/integration/sec-c3-rate-limit-atomic-db.test.ts exit=0 Tests  6 passed (6) connclosed_lines=0
+owner tests/integration/sec-a4-lockout-burst-db.test.ts exit=0 Tests  5 passed (5) connclosed_lines=0
+restricted tests/integration/sec-a4-lockout-burst-db.test.ts exit=1 Tests  5 passed (5) connclosed_lines=2
+finished=2026-10-10T22:50:58Z

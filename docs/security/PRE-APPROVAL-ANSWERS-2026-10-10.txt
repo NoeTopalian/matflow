@@ -652,7 +652,11 @@ REMAINING RESIDUALS (all Low, all OPEN, none pursued without your word):
   SF-134 the literal-family scanner misses import aliases and parameter shadowing (none in the tree today).
   R8's gate-ON live retention sweep is still unrun anywhere except the e2e job's ephemeral database.
   sec-c3 and sec-a4 DB files were not clean in R9's run (TEST connectivity degraded under concurrent gates);
-         a quiet-branch re-run is recorded in evidence/lead/rerun-c3-a4-704ab57.txt (see below when filled).
+         quiet-branch re-run (no other lane running, evidence/lead/rerun-c3-a4-704ab57.txt): every cell passes
+         (c3 6/6 both roles; a4 5/5 both roles) but one run of each file still EXITS 1 from an unhandled
+         connection-terminated error after the burst (the SF-118/119 family) — recorded as SF-135, Low–Medium:
+         under the corrected sweep standard those runs are EXIT-1, not passes, until the post-burst connection
+         error is caught in lib/auth-lockout and lib/rate-limit.
 D-6 and D-7 respected: no pooled-connection measurement and no SF-124 comparison were attempted by any route.
 SF-62 remains a separate implementation project (SF-62-APPLICATION-INTEGRATION.md). Retention disabled.
 No merge, push, deployment, production rotation or migration has happened.
