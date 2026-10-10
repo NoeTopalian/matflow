@@ -1,0 +1,14 @@
+node=v24.21.0 sha=2a6487e start=2026-10-10T08:51:20Z cmd=npx vitest run tests/unit/import-attendance-route.test.ts
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/E5/wt
+
+
+ Test Files  1 passed (1)
+      Tests  186 passed (186)
+   Start at  09:51:22
+   Duration  4.77s (transform 420ms, setup 48ms, import 1.08s, tests 3.45s, environment 0ms)
+
+exit=0 end=2026-10-10T08:51:27Z

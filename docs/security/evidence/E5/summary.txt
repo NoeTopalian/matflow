@@ -1,0 +1,49 @@
+tsc-1 exit=2 node=v24.21.0
+tsc-2 exit=2 node=v24.21.0
+tsc-3 exit=0 node=v24.21.0
+B-lint exit=0 node=v24.21.0
+B-unit exit=1 node=v24.21.0
+B-build exit=0 node=v24.21.0
+BUILD_ID=cd98_g8m2mGUpcaoI7wr-
+B gates done 2026-10-10T08:49:02Z
+B-unit-failed-rerun exit=1 node=v24.21.0
+B-unit-importroute exit=0 node=v24.21.0
+B-c2-reqval-4routes exit=0 node=v24.21.0
+B-c2-blob exit=0 node=v24.21.0
+B-c2-reqval-only4 exit=0 node=v24.21.0
+B-unit-final exit=1 node=v24.21.0
+B-db owner sec-b2-stale-bypass-db exit=0 | Tests  6 passed (6)
+B-db restricted sec-b2-stale-bypass-db exit=0 | Tests  6 passed (6)
+B-db owner sec-d2-deletion-provenance-db exit=1 | Tests  2 failed | 14 passed (16)
+B-db restricted sec-d2-deletion-provenance-db exit=1 | Tests  2 failed | 14 passed (16)
+B-db owner sec-d3-deletion-race-db exit=0 | Tests  8 passed (8)
+B-db restricted sec-d3-deletion-race-db exit=0 | Tests  8 passed (8)
+B db done 2026-10-10T09:04:05Z
+Bprobe-tsc exit=0 node=v24.21.0
+Bprobe-db owner sec-d2-deletion-provenance-db exit=0 | Tests  16 passed (16)
+Bprobe-db restricted sec-d2-deletion-provenance-db exit=0 | Tests  16 passed (16)
+Bprobe db done 2026-10-10T09:08:44Z
+B-final-tsc exit=0 node=v24.21.0
+B-final-lint exit=0 node=v24.21.0
+B-npm-ls exit=0 node=v24.21.0
+Bplus-pure-tsc exit=0 node=v24.21.0
+Bplus-pure-unit-revoc exit=1 node=v24.21.0
+BplusPure-db owner sec-a-revocation-fail-closed-db exit=0 | Tests  6 passed (6)
+BplusPure-db restricted sec-a-revocation-fail-closed-db exit=0 | Tests  6 passed (6)
+BplusPure db done 2026-10-10T09:12:45Z
+Bplus-tsc exit=0 node=v24.21.0
+Bplus-lint exit=0 node=v24.21.0
+Bplus-unit exit=1 node=v24.21.0
+Bplus-build exit=0 node=v24.21.0
+BUILD_ID=8sVbrnp8yf_mp9Ia0W-SD
+Bplus gates done 2026-10-10T09:20:23Z
+Bplus-db owner sec-a-revocation-fail-closed-db exit=0 | Tests  6 passed (6)
+Bplus-db restricted sec-a-revocation-fail-closed-db exit=0 | Tests  6 passed (6)
+Bplus-db owner sec-b2-stale-bypass-db exit=0 | Tests  6 passed (6)
+Bplus-db restricted sec-b2-stale-bypass-db exit=0 | Tests  6 passed (6)
+Bplus-db owner sec-d2-deletion-provenance-db exit=1 | Tests  2 failed | 14 passed (16)
+Bplus-db restricted sec-d2-deletion-provenance-db exit=1 | Tests  2 failed | 14 passed (16)
+Bplus-db owner sec-d3-deletion-race-db exit=0 | Tests  8 passed (8)
+Bplus-db restricted sec-d3-deletion-race-db exit=0 | Tests  8 passed (8)
+Bplus db done 2026-10-10T09:25:46Z
+Bplus-pins exit=0 node=v24.21.0
