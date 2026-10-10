@@ -1,0 +1,1719 @@
+[
+ {
+  "file": "app/admin/billing/page.tsx",
+  "line": 26,
+  "endLine": 98,
+  "fn": "AdminBillingPage",
+  "models": [
+   "payment.aggregate",
+   "payment.groupBy",
+   "dispute.aggregate",
+   "tenant.count",
+   "tenant.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 2244,
+  "cls": "a",
+  "note": "operator console page -> ops client"
+ },
+ {
+  "file": "app/admin/page.tsx",
+  "line": 45,
+  "endLine": 49,
+  "fn": "AdminDashboardPage",
+  "models": [],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 187,
+  "cls": "a",
+  "note": "operator console page -> ops client"
+ },
+ {
+  "file": "app/admin/page.tsx",
+  "line": 67,
+  "endLine": 103,
+  "fn": "AdminDashboardPage",
+  "models": [
+   "tenant.count",
+   "tenant.findMany",
+   "gymApplication.count",
+   "user.findMany",
+   "payment.aggregate",
+   "auditLog.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 1287,
+  "cls": "a",
+  "note": "operator console page -> ops client"
+ },
+ {
+  "file": "app/admin/page.tsx",
+  "line": 126,
+  "endLine": 131,
+  "fn": "AdminDashboardPage",
+  "models": [
+   "tenant.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 181,
+  "cls": "a",
+  "note": "operator console page -> ops client"
+ },
+ {
+  "file": "app/admin/tenants/[id]/page.tsx",
+  "line": 29,
+  "endLine": 54,
+  "fn": "AdminTenantDetailPage",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 770,
+  "cls": "a",
+  "note": "operator console page -> ops client"
+ },
+ {
+  "file": "app/admin/tenants/page.tsx",
+  "line": 29,
+  "endLine": 51,
+  "fn": "getTenants",
+  "models": [
+   "tenant.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 623,
+  "cls": "a",
+  "note": "operator console page -> ops client"
+ },
+ {
+  "file": "app/api/account/pending-tenant/route.ts",
+  "line": 47,
+  "endLine": 49,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 96,
+  "cls": "b",
+  "note": "tenant_id_by_slug"
+ },
+ {
+  "file": "app/api/admin/activity/route.ts",
+  "line": 35,
+  "endLine": 71,
+  "fn": "GET",
+  "models": [
+   "auditLog.findMany",
+   "tenant.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 1204,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/applications/[id]/approve/route.ts",
+  "line": 80,
+  "endLine": 82,
+  "fn": "POST",
+  "models": [
+   "gymApplication.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 80,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/applications/[id]/approve/route.ts",
+  "line": 93,
+  "endLine": 93,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 64,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/applications/[id]/approve/route.ts",
+  "line": 106,
+  "endLine": 126,
+  "fn": "POST",
+  "models": [
+   "tenant.create"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 642,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/applications/[id]/approve/route.ts",
+  "line": 163,
+  "endLine": 168,
+  "fn": "POST",
+  "models": [
+   "gymApplication.update"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 126,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/applications/[id]/reject/route.ts",
+  "line": 53,
+  "endLine": 55,
+  "fn": "POST",
+  "models": [
+   "gymApplication.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 80,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/applications/[id]/reject/route.ts",
+  "line": 60,
+  "endLine": 65,
+  "fn": "POST",
+  "models": [
+   "gymApplication.update"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 126,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/applications/route.ts",
+  "line": 25,
+  "endLine": 31,
+  "fn": "GET",
+  "models": [
+   "gymApplication.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 140,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/auth/operator-totp/setup/route.ts",
+  "line": 217,
+  "endLine": 245,
+  "fn": "POST",
+  "models": [
+   "operator.updateMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 901,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/create-tenant/route.ts",
+  "line": 85,
+  "endLine": 111,
+  "fn": "POST",
+  "models": [
+   "tenant.create"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 1053,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/force-password-reset/route.ts",
+  "line": 72,
+  "endLine": 72,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 106,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/force-password-reset/route.ts",
+  "line": 75,
+  "endLine": 81,
+  "fn": "POST",
+  "models": [
+   "user.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 195,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/force-password-reset/route.ts",
+  "line": 107,
+  "endLine": 154,
+  "fn": "POST",
+  "models": [
+   "user.findUnique",
+   "passwordHistory.create",
+   "user.update"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "consumeStepUpGrant"
+  ],
+  "chars": 2228,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/login-email/check/route.ts",
+  "line": 89,
+  "endLine": 135,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique",
+   "user.findFirst",
+   "magicLinkToken.count",
+   "passwordResetToken.count"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "claimLoginIdentity",
+   "stepUpVersionDigestIn"
+  ],
+  "chars": 2271,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/login-email/route.ts",
+  "line": 68,
+  "endLine": 68,
+  "fn": "appliedOwnerOutcome",
+  "models": [],
+  "raw": false,
+  "helperCalls": [
+   "findAppliedGrant"
+  ],
+  "chars": 117,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/login-email/route.ts",
+  "line": 109,
+  "endLine": 115,
+  "fn": "POST",
+  "models": [
+   "user.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 217,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/login-email/route.ts",
+  "line": 149,
+  "endLine": 241,
+  "fn": "POST",
+  "models": [
+   "user.update",
+   "user.updateMany"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "consumeStepUpGrant",
+   "retireEmailBoundTokens",
+   "claimLoginIdentity"
+  ],
+  "chars": 3781,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/member-totp-reset/route.ts",
+  "line": 72,
+  "endLine": 74,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 116,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/member-totp-reset/route.ts",
+  "line": 80,
+  "endLine": 85,
+  "fn": "POST",
+  "models": [
+   "member.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 189,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/member-totp-reset/route.ts",
+  "line": 99,
+  "endLine": 139,
+  "fn": "POST",
+  "models": [
+   "member.update"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "consumeStepUpGrant"
+  ],
+  "chars": 1765,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/members/[memberId]/contact-email/route.ts",
+  "line": 122,
+  "endLine": 124,
+  "fn": "appliedOutcome",
+  "models": [],
+  "raw": false,
+  "helperCalls": [
+   "findAppliedGrant"
+  ],
+  "chars": 120,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/members/[memberId]/contact-email/route.ts",
+  "line": 158,
+  "endLine": 171,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique",
+   "member.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "claimLoginIdentity",
+   "stepUpVersionDigestIn"
+  ],
+  "chars": 982,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/members/[memberId]/contact-email/route.ts",
+  "line": 196,
+  "endLine": 260,
+  "fn": "POST",
+  "models": [
+   "member.findFirst",
+   "member.updateMany"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "consumeStepUpGrant",
+   "stepUpVersionDigestIn",
+   "claimLoginIdentity",
+   "retireEmailBoundTokens"
+  ],
+  "chars": 3016,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/owner-profile/route.ts",
+  "line": 89,
+  "endLine": 95,
+  "fn": "POST",
+  "models": [
+   "user.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 182,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/owner-profile/route.ts",
+  "line": 110,
+  "endLine": 138,
+  "fn": "POST",
+  "models": [
+   "user.updateMany"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "consumeStepUpGrant"
+  ],
+  "chars": 1005,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/review-lock/route.ts",
+  "line": 54,
+  "endLine": 56,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 126,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/review-lock/route.ts",
+  "line": 63,
+  "endLine": 79,
+  "fn": "POST",
+  "models": [
+   "tenant.update"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 616,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/review-lock/route.ts",
+  "line": 91,
+  "endLine": 93,
+  "fn": "DELETE",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 126,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/review-lock/route.ts",
+  "line": 99,
+  "endLine": 112,
+  "fn": "DELETE",
+  "models": [
+   "tenant.update"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 483,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/revoke-access/route.ts",
+  "line": 114,
+  "endLine": 126,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique",
+   "user.findFirst",
+   "member.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 602,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/revoke-access/route.ts",
+  "line": 138,
+  "endLine": 198,
+  "fn": "POST",
+  "models": [
+   "user.findFirst",
+   "user.updateMany",
+   "member.findFirst",
+   "member.updateMany",
+   "passwordResetToken.updateMany",
+   "magicLinkToken.updateMany"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "consumeStepUpGrant",
+   "retireEmailBoundTokens"
+  ],
+  "chars": 3105,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/soft-delete/route.ts",
+  "line": 71,
+  "endLine": 76,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 176,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/soft-delete/route.ts",
+  "line": 105,
+  "endLine": 123,
+  "fn": "POST",
+  "models": [],
+  "raw": false,
+  "helperCalls": [
+   "consumeStepUpGrant"
+  ],
+  "chars": 666,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/soft-delete/route.ts",
+  "line": 151,
+  "endLine": 156,
+  "fn": "POST",
+  "models": [
+   "member.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 193,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/soft-delete/route.ts",
+  "line": 190,
+  "endLine": 217,
+  "fn": "POST",
+  "models": [
+   "tenant.updateMany",
+   "user.updateMany",
+   "member.updateMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 1144,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/soft-delete/route.ts",
+  "line": 276,
+  "endLine": 313,
+  "fn": "DELETE",
+  "models": [
+   "auditLog.findFirst",
+   "member.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "restoreSoftDeletedTenant"
+  ],
+  "chars": 1844,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/suspend/route.ts",
+  "line": 83,
+  "endLine": 88,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 179,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/suspend/route.ts",
+  "line": 128,
+  "endLine": 178,
+  "fn": "POST",
+  "models": [
+   "member.findMany",
+   "tenant.updateMany",
+   "user.updateMany",
+   "member.updateMany"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "consumeStepUpGrant"
+  ],
+  "chars": 2137,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/suspend/route.ts",
+  "line": 226,
+  "endLine": 231,
+  "fn": "DELETE",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 223,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/suspend/route.ts",
+  "line": 255,
+  "endLine": 261,
+  "fn": "DELETE",
+  "models": [
+   "auditLog.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 254,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/suspend/route.ts",
+  "line": 288,
+  "endLine": 293,
+  "fn": "DELETE",
+  "models": [
+   "member.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 213,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/suspend/route.ts",
+  "line": 307,
+  "endLine": 335,
+  "fn": "DELETE",
+  "models": [
+   "tenant.updateMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 971,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/totp-reset/route.ts",
+  "line": 63,
+  "endLine": 63,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 106,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/totp-reset/route.ts",
+  "line": 69,
+  "endLine": 75,
+  "fn": "POST",
+  "models": [
+   "user.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 214,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/totp-reset/route.ts",
+  "line": 89,
+  "endLine": 127,
+  "fn": "POST",
+  "models": [
+   "user.update"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "consumeStepUpGrant"
+  ],
+  "chars": 1625,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/transfer-ownership/route.ts",
+  "line": 51,
+  "endLine": 57,
+  "fn": "GET",
+  "models": [
+   "user.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 234,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/transfer-ownership/route.ts",
+  "line": 86,
+  "endLine": 86,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 106,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/customers/[id]/transfer-ownership/route.ts",
+  "line": 117,
+  "endLine": 169,
+  "fn": "POST",
+  "models": [
+   "user.findFirst",
+   "user.updateMany"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "consumeStepUpGrant"
+  ],
+  "chars": 2787,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/impersonate/route.ts",
+  "line": 156,
+  "endLine": 164,
+  "fn": "POST",
+  "models": [
+   "user.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 294,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/admin/impersonate/route.ts",
+  "line": 211,
+  "endLine": 229,
+  "fn": "POST",
+  "models": [],
+  "raw": false,
+  "helperCalls": [
+   "consumeStepUpGrant"
+  ],
+  "chars": 578,
+  "cls": "a",
+  "note": "operator API -> ops client"
+ },
+ {
+  "file": "app/api/apply/route.ts",
+  "line": 53,
+  "endLine": 69,
+  "fn": "POST",
+  "models": [
+   "gymApplication.create"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 465,
+  "cls": "e",
+  "note": "GymApplication has no RLS; drop the wrapper, runtime client keeps INSERT"
+ },
+ {
+  "file": "app/api/auth/disown-login/[token]/route.ts",
+  "line": 112,
+  "endLine": 114,
+  "fn": "POST",
+  "models": [
+   "loginEvent.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 99,
+  "cls": "c",
+  "note": "token format change: sign tenantId into the disown token (7-day TTL); no resolver exists for LoginEvent.id"
+ },
+ {
+  "file": "app/api/auth/forgot-password/route.ts",
+  "line": 42,
+  "endLine": 44,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 86,
+  "cls": "b",
+  "note": "tenant_id_by_slug"
+ },
+ {
+  "file": "app/api/auth/reset-password/route.ts",
+  "line": 78,
+  "endLine": 80,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 86,
+  "cls": "b",
+  "note": "tenant_id_by_slug"
+ },
+ {
+  "file": "app/api/auth/totp/recover/route.ts",
+  "line": 66,
+  "endLine": 68,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 90,
+  "cls": "b",
+  "note": "tenant_id_by_slug"
+ },
+ {
+  "file": "app/api/cron/class-instances/route.ts",
+  "line": 110,
+  "endLine": 115,
+  "fn": "GET",
+  "models": [
+   "tenant.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 190,
+  "cls": "a",
+  "note": "cron -> ops client"
+ },
+ {
+  "file": "app/api/cron/monthly-reports/route.ts",
+  "line": 58,
+  "endLine": 66,
+  "fn": "GET",
+  "models": [
+   "tenant.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 212,
+  "cls": "a",
+  "note": "cron -> ops client"
+ },
+ {
+  "file": "app/api/cron/retention/route.ts",
+  "line": 304,
+  "endLine": 304,
+  "fn": "countOnly",
+  "models": [],
+  "raw": false,
+  "helperCalls": [
+   "pick"
+  ],
+  "chars": 48,
+  "cls": "a",
+  "note": "cron -> ops client"
+ },
+ {
+  "file": "app/api/cron/retention/route.ts",
+  "line": 324,
+  "endLine": 326,
+  "fn": "deleteInBatches",
+  "models": [],
+  "raw": false,
+  "helperCalls": [
+   "pick"
+  ],
+  "chars": 100,
+  "cls": "a",
+  "note": "cron -> ops client"
+ },
+ {
+  "file": "app/api/cron/retention/route.ts",
+  "line": 329,
+  "endLine": 331,
+  "fn": "deleteInBatches",
+  "models": [],
+  "raw": false,
+  "helperCalls": [
+   "pick"
+  ],
+  "chars": 106,
+  "cls": "a",
+  "note": "cron -> ops client"
+ },
+ {
+  "file": "app/api/cron/retention/route.ts",
+  "line": 356,
+  "endLine": 356,
+  "fn": "purgeAbandonedImportJobs",
+  "models": [
+   "importJob.count"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 52,
+  "cls": "a",
+  "note": "cron -> ops client"
+ },
+ {
+  "file": "app/api/cron/retention/route.ts",
+  "line": 367,
+  "endLine": 369,
+  "fn": "purgeAbandonedImportJobs",
+  "models": [
+   "importJob.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 139,
+  "cls": "a",
+  "note": "cron -> ops client"
+ },
+ {
+  "file": "app/api/cron/retention/route.ts",
+  "line": 382,
+  "endLine": 384,
+  "fn": "purgeAbandonedImportJobs",
+  "models": [
+   "importJob.deleteMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 110,
+  "cls": "a",
+  "note": "cron -> ops client"
+ },
+ {
+  "file": "app/api/cron/retention/route.ts",
+  "line": 419,
+  "endLine": 419,
+  "fn": "scrubImportJobDiagnostics",
+  "models": [
+   "importJob.count"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 52,
+  "cls": "a",
+  "note": "cron -> ops client"
+ },
+ {
+  "file": "app/api/cron/retention/route.ts",
+  "line": 422,
+  "endLine": 427,
+  "fn": "scrubImportJobDiagnostics",
+  "models": [
+   "importJob.updateMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 152,
+  "cls": "a",
+  "note": "cron -> ops client"
+ },
+ {
+  "file": "app/api/cron/retention/route.ts",
+  "line": 431,
+  "endLine": 436,
+  "fn": "scrubImportJobDiagnostics",
+  "models": [
+   "importJob.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 257,
+  "cls": "a",
+  "note": "cron -> ops client"
+ },
+ {
+  "file": "app/api/cron/retention/route.ts",
+  "line": 454,
+  "endLine": 454,
+  "fn": "deleteDbUploadsForJobs",
+  "models": [
+   "importUpload.deleteMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 77,
+  "cls": "a",
+  "note": "cron -> ops client"
+ },
+ {
+  "file": "app/api/kiosk/[token]/checkin/route.ts",
+  "line": 60,
+  "endLine": 65,
+  "fn": "POST",
+  "models": [
+   "tenant.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 179,
+  "cls": "b",
+  "note": "tenant_id_by_kiosk_token_hash"
+ },
+ {
+  "file": "app/api/kiosk/[token]/classes/route.ts",
+  "line": 36,
+  "endLine": 41,
+  "fn": "GET",
+  "models": [
+   "tenant.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 314,
+  "cls": "b",
+  "note": "tenant_id_by_kiosk_token_hash"
+ },
+ {
+  "file": "app/api/kiosk/[token]/members/route.ts",
+  "line": 51,
+  "endLine": 56,
+  "fn": "GET",
+  "models": [
+   "tenant.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 179,
+  "cls": "b",
+  "note": "tenant_id_by_kiosk_token_hash"
+ },
+ {
+  "file": "app/api/magic-link/request/route.ts",
+  "line": 32,
+  "endLine": 34,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 86,
+  "cls": "b",
+  "note": "tenant_id_by_slug"
+ },
+ {
+  "file": "app/api/magic-link/verify/route.ts",
+  "line": 44,
+  "endLine": 54,
+  "fn": "GET",
+  "models": [
+   "magicLinkToken.findUnique",
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 332,
+  "cls": "b",
+  "note": "tenant_id_by_magic_link_hash"
+ },
+ {
+  "file": "app/api/magic-link/verify/route.ts",
+  "line": 72,
+  "endLine": 94,
+  "fn": "GET",
+  "models": [
+   "magicLinkToken.updateMany",
+   "magicLinkToken.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 1047,
+  "cls": "c",
+  "note": "tenant from the preflight resolver; consume inside its signed context"
+ },
+ {
+  "file": "app/api/member/totp/recover/route.ts",
+  "line": 78,
+  "endLine": 80,
+  "fn": "POST",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 90,
+  "cls": "b",
+  "note": "tenant_id_by_slug"
+ },
+ {
+  "file": "app/api/members/accept-invite/route.ts",
+  "line": 104,
+  "endLine": 108,
+  "fn": "POST",
+  "models": [
+   "magicLinkToken.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 130,
+  "cls": "b",
+  "note": "tenant_id_by_magic_link_hash"
+ },
+ {
+  "file": "app/api/members/accept-invite/route.ts",
+  "line": 117,
+  "endLine": 122,
+  "fn": "POST",
+  "models": [
+   "member.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 181,
+  "cls": "c",
+  "note": "tokenRow.tenantId"
+ },
+ {
+  "file": "app/api/stripe/webhook/route.ts",
+  "line": 137,
+  "endLine": 1239,
+  "fn": "crashes",
+  "models": [
+   "stripeEvent.create",
+   "tenant.findFirst",
+   "member.findFirst",
+   "member.updateMany",
+   "member.findUnique",
+   "member.update",
+   "payment.upsert",
+   "user.findMany",
+   "classPack.findFirst",
+   "memberClassPack.create",
+   "order.updateMany",
+   "order.findFirst",
+   "payment.findFirst",
+   "payment.update",
+   "memberClassPack.findUnique",
+   "classPackRedemption.count",
+   "memberClassPack.update",
+   "dispute.upsert",
+   "tenant.findUnique",
+   "order.update",
+   "tenant.updateMany"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "recordStatusEvent"
+  ],
+  "chars": 56785,
+  "cls": "b",
+  "note": "tenant_id_by_stripe_account INSIDE the claim transaction, then sign mid-transaction (new helper)"
+ },
+ {
+  "file": "app/api/tenant/[slug]/route.ts",
+  "line": 56,
+  "endLine": 72,
+  "fn": "GET",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 422,
+  "cls": "b",
+  "note": "tenant_id_by_slug"
+ },
+ {
+  "file": "app/api/waiver/kiosk-request/route.ts",
+  "line": 47,
+  "endLine": 52,
+  "fn": "POST",
+  "models": [
+   "tenant.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 154,
+  "cls": "b",
+  "note": "tenant_id_by_kiosk_token_hash"
+ },
+ {
+  "file": "app/api/waiver/kiosk-status/route.ts",
+  "line": 25,
+  "endLine": 30,
+  "fn": "GET",
+  "models": [
+   "magicLinkToken.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 206,
+  "cls": "b",
+  "note": "API change: lookup is by MagicLinkToken.id (no resolver); require the kiosk device token -> tenant_id_by_kiosk_token_hash, then read the token by id in that context"
+ },
+ {
+  "file": "app/api/waiver/kiosk-status/route.ts",
+  "line": 51,
+  "endLine": 56,
+  "fn": "GET",
+  "models": [
+   "member.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 167,
+  "cls": "c",
+  "note": "token.tenantId"
+ },
+ {
+  "file": "app/api/waiver/open/route.ts",
+  "line": 25,
+  "endLine": 30,
+  "fn": "GET",
+  "models": [
+   "magicLinkToken.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 202,
+  "cls": "b",
+  "note": "tenant_id_by_magic_link_hash"
+ },
+ {
+  "file": "app/api/waiver/open/route.ts",
+  "line": 77,
+  "endLine": 82,
+  "fn": "POST",
+  "models": [
+   "magicLinkToken.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 202,
+  "cls": "b",
+  "note": "tenant_id_by_magic_link_hash"
+ },
+ {
+  "file": "app/api/webhooks/resend/route.ts",
+  "line": 124,
+  "endLine": 126,
+  "fn": "POST",
+  "models": [
+   "emailLog.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 120,
+  "cls": "b*",
+  "note": "NEW resolver tenant_id_by_resend_id (EmailLog.resendId) - not in phase 1"
+ },
+ {
+  "file": "app/api/webhooks/resend/route.ts",
+  "line": 141,
+  "endLine": 149,
+  "fn": "POST",
+  "models": [
+   "emailLog.update"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 218,
+  "cls": "c",
+  "note": "tenant from the resolver above; update in its signed context"
+ },
+ {
+  "file": "app/kiosk/[token]/page.tsx",
+  "line": 29,
+  "endLine": 45,
+  "fn": "Page",
+  "models": [
+   "tenant.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 396,
+  "cls": "b",
+  "note": "tenant_id_by_kiosk_token_hash"
+ },
+ {
+  "file": "app/leaderboard/[token]/page.tsx",
+  "line": 33,
+  "endLine": 50,
+  "fn": "Page",
+  "models": [
+   "tenant.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 423,
+  "cls": "b",
+  "note": "tenant_id_by_display_token_hash"
+ },
+ {
+  "file": "auth.ts",
+  "line": 441,
+  "endLine": 443,
+  "fn": "usableSession",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 102,
+  "cls": "b",
+  "note": "tenant_id_by_slug (credentials sign-in)"
+ },
+ {
+  "file": "auth.ts",
+  "line": 859,
+  "endLine": 861,
+  "fn": "usableSession",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 82,
+  "cls": "b",
+  "note": "tenant_id_by_slug (Google sign-in; Google disabled in production)"
+ },
+ {
+  "file": "auth.ts",
+  "line": 1084,
+  "endLine": 1093,
+  "fn": "usableSession",
+  "models": [
+   "tenant.findUnique",
+   "user.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 401,
+  "cls": "b",
+  "note": "tenant_id_by_slug (dev-only DEMO_MODE token upgrade; deletable with that fallback)"
+ },
+ {
+  "file": "auth.ts",
+  "line": 1426,
+  "endLine": 1428,
+  "fn": "usableSession",
+  "models": [
+   "user.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 152,
+  "cls": "c",
+  "note": "token.tenantId from the verified JWT"
+ },
+ {
+  "file": "auth.ts",
+  "line": 1451,
+  "endLine": 1456,
+  "fn": "usableSession",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 251,
+  "cls": "c",
+  "note": "token.tenantId from the verified JWT"
+ },
+ {
+  "file": "lib/audit-log.ts",
+  "line": 245,
+  "endLine": 245,
+  "fn": "insert",
+  "models": [],
+  "raw": false,
+  "helperCalls": [
+   "insert"
+  ],
+  "chars": 36,
+  "cls": "a",
+  "note": "tenantId=null audit rows; all 7 writers are operator flows -> ops client"
+ },
+ {
+  "file": "lib/email.ts",
+  "line": 416,
+  "endLine": 424,
+  "fn": "isProvisionalLoginAddress",
+  "models": [
+   "user.findFirst"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 266,
+  "cls": "b*",
+  "note": "NEW boolean function is_provisional_login_address(text) - cross-tenant by design, not in phase 1"
+ },
+ {
+  "file": "lib/impersonation.ts",
+  "line": 265,
+  "endLine": 280,
+  "fn": "resolveActiveImpersonation",
+  "models": [
+   "user.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 592,
+  "cls": "c",
+  "note": "imp.targetTenantId from the verified support token"
+ },
+ {
+  "file": "lib/leaderboard.ts",
+  "line": 163,
+  "endLine": 200,
+  "fn": "computeLeaderboard",
+  "models": [
+   "attendanceRecord.groupBy",
+   "member.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 1226,
+  "cls": "c",
+  "note": "tenantId argument (resolved by display token)"
+ },
+ {
+  "file": "lib/notify-member-action.ts",
+  "line": 71,
+  "endLine": 73,
+  "fn": "notifyMemberAction",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 111,
+  "cls": "c",
+  "note": "args.tenantId"
+ },
+ {
+  "file": "lib/operator-step-up.ts",
+  "line": 315,
+  "endLine": 315,
+  "fn": "resolveStepUpVersionDigest",
+  "models": [],
+  "raw": false,
+  "helperCalls": [
+   "stepUpVersion"
+  ],
+  "chars": 58,
+  "cls": "a",
+  "note": "operator step-up digest -> ops client"
+ },
+ {
+  "file": "lib/promotion-candidates.ts",
+  "line": 188,
+  "endLine": 196,
+  "fn": "isPromotionReady",
+  "models": [
+   "memberRank.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 302,
+  "cls": "e",
+  "note": "isPromotionReady has no caller in app/, lib/, components/, auth.ts, proxy.ts (dead code)"
+ },
+ {
+  "file": "lib/review-lock.ts",
+  "line": 37,
+  "endLine": 42,
+  "fn": "getReviewState",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 178,
+  "cls": "c",
+  "note": "tenantId argument (session tenant; operator soft-delete caller runs as ops)"
+ },
+ {
+  "file": "lib/session-revocation.ts",
+  "line": 108,
+  "endLine": 112,
+  "fn": "checkSessionVersion",
+  "models": [
+   "member.findUnique",
+   "user.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 297,
+  "cls": "c",
+  "note": "check.tenantId from the verified JWT"
+ },
+ {
+  "file": "lib/stripe/reconcile.ts",
+  "line": 67,
+  "endLine": 72,
+  "fn": "runStripeReconciliation",
+  "models": [
+   "tenant.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 198,
+  "cls": "a",
+  "note": "cron (reconcile) -> ops client"
+ },
+ {
+  "file": "lib/stripe/reconcile.ts",
+  "line": 93,
+  "endLine": 98,
+  "fn": "runStripeReconciliation",
+  "models": [
+   "stripeEvent.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 184,
+  "cls": "a",
+  "note": "cron (reconcile) -> ops client"
+ },
+ {
+  "file": "lib/tenant-purge.ts",
+  "line": 81,
+  "endLine": 88,
+  "fn": "purgeSoftDeletedTenants",
+  "models": [
+   "tenant.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 275,
+  "cls": "a",
+  "note": "cron purge (destructive, cross-tenant) -> ops client"
+ },
+ {
+  "file": "lib/tenant-purge.ts",
+  "line": 269,
+  "endLine": 272,
+  "fn": "walkTenant",
+  "models": [],
+  "raw": false,
+  "helperCalls": [
+   "assertPurgeClaim",
+   "fn"
+  ],
+  "chars": 121,
+  "cls": "a",
+  "note": "cron purge (destructive, cross-tenant) -> ops client"
+ },
+ {
+  "file": "lib/tenant-purge.ts",
+  "line": 378,
+  "endLine": 380,
+  "fn": "walkTenant",
+  "models": [
+   "importJob.findMany"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 137,
+  "cls": "a",
+  "note": "cron purge (destructive, cross-tenant) -> ops client"
+ },
+ {
+  "file": "lib/tenant-purge.ts",
+  "line": 482,
+  "endLine": 482,
+  "fn": "purgeTenantById",
+  "models": [],
+  "raw": false,
+  "helperCalls": [
+   "claimTenantPurge"
+  ],
+  "chars": 58,
+  "cls": "a",
+  "note": "cron purge (destructive, cross-tenant) -> ops client"
+ },
+ {
+  "file": "lib/tenant-purge.ts",
+  "line": 485,
+  "endLine": 487,
+  "fn": "purgeTenantById",
+  "models": [
+   "tenant.findUnique"
+  ],
+  "raw": false,
+  "helperCalls": [],
+  "chars": 121,
+  "cls": "a",
+  "note": "cron purge (destructive, cross-tenant) -> ops client"
+ },
+ {
+  "file": "lib/tenant-purge.ts",
+  "line": 499,
+  "endLine": 525,
+  "fn": "purgeTenantById",
+  "models": [
+   "tenant.deleteMany",
+   "auditLog.create"
+  ],
+  "raw": false,
+  "helperCalls": [
+   "assertPurgeClaim"
+  ],
+  "chars": 1133,
+  "cls": "a",
+  "note": "cron purge (destructive, cross-tenant) -> ops client"
+ }
+]

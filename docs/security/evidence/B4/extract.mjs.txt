@@ -1,0 +1,57 @@
+// B4 read-only extractor: every withRlsBypass( call site in app/, lib/, auth.ts, proxy.ts with file:line,
+// the enclosing exported function/handler name, the Prisma delegate calls inside the callback (balanced-paren scan),
+// and any $queryRaw/$executeRaw inside it. Output JSON + a compact text listing.
+import fs from "node:fs";
+import path from "node:path";
+
+const root = process.argv[2];
+const outDir = process.argv[3];
+const roots = ["app", "lib", "auth.ts", "proxy.ts"];
+const files = [];
+function walk(p) {
+  const st = fs.statSync(p);
+  if (st.isDirectory()) { for (const e of fs.readdirSync(p)) walk(path.join(p, e)); }
+  else if (/\.(ts|tsx)$/.test(p)) files.push(p);
+}
+for (const r of roots) { const p = path.join(root, r); if (fs.existsSync(p)) walk(p); }
+
+const sites = [];
+for (const f of files) {
+  const src = fs.readFileSync(f, "utf8");
+  const rel = path.relative(root, f).split(path.sep).join("/");
+  const re = /withRlsBypass\(/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const before = src.slice(Math.max(0, m.index - 30), m.index);
+    if (/function\s+$/.test(before)) continue; // definition
+    const line = src.slice(0, m.index).split("\n").length;
+    // balanced scan from the "(" to find the callback extent
+    let depth = 0, i = m.index + "withRlsBypass".length, end = i;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (c === "(") depth++;
+      else if (c === ")") { depth--; if (depth === 0) { end = i; break; } }
+    }
+    const body = src.slice(m.index, end + 1);
+    const endLine = src.slice(0, end).split("\n").length;
+    const models = [...new Set([...body.matchAll(/\btx\.([a-zA-Z]+)\.([a-zA-Z]+)\(/g)].map((x) => `${x[1]}.${x[2]}`))];
+    const raw = /\btx\.\$(queryRaw|executeRaw)/.test(body);
+    const calls = [...new Set([...body.matchAll(/\b([a-zA-Z_][A-Za-z0-9_]*)\(\s*tx\b/g)].map((x) => x[1]))];
+    // enclosing function: nearest preceding "export async function X" / "async function X" / "export const X"
+    const head = src.slice(0, m.index);
+    const fm = [...head.matchAll(/(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)|export\s+const\s+([A-Za-z0-9_]+)/g)].pop();
+    const fn = fm ? (fm[1] || fm[2]) : "?";
+    sites.push({ file: rel, line, endLine, fn, models, raw, helperCalls: calls, chars: body.length });
+  }
+}
+sites.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+fs.writeFileSync(path.join(outDir, "sites.json"), JSON.stringify(sites, null, 1));
+const byFile = {};
+for (const s of sites) (byFile[s.file] ??= []).push(s);
+let txt = `total ${sites.length} call sites in ${Object.keys(byFile).length} files\n`;
+for (const [f, ss] of Object.entries(byFile)) {
+  txt += `\n${f} (${ss.length})\n`;
+  for (const s of ss) txt += `  L${s.line}-${s.endLine} fn=${s.fn} models=[${s.models.join(", ")}]${s.raw ? " RAW" : ""}${s.helperCalls.length ? " helpers=" + s.helperCalls.join(",") : ""}\n`;
+}
+fs.writeFileSync(path.join(outDir, "sites.txt"), txt);
+console.log(txt);

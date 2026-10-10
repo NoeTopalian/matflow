@@ -1,0 +1,242 @@
+# B4 test and tooling inventory — generated 2026-10-10T20:28Z from the working tree (code identical to 03ef584; HEAD 90fcbf6)
+
+## Integration files calling withRlsBypass( (count per file) — command: grep -c 'withRlsBypass(' tests/integration/*.ts
+tests/integration/cross-tenant-authorisation-matrix.test.ts:69
+tests/integration/attendance-import-engine.test.ts:46
+tests/integration/sec-d2-import-attacker-model-db.test.ts:26
+tests/integration/member-children-lifecycle.test.ts:24
+tests/integration/sec-d3-provenance-forgery-db.test.ts:19
+tests/integration/sec-d-attendance-misbinding-db.test.ts:19
+tests/integration/login-identity-claims-db.test.ts:17
+tests/integration/contact-email-change-imports-db.test.ts:17
+tests/integration/sec-a-token-subject-binding-db.test.ts:16
+tests/integration/parent-deletion-gateway.test.ts:16
+tests/integration/account-editing-db.test.ts:16
+tests/integration/tenant-restore-purge-race.test.ts:15
+tests/integration/sec-d2-deletion-provenance-db.test.ts:15
+tests/integration/sec-b-sean-imported-cancelled-db.test.ts:14
+tests/integration/sec-b-ownership-transfer-db.test.ts:12
+tests/integration/sec-a2-verify-disown-db.test.ts:12
+tests/integration/class-instance-uniqueness.test.ts:11
+tests/integration/token-scoping-db.test.ts:10
+tests/integration/sec-d3-deletion-race-db.test.ts:10
+tests/integration/sec-b-version-at-check-db.test.ts:10
+tests/integration/sec-b-role-matrix-db.test.ts:10
+tests/integration/login-email-change-db.test.ts:10
+tests/integration/operator-hub-conflict-db.test.ts:9
+tests/integration/member-children-photos.test.ts:9
+tests/integration/class-schedule-edit.test.ts:9
+tests/integration/audit-durability-db.test.ts:9
+tests/integration/sec-a-revoke-access-db.test.ts:8
+tests/integration/promote-with-photo.test.ts:8
+tests/integration/parent-pays-for-kid.test.ts:8
+tests/integration/parent-no-membership.test.ts:8
+tests/integration/operator-step-up-db.test.ts:8
+tests/integration/member-cascade-delete.test.ts:8
+tests/integration/support-session-binding-db.test.ts:7
+tests/integration/staff-edit-email.test.ts:7
+tests/integration/sec-b-rls-identity-db.test.ts:7
+tests/integration/sec-a2-outage-proxy-db.test.ts:7
+tests/integration/sec-a2-outage-handlers-db.test.ts:7
+tests/integration/login-identity-race-db.test.ts:7
+tests/integration/waiver-blob-fallback.test.ts:6
+tests/integration/sec-m1-demo-rotate-db.test.ts:6
+tests/integration/sec-a2-member-recovery-race-db.test.ts:6
+tests/integration/sec-a-revocation-fail-closed-db.test.ts:6
+tests/integration/sec-a-recovery-code-race-db.test.ts:6
+tests/integration/cron-smoke.test.ts:6
+tests/integration/checkin-window-config.test.ts:6
+tests/integration/teamup-rehearsal.test.ts:5
+tests/integration/sec-a4-lockout-burst-db.test.ts:5
+tests/integration/roster-cross-tenant.test.ts:5
+tests/integration/rls-foundation.test.ts:5
+tests/integration/push-subscribe.test.ts:5
+tests/integration/owner-recovery-revocation-db.test.ts:5
+tests/integration/member-self-pay.test.ts:5
+tests/integration/staff-photo-viewer.test.ts:4
+tests/integration/sec-b2-stale-bypass-db.test.ts:4
+tests/integration/sec-b-fixture-sweep-db.test.ts:4
+tests/integration/sec-a2-lockout-oracle-db.test.ts:4
+tests/integration/sec-a-step-up-expiry-db.test.ts:4
+tests/integration/import-upload.test.ts:4
+tests/integration/checkin-pack-race.test.ts:4
+tests/integration/sec-a3-lockout-oracle-db.test.ts:3
+tests/integration/operator-enrolment-ticket-db.test.ts:3
+tests/integration/parent-checkin-kid.test.ts:2
+tests/integration/member-children-stats.test.ts:2
+files: 63; calls: 655
+
+## Integration files setting app.bypass_rls in raw SQL — command: grep -c bypass_rls tests/integration/*.ts
+tests/integration/email-lowercase-invariant.test.ts:1
+tests/integration/rls-foundation.test.ts:1
+tests/integration/sec-b-ownership-transfer-db.test.ts:1
+tests/integration/sec-b-rls-identity-db.test.ts:3
+tests/integration/sec-b2-public-boundary-proposal.test.ts:5
+tests/integration/sec-b2-stale-bypass-db.test.ts:6
+tests/integration/sec-d2-import-attacker-model-db.test.ts:1
+tests/integration/sec-f2-auditlog-append-only-db.test.ts:1
+union of both: 66 of 82 integration files
+
+## e2e specs opening their own Prisma client on the ambient DATABASE_URL
+tests/e2e/auth/member-account-unlock.spec.ts raw-bypass-lines=2
+tests/e2e/auth/member-password-reset.spec.ts raw-bypass-lines=2
+tests/e2e/auth/member-totp-enrol.spec.ts raw-bypass-lines=0
+tests/e2e/auth/member-totp-recovery.spec.ts raw-bypass-lines=2
+tests/e2e/auth/owner-defer-totp.spec.ts raw-bypass-lines=0
+tests/e2e/auth/totp-enrolment-flow.spec.ts raw-bypass-lines=0
+
+## Unit test files mentioning withRlsBypass (mocks to update when call sites change): 123
+
+## Scripts setting app.bypass_rls or calling withRlsBypass (count | URL source)
+scripts/check-my-accounts.mjs | 2 | process.env.DATABASE_URL 
+scripts/check-stats-accuracy.ts | 4 | argv[2] 
+scripts/operator-access.mjs | 1 | argv[2] process.env.DATABASE_URL 
+scripts/probe-rls-behavior.ts | 1 | process.env.DATABASE_URL 
+scripts/probe-rls-uncontexted.mjs | 1 | process.env.DATABASE_URL 
+scripts/readiness/backup-post-restore.mjs | 4 | argv[1] 
+scripts/readiness/db-role-inspect.mjs | 1 | argv[2] argv[3] argv[4] 
+scripts/readiness/demo-accounts-rotate.mjs | 1 | argv[1] 
+scripts/readiness/function-register.mjs | 1 | 
+scripts/readiness/login-identity-duplicates.mjs | 1 | process.env.DATABASE_URL 
+scripts/readiness/owner-account-state.mjs | 1 | process.env.DATABASE_URL 
+scripts/readiness/owner-login-change-check.mjs | 3 | argv[1] 
+scripts/readiness/release-verify.mjs | 1 | argv[0] argv[1] 
+scripts/readiness/restore-verify.mjs | 3 | argv[1] 
+scripts/readiness/rls-boundary-harness.mjs | 10 | 
+scripts/readiness/rls-proposal-validate.mjs | 8 | 
+scripts/readiness/tenant-state.mjs | 2 | process.env.DATABASE_URL 
+scripts/refresh-stripe-account-status.mjs | 3 | process.env.DATABASE_URL 
+scripts/seed-demo-rich.mjs | 4 | process.env.DATABASE_URL 
+scripts/stripe-dispute-closed-e2e.mjs | 1 | argv[2] argv[3] 
+scripts/stripe-family-e2e.mjs | 1 | argv[2] 
+scripts/stripe-lifecycle-e2e.mjs | 1 | argv[2] argv[3] 
+scripts/stripe-migration-e2e.mjs | 8 | argv[2] argv[3] 
+scripts/verify-login.mjs | 3 | process.env.DATABASE_URL 
+
+## Seed: prisma/seed.ts connects with DATABASE_URL, no bypass (owner-only by construction)
+17:if (!process.env.DATABASE_URL) {
+18:  throw new Error("DATABASE_URL is required to seed");
+33:const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+
+## Role scripts
+scripts/create-restricted-role.ts:45:    `GRANT USAGE ON SCHEMA public TO ${ROLE};`,
+scripts/create-restricted-role.ts:46:    `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${ROLE};`,
+scripts/create-restricted-role.ts:47:    `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${ROLE};`,
+scripts/create-restricted-role.ts:48:    `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${ROLE};`,
+scripts/create-restricted-role.ts:49:    `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${ROLE};`,
+scripts/create-restricted-role.ts:52:    `REVOKE ALL ON public._prisma_migrations FROM ${ROLE};`,
+scripts/ci-create-restricted-role.sql:23:GRANT USAGE ON SCHEMA public TO matflow_app;
+scripts/ci-create-restricted-role.sql:24:GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO matflow_app;
+scripts/ci-create-restricted-role.sql:25:GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO matflow_app;
+scripts/ci-create-restricted-role.sql:26:ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO matflow_app;
+scripts/ci-create-restricted-role.sql:27:ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO matflow_app;
+
+## CI order (ci.yml): migrate deploy, seed, tests, THEN restricted role created
+1:name: CI
+20:    name: Typecheck + Lint + Vitest
+66:      - name: Install dependencies
+67:        run: npm ci
+69:      - name: Generate Prisma client
+70:        run: npx prisma generate
+72:      - name: Apply migrations to the CI database
+73:        run: npx prisma migrate deploy
+89:      - name: Seed the CI database
+90:        run: npm run seed
+92:      - name: Typecheck
+93:        run: npx tsc --noEmit
+99:      - name: Lint (eslint + UI-RULES ratchet)
+100:        run: npm run lint
+107:      - name: Install Semgrep
+108:        run: pipx install semgrep==1.180.0 # pinned (security campaign SF-21); bump deliberately
+110:      - name: Security SAST ratchet — gating
+111:        run: node scripts/security-scan.mjs
+115:      - name: Vitest (full suite) — gating
+116:        run: npm test
+136:      - name: Create restricted (NOBYPASSRLS) role for RLS proof
+137:        run: psql "${DATABASE_URL%%\?*}" -v ON_ERROR_STOP=1 -f scripts/ci-create-restricted-role.sql
+139:      - name: RLS enforcement — gating
+143:        run: npx vitest run tests/integration/rls-foundation.test.ts
+
+## Build-time migration
+7:    "build": "node scripts/maybe-migrate.mjs && next build",
+15:// MIGRATION_DATABASE_URL when it is set, otherwise DATABASE_URL. Migrations
+18:// MIGRATION_DATABASE_URL exists in Vercel nothing changes: DATABASE_URL is used
+23:const source = process.env.MIGRATION_DATABASE_URL
+24:  ? "MIGRATION_DATABASE_URL"
+30:  console.warn("[build] Neither MIGRATION_DATABASE_URL nor DATABASE_URL is set — skipping `prisma migrate deploy`");
+
+## Backup dump scope (db-backup.yml)
+1:# Weekly logical pg_dump to S3 as a fallback to Neon PITR.
+4:#   - DATABASE_URL_DIRECT   non-pooled Postgres URL (pg_dump cannot use pgbouncer)
+15:name: Database backup (logical pg_dump)
+31:      # The Neon project runs PostgreSQL 17.x; pg_dump refuses a server newer
+47:          "$PG_BIN/pg_dump" --version
+48:          if ! "$PG_BIN/pg_dump" --version | grep -Eq ' 17\.[0-9]+'; then
+49:            echo "::error::pg_dump at $PG_BIN is not version 17"
+91:          "$PG_BIN/pg_dump" \
+93:            --no-owner \
+94:            --no-privileges \
+103:      # This proves the STRUCTURE is readable, not that rows are present: pg_dump
+
+## Non-RLS models (schema models minus ENABLE ROW LEVEL SECURITY tables in prisma/migrations)
+GymApplication
+Operator
+PlatformConfig
+RateLimitHit
+StripeEvent
+RLS tables: 47
+
+## PlatformConfig references in app/ lib/ auth.ts proxy.ts: 0
+## Operator writes inside transactions
+app/api/admin/auth/operator-totp/setup/route.ts:218:      const res = await tx.operator.updateMany({
+lib/operator-step-up.ts:599:  const spent = await tx.operator.updateMany({
+## tenantId: null audit writers
+app/api/admin/applications/[id]/reject/route.ts:78:    tenantId: null,
+app/api/admin/auth/operator-totp/route.ts:162:      tenantId: null,
+app/api/admin/auth/operator-totp/setup/route.ts:236:        tenantId: null,
+app/api/admin/auth/step-up/route.ts:111:      tenantId: null,
+app/api/admin/impersonate/route.ts:319:            tenantId: null,
+lib/operator-auth.ts:454:      tenantId: null,
+lib/operator-step-up.ts:477:        tenantId: null,
+## dead-code check: getReviewState/isPromotionReady references
+lib/promotion-candidates.ts
+lib/review-lock.ts
+tests/unit/review-lock.test.ts
+
+## Integration files deleting AuditLog rows (break under SF-57 append-only as matflow_app; teardown must move to an owner connection) — command: grep -lE 'auditLog\.(deleteMany|delete)\(|DELETE FROM "AuditLog"' tests/integration/*.ts
+tests/integration/account-editing-db.test.ts
+tests/integration/attendance-import-engine.test.ts
+tests/integration/audit-durability-db.test.ts
+tests/integration/contact-email-change-imports-db.test.ts
+tests/integration/cross-tenant-authorisation-matrix.test.ts
+tests/integration/login-email-change-db.test.ts
+tests/integration/login-identity-claims-db.test.ts
+tests/integration/login-identity-race-db.test.ts
+tests/integration/operator-enrolment-ticket-db.test.ts
+tests/integration/operator-hub-conflict-db.test.ts
+tests/integration/operator-step-up-db.test.ts
+tests/integration/roster-cross-tenant.test.ts
+tests/integration/sec-a-recovery-code-race-db.test.ts
+tests/integration/sec-a-revocation-fail-closed-db.test.ts
+tests/integration/sec-a-revoke-access-db.test.ts
+tests/integration/sec-a-token-subject-binding-db.test.ts
+tests/integration/sec-a2-lockout-oracle-db.test.ts
+tests/integration/sec-a2-member-recovery-race-db.test.ts
+tests/integration/sec-a2-outage-handlers-db.test.ts
+tests/integration/sec-a2-outage-proxy-db.test.ts
+tests/integration/sec-a2-verify-disown-db.test.ts
+tests/integration/sec-a3-lockout-oracle-db.test.ts
+tests/integration/sec-a4-lockout-burst-db.test.ts
+tests/integration/sec-b-fixture-sweep-db.test.ts
+tests/integration/sec-b-ownership-transfer-db.test.ts
+tests/integration/sec-b-role-matrix-db.test.ts
+tests/integration/sec-b-sean-imported-cancelled-db.test.ts
+tests/integration/sec-b-version-at-check-db.test.ts
+tests/integration/sec-d-attendance-misbinding-db.test.ts
+tests/integration/sec-d2-deletion-provenance-db.test.ts
+tests/integration/sec-d2-import-attacker-model-db.test.ts
+tests/integration/sec-d3-deletion-race-db.test.ts
+tests/integration/sec-d3-provenance-forgery-db.test.ts
+tests/integration/sec-m1-demo-rotate-db.test.ts
+tests/integration/tenant-restore-purge-race.test.ts
+count: 35

@@ -1,0 +1,99 @@
+// B4: apply the P2 target class to every extracted withRlsBypass site (sites.json from extract.mjs) and emit
+// classification JSON, a per-file markdown table and totals. Classes:
+//   a = runs as matflow_ops through a separate client/URL (operator console, cron, platform-level audit)
+//   b = narrow matflow_sec lookup (resolver) then a signed context (b* = resolver NOT in proposed phase 1)
+//   c = signed tenant context; the tenant id is already known from a verified session/token/row
+//   d = genuinely needs the system role inside the tenant-facing app
+//   e = wrapper can be deleted (non-RLS table and stays on the runtime client, or dead code)
+import fs from "node:fs";
+const [, , sitesPath, outDir] = process.argv;
+const sites = JSON.parse(fs.readFileSync(sitesPath, "utf8"));
+
+const fileClass = [
+  [/^app\/admin\//, "a", "operator console page -> ops client"],
+  [/^app\/api\/admin\//, "a", "operator API -> ops client"],
+  [/^app\/api\/cron\//, "a", "cron -> ops client"],
+  [/^lib\/stripe\/reconcile\.ts$/, "a", "cron (reconcile) -> ops client"],
+  [/^lib\/tenant-purge\.ts$/, "a", "cron purge (destructive, cross-tenant) -> ops client"],
+  [/^lib\/operator-step-up\.ts$/, "a", "operator step-up digest -> ops client"],
+  [/^lib\/audit-log\.ts$/, "a", "tenantId=null audit rows; all 7 writers are operator flows -> ops client"],
+];
+const site = {
+  "auth.ts:441": ["b", "tenant_id_by_slug (credentials sign-in)"],
+  "auth.ts:859": ["b", "tenant_id_by_slug (Google sign-in; Google disabled in production)"],
+  "auth.ts:1084": ["b", "tenant_id_by_slug (dev-only DEMO_MODE token upgrade; deletable with that fallback)"],
+  "auth.ts:1426": ["c", "token.tenantId from the verified JWT"],
+  "auth.ts:1451": ["c", "token.tenantId from the verified JWT"],
+  "app/api/account/pending-tenant/route.ts:47": ["b", "tenant_id_by_slug"],
+  "app/api/auth/forgot-password/route.ts:42": ["b", "tenant_id_by_slug"],
+  "app/api/auth/reset-password/route.ts:78": ["b", "tenant_id_by_slug"],
+  "app/api/auth/totp/recover/route.ts:66": ["b", "tenant_id_by_slug"],
+  "app/api/member/totp/recover/route.ts:78": ["b", "tenant_id_by_slug"],
+  "app/api/magic-link/request/route.ts:32": ["b", "tenant_id_by_slug"],
+  "app/api/tenant/[slug]/route.ts:56": ["b", "tenant_id_by_slug"],
+  "app/api/kiosk/[token]/checkin/route.ts:60": ["b", "tenant_id_by_kiosk_token_hash"],
+  "app/api/kiosk/[token]/classes/route.ts:36": ["b", "tenant_id_by_kiosk_token_hash"],
+  "app/api/kiosk/[token]/members/route.ts:51": ["b", "tenant_id_by_kiosk_token_hash"],
+  "app/api/waiver/kiosk-request/route.ts:47": ["b", "tenant_id_by_kiosk_token_hash"],
+  "app/kiosk/[token]/page.tsx:29": ["b", "tenant_id_by_kiosk_token_hash"],
+  "app/leaderboard/[token]/page.tsx:33": ["b", "tenant_id_by_display_token_hash"],
+  "app/api/magic-link/verify/route.ts:44": ["b", "tenant_id_by_magic_link_hash"],
+  "app/api/magic-link/verify/route.ts:72": ["c", "tenant from the preflight resolver; consume inside its signed context"],
+  "app/api/members/accept-invite/route.ts:104": ["b", "tenant_id_by_magic_link_hash"],
+  "app/api/members/accept-invite/route.ts:117": ["c", "tokenRow.tenantId"],
+  "app/api/waiver/open/route.ts:25": ["b", "tenant_id_by_magic_link_hash"],
+  "app/api/waiver/open/route.ts:77": ["b", "tenant_id_by_magic_link_hash"],
+  "app/api/waiver/kiosk-status/route.ts:25": ["b", "API change: lookup is by MagicLinkToken.id (no resolver); require the kiosk device token -> tenant_id_by_kiosk_token_hash, then read the token by id in that context"],
+  "app/api/waiver/kiosk-status/route.ts:51": ["c", "token.tenantId"],
+  "app/api/auth/disown-login/[token]/route.ts:112": ["c", "token format change: sign tenantId into the disown token (7-day TTL); no resolver exists for LoginEvent.id"],
+  "app/api/webhooks/resend/route.ts:124": ["b*", "NEW resolver tenant_id_by_resend_id (EmailLog.resendId) - not in phase 1"],
+  "app/api/webhooks/resend/route.ts:141": ["c", "tenant from the resolver above; update in its signed context"],
+  "app/api/stripe/webhook/route.ts:137": ["b", "tenant_id_by_stripe_account INSIDE the claim transaction, then sign mid-transaction (new helper)"],
+  "app/api/apply/route.ts:53": ["e", "GymApplication has no RLS; drop the wrapper, runtime client keeps INSERT"],
+  "lib/email.ts:416": ["b*", "NEW boolean function is_provisional_login_address(text) - cross-tenant by design, not in phase 1"],
+  "lib/impersonation.ts:265": ["c", "imp.targetTenantId from the verified support token"],
+  "lib/leaderboard.ts:163": ["c", "tenantId argument (resolved by display token)"],
+  "lib/notify-member-action.ts:71": ["c", "args.tenantId"],
+  "lib/review-lock.ts:37": ["c", "tenantId argument (session tenant; operator soft-delete caller runs as ops)"],
+  "lib/session-revocation.ts:108": ["c", "check.tenantId from the verified JWT"],
+  "lib/promotion-candidates.ts:188": ["e", "isPromotionReady has no caller in app/, lib/, components/, auth.ts, proxy.ts (dead code)"],
+};
+const out = [];
+for (const s of sites) {
+  const key = `${s.file}:${s.line}`;
+  let cls, note;
+  if (site[key]) [cls, note] = site[key];
+  else {
+    const fc = fileClass.find(([re]) => re.test(s.file));
+    if (!fc) throw new Error(`unclassified ${key}`);
+    cls = fc[1]; note = fc[2];
+  }
+  out.push({ ...s, cls, note });
+}
+const unused = Object.keys(site).filter((k) => !out.some((o) => `${o.file}:${o.line}` === k));
+if (unused.length) throw new Error(`override keys that match no site: ${unused.join(", ")}`);
+fs.writeFileSync(`${outDir}/callsite-classification.json`, JSON.stringify(out, null, 1));
+
+const totals = {};
+const filesPer = {};
+for (const o of out) {
+  const c = o.cls.replace("*", "");
+  totals[c] = (totals[c] ?? 0) + 1;
+  (filesPer[c] ??= new Set()).add(o.file);
+}
+const starred = out.filter((o) => o.cls.endsWith("*")).length;
+let md = "| file | sites (line) | class | target |\n|---|---|---|---|\n";
+const byFile = {};
+for (const o of out) (byFile[o.file] ??= []).push(o);
+for (const [f, os] of Object.entries(byFile)) {
+  const groups = {};
+  for (const o of os) (groups[`${o.cls}\u0000${o.note}`] ??= []).push(o.line);
+  for (const [k, lines] of Object.entries(groups)) {
+    const [cls, note] = k.split("\u0000");
+    md += `| ${f} | ${lines.length} (L${lines.join(", L")}) | ${cls} | ${note} |\n`;
+  }
+}
+const sum = Object.entries(totals).map(([c, n]) => `${c}: ${n} sites in ${filesPer[c].size} files`).join("; ");
+const summary = `total ${out.length} sites in ${Object.keys(byFile).length} files. ${sum}. Of class b, ${starred} need a resolver not in phase 1.`;
+fs.writeFileSync(`${outDir}/callsite-table.md`, md + "\n" + summary + "\n");
+console.log(summary);
