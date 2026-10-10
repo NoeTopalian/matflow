@@ -1,0 +1,25 @@
+// Summarise R6's oracle probe JSON: outcome codes per shape vs ghost, and timing spread vs the second no-account shape.
+import fs from "node:fs";
+for (const p of process.argv.slice(2)) {
+  const j = JSON.parse(fs.readFileSync(p, "utf8"));
+  const out = { role: j.role, samples: j.samples, rttMedianMs: j.rttMedianMs, codeMismatches: [], diffRange: {}, ghostTrailingSpaceRange: [], networkCappedVsGhostCapped: [] };
+  const ranges = {};
+  for (const [n, shapes] of Object.entries(j)) {
+    if (!/^n\d+$/.test(n) || typeof shapes !== "object") continue;
+    const ghost = shapes.ghost;
+    for (const [s, v] of Object.entries(shapes)) {
+      if (!v || !v.outcomes) continue;
+      const peer = s.includes("NetworkCapped") ? shapes.ghostNetworkCapped : ghost;
+      if (JSON.stringify(v.outcomes) !== JSON.stringify(peer.outcomes)) out.codeMismatches.push(`${n}.${s}: ${v.outcomes} vs ${peer.outcomes}`);
+      if (s === "ghost" || s === "ghostNetworkCapped") continue;
+      const d = s.includes("NetworkCapped") ? v.medianMs - peer.medianMs : v.diffVsGhostMs;
+      const key = s === "ghostTrailingSpace" ? "noiseFloor(ghostTrailingSpace)" : s.includes("NetworkCapped") ? "networkCapped-vs-ghostNetworkCapped" : "accountShapes";
+      (ranges[key] ??= []).push(d);
+    }
+  }
+  for (const [k, a] of Object.entries(ranges)) out.diffRange[k] = [Math.min(...a), Math.max(...a)];
+  delete out.ghostTrailingSpaceRange; delete out.networkCappedVsGhostCapped;
+  const other = Object.keys(j).filter((k) => !/^n\d+$/.test(k) && !["role", "samples", "rttMedianMs"].includes(k));
+  out.otherKeys = other.map((k) => `${k}=${JSON.stringify(j[k]).slice(0, 200)}`);
+  console.log(JSON.stringify(out));
+}

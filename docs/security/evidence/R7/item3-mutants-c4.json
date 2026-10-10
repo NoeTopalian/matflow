@@ -1,0 +1,209 @@
+[
+  {
+    "id": "MC1a-security-from-memory-c4db",
+    "exit": 1,
+    "seconds": 20,
+    "tests": "Tests  2 failed | 3 passed (5)",
+    "failed": [
+      "× security bucket, burst of 60 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key",
+      "× security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key",
+      "FAIL  tests/integration/sec-c4-rate-limit-saturation-db.test.ts > SF-40 / R6-N3: rate limit when the burst saturates the production-size pool (restricted) > security bucket, burst of 60 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback ",
+      "FAIL  tests/integration/sec-c4-rate-limit-saturation-db.test.ts > SF-40 / R6-N3: rate limit when the burst saturates the production-size pool (restricted) > security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MC1a-security-from-memory-r6sat",
+    "exit": 0,
+    "seconds": 14,
+    "tests": "Tests  3 passed (3)",
+    "failed": [],
+    "restored": true
+  },
+  {
+    "id": "MC1a-security-from-memory-r7sat",
+    "exit": 1,
+    "seconds": 24,
+    "tests": "Tests  1 failed | 3 passed (4)",
+    "failed": [
+      "× B: address-keyed security bucket (forgot:<email>) burst 120 → 5 allowed; the fallback line carries no key; the over-limit warning is counted",
+      "FAIL  tests/integration/zz-r7-c4-sat-db.test.ts > R7: C4 store-failure handling under saturation (restricted) > B: address-keyed security bucket (forgot:<email>) burst 120 → 5 allowed; the fallback line carries no key; the over-limit warning is counted"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MC1a-security-from-memory-unit",
+    "exit": 1,
+    "seconds": 3,
+    "tests": "Tests  4 failed | 13 passed (17)",
+    "failed": [
+      "× pool / transaction-start timeout: every call refused with Retry-After 1..30 s",
+      "× still refused after a whole window of continuous outage (memory would have reopened by now)",
+      "× a burst logs one line with class, family and reason; the key and the IP are absent",
+      "× only tenant-lookup: and kiosk:classes: fall back to memory; look-alikes and every other door refuse",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > security buckets: a store failure is a refusal, never memory > pool / transaction-start timeout: every call refused with Retry-After 1..30 s",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > security buckets: a store failure is a refusal, never memory > still refused after a whole window of continuous outage (memory would have reopened by now)",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > store-failure logging: once per window per (class, family), never the key > a burst logs one line with class, family and reason; the key and the IP are absent",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > inventory: which buckets are non-security, and every family is a literal > only tenant-lookup: and kiosk:classes: fall back to memory; look-alikes and every other door refuse"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MC2-seed-removed-c4db",
+    "exit": 1,
+    "seconds": 20,
+    "tests": "Tests  2 failed | 3 passed (5)",
+    "failed": [
+      "× non-security bucket, burst of 60 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key",
+      "× non-security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key",
+      "FAIL  tests/integration/sec-c4-rate-limit-saturation-db.test.ts > SF-40 / R6-N3: rate limit when the burst saturates the production-size pool (restricted) > non-security bucket, burst of 60 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallb",
+      "FAIL  tests/integration/sec-c4-rate-limit-saturation-db.test.ts > SF-40 / R6-N3: rate limit when the burst saturates the production-size pool (restricted) > non-security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fall"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MC2-seed-removed-r6sat",
+    "exit": 0,
+    "seconds": 14,
+    "tests": "Tests  3 passed (3)",
+    "failed": [],
+    "restored": true
+  },
+  {
+    "id": "MC2-seed-removed-r7sat",
+    "exit": 0,
+    "seconds": 23,
+    "tests": "Tests  4 passed (4)",
+    "failed": [],
+    "restored": true
+  },
+  {
+    "id": "MC2-seed-removed-unit",
+    "exit": 1,
+    "seconds": 3,
+    "tests": "Tests  4 failed | 13 passed (17)",
+    "failed": [
+      "× inside the window the outage began in: every call refused, Retry-After = the rest of that window",
+      "× after a whole window of continuous outage, memory counts from zero: max allowed, then refused",
+      "× a window counted in an EARLIER outage is not reused after the store recovered and failed again",
+      "× only tenant-lookup: and kiosk:classes: fall back to memory; look-alikes and every other door refuse",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > non-security buckets: the memory fallback is seeded FULL and adds no capacity > inside the window the outage began in: every call refused, Retry-After = the rest of that window",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > non-security buckets: the memory fallback is seeded FULL and adds no capacity > after a whole window of continuous outage, memory counts from zero: max allowed, then refused",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > non-security buckets: the memory fallback is seeded FULL and adds no capacity > a window counted in an EARLIER outage is not reused after the store recovered and failed again",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > inventory: which buckets are non-security, and every family is a literal > only tenant-lookup: and kiosk:classes: fall back to memory; look-alikes and every other door refuse"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MC3-log-removed-c4db",
+    "exit": 1,
+    "seconds": 20,
+    "tests": "Tests  4 failed | 1 passed (5)",
+    "failed": [
+      "× security bucket, burst of 60 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key",
+      "× security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key",
+      "× non-security bucket, burst of 60 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key",
+      "× non-security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key",
+      "FAIL  tests/integration/sec-c4-rate-limit-saturation-db.test.ts > SF-40 / R6-N3: rate limit when the burst saturates the production-size pool (restricted) > security bucket, burst of 60 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback ",
+      "FAIL  tests/integration/sec-c4-rate-limit-saturation-db.test.ts > SF-40 / R6-N3: rate limit when the burst saturates the production-size pool (restricted) > security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback",
+      "FAIL  tests/integration/sec-c4-rate-limit-saturation-db.test.ts > SF-40 / R6-N3: rate limit when the burst saturates the production-size pool (restricted) > non-security bucket, burst of 60 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallb",
+      "FAIL  tests/integration/sec-c4-rate-limit-saturation-db.test.ts > SF-40 / R6-N3: rate limit when the burst saturates the production-size pool (restricted) > non-security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fall"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MC3-log-removed-r6sat",
+    "exit": 0,
+    "seconds": 14,
+    "tests": "Tests  3 passed (3)",
+    "failed": [],
+    "restored": true
+  },
+  {
+    "id": "MC3-log-removed-r7sat",
+    "exit": 1,
+    "seconds": 25,
+    "tests": "Tests  3 failed | 1 passed (4)",
+    "failed": [
+      "× B: address-keyed security bucket (forgot:<email>) burst 120 → 5 allowed; the fallback line carries no key; the over-limit warning is counted",
+      "× C: two families saturated at once → one fallback line for each, each exact",
+      "× D: failClosed caller saturated (burst 60) → at most 5 allowed, every store failure THROWS (never memory), one outcome=thrown line",
+      "FAIL  tests/integration/zz-r7-c4-sat-db.test.ts > R7: C4 store-failure handling under saturation (restricted) > B: address-keyed security bucket (forgot:<email>) burst 120 → 5 allowed; the fallback line carries no key; the over-limit warning is counted",
+      "FAIL  tests/integration/zz-r7-c4-sat-db.test.ts > R7: C4 store-failure handling under saturation (restricted) > C: two families saturated at once → one fallback line for each, each exact",
+      "FAIL  tests/integration/zz-r7-c4-sat-db.test.ts > R7: C4 store-failure handling under saturation (restricted) > D: failClosed caller saturated (burst 60) → at most 5 allowed, every store failure THROWS (never memory), one outcome=thrown line"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MC3-log-removed-unit",
+    "exit": 1,
+    "seconds": 4,
+    "tests": "Tests  4 failed | 13 passed (17)",
+    "failed": [
+      "× failClosed callers get the original error back",
+      "× a burst logs one line with class, family and reason; the key and the IP are absent",
+      "× the next window logs again and reports how many failures the previous line stood for",
+      "× a non-security fallback is logged with its class and the memory outcome",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > security buckets: a store failure is a refusal, never memory > failClosed callers get the original error back",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > store-failure logging: once per window per (class, family), never the key > a burst logs one line with class, family and reason; the key and the IP are absent",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > store-failure logging: once per window per (class, family), never the key > the next window logs again and reports how many failures the previous line stood for",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > store-failure logging: once per window per (class, family), never the key > a non-security fallback is logged with its class and the memory outcome"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MC4-key-in-log-c4db",
+    "exit": 1,
+    "seconds": 20,
+    "tests": "Tests  4 failed | 1 passed (5)",
+    "failed": [
+      "× security bucket, burst of 60 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key",
+      "× security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key",
+      "× non-security bucket, burst of 60 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key",
+      "× non-security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key",
+      "FAIL  tests/integration/sec-c4-rate-limit-saturation-db.test.ts > SF-40 / R6-N3: rate limit when the burst saturates the production-size pool (restricted) > security bucket, burst of 60 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback ",
+      "FAIL  tests/integration/sec-c4-rate-limit-saturation-db.test.ts > SF-40 / R6-N3: rate limit when the burst saturates the production-size pool (restricted) > security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback",
+      "FAIL  tests/integration/sec-c4-rate-limit-saturation-db.test.ts > SF-40 / R6-N3: rate limit when the burst saturates the production-size pool (restricted) > non-security bucket, burst of 60 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallb",
+      "FAIL  tests/integration/sec-c4-rate-limit-saturation-db.test.ts > SF-40 / R6-N3: rate limit when the burst saturates the production-size pool (restricted) > non-security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fall"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MC4-key-in-log-r6sat",
+    "exit": 0,
+    "seconds": 14,
+    "tests": "Tests  3 passed (3)",
+    "failed": [],
+    "restored": true
+  },
+  {
+    "id": "MC4-key-in-log-r7sat",
+    "exit": 1,
+    "seconds": 24,
+    "tests": "Tests  3 failed | 1 passed (4)",
+    "failed": [
+      "× A: R6's shapes (no family prefix) 20/60/120 → exactly 5 allowed with 5 rows; the fallback line names family '-' and never the key",
+      "× B: address-keyed security bucket (forgot:<email>) burst 120 → 5 allowed; the fallback line carries no key; the over-limit warning is counted",
+      "× C: two families saturated at once → one fallback line for each, each exact",
+      "FAIL  tests/integration/zz-r7-c4-sat-db.test.ts > R7: C4 store-failure handling under saturation (restricted) > A: R6's shapes (no family prefix) 20/60/120 → exactly 5 allowed with 5 rows; the fallback line names family '-' and never the key",
+      "FAIL  tests/integration/zz-r7-c4-sat-db.test.ts > R7: C4 store-failure handling under saturation (restricted) > B: address-keyed security bucket (forgot:<email>) burst 120 → 5 allowed; the fallback line carries no key; the over-limit warning is counted",
+      "FAIL  tests/integration/zz-r7-c4-sat-db.test.ts > R7: C4 store-failure handling under saturation (restricted) > C: two families saturated at once → one fallback line for each, each exact"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MC4-key-in-log-unit",
+    "exit": 1,
+    "seconds": 3,
+    "tests": "Tests  3 failed | 14 passed (17)",
+    "failed": [
+      "× a burst logs one line with class, family and reason; the key and the IP are absent",
+      "× the next window logs again and reports how many failures the previous line stood for",
+      "× a non-security fallback is logged with its class and the memory outcome",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > store-failure logging: once per window per (class, family), never the key > a burst logs one line with class, family and reason; the key and the IP are absent",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > store-failure logging: once per window per (class, family), never the key > the next window logs again and reports how many failures the previous line stood for",
+      "FAIL  tests/unit/sec-c4-rate-limit-store-failure.test.ts > store-failure logging: once per window per (class, family), never the key > a non-security fallback is logged with its class and the memory outcome"
+    ],
+    "restored": true
+  }
+]

@@ -1,0 +1,50 @@
+{
+ "nextauthOnly": {
+  "rootResolved": "5e1060abde31d0ab24d38a42899841b65498e9cf235ed45351889c1a4ba1a611",
+  "provenanceSubKey": "1fc6cc23bd4cae2050aa35a65230032aa233e3f90920225234f4aa314382f6d0",
+  "kioskSubKey": "4965d4073baa0485e4fdc9b699c622e73c6f425eb373913b048b31746788ef8b",
+  "cardSubKey": "f770238e1ddd5a6413865781deb9b3a2e1ced847a5b40a136773512fe47e05bb",
+  "provenanceProof": "531e0c402f4ae0b4cd024d4db994e969ae331170fe971aaddf8eabe46be4fa6b",
+  "sourceKeyDigest": "7dfc64b49dcf1c32fb83340063ad8eb9f1ccf4122ecc888292d1adf3d7964ead",
+  "kioskToken": "f5443b003eb4eb78a5764f73ec6bebd47018c510479d8c1d54afdd88d8174bcf",
+  "cardToken": "90be0b78f5aa052c459ee8ccdc92d4029c93af09d0f8b15f1cf61cfcd7cc7871",
+  "hashTokenSample": "ec85cd533597251595e23f8190fc305efc18789aba63a1d04a693ea398d224b3",
+  "hashTokenEmail": "c63858fba2b1b1d240c18fd1c6ff064d3572907b598a27d96bc368cb4d3a7bf2"
+ },
+ "authOnly": {
+  "rootResolved": "5e1060abde31d0ab24d38a42899841b65498e9cf235ed45351889c1a4ba1a611",
+  "provenanceSubKey": "1fc6cc23bd4cae2050aa35a65230032aa233e3f90920225234f4aa314382f6d0",
+  "kioskSubKey": "4965d4073baa0485e4fdc9b699c622e73c6f425eb373913b048b31746788ef8b",
+  "cardSubKey": "f770238e1ddd5a6413865781deb9b3a2e1ced847a5b40a136773512fe47e05bb",
+  "provenanceProof": "531e0c402f4ae0b4cd024d4db994e969ae331170fe971aaddf8eabe46be4fa6b",
+  "sourceKeyDigest": "7dfc64b49dcf1c32fb83340063ad8eb9f1ccf4122ecc888292d1adf3d7964ead",
+  "kioskToken": "f5443b003eb4eb78a5764f73ec6bebd47018c510479d8c1d54afdd88d8174bcf",
+  "cardToken": "90be0b78f5aa052c459ee8ccdc92d4029c93af09d0f8b15f1cf61cfcd7cc7871",
+  "hashTokenSample": "ec85cd533597251595e23f8190fc305efc18789aba63a1d04a693ea398d224b3",
+  "hashTokenEmail": "c63858fba2b1b1d240c18fd1c6ff064d3572907b598a27d96bc368cb4d3a7bf2"
+ },
+ "nextauthTrailingNewline": {
+  "rootResolved": "cc87dfa0b21f901b96ce8078a992850d941ac27cbad772a55010771ab95f9b96",
+  "provenanceSubKey": "d6576c625164359e9e4f187fd127d1442ff0e3b07d640a45b7291062e15cff38",
+  "kioskSubKey": "d06135ffa886fb802022aad663f8399705ca25f68e079f7b04f39aae2ef97aa2",
+  "cardSubKey": "8b87d4315c8cda686a5b40cc6e15d2b6d3710ab3110cee7cb11ad9a3ab11cdaf",
+  "provenanceProof": "cdc4cdbb82487b9e84cf4dd2aa3259279ec3a5a40bb01f679e2b0e15e75d0acd",
+  "sourceKeyDigest": "2f05e76b832bc0355a4f76f7e05b40ea1166dae4e3e9ec050daf924f1cafbfb0",
+  "kioskToken": "cdcfcb19a6bf43a72c93c7fd7808eb172410024fed814a823b42a1df2d8aa9db",
+  "cardToken": "de72640187d7ba5da78011ea615c31f43fd813d12a8fca29887f16d363c77fc6",
+  "hashTokenSample": "245c3fc237f0f8f216c97ca69043c7ab3065204194514f49a036632053491d7a",
+  "hashTokenEmail": "567b4cb20635a33cabd1162bf745f7df9e7ba1a949a8f1e45ace7eb1bb6c6c59"
+ },
+ "bothSetNextauthWins": {
+  "rootResolved": "5e1060abde31d0ab24d38a42899841b65498e9cf235ed45351889c1a4ba1a611",
+  "provenanceSubKey": "1fc6cc23bd4cae2050aa35a65230032aa233e3f90920225234f4aa314382f6d0",
+  "kioskSubKey": "4965d4073baa0485e4fdc9b699c622e73c6f425eb373913b048b31746788ef8b",
+  "cardSubKey": "f770238e1ddd5a6413865781deb9b3a2e1ced847a5b40a136773512fe47e05bb",
+  "provenanceProof": "531e0c402f4ae0b4cd024d4db994e969ae331170fe971aaddf8eabe46be4fa6b",
+  "sourceKeyDigest": "7dfc64b49dcf1c32fb83340063ad8eb9f1ccf4122ecc888292d1adf3d7964ead",
+  "kioskToken": "f5443b003eb4eb78a5764f73ec6bebd47018c510479d8c1d54afdd88d8174bcf",
+  "cardToken": "90be0b78f5aa052c459ee8ccdc92d4029c93af09d0f8b15f1cf61cfcd7cc7871",
+  "hashTokenSample": "ec85cd533597251595e23f8190fc305efc18789aba63a1d04a693ea398d224b3",
+  "hashTokenEmail": "c63858fba2b1b1d240c18fd1c6ff064d3572907b598a27d96bc368cb4d3a7bf2"
+ }
+}

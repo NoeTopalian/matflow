@@ -1,0 +1,128 @@
+[
+  {
+    "id": "MR1-refund-all-db-r7probe",
+    "exit": 1,
+    "seconds": 128,
+    "tests": "Tests  4 failed | 4 passed (8)",
+    "failed": [
+      "× R7-1 right password FIRST in a 40-way burst: admitted, its slot refunded, at most ADDR_MAX wrong verdicts",
+      "× R7-2 right password first + 9 wrong concurrently: all judged, counter 9; the person signs in again (not locked out by their own success); one more wrong fills the cap",
+      "× R7-3 kb-last: 39 wrong from 39 networks + the known device (right password) at index 39, concurrently → the known device is admitted under the address cap",
+      "× R7-3 kb-mid: 39 wrong from 39 networks + the known device (right password) at index 20, concurrently → the known device is admitted under the address cap",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-1 right password FIRST in a 40-way burst: admitted, its slot refunded, at most ADDR_MAX wrong verdicts",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-2 right password first + 9 wrong concurrently: all judged, counter 9; the person signs in again (not locked out by their own success); one more wron",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-3 kb-last: 39 wrong from 39 networks + the known device (right password) at index 39, concurrently → the known device is admitted under the address ",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-3 kb-mid: 39 wrong from 39 networks + the known device (right password) at index 20, concurrently → the known device is admitted under the address c"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MR1-refund-all-db-a4burst",
+    "exit": 1,
+    "seconds": 44,
+    "tests": "Tests  2 failed | 2 passed (4)",
+    "failed": [
+      "× a successful sign-in gives its reserved slot back: the counter is what it was before",
+      "× known-device exemption: at the cap the person's own device is still judged; an unknown network is not",
+      "FAIL  tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > a successful sign-in gives its reserved slot back: the counter is what it was before",
+      "FAIL  tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > known-device exemption: at the cap the person's own device is still judged; an unknown network is not"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MR1-refund-all-unit",
+    "exit": 1,
+    "seconds": 4,
+    "tests": "Tests  1 failed | 34 passed (35)",
+    "failed": [
+      "× right password: admitted, and its address slot is deleted by id together with this network's pair counter",
+      "FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > refund: a correct password spends nothing, a wrong one keeps its slot > right password: admitted, and its address slot is deleted by id together with this network's pair counter"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MR2-no-burst-recheck-db-r7probe",
+    "exit": 1,
+    "seconds": 109,
+    "tests": "Tests  2 failed | 6 passed (8)",
+    "failed": [
+      "× R7-3 kb-last: 39 wrong from 39 networks + the known device (right password) at index 39, concurrently → the known device is admitted under the address cap",
+      "× R7-3 kb-mid: 39 wrong from 39 networks + the known device (right password) at index 20, concurrently → the known device is admitted under the address cap",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-3 kb-last: 39 wrong from 39 networks + the known device (right password) at index 39, concurrently → the known device is admitted under the address ",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-3 kb-mid: 39 wrong from 39 networks + the known device (right password) at index 20, concurrently → the known device is admitted under the address c"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MR2-no-burst-recheck-unit",
+    "exit": 1,
+    "seconds": 12,
+    "tests": "Tests  2 failed | 10 passed (12)",
+    "failed": [
+      "× cap filled by a concurrent burst after the read: an unknown device gets the one generic code",
+      "× cap filled by a concurrent burst after the read: the person's known device is still judged (exempt reservation)",
+      "FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > fail closed and the known-device exemption > cap filled by a concurrent burst after the read: an unknown device gets the one generic code",
+      "FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > fail closed and the known-device exemption > cap filled by a concurrent burst after the read: the person's known device is still judged (exempt reservation)"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MR3-exempt-skips-pair-cap-db-r7probe",
+    "exit": 0,
+    "seconds": 125,
+    "tests": "Tests  8 passed (8)",
+    "failed": [],
+    "restored": true
+  },
+  {
+    "id": "MR4-no-advisory-lock-db-r7probe",
+    "exit": 1,
+    "seconds": 115,
+    "tests": "Tests  6 failed | 2 passed (8)",
+    "failed": [
+      "× R7-1 right password FIRST in a 40-way burst: admitted, its slot refunded, at most ADDR_MAX wrong verdicts",
+      "× R7-3 kb-last: 39 wrong from 39 networks + the known device (right password) at index 39, concurrently → the known device is admitted under the address cap",
+      "× R7-3 kb-mid: 39 wrong from 39 networks + the known device (right password) at index 20, concurrently → the known device is admitted under the address cap",
+      "× R7-4 the known device is NOT exempt from the network cap: attackers on the victim's /24 with the victim's browser family (so exempt from the address cap) burst 40 → at most PAIR_MAX verdicts from that network",
+      "× R7-6 reservation cannot be made (address lock held 13 s by another connection): every attempt incl. the right password fails CLOSED — none admitted, none judged, no slot taken; after release the right password is admitted",
+      "× R7-7 pool saturation: 120 concurrent at a fresh address (right password last) → at most ADDR_MAX verdicts, never an admission outside a verdict, every other answer generic",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-1 right password FIRST in a 40-way burst: admitted, its slot refunded, at most ADDR_MAX wrong verdicts",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-3 kb-last: 39 wrong from 39 networks + the known device (right password) at index 39, concurrently → the known device is admitted under the address ",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-3 kb-mid: 39 wrong from 39 networks + the known device (right password) at index 20, concurrently → the known device is admitted under the address c",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-4 the known device is NOT exempt from the network cap: attackers on the victim's /24 with the victim's browser family (so exempt from the address ca",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-6 reservation cannot be made (address lock held 13 s by another connection): every attempt incl. the right password fails CLOSED — none admitted, no",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-7 pool saturation: 120 concurrent at a fresh address (right password last) → at most ADDR_MAX verdicts, never an admission outside a verdict, every "
+    ],
+    "restored": true
+  },
+  {
+    "id": "MR4-no-advisory-lock-db-r6probe",
+    "exit": 1,
+    "seconds": 23,
+    "tests": "Tests  1 failed (1)",
+    "failed": [
+      "× 40 concurrent guesses (39 wrong + the right one last) from 40 networks at a fresh address: secure outcome ≤ 10 judged",
+      "FAIL  tests/integration/zz-r6-a3-burst-db.test.ts > R6: address-wide failure cap under a concurrent burst from many networks > 40 concurrent guesses (39 wrong + the right one last) from 40 networks at a fresh address: secure outcome ≤ 10 judged"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MR4-no-advisory-lock-unit",
+    "exit": 1,
+    "seconds": 3,
+    "tests": "Tests  5 failed | 7 passed (12)",
+    "failed": [
+      "× lock namespace is lane C3's (RATE_LIMIT_LOCK_NS), and the lock is on the ADDRESS bucket",
+      "× an existing member, right password: lock → reservation → bcrypt, in that order, no late insert",
+      "× an existing member, wrong password: lock → reservation → bcrypt, in that order, no late insert",
+      "× an address with no account, right password: lock → reservation → bcrypt, in that order, no late insert",
+      "× an address with no account, wrong password: lock → reservation → bcrypt, in that order, no late insert",
+      "FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > lock namespace is lane C3's (RATE_LIMIT_LOCK_NS), and the lock is on the ADDRESS bucket",
+      "FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > an existing member, right password: lock → reservation → bcrypt, in that order, no late insert",
+      "FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > an existing member, wrong password: lock → reservation → bcrypt, in that order, no late insert",
+      "FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > an address with no account, right password: lock → reservation → bcrypt, in that order, no late insert",
+      "FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > an address with no account, wrong password: lock → reservation → bcrypt, in that order, no late insert"
+    ],
+    "restored": true
+  }
+]

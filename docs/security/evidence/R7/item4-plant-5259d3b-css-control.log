@@ -1,0 +1,5 @@
+{"plantedIn":"none","ok":true,"bytes":122273}
+{"plantedIn":"tests","ok":false,"error":"tailwindcss: RangeError Invalid code point 1885808 (path elided)"}
+{"plantedIn":"scripts/readiness","ok":false,"error":"tailwindcss: RangeError Invalid code point 1885808 (path elided)"}
+{"plantedIn":".","ok":false,"error":"tailwindcss: RangeError Invalid code point 1885808 (path elided)"}
+{"plantedIn":"components","ok":false,"error":"tailwindcss: RangeError Invalid code point 1885808 (path elided)"}

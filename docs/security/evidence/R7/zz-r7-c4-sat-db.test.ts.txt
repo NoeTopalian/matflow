@@ -1,0 +1,126 @@
+// Reviewer R7 probe (iteration 2, closing review) — lane C4's store-failure handling (SF-113) under pool saturation,
+// production pool size (5). Cells: (A) R6's shapes (bucket with no family prefix) 20/60/120 with the log captured;
+// (B) an address-keyed security bucket — the fallback line must not carry the key, and the per-call over-limit
+// warning is COUNTED (C4 gap a: it logs the bucket); (C) two families saturated at once → one line each;
+// (D) a failClosed caller saturated → throws, never memory, one "outcome=thrown" line. TEST branch only, both roles,
+// secr7s- buckets, count-checked teardown. One JSON line per cell to $R7_OUT.
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+import { appendFileSync } from "node:fs";
+
+vi.hoisted(() => {
+  (process.env as Record<string, string>).NODE_ENV = "production";
+  process.env.AUTH_SECRET ??= "secr7s-saturation-synthetic-0123456789abcdef0123456789";
+});
+
+import { prisma, prismaPoolConfig } from "@/lib/prisma";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+const HAS_DB = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
+const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
+const KEY = `secr7s-${ROLE}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const FALLBACK = "[rate-limit] store unavailable";
+function report(tag: string, data: Record<string, unknown>) {
+  const line = `${tag} ${JSON.stringify({ role: ROLE, poolMax: prismaPoolConfig().max, ...data })}`.split(KEY).join("<KEY>");
+  process.stderr.write(line + "\n");
+  if (process.env.R7_OUT) appendFileSync(process.env.R7_OUT, line + "\n");
+}
+async function capture<T>(fn: () => Promise<T>) {
+  const errs = vi.spyOn(console, "error").mockImplementation(() => {});
+  const warns = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const value = await fn();
+    return { value, lines: [...errs.mock.calls, ...warns.mock.calls].map((a) => a.map(String).join(" ")) };
+  } finally {
+    errs.mockRestore();
+    warns.mockRestore();
+  }
+}
+const touched: string[] = [];
+const rows = (b: string) => prisma.rateLimitHit.count({ where: { bucket: b } });
+
+describe.skipIf(!HAS_DB)(`R7: C4 store-failure handling under saturation (${ROLE})`, () => {
+  beforeAll(() => {
+    expect(prismaPoolConfig().max).toBe(5);
+  });
+  afterAll(async () => {
+    const del = await prisma.rateLimitHit.deleteMany({ where: { bucket: { in: touched } } });
+    const left = await prisma.rateLimitHit.count({ where: { bucket: { contains: KEY } } });
+    report("R7-SAT-TEARDOWN", { buckets: touched.length, deleted: del.count, left });
+    expect(left).toBe(0);
+  });
+
+  it("A: R6's shapes (no family prefix) 20/60/120 → exactly 5 allowed with 5 rows; the fallback line names family '-' and never the key", async () => {
+    const res: Record<string, unknown>[] = [];
+    for (const n of [20, 60, 120]) {
+      const bucket = `${KEY}-b${n}`;
+      touched.push(bucket);
+      const { value, lines } = await capture(() => Promise.all(Array.from({ length: n }, () => checkRateLimit(bucket, 5, 60_000))));
+      const fb = lines.filter((l) => l.includes(FALLBACK));
+      res.push({ burst: n, allowed: value.filter((r) => r.allowed).length, rows: await rows(bucket), fallbackLines: fb.length, fallbackHasKey: fb.some((l) => l.includes(KEY)), fallbackFamilyDash: fb.every((l) => l.includes("family=- ")) });
+    }
+    report("R7-SAT-A", { res });
+    for (const r of res) {
+      expect(r.allowed).toBe(5);
+      expect(r.rows).toBe(5);
+      expect(r.fallbackHasKey).toBe(false);
+    }
+    expect(res.reduce((a, r) => a + (r.fallbackLines as number), 0), "once per window per family, across all three bursts").toBeLessThanOrEqual(1);
+  }, 300_000);
+
+  it("B: address-keyed security bucket (forgot:<email>) burst 120 → 5 allowed; the fallback line carries no key; the over-limit warning is counted", async () => {
+    const email = `${KEY}-victim@example.test`;
+    const bucket = `forgot:${email}`;
+    touched.push(bucket);
+    const { value, lines } = await capture(() => Promise.all(Array.from({ length: 120 }, () => checkRateLimit(bucket, 5, 60_000))));
+    const fb = lines.filter((l) => l.includes(FALLBACK));
+    const r = {
+      allowed: value.filter((x) => x.allowed).length, rows: await rows(bucket),
+      fallbackLines: fb.length, fallbackLine: fb[0] ?? null, fallbackHasKey: fb.some((l) => l.includes(email)),
+      overLimitWarningsWithKey: lines.filter((l) => l.includes("[rate-limit] bucket=") && l.includes(email)).length,
+      refusedFromStoreFailure: value.filter((x) => !x.allowed && x.retryAfterSeconds <= 30).length,
+    };
+    report("R7-SAT-B", r);
+    expect(r.allowed).toBe(5);
+    expect(r.rows).toBe(5);
+    expect(r.fallbackLines).toBe(1);
+    expect(r.fallbackHasKey).toBe(false);
+    expect(r.fallbackLine).toContain("class=security family=forgot outcome=refused");
+  }, 300_000);
+
+  it("C: two families saturated at once → one fallback line for each, each exact", async () => {
+    const a = `totp:${KEY}-a`, b = `apply:${KEY}-b`;
+    touched.push(a, b);
+    const { value, lines } = await capture(() => Promise.all([
+      ...Array.from({ length: 60 }, () => checkRateLimit(a, 5, 60_000).then((x) => ["a", x.allowed] as const)),
+      ...Array.from({ length: 60 }, () => checkRateLimit(b, 5, 60_000).then((x) => ["b", x.allowed] as const)),
+    ]));
+    const fb = lines.filter((l) => l.includes(FALLBACK));
+    const r = { allowedA: value.filter(([k, ok]) => k === "a" && ok).length, allowedB: value.filter(([k, ok]) => k === "b" && ok).length, rowsA: await rows(a), rowsB: await rows(b), totp: fb.filter((l) => l.includes("family=totp ")).length, apply: fb.filter((l) => l.includes("family=apply ")).length, keyInFallback: fb.some((l) => l.includes(KEY)) };
+    report("R7-SAT-C", r);
+    // Security property: never above max, every allowance has its row. (First run asserted 5/5 for BOTH buckets and
+    // failed: B got 0 — the burst on A starves every other security bucket on the instance; recorded as R7 finding.)
+    expect(r.allowedA).toBeLessThanOrEqual(5);
+    expect(r.allowedB).toBeLessThanOrEqual(5);
+    expect([r.rowsA, r.rowsB]).toEqual([r.allowedA, r.allowedB]);
+    expect(r.keyInFallback).toBe(false);
+    // Each family that failed at least once logged exactly one line.
+    expect(r.totp).toBeLessThanOrEqual(1);
+    expect(r.apply).toBeLessThanOrEqual(1);
+    expect(r.totp + r.apply).toBeGreaterThanOrEqual(1);
+  }, 300_000);
+
+  it("D: failClosed caller saturated (burst 60) → at most 5 allowed, every store failure THROWS (never memory), one outcome=thrown line", async () => {
+    const bucket = `magic:${KEY}-fc`;
+    touched.push(bucket);
+    const { value, lines } = await capture(() => Promise.all(Array.from({ length: 60 }, () => checkRateLimit(bucket, 5, 60_000, { failClosed: true }).then((x) => (x.allowed ? "allowed" : "refused"), () => "threw"))));
+    const fb = lines.filter((l) => l.includes(FALLBACK));
+    const r = { tally: value.reduce<Record<string, number>>((acc, o) => ((acc[o] = (acc[o] ?? 0) + 1), acc), {}), rows: await rows(bucket), fallbackLines: fb.length, outcomeThrown: fb.every((l) => l.includes("outcome=thrown")) };
+    report("R7-SAT-D", r);
+    expect(r.tally.allowed ?? 0).toBe(r.rows);
+    expect(r.rows).toBeLessThanOrEqual(5);
+    if ((r.tally.threw ?? 0) > 0) {
+      expect(r.fallbackLines).toBe(1);
+      expect(r.outcomeThrown).toBe(true);
+    }
+  }, 300_000);
+});

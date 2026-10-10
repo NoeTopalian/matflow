@@ -1,0 +1,206 @@
+[
+ {
+  "id": "MC1a-security-from-memory-c4db",
+  "file": "lib/rate-limit.ts",
+  "find": "if (cls === \"security\") {",
+  "replace": "if (false && cls === \"security\") {",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-restricted-m.sh",
+   "tests/integration/sec-c4-rate-limit-saturation-db.test.ts"
+  ],
+  "env": {}
+ },
+ {
+  "id": "MC1a-security-from-memory-r6sat",
+  "file": "lib/rate-limit.ts",
+  "find": "if (cls === \"security\") {",
+  "replace": "if (false && cls === \"security\") {",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-restricted-m.sh",
+   "tests/integration/zz-r6-c3-saturation-db.test.ts"
+  ],
+  "env": {
+   "R6_PROD_POOL": "1"
+  }
+ },
+ {
+  "id": "MC1a-security-from-memory-r7sat",
+  "file": "lib/rate-limit.ts",
+  "find": "if (cls === \"security\") {",
+  "replace": "if (false && cls === \"security\") {",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-restricted-m.sh",
+   "tests/integration/zz-r7-c4-sat-db.test.ts"
+  ],
+  "env": {}
+ },
+ {
+  "id": "MC1a-security-from-memory-unit",
+  "file": "lib/rate-limit.ts",
+  "find": "if (cls === \"security\") {",
+  "replace": "if (false && cls === \"security\") {",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-unit-m.sh",
+   "tests/unit/sec-c4-rate-limit-store-failure.test.ts",
+   "tests/unit/sec-c3-rate-limit-atomic.test.ts"
+  ],
+  "env": {}
+ },
+ {
+  "id": "MC2-seed-removed-c4db",
+  "file": "lib/rate-limit.ts",
+  "find": "if (now < fullUntil) {",
+  "replace": "if (false && now < fullUntil) {",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-restricted-m.sh",
+   "tests/integration/sec-c4-rate-limit-saturation-db.test.ts"
+  ],
+  "env": {}
+ },
+ {
+  "id": "MC2-seed-removed-r6sat",
+  "file": "lib/rate-limit.ts",
+  "find": "if (now < fullUntil) {",
+  "replace": "if (false && now < fullUntil) {",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-restricted-m.sh",
+   "tests/integration/zz-r6-c3-saturation-db.test.ts"
+  ],
+  "env": {
+   "R6_PROD_POOL": "1"
+  }
+ },
+ {
+  "id": "MC2-seed-removed-r7sat",
+  "file": "lib/rate-limit.ts",
+  "find": "if (now < fullUntil) {",
+  "replace": "if (false && now < fullUntil) {",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-restricted-m.sh",
+   "tests/integration/zz-r7-c4-sat-db.test.ts"
+  ],
+  "env": {}
+ },
+ {
+  "id": "MC2-seed-removed-unit",
+  "file": "lib/rate-limit.ts",
+  "find": "if (now < fullUntil) {",
+  "replace": "if (false && now < fullUntil) {",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-unit-m.sh",
+   "tests/unit/sec-c4-rate-limit-store-failure.test.ts",
+   "tests/unit/sec-c3-rate-limit-atomic.test.ts"
+  ],
+  "env": {}
+ },
+ {
+  "id": "MC3-log-removed-c4db",
+  "file": "lib/rate-limit.ts",
+  "find": "  const family = bucketFamily(bucket);\n  const k = ",
+  "replace": "  return;\n  const family = bucketFamily(bucket);\n  const k = ",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-restricted-m.sh",
+   "tests/integration/sec-c4-rate-limit-saturation-db.test.ts"
+  ],
+  "env": {}
+ },
+ {
+  "id": "MC3-log-removed-r6sat",
+  "file": "lib/rate-limit.ts",
+  "find": "  const family = bucketFamily(bucket);\n  const k = ",
+  "replace": "  return;\n  const family = bucketFamily(bucket);\n  const k = ",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-restricted-m.sh",
+   "tests/integration/zz-r6-c3-saturation-db.test.ts"
+  ],
+  "env": {
+   "R6_PROD_POOL": "1"
+  }
+ },
+ {
+  "id": "MC3-log-removed-r7sat",
+  "file": "lib/rate-limit.ts",
+  "find": "  const family = bucketFamily(bucket);\n  const k = ",
+  "replace": "  return;\n  const family = bucketFamily(bucket);\n  const k = ",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-restricted-m.sh",
+   "tests/integration/zz-r7-c4-sat-db.test.ts"
+  ],
+  "env": {}
+ },
+ {
+  "id": "MC3-log-removed-unit",
+  "file": "lib/rate-limit.ts",
+  "find": "  const family = bucketFamily(bucket);\n  const k = ",
+  "replace": "  return;\n  const family = bucketFamily(bucket);\n  const k = ",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-unit-m.sh",
+   "tests/unit/sec-c4-rate-limit-store-failure.test.ts",
+   "tests/unit/sec-c3-rate-limit-atomic.test.ts"
+  ],
+  "env": {}
+ },
+ {
+  "id": "MC4-key-in-log-c4db",
+  "file": "lib/rate-limit.ts",
+  "find": "return i > 0 ? bucket.slice(0, i) : \"-\";",
+  "replace": "return bucket;",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-restricted-m.sh",
+   "tests/integration/sec-c4-rate-limit-saturation-db.test.ts"
+  ],
+  "env": {}
+ },
+ {
+  "id": "MC4-key-in-log-r6sat",
+  "file": "lib/rate-limit.ts",
+  "find": "return i > 0 ? bucket.slice(0, i) : \"-\";",
+  "replace": "return bucket;",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-restricted-m.sh",
+   "tests/integration/zz-r6-c3-saturation-db.test.ts"
+  ],
+  "env": {
+   "R6_PROD_POOL": "1"
+  }
+ },
+ {
+  "id": "MC4-key-in-log-r7sat",
+  "file": "lib/rate-limit.ts",
+  "find": "return i > 0 ? bucket.slice(0, i) : \"-\";",
+  "replace": "return bucket;",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-restricted-m.sh",
+   "tests/integration/zz-r7-c4-sat-db.test.ts"
+  ],
+  "env": {}
+ },
+ {
+  "id": "MC4-key-in-log-unit",
+  "file": "lib/rate-limit.ts",
+  "find": "return i > 0 ? bucket.slice(0, i) : \"-\";",
+  "replace": "return bucket;",
+  "cmd": [
+   "bash",
+   "<scratchpad>/security/R7/run-unit-m.sh",
+   "tests/unit/sec-c4-rate-limit-store-failure.test.ts",
+   "tests/unit/sec-c3-rate-limit-atomic.test.ts"
+  ],
+  "env": {}
+ }
+]

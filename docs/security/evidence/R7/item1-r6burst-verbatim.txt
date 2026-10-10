@@ -1,0 +1,5 @@
+# R7 item 1 — R6 burst probe verbatim (zz-r6-a3-burst-db, unchanged copy) at 03ef584, Node v24.21.0, R7 runner copies
+item1-r6burst-owner-run2:  Test Files 1 passed (1)  Tests 1 passed (1)  0 connect-error lines
+item1-r6burst-owner:  Test Files 1 passed (1)  Tests 1 passed (1)  0 connect-error lines
+item1-r6burst-restricted-run2:  Test Files 1 passed (1)  Tests 1 passed (1)  0 connect-error lines
+item1-r6burst-restricted:  Test Files 1 failed (1)  Tests 1 skipped (1)  6 connect-error lines

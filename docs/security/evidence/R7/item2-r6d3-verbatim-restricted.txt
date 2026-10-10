@@ -1,0 +1,6 @@
+[secr6d3] role matflow_app signingKeyLen=64 harnessRootLen=64
+[secr6d3] K1 pending-tenant status=200 cookieSet=true subKeyLen=32 equalsProvenanceSubKey=false
+[secr6d3] teardown: 10 clubs removed (36 provenance rows), 0 rows left
+     × R6-4b DELETE THE NEWEST ROW AND RE-POINT to the older owner decision (tail truncation) → secure outcome: pending 
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 8 passed (9)

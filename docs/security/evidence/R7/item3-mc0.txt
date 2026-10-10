@@ -1,0 +1,7 @@
+MC0-fallback-restored(5259d3b lib/rate-limit.ts) restricted zz-r6-c3-saturation-db exit=1  Tests 2 failed | 1 passed (3)
+AssertionError: {"burst":60,"allowed":10,"rows":5,"allowedWithoutRow":5,"ms":2735}: expected 10 to be 5 // Object.is equality
+AssertionError: {"burst":120,"allowed":10,"rows":5,"allowedWithoutRow":5,"ms":4241}: expected 10 to be 5 // Object.is equality
+MC0-fallback-restored(5259d3b lib/rate-limit.ts) restricted sec-c4-rate-limit-saturation-db exit=1  Tests 4 failed | 1 passed (5)
+AssertionError: {"cls":"security","burst":60,"allowed":10,"rows":5,"allowedWithoutRow":5,"ms":3403,"fallbackLogLines":0,"fallbackLog":null}: expected 10 to be 5 // Object.is equality
+AssertionError: {"cls":"security","burst":120,"allowed":10,"rows":5,"allowedWithoutRow":5,"ms":4015,"fallbackLogLines":0,"fallbackLog":null}: expected 10 to be 5 // Object.is equality
+AssertionError: {"cls":"non-security","burst":60,"allowed":10,"rows":5,"allowedWithoutRow":5,"ms":2708,"fallbackLogLines":0,"fallbackLog":null}: expected 10 to be 5 // Object.is equality
