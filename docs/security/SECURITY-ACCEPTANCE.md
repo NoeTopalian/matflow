@@ -60,9 +60,18 @@ not independently reviewed (stated).
 `788d29a` (9 Oct 2026 17:10 UK; `scratchpad/security/gates-campaign-5.log`): `npm run lint` 0 errors / 68
 pre-existing warnings, UI ratchets at baseline; `tsc --noEmit` 0; full unit suite 436 files / 5938 tests passed;
 `npm run build` succeeded; `npm audit --omit=dev` 0 vulnerabilities. Both-role integration sweep of every security
-database file (39 files × 2 roles, 16:55–17:40 UK): every run printed its `Tests N passed` line with 0 failed — **the `exit=0` column in that log is NOT evidence** (SF-76: the script recorded the exit status of `tr`, not vitest; fixed in the script, re-run owed on the final candidate); `sec-b-fixture-sweep-db` is excluded from the expected list (maintenance tool, asserts nothing — F2);
-`tenant-restore-purge-race` under the restricted role failed to set up once (transient) and passed 5/5 on re-run; the three
-files lane D changed mid-sweep re-run on the final tree: 23/23, 19/19, 7/7 under both roles (TEST-EVIDENCE.md).
+database file (39 files × 2 roles, 16:55–17:40 UK) — **EVIDENCE REPAIRED (SF-76)**: the log's `exit=` column recorded the exit
+status of `tr`, not vitest, so it supports nothing; the run also could not distinguish a zero-test run (a file whose every
+cell skipped, or whose setup failed before any test) from a pass, because it only looked for a `Tests` line. What survives
+from that sweep is the per-file `Tests N passed` text, which is vitest's own output; what does not survive is any claim that
+the test PROCESS exited 0 or that every file ran at least one test. Affected claims, all withdrawn: "78/78 runs exit 0" here,
+the matching line in TEST-EVIDENCE.md (iteration-1 sweep section) and in CAMPAIGN-REPORT.md's gates paragraph. Replacement
+evidence: R6's sweep on `5259d3b` (54 files × 2 roles, exit codes captured directly per run, 108/108 after two setup-timeout
+re-runs, with the four skipped-only files named as not evidence — `evidence/R6/sweep.txt`), R7's sweep of the 15 changed
+files on `03ef584` (30/30), and the lead's re-run on `03ef584` with the corrected script `final-sweep-v2.sh` (captures
+`$?` of the vitest process before any pipe, parses the `Tests` line, and marks a run NO-TESTS-RAN when 0 tests passed) —
+recorded in `evidence/lead/sweep-03ef584.txt` when complete; `tenant-restore-purge-race` restricted-role setup failure of
+iteration 1 is covered by F2's change that makes a setup failure show as failed cells (TEST-EVIDENCE.md).
 
 ### 5a. Iteration 2 — gates under the supported runtime (Node 24.21.0, npm 11.19.0; `evidence/lead/gates-node24-6043fed.log`)
 On `6043fed` (= `788d29a` source + docs + the reconciliation script), 9 Oct 2026 18:30 UK: `npm run lint` 0 errors / 68
@@ -83,7 +92,13 @@ vitest exit codes (the iteration-1 sweep's exit column was not — SF-76).
 ### 5c. Final candidate `a2bc56a` (code `03ef584`; `evidence/lead/gates-node24-a2bc56a.log`, 10 Oct 2026 06:00–06:08 UTC, Node v24.21.0)
 `npm run lint` exit 0; `tsc --noEmit` exit 0; full unit suite 467 files / 6468 tests passed; `npm audit --omit=dev` 0 vulnerabilities;
 `npm run build` exit 0 from an empty `.next`, BUILD_ID `HidgoSvinSIjTV6RbsjJ_`. Lanes A4 (`03ef584`) and C4 (`9f573ff`) are inside this
-candidate; their independent review R7 (`evidence/R7/`) approved both with residuals: gates PASS, 30/30 both-role sweep, R7's own burst/refund/known-device/held-lock/saturation attacks held.
+candidate. **Build reconciliation:** the candidate CODE is `03ef584`; `a2bc56a` and every later commit change only files
+under `docs/` (`git diff --name-only 03ef584..HEAD` lists nothing outside `docs/`), and `docs/` is neither a Tailwind source
+(`@source` allow-list, 9f573ff) nor shipped (`.vercelignore`), so the executable inputs of the `a2bc56a` build and of
+`03ef584` are identical; BUILD_ID `HidgoSvinSIjTV6RbsjJ_` therefore belongs to the final executable inputs. R7 executed on
+`03ef584` itself: lint exit 0, tsc exit 0, unit 6467/6468 with one 30 s import timeout under load that passed alone 426/426,
+build exit 0 BUILD_ID `AAk3Mz2mm0dH7UYfSvAfh`, audit 0, and 30/30 both-role database runs (`evidence/R7/item5-gates.txt`,
+`item5-sweep.txt`). Their independent review R7 (`evidence/R7/`) approved both with residuals: gates PASS, 30/30 both-role sweep, R7's own burst/refund/known-device/held-lock/saturation attacks held.
 
 ## 6. Evidence limitations
 No browser rehearsal of the campaign build (unit + both-role database only); the TEST branch stands in for
