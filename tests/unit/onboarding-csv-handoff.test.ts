@@ -5,6 +5,8 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 // internal email dispatch, and audit logging. Cross-tenant impossible because
 // the route uses requireOwner() which injects tenantId from session.
 
+// The fake prisma below does not model the RateLimitHit store; the limiter is assumed to allow (lane C4, R6-N3).
+vi.mock("@/lib/rate-limit", async (orig) => (await import("./sec-c4-allow-rate-limit")).allowRateLimit(orig));
 vi.mock("next/server", () => ({
   NextResponse: {
     json: (body: unknown, init?: { status?: number }) => ({

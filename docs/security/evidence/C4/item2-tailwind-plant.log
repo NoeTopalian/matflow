@@ -1,0 +1,24 @@
+# SF-110 / R6-N4 plant check, Node v24.21.0, run from repo root at HEAD 1bad6ee + C4 working tree, 10 Oct 2026
+# command: node docs/security/evidence/C4/c4-tailwind-plant.mjs plant <css> none docs tests scripts scripts/readiness . components [...]
+## RED: HEAD app/globals.css (git show HEAD:app/globals.css) — exit 1
+{"css":"globals-HEAD.css","plantedIn":"none","ok":true,"bytes":122273}
+{"css":"globals-HEAD.css","plantedIn":"docs","ok":true,"bytes":122273}
+{"css":"globals-HEAD.css","plantedIn":"tests","ok":false,"error":"tailwindcss: <path> Invalid code point 1885808"}
+{"css":"globals-HEAD.css","plantedIn":"scripts","ok":false,"error":"tailwindcss: <path> Invalid code point 1885808"}
+{"css":"globals-HEAD.css","plantedIn":"scripts/readiness","ok":false,"error":"tailwindcss: <path> Invalid code point 1885808"}
+{"css":"globals-HEAD.css","plantedIn":".","ok":false,"error":"tailwindcss: <path> Invalid code point 1885808"}
+{"css":"globals-HEAD.css","plantedIn":"components","ok":false,"error":"tailwindcss: <path> Invalid code point 1885808"}
+## GREEN: C4 app/globals.css — exit 0
+{"css":"globals.css","plantedIn":"none","ok":true,"bytes":117686}
+{"css":"globals.css","plantedIn":"docs","ok":true,"bytes":117686}
+{"css":"globals.css","plantedIn":"tests","ok":true,"bytes":117686}
+{"css":"globals.css","plantedIn":"scripts","ok":true,"bytes":117686}
+{"css":"globals.css","plantedIn":"scripts/readiness","ok":true,"bytes":117686}
+{"css":"globals.css","plantedIn":".","ok":true,"bytes":117686}
+{"css":"globals.css","plantedIn":"components","ok":true,"bytes":117686}
+{"css":"globals.css","plantedIn":"components/ui","ok":true,"bytes":117686}
+{"css":"globals.css","plantedIn":"app","ok":true,"bytes":117686}
+{"css":"globals.css","plantedIn":"lib","ok":true,"bytes":117686}
+{"css":"globals.css","plantedIn":".omc","ok":true,"bytes":117686}
+{"css":"globals.css","plantedIn":"functions","ok":true,"bytes":117686}
+{"css":"globals.css","plantedIn":"public","ok":true,"bytes":117686}

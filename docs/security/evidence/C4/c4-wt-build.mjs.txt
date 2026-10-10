@@ -1,0 +1,16 @@
+// Lane C4: `next build` of the isolated worktree (HEAD + C4 files only), with the TEST-branch environment exactly as
+// att/prod-server.mjs builds it. The worktree has no .env, so nothing production-scoped can be loaded.
+import fs from "node:fs";
+import { spawnSync } from "node:child_process";
+const MAIN = "<repo>";
+const WT = process.argv[2];
+const env = { ...process.env };
+for (const line of fs.readFileSync(`${MAIN}/.env.test`, "utf8").split(/\r?\n/)) {
+  const m = line.match(/^([A-Z0-9_a-z]+)=(.*)$/);
+  if (m) env[m[1]] = m[2].trim().replace(/^"|"$/g, "");
+}
+if (!env.DATABASE_URL?.includes("ep-hidden-salad")) throw new Error("refusing: DATABASE_URL is not the test branch");
+delete env.VERCEL_ENV;
+for (const k of ["NEXTAUTH_URL", "STRIPE_PUBLISHABLE_KEY", "secret_Key", "DEMO_MODE"]) if (env[k] === undefined) env[k] = "";
+const r = spawnSync("npx next build", { cwd: WT, env, stdio: "inherit", shell: true });
+process.exit(r.status ?? 1);

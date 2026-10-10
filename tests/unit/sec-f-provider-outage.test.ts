@@ -5,8 +5,10 @@
 // lib/rate-limit.ts has two declared behaviours when its store (Postgres RateLimitHit) is unreachable:
 //   - failClosed callers (magic-link request, reset-password, apply, card check-in, waiver open/sign/kiosk): THROW,
 //     so the route refuses;
-//   - everyone else: degrade to a per-instance memory window that STILL enforces the same max (weaker across
-//     instances, never unlimited), and a denial is logged.
+//   - everyone else: REFUSED (lane C4, review R6-N3 — a per-instance memory window used to answer here, and a burst
+//     that saturated the pool reached it on demand, doubling the limit); the failure is logged once per window,
+//     without the key. Only two non-security buckets (tenant-lookup, kiosk:classes) keep a memory fallback, seeded
+//     full — tests/unit/sec-c4-rate-limit-store-failure.test.ts.
 // Durable audit (lib/audit-log.ts `durable` / `tx`): a write failure THROWS to the caller, so a privileged change that
 // requires its audit row is refused rather than performed unrecorded (SEC-081). Best-effort rows never throw.
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -28,6 +30,18 @@ vi.mock("@/lib/prisma", () => ({
       }),
       deleteMany: vi.fn(async () => ({ count: 0 })),
     },
+    // The lane C3 path: advisory lock + conditional insert in one transaction. Without these the "store up" control
+    // only ever passed through the memory fallback (a TypeError on prisma.$transaction) — found by lane C4.
+    $executeRaw: vi.fn(() => ({ kind: "lock" })),
+    $queryRaw: vi.fn((_s: TemplateStringsArray, ...values: unknown[]) => ({ kind: "insert", values })),
+    $transaction: vi.fn(async (ops: Array<{ kind: string; values?: unknown[] }>) => {
+      if (db.down) throw outage();
+      const max = ops[1].values![4] as number;
+      const count = db.hits;
+      const inserted = count < max ? 1 : 0;
+      db.hits += inserted;
+      return [1, [{ count, inserted, oldestAgeMs: 0 }]];
+    }),
   },
 }));
 vi.mock("@/lib/prisma-tenant", () => ({
@@ -59,15 +73,16 @@ describe("SEC-080 — rate limiter during a database outage", () => {
     await expect(checkRateLimit(`secF-fc-${Math.random()}`, 3, 60_000, { failClosed: true })).rejects.toThrow(/database/i);
   });
 
-  it("default callers degrade to a per-instance window that still enforces the max — not unlimited", async () => {
+  it("default callers are refused, never given a memory allowance, and the outage is logged (lane C4, R6-N3)", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     db.down = true;
-    const bucket = `secF-mem-${Math.random()}`;
+    const bucket = `secF-mem:${Math.random()}`;
     const r = [];
     for (let i = 0; i < 5; i++) r.push((await checkRateLimit(bucket, 3, 60_000)).allowed);
-    expect(r).toEqual([true, true, true, false, false]);
+    expect(r).toEqual([false, false, false, false, false]);
     const denied = await checkRateLimit(bucket, 3, 60_000);
     expect(denied.retryAfterSeconds).toBeGreaterThan(0);
-    expect(vi.mocked(console.warn)).toHaveBeenCalledWith(expect.stringContaining(`bucket=${bucket}`));
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining("[rate-limit] store unavailable reason=unreachable class=security family=secF-mem"));
   });
 });
 

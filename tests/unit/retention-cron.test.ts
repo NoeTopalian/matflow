@@ -6,6 +6,8 @@ import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 //   2. every rule deletes on the window the privacy policy publishes,
 //   3. one failing rule cannot take the others down with it.
 
+// The fake prisma below does not model the RateLimitHit store; the limiter is assumed to allow (lane C4, R6-N3).
+vi.mock("@/lib/rate-limit", async (orig) => (await import("./sec-c4-allow-rate-limit")).allowRateLimit(orig));
 vi.mock("next/server", () => ({
   NextResponse: {
     json: (body: unknown, init?: { status?: number }) => ({

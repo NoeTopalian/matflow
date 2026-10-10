@@ -6,7 +6,8 @@
  *  - an allowed hit is written ONLY inside one transaction whose FIRST statement takes the
  *    per-bucket advisory lock and whose second is the conditional insert (never a bare create);
  *  - a bucket already full is refused by the unlocked aggregate without opening a transaction;
- *  - a database failure still falls back to the per-instance memory count.
+ *  - a database failure on a security bucket is a refusal, never a per-instance memory count (lane C4,
+ *    R6-N3 — tests/unit/sec-c4-rate-limit-store-failure.test.ts has the full rules).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -90,11 +91,12 @@ describe("checkRateLimit: lock, then conditional insert, in one transaction", ()
     expect(h.transactions).toHaveLength(0);
   });
 
-  it("database down: per-instance memory fallback (max 2 → two allowed, third refused); failClosed still throws", async () => {
+  it("database down: a security bucket is refused (no per-instance memory allowance); failClosed still throws", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     h.down = true;
     const b = `secc3-unit-mem-${Date.now()}`;
     const v = [await checkRateLimit(b, 2, 60_000), await checkRateLimit(b, 2, 60_000), await checkRateLimit(b, 2, 60_000)];
-    expect(v.map((x) => x.allowed)).toEqual([true, true, false]);
+    expect(v.map((x) => x.allowed)).toEqual([false, false, false]);
     await expect(checkRateLimit(`${b}-fc`, 2, 60_000, { failClosed: true })).rejects.toThrow(/ECONNREFUSED/);
   });
 });

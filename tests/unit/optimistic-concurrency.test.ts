@@ -2,6 +2,8 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 // Lane 1 iter-1 CSRF-sweep follow-up: short-circuit the guard so test
 // Requests (which carry no browser-set Origin header) don't 403.
+// The fake prisma below does not model the RateLimitHit store; the limiter is assumed to allow (lane C4, R6-N3).
+vi.mock("@/lib/rate-limit", async (orig) => (await import("./sec-c4-allow-rate-limit")).allowRateLimit(orig));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 
 

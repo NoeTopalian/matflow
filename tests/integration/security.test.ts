@@ -54,9 +54,10 @@ vi.mock("bcryptjs", () => ({
   default: { hash: vi.fn().mockResolvedValue("$2a$12$hashed") },
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
-// Don't mock @/lib/rate-limit — F10 forgot-password test depends on the real
-// in-memory fallback path (Prisma mock has no rateLimitHit model, so the DB
-// path throws and the memory store kicks in correctly).
+// F10 used to depend on lib/rate-limit's in-memory fallback (this Prisma mock has no rateLimitHit model, so the DB
+// path threw and the memory store answered). Lane C4 (review R6-N3) closed that fallback for security buckets — a
+// store failure is now a refusal — so the route's limit is exercised over an explicit per-bucket counter instead.
+vi.mock("@/lib/rate-limit", async (orig) => (await import("../unit/sec-c4-allow-rate-limit")).countingRateLimit(orig));
 
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";

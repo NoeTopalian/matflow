@@ -4,3 +4,12 @@
 .omc/
 prisma/dev.db
 prisma/dev.db-journal
+
+# Security campaign SF-110 / review R6-N4 (lane C4, 10 Oct 2026): evidence, tests and tooling are never uploaded to
+# the build. docs/ holds campaign evidence (logs, probe records); tests/ and scripts/ are not runtime code.
+# The build command runs `node scripts/maybe-migrate.mjs && next build`, so that ONE script is re-included.
+# (`scripts/*` rather than `scripts/` because a file cannot be re-included once its parent directory is excluded.)
+docs/
+tests/
+scripts/*
+!scripts/maybe-migrate.mjs

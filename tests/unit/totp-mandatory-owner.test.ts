@@ -12,6 +12,8 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
  *      owners, 401 non-owners). Self-disable is impossible for everyone.
  */
 
+// The fake prisma below does not model the RateLimitHit store; the limiter is assumed to allow (lane C4, R6-N3).
+vi.mock("@/lib/rate-limit", async (orig) => (await import("./sec-c4-allow-rate-limit")).allowRateLimit(orig));
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 

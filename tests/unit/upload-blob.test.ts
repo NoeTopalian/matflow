@@ -11,6 +11,8 @@ import { isVercelBlobUrl } from "@/lib/blob-url";
 //  - no BLOB token → graceful inline data:image/webp fallback (never a hard 503)
 //  - bytes that don't match the declared image type are rejected
 
+// The fake prisma below does not model the RateLimitHit store; the limiter is assumed to allow (lane C4, R6-N3).
+vi.mock("@/lib/rate-limit", async (orig) => (await import("./sec-c4-allow-rate-limit")).allowRateLimit(orig));
 vi.mock("next/server", () => ({
   NextResponse: {
     json: (body: unknown, init?: { status?: number; headers?: Record<string, string> }) => ({

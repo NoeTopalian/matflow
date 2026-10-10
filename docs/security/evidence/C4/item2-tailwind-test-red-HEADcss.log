@@ -1,0 +1,13 @@
+ ❯ tests/unit/sec-c4-tailwind-sources.test.ts (5 tests | 3 failed) 815ms
+     × globals.css turns automatic detection off and lists only application source 12ms
+     × the scanner the build constructs reads application files (positive control) and nothing outside app/, components/, lib/ 318ms
+     × with evidence planted in tests/ and scripts/, no candidate carries the backslash-hex escape and the CSS still builds 250ms
+ FAIL  tests/unit/sec-c4-tailwind-sources.test.ts > SF-110: Tailwind scans an explicit allow-list (app, components, lib) — never tests/, scripts/, docs/ > globals.css turns automatic detection off and lists only application source
+   production build failed with \"Invalid code point\". Evidence must never be a build input. */
+     0.35/0.18 alphas failed contrast on the white card surface, so table
+     failed the §7 floor against the light staff card: amber 2.15:1, violet
+  /* The frame is a fixed 280×580 device mock whose contents must not reflow,
+ FAIL  tests/unit/sec-c4-tailwind-sources.test.ts > SF-110: Tailwind scans an explicit allow-list (app, components, lib) — never tests/, scripts/, docs/ > the scanner the build constructs reads application files (positive control) and nothing outside app/, components/, lib/
+ FAIL  tests/unit/sec-c4-tailwind-sources.test.ts > SF-110: Tailwind scans an explicit allow-list (app, components, lib) — never tests/, scripts/, docs/ > with evidence planted in tests/ and scripts/, no candidate carries the backslash-hex escape and the CSS still builds
+ Test Files  1 failed (1)
+      Tests  3 failed | 2 passed (5)

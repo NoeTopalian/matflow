@@ -1,0 +1,24 @@
+# Lane C4 gates, Node v24.21.0 (scratchpad node24 binary), 10 Oct 2026
+# Isolated worktree = HEAD 7ce179c (docs-only on top of 1bad6ee) + exactly the C4 files (no A4 work in progress),
+# fresh `npm ci --prefer-offline --ignore-scripts` + `prisma generate`, no .env in the tree.
+tsc --noEmit -p .                         exit 0
+npm run lint                              exit 0   (eslint clean, UI-RULES ratchets at baseline)
+npx vitest run (unit + integration, DB suites skip without a test URL)
+                                          exit 0   Test Files 470 passed | 74 skipped (544); Tests 6465 passed | 564 skipped | 3 todo
+next build from an EMPTY .next (TEST-branch env as att/prod-server.mjs, via c4-wt-build.mjs.txt)
+                                          exit 0   BUILD_ID w_lPHZ349bWFqb7Uuvlau   "Compiled successfully in 46s"
+next build from an EMPTY .next with a synthetic evidence plant (backslash + 1cc670… path) in tests/, scripts/readiness/,
+the repo root, components/ and docs/      exit 0   BUILD_ID IWhAVAxfi18EayE1MMHV0   (HEAD css: RangeError Invalid code point)
+built CSS check: all 831 plain class selectors of the compiled globals.css inventory present in .next/static/chunks/*.css (0 missing)
+
+# Main working tree (shared with lane A4, mid-edit), same Node:
+npm test                                  exit 1   3 files / 6 tests failed, none C4's after re-check:
+  - tests/unit/sec-c-static-guards.test.ts (raw-SQL allow-list now lists lib/auth-lockout.ts — lane A4's new SQL; fails with HEAD rate-limit too)
+  - tests/unit/sec-a4-lockout-reservation.test.ts (A4 file mid-edit; 12/12 pass on re-run)
+  - tests/integration/security.test.ts F10 (C4's — fixed afterwards, 13/13)
+npm run lint                              exit 0
+tsc --noEmit -p .                         exit 2   only tests/integration/sec-a4-lockout-burst-db.test.ts (A4, untracked, mid-edit)
+next build (main tree, empty .next)       exit 1   "Failed to type check": tests/unit/sec-a4-lockout-reservation.test.ts(85) — A4's file;
+                                                   the main tree .next is therefore a FAILED partial build — rebuild before any start.
+targeted: sec-c2-*, sec-c3-*, sec-c-*, sec-c4-*, proxy-matcher, sec-f-provider-outage → all green except sec-c-static-guards (A4, above)
+DB, both roles (guarded runners): sec-c4-rate-limit-saturation-db 5/5 owner + 5/5 restricted; sec-c3-rate-limit-atomic-db 6/6 + 6/6

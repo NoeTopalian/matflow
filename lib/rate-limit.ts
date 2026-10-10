@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 
-const memoryStore = new Map<string, { count: number; resetAt: number }>();
+const memoryStore = new Map<string, { count: number; resetAt: number; windowStart: number }>();
 
 /**
  * Advisory-lock namespace for the per-bucket check (ASCII "RLHT"). The
@@ -117,19 +117,126 @@ async function checkDbRateLimit(
   return { allowed: true, retryAfterSeconds: 0 };
 }
 
+/**
+ * What happens when the shared store cannot answer (security campaign
+ * iteration 2, lane C4, 10 Oct 2026 — review R6-N3 against SF-40).
+ *
+ * IT USED TO FALL BACK TO A FRESH PER-INSTANCE MEMORY COUNT ON ANY ERROR, AND
+ * SAY NOTHING. The C3 lock makes every allowed-path caller hold a pooled
+ * connection while it queues on its bucket, so a burst on ONE bucket is itself
+ * enough to exhaust the production pool (5 per instance): the queued callers
+ * hit Prisma's transaction-start timeout ("Unable to start a transaction in
+ * the given time"), landed here, and the memory store — which had never seen
+ * the database's hits — allowed `max` more. R6 measured bursts of 60 and 120
+ * against max 5 letting 10 through (5 rows + 5 from memory) under both roles
+ * (tests/integration/sec-c4-rate-limit-saturation-db.test.ts, red on 1bad6ee).
+ * The attacker controls the saturation, so the limit doubled on demand.
+ *
+ * Now, on any store failure (pool or transaction-start timeout, unreachable
+ * database, anything else):
+ *  - `failClosed` callers: the error is rethrown, unchanged — the route
+ *    answers 503/500 (their declared contract, tests/unit/sec-f-provider-outage).
+ *  - SECURITY buckets (every bucket not listed below): REFUSED, as if over the
+ *    limit, with a short Retry-After. Never answered from memory. Every route
+ *    behind a limiter needs the same database to do its work, so refusing
+ *    costs nothing a healthy store would have given.
+ *  - NON-SECURITY buckets (NON_SECURITY_BUCKET_PREFIXES): the memory fallback
+ *    survives, but a window this instance did not watch from its start is
+ *    seeded FULL — the database may already hold `max` hits for it — so the
+ *    fallback can never add capacity. Only once a whole window has passed
+ *    inside one continuous outage does memory count from zero (by then every
+ *    pre-outage hit has aged out of the window).
+ *  - Logged ONCE per window per (class, bucket family) with the reason and how
+ *    many failures were folded into the line. The family is the bucket's first
+ *    `:`-segment, always a literal at every call site; the key (IP, email,
+ *    user, token hash) is never logged.
+ */
+const NON_SECURITY_BUCKET_PREFIXES = [
+  // GET /api/tenant/[slug]: public club branding by slug. Load shedding only —
+  // the slug is in every club's public URL and the route reads nothing secret.
+  "tenant-lookup:",
+  // GET /api/kiosk/[token]/classes: the bucket is keyed by the token's own hash,
+  // so it cannot brake guessing (each guess is a fresh bucket); it only sheds a
+  // legitimate kiosk's polling.
+  "kiosk:classes:",
+] as const;
+
+type BucketClass = "security" | "non-security";
+
+function bucketClass(bucket: string): BucketClass {
+  return NON_SECURITY_BUCKET_PREFIXES.some((p) => bucket.startsWith(p)) ? "non-security" : "security";
+}
+
+function bucketFamily(bucket: string): string {
+  const i = bucket.indexOf(":");
+  return i > 0 ? bucket.slice(0, i) : "-";
+}
+
+/** Retry-After for a refusal caused by a store failure: transient by nature, never longer than the window. */
+const STORE_FAILURE_RETRY_AFTER_S = 30;
+
+function storeFailureReason(err: unknown): string {
+  const e = err as { code?: unknown; message?: unknown } | null;
+  const code = typeof e?.code === "string" ? e.code : "";
+  const msg = typeof e?.message === "string" ? e.message : "";
+  if (
+    code === "P2028" ||
+    code === "P2024" ||
+    /unable to start a transaction|timeout exceeded when trying to connect|timed out fetching a new connection/i.test(msg)
+  ) {
+    return "pool-timeout";
+  }
+  if (/^P10(0[0-2]|17)$/.test(code) || /reach database|ECONNREFUSED|ENOTFOUND|connection terminated/i.test(msg)) {
+    return "unreachable";
+  }
+  return "error";
+}
+
+/** When this instance first saw the store fail since its last success (null while it answers). */
+let storeOutageSince: number | null = null;
+const storeFailureLog = new Map<string, { until: number; suppressed: number }>();
+
+function logStoreFailure(cls: BucketClass, bucket: string, windowMs: number, reason: string, outcome: string) {
+  const family = bucketFamily(bucket);
+  const k = `${cls}|${family}`;
+  const now = Date.now();
+  const seen = storeFailureLog.get(k);
+  if (seen && now < seen.until) {
+    seen.suppressed++;
+    return;
+  }
+  console.error(
+    `[rate-limit] store unavailable reason=${reason} class=${cls} family=${family} outcome=${outcome} ` +
+      `windowMs=${windowMs} suppressedSinceLast=${seen?.suppressed ?? 0}`,
+  );
+  storeFailureLog.set(k, { until: now + windowMs, suppressed: 0 });
+}
+
 function checkMemoryRateLimit(
   bucket: string,
   max: number,
   windowMs: number,
 ): { allowed: boolean; retryAfterSeconds: number } {
   const now = Date.now();
+  const since = storeOutageSince ?? now;
   const entry = memoryStore.get(bucket);
-  if (!entry || now >= entry.resetAt) {
-    memoryStore.set(bucket, { count: 1, resetAt: now + windowMs });
+  if (!entry || entry.windowStart < since) {
+    // A window this instance did not count from its start: the database may
+    // already hold `max` hits in it. Full until every pre-outage hit has aged out.
+    const fullUntil = since + windowMs;
+    if (now < fullUntil) {
+      memoryStore.set(bucket, { count: max, resetAt: fullUntil, windowStart: since });
+      return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((fullUntil - now) / 1000)) };
+    }
+    memoryStore.set(bucket, { count: 1, resetAt: now + windowMs, windowStart: now });
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+  if (now >= entry.resetAt) {
+    memoryStore.set(bucket, { count: 1, resetAt: now + windowMs, windowStart: now });
     return { allowed: true, retryAfterSeconds: 0 };
   }
   if (entry.count >= max) {
-    return { allowed: false, retryAfterSeconds: Math.ceil((entry.resetAt - now) / 1000) };
+    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((entry.resetAt - now) / 1000)) };
   }
   entry.count++;
   return { allowed: true, retryAfterSeconds: 0 };
@@ -144,9 +251,27 @@ export async function checkRateLimit(
   let result: { allowed: boolean; retryAfterSeconds: number };
   try {
     result = await checkDbRateLimit(bucket, max, windowMs);
+    storeOutageSince = null;
   } catch (err) {
-    if (options?.failClosed) throw err;
-    result = checkMemoryRateLimit(bucket, max, windowMs);
+    storeOutageSince ??= Date.now();
+    const cls = bucketClass(bucket);
+    const reason = storeFailureReason(err);
+    if (options?.failClosed) {
+      logStoreFailure(cls, bucket, windowMs, reason, "thrown");
+      throw err;
+    }
+    if (cls === "security") {
+      logStoreFailure(cls, bucket, windowMs, reason, "refused");
+      return {
+        allowed: false,
+        retryAfterSeconds: Math.max(1, Math.min(STORE_FAILURE_RETRY_AFTER_S, Math.ceil(windowMs / 1000))),
+      };
+    }
+    // The store-failure line stands for any refusal the memory store gives
+    // here; the per-call warning below is for database answers (it carries the
+    // bucket, so it would log the key).
+    logStoreFailure(cls, bucket, windowMs, reason, "memory-fallback");
+    return checkMemoryRateLimit(bucket, max, windowMs);
   }
   // Surface every rate-limit hit so they show up in Vercel logs + Sentry.
   // Without this, attacks against /api/auth/* or /api/apply are silent.

@@ -1,0 +1,32 @@
+# class inventory (selectors in compiled globals.css), Node v24.21.0
+HEAD: 1119 selectors, 122273 bytes; C4: 1095 selectors, 117686 bytes; added 0, removed 24
+## removed (each traced: token absent from app/components/lib as a class; present only in tests/docs/markdown, or only with a variant prefix that is still generated)
+.backdrop-blur
+.backdrop-filter
+.bg-blue-500
+.bg-primary
+.bg-white\/80
+.blur
+.border-white\/20
+.focus\:ring-white\/20
+.h-screen
+.hover\:border-white\/20
+.invert
+.m-1
+.m-2
+.m-3
+.m-9
+.md\:overflow-y-auto
+.order-1
+.order-2
+.overflow-y-visible
+.row-1
+.top-200
+.top-5
+.xl\:grid-cols-5
+.zoom-out
+## variant forms still present
+.focus\:border-white\/20
+.lg\:order-1
+.lg\:order-2
+.md\:h-screen

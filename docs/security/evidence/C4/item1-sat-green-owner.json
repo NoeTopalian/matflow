@@ -1,0 +1,51 @@
+{
+ "role": "owner",
+ "nodeEnv": "production",
+ "results": [
+  {
+   "cls": "security",
+   "burst": 60,
+   "allowed": 5,
+   "rows": 5,
+   "allowedWithoutRow": 0,
+   "ms": 2901,
+   "fallbackLogLines": 1,
+   "fallbackLog": "[rate-limit] store unavailable reason=pool-timeout class=security family=secc4s60 outcome=refused windowMs=60000 suppressedSinceLast=0"
+  },
+  {
+   "cls": "security",
+   "burst": 120,
+   "allowed": 5,
+   "rows": 5,
+   "allowedWithoutRow": 0,
+   "ms": 4064,
+   "fallbackLogLines": 1,
+   "fallbackLog": "[rate-limit] store unavailable reason=pool-timeout class=security family=secc4s120 outcome=refused windowMs=60000 suppressedSinceLast=0"
+  },
+  {
+   "cls": "non-security",
+   "burst": 60,
+   "allowed": 5,
+   "rows": 5,
+   "allowedWithoutRow": 0,
+   "ms": 2797,
+   "fallbackLogLines": 1,
+   "fallbackLog": "[rate-limit] store unavailable reason=pool-timeout class=non-security family=tenant-lookup outcome=memory-fallback windowMs=60000 suppressedSinceLast=0"
+  },
+  {
+   "cls": "non-security",
+   "burst": 120,
+   "allowed": 5,
+   "rows": 5,
+   "allowedWithoutRow": 0,
+   "ms": 3337,
+   "fallbackLogLines": 0,
+   "fallbackLog": null
+  }
+ ],
+ "teardown": {
+  "buckets": 5,
+  "deleted": 25,
+  "left": 0
+ }
+}

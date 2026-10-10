@@ -2,8 +2,8 @@
  * SF-40 / SEC-051 / SEC-073 / SEC-049 — upload controls on every multipart route (security campaign
  * iteration 2, lane C2, 9 Oct 2026). Bounded: each cell drives the real route handler with a fake
  * blob client (put is a mock — never a real Blob upload), sharp mocked (no decode), and the REAL
- * lib/rate-limit.ts over a fake RateLimitHit table (so the shared-DB path and the per-instance
- * memory fallback are both exercised as they run in production).
+ * lib/rate-limit.ts over a fake RateLimitHit table (so the shared-DB path and the store-failure
+ * path are both exercised as they run in production).
  *
  * Controls pinned: declared Content-Length refused before the body is read; per-user and per-tenant
  * budgets (429 + Retry-After, body unread, nothing decoded or stored); MIME sniffing versus the
@@ -277,7 +277,10 @@ describe("/api/upload — per-user and per-tenant rate limits (shared DB path)",
     expect((await POST(upReq(form([["file", file(PNG, "a.png", "image/png")]])))).status).toBe(429);
   });
 
-  it("HONEST LIMIT: with the database down each instance falls back to its own memory budget (N instances × limit)", async () => {
+  it("with the database down, no instance decodes anything: the upload budget is a security bucket, refused (lane C4, R6-N3)", async () => {
+    // Before lane C4 each instance fell back to its own memory budget (N instances × limit) — and a burst that
+    // saturated the pool reached that fallback on demand. A store failure on a security bucket is now a refusal.
+    vi.spyOn(console, "error").mockImplementation(() => {});
     h.dbDown = true;
     const statuses: number[] = [];
     for (let instance = 0; instance < 2; instance++) {
@@ -287,9 +290,8 @@ describe("/api/upload — per-user and per-tenant rate limits (shared DB path)",
         statuses.push((await POST(upReq(form([["file", file(PNG, "a.png", "image/png")]])))).status);
       }
     }
-    // Each instance allows exactly `max`, then refuses: 2 instances → 2 × max decodes in the window.
-    expect(statuses.filter((s) => s === 200)).toHaveLength(2 * UPLOAD_LIMITS.image.perUser.max);
-    expect(statuses.filter((s) => s === 429)).toHaveLength(2);
+    expect(statuses.filter((s) => s === 200)).toHaveLength(0);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(2 * (UPLOAD_LIMITS.image.perUser.max + 1));
   });
 });
 
