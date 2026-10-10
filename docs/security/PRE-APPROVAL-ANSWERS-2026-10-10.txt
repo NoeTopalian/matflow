@@ -269,7 +269,16 @@ Known dependencies that may stop it standing alone: the TOTP verify routes impor
 (lane A2); the deletion routes carry the provenance change in lib/attendance-import.ts.
 Would reduce: the stale-bypass leak, undigested deletions, SVG-from-our-domain and the blob-token exposure,
 the open-ended hold from a malformed body, the key leak.
-Would leave: the REPRODUCED fail-open revocation defect (AH-G7), the lockout oracle and burst, the CSP gap,
+RESULT (lane E5, isolation build on 2a6487e, evidence/E5/): option B does NOT stand alone as listed. It
+compiles only after three forced additions (auth-pending-gate, the A2 session-revocation, importers/attendance)
+and builds (BUILD_ID cd98_g8m2mGUpcaoI7wr-, tsc 0, lint 0), but sec-d2-deletion-provenance-db fails 2/16 under
+both roles until the members-import rollback route (3be9490) is added (then 16/16). B ships more than its
+scope through the files it carries: A2's 503 verify-route refusal, tightened token-version checks, and the whole
+lane-D import chain incl. the D3 provenance MAC. B+ = B plus the AH-G7 fail-closed revocation fix at ab5f928
+(only auth.ts and session-revocation.ts differ; no further files; revocation tests 6/6 both roles; build
+8sVbrnp8yf_mp9Ia0W-SD) — the fail-closed fix CAN be carried safely. Honest minimal set = B+ plus the rollback
+route; still an emergency containment with no independent review as a unit, not a reviewed release.
+Plain B would leave: the fail-open revocation defect (AH-G7; closed only in B+), the lockout oracle and burst, the CSP gap,
 upload rate limits, and everything migration-dependent. Because of AH-G7 alone, option B must not be
 described as a secure release; it is an emergency containment of specific leak and integrity paths. Whether
 the fail-closed revocation fix can be carried safely on its own (B+ = B plus lib/session-revocation.ts,
