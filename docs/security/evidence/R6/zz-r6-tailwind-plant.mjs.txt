@@ -1,0 +1,25 @@
+// R6 SF-110 probe: compile app/globals.css exactly as the build does (postcss + @tailwindcss/postcss, which scans the
+// project for class candidates honouring @source rules and .gitignore) with a planted file in different places.
+// Usage (from the worktree root): node zz-r6-tailwind-plant.mjs <plant-source-file> <relative-dir|none> ...
+import fs from "node:fs";
+import path from "node:path";
+import postcss from "postcss";
+import tailwind from "@tailwindcss/postcss";
+
+const [plantSrc, ...dirs] = process.argv.slice(2);
+const plant = fs.readFileSync(plantSrc);
+const css = fs.readFileSync("app/globals.css", "utf8");
+for (const dir of dirs) {
+  const target = dir === "none" ? null : path.join(dir, "zz-r6-plant.txt");
+  if (target) { fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, plant); }
+  let verdict;
+  try {
+    const out = await postcss([tailwind({ base: process.cwd() })]).process(css, { from: path.resolve("app/globals.css") });
+    verdict = { ok: true, bytes: out.css.length };
+  } catch (e) {
+    verdict = { ok: false, error: String(e && e.message).slice(0, 160) };
+  } finally {
+    if (target) fs.rmSync(target);
+  }
+  console.log(JSON.stringify({ plantedIn: dir, ...verdict }));
+}

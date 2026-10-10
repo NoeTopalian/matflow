@@ -1,0 +1,6 @@
+import { it, expect } from "vitest";
+import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
+it("R6: signing key length with NEXTAUTH_SECRET set to empty and AUTH_SECRET set", () => {
+  console.log("R6-KEYLEN nextauthSet=" + (process.env.NEXTAUTH_SECRET !== undefined) + " nextauthLen=" + (process.env.NEXTAUTH_SECRET ?? "").length + " authLen=" + (process.env.AUTH_SECRET ?? "").length + " signingKeyLen=" + AUTH_SECRET_VALUE.length);
+  expect(AUTH_SECRET_VALUE.length).toBeGreaterThan(0);
+});

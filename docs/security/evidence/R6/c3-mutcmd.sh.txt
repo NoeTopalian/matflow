@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+SP=<scratchpad>/security/R6
+bash "$SP/run-unit-m.sh" tests/unit/sec-c3-rate-limit-atomic.test.ts; e1=$?
+timeout 600 bash "$SP/run-restricted-m.sh" tests/integration/sec-c3-rate-limit-atomic-db.test.ts; e2=$?
+echo "R6-MUT exits unit=$e1 c3db=$e2"
+exit $((e1|e2))

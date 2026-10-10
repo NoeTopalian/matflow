@@ -1,0 +1,26 @@
+[
+  { "id": "D3-M3 any key accepted (proof only has to look like a MAC)", "file": "lib/attendance-import.ts",
+    "find": "  return proofMatches(expected, md.proof);",
+    "replace": "  return typeof md.proof === \"string\" && /^[0-9a-f]{64}$/.test(md.proof) && !!expected;",
+    "cmd": ["C:/Program Files/Git/bin/bash.exe", "<scratchpad>/security/R6/run-restricted-m.sh", "tests/integration/sec-d3-provenance-forgery-db.test.ts"] },
+  { "id": "D3-M4 older matching row accepted (latest row that matches the mapping vouches)", "file": "lib/attendance-import.ts",
+    "find": "  const latest = sorted[sorted.length - 1];\n  const previous = sorted.length > 1 ? sorted[sorted.length - 2] : null;",
+    "replace": "  const li = (() => { for (let i = sorted.length - 1; i >= 0; i--) { const a = (sorted[i].metadata as Record<string, unknown> | null)?.after as { targetId?: string } | undefined; if (a?.targetId === mapping.targetId) return i; } return sorted.length - 1; })();\n  const latest = sorted[li];\n  const previous = li > 0 ? sorted[li - 1] : null;",
+    "cmd": ["C:/Program Files/Git/bin/bash.exe", "<scratchpad>/security/R6/run-restricted-m.sh", "tests/integration/sec-d3-provenance-forgery-db.test.ts"] },
+  { "id": "D3-MC chain check removed", "file": "lib/attendance-import.ts",
+    "find": "  if (md.prev !== (previous ? chainLinkOf(previous) : MAPPING_PROVENANCE_GENESIS)) return false;",
+    "replace": "  if (typeof md.prev !== \"string\") return false;",
+    "cmd": ["C:/Program Files/Git/bin/bash.exe", "<scratchpad>/security/R6/run-restricted-m.sh", "tests/integration/sec-d3-provenance-forgery-db.test.ts", "tests/integration/zz-r6-d3-probe-db.test.ts"] },
+  { "id": "D3-MF createdAt-not-in-future check removed", "file": "lib/attendance-import.ts",
+    "find": "  if (!Number.isFinite(latest.t) || latest.t > now + PROVENANCE_FUTURE_SKEW_MS) return false;",
+    "replace": "  if (!Number.isFinite(latest.t)) return false;",
+    "cmd": ["C:/Program Files/Git/bin/bash.exe", "<scratchpad>/security/R6/run-restricted-m.sh", "tests/integration/sec-d3-provenance-forgery-db.test.ts"] },
+  { "id": "D3-MT MAC computed without tenantId", "file": "lib/attendance-import.ts",
+    "find": "JSON.stringify([PROVENANCE_VERSION, f.tenantId, f.mappingId,",
+    "replace": "JSON.stringify([PROVENANCE_VERSION, \"\", f.mappingId,",
+    "cmd": ["C:/Program Files/Git/bin/bash.exe", "<scratchpad>/security/R6/run-restricted-m.sh", "tests/integration/sec-d3-provenance-forgery-db.test.ts"] },
+  { "id": "D3-ME empty-key guard removed (sign and verify with an empty key)", "edits": [
+      { "file": "lib/attendance-import.ts", "find": "  if (!AUTH_SECRET_VALUE) return null;\n  const key = createHmac", "replace": "  const key = createHmac" },
+      { "file": "lib/attendance-import.ts", "find": "  if (!rows.length || !AUTH_SECRET_VALUE) return false;", "replace": "  if (!rows.length) return false;" } ],
+    "cmd": ["C:/Program Files/Git/bin/bash.exe", "<scratchpad>/security/R6/run-restricted-m.sh", "tests/integration/sec-d3-provenance-forgery-db.test.ts"] }
+]

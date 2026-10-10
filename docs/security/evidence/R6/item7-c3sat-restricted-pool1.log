@@ -1,0 +1,2421 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/R6/wt
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:116016) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b60 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=60s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+prisma:error 
+Invalid `prisma.$executeRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: Unable to start a transaction in the given time.
+
+stderr | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+[rate-limit] bucket=secr6s-restricted-mv1tmxfqc46q-b120 max=5 windowMs=60000 retryAfter=59s
+
+stdout | tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production)
+R6-SAT {"role":"restricted","nodeEnv":"production","results":[{"burst":20,"allowed":5,"rows":5,"allowedWithoutRow":0,"ms":3569},{"burst":60,"allowed":10,"rows":5,"allowedWithoutRow":5,"ms":2911},{"burst":120,"allowed":10,"rows":5,"allowedWithoutRow":5,"ms":3545}],"teardown":{"deleted":15,"left":0}}
+
+ ❯ tests/integration/zz-r6-c3-saturation-db.test.ts (3 tests | 2 failed) 10699ms
+     × burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed 3221ms
+     × burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed 3673ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 60 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+AssertionError: {"burst":60,"allowed":10,"rows":5,"allowedWithoutRow":5,"ms":2911}: expected 10 to be 5 // Object.is equality
+
+- Expected
++ Received
+
+- 5
++ 10
+
+ ❯ tests/integration/zz-r6-c3-saturation-db.test.ts:40:42
+     38|       const r = { burst: n, allowed, rows, allowedWithoutRow: allowed …
+     39|       results.push(r);
+     40|       expect(allowed, JSON.stringify(r)).toBe(5);
+       |                                          ^
+     41|     }, 180_000);
+     42|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/integration/zz-r6-c3-saturation-db.test.ts > R6: rate limit when the burst saturates the pool (restricted, NODE_ENV=production) > burst of 120 on ONE bucket, max 5 → secure outcome: exactly 5 allowed
+AssertionError: {"burst":120,"allowed":10,"rows":5,"allowedWithoutRow":5,"ms":3545}: expected 10 to be 5 // Object.is equality
+
+- Expected
++ Received
+
+- 5
++ 10
+
+ ❯ tests/integration/zz-r6-c3-saturation-db.test.ts:40:42
+     38|       const r = { burst: n, allowed, rows, allowedWithoutRow: allowed …
+     39|       results.push(r);
+     40|       expect(allowed, JSON.stringify(r)).toBe(5);
+       |                                          ^
+     41|     }, 180_000);
+     42|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 1 passed (3)
+   Start at  04:15:06
+   Duration  11.64s (transform 148ms, setup 100ms, import 368ms, tests 10.70s, environment 0ms)
+

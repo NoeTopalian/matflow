@@ -1,0 +1,131 @@
+{
+  "role": "restricted",
+  "samples": 20,
+  "rttMedianMs": 43,
+  "n0": {
+    "acct": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1282,
+      "diffVsGhostMs": -6
+    },
+    "locked": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1307,
+      "diffVsGhostMs": 18
+    },
+    "lockedstaff": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1330,
+      "diffVsGhostMs": 41
+    },
+    "ghost": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1289,
+      "diffVsGhostMs": 0
+    }
+  },
+  "n9": {
+    "acct": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1305,
+      "diffVsGhostMs": 74
+    },
+    "locked": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1299,
+      "diffVsGhostMs": 68
+    },
+    "lockedstaff": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1282,
+      "diffVsGhostMs": 51
+    },
+    "ghost": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1231,
+      "diffVsGhostMs": 0
+    }
+  },
+  "n10": {
+    "acct": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1038,
+      "diffVsGhostMs": -26
+    },
+    "locked": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1055,
+      "diffVsGhostMs": -9
+    },
+    "lockedstaff": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1101,
+      "diffVsGhostMs": 38
+    },
+    "ghost": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1064,
+      "diffVsGhostMs": 0
+    }
+  },
+  "n11": {
+    "acct": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 959,
+      "diffVsGhostMs": -42
+    },
+    "locked": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1004,
+      "diffVsGhostMs": 3
+    },
+    "lockedstaff": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 995,
+      "diffVsGhostMs": -6
+    },
+    "ghost": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1001,
+      "diffVsGhostMs": 0
+    }
+  },
+  "rowLockedVsNone": {
+    "lockedMember": "refused,refused,refused,refused,refused,refused,refused,refused,refused,refused,code:rate_limited,code:rate_limited",
+    "none": "refused,refused,refused,refused,refused,refused,refused,refused,refused,refused,code:rate_limited,code:rate_limited",
+    "lockedStaff": "refused,refused,refused,refused,refused,refused,refused,refused,refused,refused,code:rate_limited,code:rate_limited",
+    "none2": "refused,refused,refused,refused,refused,refused,refused,refused,refused,refused,code:rate_limited,code:rate_limited"
+  }
+}

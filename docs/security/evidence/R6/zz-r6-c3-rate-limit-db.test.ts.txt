@@ -1,0 +1,139 @@
+// Reviewer R6 probe (iteration 2) — attacks on lane C3's atomic shared-database rate limit. TEST branch only through
+// R6 copies of the guarded runners (owner; matflow_app with RLS_ENFORCED=1). Buckets carry the secr6c3- prefix and
+// this run's stamp; teardown deletes exactly those rows and checks the count.
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+import pg from "pg";
+
+const FAULT = vi.hoisted(() => ({ mode: "off" as "off" | "before" | "after" }));
+vi.mock("@/lib/prisma", async (importOriginal) => {
+  const m = await importOriginal<typeof import("@/lib/prisma")>();
+  const real = m.prisma as unknown as Record<string | symbol, unknown> & { $transaction: (a: unknown) => Promise<unknown> };
+  const proxy = new Proxy(real, {
+    get(t, p) {
+      if (p === "$transaction" && FAULT.mode !== "off") {
+        return async (arg: unknown) => {
+          if (FAULT.mode === "before") throw new Error("R6 injected: connection lost before the lock");
+          await t.$transaction(arg);
+          throw new Error("R6 injected: connection lost after commit");
+        };
+      }
+      const v = Reflect.get(t, p, t);
+      return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+    },
+  });
+  return { ...m, prisma: proxy };
+});
+
+import { prisma } from "@/lib/prisma";
+import { checkRateLimit, RATE_LIMIT_LOCK_NS } from "@/lib/rate-limit";
+
+const HAS_DB = !!process.env.DATABASE_URL && (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
+const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
+const PREFIX = `secr6c3-${ROLE}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const report: Record<string, unknown> = { role: ROLE };
+const rows = (bucket: string) => prisma.rateLimitHit.count({ where: { bucket } });
+
+describe.skipIf(!HAS_DB)(`R6: C3 rate limit under attack (${ROLE})`, () => {
+  beforeAll(async () => {
+    const who = await prisma.$queryRaw<{ current_user: string }[]>`SELECT current_user`;
+    if (process.env.RLS_ENFORCED === "1") expect(who[0]?.current_user).toBe("matflow_app");
+    else expect(who[0]?.current_user).not.toBe("matflow_app");
+    await Promise.all(Array.from({ length: 10 }, () => prisma.$queryRaw`SELECT 1`));
+  });
+  afterAll(async () => {
+    FAULT.mode = "off";
+    const del = await prisma.rateLimitHit.deleteMany({ where: { bucket: { startsWith: PREFIX } } });
+    const left = await prisma.rateLimitHit.count({ where: { bucket: { startsWith: PREFIX } } });
+    report.teardown = { deleted: del.count, left };
+    console.log("R6-C3 " + JSON.stringify(report));
+    expect(left).toBe(0);
+  });
+
+  for (const round of [1, 2]) {
+    it(`burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round ${round})`, async () => {
+      const a = `${PREFIX}-i50-a-r${round}`;
+      const b = `${PREFIX}-i50-b-r${round}`;
+      const res = await Promise.all(Array.from({ length: 50 }, (_, i) => checkRateLimit(i % 2 ? a : b, 5, 60_000).then((r) => [i % 2, r.allowed] as const)));
+      const okA = res.filter(([k, ok]) => k === 1 && ok).length;
+      const okB = res.filter(([k, ok]) => k === 0 && ok).length;
+      const got = { okA, okB, rowsA: await rows(a), rowsB: await rows(b) };
+      report[`interleaved50_r${round}`] = got;
+      expect(got).toEqual({ okA: 5, okB: 5, rowsA: 5, rowsB: 5 });
+    }, 120_000);
+  }
+
+  it("a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed", async () => {
+    const bucket = `${PREFIX}-held`;
+    const holder = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await holder.connect();
+    await holder.query("BEGIN");
+    await holder.query("SELECT pg_advisory_xact_lock($1::int4, hashtext($2::text))", [RATE_LIMIT_LOCK_NS, bucket]);
+    const t0 = performance.now();
+    let releasedAt = 0;
+    const release = new Promise<void>((r) => setTimeout(async () => { releasedAt = performance.now() - t0; await holder.query("COMMIT"); r(); }, 2000));
+    const res = await Promise.all(Array.from({ length: 20 }, () => checkRateLimit(bucket, 5, 60_000).then((r) => ({ allowed: r.allowed, at: performance.now() - t0 }))));
+    await release;
+    await holder.end();
+    const allowed = res.filter((r) => r.allowed);
+    const got = {
+      allowed: allowed.length,
+      rows: await rows(bucket),
+      releasedAtMs: Math.round(releasedAt),
+      firstAllowedAtMs: Math.round(Math.min(...allowed.map((r) => r.at))),
+      anyAnswerBeforeRelease: res.filter((r) => r.at < releasedAt).length,
+    };
+    report.heldLock = got;
+    expect(got.allowed).toBe(5);
+    expect(got.rows).toBe(5);
+    expect(got.firstAllowedAtMs).toBeGreaterThanOrEqual(got.releasedAtMs);
+  }, 120_000);
+
+  it("DB throws BEFORE the lock (failClosed): every call throws, nothing allowed, nothing written", async () => {
+    const bucket = `${PREFIX}-fault-closed`;
+    FAULT.mode = "before";
+    const res = await Promise.allSettled(Array.from({ length: 10 }, () => checkRateLimit(bucket, 5, 60_000, { failClosed: true })));
+    FAULT.mode = "off";
+    const got = { rejected: res.filter((r) => r.status === "rejected").length, rows: await rows(bucket) };
+    report.faultBeforeFailClosed = got;
+    expect(got).toEqual({ rejected: 10, rows: 0 });
+  });
+
+  it("DB throws BEFORE the lock (fail-open): measure the fallback — total allowed in the window and whether the fault is logged", async () => {
+    const bucket = `${PREFIX}-fault-open`;
+    const pre = [];
+    for (let i = 0; i < 3; i++) pre.push((await checkRateLimit(bucket, 5, 60_000)).allowed);
+    const logged: string[] = [];
+    const spyE = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => { logged.push(String(a[0]).slice(0, 80)); });
+    const spyW = vi.spyOn(console, "warn").mockImplementation((...a: unknown[]) => { logged.push(String(a[0]).slice(0, 80)); });
+    FAULT.mode = "before";
+    const during = [];
+    for (let i = 0; i < 10; i++) during.push((await checkRateLimit(bucket, 5, 60_000)).allowed);
+    FAULT.mode = "off";
+    spyE.mockRestore();
+    spyW.mockRestore();
+    const got = {
+      allowedBeforeFault: pre.filter(Boolean).length,
+      allowedDuringFault: during.filter(Boolean).length,
+      totalAllowedInWindow: pre.filter(Boolean).length + during.filter(Boolean).length,
+      rows: await rows(bucket),
+      faultLogged: logged.some((l) => /fallback|database|injected|memory/i.test(l)),
+      logLines: logged.length,
+    };
+    report.faultBeforeFailOpen = got;
+    // Recorded, not asserted beyond the per-process bound: the documented residual is N x limit while the DB is down.
+    expect(got.allowedDuringFault).toBeLessThanOrEqual(5);
+  });
+
+  it("DB throws AFTER commit (fail-open): the committed hit still counts in the database; the fallback never lets more than max through per process", async () => {
+    const bucket = `${PREFIX}-fault-after`;
+    FAULT.mode = "after";
+    const during = [];
+    for (let i = 0; i < 8; i++) during.push((await checkRateLimit(bucket, 5, 60_000)).allowed);
+    FAULT.mode = "off";
+    const after = (await checkRateLimit(bucket, 5, 60_000)).allowed;
+    const got = { allowedDuringFault: during.filter(Boolean).length, rows: await rows(bucket), allowedAfterRecovery: after };
+    report.faultAfterCommit = got;
+    expect(got.allowedDuringFault).toBeLessThanOrEqual(5);
+    expect(got.allowedAfterRecovery).toBe(false);
+  });
+});

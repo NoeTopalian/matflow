@@ -1,0 +1,43 @@
+// Reviewer R6 probe (iteration 2) — C3 rate limit when the BURST ITSELF saturates the pool. Each allowed-path caller
+// holds a pooled connection for the length of its transaction while it queues on the bucket's advisory lock; with the
+// production pool (max 5 per instance, lib/prisma.ts) the rest wait for a connection, Prisma's transaction maxWait
+// expires ("Unable to start a transaction in the given time"), checkRateLimit catches the error and — without
+// failClosed — answers from the per-process memory store. TEST branch only; secr6s- buckets; count-checked teardown.
+import { vi, describe, it, expect, afterAll } from "vitest";
+
+vi.hoisted(() => {
+  if (process.env.R6_PROD_POOL === "1") (process.env as Record<string, string>).NODE_ENV = "production";
+  process.env.AUTH_SECRET ??= "secR6-saturation-synthetic-0123456789abcdef0123456789";
+});
+
+import { prisma } from "@/lib/prisma";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+const HAS_DB = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
+const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
+const PREFIX = `secr6s-${ROLE}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const results: Record<string, unknown>[] = [];
+
+describe.skipIf(!HAS_DB)(`R6: rate limit when the burst saturates the pool (${ROLE}, NODE_ENV=${process.env.NODE_ENV})`, () => {
+  afterAll(async () => {
+    const del = await prisma.rateLimitHit.deleteMany({ where: { bucket: { startsWith: PREFIX } } });
+    const left = await prisma.rateLimitHit.count({ where: { bucket: { startsWith: PREFIX } } });
+    console.log("R6-SAT " + JSON.stringify({ role: ROLE, nodeEnv: process.env.NODE_ENV, results, teardown: { deleted: del.count, left } }));
+    expect(left).toBe(0);
+  });
+  for (const n of [20, 60, 120]) {
+    it(`burst of ${n} on ONE bucket, max 5 → secure outcome: exactly 5 allowed`, async () => {
+      const bucket = `${PREFIX}-b${n}`;
+      const errs = vi.spyOn(console, "error").mockImplementation(() => {});
+      const t0 = performance.now();
+      const res = await Promise.all(Array.from({ length: n }, () => checkRateLimit(bucket, 5, 60_000)));
+      const ms = Math.round(performance.now() - t0);
+      errs.mockRestore();
+      const allowed = res.filter((r) => r.allowed).length;
+      const rows = await prisma.rateLimitHit.count({ where: { bucket } });
+      const r = { burst: n, allowed, rows, allowedWithoutRow: allowed - rows, ms };
+      results.push(r);
+      expect(allowed, JSON.stringify(r)).toBe(5);
+    }, 180_000);
+  }
+});

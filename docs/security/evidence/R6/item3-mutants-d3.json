@@ -1,0 +1,80 @@
+[
+  {
+    "id": "D3-M3 any key accepted (proof only has to look like a MAC)",
+    "exit": 1,
+    "seconds": 158,
+    "tests": "Tests  4 failed | 12 passed | 1 expected fail (17)",
+    "failed": [
+      "× P2 (a)+(b) PROOF MINTED IN THE ATTACKER'S OWN CLUB through the real decide route, copied whole into the victim club → pending",
+      "× X1 (a)+(b) CROSS-CLUB RE-HOME: a decision minted in club B moved whole into club A (mapping, its row and the target; only the club differs) does not verify in A",
+      "× P3b WRONG KEY, CORRECT TUPLE: the row is right in every field (digest copied from a real decision, chain, date) but the proof is under another key → pending",
+      "× E1 EMPTY KEY: a proof computed with an EMPTY signing key over the correct tuple is refused (process signs with a real key)",
+      "FAIL  tests/integration/sec-d3-provenance-forgery-db.test.ts > D3 — the mapping-provenance proof is bound to its row, club and chain (REAL route, TEST DB) > P2 (a)+(b) PROOF MINTED IN THE ATTACKER'S OWN CLUB through the real decide route, copied whole into the",
+      "FAIL  tests/integration/sec-d3-provenance-forgery-db.test.ts > D3 — the mapping-provenance proof is bound to its row, club and chain (REAL route, TEST DB) > X1 (a)+(b) CROSS-CLUB RE-HOME: a decision minted in club B moved whole into club A (mapping, its row an",
+      "FAIL  tests/integration/sec-d3-provenance-forgery-db.test.ts > D3 — the mapping-provenance proof is bound to its row, club and chain (REAL route, TEST DB) > P3b WRONG KEY, CORRECT TUPLE: the row is right in every field (digest copied from a real decision, chai",
+      "FAIL  tests/integration/sec-d3-provenance-forgery-db.test.ts > D3 — the mapping-provenance proof is bound to its row, club and chain (REAL route, TEST DB) > E1 EMPTY KEY: a proof computed with an EMPTY signing key over the correct tuple is refused (process sig"
+    ],
+    "restored": true
+  },
+  {
+    "id": "D3-M4 older matching row accepted (latest row that matches the mapping vouches)",
+    "exit": 1,
+    "seconds": 152,
+    "tests": "Tests  1 failed | 15 passed | 1 expected fail (17)",
+    "failed": [
+      "× P4 OLDER MATCHING ROW: owner decided mal, then right; raw UPDATE back to mal → the latest row disagrees → pending",
+      "FAIL  tests/integration/sec-d3-provenance-forgery-db.test.ts > D3 — the mapping-provenance proof is bound to its row, club and chain (REAL route, TEST DB) > P4 OLDER MATCHING ROW: owner decided mal, then right; raw UPDATE back to mal → the latest row disagrees"
+    ],
+    "restored": true
+  },
+  {
+    "id": "D3-MC chain check removed",
+    "exit": 1,
+    "seconds": 245,
+    "tests": "Tests  4 failed | 21 passed | 1 expected fail (26)",
+    "failed": [
+      "× C1 CHAIN: deleting an earlier provenance row breaks the latest row's link → pending (history cannot be pruned silently)",
+      "× R6-4b DELETE THE NEWEST ROW AND RE-POINT to the older owner decision (tail truncation) → secure outcome: pending",
+      "× R6-5b GENESIS ROW WITH A FRESH CORRECT TUPLE under the real key but prev = genesis on a mapping with history → refused by the chain",
+      "× R6-K1 KEY SEPARATION: a club whose slug IS the provenance key context makes /api/account/pending-tenant hand out HMAC(root, context), the provenance sub-key, as a cookie; secure outcome: a proof minted with it does NOT bind",
+      "FAIL  tests/integration/sec-d3-provenance-forgery-db.test.ts > D3 — the mapping-provenance proof is bound to its row, club and chain (REAL route, TEST DB) > C1 CHAIN: deleting an earlier provenance row breaks the latest row's link → pending (history cannot be ",
+      "FAIL  tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-4b DELETE THE NEWEST ROW AND RE-POINT to the older owner decision (tail truncation) → secure outcome: pending",
+      "FAIL  tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-5b GENESIS ROW WITH A FRESH CORRECT TUPLE under the real key but prev = genesis on a mapping with history → refused by the chain",
+      "FAIL  tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-K1 KEY SEPARATION: a club whose slug IS the provenance key context makes /api/account/pending-tenant hand out HMAC(root, context), the provenan"
+    ],
+    "restored": true
+  },
+  {
+    "id": "D3-MF createdAt-not-in-future check removed",
+    "exit": 1,
+    "seconds": 155,
+    "tests": "Tests  1 failed | 15 passed | 1 expected fail (17)",
+    "failed": [
+      "× F1 FUTURE-DATED ROW: a row right in every field and proven under the REAL key but dated a day ahead is refused",
+      "FAIL  tests/integration/sec-d3-provenance-forgery-db.test.ts > D3 — the mapping-provenance proof is bound to its row, club and chain (REAL route, TEST DB) > F1 FUTURE-DATED ROW: a row right in every field and proven under the REAL key but dated a day ahead is "
+    ],
+    "restored": true
+  },
+  {
+    "id": "D3-MT MAC computed without tenantId",
+    "exit": 1,
+    "seconds": 155,
+    "tests": "Tests  1 failed | 15 passed | 1 expected fail (17)",
+    "failed": [
+      "× X1 (a)+(b) CROSS-CLUB RE-HOME: a decision minted in club B moved whole into club A (mapping, its row and the target; only the club differs) does not verify in A",
+      "FAIL  tests/integration/sec-d3-provenance-forgery-db.test.ts > D3 — the mapping-provenance proof is bound to its row, club and chain (REAL route, TEST DB) > X1 (a)+(b) CROSS-CLUB RE-HOME: a decision minted in club B moved whole into club A (mapping, its row an"
+    ],
+    "restored": true
+  },
+  {
+    "id": "D3-ME empty-key guard removed (sign and verify with an empty key)",
+    "exit": 1,
+    "seconds": 140,
+    "tests": "Tests  1 failed | 15 passed | 1 expected fail (17)",
+    "failed": [
+      "× E2 EMPTY KEY IN THE PROCESS: with no signing secret the importer trusts no decision — not one it saved itself, not one proven under the empty key",
+      "FAIL  tests/integration/sec-d3-provenance-forgery-db.test.ts > D3 — the mapping-provenance proof is bound to its row, club and chain (REAL route, TEST DB) > E2 EMPTY KEY IN THE PROCESS: with no signing secret the importer trusts no decision — not one it saved "
+    ],
+    "restored": true
+  }
+]

@@ -1,0 +1,50 @@
+csrf-coverage.test.ts
+sec-a2-google-link.test.ts
+sec-a2-lockout-flags.test.ts
+sec-a2-proxy-outage-cookie.test.ts
+sec-b2-rls-test-target.test.ts
+sec-b2-tenant-context.test.ts
+sec-c-body-canary-sweep.test.ts
+sec-c-csrf-sweep.test.ts
+sec-c2-blob-image-inline.test.ts
+sec-c2-csp-report.test.ts
+sec-c2-csp.test.ts
+sec-c2-request-validation.test.ts
+sec-c2-upload-controls.test.ts
+sec-e3-ops-guards.test.ts
+sec-e3-setup-test-db-guard.test.ts
+sec-e3-upload-limit-input-pixels.test.ts
+sec-f2-coverage-reconcile.test.ts
+sec-f2-restore-verify-compare.test.ts
+sec-f2-skip-gate.test.ts
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/R6/wt
+
+(node:108420) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:107976) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+
+ Test Files  19 passed (19)
+      Tests  978 passed (978)
+   Start at  04:17:47
+   Duration  58.38s (transform 9.05s, setup 471ms, import 5.89s, tests 44.50s, environment 4ms)
+

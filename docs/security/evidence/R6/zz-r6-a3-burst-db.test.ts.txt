@@ -1,0 +1,103 @@
+// Reviewer R6 probe (iteration 2) — the address-wide failure cap (lockout v2, lib/auth-lockout.ts) under a CONCURRENT
+// burst. lockoutState() counts, the password is judged (bcrypt), and only then recordFailure() inserts: requests that
+// overlap all read the same count. Claim under test (A2, accepted by R3): "an attacker rotating /24s gets at most 10
+// failures per hour per address". TEST branch only, R6 copies of the guarded runners, synthetic secr6b- club,
+// count-checked teardown. Per-IP brake replaced by "allowed" (every request comes from a different address).
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+import bcrypt from "bcryptjs";
+
+type Authorize = (credentials: Record<string, unknown>, request: Request) => Promise<Record<string, unknown> | null>;
+const captured = vi.hoisted(() => {
+  process.env.AUTH_SECRET ??= "secR6-burst-db-synthetic-0123456789abcdef0123456789";
+  return { authorize: undefined as undefined | Authorize };
+});
+vi.mock("next-auth", () => ({
+  default: (config: { providers: { authorize?: Authorize }[] }) => {
+    for (const p of config.providers) if (p?.authorize) captured.authorize = p.authorize;
+    return { handlers: {}, auth: async () => null, signIn: async () => {}, signOut: async () => {} };
+  },
+  CredentialsSignin: class extends Error {
+    code = "credentials";
+  },
+}));
+vi.mock("next-auth/providers/credentials", () => ({ default: (c: unknown) => c }));
+vi.mock("next-auth/providers/google", () => ({ default: (c: unknown) => c }));
+vi.mock("@/lib/login-event", () => ({ recordLoginEvent: async () => {} }));
+vi.mock("@sentry/nextjs", () => ({ captureException: () => {} }));
+vi.mock("next/server", async (orig) => ({
+  ...(await orig<typeof import("next/server")>()),
+  after: (fn: () => unknown) => {
+    setTimeout(() => void fn(), 0);
+  },
+}));
+vi.mock("@/lib/rate-limit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  checkRateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }),
+}));
+
+import { withRlsBypass } from "@/lib/prisma-tenant";
+import { prisma } from "@/lib/prisma";
+import { lockoutKeys, ADDR_MAX } from "@/lib/auth-lockout";
+
+const HAS_DB = !!process.env.DATABASE_URL;
+const STAMP = `secr6b-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const EMAIL = `${STAMP}-victim@example.test`;
+const PASSWORD = "secR6-correct-horse-battery";
+const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+const ips: string[] = [];
+
+describe.skipIf(!HAS_DB)("R6: address-wide failure cap under a concurrent burst from many networks", () => {
+  const t = { id: "", slug: "" };
+  async function attempt(password: string, ip: string) {
+    if (!captured.authorize) await import("@/auth");
+    try {
+      const r = await captured.authorize!({ email: EMAIL, password, tenantSlug: t.slug },
+        new Request("http://localhost/api/auth/callback/credentials", { method: "POST", headers: { "x-vercel-forwarded-for": ip, "user-agent": UA } }));
+      return r ? "admitted" : "refused";
+    } catch (e) {
+      return `code:${(e as { code?: string }).code ?? "error"}`;
+    }
+  }
+  beforeAll(async () => {
+    const who = await withRlsBypass((tx) => tx.$queryRaw<{ current_user: string }[]>`SELECT current_user`);
+    if (process.env.RLS_ENFORCED === "1") expect(who[0]?.current_user).toBe("matflow_app");
+    else expect(who[0]?.current_user).not.toBe("matflow_app");
+    const hash = bcrypt.hashSync(PASSWORD, 12);
+    await withRlsBypass(async (tx) => {
+      const c = await tx.tenant.create({ data: { name: `${STAMP} club`, slug: `${STAMP}-club`, onboardingCompleted: true } });
+      Object.assign(t, { id: c.id, slug: c.slug });
+      await tx.member.create({ data: { tenantId: c.id, email: EMAIL, name: "secR6 victim", passwordHash: hash } });
+    });
+    await import("@/auth");
+  }, 120_000);
+  afterAll(async () => {
+    if (!t.id) return;
+    await new Promise((r) => setTimeout(r, 1500));
+    const buckets = [lockoutKeys(t.slug, EMAIL, "x").addr, ...ips.map((ip) => lockoutKeys(t.slug, EMAIL, ip).pair)];
+    await prisma.rateLimitHit.deleteMany({ where: { bucket: { in: buckets } } });
+    await withRlsBypass(async (tx) => {
+      await tx.auditLog.deleteMany({ where: { tenantId: t.id } });
+      await tx.loginEvent.deleteMany({ where: { tenantId: t.id } });
+      await tx.member.deleteMany({ where: { tenantId: t.id } });
+      await tx.tenant.delete({ where: { id: t.id } });
+    }, { timeout: 60_000 });
+    const left = { tenants: await withRlsBypass((tx) => tx.tenant.count({ where: { slug: { startsWith: STAMP } } })), hits: await prisma.rateLimitHit.count({ where: { bucket: { in: buckets } } }) };
+    expect(left).toEqual({ tenants: 0, hits: 0 });
+  }, 120_000);
+
+  it(`40 concurrent guesses (39 wrong + the right one last) from 40 networks at a fresh address: secure outcome ≤ ${ADDR_MAX} judged`, async () => {
+    const reqs = Array.from({ length: 40 }, (_, i) => {
+      const ip = `203.0.113.${i + 10}`;
+      ips.push(ip);
+      return attempt(i === 39 ? PASSWORD : `wrong-guess-${i}-r6`, ip);
+    });
+    const out = await Promise.all(reqs);
+    const tally = out.reduce<Record<string, number>>((a, o) => ((a[o] = (a[o] ?? 0) + 1), a), {});
+    const addrHits = await prisma.rateLimitHit.count({ where: { bucket: lockoutKeys(t.slug, EMAIL, "x").addr } });
+    const judged = out.filter((o) => o === "refused" || o === "admitted").length;
+    const after = await attempt("wrong-after-burst-r6", "203.0.113.200");
+    ips.push("203.0.113.200");
+    console.log("R6-BURST " + JSON.stringify({ role: process.env.RLS_ENFORCED === "1" ? "restricted" : "owner", tally, judged, rightPasswordOutcome: out[39], addressCounterAfter: addrHits, nextAttempt: after }));
+    expect(judged, "guesses judged by bcrypt in one burst at a fresh address").toBeLessThanOrEqual(ADDR_MAX);
+  }, 600_000);
+});

@@ -1,0 +1,328 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/R6/wt
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:115140) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r1 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r1 max=5 windowMs=60000 retryAfter=58s
+
+ ✓ tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 1) 3379ms
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=60s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-a-r2 max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2)
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-i50-b-r2 max=5 windowMs=60000 retryAfter=58s
+
+ ✓ tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > burst of 50 interleaved across two buckets, max 5 each → exactly 5 + 5 allowed and 5 + 5 rows (round 2) 3059ms
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=58s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-held max=5 windowMs=60000 retryAfter=58s
+
+ ✓ tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > a burst while another connection HOLDS the bucket's advisory lock for 2 s: callers wait, none is allowed before the release, exactly 5 allowed 5530ms
+ ✓ tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > DB throws BEFORE the lock (failClosed): every call throws, nothing allowed, nothing written 125ms
+ ✓ tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > DB throws BEFORE the lock (fail-open): measure the fallback — total allowed in the window and whether the fault is logged 1528ms
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > DB throws AFTER commit (fail-open): the committed hit still counts in the database; the fallback never lets more than max through per process
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-fault-after max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > DB throws AFTER commit (fail-open): the committed hit still counts in the database; the fallback never lets more than max through per process
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-fault-after max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > DB throws AFTER commit (fail-open): the committed hit still counts in the database; the fallback never lets more than max through per process
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-fault-after max=5 windowMs=60000 retryAfter=59s
+
+stderr | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > DB throws AFTER commit (fail-open): the committed hit still counts in the database; the fallback never lets more than max through per process
+[rate-limit] bucket=secr6c3-owner-mv1tk7yusr44-fault-after max=5 windowMs=60000 retryAfter=59s
+
+ ✓ tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner) > DB throws AFTER commit (fail-open): the committed hit still counts in the database; the fallback never lets more than max through per process 2200ms
+stdout | tests/integration/zz-r6-c3-rate-limit-db.test.ts > R6: C3 rate limit under attack (owner)
+R6-C3 {"role":"owner","interleaved50_r1":{"okA":5,"okB":5,"rowsA":5,"rowsB":5},"interleaved50_r2":{"okA":5,"okB":5,"rowsA":5,"rowsB":5},"heldLock":{"allowed":5,"rows":5,"releasedAtMs":2005,"firstAllowedAtMs":2301,"anyAnswerBeforeRelease":0},"faultBeforeFailClosed":{"rejected":10,"rows":0},"faultBeforeFailOpen":{"allowedBeforeFault":3,"allowedDuringFault":5,"totalAllowedInWindow":8,"rows":3,"faultLogged":false,"logLines":5},"faultAfterCommit":{"allowedDuringFault":5,"rows":5,"allowedAfterRecovery":false},"teardown":{"deleted":33,"left":0}}
+
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  04:13:00
+   Duration  18.01s (transform 178ms, setup 104ms, import 399ms, tests 17.08s, environment 0ms)
+

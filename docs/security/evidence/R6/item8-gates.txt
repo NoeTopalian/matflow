@@ -1,0 +1,35 @@
+sha=5259d3b614e79dbbec7c790d70da3821fc0f1465 node=v24.21.0 start=2026-10-10T02:43:47Z
+lint exit=0 02:47:07
+tsc exit=0 02:51:10
+unit exit=0 03:03:45
+build exit=0 03:08:25
+audit exit=0 03:08:29
+done 2026-10-10T03:08:29Z
+BUILD_ID=UOxcNAzUikg6bn3zfKv-9
+--- lint tail
+
+Lint passed: eslint clean, UI-RULES ratchet at or below baseline.
+(node:120172) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+--- tsc (empty = clean)
+--- unit
+ Test Files  462 passed (462)
+      Tests  6405 passed (6405)
+   Duration  751.69s (transform 47.29s, setup 7.33s, import 163.64s, tests 317.88s, environment 115.29s)
+--- build head/tail
+
+> matflow@0.1.0 build
+> node scripts/maybe-migrate.mjs && next build
+
+[build] Neither MIGRATION_DATABASE_URL nor DATABASE_URL is set — skipping `prisma migrate deploy`
+[build] If this is production, fix the env var. If preview, this is fine.
+▲ Next.js 16.3.8 (Turbopack)
+✓ Running next.config.ts took 929ms
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+--- audit
+found 0 vulnerabilities
