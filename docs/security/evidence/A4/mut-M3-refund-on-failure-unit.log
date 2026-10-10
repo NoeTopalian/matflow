@@ -1,0 +1,38 @@
+node v24.21.0 mode=unit file=tests/unit/sec-a4-lockout-reservation.test.ts head=7ce179c at=2026-10-10T05:25:22Z
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts (12 tests | 1 failed) 534ms
+     × wrong password: refused, and the reserved slot stays (it IS the recorded failure) 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > refund: a correct password spends nothing, a wrong one keeps its slot > wrong password: refused, and the reserved slot stays (it IS the recorded failure)
+AssertionError: expected 5 to be 6 // Object.is equality
+
+- Expected
++ Received
+
+- 6
++ 5
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:181:24
+    179|     h.hits = Array.from({ length: 5 }, () => ({ bucket: KEYS().addr })…
+    180|     expect(await attempt("wrong-a4")).toBe("refused");
+    181|     expect(addrHits()).toBe(6);
+       |                        ^
+    182|     expect(h.deletes).toEqual([]);
+    183|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 11 passed (12)
+   Start at  06:25:24
+   Duration  985ms (transform 296ms, setup 61ms, import 192ms, tests 534ms, environment 0ms)
+
+EXIT 1

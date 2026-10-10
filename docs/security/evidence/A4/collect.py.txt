@@ -1,0 +1,42 @@
+"""Copy lane A4 run logs into docs/security/evidence/A4, sanitised: ANSI codes stripped, backslashes turned into
+forward slashes (SF-110: a backslash-plus-hex segment in a committed file breaks Tailwind's scan), the scratchpad
+root replaced by <scratchpad>, and any line naming a connection string dropped."""
+import io, os, re, glob, shutil
+A = r"<scratchpad>/security/A4"
+D = r"C:/Users/NoeTo/Desktop/matflow/docs/security/evidence/A4"
+ANSI = re.compile(r"/x1b/[[0-9;]*[A-Za-z]")
+SCR = re.compile(r"[A-Za-z]:[///]Users[///]NoeTo[///]AppData[///]Local[///]Temp[///]claude[///][^/s/"']*?scratchpad", re.I)
+SCR2 = re.compile(r"/c/Users/NoeTo/AppData/Local/Temp/claude/[^/s/"']*?scratchpad", re.I)
+names = [
+    "red-burst-owner", "red-burst-restricted", "green-burst-owner", "green-burst-restricted",
+    "pool5-burst-owner", "pool5-burst-restricted", "batch-form-timeout-evidence",
+    "red-subkey-unit", "red-empty-secret-unit", "green-n2-n6-unit", "red-a4res-head", "a4res",
+    "a3cost", "a2flags", "unit-targeted", "unit-full", "gate-tsc", "gate-lint", "mutants-summary",
+    "sweep-db-owner", "sweep-db-restricted", "a3-oracle-owner", "a3-oracle-restricted", "unit-full-final", "leftover-check", "green-a4-unit-final", "sweep-owner-sec-d3-deletion-race-db-sequential", "sweep-restricted-sec-d3-deletion-race-db-sequential", "sweep-owner-sec-d3-deletion-race-db", "sweep-restricted-sec-d3-deletion-race-db",
+]
+names += [os.path.splitext(os.path.basename(p))[0] for p in glob.glob(A + r"/mut-*.log")]
+names += [os.path.splitext(os.path.basename(p))[0] for p in glob.glob(A + r"/sweep-*-sec-a4-*.log")]
+os.makedirs(D, exist_ok=True)
+n = 0
+for base in sorted(set(names)):
+    for ext in (".log", ".jsonl", ".txt", ".json"):
+        src = os.path.join(A, base + ext)
+        if not os.path.exists(src):
+            continue
+        t = io.open(src, encoding="utf8", errors="replace").read()
+        t = ANSI.sub("", t)
+        t = SCR.sub("<scratchpad>", t)
+        t = SCR2.sub("<scratchpad>", t)
+        t = t.replace("//", "/")
+        t = "/n".join(l for l in t.splitlines() if not re.search(r"postgres(ql)?://", l)) + "/n"
+        out = os.path.join(D, base + (".log" if ext == ".txt" and base.startswith("sweep") is False and False else ext))
+        io.open(out, "w", encoding="utf8", newline="/n").write(t)
+        n += 1
+for f in ("run.sh", "swap.sh", "mutate.py", "run-mutants.sh", "sweep-db.sh", "collect.py"):
+    t = io.open(os.path.join(A, f), encoding="utf8").read()
+    t = SCR.sub("<scratchpad>", SCR2.sub("<scratchpad>", t)).replace("//", "/")
+    io.open(os.path.join(D, f + ".txt"), "w", encoding="utf8", newline="/n").write(t)
+    n += 1
+if os.path.isdir(os.path.join(D, "patches")) and not os.listdir(os.path.join(D, "patches")):
+    os.rmdir(os.path.join(D, "patches"))
+print("copied", n)

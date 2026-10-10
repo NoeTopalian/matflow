@@ -29,7 +29,7 @@ type Authorize = (credentials: Record<string, unknown>, request: Request) => Pro
 const h = vi.hoisted(() => ({
   authorize: undefined as undefined | Authorize,
   trace: [] as string[],
-  hits: [] as { bucket: string; hitAt: number }[],
+  hits: [] as { bucket: string; hitAt: number; id?: string }[],
   user: null as unknown,
   member: null as unknown,
 }));
@@ -103,11 +103,39 @@ function client(sink: (op: string) => void) {
         for (const d of args.data) h.hits.push({ bucket: d.bucket, hitAt: Date.now() });
         return { count: args.data.length };
       },
-      deleteMany: async (args: { where: { bucket: string } }) => {
+      deleteMany: async (args: { where: { bucket?: string; OR?: { bucket?: string; id?: string }[] } }) => {
         sink("rateLimitHit.deleteMany");
-        h.hits = h.hits.filter((x) => x.bucket !== args.where.bucket);
+        const conds: { bucket?: string; id?: string }[] = args.where.OR ?? [args.where];
+        h.hits = h.hits.filter((x) => !conds.some((c) => (c.bucket !== undefined && x.bucket === c.bucket) || (c.id !== undefined && x.id === c.id)));
         return { count: 0 };
       },
+    },
+    // Lane A4 (R6-N1): the failure slot is reserved BEFORE the password is judged, in one transaction (advisory
+    // lock + one conditional insert into both counters). The fake applies the same rule to the in-memory hits.
+    $executeRaw: async () => {
+      sink("$executeRaw");
+      return 1;
+    },
+    $queryRaw: async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+      sink("$queryRaw");
+      const str = values.filter((v): v is string => typeof v === "string");
+      const pair = str.find((v) => v.startsWith("authfail:pair:"))!;
+      const addr = str.find((v) => v.startsWith("authfail:addr:"))!;
+      const [pairId, addrId] = str.filter((v) => v.startsWith("lk_"));
+      const exempt = values.find((v) => typeof v === "boolean") === true;
+      const pn = h.hits.filter((x) => x.bucket === pair).length;
+      const an = h.hits.filter((x) => x.bucket === addr).length;
+      const ok = pn < 10 && (an < 10 || exempt);
+      if (ok) h.hits.push({ bucket: pair, hitAt: Date.now(), id: pairId }, { bucket: addr, hitAt: Date.now(), id: addrId });
+      return [{ pairCount: pn, addrCount: an, inserted: ok ? 2 : 0 }];
+    },
+    $transaction: async <T,>(fn: (t: unknown) => Promise<T>) => {
+      let n = 0;
+      try {
+        return await fn(client(() => n++));
+      } finally {
+        h.trace.push(`reserve-tx:${n}`);
+      }
     },
   };
 }
@@ -208,16 +236,17 @@ describe("R3-3: a wrong password costs the same database work whether or not the
   it("the trace is not empty and shows the expected shape for an address with no account", async () => {
     const none = await observe("none", 0);
     expect(none.outcome).toBe("refused");
-    // tenant lookup, account lookup, two counter reads, the failure write and
-    // re-count, and ONE row-counter transaction with ONE statement — the
-    // no-op an address without an account must still pay for.
+    // tenant lookup, account lookup, two counter reads, the failure-slot
+    // reservation (ONE transaction, two statements: the advisory lock and the
+    // conditional insert — lane A4, R6-N1; it replaced the failure write and
+    // re-count that ran AFTER bcrypt), and ONE row-counter transaction with
+    // ONE statement — the no-op an address without an account must still pay for.
     expect(none.trace).toEqual([
       "bypass-tx:1",
       "tenant-tx:2",
       "q:rateLimitHit.count",
       "q:rateLimitHit.count",
-      "q:rateLimitHit.createMany",
-      "q:rateLimitHit.count",
+      "reserve-tx:2",
       "tenant-tx:1",
     ]);
   });

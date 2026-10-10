@@ -486,6 +486,10 @@ const nextAuth = NextAuth({
           // closed). The known-device lookup runs for every address once the
           // address-wide cap is reached — against an id that matches nothing
           // when there is no account — so both paths cost one query.
+          // When not blocked, this attempt now HOLDS a failure slot in both
+          // counters, taken atomically before bcrypt (R6-N1, lane A4): a
+          // concurrent burst gets exactly ADDR_MAX verdicts, not one per
+          // request in flight. A correct password gives the slot back below.
           const keys = lockoutKeys(tenantSlug, email, ip);
           const lock = await lockoutState(keys, () =>
             withTenantContext(tenant.id, async (tx) => {
@@ -538,9 +542,10 @@ const nextAuth = NextAuth({
           // locked row — right or wrong password — costs and answers exactly
           // what any other address does at the same count.
           if (rowLocked || !valid) {
-            // Fail closed: a counter write that cannot be made throws, and the
-            // attempt stays refused.
-            const addrFailures = await recordFailure(keys);
+            // The failure was recorded when the slot was reserved, before the
+            // password was judged (R6-N1); this only reads its count. Fail
+            // closed: a missing reservation throws and the attempt stays refused.
+            const addrFailures = await recordFailure(keys, lock.reservation);
             // The row counter is kept for the owner's and operator's view of
             // an account under attack; it no longer locks anything. The
             // database does the arithmetic ({ increment: 1 }), so overlapping
@@ -617,6 +622,14 @@ const nextAuth = NextAuth({
             return null;
           }
 
+          // The password was right: give this attempt's address slot back and
+          // start this network's counter again, BEFORE any later refusal (an
+          // expired temporary password is not a guess). Best-effort: a failure
+          // here only keeps one slot spent (R6-N1 refund, lane A4).
+          try {
+            await clearPairOnSuccess(keys, lock.reservation);
+          } catch { /* best-effort */ }
+
           // A temporary password stops working at its expiry (operator reset,
           // 6 Oct 2026). Null expiry on a temporary password (rows from before
           // the column existed) = LEGACY_TEMP_PASSWORD_DEADLINE (review D2);
@@ -626,12 +639,6 @@ const nextAuth = NextAuth({
           if (user && isTempPasswordExpired(user)) {
             throw new TemporaryPasswordExpiredError();
           }
-
-          // Successful login — this network's failure counter starts again
-          // (best-effort: a failure here only keeps an older count).
-          try {
-            await clearPairOnSuccess(keys);
-          } catch { /* best-effort */ }
 
           // Successful login — reset failed counter + clear any stale lock.
           if (subject && (subject.failedLoginCount > 0 || subject.lockedUntil)) {

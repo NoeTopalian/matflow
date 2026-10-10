@@ -1,0 +1,4 @@
+A4-BURST {"role":"owner","tally":{"refused":39,"admitted":1},"judged":40,"verdicts":{"wrong":39,"right":1,"failClosedErrors":[]},"refusedWithoutVerdict":0,"rightPasswordOutcome":"admitted","addressCounterAfter":39,"nextAttempt":"code:rate_limited"}
+A4-OVERFLOW {"role":"owner","tally":{"refused":39},"verdicts":{"wrong":39,"right":0,"failClosedErrors":[]},"refusedWithoutVerdict":0,"addressCounterAfter":39,"rightPasswordAfter":"code:rate_limited"}
+A4-REFUND {"role":"owner","outcome":"admitted","seeded":5,"counterAfter":5}
+A4-KNOWN {"role":"owner","stranger":"code:rate_limited","own":"admitted","afterOwn":10,"ownWrong":"refused","afterOwnWrong":11}

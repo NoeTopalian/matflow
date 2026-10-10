@@ -1,0 +1,14 @@
+node v24.21.0 mode=unit file=tests/unit/sec-a2-lockout-flags.test.ts head=7ce179c at=2026-10-10T05:21:56Z
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+
+ Test Files  1 passed (1)
+      Tests  25 passed (25)
+   Start at  06:21:57
+   Duration  5.79s (transform 266ms, setup 52ms, import 71ms, tests 5.39s, environment 0ms)
+
+EXIT 0

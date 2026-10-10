@@ -51,6 +51,7 @@ describe("SEC-033 raw SQL is parameterised", () => {
       "app/api/members/[id]/route.ts", // lane D3: locked read of the member + children inside the deletion transaction; ids are bind parameters
       "app/api/staff/[id]/route.ts", // lane D3: locked read of the user row inside the deletion transaction; ids are bind parameters
       "lib/attendance-import.ts", // release-digest read (lane D third pass): only tenantId is interpolated, as a bind parameter
+      "lib/auth-lockout.ts", // lane A4 (R6-N1): failure-slot reservation, C3's advisory lock + conditional insert; buckets, ids, caps, window, exempt flag and lock namespace are bind parameters
       "lib/checkin.ts",
       "lib/login-email.ts",
       "lib/prisma-tenant.ts",

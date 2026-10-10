@@ -1,0 +1,189 @@
+node v24.21.0 mode=owner file=tests/integration/sec-d3-deletion-race-db.test.ts head=7ce179c at=2026-10-10T05:39:23Z
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:129096) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[secd3r] role neondb_owner RLS_ENFORCED=0
+stdout | tests/integration/sec-d3-deletion-race-db.test.ts > D3 — the release digest is of the address actually released (REAL routes, two connections, TEST DB) > member DELETE, pre-tx: an address change committed after the preflight read → the digest is of the NEW (released) address
+prisma:error 
+Invalid `tx.tenant.create()` invocation in
+C:/Users/NoeTo/Desktop/matflow/tests/integration/sec-d3-deletion-race-db.test.ts:96:31
+
+  93 const clubs: Club[] = [];
+  94 async function mkClub(label: string): Promise<Club> {
+  95   const club = await withRlsBypass(async (tx) => {
+→ 96     const t = await tx.tenant.create(
+Unique constraint failed on the fields: (`slug`)
+
+[secd3r] member DELETE in-tx: change applied=0 blockedInWindow=true released=OLD
+stdout | tests/integration/sec-d3-deletion-race-db.test.ts > D3 — the release digest is of the address actually released (REAL routes, two connections, TEST DB) > member DELETE ?strategy=cascade, in-tx: a CHILD's address changed inside the transaction is digested as released
+prisma:error 
+Invalid `tx.tenant.create()` invocation in
+C:/Users/NoeTo/Desktop/matflow/tests/integration/sec-d3-deletion-race-db.test.ts:96:31
+
+  93 const clubs: Club[] = [];
+  94 async function mkClub(label: string): Promise<Club> {
+  95   const club = await withRlsBypass(async (tx) => {
+→ 96     const t = await tx.tenant.create(
+Unique constraint failed on the fields: (`slug`)
+
+[secd3r] child DELETE in-tx: change applied=0 blockedInWindow=true released=OLD
+stdout | tests/integration/sec-d3-deletion-race-db.test.ts > D3 — the release digest is of the address actually released (REAL routes, two connections, TEST DB) > staff DELETE, in-tx: a change attempted between the route's read and the delete cannot slip in under the digest
+prisma:error 
+Invalid `tx.tenant.create()` invocation in
+C:/Users/NoeTo/Desktop/matflow/tests/integration/sec-d3-deletion-race-db.test.ts:96:31
+
+  93 const clubs: Club[] = [];
+  94 async function mkClub(label: string): Promise<Club> {
+  95   const club = await withRlsBypass(async (tx) => {
+→ 96     const t = await tx.tenant.create(
+Unique constraint failed on the fields: (`slug`)
+
+[secd3r] DSAR erase in-tx: change applied=0 blockedInWindow=true released=OLD
+stdout | tests/integration/sec-d3-deletion-race-db.test.ts > D3 — the release digest is of the address actually released (REAL routes, two connections, TEST DB) > DSAR erase, pre-tx: an address change committed after the pre-erase read → refused (409), nothing erased, no stale digest
+prisma:error 
+Invalid `tx.tenant.create()` invocation in
+C:/Users/NoeTo/Desktop/matflow/tests/integration/sec-d3-deletion-race-db.test.ts:96:31
+
+  93 const clubs: Club[] = [];
+  94 async function mkClub(label: string): Promise<Club> {
+  95   const club = await withRlsBypass(async (tx) => {
+→ 96     const t = await tx.tenant.create(
+Unique constraint failed on the fields: (`slug`)
+
+[secd3r] teardown: 4 clubs removed, 0 rows left
+ ❯ tests/integration/sec-d3-deletion-race-db.test.ts (8 tests | 4 failed) 22507ms
+     × member DELETE, pre-tx: an address change committed after the preflight read → the digest is of the NEW (released) address 244ms
+     × member DELETE ?strategy=cascade, in-tx: a CHILD's address changed inside the transaction is digested as released 389ms
+     × staff DELETE, in-tx: a change attempted between the route's read and the delete cannot slip in under the digest 204ms
+     × DSAR erase, pre-tx: an address change committed after the pre-erase read → refused (409), nothing erased, no stale digest 215ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/sec-d3-deletion-race-db.test.ts > D3 — the release digest is of the address actually released (REAL routes, two connections, TEST DB) > member DELETE, pre-tx: an address change committed after the preflight read → the digest is of the NEW (released) address
+PrismaClientKnownRequestError: 
+Invalid `tx.tenant.create()` invocation in
+C:/Users/NoeTo/Desktop/matflow/tests/integration/sec-d3-deletion-race-db.test.ts:96:31
+
+  93 const clubs: Club[] = [];
+  94 async function mkClub(label: string): Promise<Club> {
+  95   const club = await withRlsBypass(async (tx) => {
+→ 96     const t = await tx.tenant.create(
+Unique constraint failed on the fields: (`slug`)
+ ❯ zr.handleRequestError node_modules/@prisma/client/src/runtime/RequestHandler.ts:237:12
+ ❯ zr.handleAndLogRequestError node_modules/@prisma/client/src/runtime/RequestHandler.ts:183:11
+ ❯ zr.request node_modules/@prisma/client/src/runtime/RequestHandler.ts:152:11
+ ❯ a node_modules/@prisma/client/src/runtime/getPrismaClient.ts:808:23
+ ❯ tests/integration/sec-d3-deletion-race-db.test.ts:96:15
+     94| async function mkClub(label: string): Promise<Club> {
+     95|   const club = await withRlsBypass(async (tx) => {
+     96|     const t = await tx.tenant.create({ data: { name: `${STAMP} ${label…
+       |               ^
+     97|     const u = await tx.user.create({ data: { tenantId: t.id, email: E(…
+     98|     return { tenantId: t.id, userId: u.id };
+ ❯ Proxy._transactionWithCallback node_modules/@prisma/client/src/runtime/getPrismaClient.ts:697:17
+ ❯ mkClub tests/integration/sec-d3-deletion-race-db.test.ts:95:16
+ ❯ tests/integration/sec-d3-deletion-race-db.test.ts:197:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/integration/sec-d3-deletion-race-db.test.ts > D3 — the release digest is of the address actually released (REAL routes, two connections, TEST DB) > member DELETE ?strategy=cascade, in-tx: a CHILD's address changed inside the transaction is digested as released
+PrismaClientKnownRequestError: 
+Invalid `tx.tenant.create()` invocation in
+C:/Users/NoeTo/Desktop/matflow/tests/integration/sec-d3-deletion-race-db.test.ts:96:31
+
+  93 const clubs: Club[] = [];
+  94 async function mkClub(label: string): Promise<Club> {
+  95   const club = await withRlsBypass(async (tx) => {
+→ 96     const t = await tx.tenant.create(
+Unique constraint failed on the fields: (`slug`)
+ ❯ zr.handleRequestError node_modules/@prisma/client/src/runtime/RequestHandler.ts:237:12
+ ❯ zr.handleAndLogRequestError node_modules/@prisma/client/src/runtime/RequestHandler.ts:183:11
+ ❯ zr.request node_modules/@prisma/client/src/runtime/RequestHandler.ts:152:11
+ ❯ a node_modules/@prisma/client/src/runtime/getPrismaClient.ts:808:23
+ ❯ tests/integration/sec-d3-deletion-race-db.test.ts:96:15
+     94| async function mkClub(label: string): Promise<Club> {
+     95|   const club = await withRlsBypass(async (tx) => {
+     96|     const t = await tx.tenant.create({ data: { name: `${STAMP} ${label…
+       |               ^
+     97|     const u = await tx.user.create({ data: { tenantId: t.id, email: E(…
+     98|     return { tenantId: t.id, userId: u.id };
+ ❯ Proxy._transactionWithCallback node_modules/@prisma/client/src/runtime/getPrismaClient.ts:697:17
+ ❯ mkClub tests/integration/sec-d3-deletion-race-db.test.ts:95:16
+ ❯ tests/integration/sec-d3-deletion-race-db.test.ts:221:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/integration/sec-d3-deletion-race-db.test.ts > D3 — the release digest is of the address actually released (REAL routes, two connections, TEST DB) > staff DELETE, in-tx: a change attempted between the route's read and the delete cannot slip in under the digest
+PrismaClientKnownRequestError: 
+Invalid `tx.tenant.create()` invocation in
+C:/Users/NoeTo/Desktop/matflow/tests/integration/sec-d3-deletion-race-db.test.ts:96:31
+
+  93 const clubs: Club[] = [];
+  94 async function mkClub(label: string): Promise<Club> {
+  95   const club = await withRlsBypass(async (tx) => {
+→ 96     const t = await tx.tenant.create(
+Unique constraint failed on the fields: (`slug`)
+ ❯ zr.handleRequestError node_modules/@prisma/client/src/runtime/RequestHandler.ts:237:12
+ ❯ zr.handleAndLogRequestError node_modules/@prisma/client/src/runtime/RequestHandler.ts:183:11
+ ❯ zr.request node_modules/@prisma/client/src/runtime/RequestHandler.ts:152:11
+ ❯ a node_modules/@prisma/client/src/runtime/getPrismaClient.ts:808:23
+ ❯ tests/integration/sec-d3-deletion-race-db.test.ts:96:15
+     94| async function mkClub(label: string): Promise<Club> {
+     95|   const club = await withRlsBypass(async (tx) => {
+     96|     const t = await tx.tenant.create({ data: { name: `${STAMP} ${label…
+       |               ^
+     97|     const u = await tx.user.create({ data: { tenantId: t.id, email: E(…
+     98|     return { tenantId: t.id, userId: u.id };
+ ❯ Proxy._transactionWithCallback node_modules/@prisma/client/src/runtime/getPrismaClient.ts:697:17
+ ❯ mkClub tests/integration/sec-d3-deletion-race-db.test.ts:95:16
+ ❯ tests/integration/sec-d3-deletion-race-db.test.ts:248:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/integration/sec-d3-deletion-race-db.test.ts > D3 — the release digest is of the address actually released (REAL routes, two connections, TEST DB) > DSAR erase, pre-tx: an address change committed after the pre-erase read → refused (409), nothing erased, no stale digest
+PrismaClientKnownRequestError: 
+Invalid `tx.tenant.create()` invocation in
+C:/Users/NoeTo/Desktop/matflow/tests/integration/sec-d3-deletion-race-db.test.ts:96:31
+
+  93 const clubs: Club[] = [];
+  94 async function mkClub(label: string): Promise<Club> {
+  95   const club = await withRlsBypass(async (tx) => {
+→ 96     const t = await tx.tenant.create(
+Unique constraint failed on the fields: (`slug`)
+ ❯ zr.handleRequestError node_modules/@prisma/client/src/runtime/RequestHandler.ts:237:12
+ ❯ zr.handleAndLogRequestError node_modules/@prisma/client/src/runtime/RequestHandler.ts:183:11
+ ❯ zr.request node_modules/@prisma/client/src/runtime/RequestHandler.ts:152:11
+ ❯ a node_modules/@prisma/client/src/runtime/getPrismaClient.ts:808:23
+ ❯ tests/integration/sec-d3-deletion-race-db.test.ts:96:15
+     94| async function mkClub(label: string): Promise<Club> {
+     95|   const club = await withRlsBypass(async (tx) => {
+     96|     const t = await tx.tenant.create({ data: { name: `${STAMP} ${label…
+       |               ^
+     97|     const u = await tx.user.create({ data: { tenantId: t.id, email: E(…
+     98|     return { tenantId: t.id, userId: u.id };
+ ❯ Proxy._transactionWithCallback node_modules/@prisma/client/src/runtime/getPrismaClient.ts:697:17
+ ❯ mkClub tests/integration/sec-d3-deletion-race-db.test.ts:95:16
+ ❯ tests/integration/sec-d3-deletion-race-db.test.ts:272:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 4 passed (8)
+   Start at  06:39:25
+   Duration  45.07s (transform 1.01s, setup 64ms, import 22.08s, tests 22.51s, environment 0ms)
+
+EXIT 1

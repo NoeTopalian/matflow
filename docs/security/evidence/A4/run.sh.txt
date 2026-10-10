@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# usage: run.sh owner|restricted|unit <testfile> <logname> [extra vitest args]
+S=<scratchpad>
+export PATH="$S/security/node24/node-v24.21.0-win-x64:$PATH"
+MODE=$1; FILE=$2; LOG=$S/security/A4/$3.log; export A4_EVIDENCE_OUT=$S/security/A4/$3.jsonl; rm -f "$A4_EVIDENCE_OUT"; shift 3
+cd /c/Users/NoeTo/Desktop/matflow
+{ echo "node $(node --version) mode=$MODE file=$FILE head=$(git rev-parse --short HEAD) at=$(date -u +%FT%TZ)"; } > "$LOG"
+case $MODE in
+  owner) bash $S/att/run-engine.sh "$FILE" "$@" >> "$LOG" 2>&1 ;;
+  restricted) bash $S/q78/run-restricted.sh "$FILE" "$@" >> "$LOG" 2>&1 ;;
+  unit) npx vitest run $FILE "$@" >> "$LOG" 2>&1 ;;
+esac
+RC=$?
+echo "EXIT $RC" >> "$LOG"
+echo "EXIT $RC"

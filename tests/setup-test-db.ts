@@ -55,7 +55,14 @@ if (testUrl) {
 // AUTH_SECRET for this process (never committed, never printed) and one line saying so; a configured secret is never
 // touched; a run without a test database (the plain unit suite) is left alone so unit cells about a missing secret
 // keep their meaning. An empty NEXTAUTH_SECRET is removed, because lib/auth-secret.ts reads it first with "??".
-if (process.env.TEST_DATABASE_URL && !process.env.NEXTAUTH_SECRET && !process.env.AUTH_SECRET) {
+// R6-N6 (lane A4): a BLANK value (empty or whitespace only) counts as unset here exactly as it now does in
+// lib/auth-secret.ts, and a blank NEXTAUTH_SECRET is removed even when AUTH_SECRET is set — before, the removal ran
+// only when both were empty, so NEXTAUTH_SECRET="" next to a real AUTH_SECRET left the run signing with "".
+const blankSecret = (v: string | undefined) => v === undefined || v.trim() === "";
+if (process.env.TEST_DATABASE_URL && blankSecret(process.env.NEXTAUTH_SECRET) && !blankSecret(process.env.AUTH_SECRET)) {
+  delete process.env.NEXTAUTH_SECRET;
+}
+if (process.env.TEST_DATABASE_URL && blankSecret(process.env.NEXTAUTH_SECRET) && blankSecret(process.env.AUTH_SECRET)) {
   delete process.env.NEXTAUTH_SECRET;
   process.env.AUTH_SECRET = randomBytes(32).toString("hex");
   // stderr directly: Vitest swallows console output made by a setup file outside any test.

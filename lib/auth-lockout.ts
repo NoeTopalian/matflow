@@ -1,4 +1,4 @@
-import { createHmac } from "crypto";
+import { createHmac, randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { normaliseIp } from "@/lib/login-fingerprint";
@@ -41,6 +41,25 @@ import { normaliseIp } from "@/lib/login-fingerprint";
  * The refusal is ONE generic answer for every throttle and lock, worded so it
  * is true whether or not the account exists; the detail (which counter, the
  * hashed subject) goes to the server log only.
+ *
+ * THE SLOT IS RESERVED BEFORE THE PASSWORD IS JUDGED (R6-N1, lane A4,
+ * 10 Oct 2026). v2 as first built read the counters, ran bcrypt, and only
+ * then inserted the failure, so requests that overlapped all read the same
+ * count: 40 concurrent guesses from 40 networks at a fresh address were ALL
+ * judged (cap 10) and the right password, 40th, was admitted (review R6, both
+ * roles; tests/integration/sec-a4-lockout-burst-db). Now lockoutState() takes
+ * one failure slot in BOTH counters atomically before the caller looks at the
+ * password, by lane C3's construction (lib/rate-limit.ts checkDbRateLimit): a
+ * transaction-scoped advisory lock in the same namespace, then ONE
+ * conditional insert that counts both windows and inserts both rows only if
+ * the caps allow. One lock on the ADDRESS bucket serialises both counters,
+ * because every pair bucket belongs to exactly one address. A burst gets
+ * exactly ADDR_MAX slots; the rest are refused rate_limited without a
+ * verdict. A correct password gives its address slot back
+ * (clearPairOnSuccess), so the person never spends the shared budget; a wrong
+ * one keeps it, because the reservation IS the recorded failure. Every
+ * address, with or without an account, reserves the same way, so the cost
+ * stays existence-independent (tests/unit/sec-a3-failure-path-cost).
  *
  * FAIL CLOSED. Every read here throws on a database error and the caller
  * refuses the sign-in. The counters live in RateLimitHit (lane F's table and
@@ -100,19 +119,103 @@ export function lockoutKeys(tenantSlug: string, email: string, clientIp: string)
   };
 }
 
+/**
+ * The advisory-lock namespace: the SAME value as RATE_LIMIT_LOCK_NS in
+ * lib/rate-limit.ts (ASCII "RLHT"), so a bucket is serialised by one lock
+ * whichever module touches it. A copy rather than an import for the reason
+ * requestClientIp() is one: many unit tests replace lib/rate-limit wholesale.
+ * tests/unit/sec-a4-lockout-reservation.test.ts pins the two equal.
+ */
+export const LOCKOUT_LOCK_NS = 0x524c4854;
+
 async function countRecent(bucket: string): Promise<number> {
   return prisma.rateLimitHit.count({
     where: { bucket, hitAt: { gte: new Date(Date.now() - LOCKOUT_WINDOW_MS) } },
   });
 }
 
+/** One failure slot held in both counters. The address row is given back on a correct password. */
+export interface LockoutReservation {
+  pairId: string;
+  addrId: string;
+  /** The address-wide count including this slot. */
+  addrCountAfter: number;
+}
+
 export type LockoutState =
-  | { blocked: false; addrCapped: boolean }
+  | { blocked: false; addrCapped: boolean; reservation?: LockoutReservation }
   | { blocked: true; reason: "pair" | "addr" };
 
 /**
- * Where this address stands, BEFORE the password is looked at. `isKnownDevice`
- * is consulted only when the address-wide cap is reached; it must not throw
+ * A burst against one address queues on the lock INSIDE the transaction, so
+ * Prisma's defaults (2 s to start, 5 s in all) refuse the tail of a burst
+ * with a transaction error (fail closed, but a needless refusal for the real
+ * person). Same ceiling as withTenantContext's maxWait. An interactive
+ * transaction rather than the batch form C3 uses, because Prisma 7 with the
+ * pg driver adapter applies these two options only to the interactive form
+ * (measured: the batch form still expired at 5000 ms). Same statements, same
+ * round trips: BEGIN, lock, conditional insert, COMMIT.
+ */
+const RESERVE_TX_OPTIONS = { maxWait: 10_000, timeout: 10_000 } as const;
+
+type ReserveResult = { reservation: LockoutReservation } | { refused: "pair" | "addr" };
+
+/**
+ * Atomically: lock the address bucket (transaction-scoped, so safe through
+ * the PgBouncer pooler and released by COMMIT/ROLLBACK), count both windows on
+ * the database clock, and insert one row in each counter only if pair is
+ * below PAIR_MAX and addr is below ADDR_MAX (or the device is exempt). The
+ * lock is taken in an EARLIER statement than the count, so the counting
+ * statement's READ COMMITTED snapshot sees every slot the previous holder
+ * committed (lib/rate-limit.ts explains why one statement alone is not enough).
+ */
+async function reserve(keys: LockoutKeys, addrExempt: boolean): Promise<ReserveResult> {
+  const pairId = `lk_${randomUUID()}`;
+  const addrId = `lk_${randomUUID()}`;
+  const rows = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LOCKOUT_LOCK_NS}::int4, hashtext(${keys.addr}::text))`;
+    return tx.$queryRaw<Array<{ pairCount: number; addrCount: number; inserted: number }>>`
+      WITH clock AS (
+        SELECT (statement_timestamp() AT TIME ZONE 'UTC') AS t
+      ), pw AS (
+        SELECT count(*)::int AS n FROM "RateLimitHit" h, clock
+        WHERE h.bucket = ${keys.pair}::text
+          AND h."hitAt" >= clock.t - make_interval(secs => ${LOCKOUT_WINDOW_MS}::float8 / 1000)
+      ), aw AS (
+        SELECT count(*)::int AS n FROM "RateLimitHit" h, clock
+        WHERE h.bucket = ${keys.addr}::text
+          AND h."hitAt" >= clock.t - make_interval(secs => ${LOCKOUT_WINDOW_MS}::float8 / 1000)
+      ), go AS (
+        SELECT pw.n AS pn, aw.n AS an,
+               (pw.n < ${PAIR_MAX}::int AND (aw.n < ${ADDR_MAX}::int OR ${addrExempt}::boolean)) AS ok
+        FROM pw, aw
+      ), ins AS (
+        INSERT INTO "RateLimitHit" (id, bucket, "hitAt")
+        SELECT v.id, v.bucket, clock.t
+        FROM (VALUES (${pairId}::text, ${keys.pair}::text), (${addrId}::text, ${keys.addr}::text)) AS v(id, bucket), clock, go
+        WHERE go.ok
+        RETURNING 1
+      )
+      SELECT go.pn AS "pairCount", go.an AS "addrCount", (SELECT count(*)::int FROM ins) AS "inserted" FROM go`;
+  }, RESERVE_TX_OPTIONS);
+  const row = rows[0];
+  if (!row) throw new Error("lockout reservation returned no row");
+  if (Number(row.inserted) === 2) {
+    return { reservation: { pairId, addrId, addrCountAfter: Number(row.addrCount) + 1 } };
+  }
+  return { refused: Number(row.pairCount) >= PAIR_MAX ? "pair" : "addr" };
+}
+
+/**
+ * Where this address stands, BEFORE the password is looked at — and, when it
+ * is not blocked, the failure slot this attempt holds (see the header).
+ *
+ * The unlocked read first: an address or network already at its cap is
+ * refused in one round trip without queueing on the lock (an attacker
+ * hammering a capped address must not hold pool connections). Below the cap
+ * the reservation decides. `isKnownDevice` is consulted whenever the address
+ * cap is what stands in the way — at the read, or when a concurrent burst
+ * filled the cap between the read and the reservation — and must not throw
  * for an address with no account (the caller passes a resolver that answers
  * false without a lookup difference — see auth.ts).
  */
@@ -122,22 +225,42 @@ export async function lockoutState(
 ): Promise<LockoutState> {
   const [pair, addr] = await Promise.all([countRecent(keys.pair), countRecent(keys.addr)]);
   if (pair >= PAIR_MAX) return { blocked: true, reason: "pair" };
+  let known: boolean | undefined;
   if (addr >= ADDR_MAX) {
     // Always resolved, so the known and unknown paths cost the same.
-    const known = await isKnownDevice();
+    known = await isKnownDevice();
     if (!known) return { blocked: true, reason: "addr" };
-    return { blocked: false, addrCapped: true };
   }
-  return { blocked: false, addrCapped: false };
+  let r = await reserve(keys, known === true);
+  if ("refused" in r && r.refused === "addr" && known === undefined) {
+    // A concurrent burst filled the cap after our read: the exemption is decided now.
+    known = await isKnownDevice();
+    if (known) r = await reserve(keys, true);
+  }
+  if ("refused" in r) return { blocked: true, reason: r.refused };
+  return { blocked: false, addrCapped: known === true, reservation: r.reservation };
 }
 
-/** A wrong password: one row in each counter. Returns the address-wide count after it. */
-export async function recordFailure(keys: LockoutKeys): Promise<number> {
-  await prisma.rateLimitHit.createMany({ data: [{ bucket: keys.pair }, { bucket: keys.addr }] });
-  return countRecent(keys.addr);
+/**
+ * A wrong password (or a row-locked account): the slot reserved before the
+ * password was judged IS the recorded failure, so nothing more is written.
+ * Returns the address-wide count including it. No reservation means the
+ * state did not come from lockoutState — refuse rather than count late.
+ */
+export async function recordFailure(_keys: LockoutKeys, reservation?: LockoutReservation): Promise<number> {
+  if (!reservation) throw new Error("lockout: a failure without a reservation (the slot must be taken before bcrypt)");
+  return reservation.addrCountAfter;
 }
 
-/** A correct password: this network's counter starts again. */
-export async function clearPairOnSuccess(keys: LockoutKeys): Promise<void> {
-  await prisma.rateLimitHit.deleteMany({ where: { bucket: keys.pair } });
+/**
+ * A correct password: this network's counter starts again, and the address
+ * slot this attempt reserved is given back, so the person never spends the
+ * shared budget. One statement. Other attempts' address slots are untouched
+ * — resetting the address counter on a success would hand a distributed
+ * guesser a fresh budget.
+ */
+export async function clearPairOnSuccess(keys: LockoutKeys, reservation?: LockoutReservation): Promise<void> {
+  await prisma.rateLimitHit.deleteMany({
+    where: reservation ? { OR: [{ bucket: keys.pair }, { id: reservation.addrId }] } : { bucket: keys.pair },
+  });
 }

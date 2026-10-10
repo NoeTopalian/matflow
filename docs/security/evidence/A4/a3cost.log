@@ -1,0 +1,14 @@
+node v24.21.0 mode=unit file=tests/unit/sec-a3-failure-path-cost.test.ts head=7ce179c at=2026-10-10T05:21:36Z
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+
+ Test Files  1 passed (1)
+      Tests  23 passed (23)
+   Start at  06:21:38
+   Duration  1.24s (transform 334ms, setup 99ms, import 169ms, tests 712ms, environment 0ms)
+
+EXIT 0

@@ -56,6 +56,11 @@ const tx = {
     createMany: vi.fn(async () => ({ count: 2 })),
     deleteMany: vi.fn(async () => ({ count: 0 })),
   },
+  // Lane A4 (R6-N1): the failure slot is reserved before bcrypt (advisory lock + conditional insert, one
+  // transaction). Here the reservation always succeeds unless a cell makes it throw.
+  $executeRaw: vi.fn(async () => 1),
+  $queryRaw: vi.fn(async () => [{ pairCount: 0, addrCount: 0, inserted: 2 }]),
+  $transaction: vi.fn(async (fn: (t: unknown) => unknown) => fn(tx)),
 };
 vi.mock("@/lib/prisma", () => ({ prisma: tx }));
 vi.mock("@/lib/prisma-tenant", () => ({
@@ -145,7 +150,8 @@ describe("SF-59: fail closed", () => {
 
   it("a failure that cannot be recorded keeps the attempt refused", async () => {
     const authorize = await load({ ...SAFE });
-    tx.rateLimitHit.createMany.mockRejectedValueOnce(new Error("Connection terminated unexpectedly"));
+    // The failure is now recorded by the reservation taken before bcrypt (lane A4, R6-N1).
+    tx.$queryRaw.mockRejectedValueOnce(new Error("Connection terminated unexpectedly"));
     expect(await signIn(authorize, "wrong-password-a2")).toBe("refused");
   });
 });

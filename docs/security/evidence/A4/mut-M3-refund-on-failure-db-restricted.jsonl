@@ -1,0 +1,4 @@
+A4-BURST {"role":"restricted","tally":{"refused":27,"code:rate_limited":12,"admitted":1},"judged":28,"verdicts":{"wrong":27,"right":1,"failClosedErrors":[]},"refusedWithoutVerdict":0,"rightPasswordOutcome":"admitted","addressCounterAfter":0,"nextAttempt":"refused"}
+A4-OVERFLOW {"role":"restricted","tally":{"refused":29,"code:rate_limited":10},"verdicts":{"wrong":29,"right":0,"failClosedErrors":[]},"refusedWithoutVerdict":0,"addressCounterAfter":0,"rightPasswordAfter":"admitted"}
+A4-REFUND {"role":"restricted","outcome":"admitted","seeded":5,"counterAfter":5}
+A4-KNOWN {"role":"restricted","stranger":"code:rate_limited","own":"admitted","afterOwn":10,"ownWrong":"refused","afterOwnWrong":10}
