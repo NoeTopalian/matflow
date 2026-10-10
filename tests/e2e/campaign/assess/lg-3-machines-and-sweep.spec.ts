@@ -43,12 +43,21 @@ import {
   sql,
   RUN_STAMP,
 } from "./lg-shared";
+import { retentionGateOn, retentionBearerVerdict, retentionDryRunVerdict } from "./lg-3-retention-gate";
 
 test.describe.configure({ mode: "default", timeout: 180_000 });
 
 const ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3847";
 
 const CRONS = ["class-instances", "retention", "monthly-reports", "stripe-reconcile"] as const;
+
+/**
+ * SF-128 (lane M2, 10 Oct 2026): the retention sweep's gate, as the server sees it. This spec never sets it; it reads
+ * the env it shares with the server (see lg-3-retention-gate.ts). OFF locally — the shared .env.test has no gate line —
+ * so a valid bearer gets the NAMED 503 and no live sweep touches the shared TEST branch; ON only in the e2e job, whose
+ * database is ephemeral.
+ */
+const RETENTION_GATE_ON = retentionGateOn();
 
 /** New in round 2: the brake on guessing CRON_SECRET (lib/rate-limit.ts). */
 const CRON_AUTH_BUCKET = "cron:auth";
@@ -149,9 +158,28 @@ test.describe("J61 · the crons and their bearer", () => {
     );
   });
 
-  test("retention, monthly-reports and stripe-reconcile answer with their results, never a 500", async () => {
+  test(`retention with the bearer answers as its gate requires (gate ${RETENTION_GATE_ON ? "ON: a live sweep" : "OFF: 503 retention cron disabled"}), never a 500`, async () => {
     test.skip(!CRON_SECRET, "CRON_SECRET absent from .env.test");
-    for (const name of ["retention", "monthly-reports", "stripe-reconcile"] as const) {
+    // SF-128: the gate-off 503 is NOT a missing service, so it no longer shares the /not configured/ allowance below;
+    // it must be exactly the named gate answer, and with the gate off a 200 (a live sweep) is a failure.
+    const r = await apiCall(anon.request, "get", "/api/cron/retention", ORIGIN, undefined, cronHeader());
+    describeResponse(`cron/retention with the bearer (gate ${RETENTION_GATE_ON ? "on" : "off"})`, r);
+    expect(retentionBearerVerdict(r, RETENTION_GATE_ON), "retention answer for its gate state").toBeNull();
+    const again = await apiCall(anon.request, "get", "/api/cron/retention", ORIGIN, undefined, cronHeader());
+    expect(retentionBearerVerdict(again, RETENTION_GATE_ON), "retention replayed").toBeNull();
+  });
+
+  test("retention ?dryRun=1 still counts with the gate in either state, and deletes nothing", async () => {
+    test.skip(!CRON_SECRET, "CRON_SECRET absent from .env.test");
+    // Read-only by construction (counts only; reconcile is read-only), so it is safe on the shared TEST branch.
+    const r = await apiCall(anon.request, "get", "/api/cron/retention?dryRun=1", ORIGIN, undefined, cronHeader());
+    describeResponse("cron/retention dry run", r);
+    expect(retentionDryRunVerdict(r, RETENTION_GATE_ON), "dry run counted, deleted nothing, reported the gate").toBeNull();
+  });
+
+  test("monthly-reports and stripe-reconcile answer with their results, never a 500", async () => {
+    test.skip(!CRON_SECRET, "CRON_SECRET absent from .env.test");
+    for (const name of ["monthly-reports", "stripe-reconcile"] as const) {
       const r = await apiCall(anon.request, "get", `/api/cron/${name}`, ORIGIN, undefined, cronHeader());
       describeResponse(`cron/${name} with the bearer`, r);
       // 503 is a NAMED dependency, not a failure: stripe-reconcile answers
@@ -215,7 +243,7 @@ test.describe("J61 · the crons and their bearer", () => {
       "x-vercel-forwarded-for": pinned,
     });
     expect(scheduler.status, "a valid bearer through an exhausted bucket").not.toBe(429);
-    expect([200, 503], "and it ran").toContain(scheduler.status);
+    expect(retentionBearerVerdict(scheduler, RETENTION_GATE_ON), "and it got its gate's answer").toBeNull();
 
     await clearBucket(CRON_AUTH_BUCKET);
     const afterReset = await apiCall(anon.request, "get", "/api/cron/retention", ORIGIN, undefined, {

@@ -98,10 +98,12 @@ describe("demo-accounts-rotate: no production mode", () => {
   });
 
   it("output helpers: the address is masked and digested, never shown", () => {
-    expect(maskEmail("secm1-owner@demo.matflow")).toBe("s***@demo.matflow");
+    // Lane M2 (SF-129 e): the mask is the domain only and the digest is keyed by the run's random key.
+    const key = Buffer.alloc(32, 7);
+    expect(maskEmail("secm1-owner@demo.matflow")).toBe("***@demo.matflow");
     expect(maskEmail("ab@demo.matflow")).toBe("***@demo.matflow");
-    expect(emailDigest("Secm1-Owner@demo.matflow")).toMatch(/^[0-9a-f]{12}$/);
-    expect(emailDigest("Secm1-Owner@demo.matflow")).toBe(emailDigest("secm1-owner@demo.matflow"));
+    expect(emailDigest("Secm1-Owner@demo.matflow", key)).toMatch(/^[0-9a-f]{12}$/);
+    expect(emailDigest("Secm1-Owner@demo.matflow", key)).toBe(emailDigest("secm1-owner@demo.matflow", key));
   });
 
   it("spawned: a production-shaped target is refused with exit 2 before any connection", () => {

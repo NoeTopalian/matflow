@@ -8,11 +8,49 @@
  * the family and the counts, and contain neither the address/IP nor any 8-character piece of it, of the full key,
  * or of a SHA-256 digest of either. A store-failure burst on the same buckets is checked the same way, and a static
  * check pins that no console call in the module interpolates the bucket.
+ *
+ * Lane M2 (10 Oct 2026, SF-130 / R8 residual): the static check used to match only a literal `${bucket}`, so R8's
+ * fourth mutant (`k=${bucket.split(":").slice(1).join(":")}` on the store-failure path) passed it. It now parses the
+ * module with the TypeScript compiler and refuses ANY use of the `bucket` or `key` identifier inside a console call's
+ * arguments — interpolation, concatenation, method call, property access — except as the argument of
+ * bucketFamily(…). A planted-snippet control proves each shape is caught.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import ts from "typescript";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+/** Every use of `bucket`/`key` inside a console.<level>(…) call that is not exactly bucketFamily(bucket). */
+function consoleKeyUses(text: string): { calls: number; uses: string[] } {
+  const sf = ts.createSourceFile("rate-limit.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let calls = 0;
+  const uses: string[] = [];
+  const isConsoleCall = (n: ts.Node): n is ts.CallExpression =>
+    ts.isCallExpression(n) &&
+    ts.isPropertyAccessExpression(n.expression) &&
+    ts.isIdentifier(n.expression.expression) &&
+    n.expression.expression.text === "console";
+  const inArgs = (n: ts.Node) => {
+    if (ts.isIdentifier(n) && (n.text === "bucket" || n.text === "key")) {
+      const p = n.parent;
+      const familyOnly =
+        ts.isCallExpression(p) && ts.isIdentifier(p.expression) && p.expression.text === "bucketFamily" && p.arguments.length === 1;
+      if (!familyOnly) uses.push(`${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}: ${p.getText(sf).slice(0, 60)}`);
+    }
+    ts.forEachChild(n, inArgs);
+  };
+  const visit = (n: ts.Node) => {
+    if (isConsoleCall(n)) {
+      calls++;
+      for (const a of n.arguments) inArgs(a);
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return { calls, uses };
+}
 
 type Op = { kind: "lock" | "insert"; values: unknown[] };
 const h = vi.hoisted(() => ({ mode: "ok" as "ok" | "down", rows: new Map<string, number>() }));
@@ -125,11 +163,23 @@ describe("SF-120: rate-limit log lines carry the family and counts only", () => 
 
   it("static: no console call in lib/rate-limit.ts interpolates the bucket or the key", () => {
     const src = fs.readFileSync(path.join(process.cwd(), "lib/rate-limit.ts"), "utf8");
-    const calls = [...src.matchAll(/console\.(?:log|info|warn|error|debug)\(([\s\S]*?)\);/g)].map((m) => m[1]);
-    expect(calls.length).toBeGreaterThan(0);
-    for (const c of calls) {
-      expect(c).not.toMatch(/\$\{\s*bucket\s*\}/);
-      expect(c).not.toMatch(/\$\{\s*key\s*\}/);
-    }
+    const { calls, uses } = consoleKeyUses(src);
+    expect(calls).toBeGreaterThan(0);
+    expect(uses).toEqual([]);
+  });
+
+  it("static control (lane M2): every way of putting the bucket or key into a console call is caught", () => {
+    const bad = [
+      "console.warn(`x ${bucket}`);",
+      'console.error(`k=${bucket.split(":").slice(1).join(":")}`);', // R8's fourth mutant (R8-MC2)
+      'console.info("b=" + bucket);',
+      "console.log(`${String(bucket)}`);",
+      "console.warn(`${key}`);",
+      "console.debug({ bucket });",
+      "console.error(`f=${bucketFamily(bucket)} k=${bucket.slice(7)}`);",
+    ];
+    for (const b of bad) expect(consoleKeyUses(b).uses.length, b).toBeGreaterThan(0);
+    const ok = ['console.warn(`[rate-limit] family=${bucketFamily(bucket)} bucket over limit`);', 'console.error("bucket key never logged", family);'];
+    for (const g of ok) expect(consoleKeyUses(g), g).toEqual({ calls: 1, uses: [] });
   });
 });

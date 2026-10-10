@@ -1,0 +1,591 @@
+diff --git a/app/api/cron/retention/route.ts b/app/api/cron/retention/route.ts
+index 12e0fb0..e0e44a8 100644
+--- a/app/api/cron/retention/route.ts
++++ b/app/api/cron/retention/route.ts
+@@ -144,27 +144,37 @@ function retentionEnabled(): boolean {
+ }
+ 
+ /**
+- * One line per call: the gate, the mode and the status. Never the payload
+- * (counts name what a club holds; reconcile carries Stripe ids).
++ * Why a call answered as it did — a closed set, so the log line can say it
++ * without carrying anything from the request. Lane M2 (10 Oct 2026, R8
++ * residual): the gate-off refusal and the missing-CRON_SECRET refusal both
++ * read `status=503`, so "switched off" and "misconfigured" looked the same.
++ */
++type CallReason = "not_configured" | "throttled" | "unauthorized" | "disabled" | "dry_run" | "swept" | "threw";
++
++/**
++ * One line per call: the gate, the mode, the status and the reason. Never the
++ * payload (counts name what a club holds; reconcile carries Stripe ids).
+  */
+ export async function GET(req: Request) {
+   const gate = retentionEnabled() ? "on" : "off";
+   const dryRun = new URL(req.url).searchParams.get("dryRun") === "1" ? 1 : 0;
+   let status: number | "threw" = "threw";
++  const call: { reason: CallReason } = { reason: "threw" };
+   try {
+-    const res = await handle(req);
++    const res = await handle(req, call);
+     status = res.status;
+     return res;
+   } finally {
+-    console.info(`[cron/retention] call gate=${gate} dryRun=${dryRun} status=${status}`);
++    console.info(`[cron/retention] call gate=${gate} dryRun=${dryRun} status=${status} reason=${call.reason}`);
+   }
+ }
+ 
+-async function handle(req: Request) {
++async function handle(req: Request, call: { reason: CallReason }) {
+   // Vercel cron sends Authorization: Bearer ${CRON_SECRET}
+   const authHeader = req.headers.get("authorization");
+   const expected = process.env.CRON_SECRET;
+   if (!expected) {
++    call.reason = "not_configured";
+     return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 503 });
+   }
+   // Round 1, defect 3: constant time. `!==` short-circuits at the first
+@@ -175,11 +185,13 @@ async function handle(req: Request) {
+   if (!bearerMatches(authHeader, expected)) {
+     const throttle = await checkCronAuthAttempt(req);
+     if (!throttle.allowed) {
++      call.reason = "throttled";
+       return NextResponse.json(
+         { error: "Too many attempts. Try again shortly." },
+         { status: 429, headers: { "Retry-After": String(throttle.retryAfterSeconds) } },
+       );
+     }
++    call.reason = "unauthorized";
+     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+   }
+ 
+@@ -188,6 +200,7 @@ async function handle(req: Request) {
+   const enabled = retentionEnabled();
+   const dryRunRequested = new URL(req.url).searchParams.get("dryRun") === "1";
+   if (!enabled && !dryRunRequested) {
++    call.reason = "disabled";
+     return NextResponse.json({ error: "retention cron disabled" }, { status: 503 });
+   }
+ 
+@@ -326,6 +339,7 @@ async function handle(req: Request) {
+   // next nightly run re-evaluates time-relative predicates, so there is no
+   // retry-storm risk in surfacing the failure.
+   const ok = results.every((r) => !r.error);
++  call.reason = dryRun ? "dry_run" : "swept";
+   return NextResponse.json(
+     {
+       ok,
+diff --git a/scripts/readiness/db-target.mjs b/scripts/readiness/db-target.mjs
+index 6a66408..8a2b625 100644
+--- a/scripts/readiness/db-target.mjs
++++ b/scripts/readiness/db-target.mjs
+@@ -54,6 +54,12 @@ export function resolveDbTarget(url, { expectHost, allowProduction = false } = {
+   }
+   let parsed;
+   try { parsed = parse(url); } catch { throw new TargetRefused("connection string could not be parsed"); }
++  // Neon also routes on the PASSWORD field: `endpoint=<id>$<password>` (or `;`) selects the endpoint for clients
++  // without SNI, so a TEST hostname could carry another endpoint's id there (review R8, SF-129; lane M2, 10 Oct 2026).
++  // Refused, never resolved — whatever the letter case or percent-encoding.
++  if (/^\s*endpoint=/i.test(String(parsed.password ?? ""))) {
++    throw new TargetRefused("REFUSED: the password field carries an endpoint= routing option");
++  }
+   const effective = String(parsed.host ?? "").trim().toLowerCase();
+   const urlHost = u.hostname.toLowerCase();
+   if (!effective || effective !== urlHost) throw new TargetRefused("REFUSED: the effective host differs from the URL host");
+diff --git a/scripts/readiness/demo-accounts-rotate.mjs b/scripts/readiness/demo-accounts-rotate.mjs
+index 04a74e3..cd58070 100644
+--- a/scripts/readiness/demo-accounts-rotate.mjs
++++ b/scripts/readiness/demo-accounts-rotate.mjs
+@@ -10,26 +10,32 @@
+ //
+ // Usage:
+ //   node scripts/readiness/demo-accounts-rotate.mjs --slug <tenant-slug>                 (dry run: list, change nothing)
+-//   node scripts/readiness/demo-accounts-rotate.mjs --slug <tenant-slug> --confirm [--ids <id,id,...>]
++//   node scripts/readiness/demo-accounts-rotate.mjs --slug <tenant-slug> --confirm --ids <id,id,...>
+ //   options: --env-file <path> (default .env.test)  --var TEST_DATABASE_URL|RESTRICTED_DATABASE_URL (default TEST_…)
+ //
+ // What it does, in ONE transaction (REPEATABLE READ, RLS bypass set transaction-locally, never on the session):
+-//  - lists the EXACT candidate rows: every User in that tenant whose e-mail ends with @demo.matflow — id, role, masked
+-//    local part and a 12-hex SHA-256 digest of the address; never the address in full;
++//  - lists the EXACT candidate rows: every User in that tenant whose e-mail ends with @demo.matflow — id, role, the
++//    domain only (`***@demo.matflow`) and a 12-hex address TAG: HMAC-SHA256 under a random 32-byte key made for this
++//    run, never printed or stored, so the tag links an output line to its audit row within one run and says nothing
++//    guessable about the address (lane M2, SF-129: it used to print the local part's first character and an unsalted
++//    SHA-256 of the address, which anyone can recompute for a guessable demo address);
+ //  - dry run (default): prints the list and "would rotate N accounts" and rolls back (READ ONLY);
+-//  - --confirm: per listed row, a fresh random password hashed with bcrypt(12) (the password is never printed, stored
+-//    or logged — it exists to make the old one irrelevant), sessionVersion + 1, and one AuditLog row
+-//    `admin.demo_account.rotated` with the user id and the e-mail digest. Before COMMIT it asserts that the candidate
+-//    id set is unchanged, that each listed row moved exactly one sessionVersion, and that EVERY other User row in the
+-//    database (this tenant and all others) is byte-identical to the transaction's own starting snapshot; any
+-//    difference rolls the whole run back. `--ids` binds the run to the ids a dry run printed: a different set aborts.
++//  - --confirm --ids <the ids the dry run printed>: per listed row, a fresh random password hashed with bcrypt(12)
++//    (the password is never printed, stored or logged — it exists to make the old one irrelevant), sessionVersion + 1,
++//    and one AuditLog row `admin.demo_account.rotated` with the user id, the run id and the address tag. --ids is
++//    MANDATORY with --confirm (lane M2): a confirm is always bound to a prior dry run, and a different set aborts.
++//    Before COMMIT it asserts that the candidate id set is unchanged, that each listed row moved exactly one
++//    sessionVersion, and that EVERY other User row in the database (this tenant and all others) is byte-identical to
++//    the transaction's own starting snapshot; any difference rolls the whole run back.
+ //  - prints the transaction id so a test can prove which rows this run wrote (xmin).
++// The env file can never be the production `.env`: refused by name in any letter case (Windows opens `.ENV` as
++// `.env`), by real path (a symlink to it) and by file identity (a hard link to the repo's .env under another name).
+ // It does not verify the old password; it makes it irrelevant. Exit codes: 0 done, 1 aborted (rolled back),
+ // 2 refused (target, arguments or environment), 3 no such tenant.
+ import fs from "node:fs";
+ import path from "node:path";
+ import crypto from "node:crypto";
+-import { pathToFileURL } from "node:url";
++import { pathToFileURL, fileURLToPath } from "node:url";
+ import { parse as parsePg } from "pg-connection-string";
+ import { resolveDbTarget, TargetRefused, TEST_ENDPOINT_ID, PRODUCTION_ENDPOINT_ID } from "./db-target.mjs";
+ 
+@@ -41,6 +47,24 @@ const CUIDISH = /^[A-Za-z0-9_-]{1,64}$/;
+ 
+ export class Refused extends Error {}
+ 
++/** Domain separation for the address tag's HMAC input (the key itself is random per run). */
++const ADDRESS_TAG_LABEL = "matflow.demo-rotate.address-tag.v1:";
++
++/**
++ * True when a file NAME means `.env` to Windows: compared case-insensitively, with trailing dots and spaces dropped
++ * (Win32 strips them) and an alternate-data-stream suffix (`.env::$DATA`) removed.
++ */
++function namesDotEnv(name) {
++  const base = String(name).split(":")[0].replace(/[. ]+$/, "").toLowerCase();
++  return base === ".env";
++}
++
++/** The production env files this tool must never read: the repo's `.env` and one in the working directory. */
++function defaultProductionEnvPaths() {
++  const here = path.dirname(fileURLToPath(import.meta.url));
++  return [...new Set([path.resolve(here, "..", "..", ".env"), path.resolve(".env")])];
++}
++
+ /** Parse argv strictly: unknown options are refused (there is no production flag to find). */
+ export function parseArgs(argv) {
+   const out = { slug: null, confirm: false, ids: null, envFile: ".env.test", varName: "TEST_DATABASE_URL" };
+@@ -60,15 +84,56 @@ export function parseArgs(argv) {
+   }
+   if (!out.slug || !SLUG.test(out.slug)) throw new Refused("REFUSED: --slug <tenant-slug> is required (lower-case letters, digits, hyphens)");
+   if (!ALLOWED_VARS.includes(out.varName)) throw new Refused(`REFUSED: --var must be one of ${ALLOWED_VARS.join(", ")}`);
+-  if (path.basename(out.envFile) === ".env") throw new Refused("REFUSED: .env holds the production credentials; use .env.test");
++  if (namesDotEnv(path.basename(out.envFile))) throw new Refused("REFUSED: .env holds the production credentials; use .env.test");
+   if (out.ids && (out.ids.length === 0 || !out.ids.every((s) => CUIDISH.test(s)))) throw new Refused("REFUSED: --ids must be a comma list of user ids");
+   if (out.ids && !out.confirm) throw new Refused("REFUSED: --ids only makes sense with --confirm");
++  if (out.confirm && !out.ids) {
++    throw new Refused("REFUSED: --confirm requires --ids <the ids a dry run printed>; nothing changed");
++  }
+   return out;
+ }
+ 
+-/** Any libpq environment variable can redirect or reconfigure a connection; all are refused. */
++/**
++ * The env file, vetted before it is read: not `.env` by name (any case), not `.env` by real path (a symlink), and
++ * not the same file as the production `.env` (a hard link under another name). Returns the real path to read.
++ * `realpath`, `stat` and `productionEnvPaths` are injectable for tests; stat reads metadata only, never content.
++ * @param {string} file
++ * @param {{ realpath?: (p: string) => string, stat?: typeof fs.statSync, productionEnvPaths?: string[] }} [opts]
++ * @returns {string}
++ */
++export function refuseProductionEnvFile(
++  file,
++  { realpath = fs.realpathSync.native, stat = fs.statSync, productionEnvPaths = defaultProductionEnvPaths() } = {},
++) {
++  if (namesDotEnv(path.basename(file))) throw new Refused("REFUSED: .env holds the production credentials; use .env.test");
++  let real;
++  try {
++    real = realpath(file);
++  } catch {
++    throw new Refused("REFUSED: the env file does not exist");
++  }
++  if (namesDotEnv(path.basename(real))) throw new Refused("REFUSED: the env file resolves to .env (production credentials)");
++  const mine = stat(real, { bigint: true });
++  for (const p of productionEnvPaths) {
++    let prod;
++    try {
++      prod = stat(p, { bigint: true });
++    } catch {
++      continue;
++    }
++    if (prod.ino !== 0n && prod.ino === mine.ino && prod.dev === mine.dev) {
++      throw new Refused("REFUSED: the env file is the same file as .env (a link); use .env.test");
++    }
++  }
++  return real;
++}
++
++/**
++ * Any libpq environment variable can redirect or reconfigure a connection; all are refused. Case-insensitive
++ * (lane M2): Windows environment names are case-insensitive, so `pgoptions` IS PGOPTIONS to every reader there.
++ */
+ export function refusePgEnvironment(env = process.env) {
+-  const set = Object.keys(env).filter((k) => /^PG[A-Z]/.test(k) && env[k]);
++  const set = Object.keys(env).filter((k) => /^PG[A-Z]/i.test(k) && env[k]);
+   if (set.length) throw new Refused(`REFUSED: libpq environment variable(s) set: ${set.join(", ")}`);
+ }
+ 
+@@ -98,17 +163,25 @@ export function clientConfig(url) {
+   };
+ }
+ 
+-export function emailDigest(email) {
+-  return crypto.createHash("sha256").update(String(email).trim().toLowerCase()).digest("hex").slice(0, 12);
++/**
++ * A 12-hex tag of the address, keyed: HMAC-SHA256 under `key` (the run's random key) over a labelled, normalised
++ * address. Without the key — which is never printed or stored — nobody can test a guessed address against it.
++ * There is no unkeyed form: calling it without a key throws.
++ */
++export function emailDigest(email, key) {
++  if (!key || key.length < 32) throw new Error("emailDigest needs the run's 32-byte key");
++  return crypto
++    .createHmac("sha256", key)
++    .update(`${ADDRESS_TAG_LABEL}${String(email).trim().toLowerCase()}`)
++    .digest("hex")
++    .slice(0, 12);
+ }
+ 
+-/** The local part masked to its first character and a fixed-width tail; addresses of one or two characters show none. */
++/** The domain only: no character of the local part is shown. */
+ export function maskEmail(email) {
+   const e = String(email);
+   const at = e.lastIndexOf("@");
+-  const local = at >= 0 ? e.slice(0, at) : e;
+-  const domain = at >= 0 ? e.slice(at) : "";
+-  return `${local.length > 2 ? local[0] : ""}***${domain.toLowerCase()}`;
++  return `***${at >= 0 ? e.slice(at).toLowerCase() : ""}`;
+ }
+ 
+ function readEnvFile(file) {
+@@ -132,7 +205,9 @@ async function snapshotUsers(client) {
+ async function main() {
+   const opts = parseArgs(process.argv.slice(2));
+   refusePgEnvironment();
+-  const env = readEnvFile(opts.envFile);
++  const env = readEnvFile(refuseProductionEnvFile(opts.envFile));
++  // The address-tag key: random, this run only, never printed or stored. The run id is printed and audited instead.
++  const run = { id: crypto.randomBytes(8).toString("hex"), key: crypto.randomBytes(32) };
+   const url = env[opts.varName];
+   if (!url) throw new Refused(`REFUSED: no ${opts.varName} in the env file`);
+   const host = vetTarget(url);
+@@ -149,6 +224,7 @@ async function main() {
+     await client.query("SELECT set_config('app.bypass_rls', 'on', true)");
+     const who = (await client.query("SELECT current_user AS role")).rows[0];
+     console.log(`target: TEST ${TEST_ENDPOINT_ID} (${host.includes("-pooler") ? "pooled" : "direct"}) role=${who.role}`);
++    console.log(`run: ${run.id} (address tags are keyed for this run only; the key is never shown or stored)`);
+ 
+     const t = (await client.query(`SELECT id FROM "Tenant" WHERE slug = $1`, [opts.slug])).rows[0];
+     if (!t) {
+@@ -162,7 +238,7 @@ async function main() {
+     const cands = (await client.query(`${CANDIDATES_SQL}${opts.confirm ? " FOR UPDATE" : ""}`, [t.id])).rows;
+     console.log(`candidates (${cands.length}):`);
+     for (const c of cands) {
+-      console.log(`  ${c.id}  role=${c.role}  local=${maskEmail(c.email)}  digest=${emailDigest(c.email)}`);
++      console.log(`  ${c.id}  role=${c.role}  local=${maskEmail(c.email)}  tag=${emailDigest(c.email, run.key)}`);
+     }
+     const ids = cands.map((c) => c.id);
+ 
+@@ -171,11 +247,11 @@ async function main() {
+       await client.query("ROLLBACK");
+       return 0;
+     }
+-    if (opts.ids) {
+-      const want = [...opts.ids].sort();
+-      if (want.length !== ids.length || want.some((id, i) => id !== ids[i])) {
+-        throw new Refused("ABORTED: --ids does not match the candidate set exactly; nothing changed");
+-      }
++    // parseArgs already refuses --confirm without --ids; checked again here so the write path can never run unbound.
++    if (!opts.ids) throw new Refused("ABORTED: --confirm without --ids; nothing changed");
++    const want = [...opts.ids].sort();
++    if (want.length !== ids.length || want.some((id, i) => id !== ids[i])) {
++      throw new Refused("ABORTED: --ids does not match the candidate set exactly; nothing changed");
+     }
+     if (cands.length === 0) {
+       console.log("mode: confirm — nothing to rotate");
+@@ -197,7 +273,7 @@ async function main() {
+           VALUES ($1, $2, $3, $4, 'User', $3, $5::jsonb, now())`,
+         [
+           `rot_${crypto.randomUUID()}`, t.id, c.id, AUDIT_ACTION,
+-          JSON.stringify({ emailDigest: emailDigest(c.email), sessionVersionBumped: true, tool: "scripts/readiness/demo-accounts-rotate.mjs", target: "test" }),
++          JSON.stringify({ runId: run.id, addressTag: emailDigest(c.email, run.key), sessionVersionBumped: true, tool: "scripts/readiness/demo-accounts-rotate.mjs", target: "test" }),
+         ],
+       );
+       if (a.rowCount !== 1) throw new Refused(`ABORTED: audit row for ${c.id} not written`);
+diff --git a/tests/e2e/campaign/assess/lg-3-machines-and-sweep.spec.ts b/tests/e2e/campaign/assess/lg-3-machines-and-sweep.spec.ts
+index bfe05e5..f7e3f38 100644
+--- a/tests/e2e/campaign/assess/lg-3-machines-and-sweep.spec.ts
++++ b/tests/e2e/campaign/assess/lg-3-machines-and-sweep.spec.ts
+@@ -43,6 +43,7 @@ import {
+   sql,
+   RUN_STAMP,
+ } from "./lg-shared";
++import { retentionGateOn, retentionBearerVerdict, retentionDryRunVerdict } from "./lg-3-retention-gate";
+ 
+ test.describe.configure({ mode: "default", timeout: 180_000 });
+ 
+@@ -50,6 +51,14 @@ const ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3847";
+ 
+ const CRONS = ["class-instances", "retention", "monthly-reports", "stripe-reconcile"] as const;
+ 
++/**
++ * SF-128 (lane M2, 10 Oct 2026): the retention sweep's gate, as the server sees it. This spec never sets it; it reads
++ * the env it shares with the server (see lg-3-retention-gate.ts). OFF locally — the shared .env.test has no gate line —
++ * so a valid bearer gets the NAMED 503 and no live sweep touches the shared TEST branch; ON only in the e2e job, whose
++ * database is ephemeral.
++ */
++const RETENTION_GATE_ON = retentionGateOn();
++
+ /** New in round 2: the brake on guessing CRON_SECRET (lib/rate-limit.ts). */
+ const CRON_AUTH_BUCKET = "cron:auth";
+ 
+@@ -149,9 +158,28 @@ test.describe("J61 · the crons and their bearer", () => {
+     );
+   });
+ 
+-  test("retention, monthly-reports and stripe-reconcile answer with their results, never a 500", async () => {
++  test(`retention with the bearer answers as its gate requires (gate ${RETENTION_GATE_ON ? "ON: a live sweep" : "OFF: 503 retention cron disabled"}), never a 500`, async () => {
++    test.skip(!CRON_SECRET, "CRON_SECRET absent from .env.test");
++    // SF-128: the gate-off 503 is NOT a missing service, so it no longer shares the /not configured/ allowance below;
++    // it must be exactly the named gate answer, and with the gate off a 200 (a live sweep) is a failure.
++    const r = await apiCall(anon.request, "get", "/api/cron/retention", ORIGIN, undefined, cronHeader());
++    describeResponse(`cron/retention with the bearer (gate ${RETENTION_GATE_ON ? "on" : "off"})`, r);
++    expect(retentionBearerVerdict(r, RETENTION_GATE_ON), "retention answer for its gate state").toBeNull();
++    const again = await apiCall(anon.request, "get", "/api/cron/retention", ORIGIN, undefined, cronHeader());
++    expect(retentionBearerVerdict(again, RETENTION_GATE_ON), "retention replayed").toBeNull();
++  });
++
++  test("retention ?dryRun=1 still counts with the gate in either state, and deletes nothing", async () => {
++    test.skip(!CRON_SECRET, "CRON_SECRET absent from .env.test");
++    // Read-only by construction (counts only; reconcile is read-only), so it is safe on the shared TEST branch.
++    const r = await apiCall(anon.request, "get", "/api/cron/retention?dryRun=1", ORIGIN, undefined, cronHeader());
++    describeResponse("cron/retention dry run", r);
++    expect(retentionDryRunVerdict(r, RETENTION_GATE_ON), "dry run counted, deleted nothing, reported the gate").toBeNull();
++  });
++
++  test("monthly-reports and stripe-reconcile answer with their results, never a 500", async () => {
+     test.skip(!CRON_SECRET, "CRON_SECRET absent from .env.test");
+-    for (const name of ["retention", "monthly-reports", "stripe-reconcile"] as const) {
++    for (const name of ["monthly-reports", "stripe-reconcile"] as const) {
+       const r = await apiCall(anon.request, "get", `/api/cron/${name}`, ORIGIN, undefined, cronHeader());
+       describeResponse(`cron/${name} with the bearer`, r);
+       // 503 is a NAMED dependency, not a failure: stripe-reconcile answers
+@@ -215,7 +243,7 @@ test.describe("J61 · the crons and their bearer", () => {
+       "x-vercel-forwarded-for": pinned,
+     });
+     expect(scheduler.status, "a valid bearer through an exhausted bucket").not.toBe(429);
+-    expect([200, 503], "and it ran").toContain(scheduler.status);
++    expect(retentionBearerVerdict(scheduler, RETENTION_GATE_ON), "and it got its gate's answer").toBeNull();
+ 
+     await clearBucket(CRON_AUTH_BUCKET);
+     const afterReset = await apiCall(anon.request, "get", "/api/cron/retention", ORIGIN, undefined, {
+diff --git a/tests/integration/sec-m1-demo-rotate-db.test.ts b/tests/integration/sec-m1-demo-rotate-db.test.ts
+index a3d321a..68d20c8 100644
+--- a/tests/integration/sec-m1-demo-rotate-db.test.ts
++++ b/tests/integration/sec-m1-demo-rotate-db.test.ts
+@@ -38,7 +38,11 @@ const ids = { A: "", B: "", slugA: `${STAMP}-a`, slugB: `${STAMP}-b` };
+ const seeds: Seed[] = [];
+ const demo = () => seeds.filter((s) => s.tenant === "A" && s.demo);
+ const controls = () => seeds.filter((s) => !(s.tenant === "A" && s.demo));
+-const digest = (e: string) => createHash("sha256").update(e.trim().toLowerCase()).digest("hex").slice(0, 12);
++/** The UNSALTED digest the tool printed before lane M2 (SF-129 e) — it must now appear nowhere. */
++const unsalted = (e: string) => createHash("sha256").update(e.trim().toLowerCase()).digest("hex").slice(0, 12);
++/** The keyed per-run tag the tool prints for an id (lane M2 output format), or null. */
++const tagOf = (out: string, id: string) => new RegExp(`${id}  role=\\w+  local=\\*\\*\\*@demo\\.matflow  tag=([0-9a-f]{12})`).exec(out)?.[1] ?? null;
++const runOf = (out: string) => /^run: ([0-9a-f]{16}) /m.exec(out)?.[1] ?? null;
+ 
+ async function rows(): Promise<Map<string, Row>> {
+   const r = await withRlsBypass((tx) =>
+@@ -58,7 +62,7 @@ async function audits() {
+ }
+ 
+ function tool(args: string[]) {
+-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG[A-Z]/.test(k))) as unknown as NodeJS.ProcessEnv;
++  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG[A-Z]/i.test(k))) as unknown as NodeJS.ProcessEnv;
+   const r = spawnSync(process.execPath, [SCRIPT, "--slug", ids.slugA, "--var", ROLE_VAR, ...args], {
+     env, encoding: "utf8", timeout: 180_000,
+   });
+@@ -79,6 +83,9 @@ function expectClean(out: string, known: Map<string, Row>[]) {
+   for (const s of seeds) {
+     expect(low.includes(s.email.toLowerCase()), "a full address was printed").toBe(false);
+     expect(low.includes(s.email.split("@")[0].toLowerCase()), "a local part was printed").toBe(false);
++    // Lane M2 (SF-129 e): no first character of the local part, no unsalted digest of the address.
++    expect(low.includes(`local=${s.email[0].toLowerCase()}***`), "a local-part character was printed").toBe(false);
++    expect(low.includes(unsalted(s.email)), "an unsalted digest was printed").toBe(false);
+   }
+   expect(/\$2[aby]\$/.test(out), "a bcrypt hash prefix was printed").toBe(false);
+   for (const m of known) for (const r of m.values()) expect(out.includes(r.passwordHash), "a stored hash was printed").toBe(false);
+@@ -148,8 +155,13 @@ describe.skipIf(!HAS_DB)(`SF-109 demo-account rotation tool on TEST (${process.e
+     if (process.env.RLS_ENFORCED === "1") expect(out).toContain("role=matflow_app");
+     else expect(out).not.toContain("role=matflow_app");
+     evidence("dry-run", out);
++    // Lane M2 output format: the domain only and a per-run keyed tag (was: first character + unsalted digest).
++    expect(runOf(out)).toMatch(/^[0-9a-f]{16}$/);
+     for (const s of demo()) {
+-      expect(out).toContain(`${s.id}  role=${s.role}  local=s***@demo.matflow  digest=${digest(s.email)}`);
++      expect(out).toContain(`${s.id}  role=${s.role}  local=***@demo.matflow  tag=`);
++      const tag = tagOf(out, s.id);
++      expect(tag).toMatch(/^[0-9a-f]{12}$/);
++      expect(tag).not.toBe(unsalted(s.email));
+     }
+     for (const s of controls()) expect(out).not.toContain(s.id);
+     expectClean(out, [r0]);
+@@ -194,10 +206,18 @@ describe.skipIf(!HAS_DB)(`SF-109 demo-account rotation tool on TEST (${process.e
+     const a = await audits();
+     expect(a).toHaveLength(4);
+     expect(a.map((x) => x.userId).sort()).toEqual(demo().map((s) => s.id).sort());
++    // Lane M2: the audit row carries the run id and the same keyed tag the output printed for that id in this run —
++    // no unsalted digest, no key.
++    const run = runOf(out);
++    expect(run).toMatch(/^[0-9a-f]{16}$/);
+     for (const row of a) {
+       const s = demo().find((d) => d.id === row.userId)!;
+       expect(row).toMatchObject({ tenantId: ids.A, entityType: "User", entityId: s.id });
+-      expect((row.metadata as { emailDigest?: string }).emailDigest).toBe(digest(s.email));
++      const md = row.metadata as Record<string, unknown>;
++      expect(Object.keys(md).sort()).toEqual(["addressTag", "runId", "sessionVersionBumped", "target", "tool"]);
++      expect(md.runId).toBe(run);
++      expect(md.addressTag).toBe(tagOf(out, s.id));
++      expect(JSON.stringify(md)).not.toContain(unsalted(s.email));
+     }
+ 
+     // Session revocation, by the real check: a token minted at the old version is refused; the new one is admitted.
+@@ -210,9 +230,22 @@ describe.skipIf(!HAS_DB)(`SF-109 demo-account rotation tool on TEST (${process.e
+     }
+   }, 180_000);
+ 
+-  it("a second --confirm rotates again", async () => {
+-    const { status, out } = tool(["--confirm"]);
++  it("a second --confirm rotates again (lane M2: --ids is mandatory; without it, exit 2 and nothing changes)", async () => {
++    const unbound = tool(["--confirm"]);
++    expect(unbound.status).toBe(2);
++    expect(unbound.out).toMatch(/--confirm requires --ids/);
++    expect(unbound.out).not.toMatch(/target:/);
++    const mid = await rows();
++    for (const [id, r] of r1) expect(mid.get(id)?.h, `row ${id} unchanged by the refused run`).toBe(r.h);
++    const firstRun = await audits();
++    expect(firstRun).toHaveLength(4);
++    const { status, out } = tool(["--confirm", "--ids", demo().map((s) => s.id).join(",")]);
+     expect(status).toBe(0);
++    // A fresh key per run: the same address gets a different tag in each run.
++    for (const s of demo()) {
++      const before = firstRun.find((x) => x.userId === s.id)?.metadata as Record<string, unknown>;
++      expect(tagOf(out, s.id)).not.toBe(before.addressTag);
++    }
+     const r2 = await rows();
+     expectClean(out, [r0, r1, r2]);
+     for (const s of demo()) {
+@@ -225,8 +258,8 @@ describe.skipIf(!HAS_DB)(`SF-109 demo-account rotation tool on TEST (${process.e
+   }, 180_000);
+ 
+   it("an unknown slug exits 3 and writes nothing", async () => {
+-    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG[A-Z]/.test(k))) as unknown as NodeJS.ProcessEnv;
+-    const r = spawnSync(process.execPath, [SCRIPT, "--slug", `${STAMP}-nope`, "--var", ROLE_VAR, "--confirm"], { env, encoding: "utf8", timeout: 120_000 });
++    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG[A-Z]/i.test(k))) as unknown as NodeJS.ProcessEnv;
++    const r = spawnSync(process.execPath, [SCRIPT, "--slug", `${STAMP}-nope`, "--var", ROLE_VAR, "--confirm", "--ids", "secm1-none"], { env, encoding: "utf8", timeout: 120_000 });
+     expect(r.status).toBe(3);
+     expect(await audits()).toHaveLength(8);
+   }, 180_000);
+diff --git a/tests/unit/sec-m1-demo-rotate-guard.test.ts b/tests/unit/sec-m1-demo-rotate-guard.test.ts
+index dc579ea..81c3b7f 100644
+--- a/tests/unit/sec-m1-demo-rotate-guard.test.ts
++++ b/tests/unit/sec-m1-demo-rotate-guard.test.ts
+@@ -98,10 +98,12 @@ describe("demo-accounts-rotate: no production mode", () => {
+   });
+ 
+   it("output helpers: the address is masked and digested, never shown", () => {
+-    expect(maskEmail("secm1-owner@demo.matflow")).toBe("s***@demo.matflow");
++    // Lane M2 (SF-129 e): the mask is the domain only and the digest is keyed by the run's random key.
++    const key = Buffer.alloc(32, 7);
++    expect(maskEmail("secm1-owner@demo.matflow")).toBe("***@demo.matflow");
+     expect(maskEmail("ab@demo.matflow")).toBe("***@demo.matflow");
+-    expect(emailDigest("Secm1-Owner@demo.matflow")).toMatch(/^[0-9a-f]{12}$/);
+-    expect(emailDigest("Secm1-Owner@demo.matflow")).toBe(emailDigest("secm1-owner@demo.matflow"));
++    expect(emailDigest("Secm1-Owner@demo.matflow", key)).toMatch(/^[0-9a-f]{12}$/);
++    expect(emailDigest("Secm1-Owner@demo.matflow", key)).toBe(emailDigest("secm1-owner@demo.matflow", key));
+   });
+ 
+   it("spawned: a production-shaped target is refused with exit 2 before any connection", () => {
+diff --git a/tests/unit/sec-m1-rate-limit-log-family.test.ts b/tests/unit/sec-m1-rate-limit-log-family.test.ts
+index e56cf88..154d366 100644
+--- a/tests/unit/sec-m1-rate-limit-log-family.test.ts
++++ b/tests/unit/sec-m1-rate-limit-log-family.test.ts
+@@ -8,12 +8,50 @@
+  * the family and the counts, and contain neither the address/IP nor any 8-character piece of it, of the full key,
+  * or of a SHA-256 digest of either. A store-failure burst on the same buckets is checked the same way, and a static
+  * check pins that no console call in the module interpolates the bucket.
++ *
++ * Lane M2 (10 Oct 2026, SF-130 / R8 residual): the static check used to match only a literal `${bucket}`, so R8's
++ * fourth mutant (`k=${bucket.split(":").slice(1).join(":")}` on the store-failure path) passed it. It now parses the
++ * module with the TypeScript compiler and refuses ANY use of the `bucket` or `key` identifier inside a console call's
++ * arguments — interpolation, concatenation, method call, property access — except as the argument of
++ * bucketFamily(…). A planted-snippet control proves each shape is caught.
+  */
+ import fs from "node:fs";
+ import path from "node:path";
+ import { createHash } from "node:crypto";
++import ts from "typescript";
+ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+ 
++/** Every use of `bucket`/`key` inside a console.<level>(…) call that is not exactly bucketFamily(bucket). */
++function consoleKeyUses(text: string): { calls: number; uses: string[] } {
++  const sf = ts.createSourceFile("rate-limit.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
++  let calls = 0;
++  const uses: string[] = [];
++  const isConsoleCall = (n: ts.Node): n is ts.CallExpression =>
++    ts.isCallExpression(n) &&
++    ts.isPropertyAccessExpression(n.expression) &&
++    ts.isIdentifier(n.expression.expression) &&
++    n.expression.expression.text === "console";
++  const inArgs = (n: ts.Node) => {
++    if (ts.isIdentifier(n) && (n.text === "bucket" || n.text === "key")) {
++      const p = n.parent;
++      const familyOnly =
++        ts.isCallExpression(p) && ts.isIdentifier(p.expression) && p.expression.text === "bucketFamily" && p.arguments.length === 1;
++      if (!familyOnly) uses.push(`${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}: ${p.getText(sf).slice(0, 60)}`);
++    }
++    ts.forEachChild(n, inArgs);
++  };
++  const visit = (n: ts.Node) => {
++    if (isConsoleCall(n)) {
++      calls++;
++      for (const a of n.arguments) inArgs(a);
++      return;
++    }
++    ts.forEachChild(n, visit);
++  };
++  visit(sf);
++  return { calls, uses };
++}
++
+ type Op = { kind: "lock" | "insert"; values: unknown[] };
+ const h = vi.hoisted(() => ({ mode: "ok" as "ok" | "down", rows: new Map<string, number>() }));
+ 
+@@ -125,11 +163,23 @@ describe("SF-120: rate-limit log lines carry the family and counts only", () =>
+ 
+   it("static: no console call in lib/rate-limit.ts interpolates the bucket or the key", () => {
+     const src = fs.readFileSync(path.join(process.cwd(), "lib/rate-limit.ts"), "utf8");
+-    const calls = [...src.matchAll(/console\.(?:log|info|warn|error|debug)\(([\s\S]*?)\);/g)].map((m) => m[1]);
+-    expect(calls.length).toBeGreaterThan(0);
+-    for (const c of calls) {
+-      expect(c).not.toMatch(/\$\{\s*bucket\s*\}/);
+-      expect(c).not.toMatch(/\$\{\s*key\s*\}/);
+-    }
++    const { calls, uses } = consoleKeyUses(src);
++    expect(calls).toBeGreaterThan(0);
++    expect(uses).toEqual([]);
++  });
++
++  it("static control (lane M2): every way of putting the bucket or key into a console call is caught", () => {
++    const bad = [
++      "console.warn(`x ${bucket}`);",
++      'console.error(`k=${bucket.split(":").slice(1).join(":")}`);', // R8's fourth mutant (R8-MC2)
++      'console.info("b=" + bucket);',
++      "console.log(`${String(bucket)}`);",
++      "console.warn(`${key}`);",
++      "console.debug({ bucket });",
++      "console.error(`f=${bucketFamily(bucket)} k=${bucket.slice(7)}`);",
++    ];
++    for (const b of bad) expect(consoleKeyUses(b).uses.length, b).toBeGreaterThan(0);
++    const ok = ['console.warn(`[rate-limit] family=${bucketFamily(bucket)} bucket over limit`);', 'console.error("bucket key never logged", family);'];
++    for (const g of ok) expect(consoleKeyUses(g), g).toEqual({ calls: 1, uses: [] });
+   });
+ });

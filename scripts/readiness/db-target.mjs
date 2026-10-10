@@ -54,6 +54,12 @@ export function resolveDbTarget(url, { expectHost, allowProduction = false } = {
   }
   let parsed;
   try { parsed = parse(url); } catch { throw new TargetRefused("connection string could not be parsed"); }
+  // Neon also routes on the PASSWORD field: `endpoint=<id>$<password>` (or `;`) selects the endpoint for clients
+  // without SNI, so a TEST hostname could carry another endpoint's id there (review R8, SF-129; lane M2, 10 Oct 2026).
+  // Refused, never resolved — whatever the letter case or percent-encoding.
+  if (/^\s*endpoint=/i.test(String(parsed.password ?? ""))) {
+    throw new TargetRefused("REFUSED: the password field carries an endpoint= routing option");
+  }
   const effective = String(parsed.host ?? "").trim().toLowerCase();
   const urlHost = u.hostname.toLowerCase();
   if (!effective || effective !== urlHost) throw new TargetRefused("REFUSED: the effective host differs from the URL host");

@@ -38,7 +38,11 @@ const ids = { A: "", B: "", slugA: `${STAMP}-a`, slugB: `${STAMP}-b` };
 const seeds: Seed[] = [];
 const demo = () => seeds.filter((s) => s.tenant === "A" && s.demo);
 const controls = () => seeds.filter((s) => !(s.tenant === "A" && s.demo));
-const digest = (e: string) => createHash("sha256").update(e.trim().toLowerCase()).digest("hex").slice(0, 12);
+/** The UNSALTED digest the tool printed before lane M2 (SF-129 e) — it must now appear nowhere. */
+const unsalted = (e: string) => createHash("sha256").update(e.trim().toLowerCase()).digest("hex").slice(0, 12);
+/** The keyed per-run tag the tool prints for an id (lane M2 output format), or null. */
+const tagOf = (out: string, id: string) => new RegExp(`${id}  role=\\w+  local=\\*\\*\\*@demo\\.matflow  tag=([0-9a-f]{12})`).exec(out)?.[1] ?? null;
+const runOf = (out: string) => /^run: ([0-9a-f]{16}) /m.exec(out)?.[1] ?? null;
 
 async function rows(): Promise<Map<string, Row>> {
   const r = await withRlsBypass((tx) =>
@@ -58,7 +62,7 @@ async function audits() {
 }
 
 function tool(args: string[]) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG[A-Z]/.test(k))) as unknown as NodeJS.ProcessEnv;
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG[A-Z]/i.test(k))) as unknown as NodeJS.ProcessEnv;
   const r = spawnSync(process.execPath, [SCRIPT, "--slug", ids.slugA, "--var", ROLE_VAR, ...args], {
     env, encoding: "utf8", timeout: 180_000,
   });
@@ -79,6 +83,9 @@ function expectClean(out: string, known: Map<string, Row>[]) {
   for (const s of seeds) {
     expect(low.includes(s.email.toLowerCase()), "a full address was printed").toBe(false);
     expect(low.includes(s.email.split("@")[0].toLowerCase()), "a local part was printed").toBe(false);
+    // Lane M2 (SF-129 e): no first character of the local part, no unsalted digest of the address.
+    expect(low.includes(`local=${s.email[0].toLowerCase()}***`), "a local-part character was printed").toBe(false);
+    expect(low.includes(unsalted(s.email)), "an unsalted digest was printed").toBe(false);
   }
   expect(/\$2[aby]\$/.test(out), "a bcrypt hash prefix was printed").toBe(false);
   for (const m of known) for (const r of m.values()) expect(out.includes(r.passwordHash), "a stored hash was printed").toBe(false);
@@ -148,8 +155,13 @@ describe.skipIf(!HAS_DB)(`SF-109 demo-account rotation tool on TEST (${process.e
     if (process.env.RLS_ENFORCED === "1") expect(out).toContain("role=matflow_app");
     else expect(out).not.toContain("role=matflow_app");
     evidence("dry-run", out);
+    // Lane M2 output format: the domain only and a per-run keyed tag (was: first character + unsalted digest).
+    expect(runOf(out)).toMatch(/^[0-9a-f]{16}$/);
     for (const s of demo()) {
-      expect(out).toContain(`${s.id}  role=${s.role}  local=s***@demo.matflow  digest=${digest(s.email)}`);
+      expect(out).toContain(`${s.id}  role=${s.role}  local=***@demo.matflow  tag=`);
+      const tag = tagOf(out, s.id);
+      expect(tag).toMatch(/^[0-9a-f]{12}$/);
+      expect(tag).not.toBe(unsalted(s.email));
     }
     for (const s of controls()) expect(out).not.toContain(s.id);
     expectClean(out, [r0]);
@@ -194,10 +206,18 @@ describe.skipIf(!HAS_DB)(`SF-109 demo-account rotation tool on TEST (${process.e
     const a = await audits();
     expect(a).toHaveLength(4);
     expect(a.map((x) => x.userId).sort()).toEqual(demo().map((s) => s.id).sort());
+    // Lane M2: the audit row carries the run id and the same keyed tag the output printed for that id in this run —
+    // no unsalted digest, no key.
+    const run = runOf(out);
+    expect(run).toMatch(/^[0-9a-f]{16}$/);
     for (const row of a) {
       const s = demo().find((d) => d.id === row.userId)!;
       expect(row).toMatchObject({ tenantId: ids.A, entityType: "User", entityId: s.id });
-      expect((row.metadata as { emailDigest?: string }).emailDigest).toBe(digest(s.email));
+      const md = row.metadata as Record<string, unknown>;
+      expect(Object.keys(md).sort()).toEqual(["addressTag", "runId", "sessionVersionBumped", "target", "tool"]);
+      expect(md.runId).toBe(run);
+      expect(md.addressTag).toBe(tagOf(out, s.id));
+      expect(JSON.stringify(md)).not.toContain(unsalted(s.email));
     }
 
     // Session revocation, by the real check: a token minted at the old version is refused; the new one is admitted.
@@ -210,9 +230,22 @@ describe.skipIf(!HAS_DB)(`SF-109 demo-account rotation tool on TEST (${process.e
     }
   }, 180_000);
 
-  it("a second --confirm rotates again", async () => {
-    const { status, out } = tool(["--confirm"]);
+  it("a second --confirm rotates again (lane M2: --ids is mandatory; without it, exit 2 and nothing changes)", async () => {
+    const unbound = tool(["--confirm"]);
+    expect(unbound.status).toBe(2);
+    expect(unbound.out).toMatch(/--confirm requires --ids/);
+    expect(unbound.out).not.toMatch(/target:/);
+    const mid = await rows();
+    for (const [id, r] of r1) expect(mid.get(id)?.h, `row ${id} unchanged by the refused run`).toBe(r.h);
+    const firstRun = await audits();
+    expect(firstRun).toHaveLength(4);
+    const { status, out } = tool(["--confirm", "--ids", demo().map((s) => s.id).join(",")]);
     expect(status).toBe(0);
+    // A fresh key per run: the same address gets a different tag in each run.
+    for (const s of demo()) {
+      const before = firstRun.find((x) => x.userId === s.id)?.metadata as Record<string, unknown>;
+      expect(tagOf(out, s.id)).not.toBe(before.addressTag);
+    }
     const r2 = await rows();
     expectClean(out, [r0, r1, r2]);
     for (const s of demo()) {
@@ -225,8 +258,8 @@ describe.skipIf(!HAS_DB)(`SF-109 demo-account rotation tool on TEST (${process.e
   }, 180_000);
 
   it("an unknown slug exits 3 and writes nothing", async () => {
-    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG[A-Z]/.test(k))) as unknown as NodeJS.ProcessEnv;
-    const r = spawnSync(process.execPath, [SCRIPT, "--slug", `${STAMP}-nope`, "--var", ROLE_VAR, "--confirm"], { env, encoding: "utf8", timeout: 120_000 });
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG[A-Z]/i.test(k))) as unknown as NodeJS.ProcessEnv;
+    const r = spawnSync(process.execPath, [SCRIPT, "--slug", `${STAMP}-nope`, "--var", ROLE_VAR, "--confirm", "--ids", "secm1-none"], { env, encoding: "utf8", timeout: 120_000 });
     expect(r.status).toBe(3);
     expect(await audits()).toHaveLength(8);
   }, 180_000);

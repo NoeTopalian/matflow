@@ -1,0 +1,21 @@
+target: TEST ep-hidden-salad-abom7cg4 (pooled) role=matflow_app
+run: 95a34541cfc447f8 (address tags are keyed for this run only; the key is never shown or stored)
+tenant: secm1-mv2xdxgx8aec-a id=cmv2xdy2t0000c0tgng0c127s
+candidates (4):
+  cmv2xdy7f0002c0tgcvu6iapx  role=owner  local=***@demo.matflow  tag=ed0a0a8c9ffb
+  cmv2xdy9l0003c0tga1bs6p11  role=manager  local=***@demo.matflow  tag=54cd3c1c5525
+  cmv2xdybc0004c0tggwzzh9v2  role=coach  local=***@demo.matflow  tag=afbb3ad6050e
+  cmv2xdyd00005c0tg51uhm8h9  role=admin  local=***@demo.matflow  tag=d6879e4d4f90
+xid=861194
+rotated 4 accounts: fresh random password (not shown, not stored), sessionVersion +1, 4 audit rows admin.demo_account.rotated
+assert: candidate id set unchanged (4); other User rows byte-identical: 603 (all tenants, same snapshot)
+
+(node:150148) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)

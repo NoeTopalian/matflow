@@ -144,27 +144,37 @@ function retentionEnabled(): boolean {
 }
 
 /**
- * One line per call: the gate, the mode and the status. Never the payload
- * (counts name what a club holds; reconcile carries Stripe ids).
+ * Why a call answered as it did — a closed set, so the log line can say it
+ * without carrying anything from the request. Lane M2 (10 Oct 2026, R8
+ * residual): the gate-off refusal and the missing-CRON_SECRET refusal both
+ * read `status=503`, so "switched off" and "misconfigured" looked the same.
+ */
+type CallReason = "not_configured" | "throttled" | "unauthorized" | "disabled" | "dry_run" | "swept" | "threw";
+
+/**
+ * One line per call: the gate, the mode, the status and the reason. Never the
+ * payload (counts name what a club holds; reconcile carries Stripe ids).
  */
 export async function GET(req: Request) {
   const gate = retentionEnabled() ? "on" : "off";
   const dryRun = new URL(req.url).searchParams.get("dryRun") === "1" ? 1 : 0;
   let status: number | "threw" = "threw";
+  const call: { reason: CallReason } = { reason: "threw" };
   try {
-    const res = await handle(req);
+    const res = await handle(req, call);
     status = res.status;
     return res;
   } finally {
-    console.info(`[cron/retention] call gate=${gate} dryRun=${dryRun} status=${status}`);
+    console.info(`[cron/retention] call gate=${gate} dryRun=${dryRun} status=${status} reason=${call.reason}`);
   }
 }
 
-async function handle(req: Request) {
+async function handle(req: Request, call: { reason: CallReason }) {
   // Vercel cron sends Authorization: Bearer ${CRON_SECRET}
   const authHeader = req.headers.get("authorization");
   const expected = process.env.CRON_SECRET;
   if (!expected) {
+    call.reason = "not_configured";
     return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 503 });
   }
   // Round 1, defect 3: constant time. `!==` short-circuits at the first
@@ -175,11 +185,13 @@ async function handle(req: Request) {
   if (!bearerMatches(authHeader, expected)) {
     const throttle = await checkCronAuthAttempt(req);
     if (!throttle.allowed) {
+      call.reason = "throttled";
       return NextResponse.json(
         { error: "Too many attempts. Try again shortly." },
         { status: 429, headers: { "Retry-After": String(throttle.retryAfterSeconds) } },
       );
     }
+    call.reason = "unauthorized";
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -188,6 +200,7 @@ async function handle(req: Request) {
   const enabled = retentionEnabled();
   const dryRunRequested = new URL(req.url).searchParams.get("dryRun") === "1";
   if (!enabled && !dryRunRequested) {
+    call.reason = "disabled";
     return NextResponse.json({ error: "retention cron disabled" }, { status: 503 });
   }
 
@@ -326,6 +339,7 @@ async function handle(req: Request) {
   // next nightly run re-evaluates time-relative predicates, so there is no
   // retry-storm risk in surfacing the failure.
   const ok = results.every((r) => !r.error);
+  call.reason = dryRun ? "dry_run" : "swept";
   return NextResponse.json(
     {
       ok,

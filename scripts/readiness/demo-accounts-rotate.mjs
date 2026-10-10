@@ -10,26 +10,32 @@
 //
 // Usage:
 //   node scripts/readiness/demo-accounts-rotate.mjs --slug <tenant-slug>                 (dry run: list, change nothing)
-//   node scripts/readiness/demo-accounts-rotate.mjs --slug <tenant-slug> --confirm [--ids <id,id,...>]
+//   node scripts/readiness/demo-accounts-rotate.mjs --slug <tenant-slug> --confirm --ids <id,id,...>
 //   options: --env-file <path> (default .env.test)  --var TEST_DATABASE_URL|RESTRICTED_DATABASE_URL (default TEST_…)
 //
 // What it does, in ONE transaction (REPEATABLE READ, RLS bypass set transaction-locally, never on the session):
-//  - lists the EXACT candidate rows: every User in that tenant whose e-mail ends with @demo.matflow — id, role, masked
-//    local part and a 12-hex SHA-256 digest of the address; never the address in full;
+//  - lists the EXACT candidate rows: every User in that tenant whose e-mail ends with @demo.matflow — id, role, the
+//    domain only (`***@demo.matflow`) and a 12-hex address TAG: HMAC-SHA256 under a random 32-byte key made for this
+//    run, never printed or stored, so the tag links an output line to its audit row within one run and says nothing
+//    guessable about the address (lane M2, SF-129: it used to print the local part's first character and an unsalted
+//    SHA-256 of the address, which anyone can recompute for a guessable demo address);
 //  - dry run (default): prints the list and "would rotate N accounts" and rolls back (READ ONLY);
-//  - --confirm: per listed row, a fresh random password hashed with bcrypt(12) (the password is never printed, stored
-//    or logged — it exists to make the old one irrelevant), sessionVersion + 1, and one AuditLog row
-//    `admin.demo_account.rotated` with the user id and the e-mail digest. Before COMMIT it asserts that the candidate
-//    id set is unchanged, that each listed row moved exactly one sessionVersion, and that EVERY other User row in the
-//    database (this tenant and all others) is byte-identical to the transaction's own starting snapshot; any
-//    difference rolls the whole run back. `--ids` binds the run to the ids a dry run printed: a different set aborts.
+//  - --confirm --ids <the ids the dry run printed>: per listed row, a fresh random password hashed with bcrypt(12)
+//    (the password is never printed, stored or logged — it exists to make the old one irrelevant), sessionVersion + 1,
+//    and one AuditLog row `admin.demo_account.rotated` with the user id, the run id and the address tag. --ids is
+//    MANDATORY with --confirm (lane M2): a confirm is always bound to a prior dry run, and a different set aborts.
+//    Before COMMIT it asserts that the candidate id set is unchanged, that each listed row moved exactly one
+//    sessionVersion, and that EVERY other User row in the database (this tenant and all others) is byte-identical to
+//    the transaction's own starting snapshot; any difference rolls the whole run back.
 //  - prints the transaction id so a test can prove which rows this run wrote (xmin).
+// The env file can never be the production `.env`: refused by name in any letter case (Windows opens `.ENV` as
+// `.env`), by real path (a symlink to it) and by file identity (a hard link to the repo's .env under another name).
 // It does not verify the old password; it makes it irrelevant. Exit codes: 0 done, 1 aborted (rolled back),
 // 2 refused (target, arguments or environment), 3 no such tenant.
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { parse as parsePg } from "pg-connection-string";
 import { resolveDbTarget, TargetRefused, TEST_ENDPOINT_ID, PRODUCTION_ENDPOINT_ID } from "./db-target.mjs";
 
@@ -40,6 +46,24 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const CUIDISH = /^[A-Za-z0-9_-]{1,64}$/;
 
 export class Refused extends Error {}
+
+/** Domain separation for the address tag's HMAC input (the key itself is random per run). */
+const ADDRESS_TAG_LABEL = "matflow.demo-rotate.address-tag.v1:";
+
+/**
+ * True when a file NAME means `.env` to Windows: compared case-insensitively, with trailing dots and spaces dropped
+ * (Win32 strips them) and an alternate-data-stream suffix (`.env::$DATA`) removed.
+ */
+function namesDotEnv(name) {
+  const base = String(name).split(":")[0].replace(/[. ]+$/, "").toLowerCase();
+  return base === ".env";
+}
+
+/** The production env files this tool must never read: the repo's `.env` and one in the working directory. */
+function defaultProductionEnvPaths() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return [...new Set([path.resolve(here, "..", "..", ".env"), path.resolve(".env")])];
+}
 
 /** Parse argv strictly: unknown options are refused (there is no production flag to find). */
 export function parseArgs(argv) {
@@ -60,15 +84,56 @@ export function parseArgs(argv) {
   }
   if (!out.slug || !SLUG.test(out.slug)) throw new Refused("REFUSED: --slug <tenant-slug> is required (lower-case letters, digits, hyphens)");
   if (!ALLOWED_VARS.includes(out.varName)) throw new Refused(`REFUSED: --var must be one of ${ALLOWED_VARS.join(", ")}`);
-  if (path.basename(out.envFile) === ".env") throw new Refused("REFUSED: .env holds the production credentials; use .env.test");
+  if (namesDotEnv(path.basename(out.envFile))) throw new Refused("REFUSED: .env holds the production credentials; use .env.test");
   if (out.ids && (out.ids.length === 0 || !out.ids.every((s) => CUIDISH.test(s)))) throw new Refused("REFUSED: --ids must be a comma list of user ids");
   if (out.ids && !out.confirm) throw new Refused("REFUSED: --ids only makes sense with --confirm");
+  if (out.confirm && !out.ids) {
+    throw new Refused("REFUSED: --confirm requires --ids <the ids a dry run printed>; nothing changed");
+  }
   return out;
 }
 
-/** Any libpq environment variable can redirect or reconfigure a connection; all are refused. */
+/**
+ * The env file, vetted before it is read: not `.env` by name (any case), not `.env` by real path (a symlink), and
+ * not the same file as the production `.env` (a hard link under another name). Returns the real path to read.
+ * `realpath`, `stat` and `productionEnvPaths` are injectable for tests; stat reads metadata only, never content.
+ * @param {string} file
+ * @param {{ realpath?: (p: string) => string, stat?: typeof fs.statSync, productionEnvPaths?: string[] }} [opts]
+ * @returns {string}
+ */
+export function refuseProductionEnvFile(
+  file,
+  { realpath = fs.realpathSync.native, stat = fs.statSync, productionEnvPaths = defaultProductionEnvPaths() } = {},
+) {
+  if (namesDotEnv(path.basename(file))) throw new Refused("REFUSED: .env holds the production credentials; use .env.test");
+  let real;
+  try {
+    real = realpath(file);
+  } catch {
+    throw new Refused("REFUSED: the env file does not exist");
+  }
+  if (namesDotEnv(path.basename(real))) throw new Refused("REFUSED: the env file resolves to .env (production credentials)");
+  const mine = stat(real, { bigint: true });
+  for (const p of productionEnvPaths) {
+    let prod;
+    try {
+      prod = stat(p, { bigint: true });
+    } catch {
+      continue;
+    }
+    if (prod.ino !== 0n && prod.ino === mine.ino && prod.dev === mine.dev) {
+      throw new Refused("REFUSED: the env file is the same file as .env (a link); use .env.test");
+    }
+  }
+  return real;
+}
+
+/**
+ * Any libpq environment variable can redirect or reconfigure a connection; all are refused. Case-insensitive
+ * (lane M2): Windows environment names are case-insensitive, so `pgoptions` IS PGOPTIONS to every reader there.
+ */
 export function refusePgEnvironment(env = process.env) {
-  const set = Object.keys(env).filter((k) => /^PG[A-Z]/.test(k) && env[k]);
+  const set = Object.keys(env).filter((k) => /^PG[A-Z]/i.test(k) && env[k]);
   if (set.length) throw new Refused(`REFUSED: libpq environment variable(s) set: ${set.join(", ")}`);
 }
 
@@ -98,17 +163,25 @@ export function clientConfig(url) {
   };
 }
 
-export function emailDigest(email) {
-  return crypto.createHash("sha256").update(String(email).trim().toLowerCase()).digest("hex").slice(0, 12);
+/**
+ * A 12-hex tag of the address, keyed: HMAC-SHA256 under `key` (the run's random key) over a labelled, normalised
+ * address. Without the key — which is never printed or stored — nobody can test a guessed address against it.
+ * There is no unkeyed form: calling it without a key throws.
+ */
+export function emailDigest(email, key) {
+  if (!key || key.length < 32) throw new Error("emailDigest needs the run's 32-byte key");
+  return crypto
+    .createHmac("sha256", key)
+    .update(`${ADDRESS_TAG_LABEL}${String(email).trim().toLowerCase()}`)
+    .digest("hex")
+    .slice(0, 12);
 }
 
-/** The local part masked to its first character and a fixed-width tail; addresses of one or two characters show none. */
+/** The domain only: no character of the local part is shown. */
 export function maskEmail(email) {
   const e = String(email);
   const at = e.lastIndexOf("@");
-  const local = at >= 0 ? e.slice(0, at) : e;
-  const domain = at >= 0 ? e.slice(at) : "";
-  return `${local.length > 2 ? local[0] : ""}***${domain.toLowerCase()}`;
+  return `***${at >= 0 ? e.slice(at).toLowerCase() : ""}`;
 }
 
 function readEnvFile(file) {
@@ -132,7 +205,9 @@ async function snapshotUsers(client) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   refusePgEnvironment();
-  const env = readEnvFile(opts.envFile);
+  const env = readEnvFile(refuseProductionEnvFile(opts.envFile));
+  // The address-tag key: random, this run only, never printed or stored. The run id is printed and audited instead.
+  const run = { id: crypto.randomBytes(8).toString("hex"), key: crypto.randomBytes(32) };
   const url = env[opts.varName];
   if (!url) throw new Refused(`REFUSED: no ${opts.varName} in the env file`);
   const host = vetTarget(url);
@@ -149,6 +224,7 @@ async function main() {
     await client.query("SELECT set_config('app.bypass_rls', 'on', true)");
     const who = (await client.query("SELECT current_user AS role")).rows[0];
     console.log(`target: TEST ${TEST_ENDPOINT_ID} (${host.includes("-pooler") ? "pooled" : "direct"}) role=${who.role}`);
+    console.log(`run: ${run.id} (address tags are keyed for this run only; the key is never shown or stored)`);
 
     const t = (await client.query(`SELECT id FROM "Tenant" WHERE slug = $1`, [opts.slug])).rows[0];
     if (!t) {
@@ -162,7 +238,7 @@ async function main() {
     const cands = (await client.query(`${CANDIDATES_SQL}${opts.confirm ? " FOR UPDATE" : ""}`, [t.id])).rows;
     console.log(`candidates (${cands.length}):`);
     for (const c of cands) {
-      console.log(`  ${c.id}  role=${c.role}  local=${maskEmail(c.email)}  digest=${emailDigest(c.email)}`);
+      console.log(`  ${c.id}  role=${c.role}  local=${maskEmail(c.email)}  tag=${emailDigest(c.email, run.key)}`);
     }
     const ids = cands.map((c) => c.id);
 
@@ -171,11 +247,11 @@ async function main() {
       await client.query("ROLLBACK");
       return 0;
     }
-    if (opts.ids) {
-      const want = [...opts.ids].sort();
-      if (want.length !== ids.length || want.some((id, i) => id !== ids[i])) {
-        throw new Refused("ABORTED: --ids does not match the candidate set exactly; nothing changed");
-      }
+    // parseArgs already refuses --confirm without --ids; checked again here so the write path can never run unbound.
+    if (!opts.ids) throw new Refused("ABORTED: --confirm without --ids; nothing changed");
+    const want = [...opts.ids].sort();
+    if (want.length !== ids.length || want.some((id, i) => id !== ids[i])) {
+      throw new Refused("ABORTED: --ids does not match the candidate set exactly; nothing changed");
     }
     if (cands.length === 0) {
       console.log("mode: confirm — nothing to rotate");
@@ -197,7 +273,7 @@ async function main() {
           VALUES ($1, $2, $3, $4, 'User', $3, $5::jsonb, now())`,
         [
           `rot_${crypto.randomUUID()}`, t.id, c.id, AUDIT_ACTION,
-          JSON.stringify({ emailDigest: emailDigest(c.email), sessionVersionBumped: true, tool: "scripts/readiness/demo-accounts-rotate.mjs", target: "test" }),
+          JSON.stringify({ runId: run.id, addressTag: emailDigest(c.email, run.key), sessionVersionBumped: true, tool: "scripts/readiness/demo-accounts-rotate.mjs", target: "test" }),
         ],
       );
       if (a.rowCount !== 1) throw new Refused(`ABORTED: audit row for ${c.id} not written`);
