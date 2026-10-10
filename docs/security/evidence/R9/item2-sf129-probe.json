@@ -78,7 +78,7 @@
   },
   "missingEnvFile": {
    "status": 9,
-   "stderr": "C:\\Users\\NoeTo\\AppData\\Local\\Temp\\claude\\c--Users-NoeTo-Desktop-matflow\\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\\scratchpad\\security\\node24\\node-v24.21.0-win-x64\\node.exe: C:\\Users\\NoeTo\\AppData\\Local\\Temp\\claude\\c--Users-NoeTo-Desktop-matflow\\1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\\scratchpad\\security\\R9\\envlab\\secr9-lab-mv2yen2n\\missing.env: not found"
+   "stderr": "C:\\Users\\NoeTo\\AppData\\Local\\Temp\\claude\\c--Users-NoeTo-Desktop-matflow\/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\\scratchpad\\security\\node24\\node-v24.21.0-win-x64\\node.exe: C:\\Users\\NoeTo\\AppData\\Local\\Temp\\claude\\c--Users-NoeTo-Desktop-matflow\/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\\scratchpad\\security\\R9\\envlab\\secr9-lab-mv2yen2n\\missing.env: not found"
   }
  },
  "pgEnv": {
