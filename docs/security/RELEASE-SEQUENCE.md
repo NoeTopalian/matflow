@@ -30,7 +30,7 @@ Option B/B+ is NOT a candidate (PRE-APPROVAL-ANSWERS A3.2).
 3.2 Blob token: rotate only now, after the SF-28 fix is live (SF-69); mark Sensitive, Production only.
 3.3 Preview secrets, TESTING_MODE, old deployments: CONTAINMENT-CHECKLIST §4 steps 7–9 (retirement list in `evidence/E2/`; deletion is not revocation).
 3.4 DMARC/SPF staged records in the written order (none → quarantine 25 % → 100 % → reject) — only relevant once mail is on.
-3.5 Crons: `RETENTION_CRON_ENABLED` stays unset (default OFF once lane M1 v2 lands and ships in a later release); `CRON_SECRET` stays unset until Stage 4 is complete; class-instances and monthly-reports can only run once `CRON_SECRET` is set, and with the gate in place retention stays off while they run.
+3.5 Crons: `RETENTION_CRON_ENABLED` stays unset in production (the gate is in the candidate since lane M1 v2; default OFF); `CRON_SECRET` stays unset until Stage 4 is complete; class-instances and monthly-reports can only run once `CRON_SECRET` is set, and with the gate in place retention stays off while they run.
 Verification: headers observed; cron logs. Recovery: unset the variable.
 
 ## Stage 4 — Recovery actually tested (NOE; AGENT tooling exists)
