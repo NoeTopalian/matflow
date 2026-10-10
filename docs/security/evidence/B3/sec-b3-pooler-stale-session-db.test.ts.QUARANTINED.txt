@@ -1,0 +1,299 @@
+// Security campaign iteration 2 follow-up, lane B3 (SF-87) — a session-level setting left on a POOLED server connection.
+//
+// TEST branch only, and deliberately the POOLED host (Neon PgBouncer, transaction mode) of the TEST endpoint: the
+// guarded runners already hand this file the pooled RESTRICTED_DATABASE_URL / TEST_DATABASE_URL, and the file refuses
+// anything but exactly ep-hidden-salad-abom7cg4-pooler (scripts/readiness/db-target.mjs + rls-test-target.mjs, PG* env
+// refused). Run under BOTH runners: q78/run-restricted.sh (matflow_app, RLS in force) and att/run-engine.sh (owner,
+// BYPASSRLS — RLS cells record "not in force").
+//
+// What it measures (docs/security/evidence/B3/02-pooler-measurement.md):
+//   1. What the pooler does with set_config(..., false) from client A once A is closed, or left idle.
+//   2. Whether that stale bypass / forged tenant reaches (i) the REAL bare class-(a) call sites (lib/rate-limit.ts,
+//      Operator reads) and (ii) a plain Prisma query on a tenant table with lib/prisma.ts's pool settings — the exact
+//      shape a future bare class-(c)/(d) call would have (none exists today: 01-inventory.md).
+//   3. withTenantContext on the very server connection that carries the stale setting (expected: held).
+// Every cell confirms by pg_backend_pid() that it ran on the poisoned server connection; a cell the pooler never
+// routed there is reported as not reached, never as a pass.
+//
+// Hygiene: the poisoned server connection is shared through the pooler with other clients of the same role on TEST, so
+// the window is kept to seconds and every poisoned backend is reset by a pid-conditional set_config (or proven gone
+// from pg_stat_activity) before the file ends; the final cell asserts it. Fixture prefix secb3-; count-checked teardown.
+
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import pg from "pg";
+import { prisma, prismaPoolConfig } from "@/lib/prisma";
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
+import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
+import { resolveDbTarget } from "../../scripts/readiness/db-target.mjs";
+import { vetTestUrl } from "../../scripts/readiness/rls-test-target.mjs";
+
+const POOLED_TEST_HOST = "ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech";
+const RAW = process.env.DATABASE_URL;
+const HAS_DB = !!RAW && RAW.toLowerCase().includes("ep-hidden-salad");
+let clientCfg: pg.ClientConfig = {};
+if (HAS_DB) {
+  const effective = resolveDbTarget(RAW!, { expectHost: "ep-hidden-salad" });
+  if (effective !== POOLED_TEST_HOST) throw new Error("REFUSED: lane B3 runs only on the pooled host of the TEST endpoint");
+  clientCfg = { ...(vetTestUrl(RAW!) as pg.ClientConfig), application_name: "matflow-secB3" };
+}
+
+const STAMP = `secb3-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const ATTEMPTS = 40;
+const out = (o: Record<string, unknown>) => console.log(JSON.stringify({ lane: "B3", ...o }));
+
+type Probe = { pid: number; b: string; t: string };
+type Counted = Probe & { n: number };
+
+async function withClient<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
+  const c = new pg.Client(clientCfg);
+  await c.connect();
+  try {
+    return await fn(c);
+  } finally {
+    await c.end();
+  }
+}
+const PROBE_SQL = `SELECT pg_backend_pid()::int AS pid, coalesce(current_setting('app.bypass_rls', true), '<unset>') AS b,
+  coalesce(current_setting('app.current_tenant_id', true), '<unset>') AS t`;
+
+describe.skipIf(!HAS_DB)("SF-87: session-level settings left on a pooled server connection", () => {
+  const ids = { a: "", b: "", memberA: "", memberB: "" };
+  const VICTIM_NAME = `${STAMP} victim`;
+  const poisoned = new Set<number>();
+  const idle: pg.Client[] = [];
+  let enforced = false;
+
+  /** Client A: leave a session-level setting on whichever server connection the pooler gives it. */
+  async function poison(name: "app.bypass_rls" | "app.current_tenant_id", value: string, mode: "close" | "idle"): Promise<number> {
+    const c = new pg.Client(clientCfg);
+    await c.connect();
+    const r = await c.query<{ pid: number }>("SELECT pg_backend_pid()::int AS pid, set_config($1, $2, false) AS v", [name, value]);
+    const pid = Number(r.rows[0].pid);
+    poisoned.add(pid);
+    if (mode === "close") await c.end();
+    else idle.push(c);
+    return pid;
+  }
+
+  /** Reset every poisoned backend the pooler hands us; a backend gone from pg_stat_activity is clean by definition. */
+  async function sweep(): Promise<{ reset: number[]; gone: number[]; remaining: number[] }> {
+    const reset: number[] = [];
+    for (let i = 0; i < 200 && poisoned.size > 0; i++) {
+      const pids = [...poisoned];
+      const [row] = await prisma.$queryRaw<Array<{ pid: number; hit: boolean }>>`
+        SELECT pg_backend_pid()::int AS pid, (pg_backend_pid() = ANY(${pids}::int[])) AS hit,
+          CASE WHEN pg_backend_pid() = ANY(${pids}::int[]) THEN set_config('app.bypass_rls', '', false) END AS b,
+          CASE WHEN pg_backend_pid() = ANY(${pids}::int[]) THEN set_config('app.current_tenant_id', '', false) END AS t`;
+      if (row.hit) { poisoned.delete(Number(row.pid)); reset.push(Number(row.pid)); }
+      if (i % 20 === 19) {
+        const alive = await prisma.$queryRaw<Array<{ pid: number }>>`SELECT pid::int AS pid FROM pg_stat_activity WHERE pid = ANY(${[...poisoned]}::int[])`;
+        const aliveSet = new Set(alive.map((x) => Number(x.pid)));
+        for (const p of [...poisoned]) if (!aliveSet.has(p)) poisoned.delete(p);
+      }
+    }
+    const alive = poisoned.size
+      ? await prisma.$queryRaw<Array<{ pid: number }>>`SELECT pid::int AS pid FROM pg_stat_activity WHERE pid = ANY(${[...poisoned]}::int[])`
+      : [];
+    const aliveSet = new Set(alive.map((x) => Number(x.pid)));
+    const gone = [...poisoned].filter((p) => !aliveSet.has(p));
+    for (const p of gone) poisoned.delete(p);
+    return { reset, gone, remaining: [...poisoned] };
+  }
+
+  /** Repeat `run` until it lands on `pid` (the pooler decides the server connection per transaction). */
+  async function onPid<T extends { pid: number }>(pid: number, run: () => Promise<T>): Promise<{ hit: T | null; attempts: number; seen: number[] }> {
+    const seen: number[] = [];
+    for (let i = 1; i <= ATTEMPTS; i++) {
+      const r = await run();
+      seen.push(Number(r.pid));
+      if (Number(r.pid) === pid) return { hit: r, attempts: i, seen };
+    }
+    return { hit: null, attempts: ATTEMPTS, seen };
+  }
+
+  beforeAll(async () => {
+    const r = await prisma.$queryRaw<Array<{ u: string; bypass: boolean; superuser: boolean }>>`
+      SELECT current_user AS u, rolbypassrls AS bypass, rolsuper AS superuser FROM pg_roles WHERE rolname = current_user`;
+    enforced = !r[0].bypass && !r[0].superuser;
+    if (process.env.RLS_ENFORCED === "1") expect(enforced, `RLS_ENFORCED=1 but ${r[0].u} bypasses RLS`).toBe(true);
+    out({ cell: "identity", currentUser: r[0].u, rlsInForce: enforced, host: new URL(RAW!).hostname, pool: prismaPoolConfig() });
+    await withRlsBypass(async (tx) => {
+      ids.a = (await tx.tenant.create({ data: { name: `${STAMP} attacker`, slug: `${STAMP}-a` } })).id;
+      ids.b = (await tx.tenant.create({ data: { name: `${STAMP} victim`, slug: `${STAMP}-b` } })).id;
+      ids.memberA = (await tx.member.create({ data: { tenantId: ids.a, email: `${STAMP}-a@example.test`, name: `${STAMP} attacker` } })).id;
+      ids.memberB = (await tx.member.create({ data: { tenantId: ids.b, email: `${STAMP}-b@example.test`, name: VICTIM_NAME } })).id;
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    for (const c of idle) await c.end().catch(() => {});
+    const s = await sweep();
+    out({ cell: "teardown-sweep", ...s });
+    for (const tenantId of [ids.a, ids.b].filter(Boolean)) {
+      await withRlsBypass(async (tx) => {
+        await tx.member.deleteMany({ where: { tenantId } });
+        await tx.tenant.delete({ where: { id: tenantId } });
+      });
+    }
+    await prisma.rateLimitHit.deleteMany({ where: { bucket: { startsWith: STAMP } } });
+    const left = await withRlsBypass(async (tx) => ({
+      tenants: await tx.tenant.count({ where: { slug: { startsWith: STAMP } } }),
+      members: await tx.member.count({ where: { email: { startsWith: STAMP } } }),
+      hits: await tx.rateLimitHit.count({ where: { bucket: { startsWith: STAMP } } }),
+    }));
+    out({ cell: "teardown-count", ...left });
+    expect(left).toEqual({ tenants: 0, members: 0, hits: 0 });
+    expect(s.remaining, "a poisoned server connection was neither reset nor retired").toEqual([]);
+    await prisma.$disconnect();
+  }, 180_000);
+
+  it("catalogue: Operator and RateLimitHit carry no RLS; 47 public tables do; what the role may create", async () => {
+    const rows = await prisma.$queryRaw<Array<{ relname: string; rls: boolean }>>`
+      SELECT c.relname, c.relrowsecurity AS rls FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname IN ('Operator', 'RateLimitHit', 'PlatformConfig', 'Member', 'Tenant')
+      ORDER BY 1`;
+    const [{ n }] = await prisma.$queryRaw<Array<{ n: number }>>`
+      SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity`;
+    const create = await prisma.$queryRaw<Array<{ nspname: string }>>`
+      SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema'
+        AND has_schema_privilege(current_user, oid, 'CREATE') ORDER BY 1`;
+    const [{ temp }] = await prisma.$queryRaw<Array<{ temp: boolean }>>`SELECT has_database_privilege(current_user, current_database(), 'TEMP') AS temp`;
+    out({ cell: "catalogue", tables: rows, rlsTables: n, createOnSchemas: create.map((x) => x.nspname), temp });
+    expect(Object.fromEntries(rows.map((x) => [x.relname, x.rls]))).toEqual({
+      Member: true, Operator: false, PlatformConfig: false, RateLimitHit: false, Tenant: true,
+    });
+    expect(n).toBe(47);
+  });
+
+  it("pooler: a set_config(..., false) from a CLOSED client A is still on the server connection the next client gets", async () => {
+    const pid = await poison("app.bypass_rls", "on", "close");
+    const r = await onPid(pid, () => withClient(async (c) => (await c.query<Probe>(PROBE_SQL)).rows[0]));
+    out({ cell: "pooler-closed-client", poisonedPid: pid, reached: !!r.hit, attempts: r.attempts, distinctPids: new Set(r.seen).size, setting: r.hit?.b ?? null });
+    expect(r.hit, "the pooler never routed a fresh client to the poisoned server connection").not.toBeNull();
+    expect(r.hit!.b).toBe("on");
+    await sweep();
+  }, 180_000);
+
+  it("pooler: the same with client A kept open and idle (transaction mode releases the server connection either way)", async () => {
+    const pid = await poison("app.current_tenant_id", ids.b, "idle");
+    const r = await onPid(pid, () => withClient(async (c) => (await c.query<Probe>(PROBE_SQL)).rows[0]));
+    out({ cell: "pooler-idle-client", poisonedPid: pid, reached: !!r.hit, attempts: r.attempts, tenantSeenIsVictim: r.hit?.t === ids.b });
+    expect(r.hit).not.toBeNull();
+    expect(r.hit!.t).toBe(ids.b);
+    for (const c of idle.splice(0)) await c.end();
+    await sweep();
+  }, 180_000);
+
+  it("positive control: on a clean connection a plain tenant-table query sees nothing (no context) under matflow_app", async () => {
+    await sweep();
+    const [row] = await prisma.$queryRaw<Counted[]>`
+      SELECT pg_backend_pid()::int AS pid, '' AS b, '' AS t, (SELECT count(*)::int FROM "Member" WHERE id = ${ids.memberB}) AS n`;
+    out({ cell: "clean-plain-read", visible: row.n, rlsInForce: enforced });
+    expect(row.n).toBe(enforced ? 0 : 1);
+  });
+
+  for (const kind of ["bypass", "forged-tenant"] as const) {
+    describe(`stale ${kind} left by a closed client A`, () => {
+      let pid = 0;
+      beforeAll(async () => {
+        pid = kind === "bypass" ? await poison("app.bypass_rls", "on", "close") : await poison("app.current_tenant_id", ids.b, "close");
+      }, 60_000);
+      afterAll(async () => { await sweep(); }, 180_000);
+
+      it("hazard shape (no such call exists today): a plain read of the victim's row with the lib/prisma.ts client", async () => {
+        const r = await onPid(pid, async () => (await prisma.$queryRaw<Counted[]>`
+          SELECT pg_backend_pid()::int AS pid, coalesce(current_setting('app.bypass_rls', true), '') AS b,
+            coalesce(current_setting('app.current_tenant_id', true), '') AS t,
+            (SELECT count(*)::int FROM "Member" WHERE id = ${ids.memberB}) AS n`)[0]);
+        out({ cell: `hazard-plain-read/${kind}`, reached: !!r.hit, attempts: r.attempts, victimVisible: r.hit?.n ?? null, rlsInForce: enforced });
+        expect(r.hit).not.toBeNull();
+        // Characterisation, not a pass: a bare tenant-table read outside withTenantContext WOULD return the other club's
+        // row on this connection. 01-inventory.md: no bare call has this shape; sec-b3-bare-prisma-allowlist keeps it so.
+        expect(r.hit!.n).toBe(1);
+      }, 180_000);
+
+      it("hazard shape (no such call exists today): a plain write to the victim's row with the lib/prisma.ts client", async () => {
+        const r = await onPid(pid, async () => (await prisma.$queryRaw<Counted[]>`
+          WITH u AS (UPDATE "Member" SET name = name WHERE id = ${ids.memberB} RETURNING 1)
+          SELECT pg_backend_pid()::int AS pid, coalesce(current_setting('app.bypass_rls', true), '') AS b,
+            coalesce(current_setting('app.current_tenant_id', true), '') AS t, (SELECT count(*)::int FROM u) AS n`)[0]);
+        out({ cell: `hazard-plain-write/${kind}`, reached: !!r.hit, attempts: r.attempts, victimRowsWritten: r.hit?.n ?? null });
+        expect(r.hit).not.toBeNull();
+        expect(r.hit!.n).toBe(1);
+      }, 180_000);
+
+      it("hazard shape through the Prisma model API (bracketed by the backend pid)", async () => {
+        const r = await onPid(pid, async () => {
+          const before = (await prisma.$queryRaw<Probe[]>`SELECT pg_backend_pid()::int AS pid, '' AS b, '' AS t`)[0].pid;
+          const found = await prisma.member.findUnique({ where: { id: ids.memberB }, select: { id: true } });
+          const written = await prisma.member.updateMany({ where: { id: ids.memberB }, data: { name: VICTIM_NAME } });
+          const after = (await prisma.$queryRaw<Probe[]>`SELECT pg_backend_pid()::int AS pid, '' AS b, '' AS t`)[0].pid;
+          return { pid: before === after ? Number(before) : -1, found: !!found, written: written.count };
+        });
+        out({ cell: `hazard-model-api/${kind}`, reached: !!r.hit, attempts: r.attempts, found: r.hit?.found ?? null, written: r.hit?.written ?? null });
+        // Attribution is best-effort (four statements, the pooler may move between them); recorded, asserted only when reached.
+        if (r.hit) expect({ found: r.hit.found, written: r.hit.written }).toEqual({ found: true, written: 1 });
+      }, 180_000);
+
+      it("REAL bare class-(a) call sites: rate limiting and Operator reads behave identically on the poisoned connection", async () => {
+        const bucket = `${STAMP}-${kind}-rl`;
+        const results: boolean[] = [];
+        let landed = 0;
+        for (let i = 0; i < 4; i++) {
+          const before = (await prisma.$queryRaw<Probe[]>`SELECT pg_backend_pid()::int AS pid, '' AS b, '' AS t`)[0].pid;
+          results.push((await checkRateLimit(bucket, 3, 60_000)).allowed);
+          if (Number(before) === pid) landed++;
+        }
+        const ops = await onPid(pid, async () => {
+          const [row] = await prisma.$queryRaw<Array<{ pid: number; n: number }>>`
+            SELECT pg_backend_pid()::int AS pid, (SELECT count(*)::int FROM "Operator") AS n`;
+          return row;
+        });
+        const [{ n: clean }] = await withTenantContext(ids.a, (tx) => tx.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM "Operator"`);
+        await resetRateLimit(bucket);
+        const remaining = await prisma.rateLimitHit.count({ where: { bucket } });
+        out({ cell: `real-class-a/${kind}`, rateLimit: results, statementsOnPoisonedPid: landed, operatorCountEqual: ops.hit ? ops.hit.n === clean : null, resetLeft: remaining });
+        expect(results).toEqual([true, true, true, false]);
+        expect(remaining).toBe(0);
+        if (ops.hit) expect(ops.hit.n).toBe(clean);
+      }, 180_000);
+
+      it("withTenantContext on the poisoned server connection: the victim's row stays invisible and unwritable", async () => {
+        const r = await onPid(pid, () => withTenantContext(ids.a, async (tx) => {
+          const [p] = await tx.$queryRaw<Probe[]>`
+            SELECT pg_backend_pid()::int AS pid, coalesce(current_setting('app.bypass_rls', true), '') AS b,
+              coalesce(current_setting('app.current_tenant_id', true), '') AS t`;
+          const own = await tx.member.count({ where: { id: ids.memberA } });
+          const victim = await tx.member.count({ where: { id: ids.memberB } });
+          const written = await tx.member.updateMany({ where: { id: ids.memberB }, data: { name: VICTIM_NAME } });
+          return { ...p, own, victim, written: written.count };
+        }));
+        // After commit the session value is back: prove the connection was still poisoned when the transaction ran.
+        const after = r.hit ? await onPid(pid, async () => (await prisma.$queryRaw<Probe[]>`
+          SELECT pg_backend_pid()::int AS pid, coalesce(current_setting('app.bypass_rls', true), '') AS b,
+            coalesce(current_setting('app.current_tenant_id', true), '') AS t`)[0]) : null;
+        out({ cell: `withTenantContext/${kind}`, reached: !!r.hit, attempts: r.attempts, inside: r.hit && { b: r.hit.b, tIsAttacker: r.hit.t === ids.a },
+          own: r.hit?.own, victimVisible: r.hit?.victim, victimWritten: r.hit?.written, stillPoisonedAfterCommit: after?.hit ? (kind === "bypass" ? after.hit.b === "on" : after.hit.t === ids.b) : null, rlsInForce: enforced });
+        expect(r.hit).not.toBeNull();
+        expect(r.hit!.b).toBe("off");
+        expect(r.hit!.t).toBe(ids.a);
+        expect(r.hit!.own).toBe(1);
+        if (!enforced) return;
+        expect(r.hit!.victim).toBe(0);
+        expect(r.hit!.written).toBe(0);
+      }, 180_000);
+    });
+  }
+
+  it("positive control: withRlsBypass still crosses clubs", async () => {
+    const n = await withRlsBypass((tx) => tx.member.count({ where: { id: { in: [ids.memberA, ids.memberB] } } }));
+    expect(n).toBe(2);
+  });
+
+  it("no poisoned server connection is left behind", async () => {
+    const s = await sweep();
+    out({ cell: "final-sweep", ...s });
+    expect(s.remaining).toEqual([]);
+  }, 180_000);
+});

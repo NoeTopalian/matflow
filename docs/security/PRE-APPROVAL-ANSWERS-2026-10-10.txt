@@ -212,7 +212,15 @@ database credential, or a SQL injection as the app role, to leave a session-leve
 server connection — the same prerequisite as SF-62, so the question is what SF-87 adds beyond it. Lane B3
 is now (a) classifying all 27 calls by table, filter and reachability, (b) reproducing the real pooled-
 connection path under both roles with a stale session bypass and a forged tenant id, and (c) stating the
-release severity from measurement. Until that lands SF-87 is OPEN with severity UNDETERMINED, not nil.
+release severity from measurement. RESULT (lane B3, restricted role, 10 Oct): 25 bare calls in 9 files, ALL on non-RLS platform tables (Operator
+19, RateLimitHit 6); no bare call touches a tenant table. On the TEST pooler a session-level bypass or forged
+tenant left by an idle client DOES reach a later client's plain query on the same server connection (victim
+row read and written in the hazard shape), and withTenantContext holds on that same connection. No raw SQL
+takes caller input. Beyond SF-62 nothing is gained on today's code; the hazard is any future bare tenant-
+table call. Severity Low, latent; verification PARTIAL — the owner-role run and the gates were not done
+because the lane was stopped by a safety classifier when it rewrote the test to leave session settings on
+pooled connections deliberately (DENIALS.md D-5; not retried). Owed: a static allowlist test pinning bare
+models to non-RLS tables; the owner-role run; the schema-CREATE / search_path check.
 
 ======================================================================
 11. WHICH CONTROLS THE CANDIDATE ACTUALLY ENABLES
