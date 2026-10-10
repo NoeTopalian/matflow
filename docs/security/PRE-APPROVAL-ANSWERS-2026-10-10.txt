@@ -632,3 +632,28 @@ and CREATE checks stay NOT RUN. Lane B4's SF-62 application-integration inventor
 docs/security/SF-62-APPLICATION-INTEGRATION.md (SF-124..126 added; RELEASE-SEQUENCE Stage 5/6 corrected).
 No merge, push, deploy or migration has happened. The first owner step (A3.4 fingerprint check) stands.
 
+======================================================================
+ADDENDUM 5 — 11 Oct 2026 00:55 Italy: SF-128/129/130 finished and reviewed; resulting executable SHA
+======================================================================
+EXECUTABLE SHA: 704ab57 (= ed567c4 + lane M2). Gates on 704ab57 under Node v24.21.0: lint 0, tsc 0, audit 0,
+build from an empty .next BUILD_ID jC4rie0YWg4mHwTrUqheP, full unit 475 files / 6533 passed / 1 skipped (the
+real-symlink cell: Windows EPERM without Developer Mode). R9 (independent) on the same SHA: lint 0, tsc 0, audit
+0, build LrEgzWQuvDyry3ajefPcw, unit 6532/6534 with one load timeout that passes alone; every M2 fix held under
+attack and 13 mutants were red. Verdicts: SF-128, SF-129, SF-130 APPROVED WITH RESIDUALS.
+Changed executables since ed567c4: app/api/cron/retention/route.ts (reason= token only), scripts/readiness/
+db-target.mjs (one refusal), scripts/readiness/demo-accounts-rotate.mjs (hardening). No dependency, migration or
+configuration change. Documentation commits follow 704ab57.
+REMAINING RESIDUALS (all Low, all OPEN, none pursued without your word):
+  SF-131 db-target does not refuse Neon's project= password prefix (endpoint= is refused); likely inert under
+         forced TLS+SNI, untested.
+  SF-132 Node 24's argv scan opens a file named by --env-file (exit 9 if missing); rename the tool's option.
+  SF-133 lg-3 notices a gate mismatch only after its first live call; a local server started with the gate ON
+         would sweep the shared TEST branch once; its static check covers the dotted form only.
+  SF-134 the literal-family scanner misses import aliases and parameter shadowing (none in the tree today).
+  R8's gate-ON live retention sweep is still unrun anywhere except the e2e job's ephemeral database.
+  sec-c3 and sec-a4 DB files were not clean in R9's run (TEST connectivity degraded under concurrent gates);
+         a quiet-branch re-run is recorded in evidence/lead/rerun-c3-a4-704ab57.txt (see below when filled).
+D-6 and D-7 respected: no pooled-connection measurement and no SF-124 comparison were attempted by any route.
+SF-62 remains a separate implementation project (SF-62-APPLICATION-INTEGRATION.md). Retention disabled.
+No merge, push, deployment, production rotation or migration has happened.
+
