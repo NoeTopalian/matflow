@@ -618,3 +618,17 @@ A3.5 THE NEXT STEP AFTER THAT (do not run until A3.4 is interpreted)
   DEFINER functions as JSON, no credential. It decides whether the SF-62 and SF-57 proposals protect
   anything as production stands. I will not ask for it until A3.4 is read.
 
+======================================================================
+ADDENDUM 4 — 10 Oct 2026 23:05 Italy: candidate identity after your authorised work
+======================================================================
+Candidate EXECUTABLE is now ed567c4 = 03ef584 (the R7-reviewed code) + lane M1 v2 (family-only rate-limit
+logging SF-120; RETENTION_CRON_ENABLED default OFF with dry run allowed SF-127; TEST-only demo-account rotation
+tool SF-109; e2e job opt-in). Gates on 1f16afd (same executable): lint 0, tsc 0, audit 0, build BUILD_ID
+tcDYs3UfaNqPLERNJkLos; full unit 471 files / 6503 tests at 86b65e9. M1's DB file 6/6 both roles. Independent
+review R8 of M1 v2 is running; until it reports, SF-120/SF-127/SF-109-tool are FIXED AWAITING REVIEW and the
+sweep evidence of record is the 03ef584 one (the four M1 files are covered by M1's and R8's runs).
+Lane B3 v2 was stopped by the safety classifier before any connection (DENIALS.md D-6); SF-87's owner-role
+and CREATE checks stay NOT RUN. Lane B4's SF-62 application-integration inventory is in
+docs/security/SF-62-APPLICATION-INTEGRATION.md (SF-124..126 added; RELEASE-SEQUENCE Stage 5/6 corrected).
+No merge, push, deploy or migration has happened. The first owner step (A3.4 fingerprint check) stands.
+

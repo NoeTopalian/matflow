@@ -100,6 +100,9 @@ under `docs/` (`git diff --name-only 03ef584..HEAD` lists nothing outside `docs/
 build exit 0 BUILD_ID `AAk3Mz2mm0dH7UYfSvAfh`, audit 0, and 30/30 both-role database runs (`evidence/R7/item5-gates.txt`,
 `item5-sweep.txt`). Their independent review R7 (`evidence/R7/`) approved both with residuals: gates PASS, 30/30 both-role sweep, R7's own burst/refund/known-device/held-lock/saturation attacks held.
 
+### 5d. Candidate executable `ed567c4` (lane M1 v2 added under Noe's 10 Oct 22:13 authorisation; `evidence/lead/gates-node24-1f16afd.log`, `unit-3f7694e.log`)
+Changed since `03ef584`: `lib/rate-limit.ts` (log lines), `app/api/cron/retention/route.ts` (gate), `scripts/readiness/demo-accounts-rotate.mjs` (new, TEST-only), `.github/workflows/e2e.yml` (gate opt-in); no dependency, migration or configuration change. Gates under Node v24.21.0 on `1f16afd`: lint 0, tsc 0, audit 0, build exit 0 BUILD_ID `tcDYs3UfaNqPLERNJkLos`; full unit 471 files / 6503 tests at `86b65e9` (one literal fixture credential tripped the tree secret scan at `1f16afd` and was rebuilt at runtime in `3f7694e`). M1's own DB file ran 6/6 under both roles; the both-role sweep was last run on `03ef584` (112 runs) and the four M1-touched files are covered by M1's and R8's runs rather than a new full sweep. Independent review R8 pending.
+
 ## 6. Evidence limitations
 No browser rehearsal of the campaign build (unit + both-role database only); the TEST branch stands in for
 production; both-roles results are local (CI runs as a superuser until SF-58 lands); the digest-based import rules
