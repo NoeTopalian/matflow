@@ -376,3 +376,183 @@ MATCH is decisive; a non-match decides nothing about the providers or the old bu
 action table still follows unless the providers show a post-7-May rotation.
 Agent work continuing without waiting: the option B isolation build; then SF-120 and SF-121.
 The campaign is NOT complete; its acceptance conditions remain unresolved as listed in section 15.
+
+======================================================================
+ADDENDUM 2 — 10 Oct 2026 12:45 Italy, HEAD 9f5bc39 (candidate code still 03ef584)
+Answers to the six follow-up points. No merge, push or deploy has happened.
+======================================================================
+
+A2.1 D-4 AND D-5: EXACT TEXT, ATTEMPTED ACTION, ENVIRONMENT, SCOPE, APPROVAL PATH
+
+D-4 — attempted action: one Agent-tool call launching sub-agent "Lane M1" with the brief BRIEF-M1.md (three
+tasks, listed separately below). Environment the brief named: the local repository and the Neon TEST branch
+only, plus a NEW script carrying a `--production` mode (never run by the agent). Exact rejection text,
+verbatim and complete:
+  "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Auto-Mode Bypass].
+  If you have other tasks that don't depend on this action, continue working on those. IMPORTANT: You *may*
+  attempt to accomplish this action using other tools that might naturally be used to accomplish this goal,
+  e.g. using head instead of cat. But you *should not* attempt to work around this denial in malicious ways,
+  e.g. do not use your ability to run tests to execute non-test actions. You should only try to work around
+  this restriction in reasonable ways that do not attempt to bypass the intent behind this denial. If you
+  believe this capability is essential to complete the user's request, first try a safer method. Get as much
+  of the rest of the task done as you can, then STOP and explain to the user what you were trying to do and
+  why you need this permission. Let the user decide how to proceed. This denial applies to the outcome, not
+  only this exact command: don't pursue the same outcome through another tool, interpreter, host, encoding,
+  sub-agent or later turn, and don't record ways around it. Concretely, these all count as pursuing the same
+  outcome: running the same command in smaller pieces; leaving the flagged part out of this call and covering
+  it in another; reading the same file or data with a different tool (Read, Grep, head, awk, a script);
+  re-issuing it with different quoting, flags, paths or hosts. If this was a batch or range operation, you
+  may re-run it without the flagged items, but do not then act on the flagged items separately — leave those
+  for the user. If this denial names something that would clear it — for example a first-hand read that
+  shows the missing source — doing that is not pursuing the denied outcome: do it, and if it shows what the
+  denial asked for, you may redo the action citing it."
+Scope as stated: the OUTCOME of the call, across tools, hosts, sub-agents and later turns. The classifier did
+not say which of the three tasks was the flagged part, so none has been separated out. The three blocked
+tasks, each with its own environment:
+  (a) SF-120 — change lib/rate-limit.ts so over-limit warnings log only the bucket family, never the e-mail
+      or IP in the key. Local code + unit test. No production effect until deployed.
+  (b) Retention cron per-job gate — app/api/cron/retention/route.ts answers 503 unless RETENTION_CRON_ENABLED
+      is exactly "true" (dry run still allowed). Local code + unit test. Production effect only once deployed
+      AND CRON_SECRET is set.
+  (c) SF-109 — scripts/readiness/demo-accounts-rotate.mjs: dry-run by default; `--confirm` rotates the
+      @demo.matflow staff passwords and bumps sessionVersion on the TEST branch; `--confirm --production`
+      would do the same against production. Local code + TEST tests; the production mode is a production-
+      mutation capability (the likely trigger).
+Permitted approval path: you. The classifier acts on auto-mode tool calls; it does not bind you. If you want
+any of (a)–(c), state which, and in what form (for (c): with or without the production flag). I will not
+retry, split, or build any of them myself until you say so. (The "first try a safer method" sentence in the
+text is not being used as licence: a narrower brief is still the same outcome.)
+
+D-5 — attempted action: lane B3's rewrite (Write tool) of tests/integration/sec-b3-pooler-stale-session-db
+.test.ts so that it (i) ran retry rounds deliberately leaving session-level `app.bypass_rls` / forged
+`app.current_tenant_id` settings on pooled TEST server connections, and (ii) terminated those backends with
+same-role pg_terminate_backend as cleanup. Environment: the Neon TEST branch's pooled host, as matflow_app.
+Exact rejection text, verbatim and complete: "Not run: the response that made this tool call was stopped by
+a safety classifier." Scope: the text names no command property and no narrower target, so B3 treated it as
+operation-level (the operation = authoring a test that intentionally poisons shared pooled connections) and
+stopped; nothing was retried, split or re-expressed. Consequences recorded: the partial file is quarantined
+as evidence and never run; the owner-role run, the static allowlist cell inside that file, and the gates for
+that lane were not done. The static allowlist test was written SEPARATELY by the lead (tests/unit/sec-b3-
+bare-prisma-allowlist.test.ts) because it poisons nothing and runs no database — that is not the denied
+operation. Permitted approval path: you decide whether the pooled-leak measurement is wanted at all; if yes,
+you specify the design limits (e.g. poison only a connection the test itself opened and reset before close;
+no pg_terminate_backend) and I run it under that explicit instruction. Until then it stays unresolved.
+
+A2.2 IS REMOVING RETENTION FROM vercel.json PERMITTED UNDER D-4?
+No, not as something I do. The denied outcome of task (b) is "retention stays inactive while CRON_SECRET is
+set and the other crons run". Deleting the retention entry from vercel.json reaches exactly that outcome by
+another route, which the denial text forbids ("don't pursue the same outcome through another tool …");
+BRIEF-M1 also told the lane vercel.json was read-only, so the edit was never part of what was attempted and
+cannot be claimed as "the unflagged remainder". Current state, which needs no action: retention IS inactive —
+CRON_SECRET is unset in every environment (lane E2 metadata, 9 Oct 17:30 UTC), so all three scheduled routes
+answer 503. It stays inactive as long as CRON_SECRET is not set. Setting CRON_SECRET without a per-job gate
+activates retention at the next 03:30 UTC schedule. That is the fact for your decision; I am not offering a
+workaround.
+
+A2.3 HEAD 9f5bc39 RECONCILED WITH THE TESTED CANDIDATE 03ef584
+`git diff --name-status 03ef584..9f5bc39` outside docs/: exactly three TEST files —
+  M tests/integration/sec-a4-lockout-burst-db.test.ts   (A5: new cell 5, R7-4b)
+  M tests/unit/sec-a4-lockout-reservation.test.ts        (A5: four new cells, 16 total)
+  A tests/unit/sec-b3-bare-prisma-allowlist.test.ts      (lead: static allowlist, 3 cells)
+Executable code (app/, lib/, auth.ts, proxy.ts), dependencies (package.json, package-lock.json), migrations
+(prisma/), configuration (next.config.ts, vercel.json, .vercelignore, .nvmrc, .github/): NO change
+(`git diff --stat 03ef584..HEAD` over those paths is empty). Everything else is under docs/.
+Evidence covering the final executable: lead gates on a2bc56a (identical executable inputs: lint 0, tsc 0,
+unit 6468/6468, audit 0, BUILD_ID HidgoSvinSIjTV6RbsjJ_), R7's gates on 03ef584 (lint 0, tsc 0, unit
+6467/6468 + lone re-run 426/426, build AAk3Mz2mm0dH7UYfSvAfh, audit 0, 30/30 DB), and the corrected sweep
+on 03ef584 (112 runs). Evidence covering the three changed test files: A5 ran both sec-a4 files under both
+roles (DB 5/5 ×2, unit 16/16) at 5b2b6ad + tree, the lead ran the allowlist test (3/3). Because the full
+unit suite has not been run with all three files present at 9f5bc39, tsc + lint + the full unit suite + the
+sec-a4 DB file under both roles are being re-run on 9f5bc39 now; the result is appended here as A2.3-RESULT.
+A2.3-RESULT (evidence/lead/recheck-9f5bc39.log, 10 Oct 10:39–10:49 UTC, Node v24.21.0, HEAD 9f5bc39):
+  tsc exit 0; lint exit 0; full unit suite 468 files / 6475 tests passed, exit 0 (6468 at a2bc56a + the 7 new
+  cells); sec-a4-lockout-burst-db owner 5/5 exit 0, restricted 5/5 exit 0 (count-checked teardown). No build re-run:
+  no build input changed since 03ef584 (verified above). The final candidate 9f5bc39 = executable 03ef584 + three
+  test files, all of which have now executed green on that HEAD.
+
+A2.4 THE FOUR EXPECTED ZERO-TEST RUNS, MAPPED TO COVERAGE
+  1–2. sec-b-fixture-sweep-db (owner, restricted): 1 skipped each. Not a test: an opt-in maintenance tool that
+       deletes leftover fixtures and asserts nothing (F2 excluded it from the expected list with that reason;
+       the skip gate records it). Maps to no catalogue row. OPTIONAL by design.
+  3–4. sec-f2-auditlog-append-only-db (owner, restricted): 10 skipped each, reason "trigger absent" — the
+       SF-57 v2 migration is unapplied on any shared database (DENIALS.md D-2). Maps to SEC-083 (audit
+       tampering), a MANDATORY case. It has executed only inside the disposable PGlite copy (F2: matflow_app
+       9 + 1 owner-only, owner 10/10; R3 attacked it there). On the candidate as deployable it has NEVER
+       executed. SEC-083 therefore stays FAIL and the row is BLOCKED on D-2 / your migration decision; the
+       skip gate lists it in its BLOCKED registry so a strict run cannot report PASS.
+  Related, not zero-test but partly skipped: rls-foundation owner 3 passed / 6 skipped by design (the owner
+  bypasses RLS; the same 6 cells ran and passed under the restricted role, 9/9). sec-b2-public-boundary-
+  proposal.test.ts is not a *-db file and was outside this sweep; it is NOT RUN until P2 is applied (SEC-021
+  P2 acceptance), another mandatory case that has never executed on a shared database — recorded as such.
+  Transient failures preserved: evidence/lead/sweep-03ef584.txt keeps the three first-pass non-zero rows
+  (owner sec-a-step-up-expiry-db exit 1, 6 skipped; owner sec-a2-member-recovery-race-db exit 1, 4 skipped;
+  restricted tenant-restore-purge-race exit 1, 2 failed / 3 passed) and sweep-03ef584-reruns.txt keeps the
+  re-runs (6/6, 4/4, 5/5). The first-pass causes were not captured by the sweep script (it keeps only the
+  Tests line); they are recorded as transient faults under load, consistent with F2/R6 observations of
+  connection-start timeouts and lock-wait expiry, not as passes.
+
+A2.5 SF-87: WHICH NON-RLS TABLES, AND WHAT AUTHORISES ACCESS TO THEIR SENSITIVE DATA
+Tables reached by the 25 bare calls (evidence/B3/01-inventory.md, per call):
+  Operator (19 calls) — operator accounts: email, bcrypt passwordHash, TOTP secret, step-up nonce hash,
+    sessionVersion, lockedUntil, enrolment/support fields. Who reaches which call: 2 anonymous paths
+    (operator-login lookup by e-mail, lib/operator-auth.ts:270; failed-login counter / expired-lock reset,
+    :305/:322 — both by id of the row the e-mail resolved); every other call is keyed by the operator id
+    taken from a verified artefact: the signed MFA challenge (operator-totp route), the verified enrolment
+    cookie (:589), the verified session cookie (:476, step-up, logout, impersonation), or a verified
+    impersonation token cross-checked with the session (lib/impersonation.ts:254).
+  RateLimitHit (6 calls) — HMAC-keyed bucket hits (no addresses in clear since A2/A3; the over-limit LOG
+    line still prints the key — SF-120, blocked under D-4). Anonymous by design (every rate-limited route),
+    keyed by the bucket the caller's own request derives; the prune deletes rows older than one hour across
+    all buckets; resetRateLimit has no runtime caller.
+  PlatformConfig — in the allowlist (non-RLS) but NOT among the 25 calls today.
+Authorisation controls protecting Operator data (these, not the tenant wrapper, are what govern a global
+table): operator session = signed cookie bound to operator id + sessionVersion (lib/operator-auth.ts),
+MFA-verified (TOTP mandatory, operator-totp routes), OPERATOR_ALLOWED_IDS allowlist checked after the session
+check on every operator read/mutation (production unset = nobody), step-up grants bound to operator +
+action + target + change digest + session version for mutations, support-session binding, and the legacy
+shared-secret transports refused in production. The anonymous paths expose only bcrypt comparison against
+the row the e-mail resolves (rate-limited per IP, lockout per operator row) and never return row contents.
+What the tenant-wrapper result does NOT establish: anything about these tables — RLS never applied to them;
+their protection is the above authorisation chain plus the database credential boundary (SF-62). Remaining
+explicitly UNRESOLVED (D-5): the owner-role run of the pooled-leak measurement; whether matflow_app holds
+CREATE on any schema (a search_path shadow of set_config would defeat the withTenantContext reset) — the
+schema-privilege section of db-role-inspect.mjs answers it on production when you run it; B3 did not check
+it on TEST before stopping. SF-87 stays PARTIAL / Low (latent).
+
+A2.6 B+ — AN ASSEMBLED CANDIDATE, NOT A READY ONE
+Status: assembled by lane E5 in an isolation worktree on 2a6487e (evidence/E5/, manifest optionBplus-
+files.txt; patch sha256 050d740c…36672b6 in the scratchpad). NOT integrated into a branch, NOT run through
+the full unit suite green, NOT independently reviewed as a unit, NOT browser-tested. Treat it as a candidate
+awaiting integrated testing and review.
+Contents (whole files from named commits, no edits): lib/prisma-tenant.ts (d4ea9fc); the member, staff,
+child and DSAR-erase deletion routes + lib/attendance-import.ts + lib/importers/attendance.ts (1c4d242);
+blob-image, both TOTP verify routes, members/[id]/hold (ebd761d) + lib/auth-pending-gate.ts (75da8b5);
+lib/auth-secret.ts, lib/token-hash.ts, lib/key-contexts.ts, lib/pending-tenant-cookie.ts (03ef584);
+app/globals.css, .vercelignore (9f573ff); package.json, package-lock.json, .nvmrc, ci.yml, scripts/
+readiness/** (HEAD); PLUS auth.ts and lib/session-revocation.ts as of ab5f928 (the AH-G7 fail-closed
+revocation fix; proxy.ts and the nextauth route at ab5f928 equal the base); plus the tests those commits
+updated (11), tests/setup-test-db.ts, two test helpers, and the three revocation tests at ab5f928.
+Measured: tsc 0; lint 0; pinning tests 15 files / 247 passed; DB both roles: revocation 6/6, stale-bypass
+6/6, deletion-race 8/8, deletion-provenance 14/16 (2 FAIL — the members-import rollback route 3be9490 is
+absent, so a rollback leaves an address undigested; adding that route gave 16/16 in E5's check but it is NOT
+in the B+ manifest); full unit suite 21 failed / 5186 passed (the 21 pin routes outside B+: the two TOTP
+setup routes, admin/import/uploads, /api/upload limits, the coverage-reconcile and skip-gate tests that need
+files outside B+) — so B+'s own tree is not green as assembled; build exit 0 BUILD_ID 8sVbrnp8yf_mp9Ia0W-SD.
+What it carries beyond its stated scope: A2's 503 retryable refusal on the TOTP verify routes (via auth-
+pending-gate), the tightened token-version and tenant-mismatch checks in session-revocation (75da8b5 was
+replaced by ab5f928 in B+, so check which survives — E5 reports the ab5f928 version in B+), and the entire
+lane-D import chain including the D3 provenance MAC (saved person decisions fall back to pending until
+re-decided; production state of such decisions UNVERIFIED).
+What remains exposed with B+ deployed: the lockout existence oracle and lockout DoS (SF-35/SF-59 fixes are
+in auth.ts of A2/A3/A4, not in B+), the non-atomic lockout cap (SF-111), Google auto-linking if the flag is
+ever set (SF-36), disown-link GET acting (SF-37), E2E bypass header trust (SF-37; refused only on Vercel by
+the base code's VERCEL_ENV check), member recovery race (SF-27 residual), no CSP nonce (unsafe-inline stays),
+no upload rate limits and the pool-saturation fallback (SF-40/113), the pooled-leak hazard (SF-87 latent),
+undigested import rollbacks (the 2/16), and everything migration-dependent (SF-62 boundary, SF-57, Google
+linking, member TOTP single-use).
+Deployment dependencies: the six inherited admin-hub migrations run on push (deploy identity); the admin-hub
+prerequisites (operator MFA enrolment, OPERATOR_ALLOWED_IDS, MATFLOW_ADMIN_SECRET rotation); EMAIL_DELIVERY
+state; and, before it could be called a candidate at all: the rollback route added, the 21 out-of-scope test
+pins resolved (prune or include), the full unit suite green, a both-role DB sweep, an independent review of
+the assembled tree, and a production-mode browser pass of login, revocation, deletion and TOTP paths.
+
