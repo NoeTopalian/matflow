@@ -325,8 +325,11 @@ tsc 0, unit 6467/6468 (one 30 s import timeout under load, passed alone 426/426)
 AAk3Mz2mm0dH7UYfSvAfh, audit 0, 30/30 both-role database runs (evidence/R7/item5-gates.txt, item5-sweep.txt).
 SF-76 REPAIR: the iteration-1 claim "78/78 runs exit 0" is withdrawn in SECURITY-ACCEPTANCE section 5,
 TEST-EVIDENCE and CAMPAIGN-REPORT; the lead's sweep script now captures the vitest process status before any
-pipe and marks NO-TESTS-RAN when zero tests passed; a full both-role re-run on 03ef584 with that script is in
-progress (evidence/lead/sweep-03ef584.txt).
+pipe and marks NO-TESTS-RAN when zero tests passed; the full both-role re-run on 03ef584 with that script is DONE:
+112 runs — 105 OK first pass; 4 NO-TESTS-RAN (the two known skipped-only files, both roles — not evidence);
+3 non-zero exits re-run once and green (owner sec-a-step-up-expiry-db 6/6 and sec-a2-member-recovery-race-db
+4/4 after setup failures that skipped every cell; restricted tenant-restore-purge-race 5/5 after two lock-wait
+cells failed under load). evidence/lead/sweep-03ef584.txt and sweep-03ef584-reruns.txt.
 Evidence on the final integrated source and Node 24.21.0: lead gates on a2bc56a (lint 0, tsc 0, unit
 6468/6468, audit 0, BUILD_ID HidgoSvinSIjTV6RbsjJ_; evidence/lead/gates-node24-a2bc56a.log) and R7's gates
 plus 30/30 both-role database runs on 03ef584 (evidence/R7/).
