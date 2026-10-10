@@ -1,0 +1,304 @@
+MATFLOW SECURITY CAMPAIGN — PRE-APPROVAL QUESTIONS, ANSWERED
+Written 10 Oct 2026, 10:20 Italy, by the coordinator for Noe.
+Branch security/assurance-2026-10. Candidate code 03ef584; documentation through 23af42b.
+Every database claim is from the Neon TEST branch ep-hidden-salad unless it says production.
+Every production statement carries the time it was last observed. Nothing here was pushed, deployed,
+rotated or applied. No secret values appear in this file.
+
+======================================================================
+1. WHAT I ACTUALLY KNOW ABOUT PRODUCTION
+======================================================================
+Current observations: none. No agent read or wrote production in either iteration; the one attempt
+was refused by the permission layer on 9 Oct and never retried.
+
+Historical observations (read-only Vercel and GitHub metadata, lane E2, 9 Oct 17:28–17:50 UTC,
+docs/security/evidence/E2/OBSERVATION-LEDGER.md):
+  - 64 production builds, 62 holding an older MATFLOW_ADMIN_SECRET; serving build e8afb6a.
+  - Production DATABASE_URL uses the DIRECT Neon host (not -pooler); app and migrations share one identity.
+  - RESEND_API_KEY created 7 May and never changed; DATABASE_URL last changed 18 minutes BEFORE the
+    leaking commit fa3c460.
+  - LOGIN_THROTTLE_ENABLED exists on Production since 23 Sep, value unreadable.
+  - No CRON_SECRET in any environment; Blob token non-sensitive on all three environments.
+  - Weekly dump job failed on all 22 recorded runs (GitHub API, 9 Oct).
+
+Assumptions, stated as such:
+  - The production database role is PRESUMED owner-level because migrations run under it. Inference,
+    not observation (SF-02).
+  - The May-leak credentials are PRESUMED unrotated because the metadata shows no change. Strong, not proof.
+  - Neon PITR window: unknown. Whether production holds attendance-import decisions: unverified.
+  - Whether Iron Path still carries its seeded accounts: unverified (see 9).
+
+Correction to my own earlier wording: iteration 1's sweep log claimed 78/78 runs with exit 0; those exit
+codes were the status of `tr`, not vitest. The test counts stand, the exit column does not (SF-76).
+
+======================================================================
+2. WHAT THE OFFLINE CREDENTIAL CHECK PROVES
+======================================================================
+scripts/readiness/ops-credential-fingerprint.mjs (4b06d31; R3 verified six argument shapes leak no byte
+of a value) reads ONE local env file or stdin, fingerprints each value, compares against the 7 May
+fingerprints, opens no network connection and writes nothing.
+  - MATCH proves the value on your laptop is the leaked one, so it is still in use wherever that file is
+    deployed from.
+  - A non-match proves only that your laptop holds a different value. It says nothing about what the 62
+    old builds hold, nothing about whether the old Neon password or Resend key still authenticate at the
+    provider, and nothing about Vercel's current variable.
+Proof of revocation lives at the providers: Neon role password reset after 7 May 14:17 UTC with the old
+password refused; Resend's key list showing the old key deleted; Vercel's variable updated after both.
+Old deployments become unusable only when the provider refuses the old value. Deleting a build is not
+revocation (SF-10).
+
+======================================================================
+3. WHAT TO RUN FIRST
+======================================================================
+Command (from the repo root, your machine):
+  node scripts/readiness/ops-credential-fingerprint.mjs --from-env-file .env --var DATABASE_URL --var RESEND_API_KEY
+Purpose: decide offline whether the leak is live.
+Expected output: one line per variable, nothing else, e.g.
+  DATABASE_URL: no match with any 7 May leaked value
+  RESEND_API_KEY: MATCH leaked C2 — treat as compromised
+Exit codes: 0 = no input matched; 3 = at least one MATCH (treat that credential as compromised, go to
+CONTAINMENT-CHECKLIST.md section 4 steps 1–3); 2 = usage error (wrong flag or unreadable file; it prints the
+error code, never the path).
+Connects nowhere, writes nothing, prints neither values nor fingerprints of your values.
+
+Second, when ready (your run; the production read is refused to agents):
+  node scripts/readiness/db-role-inspect.mjs .env ep-bold-wave-abt39t7x
+One TLS-verified READ ONLY transaction against production; prints role flags, memberships, policy
+expressions, SECURITY DEFINER functions and schema privileges as JSON with no credential; exit 2 on a
+refused target. Unblocks SF-02 and decides what SF-62/SF-57 would protect.
+
+======================================================================
+4. WHAT EACH PROPOSED RELEASE PROTECTS
+======================================================================
+Inherited migrations (both options, from the admin-hub work, none from this campaign, all additive, run
+by the deploy on push): 20261006010000_operator_auth_hardening, 20261006020000_tenant_lifecycle_safety,
+20261006040000_support_session_binding, 20261006050000_operator_enrolment_ticket,
+20261007010000_login_email_provisional, 20261009010000_audit_operator_request.
+
+OPTION A — complete tree at 03ef584
+  Delivered immediately on deploy: per-transaction RLS bypass reset; deletion digests inside the
+  transaction; chained import provenance; atomic lockout with one refusal code; retryable 503 outage mode;
+  Google-door refusal; verify-route revocation gate; disown-link click; blob/SVG handling; strict schemas
+  on ten routes; upload limits exact under concurrency; fail-closed rate-limit store; Tailwind source list.
+  Configuration-dependent: CSP enforcement (MATFLOW_CSP_ENFORCE=1 after a preview check); the throttle
+  flag (ignored in production regardless); Google linking (refused until a store exists).
+  Migration-dependent, NOT shipped: SF-62 boundary (cross-club SQL as the app role); SF-57 append-only
+  audit; Google linking store; member TOTP single-use.
+
+OPTION B — minimal containment patch
+  Delivers only: bypass reset, deletion digests, blob/SVG, TOTP null-body and hold fixes, key separation,
+  build hygiene. Same inherited migrations, same unshipped proposals. Isolation build in progress (see 13).
+
+======================================================================
+5. THE PRECISE FIX FOR SF-62
+======================================================================
+Today: all 47 tenant_isolation policies read current_setting('app.bypass_rls') or compare the row's tenant
+with current_setting('app.current_tenant_id'). Both are unregistered settings any role may set, so the
+application role opens every club with one set_config (B2, evidence/B2/01-root-cause-and-policy-matrix.md;
+measured as matflow_app on TEST: 141 clubs).
+Shipped (d4ea9fc): only stops a leftover SESSION bypass on a reused pooled connection leaking into another
+club's transaction. It does NOT stop the role setting the bypass itself.
+Proposed P2 (evidence/B2/proposed-sf62-phase1.sql, phase2.sql, rollback.sql): replaces the bypass clause with
+a system role the runtime cannot assume and a signed per-transaction tenant context checked by a SECURITY
+DEFINER function owned by that role. After it the app role cannot forge a context without the signing key,
+cannot execute the privileged functions beyond the named lookups, and cannot reach another club through
+arbitrary SQL (16 attack checks; validator 22/22; R2 confirmed the SQL text with two precisions, SF-88).
+Remaining trust boundary: the database owner; anyone holding the signing key or the full application
+environment; 27 bare Prisma calls outside the wrapper remain exposed to a pooler-leaked session setting
+until moved (SF-87).
+
+======================================================================
+6. THE PRECISE PROTECTION PROVIDED BY SF-57
+======================================================================
+After v2 (evidence/F2/proposed-auditlog-append-only-v2.sql) the application role still INSERTS audit rows,
+and only inserts: UPDATE refused for every role including the owner (whole-row trigger); DELETE and TRUNCATE
+refused to the runtime role; back-dating overwritten by a BEFORE INSERT trigger for every role except the
+owner; trigger disabling and function replacement refused; purge only through a SECURITY DEFINER function
+with published minimums. R3 attacked every path as matflow_app in a disposable Postgres 17.5 copy
+(evidence/R3/sf57-attack.log): all refused.
+Cannot stop: a true-looking false row from a compromised app; junk floods; anything the OWNER does (the
+owner deletes, back-dates, disables triggers and replaces functions at will — proved by R3).
+If production connects as the owner (the presumption), the migration protects nothing until the app runs
+as a restricted role (SF-02, SF-75).
+
+======================================================================
+7. RECOMMENDED MIGRATION SEQUENCE
+======================================================================
+Before anything: production role read (3); fingerprint check (3); a Neon restore point; the dump secrets.
+Then, in order:
+  1. Six inherited migrations ship with the push (deploy identity; compatible with e8afb6a data).
+  2. SF-62 phase 1: additive; run as the owner; compatible with the deployed code; verified by
+     rls-proposal-validate.mjs 22/22; recovery = proposed-sf62-rollback.sql.
+  3. Signing key and matflow_ops login provisioned out of band.
+  4. Application release replacing the 116 withRlsBypass call sites (evidence/B2/05-bypass-inventory.md).
+  5. SF-62 phase 2: the switch; refuses without the key; BREAKS the deployed code if applied before step 4.
+  6. App DATABASE_URL moved to the restricted role; migrations on a separate credential/pipeline.
+  7. Phase 3: revoke runtime writes to Operator and PlatformConfig (SF-73).
+  8. SF-57 v2 (evidence/F2/patches/0002): run as the owner; move ~30 test teardowns and 4 e2e helpers to an
+     owner connection first; verified by the ten-cell test and the PGlite attack run; recovery = drop the
+     triggers and the purge function.
+  9. Google-linking (ExternalIdentity) and member TOTP single-use migrations.
+Outstanding refusal: applying the SF-57 migration and the ci.yml steps was judged dangerous by the
+permission classifier on 9 Oct 14:14 UTC ("The server-side auto mode classifier judged this action
+dangerous (it gave no explanation)"). It stands; nothing was re-routed; the proposals wait for your
+approval through the permitted process.
+
+======================================================================
+8. WHAT THE RESTORE DRILLS ACTUALLY RESTORED
+======================================================================
+Real PostgreSQL 17.5 engines running in process (PGlite), not simulations, but in memory and private.
+Each drill: read-only REPEATABLE READ export of the whole TEST branch (53 tables, 115–116 thousand rows);
+all 100 migrations replayed under a recreated owner role; data loaded; roles recreated with their flags;
+grants and default privileges replayed; compared by content hashes, policy expressions, trigger and function
+definitions, ACLs, role memberships, settings, rules and column grants; then revoked and neutralised
+(ea73c2c F2, 190caa6 D2, 3a4c5d2 F3; repeated by R3, R4, R6).
+Not done: any Neon-level restore; a Neon restore time; the PITR window; the neutralise CLI against a copy it
+accepts (it refuses 127.0.0.1).
+Before recovery can be relied on: dump secrets plus a roles-and-grants capture (SF-77); one TEST child-branch
+restore checked with restore-verify compare (runbook section 2.4); the PITR window read.
+
+======================================================================
+9. SF-109 EXPOSURE
+======================================================================
+scripts/seed-demo-rich.mjs hard-codes DEMO_PASSWORD and gives it (bcrypt) to exactly four STAFF accounts it
+creates: owner, coach1, coach2, admin at @demo.matflow. Members get no password.
+Project memory records that Iron Path BJJ in production (/ironpathbjj) was seeded with this script on
+23 Sep 2026. Those four production accounts are the exposure unless changed since (UNVERIFIED). The former
+totalbjj demo was wiped on 3 Oct (owner-to-sean).
+Status without logins: a read-only query of User rows in that tenant with that suffix and the date of
+their password hash (your production read).
+Supported process: the operator revoke-access route per club once an operator exists with MFA and the
+allowlist; before that, the manual SQL in INCIDENT-AND-RESTORE-RUNBOOK.md section 1.3 that bumps session
+versions; then new passwords via the normal reset path with mail on, or disable the four staff rows.
+Severity Medium while the accounts exist. Owed: the script takes the password from the environment.
+
+======================================================================
+10. WHAT SF-90 AND SF-87 PERMIT
+======================================================================
+SF-90: a member's six-digit authenticator code can be REPLAYED within its validity window because the
+member verify route records no last-used step (the staff route does). Window = otplib default: the current
+30 s step plus one either side, so a captured code works for up to ~90 s. Consequence: one extra session for
+an attacker who already holds the password AND captured a code. Severity Low. Needs a Member.totpLastUsedStep
+migration.
+SF-87: 27 bare prisma.<model> calls in 12 files, mostly operator/auth plumbing — lib/operator-auth.ts 7,
+lib/impersonation.ts 3, the two operator TOTP routes 6, session-revocation / rate-limit / step-up /
+auth-lockout 2 each, single calls in pagination, settings, admin logout. They run without the per-transaction
+bypass reset, so a session-level app.* setting left on a POOLER connection would reach them. Nobody has
+reproduced that on the pooler (the test used the direct host); in production today RLS is not in force at
+all, so practical exposure is nil until the boundary lands, then Low. Evidence: evidence/R2/REPORT.md
+section 4 and today's grep.
+
+======================================================================
+11. WHICH CONTROLS THE CANDIDATE ACTUALLY ENABLES
+======================================================================
+Login throttling: ON by default; flag absent or malformed = on; "false" ignored on any Vercel deployment
+and against the production database; counters fail CLOSED when the store is unreadable (sign-in refused).
+Google sign-in: OFF unless ENABLE_GOOGLE_OAUTH, NEXT_PUBLIC_ENABLE_GOOGLE_OAUTH and the client credentials
+are all set; even then every account is refused (google_link_required) until a link store exists.
+CSP: report-only by default (counts-only endpoint /api/csp-report); enforcing requires MATFLOW_CSP_ENFORCE=1.
+TESTING_MODE: honoured anywhere EXCEPT VERCEL_ENV=production or a production database endpoint; the E2E
+bypass additionally needs E2E_AUTH_BYPASS=true and refuses on ANY Vercel environment.
+Upload limits: constants in code, no configuration; exact under concurrency while the database answers;
+refused outright when the store fails (never N × limit for security buckets).
+Session revocation: no flag; revoked = signed out + cookie cleared; unknown = 503 Retry-After 15 with the
+cookie kept, 24-hour bound, no cached verdict.
+
+======================================================================
+12. WHAT ENABLING THE CRONS WOULD DO IMMEDIATELY
+======================================================================
+vercel.json schedules three jobs; every one answers 503 today because CRON_SECRET is unset.
+  - /api/cron/retention (03:30 daily): purges audit logs, email logs, login events, magic-link tokens and
+    other rows past their minimums, and HARD-DELETES clubs past the 30-day grace; chunked, 240 s deadline,
+    resumes at committed batch boundaries. Supports ?dryRun=1 (counts everything, deletes nothing).
+    Production backlog UNKNOWN; the TEST copy showed 7 clubs past grace. Its first real run is a one-way
+    door: backups and a logged dry run first.
+  - /api/cron/class-instances (02:40 daily): generates future class instances; idempotent; safe alone.
+  - /api/cron/monthly-reports (02:00 on the 1st): writes report rows; safe alone.
+  - /api/cron/stripe-reconcile exists as a route but is NOT scheduled.
+Enable class-instances and monthly-reports independently; retention only after the backup chain and a
+logged dry run.
+
+======================================================================
+13. IS THE MINIMAL CONTAINMENT RELEASE READY?
+======================================================================
+No. It has not been assembled, built or tested in isolation; it was listed by file. An agent is assembling
+it NOW in a scratch worktree on the admin-hub base (2a6487e), pulling exactly the listed files by commit,
+adding only forced dependencies and recording each, then tsc, lint, the unit suite, the relevant database
+files under both roles and a clean build. Its report is pending and will be filed under
+docs/security/evidence/E5/.
+Known dependencies that may stop it standing alone: the TOTP verify routes import lib/auth-pending-gate.ts
+(lane A2); the deletion routes carry the provenance change in lib/attendance-import.ts.
+Would reduce: the stale-bypass leak, undigested deletions, SVG-from-our-domain and the blob-token exposure,
+the open-ended hold from a malformed body, the key leak.
+Would leave: the lockout oracle and burst, the fail-open outage mode, the CSP gap, upload rate limits, and
+everything migration-dependent.
+
+======================================================================
+14. CAN THE FINISHED HUB COMPLETE SEAN'S ACTUAL WORKFLOW?
+======================================================================
+Yes on synthetic data, with one caveat. The admin-hub loop's production-mode browser rehearsal on build
+c837e38 ran the full Resolve sequence — check, member record moved to the "+member" address, re-check, owner
+login change, checker verify 38/38 — under both database roles with mail off and zero sends
+(docs/readiness/admin-hub-2026-10-09/FINAL-REPORT.md). The hub refused an erased record and a no-login child
+placeholder (AH-R1). The imports lane proved the external reference stays byte-identical after an address
+change and that refresh and attendance resolve to the same member (AH-05). Lane B in this campaign re-ran the
+cancelled imported record against a real TeamUp export under both roles. Credentials are untouched by the
+member step; history and family links compare by stable ids; future TeamUp matching uses the external
+reference.
+Caveat: the rehearsal record was synthetic. The live run on Sean's record is the separately authorised step
+after deployment ("fix Sean's address").
+
+======================================================================
+15. WHAT REMAINS UNVERIFIED ON THE FINAL CANDIDATE
+======================================================================
+Matrix (coverage-reconcile --findings-strict --require-reviewed, 96 rows):
+  FAIL 13: SEC-036 (SF-31), 060, 063, 064, 066, 067, 070, 072, 078, 079, 082, 083 (SF-57 unapplied),
+           085 (no backup).
+  BLOCKED 4: SEC-062 (rotation unverifiable), 068, 071, 086 (Neon-level restore).
+  NOT RUN 6: SEC-024, 050, 087 (rollback at runtime level), 094, 095, 096.
+  UNKNOWN 4: SEC-058, 065, 069, 092.
+Skipped mandatory cells: the 10 SF-57 cells (migration unapplied); the 6 boundary cells (P2 unapplied); the
+6 attacker-model cells pinned as expected failures by design.
+Uncovered standards (STANDARDS-MAPPING.md sections 4–6): ASVS V6.2 password security (no catalogue row),
+V7.3, V11 beyond one requirement, V12.3, V5.4, V14.1, V17; WSTG error handling.
+Independent review: every FIXED row carries an approval (R2–R7). SF-116 sits inside R7's reviewed candidate
+but was not separately attacked. SF-121: one A4 mutant uncovered by A4's suite (R7's cell to adopt). No
+browser pass of the outage path; kiosk with a valid token under enforced CSP only by R5.
+Evidence on the final integrated source and Node 24.21.0: lead gates on a2bc56a (lint 0, tsc 0, unit
+6468/6468, audit 0, BUILD_ID HidgoSvinSIjTV6RbsjJ_; evidence/lead/gates-node24-a2bc56a.log) and R7's gates
+plus 30/30 both-role database runs on 03ef584 (evidence/R7/).
+
+======================================================================
+16. WHAT HAPPENED IN SF-117
+======================================================================
+Reviewer R6 was instructed to delete a stale scratch worktree left by its own crashed first run. A hook
+blocked the `rd` command on the quoted path (reason: with empty variables it would target the drive root).
+R6 then removed the same directory with Remove-Item -LiteralPath on the literal long path and ran
+git worktree prune, and reported this itself as a second route to the same action.
+What changed: a scratch directory under the session scratchpad was deleted. No repository file, branch or
+database was touched.
+Judgement: the block was a command-shape guard, not a denial of the action, and the action was my explicit
+instruction; it is logged because the rule says a denied operation is never moved to another tool.
+Rule now applied: R7 was instructed in writing that a blocked removal means stop and report, and it did so
+(it deleted only after confirming a failure was a git long-path error, not a hook). Every future lane brief
+carries the same line; the lead performs any removal a hook blocks only after reading the block.
+
+======================================================================
+PRIORITISED ACTION TABLE
+======================================================================
+Action | Why it matters | Agent or Noe | Evidence required | Production effect | Approval needed
+--- | --- | --- | --- | --- | ---
+Run the offline fingerprint check on .env | Decides whether the 7 May leak is live | Noe | Exit code + the two result lines | None | No
+If MATCH or no provider proof of rotation: rotate Neon password and Resend key, update Vercel, redeploy | Only provider-side revocation disarms the 62 old builds | Noe | Provider timestamps; old value refused | Service restart | Noe
+Run the read-only role inspection against production | Decides what SF-62/SF-57 protect (SF-02) | Noe | JSON output, no credential | Read only | No
+Read LOGIN_THROTTLE_ENABLED; check Iron Path's four seeded accounts | SF-68, SF-109 | Noe | Value; four rows with hash dates | Read only | No
+Finish and report the option B isolation build | Decides whether a smaller release exists | Agent (running) | Build id, unit and both-role counts | None | No
+Adopt R7's cell for the uncovered lockout mutant; log only the bucket family | SF-121, SF-120 | Agent | Red then green, both roles | None | No
+Dump secrets, roles capture, PITR window, one TEST branch restore via the verifier | Recovery untested at Neon level | Noe | Verifier compare PASS | None | Noe
+Enable class-instances and monthly-reports crons; retention only after a logged dry run | 503s today; retention is a one-way door | Noe | Cron logs; ?dryRun=1 counts | Writes | Noe
+Decide SF-62 phase 1, SF-57 v2, Google linking, member TOTP migrations, in that order | Structural gaps are proposals | Noe | Validator runs already recorded | Schema | Noe
+Merge and deploy option A | Ships the reviewed fixes | Noe | ITERATION-2-REPORT.md, gates, R7 | Deploy + six migrations | Noe
+
+NEXT CONCRETE STEP: the fingerprint command in section 3. Five minutes, no connection, no risk.
+Agent work continuing without waiting: the option B isolation build; then SF-120 and SF-121.
+The campaign is NOT complete; its acceptance conditions remain unresolved as listed in section 15.
