@@ -1,0 +1,64 @@
+node v24.21.0 mode=unit file=tests/unit/sec-a4-lockout-reservation.test.ts head=a5cd7d2 auth-lockout.sha256=10307c48cc11cfb3 at=2026-10-10T08:34:46Z
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts (16 tests | 2 failed) 406ms
+     × in the single reservation statement the exemption is evaluated after the network-cap check, inside the address clause (truth table over the parsed SQL) 6ms
+     × through authorize(), fake granting by the SQL's own rule: address at its cap, known device, a burst fills THIS network's cap after the read → refused with the generic code, no slot granted 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > SF-121: the known-device exemption lifts the address cap only, never the network cap > in the single reservation statement the exemption is evaluated after the network-cap check, inside the address clause (truth table over the parsed SQL)
+AssertionError: grant expression: ((pw.n < ${PAIR_MAX}::int OR ${addrExempt}::boolean) AND (aw.n < ${ADDR_MAX}::int OR ${addrExempt}::boolean)): expected [ …(8) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "pair=10 addr=0 exempt=true: got true, want false",
++   "pair=10 addr=9 exempt=true: got true, want false",
++   "pair=10 addr=10 exempt=true: got true, want false",
++   "pair=10 addr=15 exempt=true: got true, want false",
++   "pair=15 addr=0 exempt=true: got true, want false",
++   "pair=15 addr=9 exempt=true: got true, want false",
++   "pair=15 addr=10 exempt=true: got true, want false",
++   "pair=15 addr=15 exempt=true: got true, want false",
++ ]
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:278:47
+    276|           if (Boolean(rule(pn, an, exempt)) !== want) wrong.push(`pair…
+    277|         }
+    278|     expect(wrong, `grant expression: ${sql}`).toEqual([]);
+       |                                               ^
+    279|   });
+    280|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > SF-121: the known-device exemption lifts the address cap only, never the network cap > through authorize(), fake granting by the SQL's own rule: address at its cap, known device, a burst fills THIS network's cap after the read → refused with the generic code, no slot granted
+AssertionError: expected 'admitted' to be 'code:rate_limited' // Object.is equality
+
+Expected: "code:rate_limited"
+Received: "admitted"
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:286:37
+    284|     h.known = true;
+    285|     h.pairFilledByBurst = true;
+    286|     expect(await attempt(PASSWORD)).toBe("code:rate_limited");
+       |                                     ^
+    287|     expect(h.trace).toEqual(expect.arrayContaining(["known-device-look…
+    288|     // bcrypt still runs (equal cost, auth.ts), but no slot was grante…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 14 passed (16)
+   Start at  09:34:47
+   Duration  714ms (transform 173ms, setup 37ms, import 102ms, tests 406ms, environment 0ms)
+
+EXIT 1

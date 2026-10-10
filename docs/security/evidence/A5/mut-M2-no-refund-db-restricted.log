@@ -1,0 +1,82 @@
+node v24.21.0 mode=restricted file=tests/integration/sec-a4-lockout-burst-db.test.ts head=a5cd7d2 auth-lockout.sha256=0241ccb7dede765c at=2026-10-10T08:43:48Z
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:103396) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stdout | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > a successful sign-in gives its reserved slot back: the counter is what it was before
+A4-REFUND {"role":"restricted","outcome":"admitted","seeded":5,"counterAfter":6}
+
+stderr | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > known-device exemption: at the cap the person's own device is still judged; an unknown network is not
+[auth] sign-in refused: failure lockout {
+  counter: 'addr',
+  tenantId: 'cmv25dpr90000s4tgsssrrlkr',
+  subject: 'member',
+  subjectId: 'cmv25dpzr0004s4tg5fm2cxs2'
+}
+
+stdout | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > known-device exemption: at the cap the person's own device is still judged; an unknown network is not
+A4-KNOWN {"role":"restricted","stranger":"code:rate_limited","own":"admitted","afterOwn":11,"ownWrong":"refused","afterOwnWrong":12}
+
+ ❯ tests/integration/sec-a4-lockout-burst-db.test.ts (5 tests | 2 failed) 60036ms
+     × a successful sign-in gives its reserved slot back: the counter is what it was before 1661ms
+     × known-device exemption: at the cap the person's own device is still judged; an unknown network is not 4129ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > a successful sign-in gives its reserved slot back: the counter is what it was before
+AssertionError: a correct password spends nothing: expected 6 to be 5 // Object.is equality
+
+- Expected
++ Received
+
+- 5
++ 6
+
+ ❯ tests/integration/sec-a4-lockout-burst-db.test.ts:215:58
+    213|     report("A4-REFUND", { role: ROLE, outcome: ok, seeded, counterAfte…
+    214|     expect(ok).toBe("admitted");
+    215|     expect(counter, "a correct password spends nothing").toBe(seeded);
+       |                                                          ^
+    216|     // And a wrong one does spend: the reservation is kept.
+    217|     expect(await attempt(email, "wrong-refund-a4", net(203))).toBe("re…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > known-device exemption: at the cap the person's own device is still judged; an unknown network is not
+AssertionError: the exempt success is refunded too: expected 11 to be 10 // Object.is equality
+
+- Expected
++ Received
+
+- 10
++ 11
+
+ ❯ tests/integration/sec-a4-lockout-burst-db.test.ts:235:60
+    233|     expect(stranger).toBe("code:rate_limited");
+    234|     expect(own).toBe("admitted");
+    235|     expect(afterOwn, "the exempt success is refunded too").toBe(ADDR_M…
+       |                                                            ^
+    236|     expect(ownWrong, "a wrong password from the known device is judged…
+    237|     expect(afterOwnWrong, "and counted").toBe(ADDR_MAX + 1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 3 passed (5)
+   Start at  09:43:51
+   Duration  60.47s (transform 266ms, setup 39ms, import 212ms, tests 60.04s, environment 0ms)
+
+EXIT 1

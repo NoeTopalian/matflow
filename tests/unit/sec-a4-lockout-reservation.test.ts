@@ -7,8 +7,13 @@
 //   - a reservation the database cannot make refuses even the right password (fail closed);
 //   - the known-device exemption still applies when a concurrent burst fills the cap between the read and the
 //     reservation;
-//   - the lock namespace is lane C3's.
+//   - the lock namespace is lane C3's;
+//   - SF-121 (lane A5, 10 Oct 2026): in the single reservation statement the known-device exemption is evaluated
+//     AFTER, and only inside, the network-cap check — it can lift the address cap, never the network cap. Pinned on
+//     the SQL itself (its grant expression is parsed from lib/auth-lockout.ts and evaluated as a truth table) and
+//     through authorize() with the fake granting by that parsed rule.
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
 
 type Authorize = (credentials: Record<string, unknown>, request: Request) => Promise<Record<string, unknown> | null>;
 
@@ -21,6 +26,10 @@ const h = vi.hoisted(() => ({
   reserveFails: false,
   // Simulates a burst that fills the address cap between the unlocked read and the reservation.
   addrFilledByBurst: false,
+  // SF-121 (lane A5): simulates a burst on THIS network that fills the network cap between the read and the reservation.
+  pairFilledByBurst: false,
+  // When set, the fake grants a reservation by the rule parsed out of lib/auth-lockout.ts's SQL (not its own copy).
+  sourceRule: undefined as undefined | ((pn: number, an: number, exempt: boolean) => boolean),
   deletes: [] as unknown[],
 }));
 
@@ -101,9 +110,13 @@ function client(): Record<string, unknown> {
         h.addrFilledByBurst = false;
         for (let i = 0; i < 10; i++) h.hits.push({ bucket: addr });
       }
+      if (h.pairFilledByBurst) {
+        h.pairFilledByBurst = false;
+        for (let i = 0; i < 10; i++) h.hits.push({ bucket: pair });
+      }
       const pn = h.hits.filter((x) => x.bucket === pair).length;
       const an = h.hits.filter((x) => x.bucket === addr).length;
-      const ok = pn < 10 && (an < 10 || exempt);
+      const ok = h.sourceRule ? h.sourceRule(pn, an, exempt) : pn < 10 && (an < 10 || exempt);
       h.trace.push(`reserve:${ok ? "granted" : "refused"}${exempt ? ":exempt" : ""}`);
       if (ok) h.hits.push({ bucket: pair, id: pairId }, { bucket: addr, id: addrId });
       return [{ pairCount: pn, addrCount: an, inserted: ok ? 2 : 0 }];
@@ -136,7 +149,7 @@ async function attempt(password: string) {
 const addrHits = () => h.hits.filter((x) => x.bucket === KEYS().addr).length;
 
 beforeEach(() => {
-  Object.assign(h, { hits: [], member: MEMBER(), known: false, reserveFails: false, addrFilledByBurst: false, deletes: [] });
+  Object.assign(h, { hits: [], member: MEMBER(), known: false, reserveFails: false, addrFilledByBurst: false, pairFilledByBurst: false, sourceRule: undefined, deletes: [] });
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
@@ -206,5 +219,89 @@ describe("fail closed and the known-device exemption", () => {
     h.hits = Array.from({ length: 10 }, () => ({ bucket: KEYS().addr }));
     expect(await attempt(PASSWORD)).toBe("code:rate_limited");
     expect(h.trace.some((t) => t.startsWith("lock:"))).toBe(false);
+  });
+});
+
+// SF-121 (lane A5). The grant expression of reserve()'s single statement, read from the source and turned into a
+// function of (pair count, address count, exempt). Only the tokens the expression may contain are accepted; anything
+// else fails the parse rather than being evaluated.
+function sourceGrantRule(): { sql: string; rule: (pn: number, an: number, exempt: boolean) => boolean; reserveFn: string } {
+  const src = readFileSync("lib/auth-lockout.ts", "utf8");
+  const start = src.indexOf("async function reserve(");
+  const end = src.indexOf("export async function lockoutState(");
+  expect(start, "reserve() in lib/auth-lockout.ts").toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  const reserveFn = src.slice(start, end);
+  const m = reserveFn.match(/SELECT pw\.n AS pn, aw\.n AS an,\s*([\s\S]*?)\s+AS ok\b/);
+  expect(m, "the grant expression (… AS ok) in reserve()'s SQL").not.toBeNull();
+  const sql = m![1].trim();
+  const js = sql
+    .replace(/::\w+/g, "")
+    .replace(/\$\{PAIR_MAX\}/g, String(lockout.PAIR_MAX))
+    .replace(/\$\{ADDR_MAX\}/g, String(lockout.ADDR_MAX))
+    .replace(/\$\{addrExempt\}/g, "exempt")
+    .replace(/\bpw\.n\b/g, "pn")
+    .replace(/\baw\.n\b/g, "an")
+    .replace(/\bAND\b/g, "&&")
+    .replace(/\bOR\b/g, "||")
+    .replace(/\bNOT\b/g, "!")
+    .replace(/<>/g, "!==")
+    .replace(/(?<![<>!=])=(?!=)/g, "===");
+  expect(js, `only counts, caps, the exemption and boolean/comparison operators in: ${sql}`).toMatch(/^[\s()0-9a-z<>=!&|]*$/);
+  expect(new Set(js.match(/[a-z]+/g) ?? []), "identifiers in the grant expression").toEqual(
+    new Set((js.match(/[a-z]+/g) ?? []).filter((w) => ["pn", "an", "exempt", "true", "false"].includes(w))),
+  );
+  const rule = new Function("pn", "an", "exempt", `return (${js});`) as (pn: number, an: number, exempt: boolean) => boolean;
+  return { sql, rule, reserveFn };
+}
+
+describe("SF-121: the known-device exemption lifts the address cap only, never the network cap", () => {
+  it("in the single reservation statement the exemption is evaluated after the network-cap check, inside the address clause (truth table over the parsed SQL)", () => {
+    const { sql, rule, reserveFn } = sourceGrantRule();
+    // One statement decides and inserts: one $queryRaw in reserve(), and the inserts are gated by its grant.
+    expect(reserveFn.match(/\$queryRaw/g)?.length, "one reservation statement").toBe(1);
+    expect(reserveFn).toMatch(/WHERE go\.ok/);
+    // Order in the expression: the network cap comes first; the exemption appears only after it.
+    const iPair = sql.indexOf("pw.n");
+    const iExempt = sql.indexOf("${addrExempt}");
+    expect(iPair, "network-cap term").toBeGreaterThanOrEqual(0);
+    expect(iExempt, "exemption term").toBeGreaterThan(iPair);
+    // Semantics: granted iff pair < PAIR_MAX AND (addr < ADDR_MAX OR exempt), for counts around both caps.
+    const { PAIR_MAX: P, ADDR_MAX: A } = lockout;
+    const wrong: string[] = [];
+    for (const pn of [0, P - 1, P, P + 5])
+      for (const an of [0, A - 1, A, A + 5])
+        for (const exempt of [false, true]) {
+          const want = pn < P && (an < A || exempt);
+          if (Boolean(rule(pn, an, exempt)) !== want) wrong.push(`pair=${pn} addr=${an} exempt=${exempt}: got ${!want}, want ${want}`);
+        }
+    expect(wrong, `grant expression: ${sql}`).toEqual([]);
+  });
+
+  it("through authorize(), fake granting by the SQL's own rule: address at its cap, known device, a burst fills THIS network's cap after the read → refused with the generic code, no slot granted", async () => {
+    h.sourceRule = sourceGrantRule().rule;
+    h.hits = Array.from({ length: 10 }, () => ({ bucket: KEYS().addr }));
+    h.known = true;
+    h.pairFilledByBurst = true;
+    expect(await attempt(PASSWORD)).toBe("code:rate_limited");
+    expect(h.trace).toEqual(expect.arrayContaining(["known-device-lookup", "reserve:refused:exempt"]));
+    // bcrypt still runs (equal cost, auth.ts), but no slot was granted, so its result is never a verdict.
+    expect(h.trace.some((t) => t.startsWith("reserve:granted")), "no slot granted").toBe(false);
+  });
+
+  it("positive control: same address at its cap, same known device, network below its cap → the exempt reservation is granted and the right password admitted", async () => {
+    h.sourceRule = sourceGrantRule().rule;
+    h.hits = Array.from({ length: 10 }, () => ({ bucket: KEYS().addr }));
+    h.known = true;
+    expect(await attempt(PASSWORD)).toBe("admitted");
+    expect(h.trace).toEqual(expect.arrayContaining(["known-device-lookup", "reserve:granted:exempt", "bcrypt"]));
+  });
+
+  it("network AND address at their caps at the read: refused before the exemption is even resolved, without queueing on the lock", async () => {
+    h.hits = [...Array.from({ length: 10 }, () => ({ bucket: KEYS().addr })), ...Array.from({ length: 10 }, () => ({ bucket: KEYS().pair }))];
+    h.known = true;
+    expect(await attempt(PASSWORD)).toBe("code:rate_limited");
+    expect(h.trace).not.toContain("known-device-lookup");
+    expect(h.trace.some((t) => t.startsWith("lock:") || t.startsWith("reserve:"))).toBe(false);
   });
 });

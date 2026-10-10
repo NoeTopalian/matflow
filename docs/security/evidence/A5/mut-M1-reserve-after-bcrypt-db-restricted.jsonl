@@ -1,0 +1,5 @@
+A4-BURST {"role":"restricted","nodeEnv":"test","poolMax":20,"tally":{"refused":13,"code:rate_limited":27},"judged":10,"verdicts":{"wrong":10,"right":0,"failClosedErrors":["1x timeout exceeded when trying to connect","1x  Invalid `prisma.rateLimitHit.count()` invocation: "]},"refusedWithoutVerdict":3,"rightPasswordOutcome":"code:rate_limited","addressCounterAfter":10,"nextAttempt":"code:rate_limited"}
+A4-OVERFLOW {"role":"restricted","tally":{"refused":11,"code:rate_limited":28},"verdicts":{"wrong":10,"right":0,"failClosedErrors":["1x  Invalid `prisma.rateLimitHit.count()` invocation: "]},"refusedWithoutVerdict":1,"addressCounterAfter":10,"rightPasswordAfter":"code:rate_limited"}
+A4-REFUND {"role":"restricted","outcome":"admitted","seeded":5,"counterAfter":5}
+A4-KNOWN {"role":"restricted","stranger":"code:rate_limited","own":"admitted","afterOwn":10,"ownWrong":"refused","afterOwnWrong":11}
+A5-KNOWN-NET-BURST {"role":"restricted","poolMax":20,"tally":{"refused":10,"code:rate_limited":30},"verdicts":{"wrong":10,"right":0,"failClosed":0,"failClosedErrors":[]},"pairCounter":10,"addressCounterAfter":20,"own":"code:rate_limited","ownAfterNetCleared":"admitted"}

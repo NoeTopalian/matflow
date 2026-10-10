@@ -1,0 +1,80 @@
+node v24.21.0 mode=owner file=tests/integration/sec-a4-lockout-burst-db.test.ts head=a5cd7d2 auth-lockout.sha256=10307c48cc11cfb3 at=2026-10-10T08:34:49Z
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:121548) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stdout | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most 10 verdicts; the exemption never lifts the network cap
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: A query cannot be executed on an expired transaction. The timeout for this transaction was 10000 ms, however 11044 ms passed since the start of the transaction. Consider increasing the interactive transaction timeout or doing less work in the transaction.
+
+stdout | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most 10 verdicts; the exemption never lifts the network cap
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: A query cannot be executed on an expired transaction. The timeout for this transaction was 10000 ms, however 11152 ms passed since the start of the transaction. Consider increasing the interactive transaction timeout or doing less work in the transaction.
+
+stdout | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most 10 verdicts; the exemption never lifts the network cap
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: A query cannot be executed on an expired transaction. The timeout for this transaction was 10000 ms, however 11251 ms passed since the start of the transaction. Consider increasing the interactive transaction timeout or doing less work in the transaction.
+
+stdout | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most 10 verdicts; the exemption never lifts the network cap
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Transaction API error: A query cannot be executed on an expired transaction. The timeout for this transaction was 10000 ms, however 11300 ms passed since the start of the transaction. Consider increasing the interactive transaction timeout or doing less work in the transaction.
+
+stderr | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most 10 verdicts; the exemption never lifts the network cap
+[auth] sign-in refused: failure lockout {
+  counter: 'pair',
+  tenantId: 'cmv2524rh0000sctgt4dkum5z',
+  subject: 'member',
+  subjectId: 'cmv25252o0006sctg32qthbs3'
+}
+
+stdout | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most 10 verdicts; the exemption never lifts the network cap
+A5-KNOWN-NET-BURST {"role":"owner","poolMax":20,"tally":{"refused":40},"verdicts":{"wrong":33,"right":0,"failClosed":7,"failClosedErrors":["2x Transaction API error: Unable to start a transaction in the given time.","1x Transaction API error: A commit cannot be executed on an expired transaction. The timeout for this transaction was 10000","4x  Invalid `prisma.$queryRaw()` invocation: Transaction API error: A query cannot be executed on an expired transaction. T"]},"pairCounter":33,"addressCounterAfter":43,"own":"code:rate_limited","ownAfterNetCleared":"admitted"}
+
+ ❯ tests/integration/sec-a4-lockout-burst-db.test.ts (5 tests | 1 failed) 88588ms
+     × SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most 10 verdicts; the exemption never lifts the network cap 27196ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most 10 verdicts; the exemption never lifts the network cap
+AssertionError: verdicts from one network while the address cap is lifted for it: expected 33 to be less than or equal to 10
+ ❯ tests/integration/sec-a4-lockout-burst-db.test.ts:263:89
+    261|     report("A5-KNOWN-NET-BURST", { role: ROLE, poolMax: prismaPoolConf…
+    262|     expect(v.right).toBe(0);
+    263|     expect(v.wrong, "verdicts from one network while the address cap i…
+       |                                                                                         ^
+    264|     expect(pair, "network counter after the burst").toBeLessThanOrEqua…
+    265|     expect(pair, "every wrong verdict holds exactly one network slot")…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 passed (5)
+   Start at  09:34:50
+   Duration  89.12s (transform 266ms, setup 39ms, import 212ms, tests 88.59s, environment 0ms)
+
+EXIT 1

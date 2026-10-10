@@ -8,7 +8,11 @@
 //
 // Cells: (1) R6's burst verbatim; (2) a burst of wrong guesses leaves the counter at exactly ADDR_MAX and the right
 // password from an unknown network is then refused; (3) a successful sign-in gives its reserved slot back (refund);
-// (4) the known-device exemption still admits the person at the cap, and their own wrong password still counts.
+// (4) the known-device exemption still admits the person at the cap, and their own wrong password still counts;
+// (5) SF-121, adopted from review R7's cell R7-4b (lane A5, 10 Oct 2026): with the address ALREADY at its cap, every
+// request from the known device's network and browser family is exempt at the read — a burst of 40 from there still
+// gets at most PAIR_MAX verdicts, because the exemption lifts only the address cap, never the network cap. R7 found
+// the mutant "an exempt request skips the network cap" survives cells (1)-(4): the unlocked fast read masks it.
 // TEST branch only through the guarded runners (owner and matflow_app/RLS), synthetic secA4- club, count-checked
 // teardown. The per-IP attempt brake is replaced by "allowed" (every request comes from a different network).
 //
@@ -72,7 +76,7 @@ vi.mock("@/lib/rate-limit", async (importOriginal) => ({
 
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { prisma, prismaPoolConfig } from "@/lib/prisma";
-import { lockoutKeys, ADDR_MAX } from "@/lib/auth-lockout";
+import { lockoutKeys, ADDR_MAX, PAIR_MAX } from "@/lib/auth-lockout";
 import { deviceHash } from "@/lib/login-fingerprint";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -86,6 +90,7 @@ const KNOWN_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1
 // One documentation /16 per role and run, so the owner and restricted runs never share a pair counter.
 const NET = Math.floor(Math.random() * 200) + 20;
 const net = (i: number) => `198.${NET}.${i}.10`; // a distinct /24 per i
+const knownNetHost = (i: number) => `192.0.2.${(i % 200) + 20}`; // the same /24 as KNOWN_IP, so the same device hash
 
 type Outcome = "admitted" | "refused" | `code:${string}`;
 // One JSON line per cell: printed, and appended to $A4_EVIDENCE_OUT when set (Vitest hides console output of passing
@@ -129,9 +134,9 @@ describe.skipIf(!HAS_DB)("R6-N1: the address-wide failure cap holds under a conc
     await withRlsBypass(async (tx) => {
       const c = await tx.tenant.create({ data: { name: `${STAMP} club`, slug: `${STAMP}-club`, onboardingCompleted: true } });
       Object.assign(t, { id: c.id, slug: c.slug });
-      for (const w of ["burst", "overflow", "refund", "known"]) {
+      for (const w of ["burst", "overflow", "refund", "known", "known-net-burst"]) {
         const m = await tx.member.create({ data: { tenantId: c.id, email: E(w), name: `secA4 ${w}`, passwordHash: hash } });
-        if (w === "known") {
+        if (w.startsWith("known")) {
           await tx.loginEvent.create({
             data: { tenantId: c.id, memberId: m.id, deviceHash: deviceHash(KNOWN_IP, KNOWN_UA), ipApprox: "192.0.2.0", uaSummary: "Safari 17 on macOS" },
           });
@@ -231,4 +236,39 @@ describe.skipIf(!HAS_DB)("R6-N1: the address-wide failure cap holds under a conc
     expect(ownWrong, "a wrong password from the known device is judged").toBe("refused");
     expect(afterOwnWrong, "and counted").toBe(ADDR_MAX + 1);
   }, 120_000);
+
+  // SF-121 / R7-4b. 40 WRONG guesses (R7's cell put the right password last; here it is tried after the burst instead,
+  // because a judged success legitimately clears this network's counter mid-burst and would make the count depend on
+  // scheduling). Mutant MR3 ("an exempt request skips the network cap") turns this red: all 40 judged, then admitted.
+  it(`SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most ${PAIR_MAX} verdicts; the exemption never lifts the network cap`, async () => {
+    const email = E("known-net-burst");
+    const k = lockoutKeys(t.slug, email, KNOWN_IP);
+    await prisma.rateLimitHit.createMany({ data: Array.from({ length: ADDR_MAX }, () => ({ bucket: k.addr })) });
+    used.push({ email, ip: KNOWN_IP });
+    resetVerdicts();
+    const out = await Promise.all(
+      Array.from({ length: 40 }, (_, i) => attempt(email, `wrong-knownnet-${i}-a4`, knownNetHost(i), KNOWN_UA)),
+    );
+    const failClosed = verdicts.errors.length;
+    const v = { wrong: verdicts.wrong, right: verdicts.right, failClosed, failClosedErrors: [...new Set(verdicts.errors)].map((m) => `${verdicts.errors.filter((x) => x === m).length}x ${m}`) };
+    const pair = await prisma.rateLimitHit.count({ where: { bucket: k.pair } });
+    const counter = await addrCount(email);
+    // The person on their own device and network, right password, network now capped: refused like anyone else.
+    const own = await attempt(email, PASSWORD, KNOWN_IP, KNOWN_UA);
+    // Positive control: clear ONLY the network counter (the address stays over its cap) → the known device is admitted.
+    await prisma.rateLimitHit.deleteMany({ where: { bucket: k.pair } });
+    const ownAfterNetCleared = await attempt(email, PASSWORD, KNOWN_IP, KNOWN_UA);
+    report("A5-KNOWN-NET-BURST", { role: ROLE, poolMax: prismaPoolConfig().max, tally: tally(out), verdicts: v, pairCounter: pair, addressCounterAfter: counter, own, ownAfterNetCleared });
+    expect(v.right).toBe(0);
+    expect(v.wrong, "verdicts from one network while the address cap is lifted for it").toBeLessThanOrEqual(PAIR_MAX);
+    expect(pair, "network counter after the burst").toBeLessThanOrEqual(PAIR_MAX);
+    expect(pair, "every wrong verdict holds exactly one network slot").toBe(v.wrong);
+    expect(counter, "each exempt wrong verdict still counts against the address").toBe(ADDR_MAX + v.wrong);
+    // The exemption is real (not every request refused): with no fail-closed refusal the network is judged to its cap.
+    expect(v.wrong).toBeGreaterThan(0);
+    if (failClosed === 0) expect(v.wrong).toBe(PAIR_MAX);
+    expect(out.every((o) => o === "refused" || o === "code:rate_limited"), "only the generic answers").toBe(true);
+    expect(own, "known device on a capped network").toBe("code:rate_limited");
+    expect(ownAfterNetCleared, "known device once only the network counter is cleared").toBe("admitted");
+  }, 600_000);
 });

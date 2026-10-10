@@ -1,0 +1,37 @@
+import io, sys
+R = r"C:\Users\NoeTo\Desktop\matflow"
+m = sys.argv[1]
+
+def edit(rel, fn):
+    p = R + "\\" + rel
+    s = io.open(p, encoding="utf8", newline="").read()
+    t = fn(s)
+    assert t != s, "mutant did not apply: " + m
+    io.open(p, "w", encoding="utf8", newline="").write(t)
+
+if m == "M1-reserve-after-bcrypt":
+    def f(s):
+        a = s.index("          // Always run bcrypt to prevent email enumeration via timing differences.")
+        b_marker = "const valid = e2eTokenValid || (await bcrypt.compare(password, targetHash));\n"
+        b = s.index(b_marker) + len(b_marker)
+        block = s[a:b]
+        s = s[:a] + s[b:]
+        k = s.index("          const keys = lockoutKeys(tenantSlug, email, ip);")
+        return s[:k] + block + s[k:]
+    edit("auth.ts", f)
+elif m == "M2-no-refund":
+    edit("lib/auth-lockout.ts", lambda s: s.replace(
+        "where: reservation ? { OR: [{ bucket: keys.pair }, { id: reservation.addrId }] } : { bucket: keys.pair },",
+        "where: { bucket: keys.pair },"))
+elif m == "M3-refund-on-failure":
+    edit("lib/auth-lockout.ts", lambda s: s.replace(
+        "  return reservation.addrCountAfter;\n}",
+        "  await prisma.rateLimitHit.deleteMany({ where: { OR: [{ id: reservation.pairId }, { id: reservation.addrId }] } });\n  return reservation.addrCountAfter;\n}"))
+elif m == "M4-exempt-skips-network-cap":
+    # Review R7's MR3, byte-for-byte the same replacement.
+    edit("lib/auth-lockout.ts", lambda s: s.replace(
+        "(pw.n < ${PAIR_MAX}::int AND (aw.n < ${ADDR_MAX}::int OR ${addrExempt}::boolean)) AS ok",
+        "((pw.n < ${PAIR_MAX}::int OR ${addrExempt}::boolean) AND (aw.n < ${ADDR_MAX}::int OR ${addrExempt}::boolean)) AS ok"))
+else:
+    raise SystemExit("unknown mutant")
+print("applied", m)
