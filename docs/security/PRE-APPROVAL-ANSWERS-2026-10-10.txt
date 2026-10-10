@@ -556,3 +556,65 @@ state; and, before it could be called a candidate at all: the rollback route add
 pins resolved (prune or include), the full unit suite green, a both-role DB sweep, an independent review of
 the assembled tree, and a production-mode browser pass of login, revocation, deletion and TOTP paths.
 
+======================================================================
+ADDENDUM 3 — 10 Oct 2026 22:30 Italy: Noe's decisions applied; B+ ruling; first owner verification step
+======================================================================
+
+A3.1 WHAT IS NOW RUNNING UNDER YOUR DECISIONS (no merge, push, deploy, migration or production action)
+  Lane M1 v2: log-family-only logging; RETENTION_CRON_ENABLED default OFF; demo-account rotation tool with
+    dry-run and TEST-only guard (no production mode exists in it); exact ids, unrelated rows asserted
+    unchanged, session revocation verified through the real version check. CRON_SECRET is not set anywhere.
+  Lane B3 v2: pooled-connection measurement on TEST with the test's own connections, ≤ 8 clients, 10 s
+    statement timeouts, settings reset and verified before close, no backend termination; CREATE and
+    search_path by read-only metadata.
+  Lane B4 (read-only): the application changes still required before the SF-62 boundary can be applied,
+    with counts verified by its own grep — deliverable docs/security/SF-62-APPLICATION-INTEGRATION.md.
+  All three launches went through the ordinary Agent call and were accepted by the classifier; DENIALS.md
+  records your decisions against D-4 and D-5 and the parts that remain denied.
+
+A3.2 B+ — NOT READY; repair is PERMITTED; pursuing it is NOT RECOMMENDED
+  Repairing B+ (adding the members-import rollback route from 3be9490 and resolving the 21 out-of-scope test
+  pins by pruning or including their routes) is ordinary local assembly work and is permitted. It is not a
+  broad audit. Whether it is worth doing: NO, unless you have a reason to deploy a smaller change set than
+  the reviewed candidate. The reviewed candidate (03ef584) already contains everything B+ contains plus the
+  lockout, outage-mode, CSP, upload and Google fixes, has green gates and a both-role sweep, and has seven
+  independent review passes; B+ would need its own integrated run, sweep and review to reach the same
+  standing, and would still leave the lockout oracle, the lockout burst, the CSP gap and the upload limits
+  exposed. Ruling: B+ stays an assembled, NOT READY artefact. If you want it anyway, say so and the two
+  repairs plus a review lane follow; otherwise no further work goes into it.
+
+A3.3 GOOGLE SIGN-IN
+  Disabled in production (flag absent per lane E's 9 Oct listing; not re-observed). The candidate refuses
+  every Google sign-in until an explicit link store exists (SF-36). Google linking is a separate proposal and
+  is NOT a prerequisite for anything else in the candidate; it will not be presented as one.
+
+A3.4 FIRST OWNER VERIFICATION STEP — run this, then paste the output (it contains no secret)
+  Command (repo root, your machine, any shell):
+    node scripts/readiness/ops-credential-fingerprint.mjs --from-env-file .env --var DATABASE_URL --var RESEND_API_KEY
+  What it does: reads .env locally, compares DATABASE_URL (whole value AND its decoded password alone) and
+  RESEND_API_KEY (whole value) against the 7 May leaked fingerprints. Connects nowhere, writes nothing, prints
+  no value and no fingerprint of your values.
+  Interpretation of the redacted result:
+    exit 0, both lines "no match with any 7 May leaked value"
+        → your laptop does not hold the leaked values. This does NOT show the providers have revoked them
+          (see 2): the next step is still the provider-side check (Neon password reset date; Resend key list)
+          before any production action; and the production role read (A3.5).
+    exit 3, "DATABASE_URL: MATCH leaked C1 — treat as compromised"
+        → the leaked Neon password is still in your .env; assume it is still live in production. Do NOT
+          deploy anything first. Rotate the Neon role password, update Vercel Production DATABASE_URL, redeploy
+          the CURRENT build (never Instant Rollback), then re-run this command. CONTAINMENT-CHECKLIST §4 step 2.
+    exit 3, "RESEND_API_KEY: MATCH leaked C2 — treat as compromised"
+        → the leaked Resend key is still in your .env; create a new sending-only key, set it in Vercel
+          Production only, delete the old key at Resend, redeploy; CONTAINMENT-CHECKLIST §4 step 3.
+    exit 2 with "cannot read the --from-env-file (ENOENT …)" or "unexpected --var value …"
+        → usage error (wrong directory, or a value typed where a NAME belongs); nothing was compared; re-run
+          from the repo root with the exact command above.
+  Paste the two result lines and the exit code here; I interpret them before asking for anything else.
+
+A3.5 THE NEXT STEP AFTER THAT (do not run until A3.4 is interpreted)
+    node scripts/readiness/db-role-inspect.mjs .env ep-bold-wave-abt39t7x
+  One TLS-verified READ ONLY transaction against production; prints the role's flags, memberships, schema
+  privileges (answers the CREATE/search_path question for production), policy expressions and SECURITY
+  DEFINER functions as JSON, no credential. It decides whether the SF-62 and SF-57 proposals protect
+  anything as production stands. I will not ask for it until A3.4 is read.
+
