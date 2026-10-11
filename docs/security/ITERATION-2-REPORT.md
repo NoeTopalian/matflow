@@ -105,6 +105,8 @@ Required release conditions (what must be true to merge and deploy this candidat
 Campaign acceptance (the brief's four conditions) is NOT met and is separate: runtime isolation, revocation evidence, audit protection, tested recovery — all open per the table. A release can be defensible without campaign acceptance only as an explicit owner decision that ships the reviewed fixes while those four remain open.
 Residual risk needing an explicit owner decision: SF-62 not applied (RLS no backstop in production as presumed); SF-57 not applied; SF-90 member codes replayable ~90 s; SF-87 latent pooler leak (owner-role check not run, D-5/D-6); SF-115 DSAR cascade digests; SF-118/119 availability under burst; SF-131..134 BLOCKED (D-8); SF-135/SF-136 fixed but unreviewed (D-9); B+ NOT READY (2/16 deletion-provenance cells red without the rollback route, 21 out-of-scope unit failures, no integrated review) and no further variant without a concrete reason.
 
+**Timestamp note (added 11 Oct 2026 16:45 UK):** every time stamped "Italy" on 11 Oct in sections 9, 11 and 12 and in the ledger was computed as UK+1 from the session hook, which was still announcing the Italy trip. Noe confirmed at 16:40 UK that he is in the UK. Subtract one hour for the true local (UK) time; the order and intervals are unaffected. From this note on, stamps are UK.
+
 ## 11. Review gap, failed verification and the next approval (added 11 Oct 2026 14:00 Italy at Noe's instruction)
 **Frozen candidate.** `1ca92c0` is frozen as a candidate AWAITING INDEPENDENT REVIEW. SF-135 and SF-136 stay FIXED AWAITING REVIEW on the implementer's evidence alone; they are not promoted. No merge, push, deployment or migration.
 
