@@ -29,9 +29,13 @@
  *    per-tenant try/catch is exercised, and no `MonthlyReport` row is written,
  *    so this file mutates nothing in that route. The consequence asserted is
  *    the response body's `failures` array.
- *  - `@/lib/stripe/reconcile` — same reasoning, and it is imported by BOTH
- *    cron/stripe-reconcile and cron/retention (retention runs reconciliation
- *    as its first step because the Hobby plan only allows two cron entries).
+ *  - the `stripe` SDK — no Stripe call leaves the machine. Since payments lane
+ *    PD (11 Oct 2026) the RECONCILIATION itself is real here: both
+ *    cron/stripe-reconcile and cron/retention run lib/stripe/reconcile.ts
+ *    against the test branch (StripeEvent, Member, Payment reads and one
+ *    StripeReconcileRun row per run), and only the SDK below it is a fake that
+ *    serves empty event lists. Before, the whole module was mocked and the
+ *    logic was untested (audit 11 Oct 2026, §14).
  *  - `next/server` — `NextResponse.json` is reduced to a plain object, the
  *    pattern tests/integration/push-subscribe.test.ts already established, so
  *    the assertions read the status and body without a fetch layer.
@@ -71,11 +75,22 @@ vi.mock("@/lib/ai-causal-report", () => ({
   }),
 }));
 
-vi.mock("@/lib/stripe/reconcile", () => ({
-  runStripeReconciliation: vi.fn(async () => ({ stubbed: true as const })),
-}));
+// The Stripe SDK at the process boundary: every connected account answers with
+// no events, and any retrieve says the object is gone (so drift on the test
+// branch is reported, never written — the reconcile job writes no member or
+// payment state).
+vi.mock("stripe", () => {
+  const missing = () => Promise.reject(Object.assign(new Error("No such object (cron-smoke fake)"), { code: "resource_missing", statusCode: 404 }));
+  class FakeStripe {
+    events = { list: () => (async function* () {})() };
+    subscriptions = { retrieve: missing };
+    charges = { retrieve: missing };
+    paymentIntents = { retrieve: missing };
+  }
+  return { default: FakeStripe };
+});
 
-vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
+vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
 
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { GET as classInstancesCron } from "@/app/api/cron/class-instances/route";
@@ -86,6 +101,7 @@ import { GET as stripeReconcileCron } from "@/app/api/cron/stripe-reconcile/rout
 const HAS_DB = !!process.env.DATABASE_URL;
 const SECRET = "cron-smoke-not-a-real-secret";
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SMOKE_STARTED = new Date();
 
 type CronHandler = (req: Request) => Promise<{ status: number; json: () => Promise<unknown> }>;
 
@@ -108,12 +124,14 @@ describe.skipIf(!HAS_DB)("Vercel cron entrypoints", () => {
   const saved: Record<string, string | undefined> = {};
 
   beforeAll(() => {
-    for (const name of ["CRON_SECRET", "ANTHROPIC_API_KEY", "STRIPE_SECRET_KEY", "RETENTION_CRON_ENABLED"]) {
+    for (const name of ["CRON_SECRET", "ANTHROPIC_API_KEY", "STRIPE_SECRET_KEY", "RETENTION_CRON_ENABLED", "STRIPE_RECONCILE_ENABLED"]) {
       saved[name] = process.env[name];
     }
     process.env.CRON_SECRET = SECRET;
     // Lane M1 (10 Oct 2026): the retention sweep is gated, default OFF; this smoke drives the live sweep.
     process.env.RETENTION_CRON_ENABLED = "true";
+    // Lane PD (11 Oct 2026): the reconcile schedule has its own gate, default OFF; this smoke drives it.
+    process.env.STRIPE_RECONCILE_ENABLED = "true";
     // Both are presence-checked by their routes and never used here: the
     // libraries that would consume them are mocked above. Placeholder values,
     // not credentials.
@@ -121,7 +139,9 @@ describe.skipIf(!HAS_DB)("Vercel cron entrypoints", () => {
     process.env.STRIPE_SECRET_KEY = "cron-smoke-placeholder-not-a-key";
   });
 
-  afterAll(() => {
+  afterAll(async () => {
+    // The reconcile runs this file caused (both cron routes) — summary rows only.
+    await withRlsBypass((tx) => tx.stripeReconcileRun.deleteMany({ where: { startedAt: { gte: SMOKE_STARTED } } }));
     for (const [name, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
@@ -287,15 +307,55 @@ describe.skipIf(!HAS_DB)("Vercel cron entrypoints", () => {
     120_000,
   );
 
-  it("stripe-reconcile answers on the ad-hoc path", async () => {
-    const res = await stripeReconcileCron(cronReq("/api/cron/stripe-reconcile", `Bearer ${SECRET}`));
-    const body = await res.json();
-    console.log("[cron-smoke] stripe-reconcile →", res.status, JSON.stringify(body));
-    expect(res.status).toBe(200);
-    // The reconciliation itself is mocked (it talks to Stripe), so this proves
-    // the auth gate, the STRIPE_SECRET_KEY guard and the response plumbing —
-    // NOT the reconciliation logic, which lib/stripe/reconcile.ts owns.
-    expect(body).toEqual({ stubbed: true });
+  it(
+    "stripe-reconcile runs the real reconciliation and records the run",
+    async () => {
+      const res = await stripeReconcileCron(cronReq("/api/cron/stripe-reconcile", `Bearer ${SECRET}`));
+      const body = (await res.json()) as {
+        ok: boolean;
+        runId: string | null;
+        tenantsChecked: number;
+        missingCount: number;
+        errors: unknown[];
+        stateMismatches: unknown[];
+      };
+      console.log("[cron-smoke] stripe-reconcile →", res.status, JSON.stringify({
+        ok: body.ok, runId: body.runId, tenantsChecked: body.tenantsChecked, missingCount: body.missingCount,
+        mismatches: body.stateMismatches?.length, errors: body.errors,
+      }));
+      expect(res.status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(body.errors).toEqual([]);
+      // The fake SDK serves no events: nothing can be missing.
+      expect(body.missingCount).toBe(0);
+      expect(typeof body.runId).toBe("string");
+      const run = await withRlsBypass((tx) => tx.stripeReconcileRun.findUnique({ where: { id: body.runId! } }));
+      expect(run).toMatchObject({ trigger: "cron", tenantsChecked: body.tenantsChecked, eventsMissing: 0 });
+      expect(["ok", "mismatches"]).toContain(run?.status);
+      expect(run?.finishedAt).toBeInstanceOf(Date);
+    },
+    240_000,
+  );
+
+  it("stripe-reconcile is OFF unless STRIPE_RECONCILE_ENABLED is exactly \"true\" (503, nothing run)", async () => {
+    const before = await withRlsBypass((tx) => tx.stripeReconcileRun.count());
+    for (const value of [undefined, "", "1", "TRUE", "yes"]) {
+      if (value === undefined) delete process.env.STRIPE_RECONCILE_ENABLED;
+      else process.env.STRIPE_RECONCILE_ENABLED = value;
+      const res = await stripeReconcileCron(cronReq("/api/cron/stripe-reconcile", `Bearer ${SECRET}`));
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: "stripe reconcile cron disabled" });
+    }
+    process.env.STRIPE_RECONCILE_ENABLED = "true";
+    expect(await withRlsBypass((tx) => tx.stripeReconcileRun.count())).toBe(before);
+    // The gate sits after the bearer: an unauthenticated caller learns nothing about it.
+    delete process.env.STRIPE_RECONCILE_ENABLED;
+    try {
+      const res = await stripeReconcileCron(cronReq("/api/cron/stripe-reconcile", "Bearer wrong"));
+      expect(res.status).toBe(401);
+    } finally {
+      process.env.STRIPE_RECONCILE_ENABLED = "true";
+    }
   });
 
   it("stripe-reconcile reports 503 rather than running when Stripe is unconfigured", async () => {

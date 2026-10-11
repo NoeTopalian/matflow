@@ -1,135 +1,373 @@
 /**
- * Stripe → MatFlow reconciliation backstop (Tier 1.2).
+ * Stripe → MatFlow reconciliation (payments lane PD, 11 Oct 2026; was Tier 1.2).
  *
- * The whole payment pipeline is webhook-driven. Even with atomic idempotency and
- * Stripe's own retries, an event can still go unprocessed (a multi-day outage, a
- * webhook misconfiguration, a destination that was paused). This is the universal
- * safety net: for every connected account it lists the events Stripe actually
- * emitted and flags any HANDLED-type event whose id never made it into our
- * StripeEvent ledger — i.e. a silently-dropped payment/subscription/dispute event
- * — and raises it to Sentry + the logs so an operator can resend it from the
- * Stripe dashboard. (Auto-reprocessing is a deliberate follow-up: it needs the
- * webhook handler extracted into a reusable processor.)
+ * The pipeline is webhook-driven and Stripe says so plainly: deliveries are
+ * retried for three days, order is not guaranteed, duplicates happen, and the
+ * Events API only reaches back 30 days. This job is the backstop. Per club that
+ * holds a connected-account id:
  *
- * Read-only against the DB — it detects drops and reports them; it deletes
- * nothing. StripeEvent lifecycle belongs to app/api/cron/retention.
+ *  (a) EVENTS — lists the account's events for the window (as the connected
+ *      account, `Stripe-Account`), and every HANDLED-type event the store has
+ *      never seen is written to the store as `received` with attempts 0 and
+ *      `reconcileFoundAt` set. It is NOT processed: replay is operator-
+ *      controlled (lib/stripe/replay.ts, /admin/stripe). The whole window is
+ *      compared rather than `delivery_success=false` alone: an event Stripe
+ *      counts as delivered (a 2xx from an older deploy, a P2002 misread as a
+ *      duplicate) can still be missing here, and only a full comparison sees it.
+ *  (b) STATE — for each member pointing at a subscription, the subscription is
+ *      retrieved and its status compared with the member's payment status
+ *      (through the same map the webhook uses); for each Stripe-backed Payment
+ *      in the window, the charge (or PaymentIntent) is retrieved and its status
+ *      and amount_refunded compared with the row. Differences are REPORTED
+ *      (ids, field names, statuses, pence) — this job never writes member or
+ *      payment state.
  *
- * Lives here rather than in the route because two cron entries would exceed the
- * Vercel Hobby limit of 2, so /api/cron/retention calls this as its first step.
- * The standalone /api/cron/stripe-reconcile route is kept for manual runs.
+ * A club whose Stripe access was withdrawn (`stripeConnected: false`) but which
+ * still holds an id is REPORTED (with its unprocessed store rows) and not
+ * called: the platform can no longer act as that account.
+ *
+ * Every run writes one `StripeReconcileRun` row (running → final status) that
+ * /admin/stripe shows. Callers: /api/cron/stripe-reconcile (its own schedule
+ * and gate, STRIPE_RECONCILE_ENABLED) and, unchanged, the retention cron.
  */
+import type { Prisma } from "@prisma/client";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import * as Sentry from "@sentry/nextjs";
 import { HANDLED_STRIPE_EVENT_TYPES } from "@/lib/stripe/handled-events";
+import { classifyStripeKey } from "@/lib/stripe/key-mode";
+import { subscriptionStatusToPaymentStatus } from "@/lib/stripe/subscription-status";
+import { recordReceived, sanitiseEventError } from "@/lib/stripe/event-store";
 
-// Keep in sync with HANDLED_EVENT_TYPES in app/api/stripe/webhook/route.ts — these
-// are the only events whose absence from StripeEvent indicates a real drop (we
-// intentionally never claim unhandled types).
-// Imported, not copied. These two lists used to be hand-kept under a
-// "keep in sync" comment and had already drifted — charge.dispute.closed was
-// in the webhook's and missing here, so a dropped dispute resolution was
-// invisible to the job that exists to spot dropped events.
 const HANDLED_EVENT_TYPES = HANDLED_STRIPE_EVENT_TYPES;
 
-// Look back a little over two webhook-retry windows so a transient outage that
-// exhausts Stripe's retries is still caught here. Comfortably longer than the
-// daily cadence, so a skipped night still gets covered by the next run.
-const LOOKBACK_MS = 72 * 60 * 60 * 1000;
+/** Default window: a little over two delivery-retry windows, so a skipped night is still covered. */
+export const RECONCILE_LOOKBACK_MS = 72 * 60 * 60 * 1000;
+/** Stripe's List Events reaches back 30 days; asking for more returns nothing extra. */
+export const RECONCILE_MAX_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+/** Upper bound on retrieves per club per kind, to stay inside the cron's maxDuration. */
+export const RECONCILE_MAX_OBJECTS_PER_TENANT = 200;
+
+type StripeEventLike = {
+  id: string;
+  type: string;
+  created: number;
+  livemode: boolean;
+  account?: string | null;
+  data: { object: { id?: unknown } & Record<string, unknown> };
+};
+type AcctOpt = { stripeAccount: string };
+
+/** The Stripe calls this job makes — all reads, all as the connected account. */
+export type ReconcileStripe = {
+  events: { list(params: { limit: number; created: { gte: number } }, opts: AcctOpt): AsyncIterable<StripeEventLike> };
+  subscriptions: { retrieve(id: string, params: Record<string, never>, opts: AcctOpt): Promise<{ id: string; status: string }> };
+  charges: {
+    retrieve(
+      id: string,
+      params: Record<string, never>,
+      opts: AcctOpt,
+    ): Promise<{ id: string; status: string; refunded: boolean; amount_refunded: number; disputed: boolean }>;
+  };
+  paymentIntents: { retrieve(id: string, params: Record<string, never>, opts: AcctOpt): Promise<{ id: string; status: string }> };
+};
+
+export type StateMismatch = {
+  tenantId: string;
+  kind: "subscription" | "payment";
+  /** The Stripe object compared (sub_…, ch_…, pi_…). */
+  objectId: string;
+  /** The MatFlow row compared (Member.id or Payment.id). */
+  recordId: string;
+  field: "paymentStatus" | "status" | "amountRefundedPence" | "exists";
+  stored: string | number | null;
+  stripe: string | number | null;
+};
 
 export type ReconcileResult = {
   ok: boolean;
   skipped?: string;
+  runId: string | null;
   tenantsChecked: number;
+  tenantsSkipped: number;
   eventsScanned: number;
   missingCount: number;
   missing: { tenantId: string; stripeAccountId: string; eventId: string; type: string }[];
+  stateMismatches: StateMismatch[];
+  skippedTenants: { tenantId: string; stripeAccountId: string; reason: "stripe_access_withdrawn"; unprocessedInStore: number }[];
+  truncated: { tenantId: string; kind: "subscriptions" | "payments"; limit: number }[];
   errors: { tenantId: string; error: string }[];
 };
 
-export async function runStripeReconciliation(): Promise<ReconcileResult> {
-  const empty: ReconcileResult = {
+export type ReconcileOptions = {
+  trigger?: "cron" | "manual";
+  lookbackMs?: number;
+  now?: Date;
+  /** Injected in tests; otherwise built from STRIPE_SECRET_KEY. */
+  stripe?: ReconcileStripe;
+  /** Limit the run to these clubs (tests, manual runs). */
+  tenantIds?: string[];
+};
+
+function isMissingResource(err: unknown): boolean {
+  const e = err as { code?: unknown; statusCode?: unknown; raw?: { code?: unknown } } | null;
+  return e?.code === "resource_missing" || e?.raw?.code === "resource_missing" || e?.statusCode === 404;
+}
+
+/** Local Payment statuses consistent with what Stripe says about the charge. */
+function acceptableForCharge(c: { status: string; refunded: boolean; disputed: boolean }): string[] {
+  if (c.disputed) return ["disputed", "succeeded", "refunded"];
+  if (c.refunded) return ["refunded"];
+  if (c.status === "succeeded") return ["succeeded"];
+  if (c.status === "pending") return ["pending"];
+  return ["failed"];
+}
+
+function acceptableForIntent(status: string): string[] {
+  switch (status) {
+    case "succeeded":
+      return ["succeeded", "refunded", "disputed"];
+    case "processing":
+      return ["pending"];
+    case "requires_payment_method":
+    case "requires_action":
+    case "requires_confirmation":
+      return ["pending", "failed"];
+    case "canceled":
+      return ["failed"];
+    default:
+      return ["pending", "failed", "succeeded"];
+  }
+}
+
+async function makeStripe(): Promise<ReconcileStripe> {
+  const Stripe = (await import("stripe")).default;
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2026-03-25.dahlia" });
+  return stripe as unknown as ReconcileStripe;
+}
+
+export async function runStripeReconciliation(opts: ReconcileOptions = {}): Promise<ReconcileResult> {
+  const now = opts.now ?? new Date();
+  const lookback = Math.min(Math.max(opts.lookbackMs ?? RECONCILE_LOOKBACK_MS, 60_000), RECONCILE_MAX_LOOKBACK_MS);
+  const windowStart = new Date(now.getTime() - lookback);
+  const trigger = opts.trigger ?? "cron";
+  const result: ReconcileResult = {
     ok: true,
+    runId: null,
     tenantsChecked: 0,
+    tenantsSkipped: 0,
     eventsScanned: 0,
     missingCount: 0,
     missing: [],
+    stateMismatches: [],
+    skippedTenants: [],
+    truncated: [],
     errors: [],
   };
-  if (!process.env.STRIPE_SECRET_KEY) {
-    return { ...empty, skipped: "Stripe not configured" };
-  }
 
-  const Stripe = (await import("stripe")).default;
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
-  const createdGte = Math.floor((Date.now() - LOOKBACK_MS) / 1000);
+  if (!opts.stripe && !process.env.STRIPE_SECRET_KEY) {
+    const run = await withRlsBypass((tx) =>
+      tx.stripeReconcileRun.create({
+        data: { trigger, windowStart, status: "skipped", finishedAt: new Date(), errors: [{ tenantId: null, error: "Stripe not configured" }] },
+        select: { id: true },
+      }),
+    );
+    return { ...result, runId: run.id, skipped: "Stripe not configured" };
+  }
+  const stripe = opts.stripe ?? (await makeStripe());
+  const keyMode = classifyStripeKey(process.env.STRIPE_SECRET_KEY).mode;
+  const expectLive = keyMode === "live" ? true : keyMode === "test" ? false : null;
+
+  const run = await withRlsBypass((tx) =>
+    tx.stripeReconcileRun.create({ data: { trigger, windowStart, status: "running" }, select: { id: true } }),
+  );
+  result.runId = run.id;
 
   // Cross-tenant enumeration — bypass is intentional (a cron has no session).
   const tenants = await withRlsBypass((tx) =>
     tx.tenant.findMany({
-      where: { stripeConnected: true, stripeAccountId: { not: null } },
-      select: { id: true, stripeAccountId: true, name: true },
+      where: {
+        stripeAccountId: { not: null },
+        ...(opts.tenantIds ? { id: { in: opts.tenantIds } } : {}),
+      },
+      select: { id: true, stripeAccountId: true, stripeConnected: true },
+      orderBy: { id: "asc" },
     }),
   );
-
-  let eventsScanned = 0;
-  const missing: ReconcileResult["missing"] = [];
-  const errors: ReconcileResult["errors"] = [];
+  const createdGte = Math.floor(windowStart.getTime() / 1000);
 
   for (const tenant of tenants) {
     const acct = tenant.stripeAccountId!;
-    try {
-      // Page through the connected account's recent events.
-      const handledIds: { id: string; type: string }[] = [];
-      for await (const ev of stripe.events.list(
-        { limit: 100, created: { gte: createdGte } },
-        { stripeAccount: acct },
-      )) {
-        eventsScanned++;
-        if (HANDLED_EVENT_TYPES.has(ev.type)) handledIds.push({ id: ev.id, type: ev.type });
-      }
-      if (handledIds.length === 0) continue;
-
-      // Which of those did we actually claim?
-      const claimed = await withRlsBypass((tx) =>
-        tx.stripeEvent.findMany({
-          where: { eventId: { in: handledIds.map((e) => e.id) } },
-          select: { eventId: true },
-        }),
+    if (!tenant.stripeConnected) {
+      const unprocessed = await withRlsBypass((tx) =>
+        tx.stripeEvent.count({ where: { OR: [{ tenantId: tenant.id }, { stripeAccountId: acct }], status: { in: ["received", "failed"] } } }),
       );
-      const claimedSet = new Set(claimed.map((c) => c.eventId));
-      for (const e of handledIds) {
-        if (!claimedSet.has(e.id)) {
-          missing.push({ tenantId: tenant.id, stripeAccountId: acct, eventId: e.id, type: e.type });
-        }
-      }
+      result.skippedTenants.push({ tenantId: tenant.id, stripeAccountId: acct, reason: "stripe_access_withdrawn", unprocessedInStore: unprocessed });
+      continue;
+    }
+    result.tenantsChecked++;
+    try {
+      await reconcileEvents(stripe, tenant.id, acct, createdGte, expectLive, result);
+      await reconcileSubscriptions(stripe, tenant.id, acct, result);
+      await reconcilePayments(stripe, tenant.id, acct, windowStart, result);
     } catch (e) {
-      errors.push({ tenantId: tenant.id, error: (e as Error)?.message ?? "unknown" });
+      result.errors.push({ tenantId: tenant.id, error: sanitiseEventError(e) });
     }
   }
+  result.tenantsSkipped = result.skippedTenants.length;
+  result.missingCount = result.missing.length;
 
-  if (missing.length > 0) {
-    console.error("[stripe-reconcile] unprocessed Stripe events detected", { count: missing.length, missing });
+  const status = result.errors.length > 0 ? "errors" : result.missingCount > 0 || result.stateMismatches.length > 0 ? "mismatches" : "ok";
+  await withRlsBypass((tx) =>
+    tx.stripeReconcileRun.update({
+      where: { id: run.id },
+      data: {
+        status,
+        finishedAt: new Date(),
+        tenantsChecked: result.tenantsChecked,
+        tenantsSkipped: result.tenantsSkipped,
+        eventsScanned: result.eventsScanned,
+        eventsMissing: result.missingCount,
+        stateMismatches: result.stateMismatches as unknown as Prisma.InputJsonValue,
+        skipped: { tenants: result.skippedTenants, truncated: result.truncated } as unknown as Prisma.InputJsonValue,
+        errors: result.errors as unknown as Prisma.InputJsonValue,
+      },
+    }),
+  );
+
+  if (result.missingCount > 0 || result.stateMismatches.length > 0) {
+    console.error("[stripe-reconcile] drift detected", {
+      runId: run.id,
+      missing: result.missingCount,
+      mismatches: result.stateMismatches.length,
+    });
     Sentry.captureMessage(
-      `Stripe reconcile: ${missing.length} handled event(s) Stripe emitted were never processed`,
-      { level: "error", tags: { area: "stripe-reconcile" }, extra: { missing } },
+      `Stripe reconcile: ${result.missingCount} missing event(s), ${result.stateMismatches.length} state mismatch(es)`,
+      { level: "error", tags: { area: "stripe-reconcile" }, extra: { runId: run.id } },
     );
   }
-  if (errors.length > 0) {
-    console.warn("[stripe-reconcile] per-tenant errors", { errors });
+  if (result.errors.length > 0) {
+    console.warn("[stripe-reconcile] per-tenant errors", { runId: run.id, errors: result.errors });
   }
+  // StripeEvent lifecycle (the 90-day prune) belongs to app/api/cron/retention.
+  return result;
+}
 
-  // Tier 4.17 originally pruned StripeEvent here at 30 days. That prune is gone:
-  // app/api/cron/retention owns StripeEvent's lifecycle on a 90-day window
-  // (STRIPE_EVENT_RETENTION_MS, "Stripe's event replay window is ~30 days; 90 is
-  // a generous idempotency margin"). Two prunes on one table means the shorter
-  // one silently wins and the published retention rule becomes dead code, so
-  // this job only DETECTS drops now — retention deletes.
-  return {
-    ok: true,
-    tenantsChecked: tenants.length,
-    eventsScanned,
-    missingCount: missing.length,
-    missing,
-    errors,
-  };
+async function reconcileEvents(
+  stripe: ReconcileStripe,
+  tenantId: string,
+  acct: string,
+  createdGte: number,
+  expectLive: boolean | null,
+  result: ReconcileResult,
+): Promise<void> {
+  const handled: StripeEventLike[] = [];
+  for await (const ev of stripe.events.list({ limit: 100, created: { gte: createdGte } }, { stripeAccount: acct })) {
+    result.eventsScanned++;
+    if (!HANDLED_EVENT_TYPES.has(ev.type)) continue;
+    // An event of the other mode is not ours to process under this key.
+    if (expectLive !== null && ev.livemode !== expectLive) continue;
+    handled.push(ev);
+  }
+  if (handled.length === 0) return;
+  const known = await withRlsBypass((tx) =>
+    tx.stripeEvent.findMany({ where: { eventId: { in: handled.map((e) => e.id) } }, select: { eventId: true } }),
+  );
+  const knownSet = new Set(known.map((k) => k.eventId));
+  for (const ev of handled) {
+    if (knownSet.has(ev.id)) continue;
+    await recordReceived({ ...ev, account: acct }, { reconcileFound: true, tenantId });
+    result.missing.push({ tenantId, stripeAccountId: acct, eventId: ev.id, type: ev.type });
+  }
+}
+
+async function reconcileSubscriptions(stripe: ReconcileStripe, tenantId: string, acct: string, result: ReconcileResult): Promise<void> {
+  const members = await withRlsBypass((tx) =>
+    tx.member.findMany({
+      where: { tenantId, stripeSubscriptionId: { not: null } },
+      select: { id: true, stripeSubscriptionId: true, paymentStatus: true },
+      orderBy: { id: "asc" },
+      take: RECONCILE_MAX_OBJECTS_PER_TENANT + 1,
+    }),
+  );
+  if (members.length > RECONCILE_MAX_OBJECTS_PER_TENANT) {
+    result.truncated.push({ tenantId, kind: "subscriptions", limit: RECONCILE_MAX_OBJECTS_PER_TENANT });
+    members.length = RECONCILE_MAX_OBJECTS_PER_TENANT;
+  }
+  for (const m of members) {
+    const subId = m.stripeSubscriptionId!;
+    let sub: { status: string };
+    try {
+      sub = await stripe.subscriptions.retrieve(subId, {}, { stripeAccount: acct });
+    } catch (e) {
+      if (isMissingResource(e)) {
+        result.stateMismatches.push({ tenantId, kind: "subscription", objectId: subId, recordId: m.id, field: "exists", stored: "linked", stripe: "missing" });
+        continue;
+      }
+      throw e;
+    }
+    const expected = subscriptionStatusToPaymentStatus(sub.status);
+    if (expected !== undefined && expected !== m.paymentStatus) {
+      result.stateMismatches.push({ tenantId, kind: "subscription", objectId: subId, recordId: m.id, field: "paymentStatus", stored: m.paymentStatus, stripe: sub.status });
+    }
+  }
+}
+
+async function reconcilePayments(
+  stripe: ReconcileStripe,
+  tenantId: string,
+  acct: string,
+  windowStart: Date,
+  result: ReconcileResult,
+): Promise<void> {
+  const payments = await withRlsBypass((tx) =>
+    tx.payment.findMany({
+      where: {
+        tenantId,
+        createdAt: { gte: windowStart },
+        OR: [{ stripeChargeId: { not: null } }, { stripePaymentIntentId: { not: null } }],
+      },
+      select: { id: true, status: true, stripeChargeId: true, stripePaymentIntentId: true, refundedAmountPence: true },
+      orderBy: { createdAt: "asc" },
+      take: RECONCILE_MAX_OBJECTS_PER_TENANT + 1,
+    }),
+  );
+  if (payments.length > RECONCILE_MAX_OBJECTS_PER_TENANT) {
+    result.truncated.push({ tenantId, kind: "payments", limit: RECONCILE_MAX_OBJECTS_PER_TENANT });
+    payments.length = RECONCILE_MAX_OBJECTS_PER_TENANT;
+  }
+  for (const p of payments) {
+    if (p.stripeChargeId) {
+      let ch: { status: string; refunded: boolean; amount_refunded: number; disputed: boolean };
+      try {
+        ch = await stripe.charges.retrieve(p.stripeChargeId, {}, { stripeAccount: acct });
+      } catch (e) {
+        if (isMissingResource(e)) {
+          result.stateMismatches.push({ tenantId, kind: "payment", objectId: p.stripeChargeId, recordId: p.id, field: "exists", stored: p.status, stripe: "missing" });
+          continue;
+        }
+        throw e;
+      }
+      if (!acceptableForCharge(ch).includes(p.status)) {
+        result.stateMismatches.push({ tenantId, kind: "payment", objectId: p.stripeChargeId, recordId: p.id, field: "status", stored: p.status, stripe: ch.refunded ? "refunded" : ch.disputed ? "disputed" : ch.status });
+      }
+      const localRefunded = p.refundedAmountPence ?? 0;
+      if (localRefunded !== ch.amount_refunded) {
+        result.stateMismatches.push({ tenantId, kind: "payment", objectId: p.stripeChargeId, recordId: p.id, field: "amountRefundedPence", stored: localRefunded, stripe: ch.amount_refunded });
+      }
+    } else if (p.stripePaymentIntentId) {
+      let pi: { status: string };
+      try {
+        pi = await stripe.paymentIntents.retrieve(p.stripePaymentIntentId, {}, { stripeAccount: acct });
+      } catch (e) {
+        if (isMissingResource(e)) {
+          result.stateMismatches.push({ tenantId, kind: "payment", objectId: p.stripePaymentIntentId, recordId: p.id, field: "exists", stored: p.status, stripe: "missing" });
+          continue;
+        }
+        throw e;
+      }
+      if (!acceptableForIntent(pi.status).includes(p.status)) {
+        result.stateMismatches.push({ tenantId, kind: "payment", objectId: p.stripePaymentIntentId, recordId: p.id, field: "status", stored: p.status, stripe: pi.status });
+      }
+    }
+  }
 }
