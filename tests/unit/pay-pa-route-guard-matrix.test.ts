@@ -229,6 +229,8 @@ const ROUTES: RouteSpec[] = [
     load: async () => (await import("@/app/api/stripe/create-subscription/route")).POST as unknown as Handler,
     body: { memberId: "mem_1", priceId: "price_1", requestId: "req_12345678" },
     memberOverrides: { stripeSubscriptionId: null },
+    // Round 2 (RP-2): the staff route now resolves the price's active tier.
+    tier: { id: "tier_1", isKids: false, name: "Adult", stripePriceId: "price_1" },
     role: "owner", moneyIn: true, billedElsewhereGuard: true, successStatus: 200,
     moneyCalls: ["subscriptions.create"],
   },

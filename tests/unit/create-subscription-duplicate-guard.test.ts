@@ -49,6 +49,8 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     tenant: { findUnique: mockTenantFindUnique },
     member: { findFirst: mockMemberFindFirst },
+    // Lane PA round 2 (RP-2): the route resolves the price's active tier.
+    membershipTier: { findFirst: async () => ({ id: "tier_adult", stripePriceId: "price_adult" }) },
   },
 }));
 

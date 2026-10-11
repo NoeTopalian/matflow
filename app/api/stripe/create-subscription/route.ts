@@ -30,6 +30,13 @@ const createSubscriptionSchema = z.object({
    * older client is refused explicitly below rather than silently unprotected.
    */
   requestId: z.string().min(8).max(100).optional(),
+  /**
+   * The tier the drawer picked (payments RP-2). Optional so an older client
+   * still works: the tier is then resolved from the price, as the member
+   * routes do. Never written to the member here — the tier is granted by the
+   * webhook on the first paid invoice.
+   */
+  membershipTierId: z.string().min(1).max(50).optional(),
 });
 
 export async function POST(req: Request) {
@@ -63,7 +70,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data" }, { status: 400 });
   }
-  const { memberId, priceId, paymentMethodType, requestId } = parsed.data;
+  const { memberId, priceId, paymentMethodType, requestId, membershipTierId } = parsed.data;
 
   // A subscribe request without a request id has NO protection against a
   // double-submit: the Stripe idempotency key is derived from it. Refuse
@@ -107,6 +114,31 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { error: "This member already has a subscription. Cancel it before starting another." },
       { status: 409 },
+    );
+  }
+
+  // Payments RP-2 (lane PA round 2): the price must belong to an active tier of
+  // THIS club. With membershipTierId the drawer named the tier, and it must be
+  // that tier's own price (one tier cannot be paired with another's price);
+  // without it the tier is resolved from the price exactly as
+  // member/subscriptions/start does. Nothing here writes Member.membershipTierId
+  // or membershipType. lib/stripe/subscriptions.ts records the price tier on
+  // the subscription mapping and the webhook grants it on the first payment.
+  const tier = await withTenantContext(session.user.tenantId, (tx) =>
+    membershipTierId
+      ? tx.membershipTier.findFirst({
+          where: { id: membershipTierId, tenantId: session.user.tenantId, isActive: true },
+          select: { id: true, stripePriceId: true },
+        })
+      : tx.membershipTier.findFirst({
+          where: { stripePriceId: priceId, tenantId: session.user.tenantId, isActive: true },
+          select: { id: true, stripePriceId: true },
+        }),
+  );
+  if (!tier || tier.stripePriceId !== priceId) {
+    return NextResponse.json(
+      { error: "Plan not found — pick one of this club's membership plans." },
+      { status: 400 },
     );
   }
 
