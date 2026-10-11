@@ -61,7 +61,7 @@ vi.mock("@/lib/stripe/event-store", () => {
           await (tx as { stripeEvent: { create: (a: unknown) => Promise<unknown> } }).stripeEvent.create({ data: { eventId: event.id, type: event.type } });
           return processor(event, { tx, mode: "delivery", tenantId: null });
         });
-        for (const e of out.emails ?? []) await sendEmail(e as never);
+        for (const e of out.emails ?? []) await (sendEmail as unknown as (x: unknown) => Promise<unknown>)(e);
         return { kind: out.outcome, status: out.outcome, tenantId: null, emailsSent: 0, auditsWritten: 0 };
       } catch (err) {
         if ((err as { code?: string }).code === "P2002") return { kind: "already_processed", status: "processed" };
