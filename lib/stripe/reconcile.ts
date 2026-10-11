@@ -14,9 +14,10 @@
  *      compared rather than `delivery_success=false` alone: an event Stripe
  *      counts as delivered (a 2xx from an older deploy, a P2002 misread as a
  *      duplicate) can still be missing here, and only a full comparison sees it.
- *  (b) STATE — for each member pointing at a subscription, the subscription is
- *      retrieved and its status compared with the member's payment status
- *      (through the same map the webhook uses); for each Stripe-backed Payment
+ *  (b) STATE — for each live MemberSubscription mapping, the subscription is
+ *      retrieved and its status and current_period_end compared with the
+ *      mapping, and (for the member's active mapping) the member's payment
+ *      status through the map the webhook uses; for each Stripe-backed Payment
  *      in the window, the charge (or PaymentIntent) is retrieved and its status
  *      and amount_refunded compared with the row. Differences are REPORTED
  *      (ids, field names, statuses, pence) — this job never writes member or
@@ -37,6 +38,7 @@ import { HANDLED_STRIPE_EVENT_TYPES } from "@/lib/stripe/handled-events";
 import { classifyStripeKey } from "@/lib/stripe/key-mode";
 import { subscriptionStatusToPaymentStatus } from "@/lib/stripe/subscription-status";
 import { recordReceived, sanitiseEventError } from "@/lib/stripe/event-store";
+import { subscriptionCurrentPeriodEnd } from "@/lib/stripe/webhook/mapping";
 
 const HANDLED_EVENT_TYPES = HANDLED_STRIPE_EVENT_TYPES;
 
@@ -60,7 +62,9 @@ type AcctOpt = { stripeAccount: string };
 /** The Stripe calls this job makes — all reads, all as the connected account. */
 export type ReconcileStripe = {
   events: { list(params: { limit: number; created: { gte: number } }, opts: AcctOpt): AsyncIterable<StripeEventLike> };
-  subscriptions: { retrieve(id: string, params: Record<string, never>, opts: AcctOpt): Promise<{ id: string; status: string }> };
+  subscriptions: {
+    retrieve(id: string, params: Record<string, never>, opts: AcctOpt): Promise<{ id: string; status: string } & Record<string, unknown>>;
+  };
   charges: {
     retrieve(
       id: string,
@@ -78,7 +82,7 @@ export type StateMismatch = {
   objectId: string;
   /** The MatFlow row compared (Member.id or Payment.id). */
   recordId: string;
-  field: "paymentStatus" | "status" | "amountRefundedPence" | "exists";
+  field: "paymentStatus" | "status" | "currentPeriodEnd" | "amountRefundedPence" | "exists" | "mapping";
   stored: string | number | null;
   stripe: string | number | null;
 };
@@ -280,34 +284,85 @@ async function reconcileEvents(
   }
 }
 
+/**
+ * Subscriptions are compared through lane PC's MemberSubscription mapping —
+ * the verified link between one Stripe subscription and one member. For every
+ * live mapping (not ended): its status and current_period_end against Stripe's;
+ * and, when it is the member's ACTIVE mapping (Member.stripeSubscriptionId
+ * points at it), the member's paymentStatus against the status map the webhook
+ * uses. A member pointer with no mapping row at all is reported without a
+ * Stripe call. Reports only: no mapping, member or payment row is written.
+ */
 async function reconcileSubscriptions(stripe: ReconcileStripe, tenantId: string, acct: string, result: ReconcileResult): Promise<void> {
-  const members = await withRlsBypass((tx) =>
-    tx.member.findMany({
-      where: { tenantId, stripeSubscriptionId: { not: null } },
-      select: { id: true, stripeSubscriptionId: true, paymentStatus: true },
+  const { mappings, unmapped } = await withRlsBypass(async (tx) => {
+    const mappings = await tx.memberSubscription.findMany({
+      where: { tenantId, endedAt: null },
+      select: {
+        id: true,
+        memberId: true,
+        stripeSubscriptionId: true,
+        status: true,
+        currentPeriodEnd: true,
+        member: { select: { paymentStatus: true, stripeSubscriptionId: true } },
+      },
       orderBy: { id: "asc" },
       take: RECONCILE_MAX_OBJECTS_PER_TENANT + 1,
-    }),
-  );
-  if (members.length > RECONCILE_MAX_OBJECTS_PER_TENANT) {
+    });
+    const pointers = await tx.member.findMany({
+      where: { tenantId, stripeSubscriptionId: { not: null } },
+      select: { id: true, stripeSubscriptionId: true },
+      orderBy: { id: "asc" },
+      take: RECONCILE_MAX_OBJECTS_PER_TENANT,
+    });
+    const known = pointers.length
+      ? await tx.memberSubscription.findMany({
+          where: { tenantId, stripeSubscriptionId: { in: pointers.map((p) => p.stripeSubscriptionId!) } },
+          select: { stripeSubscriptionId: true },
+        })
+      : [];
+    const knownSet = new Set(known.map((k) => k.stripeSubscriptionId));
+    return { mappings, unmapped: pointers.filter((p) => !knownSet.has(p.stripeSubscriptionId!)) };
+  });
+  if (mappings.length > RECONCILE_MAX_OBJECTS_PER_TENANT) {
     result.truncated.push({ tenantId, kind: "subscriptions", limit: RECONCILE_MAX_OBJECTS_PER_TENANT });
-    members.length = RECONCILE_MAX_OBJECTS_PER_TENANT;
+    mappings.length = RECONCILE_MAX_OBJECTS_PER_TENANT;
   }
-  for (const m of members) {
-    const subId = m.stripeSubscriptionId!;
-    let sub: { status: string };
+  for (const p of unmapped) {
+    result.stateMismatches.push({ tenantId, kind: "subscription", objectId: p.stripeSubscriptionId!, recordId: p.id, field: "mapping", stored: "missing", stripe: null });
+  }
+  for (const m of mappings) {
+    const subId = m.stripeSubscriptionId;
+    let sub: { status: string } & Record<string, unknown>;
     try {
       sub = await stripe.subscriptions.retrieve(subId, {}, { stripeAccount: acct });
     } catch (e) {
       if (isMissingResource(e)) {
-        result.stateMismatches.push({ tenantId, kind: "subscription", objectId: subId, recordId: m.id, field: "exists", stored: "linked", stripe: "missing" });
+        result.stateMismatches.push({ tenantId, kind: "subscription", objectId: subId, recordId: m.memberId, field: "exists", stored: m.status, stripe: "missing" });
         continue;
       }
       throw e;
     }
+    if (sub.status !== m.status) {
+      result.stateMismatches.push({ tenantId, kind: "subscription", objectId: subId, recordId: m.memberId, field: "status", stored: m.status, stripe: sub.status });
+    }
+    const stripeEnd = subscriptionCurrentPeriodEnd(sub);
+    const storedEnd = m.currentPeriodEnd;
+    const toSec = (d: Date | null) => (d ? Math.floor(d.getTime() / 1000) : null);
+    if (stripeEnd && toSec(storedEnd) !== toSec(stripeEnd)) {
+      result.stateMismatches.push({
+        tenantId,
+        kind: "subscription",
+        objectId: subId,
+        recordId: m.memberId,
+        field: "currentPeriodEnd",
+        stored: storedEnd ? storedEnd.toISOString() : null,
+        stripe: stripeEnd.toISOString(),
+      });
+    }
+    const active = m.member.stripeSubscriptionId === subId;
     const expected = subscriptionStatusToPaymentStatus(sub.status);
-    if (expected !== undefined && expected !== m.paymentStatus) {
-      result.stateMismatches.push({ tenantId, kind: "subscription", objectId: subId, recordId: m.id, field: "paymentStatus", stored: m.paymentStatus, stripe: sub.status });
+    if (active && expected !== undefined && expected !== m.member.paymentStatus) {
+      result.stateMismatches.push({ tenantId, kind: "subscription", objectId: subId, recordId: m.memberId, field: "paymentStatus", stored: m.member.paymentStatus, stripe: sub.status });
     }
   }
 }

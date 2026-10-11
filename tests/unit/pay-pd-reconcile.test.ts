@@ -16,7 +16,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const db = vi.hoisted(() => ({
   tenants: [] as Array<{ id: string; stripeAccountId: string | null; stripeConnected: boolean }>,
   known: new Set<string>(),
-  members: [] as Array<{ id: string; tenantId: string; stripeSubscriptionId: string; paymentStatus: string }>,
+  members: [] as Array<{ id: string; tenantId: string; stripeSubscriptionId: string | null; paymentStatus: string }>,
+  mappings: [] as Array<{ id: string; tenantId: string; memberId: string; stripeSubscriptionId: string; status: string; currentPeriodEnd: Date | null; endedAt: Date | null }>,
   payments: [] as Array<{ id: string; tenantId: string; status: string; stripeChargeId: string | null; stripePaymentIntentId: string | null; refundedAmountPence: number | null }>,
   backlog: 0,
   runs: [] as Array<Record<string, unknown>>,
@@ -36,8 +37,22 @@ vi.mock("@/lib/prisma-tenant", () => ({
           where.eventId.in.filter((id) => db.known.has(id)).map((eventId) => ({ eventId })),
         count: async () => db.backlog,
       },
+      memberSubscription: {
+        findMany: async ({ where }: { where: { tenantId: string; endedAt?: null; stripeSubscriptionId?: { in: string[] } } }) => {
+          const rows = db.mappings.filter((m) => m.tenantId === where.tenantId);
+          if (where.stripeSubscriptionId) return rows.filter((m) => where.stripeSubscriptionId!.in.includes(m.stripeSubscriptionId));
+          return rows
+            .filter((m) => m.endedAt === null)
+            .map((m) => {
+              const member = db.members.find((x) => x.id === m.memberId)!;
+              return { ...m, member: { paymentStatus: member.paymentStatus, stripeSubscriptionId: member.stripeSubscriptionId } };
+            });
+        },
+        update: async () => { db.writes.push("memberSubscription.update"); },
+        updateMany: async () => { db.writes.push("memberSubscription.updateMany"); },
+      },
       member: {
-        findMany: async ({ where }: { where: { tenantId: string } }) => db.members.filter((m) => m.tenantId === where.tenantId),
+        findMany: async ({ where }: { where: { tenantId: string } }) => db.members.filter((m) => m.tenantId === where.tenantId && m.stripeSubscriptionId),
         update: async () => { db.writes.push("member.update"); },
         updateMany: async () => { db.writes.push("member.updateMany"); },
       },
@@ -73,7 +88,7 @@ const ev = (id: string, type: string, livemode = false) => ({ id, type, created:
 
 function fakeStripe(over: Partial<{
   events: Record<string, ReturnType<typeof ev>[]>;
-  subs: Record<string, string | Error>;
+  subs: Record<string, string | Error | { status: string; periodEnd: number }>;
   charges: Record<string, { status: string; refunded: boolean; amount_refunded: number; disputed: boolean } | Error>;
   intents: Record<string, string>;
 }> = {}) {
@@ -94,7 +109,8 @@ function fakeStripe(over: Partial<{
         const v = over.subs?.[id];
         if (v === undefined) throw missing();
         if (v instanceof Error) throw v;
-        return { id, status: v };
+        if (typeof v === "string") return { id, status: v };
+        return { id, status: v.status, items: { data: [{ current_period_end: v.periodEnd }] } };
       },
     },
     charges: {
@@ -122,6 +138,7 @@ beforeEach(() => {
   db.tenants = [];
   db.known = new Set();
   db.members = [];
+  db.mappings = [];
   db.payments = [];
   db.backlog = 0;
   db.runs = [];
@@ -171,21 +188,50 @@ describe("pay-pd: Stripe reconciliation", () => {
     expect(db.runs[1]).toMatchObject({ status: "ok" });
   });
 
-  it("reports subscription status that disagrees with the member, and a subscription Stripe no longer has", async () => {
+  it("compares each live mapping with Stripe: status, current_period_end, and the member's paymentStatus only on the ACTIVE mapping", async () => {
     db.tenants = [{ id: "t1", stripeAccountId: "acct_1", stripeConnected: true }];
+    const END = new Date("2026-11-01T00:00:00Z");
+    const end = Math.floor(END.getTime() / 1000);
     db.members = [
       { id: "m_ok", tenantId: "t1", stripeSubscriptionId: "sub_ok", paymentStatus: "paid" },
       { id: "m_drift", tenantId: "t1", stripeSubscriptionId: "sub_drift", paymentStatus: "paid" },
+      { id: "m_two", tenantId: "t1", stripeSubscriptionId: "sub_two_active", paymentStatus: "paid" },
       { id: "m_gone", tenantId: "t1", stripeSubscriptionId: "sub_gone", paymentStatus: "paid" },
-      { id: "m_unmapped", tenantId: "t1", stripeSubscriptionId: "sub_incomplete", paymentStatus: "pending" },
+      { id: "m_nomap", tenantId: "t1", stripeSubscriptionId: "sub_nomap", paymentStatus: "paid" },
     ];
-    const { stripe, calls } = fakeStripe({ events: { acct_1: [] }, subs: { sub_ok: "active", sub_drift: "past_due", sub_incomplete: "incomplete" } });
+    const map = (id: string, memberId: string, sub: string, status: string, periodEnd: Date | null, endedAt: Date | null = null) =>
+      ({ id, tenantId: "t1", memberId, stripeSubscriptionId: sub, status, currentPeriodEnd: periodEnd, endedAt });
+    db.mappings = [
+      map("ms_ok", "m_ok", "sub_ok", "active", END),
+      map("ms_drift", "m_drift", "sub_drift", "active", END),
+      // Two mappings for one member: only the one the member points at moves paymentStatus.
+      map("ms_two_active", "m_two", "sub_two_active", "active", END),
+      map("ms_two_other", "m_two", "sub_two_other", "past_due", END),
+      map("ms_gone", "m_gone", "sub_gone", "active", END),
+      // Ended mappings are history: never compared, never fetched.
+      map("ms_ended", "m_ok", "sub_ended", "canceled", null, new Date("2026-09-01T00:00:00Z")),
+    ];
+    const { stripe, calls } = fakeStripe({
+      events: { acct_1: [] },
+      subs: {
+        sub_ok: { status: "active", periodEnd: end },
+        sub_drift: { status: "past_due", periodEnd: end + 86400 },
+        sub_two_active: { status: "active", periodEnd: end },
+        sub_two_other: { status: "past_due", periodEnd: end },
+      },
+    });
     const r = await runStripeReconciliation({ stripe, now: NOW });
     expect(r.stateMismatches).toEqual([
+      { tenantId: "t1", kind: "subscription", objectId: "sub_nomap", recordId: "m_nomap", field: "mapping", stored: "missing", stripe: null },
+      { tenantId: "t1", kind: "subscription", objectId: "sub_drift", recordId: "m_drift", field: "status", stored: "active", stripe: "past_due" },
+      { tenantId: "t1", kind: "subscription", objectId: "sub_drift", recordId: "m_drift", field: "currentPeriodEnd", stored: END.toISOString(), stripe: new Date((end + 86400) * 1000).toISOString() },
       { tenantId: "t1", kind: "subscription", objectId: "sub_drift", recordId: "m_drift", field: "paymentStatus", stored: "paid", stripe: "past_due" },
-      { tenantId: "t1", kind: "subscription", objectId: "sub_gone", recordId: "m_gone", field: "exists", stored: "linked", stripe: "missing" },
+      { tenantId: "t1", kind: "subscription", objectId: "sub_gone", recordId: "m_gone", field: "exists", stored: "active", stripe: "missing" },
     ]);
-    expect(calls.filter((c) => c.kind === "subscriptions.retrieve").every((c) => c.acct === "acct_1")).toBe(true);
+    const subCalls = calls.filter((c) => c.kind === "subscriptions.retrieve");
+    expect(subCalls.every((c) => c.acct === "acct_1")).toBe(true);
+    expect(subCalls.map((c) => c.id)).not.toContain("sub_ended");
+    expect(subCalls.map((c) => c.id)).not.toContain("sub_nomap");
     expect(db.writes).toEqual([]);
     expect(db.runs[0]).toMatchObject({ status: "mismatches" });
   });

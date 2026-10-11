@@ -29,6 +29,8 @@ const MEMBER = `${STAMP}-m`;
 const SUB = `sub_${S}`;
 const CHARGE = `ch_${S}`;
 const NOW = Math.floor(Date.now() / 1000);
+const STORED_END = new Date("2026-11-01T00:00:00.000Z");
+const STRIPE_END = Math.floor(new Date("2026-11-08T00:00:00.000Z").getTime() / 1000);
 const E_KEPT = `evt_${S}_kept`;
 const E_DELETED = `evt_${S}_deleted`;
 
@@ -43,6 +45,9 @@ describe.skipIf(!HAS_DB)("pay-pd: reconciliation against the real store", () => 
       await tx.tenant.create({ data: { id: TENANT, name: `${STAMP} club`, slug: TENANT, stripeAccountId: ACCT, stripeConnected: true } });
       await tx.tenant.create({ data: { id: GONE, name: `${STAMP} gone`, slug: GONE, stripeAccountId: ACCT_GONE, stripeConnected: false } });
       await tx.member.create({ data: { id: MEMBER, tenantId: TENANT, email: `${STAMP}@example.test`, name: "PD reconcile", stripeSubscriptionId: SUB, paymentStatus: "paid" } });
+      await tx.memberSubscription.create({
+        data: { tenantId: TENANT, memberId: MEMBER, stripeAccountId: ACCT, stripeSubscriptionId: SUB, source: "app", status: "active", currentPeriodEnd: STORED_END },
+      });
       const p = await tx.payment.create({ data: { tenantId: TENANT, memberId: MEMBER, stripeChargeId: CHARGE, amountPence: 4500, currency: "GBP", status: "succeeded", paidAt: new Date() } });
       paymentId = p.id;
     });
@@ -61,6 +66,7 @@ describe.skipIf(!HAS_DB)("pay-pd: reconciliation against the real store", () => 
       await tx.stripeEvent.deleteMany({ where: { eventId: { startsWith: `evt_${S}` } } });
       await tx.stripeReconcileRun.deleteMany({ where: { id: { in: runIds } } });
       await tx.payment.deleteMany({ where: { tenantId: TENANT } });
+      await tx.memberSubscription.deleteMany({ where: { tenantId: TENANT } });
       await tx.member.deleteMany({ where: { tenantId: TENANT } });
       await tx.tenant.deleteMany({ where: { id: { in: [TENANT, GONE] } } });
     });
@@ -78,7 +84,7 @@ describe.skipIf(!HAS_DB)("pay-pd: reconciliation against the real store", () => 
         return (async function* () { yield* list; })();
       },
     },
-    subscriptions: { retrieve: async (id, _p, o) => { calls.push(`sub:${o.stripeAccount}`); return { id, status: "past_due" }; } },
+    subscriptions: { retrieve: async (id, _p, o) => { calls.push(`sub:${o.stripeAccount}`); return { id, status: "past_due", items: { data: [{ current_period_end: STRIPE_END }] } }; } },
     charges: { retrieve: async (id, _p, o) => { calls.push(`ch:${o.stripeAccount}`); return { id, status: "succeeded", refunded: true, amount_refunded: 4500, disputed: false }; } },
     paymentIntents: { retrieve: async (id) => ({ id, status: "succeeded" }) },
   };
@@ -98,12 +104,16 @@ describe.skipIf(!HAS_DB)("pay-pd: reconciliation against the real store", () => 
 
     // (b) state drift reported, never written.
     expect(r.stateMismatches).toEqual([
+      { tenantId: TENANT, kind: "subscription", objectId: SUB, recordId: MEMBER, field: "status", stored: "active", stripe: "past_due" },
+      { tenantId: TENANT, kind: "subscription", objectId: SUB, recordId: MEMBER, field: "currentPeriodEnd", stored: STORED_END.toISOString(), stripe: new Date(STRIPE_END * 1000).toISOString() },
       { tenantId: TENANT, kind: "subscription", objectId: SUB, recordId: MEMBER, field: "paymentStatus", stored: "paid", stripe: "past_due" },
       { tenantId: TENANT, kind: "payment", objectId: CHARGE, recordId: paymentId, field: "status", stored: "succeeded", stripe: "refunded" },
       { tenantId: TENANT, kind: "payment", objectId: CHARGE, recordId: paymentId, field: "amountRefundedPence", stored: 0, stripe: 4500 },
     ]);
     const m = await withRlsBypass((tx) => tx.member.findUnique({ where: { id: MEMBER }, select: { paymentStatus: true, stripeSubscriptionId: true } }));
     expect(m).toEqual({ paymentStatus: "paid", stripeSubscriptionId: SUB });
+    const mapping = await withRlsBypass((tx) => tx.memberSubscription.findUnique({ where: { stripeSubscriptionId: SUB }, select: { status: true, currentPeriodEnd: true, endedAt: true } }));
+    expect(mapping).toEqual({ status: "active", currentPeriodEnd: STORED_END, endedAt: null });
     const p = await withRlsBypass((tx) => tx.payment.findUnique({ where: { id: paymentId }, select: { status: true, refundedAmountPence: true } }));
     expect(p).toEqual({ status: "succeeded", refundedAmountPence: null });
 
