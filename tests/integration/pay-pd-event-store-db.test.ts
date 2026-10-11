@@ -256,6 +256,32 @@ describe.skipIf(!HAS_DB)("pay-pd: durable Stripe event store", () => {
     expect(await paymentsFor(id)).toBe(1);
   });
 
+  it("a unique violation SWALLOWED inside the processor still aborts the transaction: recorded failed, never processed", async () => {
+    // The webhook's class-pack and shop branches catch P2002 inside the
+    // transaction and carry on. Postgres aborts the transaction at the error,
+    // so the terminal status cannot commit: the store records the event as
+    // failed (visible, replayable) instead of claiming it was processed.
+    const id = evtId("swallow");
+    const invoice = `in_${STAMP}_swallow`;
+    await withRlsBypass((tx) =>
+      tx.payment.create({ data: { tenantId: TENANT, memberId: MEMBER, stripeInvoiceId: invoice, amountPence: 4500, currency: "GBP", status: "succeeded" } }),
+    );
+    const swallowing: StripeEventProcessor<FreshStripeEvent> = async (_e, { tx }) => {
+      try {
+        await tx.payment.create({ data: { tenantId: TENANT, memberId: MEMBER, stripeInvoiceId: invoice, amountPence: 4500, currency: "GBP", status: "succeeded" } });
+      } catch (e) {
+        if ((e as { code?: string }).code !== "P2002") throw e;
+      }
+      return { outcome: "processed", tenantId: TENANT };
+    };
+    const r = await runStripeEvent(invoiceEvent(id, invoice), swallowing);
+    expect(r.kind).toBe("failed");
+    const row = await rowOf(id);
+    expect(row?.status).toBe("failed");
+    expect(row?.lastError ?? "").not.toBe("");
+    expect(await paymentsForInvoice(invoice)).toBe(1);
+  });
+
   it("a retryable refusal (club not linked yet) is recorded failed and reported retryable", async () => {
     const id = evtId("retry");
     const notYet: StripeEventProcessor<FreshStripeEvent> = async () => {
