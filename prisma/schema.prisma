@@ -115,6 +115,7 @@ model Tenant {
   memberPhotos      MemberPhoto[]
   pushSubscriptions PushSubscription[]
   memberStatusEvents MemberStatusEvent[]
+  memberSubscriptions MemberSubscription[]
 }
 
 // ─── Staff / Admin Users ─────────────────────────────────────────────────────
@@ -346,6 +347,9 @@ model Member {
   creditedByMembers Member[]            @relation("MemberCreditedTo")
   // The status-transition trail behind the conversion funnel.
   statusEvents      MemberStatusEvent[]
+  // Every Stripe subscription MatFlow created, migrated or adopted for this
+  // member (payments lane PC). stripeSubscriptionId above points at the ACTIVE one.
+  stripeSubscriptions MemberSubscription[]
 
   @@unique([tenantId, email])
   @@unique([tenantId, externalRef])
@@ -373,6 +377,47 @@ model Member {
   // C1: Postgres does not index a foreign key automatically, and the SetNull
   // on tier delete scans Member without one.
   @@index([membershipTierId])
+}
+
+// ─── Member ↔ Stripe subscription mapping (payments lane PC, 11 Oct 2026) ────
+// The verified, immutable link between one Stripe subscription on a club's
+// connected account and one MatFlow member. Written in the same transaction as
+// the Stripe id by every place MatFlow creates (app), migrates (migration) or
+// adopts (adopted, and the backfill) a subscription. The webhook resolves
+// subscription and invoice events through this row and nothing else, so a
+// subscription that is not MatFlow's (another platform's, on the same customer)
+// can never move a member. Member.stripeSubscriptionId stays as a pointer to
+// the member's ACTIVE mapping and is only ever set from one of these rows.
+// tenantId/memberId CASCADE: the row is meaningless without its member, and the
+// tenant purge removes members first.
+model MemberSubscription {
+  id                      String    @id @default(cuid())
+  tenantId                String
+  tenant                  Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  memberId                String
+  member                  Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  // The connected account the subscription lives on (Tenant.stripeAccountId at write time).
+  stripeAccountId         String
+  stripeSubscriptionId    String    @unique
+  // app | migration | adopted
+  source                  String
+  // Mirror of the Stripe subscription status (incomplete, active, past_due, canceled…).
+  status                  String
+  currentPeriodEnd        DateTime?
+  // Stripe event.created (unix seconds) of the last subscription event applied:
+  // an event older than this is recorded as stale and not applied.
+  lastEventCreated        Int?
+  // invoice.payment_action_required: the invoice waiting on the payer (3-D
+  // Secure / authentication). Cleared when that invoice is paid. Payment state
+  // only; never changes entitlement.
+  requiresActionInvoiceId String?
+  requiresActionAt        DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  // Set when Stripe reports the subscription canceled or incomplete_expired.
+  endedAt                 DateTime?
+
+  @@index([tenantId, memberId])
 }
 
 // ─── Member status events (M1: the conversion funnel's spine) ────────────────
