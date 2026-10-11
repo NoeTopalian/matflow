@@ -124,8 +124,11 @@ describe("SubscribeDrawer", () => {
     expect(body.priceId).toBe("price_adult_unlimited");
     expect(body.priceId.startsWith("price_")).toBe(true);
     // Pinned as a SET so a future field cannot be added without a decision —
-    // this endpoint takes money and its payload should not drift.
-    expect(Object.keys(body).sort()).toEqual(["memberId", "priceId", "requestId"]);
+    // this endpoint takes money and its payload should not drift. RP-2
+    // (review, 11 Oct 2026) added membershipTierId: the tier travels with the
+    // subscription and is written to the member only when it is paid.
+    expect(Object.keys(body).sort()).toEqual(["memberId", "membershipTierId", "priceId", "requestId"]);
+    expect(body.membershipTierId).toBe("tier_adult");
     // Must actually carry a value: sending the key as undefined would be the
     // same as not having one, and the route would refuse.
     expect(typeof body.requestId).toBe("string");
@@ -225,21 +228,23 @@ describe("SubscribeDrawer", () => {
 });
 
 // ---------------------------------------------------------------------------
-// C1 review, H4 — the tier must be recorded, not just the subscription id.
+// C1 review H4, revised by review item RP-2 (11 Oct 2026).
 //
-// Before this, a confirmed subscription wrote only `stripeSubscriptionId` to
-// the profile. `membershipType` stayed null, and the kiosk's self-check-in
-// test (accountType !== "kids" && !!membershipType) therefore excluded the
-// member — so someone put on a paid membership could not check themselves in
-// seconds later. These pin the second write and, separately, its failure.
+// H4 found that a member put on a paid membership could not check in because
+// no tier was recorded, and the fix PATCHed membershipTierId straight after
+// the subscription was CREATED. That was before any payment: lib/checkin.ts
+// counts a tier with paymentStatus "pending" as desk coverage, so an unpaid or
+// abandoned sign-up granted check-in. The tier now travels with the
+// subscription (create body) and is written when the first invoice is paid
+// (lane PC's webhook). These pin that the drawer itself never writes it.
 // ---------------------------------------------------------------------------
 
-describe("SubscribeDrawer — recording the chosen tier (H4)", () => {
+describe("SubscribeDrawer — the tier is not written before payment (H4 / RP-2)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("writes the chosen tier to the member after the subscription is confirmed", async () => {
+  it("sends the chosen tier with the subscription and never PATCHes the member", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) =>
       url === "/api/stripe/create-subscription"
         ? Promise.resolve({ ok: true, status: 200, json: async () => ({ subscriptionId: "sub_123" }) })
@@ -251,40 +256,19 @@ describe("SubscribeDrawer — recording the chosen tier (H4)", () => {
     selectTier("tier_adult");
     fireEvent.click(submitButton()!);
 
-    // Payments lane PB (11 Oct 2026): a created subscription is not a paid
-    // one, so the drawer no longer closes here — it moves on to take the
-    // first payment (pay-pb-subscribe-drawer-payment.test.tsx). The tier write
-    // must still have happened by then.
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.some((call) => call[0] === "/api/members/mem_1")).toBe(true),
-    );
-    expect(onClose).not.toHaveBeenCalled();
-
-    const tierCall = fetchMock.mock.calls.find((call) => call[0] === "/api/members/mem_1");
-    expect(tierCall).toBeTruthy();
-    expect(tierCall![1].method).toBe("PATCH");
+    await waitFor(() => expect(onSubscribed).toHaveBeenCalledWith("sub_123"));
+    await screen.findByTestId("payment-step");
     // The id of the tier that was actually selected — not a name, not a label.
-    expect(JSON.parse(tierCall![1].body)).toMatchObject({ membershipTierId: "tier_adult" });
-    expect(onSubscribed).toHaveBeenCalledWith("sub_123");
+    const create = fetchMock.mock.calls.find((call) => call[0] === "/api/stripe/create-subscription");
+    expect(JSON.parse(create![1].body)).toMatchObject({ membershipTierId: "tier_adult" });
+    // No write to the member record at all: no access before the first payment.
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).startsWith("/api/members/"))).toEqual([]);
+    expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("reports a half-recorded membership rather than closing on success when the tier write fails", async () => {
-    const fetchMock = vi.fn().mockImplementation((url: string) =>
-      url === "/api/stripe/create-subscription"
-        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ subscriptionId: "sub_123" }) })
-        : Promise.resolve({ ok: false, status: 500, json: async () => ({ error: "boom" }) }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const { onSubscribed, onClose } = renderDrawer();
+  it("states before payment that there is no access until the first payment is received", () => {
+    renderDrawer();
     selectTier("tier_adult");
-    fireEvent.click(submitButton()!);
-
-    // The money side succeeded, so the callback still fires and must NOT be
-    // retried — but the drawer stays open carrying an error, because a human
-    // has to finish recording the membership by hand.
-    await waitFor(() => expect(onSubscribed).toHaveBeenCalledWith("sub_123"));
-    expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(document.body.textContent).toMatch(/no access until the first payment is received/i);
   });
 });

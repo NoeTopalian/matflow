@@ -142,8 +142,8 @@ export default function SelfSubscribeCard({
         {setAside ? (
           <div className="space-y-3" role="status">
             <p className="text-sm" style={{ color: "var(--member-text-muted)" }}>
-              The first payment has not been taken, so your membership is pending and isn&apos;t active yet. Resume
-              when you&apos;re ready. If it stays unpaid for about 23 hours Stripe cancels the sign-up and nothing is
+              The first payment has not been taken, so your membership is pending. No access until the first payment is received. Resume when
+              you&apos;re ready. If it stays unpaid for about 23 hours Stripe cancels the sign-up and nothing is
               charged.
             </p>
             <Button
@@ -206,7 +206,7 @@ export default function SelfSubscribeCard({
         <div className="flex items-start gap-2">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" style={{ color: "var(--member-warning)" }} aria-hidden />
           <p className="text-sm" style={{ color: "var(--member-text)" }}>
-            Your membership was started but the first payment has not been completed, so it isn&apos;t active yet.
+            Your membership was started but the first payment has not been completed. No access until the first payment is received.
           </p>
         </div>
         <Button
@@ -280,8 +280,8 @@ export default function SelfSubscribeCard({
         </div>
       )}
       <p className="text-xs" style={{ color: "var(--member-text-muted)" }}>
-        Next you pay the first {plan ? formatPrice(plan.pricePence, plan.currency) : "payment"} by card. Your
-        membership goes active once Stripe confirms it and then renews automatically until you cancel.
+        No access until the first payment is received. Next you pay the first {plan ? formatPrice(plan.pricePence, plan.currency) : "payment"} by
+        card; your membership goes active once Stripe confirms it and then renews automatically until you cancel.
       </p>
       <Button type="button" size="mobile" className="w-full" disabled={!plan} loading={starting} onClick={() => void start()}>
         {starting ? "Starting…" : "Continue to payment"}

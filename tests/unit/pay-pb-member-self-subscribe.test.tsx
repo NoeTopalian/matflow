@@ -133,12 +133,14 @@ describe("pay-pb: SelfSubscribeCard", () => {
   it("an unpaid subscription on load is offered Finish payment; Pay later + Resume keep the same subscription", async () => {
     renderCard({ state: { kind: "unpaid", subscriptionId: "sub_unpaid_9" } });
     expect(screen.queryByRole("button", { name: /continue to payment/i })).toBeNull();
+    expect(document.body.textContent ?? "").toMatch(/no access until the first payment is received/i);
     fireEvent.click(screen.getByRole("button", { name: /finish payment/i }));
     expect((await screen.findByTestId("payment-step")).getAttribute("data-subscription")).toBe("sub_unpaid_9");
 
     fireEvent.click(screen.getByText("probe-abandon"));
     await waitFor(() => expect(screen.queryByTestId("payment-step")).toBeNull());
     expect(document.body.textContent ?? "").toMatch(/not been taken/i);
+    expect(document.body.textContent ?? "").toMatch(/no access until the first payment is received/i);
     fireEvent.click(screen.getByRole("button", { name: /resume/i }));
     expect((await screen.findByTestId("payment-step")).getAttribute("data-subscription")).toBe("sub_unpaid_9");
   });

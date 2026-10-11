@@ -115,7 +115,7 @@ describe("pay-pb: SubscribeDrawer takes the first payment", () => {
   });
 
   it("moves to a payment step for the created subscription instead of announcing success", async () => {
-    stubCreateFlow();
+    const fetchMock = stubCreateFlow();
     const { onClose, onSubscribed } = renderDrawer();
     await startMembership();
 
@@ -125,6 +125,8 @@ describe("pay-pb: SubscribeDrawer takes the first payment", () => {
     // Nothing has been paid: no success toast, and the drawer stays open.
     expect(toastSpy.mock.calls.filter((c) => c[1] === "success")).toEqual([]);
     expect(onClose).not.toHaveBeenCalled();
+    // RP-2: no tier (or anything else) is written to the member before payment.
+    expect(fetchMock.mock.calls.filter((c) => String(c[0]).startsWith("/api/members/"))).toEqual([]);
   });
 
   it("announces success only after MatFlow has recorded the payment", async () => {
@@ -149,6 +151,7 @@ describe("pay-pb: SubscribeDrawer takes the first payment", () => {
     // The step is gone, the state is named, and nothing claims success.
     await waitFor(() => expect(screen.queryByTestId("payment-step")).toBeNull());
     expect(document.body.textContent ?? "").toMatch(/not (been )?(completed|taken)/i);
+    expect(document.body.textContent ?? "").toMatch(/no access until the first payment is received/i);
     expect(toastSpy.mock.calls.filter((c) => c[1] === "success")).toEqual([]);
 
     fireEvent.click(screen.getByRole("button", { name: /resume/i }));

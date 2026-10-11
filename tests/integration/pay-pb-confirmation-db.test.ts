@@ -19,6 +19,9 @@
 //       409 ended without asking Stripe
 //   (d) retry after expiry: a NEW request id passes the duplicate guard and
 //       creates a new mapping; the ended one stays ended
+//   RP-2: at every point before the payment lands the member carries NO tier
+//       (membershipTierId and membershipType null) — a tier with "pending"
+//       counts as desk coverage in lib/checkin.ts
 //   (e) the payment lands (subscription active + invoice paid): the status
 //       route reports mapping active, Payment succeeded, paymentStatus paid —
 //       three facts, no secret
@@ -77,6 +80,7 @@ import Stripe from "stripe";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { POST as startPOST } from "@/app/api/member/subscriptions/start/route";
 import { POST as startKidPOST } from "@/app/api/member/subscriptions/start-for-kid/route";
+import { POST as staffCreatePOST } from "@/app/api/stripe/create-subscription/route";
 import { GET as confirmationGET } from "@/app/api/stripe/subscriptions/[id]/confirmation/route";
 import { GET as statusGET } from "@/app/api/stripe/subscriptions/[id]/status/route";
 import { POST as webhookPOST } from "@/app/api/stripe/webhook/route";
@@ -121,7 +125,7 @@ async function deliver(type: string, object: Record<string, unknown>, created: n
 }
 
 const member = (id: string) =>
-  withRlsBypass((tx) => tx.member.findUnique({ where: { id }, select: { status: true, paymentStatus: true, stripeSubscriptionId: true, cancelledAt: true } }));
+  withRlsBypass((tx) => tx.member.findUnique({ where: { id }, select: { status: true, paymentStatus: true, stripeSubscriptionId: true, cancelledAt: true, membershipTierId: true, membershipType: true } }));
 const mapping = (sub: string) => withRlsBypass((tx) => tx.memberSubscription.findUnique({ where: { stripeSubscriptionId: sub } }));
 
 let firstSub = "";
@@ -186,6 +190,8 @@ describe.skipIf(!HAS_DB)("pay-pb: first payment — start, confirm, expire, rest
     expect(h.createCalls.at(-1)?.opts).toMatchObject({ stripeAccount: ACCT });
 
     expect(await member(MEM.A)).toMatchObject({ status: "active", paymentStatus: "pending", stripeSubscriptionId: firstSub });
+    // RP-2: no tier before payment (a tier + "pending" is desk coverage in lib/checkin.ts).
+    expect(await member(MEM.A)).toMatchObject({ membershipTierId: null, membershipType: null });
     expect(await mapping(firstSub)).toMatchObject({ memberId: MEM.A, status: "incomplete", endedAt: null, stripeAccountId: ACCT });
 
     const mine = await confirm(firstSub);
@@ -205,6 +211,20 @@ describe.skipIf(!HAS_DB)("pay-pb: first payment — start, confirm, expire, rest
     expect(h.retrieveCalls.length).toBe(calls);
   });
 
+  it("(a2) RP-2: a staff start writes the subscription and NO tier, even when the drawer sends the tier id", async () => {
+    h.session = asOwner();
+    const tierId = (await withRlsBypass((tx) => tx.membershipTier.findFirst({ where: { tenantId: TENANT, stripePriceId: PRICE.adult }, select: { id: true } })))!.id;
+    const res = await staffCreatePOST(
+      new Request("http://localhost/api/stripe/create-subscription", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ memberId: MEM.O, priceId: PRICE.adult, requestId: `${STAMP}-req-staff`, membershipTierId: tierId }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const sub = ((await res.json()) as { subscriptionId: string }).subscriptionId;
+    expect(await member(MEM.O)).toMatchObject({ paymentStatus: "pending", stripeSubscriptionId: sub, membershipTierId: null, membershipType: null });
+  });
+
   it("(b) a guardian pays for a CONFIRMED child only", async () => {
     h.session = asMember(MEM.P);
     const res = await startKidPOST(
@@ -216,7 +236,7 @@ describe.skipIf(!HAS_DB)("pay-pb: first payment — start, confirm, expire, rest
     expect(res.status).toBe(201);
     const kidSub = ((await res.json()) as { subscriptionId: string }).subscriptionId;
     expect((await confirm(kidSub)).status).toBe(200);
-    expect((await member(MEM.K))?.paymentStatus).toBe("pending");
+    expect(await member(MEM.K)).toMatchObject({ paymentStatus: "pending", membershipTierId: null, membershipType: null });
 
     // Another parent cannot pay it; P cannot pay Q's suggested child; Q (unconfirmed) cannot either.
     h.session = asMember(MEM.Q);
@@ -233,7 +253,7 @@ describe.skipIf(!HAS_DB)("pay-pb: first payment — start, confirm, expire, rest
     expect(r.status).toBe(200);
 
     const a = await member(MEM.A);
-    expect(a).toMatchObject({ status: "active", stripeSubscriptionId: null, cancelledAt: null });
+    expect(a).toMatchObject({ status: "active", stripeSubscriptionId: null, cancelledAt: null, membershipTierId: null, membershipType: null });
     expect(a?.paymentStatus).not.toBe("cancelled");
     expect(await mapping(firstSub)).toMatchObject({ status: "incomplete_expired" });
     expect((await mapping(firstSub))?.endedAt).toBeInstanceOf(Date);
@@ -257,7 +277,7 @@ describe.skipIf(!HAS_DB)("pay-pb: first payment — start, confirm, expire, rest
     expect(res.status).toBe(201);
     secondSub = ((await res.json()) as { subscriptionId: string }).subscriptionId;
     expect(secondSub).not.toBe(firstSub);
-    expect(await member(MEM.A)).toMatchObject({ status: "active", paymentStatus: "pending", stripeSubscriptionId: secondSub });
+    expect(await member(MEM.A)).toMatchObject({ status: "active", paymentStatus: "pending", stripeSubscriptionId: secondSub, membershipTierId: null, membershipType: null });
     expect(await mapping(secondSub)).toMatchObject({ status: "incomplete", endedAt: null });
     expect(await mapping(firstSub)).toMatchObject({ status: "incomplete_expired" });
     // And while the new one is unpaid, a third start is refused (resume instead).
@@ -270,6 +290,7 @@ describe.skipIf(!HAS_DB)("pay-pb: first payment — start, confirm, expire, rest
     const rec = h.subs.get(secondSub)!;
     rec.status = "active";
     const before = await status(secondSub);
+    expect(await member(MEM.A)).toMatchObject({ membershipTierId: null, membershipType: null });
     expect(before.body).toMatchObject({ subscription: { status: "incomplete" }, payment: null, billing: { paymentStatus: "pending" } });
 
     await deliver("customer.subscription.updated", { id: secondSub, object: "subscription", customer: rec.customer, status: "active", items: { data: [] } }, 6000);

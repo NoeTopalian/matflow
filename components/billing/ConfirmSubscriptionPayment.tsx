@@ -334,7 +334,7 @@ export default function ConfirmSubscriptionPayment({
             <Lock className="mt-0.5 size-4 shrink-0 text-tx-3" aria-hidden />
             <p className="text-sm text-tx-2">
               {amount ? `Pay ${amount} now for ${who} first payment.` : `Enter card details to take ${who} first payment.`}{" "}
-              The card is handled by Stripe on the club&apos;s account.
+              The card is handled by Stripe on the club&apos;s account. No access until the first payment is received.
             </p>
           </div>
           {stage === "loading" && (

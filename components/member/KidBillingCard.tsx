@@ -262,8 +262,8 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
         {paymentSetAside ? (
           <div className="space-y-3" role="status">
             <p className="text-xs" style={{ color: "var(--member-text-muted)" }}>
-              The first payment has not been taken, so {data.kid.name}&apos;s membership is pending and isn&apos;t
-              active yet. Resume when you&apos;re ready. If it stays unpaid for about 23 hours Stripe cancels the
+              The first payment has not been taken, so {data.kid.name}&apos;s membership is pending. No access until the first payment is received.{" "}
+              Resume when you&apos;re ready. If it stays unpaid for about 23 hours Stripe cancels the
               sign-up and nothing is charged.
             </p>
             <div className="flex flex-wrap gap-2">
@@ -327,8 +327,8 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
             <div className="flex items-start gap-2" style={{ color: "var(--member-warning)" }}>
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden />
               <span>
-                {data.kid.membershipType ?? "A plan"} is set up but the first payment has not been completed, so
-                it isn&apos;t active yet.
+                {data.kid.membershipType ?? "A plan"} is set up but the first payment has not been completed.{" "}
+                No access until the first payment is received.
                 {resumableId
                   ? " Finish the payment below."
                   : " If you started it here, reload this page to finish the payment, or ask the gym."}

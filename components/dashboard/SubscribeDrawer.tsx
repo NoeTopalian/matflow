@@ -191,6 +191,11 @@ export default function SubscribeDrawer({
           memberId,
           priceId: selected.stripePriceId,
           requestId: requestIdRef.current,
+          // RP-2 (review, 11 Oct 2026): the tier travels WITH the subscription
+          // and is written to the member only when the first invoice is paid
+          // (lane PC: mapping at create, webhook on payment). The drawer never
+          // writes it itself.
+          membershipTierId: selected.id,
         }),
       });
 
@@ -213,34 +218,11 @@ export default function SubscribeDrawer({
       onSubscribed(data.subscriptionId);
       const createdId = data.subscriptionId;
 
-      // The subscription exists, but the TIER still has to be written to the
-      // member. Without it `membershipType` stays null, and the kiosk's
-      // `selfTrainable` check (accountType !== "kids" && !!membershipType)
-      // leaves the member unable to check themselves in — immediately after
-      // being put on a paid membership. The members PATCH dual-writes the
-      // legacy label alongside the FK, so one call covers both readers.
-      let tierRecorded = true;
-      try {
-        const tierRes = await fetch(`/api/members/${memberId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ membershipTierId: selected.id }),
-        });
-        tierRecorded = tierRes.ok;
-      } catch {
-        tierRecorded = false;
-      }
-
-      if (!tierRecorded) {
-        // Do not fold this into the subscription result: the subscription
-        // exists and must not be retried, but the membership is only
-        // half-recorded and someone has to finish it by hand. The first
-        // payment can still be taken below.
-        setErrorMsg(
-          `The membership was created, but ${memberName}'s tier could not be saved. ` +
-            `Set it on their profile — until then they cannot check themselves in.`,
-        );
-      }
+      // RP-2 (review, 11 Oct 2026): NO tier write here. This used to PATCH
+      // membershipTierId straight after the create, before any payment, and
+      // lib/checkin.ts counts a tier with paymentStatus "pending" as desk
+      // coverage — so an unpaid or abandoned sign-up let the member check in.
+      // The tier is written when the first invoice is paid (lane PC).
 
       // Lane PB: nothing has been paid yet. Move to the payment step for the
       // subscription the server just created; no success toast until MatFlow
@@ -305,8 +287,8 @@ export default function SubscribeDrawer({
                 <div className="flex items-start gap-2">
                   <Info className="mt-0.5 size-4 shrink-0" style={{ color: "var(--tx-3)" }} />
                   <p className="text-sm" style={{ color: "var(--tx-2)" }}>
-                    The first payment has not been taken, so {memberName}&apos;s membership is pending and gives no
-                    access yet. Resume to take it now, or reopen this drawer later. Stripe cancels an unpaid
+                    The first payment has not been taken, so {memberName}&apos;s membership is pending. No access until the first payment is received.{" "}
+                    Resume to take it now, or reopen this drawer later. Stripe cancels an unpaid
                     sign-up after about 23 hours; nothing is charged if it lapses.
                   </p>
                 </div>
@@ -444,7 +426,7 @@ export default function SubscribeDrawer({
             <div className="flex items-start gap-2">
               <Info className="mt-0.5 size-4 shrink-0" style={{ color: "var(--tx-3)" }} />
               <p className="text-xs" style={{ color: "var(--tx-3)" }}>
-                Next you take the first payment by card. The membership goes active once Stripe confirms it.
+                No access until the first payment is received. Next you take it by card here; the membership goes active once Stripe confirms it.
               </p>
             </div>
 

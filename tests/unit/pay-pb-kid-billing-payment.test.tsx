@@ -108,6 +108,7 @@ describe("pay-pb: KidBillingCard takes the first payment", () => {
     fireEvent.click(screen.getByText("probe-abandon"));
     await waitFor(() => expect(screen.queryByTestId("payment-step")).toBeNull());
     expect(document.body.textContent ?? "").toMatch(/not (been )?(completed|taken)/i);
+    expect(document.body.textContent ?? "").toMatch(/no access until the first payment is received/i);
 
     fireEvent.click(screen.getByRole("button", { name: /resume|finish payment/i }));
     const again = await screen.findByTestId("payment-step");
@@ -119,6 +120,7 @@ describe("pay-pb: KidBillingCard takes the first payment", () => {
     render(<KidBillingCard childId="kid_1" primaryColor="#4f46e5" />);
     const resume = await screen.findByRole("button", { name: /resume|finish payment/i });
     expect(document.body.textContent ?? "").not.toMatch(/speak to the gym to finish/i);
+    expect(document.body.textContent ?? "").toMatch(/no access until the first payment is received/i);
     fireEvent.click(resume);
     const step = await screen.findByTestId("payment-step");
     expect(step.getAttribute("data-subscription")).toBe("sub_kid_pending");
