@@ -83,6 +83,14 @@ vi.mock("@/lib/prisma-tenant", () => {
   const ok = <T,>(v: T) => vi.fn(async () => v);
   const tx = () => ({
     $executeRaw: ok(0),
+    // Lane PC writes a MemberSubscription mapping inside the create transaction (11 Oct 2026).
+    memberSubscription: {
+      upsert: vi.fn(async (a: { create: { tenantId: string; memberId: string } }) => ({
+        id: "ms_1",
+        tenantId: a.create.tenantId,
+        memberId: a.create.memberId,
+      })),
+    },
     tenant: {
       findUnique: vi.fn(async () => ({ ...m.tenantRow })),
       findFirst: vi.fn(async () => ({ ...m.tenantRow })),
