@@ -21,6 +21,15 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import React from "react";
 
+// Payments lane PB (11 Oct 2026): after a subscription is created the drawer
+// mounts the Stripe payment step. Stripe.js cannot run in jsdom and the step
+// has its own tests (pay-pb-*), so here it is an inert stand-in.
+vi.mock("@/components/billing/ConfirmSubscriptionPayment", () => ({
+  default: (props: { subscriptionId: string }) => (
+    <div data-testid="payment-step" data-subscription={props.subscriptionId} />
+  ),
+}));
+
 import SubscribeDrawer from "@/components/dashboard/SubscribeDrawer";
 import type { MembershipTierOption, TenantBilling } from "@/components/dashboard/MemberProfile";
 
@@ -242,7 +251,14 @@ describe("SubscribeDrawer — recording the chosen tier (H4)", () => {
     selectTier("tier_adult");
     fireEvent.click(submitButton()!);
 
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    // Payments lane PB (11 Oct 2026): a created subscription is not a paid
+    // one, so the drawer no longer closes here — it moves on to take the
+    // first payment (pay-pb-subscribe-drawer-payment.test.tsx). The tier write
+    // must still have happened by then.
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((call) => call[0] === "/api/members/mem_1")).toBe(true),
+    );
+    expect(onClose).not.toHaveBeenCalled();
 
     const tierCall = fetchMock.mock.calls.find((call) => call[0] === "/api/members/mem_1");
     expect(tierCall).toBeTruthy();

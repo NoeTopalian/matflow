@@ -15,10 +15,19 @@
 // When the owner hasn't enabled member-side billing the card surfaces a
 // short explainer pointing the parent at gym staff — never silently
 // hidden, so the parent isn't left wondering whether the feature exists.
+//
+// Payments lane PB (11 Oct 2026, audit F1): Subscribe now goes straight on to
+// take the first payment in the app (components/billing/
+// ConfirmSubscriptionPayment, on the club's own Stripe account). Before, the
+// card discarded the client secret and sent the parent to staff, who had no
+// screen that could take it, so the subscription expired unpaid. "Pay later"
+// leaves it pending and offers Resume.
 
 import { useEffect, useRef, useState } from "react";
 import { CreditCard, Loader2, AlertTriangle, ExternalLink, Check } from "lucide-react";
 import { paymentStatusLabel } from "@/lib/payment-status";
+import { Button } from "@/components/ui/button";
+import ConfirmSubscriptionPayment from "@/components/billing/ConfirmSubscriptionPayment";
 
 type BillingData = {
   tenant: {
@@ -32,6 +41,12 @@ type BillingData = {
     membershipType: string | null;
     paymentStatus: string;
     subscriptionState: "none" | "pending" | "active";
+    /**
+     * The child's current Stripe subscription id, when the billing read
+     * supplies it (requested from the route owner by lane PB). Needed to
+     * resume an unpaid first payment after a reload.
+     */
+    stripeSubscriptionId?: string | null;
   };
   plans: Array<{
     id: string;
@@ -40,6 +55,7 @@ type BillingData = {
     pricePence: number;
     currency: string;
     billingCycle: string;
+    stripePriceId?: string | null;
   }>;
   payments: Array<{
     id: string;
@@ -64,6 +80,13 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [actioning, setActioning] = useState<"subscribe" | "cancel" | "portal" | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  // Lane PB: the subscription whose first payment is being taken (from the
+  // start response this session, or the billing read), whether the parent set
+  // it aside, and a key that remounts the payment step on Resume.
+  const [payingId, setPayingId] = useState<string | null>(null);
+  const [startedId, setStartedId] = useState<string | null>(null);
+  const [paymentSetAside, setPaymentSetAside] = useState(false);
+  const [paymentKey, setPaymentKey] = useState(0);
 
   // Synchronous double-submit guard. `setActioning` is React state, which is
   // asynchronous and batched, so two taps inside one tick BOTH passed it. On
@@ -115,12 +138,8 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
     setActioning("subscribe");
     setActionMessage(null);
     try {
-      // We use the plan's name as a stand-in until MembershipTier surfaces
-      // its stripePriceId in the billing read. For now the priceId comes
-      // from the staff Memberships tab (which lets the owner paste the
-      // price_… directly). When the billing read picks up the
-      // stripePriceId, swap this line out.
-      const priceId = (plan as unknown as { stripePriceId?: string }).stripePriceId;
+      // The billing read carries each kid tier's stripePriceId.
+      const priceId = plan.stripePriceId;
       if (!priceId) {
         setActionMessage("This plan isn't wired to Stripe yet — speak to gym staff.");
         return;
@@ -130,28 +149,20 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kidMemberId: childId, priceId, requestId: requestIdRef.current }),
       });
-      const body = await res.json();
-      if (!res.ok) {
-        setActionMessage(body?.error ?? "Subscription failed");
+      const body = (await res.json().catch(() => ({}))) as { subscriptionId?: string; error?: string };
+      if (!res.ok || !body.subscriptionId) {
+        setActionMessage(body?.error ?? "Couldn't start the subscription. Nothing has been charged — please try again.");
         return;
       }
-      // The response carries a PaymentIntent client secret that still has to
-      // be confirmed before the subscription leaves Stripe's `incomplete`
-      // state — nothing has been charged at this point.
-      //
-      // There is deliberately no claim here about a confirmation email:
-      // these invoices are created with collection_method
-      // `charge_automatically`, for which Stripe sends no "confirm your
-      // payment" email (verified 2026-08-18). The previous copy promised one
-      // and left parents waiting for a message that never arrives.
-      //
-      // A missing secret is no longer possible on this branch — the server
-      // returns an error rather than a null secret — so there is no
-      // success-looking fallback to fall into.
+      // Nothing has been charged yet: the subscription is `incomplete` until
+      // its first invoice is paid. Take that payment here (lane PB).
+      setStartedId(body.subscriptionId);
+      setPaymentSetAside(false);
+      setPayingId(body.subscriptionId);
+    } catch {
       setActionMessage(
-        "Subscription created. Payment hasn't been taken yet — speak to gym staff to confirm the first payment.",
+        "We couldn't reach the gym's billing to confirm this. Reload the page before trying again — a subscription may already have been started.",
       );
-      void refresh();
     } finally {
       // Released here, not on success, so a failed attempt does not leave
       // the button permanently dead. The request id is deliberately NOT
@@ -237,6 +248,63 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
   // `pending` still hides the plan picker: the subscription exists at Stripe,
   // so offering another would create a duplicate.
   const hasSub = state !== "none";
+  // Which unpaid subscription Resume would pay: the one started in this
+  // session, else the one the billing read names.
+  const resumableId = startedId ?? data.kid.stripeSubscriptionId ?? null;
+
+  if (payingId) {
+    return (
+      <div className="rounded-2xl border p-5 space-y-4" style={{ borderColor: "var(--member-border)" }}>
+        <div className="flex items-center gap-2">
+          <CreditCard className="w-4 h-4" style={{ color: primaryColor }} />
+          <h3 className="text-sm font-bold" style={{ color: "var(--member-text)" }}>First payment for {data.kid.name}</h3>
+        </div>
+        {paymentSetAside ? (
+          <div className="space-y-3" role="status">
+            <p className="text-xs" style={{ color: "var(--member-text-muted)" }}>
+              The first payment has not been taken, so {data.kid.name}&apos;s membership is pending and isn&apos;t
+              active yet. Resume when you&apos;re ready. If it stays unpaid for about 23 hours Stripe cancels the
+              sign-up and nothing is charged.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                onClick={() => {
+                  setPaymentSetAside(false);
+                  setPaymentKey((k) => k + 1);
+                }}
+              >
+                Resume payment
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setPayingId(null);
+                  void refresh();
+                }}
+              >
+                Back to billing
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <ConfirmSubscriptionPayment
+            key={`${payingId}:${paymentKey}`}
+            subscriptionId={payingId}
+            payerLabel={data.kid.name}
+            onAbandon={() => setPaymentSetAside(true)}
+            onPaid={() => {
+              setPayingId(null);
+              setStartedId(null);
+              setActionMessage(`First payment received — ${data.kid.name}'s membership is active.`);
+              void refresh();
+            }}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl border p-5 space-y-4" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
@@ -255,13 +323,29 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
             </span>
           </div>
         ) : state === "pending" ? (
-          <div className="flex items-start gap-2 text-amber-400">
-            <Check className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden />
-            <span>
-              {data.kid.membershipType ?? "A plan"} is set up but the first payment
-              hasn&apos;t completed, so it isn&apos;t active yet. Speak to the gym to
-              finish setting up payment.
-            </span>
+          <div className="space-y-2">
+            <div className="flex items-start gap-2" style={{ color: "var(--member-warning)" }}>
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden />
+              <span>
+                {data.kid.membershipType ?? "A plan"} is set up but the first payment has not been completed, so
+                it isn&apos;t active yet.
+                {resumableId
+                  ? " Finish the payment below."
+                  : " If you started it here, reload this page to finish the payment, or ask the gym."}
+              </span>
+            </div>
+            {resumableId && (
+              <Button
+                type="button"
+                onClick={() => {
+                  setActionMessage(null);
+                  setPaymentSetAside(false);
+                  setPayingId(resumableId);
+                }}
+              >
+                Finish payment
+              </Button>
+            )}
           </div>
         ) : (
           <p className="text-gray-400">
@@ -302,18 +386,16 @@ export function KidBillingCard({ childId, primaryColor }: { childId: string; pri
                   </div>
                 </button>
               ))}
-              <button
-                onClick={subscribe}
-                disabled={!selectedPlanId || actioning === "subscribe"}
-                className="w-full py-2.5 rounded-lg text-[var(--tx-on-accent)] text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
-                style={{ background: primaryColor }}
+              <Button
+                type="button"
+                size="mobile"
+                className="w-full"
+                onClick={() => void subscribe()}
+                disabled={!selectedPlanId}
+                loading={actioning === "subscribe"}
               >
-                {actioning === "subscribe" ? (
-                  <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Starting…</>
-                ) : (
-                  "Subscribe + pay"
-                )}
-              </button>
+                {actioning === "subscribe" ? "Starting…" : "Subscribe and pay"}
+              </Button>
             </>
           )}
         </div>

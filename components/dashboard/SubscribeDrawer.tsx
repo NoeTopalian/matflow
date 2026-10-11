@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, useId, useRef } from "react";
+import { useState, useEffect, useId, useRef, useCallback } from "react";
 import Link from "next/link";
-import { AlertTriangle, BadgePoundSterling, Info } from "lucide-react";
+import { AlertTriangle, BadgePoundSterling, Info, CreditCard } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
+import ConfirmSubscriptionPayment from "@/components/billing/ConfirmSubscriptionPayment";
 import { formatTierPrice } from "@/lib/membership-tier-format";
 import { cycleBilledCopy } from "@/lib/billing-cycle";
 import type { MembershipTierOption, TenantBilling } from "@/components/dashboard/MemberProfile";
@@ -26,10 +27,21 @@ import type { MembershipTierOption, TenantBilling } from "@/components/dashboard
  *     billing state is updated unless the server said the subscription
  *     exists.
  *  2. **A created subscription is not a collected payment.** The helper
- *     creates it with `payment_behavior: "default_incomplete"`, so the member
- *     still has to pay the first invoice before it goes live. Saying
- *     "subscribed" here would be the same lie in a different hat.
+ *     creates it with `payment_behavior: "default_incomplete"`, so the first
+ *     invoice still has to be paid before it goes live. Saying "subscribed"
+ *     here would be the same lie in a different hat.
+ *
+ * Payments lane PB (11 Oct 2026, audit F1): the drawer now TAKES that first
+ * payment. After the server creates the subscription it moves to a payment
+ * step (components/billing/ConfirmSubscriptionPayment) on the club's own
+ * Stripe account; success is announced only once MatFlow has recorded the
+ * payment. "Pay later" leaves it unpaid and offers Resume; reopening the
+ * drawer for a member whose subscription is still unpaid offers the first
+ * payment instead of a second subscription.
  */
+
+/** What the drawer knows about the member's EXISTING subscription. */
+type ExistingState = "none" | "checking" | "unpaid" | "live" | "expired" | "error";
 
 interface Props {
   memberId: string;
@@ -59,6 +71,12 @@ export default function SubscribeDrawer({
   const [tierId, setTierId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Payment step (lane PB): the subscription being paid, whether the payer
+  // set it aside, and a key that remounts the step on Resume.
+  const [payingId, setPayingId] = useState<string | null>(null);
+  const [abandoned, setAbandoned] = useState(false);
+  const [paymentKey, setPaymentKey] = useState(0);
+  const [existing, setExisting] = useState<ExistingState>(existingSubscriptionId ? "checking" : "none");
   // Synchronous in-flight guard. `useState` updates batch, so two clicks in
   // one tick can both slip past a `disabled` attribute; a ref flips
   // immediately. (Same defect class as the addPayment fix in MemberProfile.)
@@ -76,7 +94,42 @@ export default function SubscribeDrawer({
     if (open) return;
     setTierId("");
     setErrorMsg(null);
+    setPayingId(null);
+    setAbandoned(false);
   }, [open]);
+
+  // The profile's subscription id is an SSR snapshot and says nothing about
+  // whether the first payment was ever taken. Ask MatFlow before deciding
+  // between "take the first payment" and "already subscribed".
+  const checkExisting = useCallback(async () => {
+    if (!existingSubscriptionId) {
+      setExisting("none");
+      return;
+    }
+    setExisting("checking");
+    try {
+      const res = await fetch(`/api/stripe/subscriptions/${encodeURIComponent(existingSubscriptionId)}/status`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        setExisting("error");
+        return;
+      }
+      const body = (await res.json()) as { subscription?: { status?: string; ended?: boolean } };
+      const sub = body.subscription;
+      if (!sub?.status) setExisting("error");
+      else if (sub.ended) setExisting("expired");
+      else if (sub.status === "incomplete") setExisting("unpaid");
+      else setExisting("live");
+    } catch {
+      setExisting("error");
+    }
+  }, [existingSubscriptionId]);
+
+  useEffect(() => {
+    if (!open || payingId) return;
+    void checkExisting();
+  }, [open, payingId, checkExisting]);
 
   // Only a tier an owner has wired to a Stripe price can be subscribed to —
   // the endpoint requires a `price_…` id. Tiers without one are a real,
@@ -87,24 +140,35 @@ export default function SubscribeDrawer({
   const selected = subscribable.find((t) => t.id === tierId) ?? null;
 
   const alreadySubscribed = !!existingSubscriptionId;
+  const existingBlocker: string | null =
+    existing === "checking"
+      ? `Checking ${memberName}'s current subscription…`
+      : existing === "expired"
+        ? `${memberName}'s last sign-up expired before it was paid, so nothing was taken. Reload the profile to start a new membership.`
+        : existing === "unpaid"
+          ? `${memberName}'s membership was started but the first payment hasn't been taken, so it isn't active.`
+          : existing === "error"
+            ? null
+            : `${memberName} is already on a Stripe subscription. Cancel that one before starting another, or the member will be billed twice.`;
   const blocker: string | null = !billing.stripeConnected
     ? "This gym cannot take card payments yet. Connect Stripe under Settings → Revenue, then you can put members on a paid membership."
     : billing.chargesEnabled === false
       ? "This gym's Stripe account needs attention before it can take payments. Finish the outstanding steps in Stripe, then try again."
       : alreadySubscribed
-        ? `${memberName} is already on a Stripe subscription. Cancel that one before starting another, or the member will be billed twice.`
+        ? existingBlocker
         : tiers.length === 0
           ? "This gym has no membership tiers yet. Create your price list under Memberships first."
           : subscribable.length === 0
             ? "None of this gym's membership tiers is linked to a Stripe price yet, so none can be billed. Add a Stripe price to a tier under Memberships."
             : null;
 
-  const canSubmit = blocker === null && selected !== null && !submitting;
+  const existingError = alreadySubscribed && existing === "error";
+  const canSubmit = blocker === null && !existingError && selected !== null && !submitting && !payingId;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (submittingRef.current) return;
-    if (blocker !== null) return;
+    if (blocker !== null || existingError || payingId) return;
     if (!selected?.stripePriceId) return;
 
     submittingRef.current = true;
@@ -147,6 +211,7 @@ export default function SubscribeDrawer({
       }
 
       onSubscribed(data.subscriptionId);
+      const createdId = data.subscriptionId;
 
       // The subscription exists, but the TIER still has to be written to the
       // member. Without it `membershipType` stays null, and the kiosk's
@@ -167,18 +232,21 @@ export default function SubscribeDrawer({
       }
 
       if (!tierRecorded) {
-        // Do not fold this into the subscription result: the money side
-        // succeeded and must not be retried, but the membership is only
-        // half-recorded and someone has to finish it by hand.
+        // Do not fold this into the subscription result: the subscription
+        // exists and must not be retried, but the membership is only
+        // half-recorded and someone has to finish it by hand. The first
+        // payment can still be taken below.
         setErrorMsg(
           `The membership was created, but ${memberName}'s tier could not be saved. ` +
             `Set it on their profile — until then they cannot check themselves in.`,
         );
-        return;
       }
 
-      toast(`Membership created for ${memberName}`, "success");
-      onClose();
+      // Lane PB: nothing has been paid yet. Move to the payment step for the
+      // subscription the server just created; no success toast until MatFlow
+      // has recorded the payment.
+      setAbandoned(false);
+      setPayingId(createdId);
     } catch {
       // The request never came back, so we do not know whether Stripe created
       // anything. Say exactly that rather than guessing in either direction.
@@ -200,18 +268,92 @@ export default function SubscribeDrawer({
       title="Start a membership"
       description={memberName}
       footer={
-        <Button type="submit" form={formId} disabled={!canSubmit} loading={submitting}>
-          {!submitting && <BadgePoundSterling className="size-4" />}
-          {submitting
-            ? "Starting…"
-            : selected
-              ? `Start ${formatTierPrice(selected)}`
-              : "Start membership"}
-        </Button>
+        payingId ? (
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Close
+          </Button>
+        ) : (
+          <Button type="submit" form={formId} disabled={!canSubmit} loading={submitting}>
+            {!submitting && <BadgePoundSterling className="size-4" />}
+            {submitting
+              ? "Starting…"
+              : selected
+                ? `Start ${formatTierPrice(selected)}`
+                : "Start membership"}
+          </Button>
+        )
       }
     >
       <div className="space-y-4">
-        {blocker !== null ? (
+        {payingId ? (
+          <div className="space-y-4">
+            {errorMsg && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-[var(--r-md)] p-3"
+                style={{
+                  background: "color-mix(in srgb, var(--hue-danger) 8%, transparent)",
+                  border: "1px solid color-mix(in srgb, var(--hue-danger) 20%, transparent)",
+                }}
+              >
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" style={{ color: "var(--sf-danger)" }} />
+                <p className="text-sm" style={{ color: "var(--sf-danger)" }}>{errorMsg}</p>
+              </div>
+            )}
+            {abandoned ? (
+              <div role="status" className="space-y-3">
+                <div className="flex items-start gap-2">
+                  <Info className="mt-0.5 size-4 shrink-0" style={{ color: "var(--tx-3)" }} />
+                  <p className="text-sm" style={{ color: "var(--tx-2)" }}>
+                    The first payment has not been taken, so {memberName}&apos;s membership is pending and gives no
+                    access yet. Resume to take it now, or reopen this drawer later. Stripe cancels an unpaid
+                    sign-up after about 23 hours; nothing is charged if it lapses.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setAbandoned(false);
+                    setPaymentKey((k) => k + 1);
+                  }}
+                >
+                  <CreditCard className="size-4" />
+                  Resume payment
+                </Button>
+              </div>
+            ) : (
+              <ConfirmSubscriptionPayment
+                key={`${payingId}:${paymentKey}`}
+                subscriptionId={payingId}
+                payerLabel={memberName}
+                onAbandon={() => setAbandoned(true)}
+                onPaid={() => {
+                  toast(`First payment received — ${memberName}'s membership is active`, "success");
+                  onClose();
+                }}
+              />
+            )}
+          </div>
+        ) : existingError ? (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-[var(--r-md)] p-3"
+            style={{
+              background: "color-mix(in srgb, var(--hue-danger) 8%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--hue-danger) 20%, transparent)",
+            }}
+          >
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" style={{ color: "var(--sf-danger)" }} />
+            <div className="min-w-0 space-y-2">
+              <p className="text-sm" style={{ color: "var(--sf-danger)" }}>
+                Couldn&apos;t check {memberName}&apos;s current subscription, so a new one can&apos;t be started safely.
+              </p>
+              <Button type="button" variant="secondary" size="compact" onClick={() => void checkExisting()}>
+                Try again
+              </Button>
+            </div>
+          </div>
+        ) : blocker !== null ? (
           <div
             role="status"
             className="flex items-start gap-2 rounded-[var(--r-md)] p-3"
@@ -221,8 +363,20 @@ export default function SubscribeDrawer({
             }}
           >
             <AlertTriangle className="mt-0.5 size-4 shrink-0" style={{ color: "var(--hue-warning)" }} />
-            <div className="min-w-0">
+            <div className="min-w-0 space-y-2">
               <p className="text-sm" style={{ color: "var(--tx-1)" }}>{blocker}</p>
+              {alreadySubscribed && existing === "unpaid" && billing.stripeConnected && billing.chargesEnabled !== false && (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setAbandoned(false);
+                    setPayingId(existingSubscriptionId ?? null);
+                  }}
+                >
+                  <CreditCard className="size-4" />
+                  Take the first payment
+                </Button>
+              )}
               {(tiers.length === 0 || subscribable.length === 0) && billing.stripeConnected && !alreadySubscribed && (
                 <Link
                   href="/dashboard/memberships"
@@ -286,12 +440,11 @@ export default function SubscribeDrawer({
             )}
 
             {/* Never promise money has moved. The subscription is created
-                incomplete; the member pays the first invoice themselves. */}
+                incomplete; the next step takes the first payment. */}
             <div className="flex items-start gap-2">
               <Info className="mt-0.5 size-4 shrink-0" style={{ color: "var(--tx-3)" }} />
               <p className="text-xs" style={{ color: "var(--tx-3)" }}>
-                Starting a membership does not take payment here. Stripe raises the first invoice and{" "}
-                {memberName} pays it; the membership goes active once that payment clears.
+                Next you take the first payment by card. The membership goes active once Stripe confirms it.
               </p>
             </div>
 
