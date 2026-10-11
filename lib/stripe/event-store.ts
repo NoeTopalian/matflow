@@ -1,0 +1,422 @@
+/**
+ * Durable Stripe event store (payments lane PD, 11 Oct 2026).
+ *
+ * The defect it closes (audit 11 Oct, section 13-14): the webhook claimed
+ * `StripeEvent` INSIDE the handler transaction, so an event whose handler threw
+ * left no row at all. It existed only as a Stripe retry and a log line; after
+ * Stripe's three days of retries it was gone, and nothing in MatFlow could say
+ * it had ever arrived.
+ *
+ * Two phases now:
+ *
+ *  1. `recordReceived(event)` writes (or touches) the row in its OWN short
+ *     transaction BEFORE any processing: status `received`, attempts + 1. That
+ *     commit survives whatever the handler does next.
+ *  2. The handler runs in ONE transaction that first locks the row
+ *     (`claimStripeEvent`: SELECT … FOR UPDATE SKIP LOCKED) and, in the same
+ *     commit as its effects, sets the terminal status (`markProcessed` /
+ *     `markIgnored`). A crash or throw rolls the effects AND the terminal status
+ *     back together; `markFailed` then records the error on the row in another
+ *     short transaction, and the next delivery (Stripe retry or operator
+ *     replay) processes it.
+ *
+ * Duplicate delivery: a row already processed/ignored/replayed answers
+ * `already_processed` without running anything. Concurrent delivery: the row
+ * lock means at most one transaction processes an id at a time; the second
+ * sees the row locked (`in_progress`, mapped to a non-2xx so Stripe retries)
+ * or, once the first committed, sees it terminal.
+ *
+ * `runStripeEvent` composes the two phases for a caller-supplied processor —
+ * the webhook (lane PC wires its handler in) and operator replay
+ * (lib/stripe/replay.ts) both go through it, so there is one processing path.
+ */
+import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
+import { withRlsBypass } from "@/lib/prisma-tenant";
+import { logAudit } from "@/lib/audit-log";
+import { sendEmail } from "@/lib/email";
+import * as Sentry from "@sentry/nextjs";
+
+type Tx = Prisma.TransactionClient;
+
+export const STRIPE_EVENT_STATUSES = [
+  "received",
+  "processed",
+  "failed",
+  "ignored_foreign",
+  "ignored_stale",
+  "replayed",
+] as const;
+export type StripeEventStatus = (typeof STRIPE_EVENT_STATUSES)[number];
+
+/** Statuses after which a delivery has nothing left to do. */
+export const TERMINAL_STRIPE_EVENT_STATUSES: ReadonlySet<StripeEventStatus> = new Set([
+  "processed",
+  "ignored_foreign",
+  "ignored_stale",
+  "replayed",
+]);
+
+/** Statuses an operator replay (or a Stripe retry) may still process. */
+export const REPLAYABLE_STRIPE_EVENT_STATUSES: ReadonlySet<StripeEventStatus> = new Set(["received", "failed"]);
+
+export type IgnoredKind = "ignored_foreign" | "ignored_stale";
+
+/** The parts of a Stripe event the store keeps. Never the payload. */
+export type StoreEventInput = {
+  id: string;
+  type: string;
+  account?: string | null;
+  livemode?: boolean | null;
+  created?: number | null;
+  data?: { object?: { id?: unknown } | Record<string, unknown> | null } | null;
+};
+
+/** Longest error text kept on a row. */
+export const LAST_ERROR_MAX = 300;
+
+/**
+ * An error message fit to store and show an operator: one line, addresses
+ * masked, truncated. Stripe and Prisma messages can quote a value; the admin
+ * page must never become a place where a member's address is displayed.
+ */
+export function sanitiseEventError(err: unknown): string {
+  const raw =
+    err instanceof Error
+      ? `${err.name && err.name !== "Error" ? `${err.name}: ` : ""}${err.message}`
+      : typeof err === "string"
+        ? err
+        : (() => {
+            try {
+              return JSON.stringify(err) ?? "unknown error";
+            } catch {
+              return "unknown error";
+            }
+          })();
+  const oneLine = raw.replace(/\s+/g, " ").trim();
+  const masked = oneLine.replace(/[^\s@<>()"']+@[^\s@<>()"']+\.[^\s@<>()"']+/g, "[email]");
+  return masked.length > LAST_ERROR_MAX ? `${masked.slice(0, LAST_ERROR_MAX - 1)}…` : masked || "unknown error";
+}
+
+function objectIdOf(event: StoreEventInput): string | null {
+  const id = (event.data?.object as { id?: unknown } | null | undefined)?.id;
+  return typeof id === "string" && id.length > 0 ? id.slice(0, 255) : null;
+}
+
+export type RecordReceivedResult = {
+  eventId: string;
+  status: StripeEventStatus;
+  attempts: number;
+  tenantId: string | null;
+  /** True when the row is already terminal: nothing to run. */
+  alreadyProcessed: boolean;
+};
+
+/**
+ * Phase 1. Upsert the row in its own transaction, before any processing.
+ *
+ * New id: inserted as `received`, attempts 1. Known id still `received` or
+ * `failed`: attempts + 1, lastAttemptAt now. Known id already terminal: left
+ * untouched and reported `alreadyProcessed`. The club is resolved from
+ * `event.account` here (when it maps to one) so the failed-event list can be
+ * shown per club even when the handler never got that far.
+ *
+ * `opts.reconcileFound` records an event the reconcile job found missing:
+ * attempts stay 0 (nothing tried to process it) and reconcileFoundAt is set.
+ */
+export async function recordReceived(
+  event: StoreEventInput,
+  opts: { reconcileFound?: boolean; tenantId?: string | null } = {},
+): Promise<RecordReceivedResult> {
+  const account = typeof event.account === "string" && event.account.length > 0 ? event.account : null;
+  const objectId = objectIdOf(event);
+  const created = Number.isFinite(event.created) ? Math.trunc(event.created as number) : 0;
+  const livemode = event.livemode === true;
+  const found = opts.reconcileFound === true;
+
+  return withRlsBypass(async (tx) => {
+    let tenantId = opts.tenantId ?? null;
+    if (!tenantId && account) {
+      const t = await tx.tenant.findFirst({ where: { stripeAccountId: account }, select: { id: true } });
+      tenantId = t?.id ?? null;
+    }
+    const attemptsOnInsert = found ? 0 : 1;
+    const rows = await tx.$queryRaw<Array<{ status: string; attempts: number; tenantId: string | null }>>`
+      INSERT INTO "StripeEvent"
+        ("id", "eventId", "type", "tenantId", "stripeAccountId", "livemode", "objectId", "created",
+         "status", "attempts", "firstSeenAt", "lastAttemptAt", "processedAt", "reconcileFoundAt")
+      VALUES
+        (${randomUUID()}, ${event.id}, ${event.type}, ${tenantId}, ${account}, ${livemode}, ${objectId}, ${created},
+         'received', ${attemptsOnInsert}, now(), ${found ? null : new Date()}, now(), ${found ? new Date() : null})
+      ON CONFLICT ("eventId") DO UPDATE SET
+        "attempts" = "StripeEvent"."attempts" + ${found ? 0 : 1},
+        "lastAttemptAt" = CASE WHEN ${found} THEN "StripeEvent"."lastAttemptAt" ELSE now() END,
+        "tenantId" = COALESCE("StripeEvent"."tenantId", EXCLUDED."tenantId"),
+        "stripeAccountId" = COALESCE("StripeEvent"."stripeAccountId", EXCLUDED."stripeAccountId"),
+        "objectId" = COALESCE("StripeEvent"."objectId", EXCLUDED."objectId"),
+        "created" = CASE WHEN "StripeEvent"."created" = 0 THEN EXCLUDED."created" ELSE "StripeEvent"."created" END,
+        "livemode" = EXCLUDED."livemode"
+      WHERE "StripeEvent"."status" IN ('received', 'failed')
+      RETURNING "status", "attempts", "tenantId"`;
+    if (rows.length === 1) {
+      const r = rows[0];
+      return {
+        eventId: event.id,
+        status: r.status as StripeEventStatus,
+        attempts: Number(r.attempts),
+        tenantId: r.tenantId,
+        alreadyProcessed: false,
+      };
+    }
+    // The conditional update matched nothing: the row exists and is terminal.
+    const existing = await tx.stripeEvent.findUnique({
+      where: { eventId: event.id },
+      select: { status: true, attempts: true, tenantId: true },
+    });
+    if (!existing) throw new Error(`stripe event ${event.id} neither inserted nor found`);
+    return {
+      eventId: event.id,
+      status: existing.status as StripeEventStatus,
+      attempts: existing.attempts,
+      tenantId: existing.tenantId,
+      alreadyProcessed: TERMINAL_STRIPE_EVENT_STATUSES.has(existing.status as StripeEventStatus),
+    };
+  });
+}
+
+export type ClaimResult =
+  | { kind: "claimed"; status: StripeEventStatus }
+  | { kind: "done"; status: StripeEventStatus }
+  | { kind: "busy" }
+  | { kind: "missing" };
+
+/**
+ * Phase 2, first statement of the handler transaction: lock the row.
+ * `SKIP LOCKED` so a second concurrent delivery does not queue behind the first
+ * (holding a pooled connection for the length of someone else's handler); it
+ * is told `busy` and answers Stripe with a non-2xx, and Stripe's retry finds the
+ * row terminal (first one committed) or claimable (first one rolled back).
+ */
+export async function claimStripeEvent(tx: Tx, eventId: string): Promise<ClaimResult> {
+  const locked = await tx.$queryRaw<Array<{ status: string }>>`
+    SELECT "status" FROM "StripeEvent" WHERE "eventId" = ${eventId} FOR UPDATE SKIP LOCKED`;
+  if (locked.length === 1) {
+    const status = locked[0].status as StripeEventStatus;
+    return TERMINAL_STRIPE_EVENT_STATUSES.has(status) ? { kind: "done", status } : { kind: "claimed", status };
+  }
+  const exists = await tx.$queryRaw<Array<{ n: number }>>`
+    SELECT 1 AS n FROM "StripeEvent" WHERE "eventId" = ${eventId}`;
+  return exists.length === 1 ? { kind: "busy" } : { kind: "missing" };
+}
+
+/** Terminal success, inside the handler transaction (same commit as the effects). */
+export async function markProcessed(
+  tx: Tx,
+  eventId: string,
+  opts: { tenantId?: string | null; status?: "processed" | "replayed" } = {},
+): Promise<void> {
+  await tx.stripeEvent.update({
+    where: { eventId },
+    data: {
+      status: opts.status ?? "processed",
+      processedAt: new Date(),
+      lastError: null,
+      ...(opts.tenantId ? { tenantId: opts.tenantId } : {}),
+    },
+  });
+}
+
+/** Acknowledged but deliberately not applied (lane PC's foreign / stale rules). */
+export async function markIgnored(
+  tx: Tx,
+  eventId: string,
+  kind: IgnoredKind,
+  opts: { tenantId?: string | null } = {},
+): Promise<void> {
+  await tx.stripeEvent.update({
+    where: { eventId },
+    data: {
+      status: kind,
+      processedAt: new Date(),
+      lastError: null,
+      ...(opts.tenantId ? { tenantId: opts.tenantId } : {}),
+    },
+  });
+}
+
+/**
+ * Record a failed attempt, in its own transaction, AFTER the handler
+ * transaction rolled back. Never downgrades a terminal row (a concurrent
+ * delivery may have processed it in the meantime).
+ */
+export async function markFailed(eventId: string, error: unknown): Promise<void> {
+  const lastError = sanitiseEventError(error);
+  await withRlsBypass((tx) =>
+    tx.stripeEvent.updateMany({
+      where: { eventId, status: { in: ["received", "failed"] } },
+      data: { status: "failed", lastError, lastAttemptAt: new Date() },
+    }),
+  );
+}
+
+// ─── One processing path ────────────────────────────────────────────────────
+
+/** A queued email; dispatched after commit (an email cannot be transactional). */
+export type QueuedEmail = Parameters<typeof sendEmail>[0];
+
+/** A queued audit row; written INSIDE the processing transaction (durable). */
+export type QueuedAudit = {
+  tenantId: string;
+  userId: string | null;
+  action: string;
+  entityType: string;
+  entityId: string;
+  metadata: Record<string, unknown>;
+};
+
+export type RunMode = "delivery" | "replay" | "replay_forced";
+
+export type ProcessorContext = {
+  tx: Tx;
+  mode: RunMode;
+  /** The store's view of the club, when event.account resolved to one. */
+  tenantId: string | null;
+};
+
+export type ProcessorResult = {
+  outcome: "processed" | IgnoredKind;
+  tenantId?: string | null;
+  emails?: QueuedEmail[];
+  audits?: QueuedAudit[];
+  /** Post-commit work that needs no durability (e.g. refreshing a cached status). */
+  after?: Array<() => Promise<unknown>>;
+};
+
+/**
+ * The function lane PC exposes from the webhook handler. It must do ALL its
+ * database work through `ctx.tx`, must not call Stripe inside it (resolve
+ * network lookups before `runStripeEvent`, as the route already does), and must
+ * RETURN its emails and audit rows rather than dispatching them.
+ */
+export type StripeEventProcessor<E extends StoreEventInput = StoreEventInput> = (
+  event: E,
+  ctx: ProcessorContext,
+) => Promise<ProcessorResult>;
+
+/** Thrown by a processor for "not attributable yet": recorded as failed, answered 409. */
+export class StripeEventRetryableError extends Error {
+  readonly retryable = true;
+}
+
+class EventBusyError extends Error {}
+class EventDoneError extends Error {
+  constructor(readonly status: StripeEventStatus) {
+    super("already processed");
+  }
+}
+
+export type RunResult =
+  | {
+      kind: "processed" | IgnoredKind;
+      status: StripeEventStatus;
+      tenantId: string | null;
+      emailsSent: number;
+      auditsWritten: number;
+    }
+  | { kind: "already_processed"; status: StripeEventStatus }
+  | { kind: "in_progress" }
+  | { kind: "failed"; retryable: boolean; error: string };
+
+/**
+ * Record → claim → process → mark, with failure recorded durably.
+ *
+ * Modes:
+ *  - `delivery`: a webhook delivery. A terminal row answers already_processed.
+ *  - `replay`: operator replay of a received/failed row. Success is `replayed`.
+ *  - `replay_forced`: operator replay of a TERMINAL row, with a reason. The
+ *    processor runs (its own idempotency — unique Payment keys, mapping rules —
+ *    must make it a no-op), and its queued emails and audit rows are
+ *    SUPPRESSED: the member and the club were already told the first time, and
+ *    the operator's own `stripe.event.replayed` audit row is the record.
+ *
+ * Return codes for the webhook: processed / ignored_* / already_processed →
+ * 200; in_progress → 409 (Stripe retries); failed → 409 when retryable, else
+ * 500. Every failure is on the row (status failed, lastError).
+ */
+export async function runStripeEvent<E extends StoreEventInput>(
+  event: E,
+  processor: StripeEventProcessor<E>,
+  opts: { mode?: RunMode } = {},
+): Promise<RunResult> {
+  const mode = opts.mode ?? "delivery";
+  const recorded = await recordReceived(event);
+  if (recorded.alreadyProcessed && mode !== "replay_forced") {
+    return { kind: "already_processed", status: recorded.status };
+  }
+  const suppressSideEffects = mode === "replay_forced";
+
+  let result: ProcessorResult;
+  let finalStatus: StripeEventStatus;
+  let auditsWritten = 0;
+  try {
+    ({ result, finalStatus, auditsWritten } = await withRlsBypass(async (tx) => {
+      const claim = await claimStripeEvent(tx, event.id);
+      if (claim.kind === "busy") throw new EventBusyError("event is being processed by another delivery");
+      if (claim.kind === "missing") throw new Error(`stripe event ${event.id} has no store row`);
+      if (claim.kind === "done" && mode !== "replay_forced") throw new EventDoneError(claim.status);
+
+      const out = await processor(event, { tx, mode, tenantId: recorded.tenantId });
+      const tenantId = out.tenantId ?? recorded.tenantId ?? null;
+
+      let written = 0;
+      if (!suppressSideEffects) {
+        for (const a of out.audits ?? []) {
+          await logAudit({ ...a, tx });
+          written++;
+        }
+      }
+      let status: StripeEventStatus;
+      if (out.outcome === "processed") {
+        status = mode === "delivery" ? "processed" : "replayed";
+        await markProcessed(tx, event.id, { tenantId, status });
+      } else {
+        status = out.outcome;
+        await markIgnored(tx, event.id, out.outcome, { tenantId });
+      }
+      return { result: { ...out, tenantId }, finalStatus: status, auditsWritten: written };
+    }));
+  } catch (err) {
+    if (err instanceof EventDoneError) return { kind: "already_processed", status: err.status };
+    if (err instanceof EventBusyError) return { kind: "in_progress" };
+    await markFailed(event.id, err).catch((e: unknown) => {
+      // The row could not be updated (database down): the delivery still fails
+      // non-2xx, so Stripe retries; the row keeps its earlier state.
+      console.error("[stripe-event-store] could not record the failure", { eventId: event.id, error: (e as Error)?.message });
+    });
+    const retryable = err instanceof StripeEventRetryableError || (err as { retryable?: unknown })?.retryable === true;
+    if (!retryable) {
+      Sentry.captureException(err, { tags: { area: "stripe-event-store", eventType: event.type }, extra: { eventId: event.id, mode } });
+    }
+    return { kind: "failed", retryable, error: sanitiseEventError(err) };
+  }
+
+  let emailsSent = 0;
+  if (!suppressSideEffects) {
+    for (const email of result.emails ?? []) {
+      emailsSent++;
+      sendEmail(email).catch((e: unknown) => {
+        console.warn("[stripe-event-store] post-commit email failed", { eventId: event.id, error: (e as Error)?.message });
+      });
+    }
+  }
+  for (const job of result.after ?? []) {
+    await job().catch(() => {});
+  }
+  return {
+    kind: result.outcome,
+    status: finalStatus,
+    tenantId: result.tenantId ?? null,
+    emailsSent,
+    auditsWritten,
+  };
+}

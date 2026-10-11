@@ -910,11 +910,62 @@ model SignedWaiver {
 
 // ─── Stripe Webhook Idempotency ──────────────────────────────────────────────
 
+// Durable event store (payments lane PD, 11 Oct 2026; lib/stripe/event-store.ts).
+// The row is written in its OWN transaction BEFORE the handler runs, so an event
+// whose handler failed is still on record (status "failed", lastError) instead
+// of vanishing with the rolled-back claim. The handler's transaction locks the
+// row (SELECT … FOR UPDATE SKIP LOCKED) and sets the terminal status in the same
+// commit as its effects, so two deliveries of one id never both process.
 model StripeEvent {
-  id          String   @id @default(cuid())
-  eventId     String   @unique
-  type        String
-  processedAt DateTime @default(now())
+  id               String    @id @default(cuid())
+  eventId          String    @unique
+  type             String
+  // Retention key for app/api/cron/retention (90 days). Set when the row is
+  // first written and moved to the processing time when the event is processed.
+  processedAt      DateTime  @default(now())
+  tenantId         String?
+  stripeAccountId  String?
+  livemode         Boolean   @default(false)
+  // data.object.id — what the event is about (a subscription, invoice, charge…).
+  objectId         String?
+  // Stripe's event.created (unix seconds): ordering, never our clock.
+  created          Int       @default(0)
+  // CHECK: received | processed | failed | ignored_foreign | ignored_stale | replayed
+  status           String    @default("received")
+  attempts         Int       @default(0)
+  // Truncated error message of the last failed attempt; never a payload, never PII.
+  lastError        String?
+  firstSeenAt      DateTime  @default(now())
+  lastAttemptAt    DateTime?
+  // Set when the reconcile job, not a delivery, found this event missing.
+  reconcileFoundAt DateTime?
+
+  @@index([tenantId, status])
+  @@index([status, lastAttemptAt])
+}
+
+// One row per reconciliation run (lib/stripe/reconcile.ts). Platform table:
+// operator-only, read under the RLS bypass. Holds ids, statuses and pence —
+// never names, emails or card details.
+model StripeReconcileRun {
+  id              String    @id @default(cuid())
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  // running | ok | mismatches | errors | skipped
+  status          String    @default("running")
+  trigger         String    @default("cron")
+  windowStart     DateTime
+  tenantsChecked  Int       @default(0)
+  tenantsSkipped  Int       @default(0)
+  eventsScanned   Int       @default(0)
+  eventsMissing   Int       @default(0)
+  // [{ tenantId, kind, objectId, field, stored, stripe }] — ids and fields only.
+  stateMismatches Json?
+  // [{ tenantId, reason }] — deauthorised clubs reported, not called.
+  skipped         Json?
+  errors          Json?
+
+  @@index([startedAt])
 }
 
 // ─── Rate Limit Hits (DB-backed sliding window) ──────────────────────────────
