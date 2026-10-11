@@ -71,7 +71,7 @@ type Run = {
   eventsMissing: number;
   stateMismatches: Mismatch[] | null;
   skipped: { tenants?: Array<{ tenantId: string; stripeAccountId: string; unprocessedInStore: number }> } | null;
-  errors: Array<{ tenantId: string | null; error: string }> | null;
+  errors: Array<{ tenantId: string | null; code: string }> | null;
 };
 
 type Overview = { generatedAt: string; clubs: Club[]; unattributed: EventRow[]; lastRun: Run | null };
@@ -93,6 +93,20 @@ const STATUS_TONE: Record<string, string> = {
   received: "text-[var(--hue-warning-ink)]",
   processed: "text-[var(--hue-success-ink)]",
   replayed: "text-[var(--hue-success-ink)]",
+};
+
+// Codes only reach this page (lib/stripe/reconcile.ts reconcileErrorCode); Stripe's own text stays in the server log.
+const ERROR_LABEL: Record<string, string> = {
+  account_invalid: "Stripe says the account id is not valid for this platform",
+  permission_error: "MatFlow has no permission on this account",
+  authentication_error: "Stripe refused the platform key",
+  rate_limited: "Stripe rate limit reached",
+  timeout: "Stripe did not answer in time",
+  connection_error: "Stripe could not be reached",
+  stripe_api_error: "Stripe returned an error",
+  invalid_request: "Stripe refused the request",
+  internal_error: "MatFlow error while checking",
+  stripe_not_configured: "Stripe is not configured",
 };
 
 const RUN_LABEL: Record<string, string> = {
@@ -270,7 +284,7 @@ function RunCard({ run, clubName }: { run: Run | null; clubName: (id: string) =>
           <ul className="list-disc pl-5">
             {errors.map((e, i) => (
               <li key={`${e.tenantId}:${i}`}>
-                {e.tenantId ? clubName(e.tenantId) : "Run"}: {e.error}
+                {e.tenantId ? clubName(e.tenantId) : "Run"}: {ERROR_LABEL[e.code] ?? e.code}
               </li>
             ))}
           </ul>

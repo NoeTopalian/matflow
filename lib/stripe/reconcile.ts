@@ -99,7 +99,10 @@ export type ReconcileResult = {
   stateMismatches: StateMismatch[];
   skippedTenants: { tenantId: string; stripeAccountId: string; reason: "stripe_access_withdrawn"; unprocessedInStore: number }[];
   truncated: { tenantId: string; kind: "subscriptions" | "payments"; limit: number }[];
-  errors: { tenantId: string; error: string }[];
+  /** Per-club failures: a CODE only, never Stripe's message (it can quote the key, partly masked). */
+  errors: { tenantId: string; code: ReconcileErrorCode }[];
+  /** True for ?dryRun=1: nothing was recorded (no StripeEvent row, no run row). */
+  dryRun?: boolean;
 };
 
 export type ReconcileOptions = {
@@ -110,7 +113,49 @@ export type ReconcileOptions = {
   stripe?: ReconcileStripe;
   /** Limit the run to these clubs (tests, manual runs). */
   tenantIds?: string[];
+  /**
+   * Report only: list what is missing or drifting, record nothing — no
+   * StripeEvent row for a missing event, no StripeReconcileRun row.
+   */
+  dryRun?: boolean;
 };
+
+export type ReconcileErrorCode =
+  | "account_invalid"
+  | "permission_error"
+  | "authentication_error"
+  | "rate_limited"
+  | "timeout"
+  | "connection_error"
+  | "stripe_api_error"
+  | "invalid_request"
+  | "internal_error";
+
+/**
+ * A per-club failure as a fixed code. Stripe's message text never leaves this
+ * function except to the server log, masked: an authentication failure's
+ * message quotes the platform key (partly masked by Stripe, still too much).
+ */
+export function reconcileErrorCode(err: unknown): ReconcileErrorCode {
+  const e = (err ?? {}) as { type?: unknown; code?: unknown; statusCode?: unknown; raw?: { code?: unknown } };
+  const code = typeof e.code === "string" ? e.code : typeof e.raw?.code === "string" ? e.raw.code : "";
+  const type = typeof e.type === "string" ? e.type : "";
+  const status = typeof e.statusCode === "number" ? e.statusCode : 0;
+  if (code === "account_invalid") return "account_invalid";
+  if (type === "StripePermissionError" || status === 403) return "permission_error";
+  if (type === "StripeAuthenticationError" || status === 401) return "authentication_error";
+  if (type === "StripeRateLimitError" || status === 429) return "rate_limited";
+  if (code === "ETIMEDOUT" || /timeout/i.test(code) || type === "StripeTimeoutError") return "timeout";
+  if (type === "StripeConnectionError" || code === "ECONNRESET" || code === "ECONNREFUSED" || code === "ENOTFOUND") return "connection_error";
+  if (type === "StripeAPIError" || status >= 500) return "stripe_api_error";
+  if (type === "StripeInvalidRequestError" || status === 400 || status === 404) return "invalid_request";
+  return "internal_error";
+}
+
+/** Any Stripe key or signing secret in a log line, masked to its prefix. */
+export function maskStripeSecrets(text: string): string {
+  return text.replace(/(sk|rk|pk)_(live|test)_[A-Za-z0-9*]+/g, "$1_$2_[masked]").replace(/whsec_[A-Za-z0-9*]+/g, "whsec_[masked]");
+}
 
 function isMissingResource(err: unknown): boolean {
   const e = err as { code?: unknown; statusCode?: unknown; raw?: { code?: unknown } } | null;
@@ -168,10 +213,13 @@ export async function runStripeReconciliation(opts: ReconcileOptions = {}): Prom
     errors: [],
   };
 
+  const dryRun = opts.dryRun === true;
+  if (dryRun) result.dryRun = true;
   if (!opts.stripe && !process.env.STRIPE_SECRET_KEY) {
+    if (dryRun) return { ...result, skipped: "Stripe not configured" };
     const run = await withRlsBypass((tx) =>
       tx.stripeReconcileRun.create({
-        data: { trigger, windowStart, status: "skipped", finishedAt: new Date(), errors: [{ tenantId: null, error: "Stripe not configured" }] },
+        data: { trigger, windowStart, status: "skipped", finishedAt: new Date(), errors: [{ tenantId: null, code: "stripe_not_configured" }] },
         select: { id: true },
       }),
     );
@@ -181,10 +229,12 @@ export async function runStripeReconciliation(opts: ReconcileOptions = {}): Prom
   const keyMode = classifyStripeKey(process.env.STRIPE_SECRET_KEY).mode;
   const expectLive = keyMode === "live" ? true : keyMode === "test" ? false : null;
 
-  const run = await withRlsBypass((tx) =>
-    tx.stripeReconcileRun.create({ data: { trigger, windowStart, status: "running" }, select: { id: true } }),
-  );
-  result.runId = run.id;
+  const run = dryRun
+    ? null
+    : await withRlsBypass((tx) =>
+        tx.stripeReconcileRun.create({ data: { trigger, windowStart, status: "running" }, select: { id: true } }),
+      );
+  result.runId = run?.id ?? null;
 
   // Cross-tenant enumeration — bypass is intentional (a cron has no session).
   const tenants = await withRlsBypass((tx) =>
@@ -210,17 +260,26 @@ export async function runStripeReconciliation(opts: ReconcileOptions = {}): Prom
     }
     result.tenantsChecked++;
     try {
-      await reconcileEvents(stripe, tenant.id, acct, createdGte, expectLive, result);
+      await reconcileEvents(stripe, tenant.id, acct, createdGte, expectLive, result, dryRun);
       await reconcileSubscriptions(stripe, tenant.id, acct, result);
       await reconcilePayments(stripe, tenant.id, acct, windowStart, result);
     } catch (e) {
-      result.errors.push({ tenantId: tenant.id, error: sanitiseEventError(e) });
+      // One club's failure never fails the run: its code is recorded and the
+      // next club is checked. The message goes to the server log only, masked.
+      const code = reconcileErrorCode(e);
+      result.errors.push({ tenantId: tenant.id, code });
+      console.error("[stripe-reconcile] club could not be checked", {
+        tenantId: tenant.id,
+        code,
+        message: maskStripeSecrets(sanitiseEventError(e)),
+      });
     }
   }
   result.tenantsSkipped = result.skippedTenants.length;
   result.missingCount = result.missing.length;
 
   const status = result.errors.length > 0 ? "errors" : result.missingCount > 0 || result.stateMismatches.length > 0 ? "mismatches" : "ok";
+  if (!run) return result;
   await withRlsBypass((tx) =>
     tx.stripeReconcileRun.update({
       where: { id: run.id },
@@ -250,7 +309,7 @@ export async function runStripeReconciliation(opts: ReconcileOptions = {}): Prom
     );
   }
   if (result.errors.length > 0) {
-    console.warn("[stripe-reconcile] per-tenant errors", { runId: run.id, errors: result.errors });
+    console.warn("[stripe-reconcile] clubs not checked", { runId: run.id, errors: result.errors });
   }
   // StripeEvent lifecycle (the 90-day prune) belongs to app/api/cron/retention.
   return result;
@@ -263,6 +322,7 @@ async function reconcileEvents(
   createdGte: number,
   expectLive: boolean | null,
   result: ReconcileResult,
+  dryRun: boolean,
 ): Promise<void> {
   const handled: StripeEventLike[] = [];
   for await (const ev of stripe.events.list({ limit: 100, created: { gte: createdGte } }, { stripeAccount: acct })) {
@@ -279,7 +339,7 @@ async function reconcileEvents(
   const knownSet = new Set(known.map((k) => k.eventId));
   for (const ev of handled) {
     if (knownSet.has(ev.id)) continue;
-    await recordReceived({ ...ev, account: acct }, { reconcileFound: true, tenantId });
+    if (!dryRun) await recordReceived({ ...ev, account: acct }, { reconcileFound: true, tenantId });
     result.missing.push({ tenantId, stripeAccountId: acct, eventId: ev.id, type: ev.type });
   }
 }

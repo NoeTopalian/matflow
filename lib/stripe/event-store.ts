@@ -101,7 +101,11 @@ export function sanitiseEventError(err: unknown): string {
             }
           })();
   const oneLine = raw.replace(/\s+/g, " ").trim();
-  const masked = oneLine.replace(/[^\s@<>()"']+@[^\s@<>()"']+\.[^\s@<>()"']+/g, "[email]");
+  const masked = oneLine
+    .replace(/[^\s@<>()"']+@[^\s@<>()"']+\.[^\s@<>()"']+/g, "[email]")
+    // Stripe's authentication errors quote the key (partly masked): never keep any of it.
+    .replace(/\b(sk|rk|pk)_(live|test)_[A-Za-z0-9*]+/g, "$1_$2_[masked]")
+    .replace(/\bwhsec_[A-Za-z0-9*]+/g, "whsec_[masked]");
   return masked.length > LAST_ERROR_MAX ? `${masked.slice(0, LAST_ERROR_MAX - 1)}…` : masked || "unknown error";
 }
 

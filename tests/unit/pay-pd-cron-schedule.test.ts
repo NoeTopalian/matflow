@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const run = vi.hoisted(() => vi.fn(async () => ({ ok: true, runId: "run-1", errors: [] as unknown[] })));
-vi.mock("@/lib/stripe/reconcile", () => ({ runStripeReconciliation: run }));
+vi.mock("@/lib/stripe/reconcile", async (orig) => ({ ...(await orig<typeof import("@/lib/stripe/reconcile")>()), runStripeReconciliation: run }));
 vi.mock("@/lib/rate-limit", () => ({ checkCronAuthAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }) }));
 vi.mock("next/server", () => ({
   NextResponse: { json: (b: unknown, init?: { status?: number }) => ({ status: init?.status ?? 200, json: async () => b }) },
@@ -67,15 +67,43 @@ describe("pay-pd: the reconcile schedule", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("exactly \"true\" runs it as a cron run; per-club errors answer 500 ok:false", async () => {
+  it("exactly \"true\" runs it as a cron run; one club that could not be checked is a code on a 200, not a failed run", async () => {
     process.env.STRIPE_RECONCILE_ENABLED = "true";
     const ok = await GET(req("Bearer pay-pd-cron-test-bearer"));
     expect(ok.status).toBe(200);
-    expect(run).toHaveBeenCalledWith({ trigger: "cron" });
-    run.mockResolvedValueOnce({ ok: true, runId: "run-2", errors: [{ tenantId: "t", error: "x" }] });
-    const bad = await GET(req("Bearer pay-pd-cron-test-bearer"));
-    expect(bad.status).toBe(500);
-    expect(await bad.json()).toMatchObject({ ok: false, runId: "run-2" });
+    expect(run).toHaveBeenCalledWith({ trigger: "cron", dryRun: false });
+    run.mockResolvedValueOnce({ ok: true, runId: "run-2", errors: [{ tenantId: "t", code: "account_invalid" }] } as never);
+    const partial = await GET(req("Bearer pay-pd-cron-test-bearer"));
+    expect(partial.status).toBe(200);
+    expect(await partial.json()).toMatchObject({ ok: true, runId: "run-2", errors: [{ tenantId: "t", code: "account_invalid" }] });
+  });
+
+  it("a run that cannot complete answers 500 with a code only; the message (which can quote the key) stays in the server log, masked", async () => {
+    process.env.STRIPE_RECONCILE_ENABLED = "true";
+    run.mockRejectedValueOnce(Object.assign(new Error("Invalid API Key provided: sk_test_51Abc****wxyz"), { type: "StripeAuthenticationError", statusCode: 401 }));
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => { logged.push(JSON.stringify(a)); });
+    try {
+      const res = await GET(req("Bearer pay-pd-cron-test-bearer"));
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body).toEqual({ ok: false, error: "reconcile_failed", code: "authentication_error" });
+      expect(JSON.stringify(body)).not.toMatch(/sk_test|Invalid API Key/);
+      expect(logged.join(" ")).toContain("sk_test_[masked]");
+      expect(logged.join(" ")).not.toContain("51Abc");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("?dryRun=1 runs report-only, even while the switch is off; without it the switch still decides", async () => {
+    const dry = await GET(new Request("https://matflow.test/api/cron/stripe-reconcile?dryRun=1", { headers: { authorization: "Bearer pay-pd-cron-test-bearer" } }));
+    expect(dry.status).toBe(200);
+    expect(run).toHaveBeenCalledWith({ trigger: "cron", dryRun: true });
+    expect((await GET(req("Bearer pay-pd-cron-test-bearer"))).status).toBe(503);
+    expect(run).toHaveBeenCalledTimes(1);
+    // The bearer still comes first.
+    expect((await GET(new Request("https://matflow.test/api/cron/stripe-reconcile?dryRun=1", { headers: { authorization: "Bearer wrong" } }))).status).toBe(401);
   });
 
   it("the gate is checked after the bearer: a wrong bearer is 401 whatever the switch says", async () => {

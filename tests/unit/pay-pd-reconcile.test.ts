@@ -91,6 +91,7 @@ function fakeStripe(over: Partial<{
   subs: Record<string, string | Error | { status: string; periodEnd: number }>;
   charges: Record<string, { status: string; refunded: boolean; amount_refunded: number; disputed: boolean } | Error>;
   intents: Record<string, string>;
+  failures: Record<string, Error>;
 }> = {}) {
   const calls: Array<{ kind: string; id?: string; acct: string }> = [];
   const missing = () => Object.assign(new Error("No such object"), { code: "resource_missing", statusCode: 404 });
@@ -99,6 +100,8 @@ function fakeStripe(over: Partial<{
       list: (_p, o) => {
         calls.push({ kind: "events.list", acct: o.stripeAccount });
         const list = over.events?.[o.stripeAccount];
+        const failure = over.failures?.[o.stripeAccount];
+        if (failure) throw failure;
         if (!list) throw new Error(`stripe down for ${o.stripeAccount}`);
         return (async function* () { yield* list; })();
       },
@@ -279,16 +282,63 @@ describe("pay-pd: Stripe reconciliation", () => {
     expect(db.runs[0]).toMatchObject({ tenantsSkipped: 1, skipped: { tenants: r.skippedTenants, truncated: [] } });
   });
 
-  it("one club's Stripe failure is recorded and the others are still checked", async () => {
+  it("one club failing never fails the run: a CODE per club, the others reconciled, no Stripe message text in the result or the row", async () => {
+    // The shape lane TS met in the sandbox: a club holding a fake account id.
+    const KEY_TEXT = "sk_test_51Abc****************************wxyz";
+    const stripeError = (props: Record<string, unknown>, message: string) => Object.assign(new Error(message), props);
     db.tenants = [
-      { id: "t_down", stripeAccountId: "acct_down", stripeConnected: true },
+      { id: "t_fake", stripeAccountId: "acct_revfn_fake", stripeConnected: true },
+      { id: "t_perm", stripeAccountId: "acct_perm", stripeConnected: true },
+      { id: "t_auth", stripeAccountId: "acct_auth", stripeConnected: true },
+      { id: "t_slow", stripeAccountId: "acct_slow", stripeConnected: true },
       { id: "t1", stripeAccountId: "acct_1", stripeConnected: true },
     ];
-    const { stripe } = fakeStripe({ events: { acct_1: [ev("evt_x", "invoice.voided")] } });
-    const r = await runStripeReconciliation({ stripe, now: NOW });
-    expect(r.errors).toEqual([{ tenantId: "t_down", error: "stripe down for acct_down" }]);
-    expect(r.missing.map((m) => m.eventId)).toEqual(["evt_x"]);
-    expect(db.runs[0]).toMatchObject({ status: "errors" });
+    const { stripe } = fakeStripe({
+      events: { acct_1: [ev("evt_x", "invoice.voided")] },
+      failures: {
+        acct_revfn_fake: stripeError(
+          { type: "StripeInvalidRequestError", code: "account_invalid", statusCode: 403 },
+          `The provided key '${KEY_TEXT}' does not have access to account 'acct_revfn_fake' (or that account does not exist).`,
+        ),
+        acct_perm: stripeError({ type: "StripePermissionError", statusCode: 403 }, `The provided key '${KEY_TEXT}' does not have the required permissions`),
+        acct_auth: stripeError({ type: "StripeAuthenticationError", statusCode: 401 }, `Invalid API Key provided: ${KEY_TEXT}`),
+        acct_slow: stripeError({ type: "StripeConnectionError", code: "ETIMEDOUT" }, "Request timed out"),
+      },
+    });
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => { logged.push(JSON.stringify(a)); });
+    try {
+      const r = await runStripeReconciliation({ stripe, now: NOW });
+      expect(r.errors).toEqual([
+        { tenantId: "t_fake", code: "account_invalid" },
+        { tenantId: "t_perm", code: "permission_error" },
+        { tenantId: "t_auth", code: "authentication_error" },
+        { tenantId: "t_slow", code: "timeout" },
+      ]);
+      expect(r.tenantsChecked).toBe(5);
+      expect(r.missing.map((m) => m.eventId)).toEqual(["evt_x"]);
+      expect(db.runs[0]).toMatchObject({ status: "errors" });
+      const out = JSON.stringify(r) + JSON.stringify(db.runs);
+      expect(out).not.toMatch(/sk_test|\*\*\*\*|does not have|Invalid API Key|timed out/);
+      // The server log has the message, with the key masked.
+      const clubLines = logged.filter((l) => l.includes("club could not be checked"));
+      expect(clubLines).toHaveLength(4);
+      expect(clubLines.join(" ")).toContain("sk_test_[masked]");
+      expect(clubLines.join(" ")).not.toContain("51Abc");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("?dryRun reports missing events and drift but records nothing: no StripeEvent row, no run row", async () => {
+    db.tenants = [{ id: "t1", stripeAccountId: "acct_1", stripeConnected: true }];
+    const { stripe } = fakeStripe({ events: { acct_1: [ev("evt_dry", "invoice.payment_succeeded")] } });
+    const r = await runStripeReconciliation({ stripe, now: NOW, dryRun: true });
+    expect(r).toMatchObject({ dryRun: true, runId: null, missingCount: 1 });
+    expect(r.missing.map((m) => m.eventId)).toEqual(["evt_dry"]);
+    expect(recordReceived).not.toHaveBeenCalled();
+    expect(db.runs).toEqual([]);
+    expect(db.writes).toEqual([]);
   });
 
   it("without a Stripe key the run is recorded as skipped and nothing is called", async () => {

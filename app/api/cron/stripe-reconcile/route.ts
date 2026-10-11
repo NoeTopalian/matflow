@@ -13,9 +13,12 @@
  * The work is lib/stripe/reconcile.ts: it records events Stripe emitted that
  * the store never saw (as `received`, for operator replay — never processed
  * here), reports state drift without writing member or payment state, and
- * writes one StripeReconcileRun row that /admin/stripe shows. A run whose
- * per-club work failed answers 500 with ok:false so the scheduler shows red;
- * drift alone is a finding, not a failure (200, status "mismatches").
+ * writes one StripeReconcileRun row that /admin/stripe shows. One club that
+ * cannot be checked (an invalid account id, a permission error, a timeout) is
+ * recorded with an error CODE and the run carries on (200, run status
+ * "errors"); only a run that could not complete answers 500. Stripe's error
+ * text is never in the response or the row: it can quote the key. ?dryRun=1
+ * reports without recording anything.
  *
  * The retention cron still calls the same function as its first step; that
  * caller is unchanged (lane PD does not own it).
@@ -23,7 +26,8 @@
 import { NextResponse } from "next/server";
 import { bearerMatches } from "@/lib/constant-time";
 import { checkCronAuthAttempt } from "@/lib/rate-limit";
-import { runStripeReconciliation } from "@/lib/stripe/reconcile";
+import { maskStripeSecrets, reconcileErrorCode, runStripeReconciliation } from "@/lib/stripe/reconcile";
+import { sanitiseEventError } from "@/lib/stripe/event-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -55,11 +59,23 @@ export async function GET(req: Request) {
   if (!process.env.STRIPE_SECRET_KEY) {
     return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
   }
-  if (!stripeReconcileEnabled()) {
+  // ?dryRun=1 reports what is missing or drifting and records NOTHING (no
+  // StripeEvent row, no run row); like retention's dry run it is allowed while
+  // the switch is off, behind the same bearer.
+  const dryRun = new URL(req.url).searchParams.get("dryRun") === "1";
+  if (!stripeReconcileEnabled() && !dryRun) {
     return NextResponse.json({ error: "stripe reconcile cron disabled" }, { status: 503 });
   }
 
-  const result = await runStripeReconciliation({ trigger: "cron" });
-  const ok = result.errors.length === 0;
-  return NextResponse.json({ ...result, ok }, { status: ok ? 200 : 500 });
+  try {
+    const result = await runStripeReconciliation({ trigger: "cron", dryRun });
+    // A club that could not be checked is a finding with a code on the run
+    // row, not a failed run: the other clubs were reconciled.
+    return NextResponse.json({ ...result, ok: true });
+  } catch (e) {
+    // The run itself failed (database unreachable, …). Code only in the
+    // response; the masked message goes to the server log.
+    console.error("[cron/stripe-reconcile] run failed", { code: reconcileErrorCode(e), message: maskStripeSecrets(sanitiseEventError(e)) });
+    return NextResponse.json({ ok: false, error: "reconcile_failed", code: reconcileErrorCode(e) }, { status: 500 });
+  }
 }

@@ -23,6 +23,8 @@ const STAMP = `paypdrc-${Date.now().toString(36)}${Math.random().toString(36).sl
 const S = STAMP.replace(/-/g, "");
 const TENANT = `${STAMP}-t`;
 const GONE = `${STAMP}-g`;
+const FAKE = `${STAMP}-f`;
+const ACCT_FAKE = `acct_${S}_fake`;
 const ACCT = `acct_${S}`;
 const ACCT_GONE = `acct_${S}gone`;
 const MEMBER = `${STAMP}-m`;
@@ -68,7 +70,7 @@ describe.skipIf(!HAS_DB)("pay-pd: reconciliation against the real store", () => 
       await tx.payment.deleteMany({ where: { tenantId: TENANT } });
       await tx.memberSubscription.deleteMany({ where: { tenantId: TENANT } });
       await tx.member.deleteMany({ where: { tenantId: TENANT } });
-      await tx.tenant.deleteMany({ where: { id: { in: [TENANT, GONE] } } });
+      await tx.tenant.deleteMany({ where: { id: { in: [TENANT, GONE, FAKE] } } });
     });
   }, 120_000);
 
@@ -132,5 +134,33 @@ describe.skipIf(!HAS_DB)("pay-pd: reconciliation against the real store", () => 
     if (r.runId) runIds.push(r.runId);
     expect(r.missingCount).toBe(0);
     expect(await withRlsBypass((tx) => tx.stripeEvent.findUnique({ where: { eventId: E_DELETED }, select: { status: true, attempts: true } }))).toEqual({ status: "received", attempts: 0 });
+  });
+
+  it("a connected club holding an account id Stripe rejects is recorded with a CODE on the run row and the others are still reconciled", async () => {
+    await withRlsBypass((tx) => tx.tenant.create({ data: { id: FAKE, name: `${STAMP} fake`, slug: FAKE, stripeAccountId: ACCT_FAKE, stripeConnected: true } }));
+    const KEY_TEXT = "sk_test_51Abc****************************wxyz";
+    const rejecting: ReconcileStripe = {
+      ...fake,
+      events: {
+        list: (p, o) => {
+          if (o.stripeAccount === ACCT_FAKE) {
+            throw Object.assign(new Error(`The provided key '${KEY_TEXT}' does not have access to account '${ACCT_FAKE}' (or that account does not exist).`), {
+              type: "StripeInvalidRequestError", code: "account_invalid", statusCode: 403,
+            });
+          }
+          return fake.events.list(p, o);
+        },
+      },
+    };
+    const r = await runStripeReconciliation({ stripe: rejecting, trigger: "manual", tenantIds: [TENANT, FAKE] });
+    if (r.runId) runIds.push(r.runId);
+    expect(r.errors).toEqual([{ tenantId: FAKE, code: "account_invalid" }]);
+    expect(r.tenantsChecked).toBe(2);
+    const row = await withRlsBypass((tx) => tx.stripeReconcileRun.findUnique({ where: { id: r.runId! } }));
+    expect(row?.status).toBe("errors");
+    expect(row?.errors).toEqual([{ tenantId: FAKE, code: "account_invalid" }]);
+    expect(JSON.stringify(row) + JSON.stringify(r)).not.toMatch(/sk_test|does not have access|\*\*\*\*/);
+    // The good club was still reconciled in the same run (its drift is reported).
+    expect(r.stateMismatches.some((m) => m.tenantId === TENANT)).toBe(true);
   });
 });
