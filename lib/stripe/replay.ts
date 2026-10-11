@@ -10,9 +10,10 @@
  *
  *  - `received` / `failed` rows: processed once; status `replayed` on success.
  *  - terminal rows (`processed`, `ignored_*`, `replayed`): refused — there is
- *    nothing to do — unless `force` with a reason. A forced replay runs the
- *    processor with its emails and audit rows suppressed; the processor's own
- *    idempotency (unique Payment keys, mapping rules) must make it a no-op.
+ *    nothing to do — unless `force` with a reason. A forced replay is
+ *    COMPARE-ONLY (review RP-8, `compareStripeEvent`): the handler runs in a
+ *    transaction that is always rolled back, the writes it would make are
+ *    reported, and no member, payment, email or event row changes.
  *  - a club whose Stripe access was withdrawn (`stripeConnected: false`) is
  *    refused before any call: the platform can no longer act as that account.
  *
@@ -25,6 +26,8 @@ import { logAudit } from "@/lib/audit-log";
 import {
   REPLAYABLE_STRIPE_EVENT_STATUSES,
   runStripeEvent,
+  compareStripeEvent,
+  type CompareResult,
   sanitiseEventError,
   type RunResult,
   type StoreEventInput,
@@ -67,7 +70,7 @@ export type ReplayRefusal =
   | "not_wired";
 
 export type ReplayOutcome =
-  | { ok: true; tenantId: string; result: RunResult; forced: boolean; previousStatus: StripeEventStatus }
+  | { ok: true; tenantId: string; result: RunResult | CompareResult; forced: boolean; previousStatus: StripeEventStatus }
   | { ok: false; refusal: ReplayRefusal; message: string };
 
 export type ReplayRequest = {
@@ -187,7 +190,14 @@ export async function replayStripeEvent(r: ReplayRequest, deps: ReplayDeps): Pro
     console.warn("[stripe-replay] preparing the event failed", { eventId: r.eventId, error: sanitiseEventError(err) });
     return refuse("stripe_unavailable");
   }
-  const result = await runStripeEvent(event, processor, { mode: forced ? "replay_forced" : "replay" });
+  // Review RP-8: a forced look at a settled event is COMPARE-ONLY. Re-applying
+  // the handler's writes let an old payment_failed undo a later payment; the
+  // comparison runs the handler in a transaction that is always rolled back and
+  // reports what it would do, and nothing about the member, the payments or the
+  // event row changes.
+  const result: RunResult | CompareResult = forced
+    ? await compareStripeEvent(event, processor)
+    : await runStripeEvent(event, processor, { mode: "replay" });
 
   await logAudit({
     durable: true,
@@ -204,6 +214,7 @@ export async function replayStripeEvent(r: ReplayRequest, deps: ReplayDeps): Pro
       forced,
       reason,
       result: result.kind,
+      ...(result.kind === "compared" ? { wouldBe: result.wouldBe, writesRolledBack: result.writes } : {}),
       ...(result.kind === "failed" ? { error: result.error } : {}),
     },
     actAsUserId: r.operatorId,

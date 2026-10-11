@@ -103,6 +103,10 @@ const IN_PAID = `in_${S}_paid`;
 const IN_FAILED = `in_${S}_failed`;
 const EVT_PAID = `evt_${S}_paid`;
 const EVT_FAILED = `evt_${S}_failed`;
+const IN_OLD = `in_${S}_old`;
+const IN_NEW = `in_${S}_new`;
+const EVT_OLD_FAIL = `evt_${S}_oldfail`;
+const EVT_NEW_PAID = `evt_${S}_newpaid`;
 const ORIGIN = "http://localhost:3847";
 const SECRET = "whsec_paypde2e_synthetic_local_only_0123456789";
 
@@ -187,8 +191,12 @@ describe.skipIf(!HAS_DB)("pay-pd: replay end to end through the real webhook pro
     });
     h.pi.set(IN_PAID, `pi_${S}_paid`);
     h.pi.set(IN_FAILED, `pi_${S}_failed`);
+    h.pi.set(IN_OLD, `pi_${S}_old`);
+    h.pi.set(IN_NEW, `pi_${S}_new`);
     h.payloads.set(EVT_PAID, invoiceEvent(EVT_PAID, "invoice.payment_succeeded", IN_PAID));
     h.payloads.set(EVT_FAILED, invoiceEvent(EVT_FAILED, "invoice.payment_failed", IN_FAILED));
+    h.payloads.set(EVT_OLD_FAIL, { ...invoiceEvent(EVT_OLD_FAIL, "invoice.payment_failed", IN_OLD), created: Math.floor(Date.now() / 1000) - 7200 });
+    h.payloads.set(EVT_NEW_PAID, { ...invoiceEvent(EVT_NEW_PAID, "invoice.payment_succeeded", IN_NEW), created: Math.floor(Date.now() / 1000) - 60 });
     h.jar.set(OP_SESSION_COOKIE, issueOperatorSession(OP_ID, 0));
   }, 180_000);
 
@@ -244,7 +252,10 @@ describe.skipIf(!HAS_DB)("pay-pd: replay end to end through the real webhook pro
   it("(3) a forced replay of the processed event: no second Payment, no second handler audit, the operator's row written", async () => {
     const r = await replay(EVT_PAID, { reason: "forced convergence check after the fix", force: true }, await grantFor(EVT_PAID, true));
     console.log("[pay-pd e2e] forced replay →", r.status, JSON.stringify(r.body));
-    expect(r).toMatchObject({ status: 200, body: { ok: true, result: "processed", status: "replayed", forced: true } });
+    // Compare-only (review RP-8): the handler ran in a rolled-back transaction.
+    expect(r).toMatchObject({ status: 200, body: { ok: true, result: "compared", status: "replayed", forced: true, wouldBe: "processed" } });
+    expect(r.body.writesRolledBack).toEqual(expect.arrayContaining(["payment.upsert"]));
+    expect(await row(EVT_PAID)).toMatchObject({ status: "replayed" });
     expect(await payments(IN_PAID)).toBe(1);
     expect(await audits("member.payment.succeeded")).toBe(1);
     expect(await audits("stripe.event.replayed")).toBe(2);
@@ -252,7 +263,7 @@ describe.skipIf(!HAS_DB)("pay-pd: replay end to end through the real webhook pro
       tx.auditLog.findFirst({ where: { tenantId: TENANT, action: "stripe.event.replayed" }, orderBy: { createdAt: "desc" }, select: { operatorId: true, metadata: true } }),
     );
     expect(last?.operatorId).toBe(OP_ID);
-    expect(last?.metadata).toMatchObject({ eventId: EVT_PAID, previousStatus: "replayed", forced: true, result: "processed" });
+    expect(last?.metadata).toMatchObject({ eventId: EVT_PAID, previousStatus: "replayed", forced: true, result: "compared", wouldBe: "processed" });
   });
 
   it("(4) a forced replay of a processed invoice.payment_failed sends no email again", async () => {
@@ -267,9 +278,42 @@ describe.skipIf(!HAS_DB)("pay-pd: replay end to end through the real webhook pro
 
     const r = await replay(EVT_FAILED, { reason: "forced convergence check on a failure", force: true }, await grantFor(EVT_FAILED, true));
     console.log("[pay-pd e2e] forced replay of payment_failed →", r.status, JSON.stringify(r.body), "emails before/after", sentOnDelivery, h.emails.length);
-    expect(r).toMatchObject({ status: 200, body: { ok: true, forced: true } });
+    expect(r).toMatchObject({ status: 200, body: { ok: true, forced: true, result: "compared" } });
     expect(h.emails.length).toBe(sentOnDelivery);
     expect(await audits("member.payment.failed")).toBe(failedAudits);
     expect(await payments(IN_FAILED)).toBe(1);
+  });
+
+  it("(5) RP-8: a forced replay of an OLD payment_failed after a later paid invoice changes nothing; the member stays paid", async () => {
+    expect((await deliver(h.payloads.get(EVT_OLD_FAIL))).status).toBe(200);
+    expect((await deliver(h.payloads.get(EVT_NEW_PAID))).status).toBe(200);
+    const member = () => withRlsBypass((tx) => tx.member.findUnique({ where: { id: MEMBER }, select: { paymentStatus: true, status: true } }));
+    const before = await member();
+    expect(before?.paymentStatus).toBe("paid");
+    const paymentsBefore = await withRlsBypass((tx) =>
+      tx.payment.findMany({ where: { tenantId: TENANT }, select: { id: true, status: true, stripeInvoiceId: true }, orderBy: { id: "asc" } }),
+    );
+    const failedAuditsBefore = await audits("member.payment.failed");
+    const emailsBefore = h.emails.length;
+    const rowBefore = await row(EVT_OLD_FAIL);
+
+    const r = await replay(EVT_OLD_FAIL, { reason: "forced look at an old failure after the member paid", force: true }, await grantFor(EVT_OLD_FAIL, true));
+    console.log("[pay-pd e2e] RP-8 forced compare of old payment_failed →", r.status, JSON.stringify(r.body));
+    expect(r).toMatchObject({ status: 200, body: { ok: true, result: "compared", forced: true } });
+    expect(Array.isArray(r.body.writesRolledBack)).toBe(true);
+
+    expect(await member()).toEqual(before);
+    const paymentsAfter = await withRlsBypass((tx) =>
+      tx.payment.findMany({ where: { tenantId: TENANT }, select: { id: true, status: true, stripeInvoiceId: true }, orderBy: { id: "asc" } }),
+    );
+    expect(paymentsAfter).toEqual(paymentsBefore);
+    expect(await audits("member.payment.failed")).toBe(failedAuditsBefore);
+    expect(h.emails.length).toBe(emailsBefore);
+    expect(await row(EVT_OLD_FAIL)).toEqual(rowBefore);
+    const last = await withRlsBypass((tx) =>
+      tx.auditLog.findFirst({ where: { tenantId: TENANT, action: "stripe.event.replayed", entityId: EVT_OLD_FAIL }, select: { operatorId: true, metadata: true } }),
+    );
+    expect(last?.operatorId).toBe(OP_ID);
+    expect(last?.metadata).toMatchObject({ eventId: EVT_OLD_FAIL, forced: true, result: "compared" });
   });
 });

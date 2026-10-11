@@ -111,6 +111,8 @@ export async function GET(req: Request) {
     return { tenants, c24, c7, last, attention, unattributed, lastRun };
   });
 
+  // StripeEvent.created is a BigInt column (unix seconds); JSON has no bigint.
+  const plain = <T extends { created: bigint }>(e: T) => ({ ...e, created: Number(e.created) });
   const counts = (rows: typeof data.c24, tenantId: string) =>
     Object.fromEntries(rows.filter((r) => r.tenantId === tenantId).map((r) => [r.status, r._count._all]));
   const clubs = data.tenants.map((t) => ({
@@ -123,13 +125,14 @@ export async function GET(req: Request) {
     lastEventAt: data.last.find((l) => l.tenantId === t.id)?._max.firstSeenAt ?? null,
     attention: data.attention
       .filter((e) => e.tenantId === t.id || (e.tenantId === null && !!t.stripeAccountId && e.stripeAccountId === t.stripeAccountId))
-      .slice(0, ATTENTION_PER_CLUB),
+      .slice(0, ATTENTION_PER_CLUB)
+      .map(plain),
   }));
 
   return NextResponse.json({
     generatedAt: new Date(now).toISOString(),
     clubs,
-    unattributed: data.unattributed,
+    unattributed: data.unattributed.map(plain),
     lastRun: data.lastRun,
   });
 }

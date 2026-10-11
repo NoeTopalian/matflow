@@ -141,7 +141,8 @@ export async function recordReceived(
 ): Promise<RecordReceivedResult> {
   const account = typeof event.account === "string" && event.account.length > 0 ? event.account : null;
   const objectId = objectIdOf(event);
-  const created = Number.isFinite(event.created) ? Math.trunc(event.created as number) : 0;
+  // BigInt column (review RP-10): unix seconds, safe past 2038.
+  const created = BigInt(Number.isFinite(event.created) ? Math.trunc(event.created as number) : 0);
   const livemode = event.livemode === true;
   const found = opts.reconcileFound === true;
 
@@ -186,7 +187,7 @@ export async function recordReceived(
       if (tenantId) await tx.stripeEvent.updateMany({ where: { eventId: event.id, tenantId: null }, data: { tenantId } });
       if (account) await tx.stripeEvent.updateMany({ where: { eventId: event.id, stripeAccountId: null }, data: { stripeAccountId: account } });
       if (objectId) await tx.stripeEvent.updateMany({ where: { eventId: event.id, objectId: null }, data: { objectId } });
-      if (created) await tx.stripeEvent.updateMany({ where: { eventId: event.id, created: 0 }, data: { created } });
+      if (created !== BigInt(0)) await tx.stripeEvent.updateMany({ where: { eventId: event.id, created: BigInt(0) }, data: { created } });
     }
     const row = await tx.stripeEvent.findUnique({
       where: { eventId: event.id },
@@ -361,17 +362,13 @@ export type RunResult =
  * Modes:
  *  - `delivery`: a webhook delivery. A terminal row answers already_processed.
  *  - `replay`: operator replay of a received/failed row. Success is `replayed`.
- *  - `replay_forced`: operator replay of a TERMINAL row, with a reason. The
- *    processor runs (its own idempotency — unique Payment keys, mapping rules —
- *    must make it a no-op), and its queued emails and audit rows are
- *    SUPPRESSED: the member and the club were already told the first time, and
- *    the operator's own `stripe.event.replayed` audit row is the record.
+ *  A TERMINAL row is never re-applied here: an operator's forced look at a
+ *  settled event goes through `compareStripeEvent` (compare-only, rolled back).
  *
  * `opts.recorded`: the caller already ran `recordReceived` for THIS delivery
  * (the webhook records before its pre-transaction lookups, so a lookup failure
- * still leaves the row `received` with the attempt counted). Passing it skips
- * runStripeEvent's own recordReceived, so one delivery is one attempt; every
- * other behaviour is identical. Callers that pass nothing are unchanged.
+ * still leaves the row `received` with the attempt counted). Passing it stops
+ * the same delivery being counted twice.
  *
  * Return codes for the webhook: processed / ignored_* / already_processed →
  * 200; in_progress → 409 (Stripe retries); failed → 409 when retryable, else
@@ -380,14 +377,16 @@ export type RunResult =
 export async function runStripeEvent<E extends StoreEventInput>(
   event: E,
   processor: StripeEventProcessor<E>,
-  opts: { mode?: RunMode; recorded?: RecordReceivedResult } = {},
+  opts: { mode?: "delivery" | "replay"; recorded?: RecordReceivedResult } = {},
 ): Promise<RunResult> {
   const mode = opts.mode ?? "delivery";
+  if ((mode as RunMode) === "replay_forced") {
+    throw new Error("a forced replay is compare-only: use compareStripeEvent");
+  }
   const recorded = opts.recorded && opts.recorded.eventId === event.id ? opts.recorded : await recordReceived(event);
-  if (recorded.alreadyProcessed && mode !== "replay_forced") {
+  if (recorded.alreadyProcessed) {
     return { kind: "already_processed", status: recorded.status };
   }
-  const suppressSideEffects = mode === "replay_forced";
 
   let result: ProcessorResult;
   let finalStatus: StripeEventStatus;
@@ -402,20 +401,15 @@ export async function runStripeEvent<E extends StoreEventInput>(
         throw e;
       }
       if (claim.kind === "missing") throw new Error(`stripe event ${event.id} has no store row`);
-      if (claim.kind === "done" && mode !== "replay_forced") throw new EventDoneError(claim.status);
-      // A forced replay of a settled row still takes the row lock, so two
-      // forced replays of one id run one after the other, never together.
-      if (claim.kind === "done") await tx.stripeEvent.update({ where: { eventId: event.id }, data: { lastAttemptAt: new Date() } });
+      if (claim.kind === "done") throw new EventDoneError(claim.status);
 
       const out = await processor(event, { tx, mode, tenantId: recorded.tenantId });
       const tenantId = out.tenantId ?? recorded.tenantId ?? null;
 
       let written = 0;
-      if (!suppressSideEffects) {
-        for (const a of out.audits ?? []) {
-          await logAudit({ ...a, tx });
-          written++;
-        }
+      for (const a of out.audits ?? []) {
+        await logAudit({ ...a, tx });
+        written++;
       }
       let status: StripeEventStatus;
       if (out.outcome === "processed") {
@@ -443,13 +437,11 @@ export async function runStripeEvent<E extends StoreEventInput>(
   }
 
   let emailsSent = 0;
-  if (!suppressSideEffects) {
-    for (const email of result.emails ?? []) {
-      emailsSent++;
-      sendEmail(email).catch((e: unknown) => {
-        console.warn("[stripe-event-store] post-commit email failed", { eventId: event.id, error: (e as Error)?.message });
-      });
-    }
+  for (const email of result.emails ?? []) {
+    emailsSent++;
+    sendEmail(email).catch((e: unknown) => {
+      console.warn("[stripe-event-store] post-commit email failed", { eventId: event.id, error: (e as Error)?.message });
+    });
   }
   for (const job of result.after ?? []) {
     await job().catch(() => {});
@@ -461,4 +453,105 @@ export async function runStripeEvent<E extends StoreEventInput>(
     emailsSent,
     auditsWritten,
   };
+}
+
+// ─── Compare-only (an operator's forced look at a settled event) ────────────
+
+const WRITE_OPERATIONS = new Set(["create", "createMany", "createManyAndReturn", "update", "updateMany", "upsert", "delete", "deleteMany"]);
+
+/** A transaction client that records every model write (`member.update`, …) and passes it through. */
+function recordingTx(tx: Tx, writes: Set<string>): Tx {
+  return new Proxy(tx, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver) as unknown;
+      if (typeof value === "function") return (value as (...a: unknown[]) => unknown).bind(target);
+      if (typeof prop !== "string" || prop.startsWith("$") || !value || typeof value !== "object") return value;
+      const model = prop;
+      return new Proxy(value as object, {
+        get(delegate, op, r) {
+          const fn = Reflect.get(delegate, op, r) as unknown;
+          if (typeof fn !== "function") return fn;
+          if (typeof op === "string" && WRITE_OPERATIONS.has(op)) {
+            return (...args: unknown[]) => {
+              writes.add(`${model}.${op}`);
+              return (fn as (...a: unknown[]) => unknown).apply(delegate, args);
+            };
+          }
+          return (fn as (...a: unknown[]) => unknown).bind(delegate);
+        },
+      });
+    },
+  });
+}
+
+class CompareRollback extends Error {
+  constructor(readonly result: ProcessorResult) {
+    super("compare-only: rolled back");
+  }
+}
+
+export type CompareResult =
+  | {
+      kind: "compared";
+      /** The row's status, unchanged by the comparison. */
+      status: StripeEventStatus;
+      /** What the handler would decide today for this event. */
+      wouldBe: ProcessorResult["outcome"];
+      /** The model writes it attempted (all rolled back), e.g. ["member.update", "payment.upsert"]. */
+      writes: string[];
+      emailsSuppressed: number;
+      auditsSuppressed: number;
+    }
+  | { kind: "missing" }
+  | { kind: "in_progress" }
+  | { kind: "failed"; error: string };
+
+/**
+ * Review RP-8: a forced replay re-applied the handler's writes, so forcing an
+ * old `invoice.payment_failed` after a later paid invoice put an active member
+ * back to overdue. A forced look is now COMPARE-ONLY: the handler runs inside a
+ * transaction that is always rolled back, every model write it attempts is
+ * recorded, its emails, audit rows and post-commit jobs are dropped, and the
+ * store row is left exactly as it was. The caller reports what the handler
+ * would do today; nothing about the member, the payments or the event changes.
+ * The row lock is taken first, so a comparison never overlaps a delivery.
+ */
+export async function compareStripeEvent<E extends StoreEventInput>(
+  event: E,
+  processor: StripeEventProcessor<E>,
+): Promise<CompareResult> {
+  const row = await withRlsBypass((tx) =>
+    tx.stripeEvent.findUnique({ where: { eventId: event.id }, select: { status: true, tenantId: true } }),
+  );
+  if (!row) return { kind: "missing" };
+  const writes = new Set<string>();
+  try {
+    await withRlsBypass(async (tx) => {
+      try {
+        // A no-op write: takes the row lock (rolled back with everything else).
+        await tx.stripeEvent.update({ where: { eventId: event.id }, data: { lastAttemptAt: new Date() } });
+      } catch (e) {
+        if (isLockTimeout(e)) throw new EventBusyError("event is being processed by another delivery");
+        throw e;
+      }
+      const out = await processor(event, { tx: recordingTx(tx, writes), mode: "replay_forced", tenantId: row.tenantId });
+      throw new CompareRollback(out);
+    });
+  } catch (err) {
+    if (err instanceof CompareRollback) {
+      return {
+        kind: "compared",
+        status: row.status as StripeEventStatus,
+        wouldBe: err.result.outcome,
+        writes: [...writes].sort(),
+        emailsSuppressed: err.result.emails?.length ?? 0,
+        auditsSuppressed: err.result.audits?.length ?? 0,
+      };
+    }
+    if (err instanceof EventBusyError) return { kind: "in_progress" };
+    // The row is terminal and stays so: a failed comparison is reported, never recorded on it.
+    return { kind: "failed", error: sanitiseEventError(err) };
+  }
+  // Unreachable: the transaction above always throws.
+  return { kind: "failed", error: "comparison did not run" };
 }

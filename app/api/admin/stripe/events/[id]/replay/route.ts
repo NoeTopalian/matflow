@@ -182,15 +182,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: outcome.message, refusal: outcome.refusal }, { status: REFUSAL_STATUS[outcome.refusal] });
   }
   const r = outcome.result;
-  const failed = r.kind === "failed";
+  const failed = r.kind === "failed" || r.kind === "missing" || r.kind === "in_progress";
   return NextResponse.json(
     {
       ok: !failed,
       result: r.kind,
       status: "status" in r ? r.status : null,
       forced: outcome.forced,
-      ...(failed ? { error: r.error } : {}),
+      // Compare-only (forced): what the handler would do today; every write rolled back.
+      ...(r.kind === "compared" ? { wouldBe: r.wouldBe, writesRolledBack: r.writes } : {}),
+      ...(r.kind === "failed" ? { error: r.error } : r.kind === "in_progress" ? { error: "The event is being processed. Try again shortly." } : r.kind === "missing" ? { error: "No such event is on record." } : {}),
     },
-    { status: failed ? 502 : 200 },
+    { status: r.kind === "in_progress" ? 409 : failed ? 502 : 200 },
   );
 }

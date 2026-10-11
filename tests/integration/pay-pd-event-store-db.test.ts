@@ -13,8 +13,10 @@
 // both recorded with Stripe's created; (c) crash after the Payment insert →
 // no Payment row, row failed with the error, retry processes once; (d) replay
 // of a failed event after the cause is removed → processed once, replayed,
-// operator audit; (e) forced replay of a processed invoice.payment_succeeded →
-// no second Payment row, no second audit row, no second email.
+// operator audit; (e) forced replay of a processed invoice.payment_succeeded is
+// COMPARE-ONLY (review RP-8): the handler runs in a rolled-back transaction, its
+// writes are reported, no Payment/audit/email/row change. StripeEvent.created
+// is a BigInt column (review RP-10).
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
@@ -29,6 +31,7 @@ vi.mock("@/lib/email", () => ({
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import {
   claimStripeEvent,
+  compareStripeEvent,
   markProcessed,
   recordReceived,
   runStripeEvent,
@@ -128,7 +131,7 @@ describe.skipIf(!HAS_DB)("pay-pd: durable Stripe event store", () => {
     const r = await recordReceived(invoiceEvent(id, `in_${STAMP}_rec`));
     expect(r).toMatchObject({ status: "received", attempts: 1, tenantId: TENANT, alreadyProcessed: false });
     const row = await rowOf(id);
-    expect(row).toMatchObject({ status: "received", attempts: 1, tenantId: TENANT, stripeAccountId: ACCT, objectId: `in_${STAMP}_rec`, livemode: false, created: NOW });
+    expect(row).toMatchObject({ status: "received", attempts: 1, tenantId: TENANT, stripeAccountId: ACCT, objectId: `in_${STAMP}_rec`, livemode: false, created: BigInt(NOW) });
     const again = await recordReceived(invoiceEvent(id, `in_${STAMP}_rec`));
     expect(again.attempts).toBe(2);
   });
@@ -223,8 +226,8 @@ describe.skipIf(!HAS_DB)("pay-pd: durable Stripe event store", () => {
       tx.stripeEvent.findMany({ where: { objectId: sub }, orderBy: { created: "asc" }, select: { eventId: true, created: true, status: true } }),
     );
     expect(rows).toEqual([
-      { eventId: older, created: NOW + 30, status: "ignored_stale" },
-      { eventId: newer, created: NOW + 120, status: "processed" },
+      { eventId: older, created: BigInt(NOW + 30), status: "ignored_stale" },
+      { eventId: newer, created: BigInt(NOW + 120), status: "processed" },
     ]);
     expect(seen).toEqual([newer, older]);
   });
@@ -327,7 +330,7 @@ describe.skipIf(!HAS_DB)("pay-pd: durable Stripe event store", () => {
     expect(await paymentsForInvoice(invoice)).toBe(1);
   });
 
-  it("(e) forced replay of a processed invoice.payment_succeeded: no second Payment, audit or email", async () => {
+  it("(e) forced replay of a processed invoice.payment_succeeded is compare-only: no second Payment, audit or email; the row unchanged", async () => {
     const id = evtId("forced");
     const invoice = `in_${STAMP}_forced`;
     h.emails.length = 0;
@@ -340,12 +343,50 @@ describe.skipIf(!HAS_DB)("pay-pd: durable Stripe event store", () => {
     const refused = await replayStripeEvent({ eventId: id, operatorId: `${STAMP}-operator`, reason: "checking the ledger" }, deps);
     expect(refused).toMatchObject({ ok: false, refusal: "already_processed" });
     const forced = await replayStripeEvent({ eventId: id, operatorId: `${STAMP}-operator`, reason: "forced convergence check", force: true }, deps);
-    expect(forced).toMatchObject({ ok: true, forced: true, previousStatus: "processed", result: { kind: "processed", status: "replayed", auditsWritten: 0, emailsSent: 0 } });
+    expect(forced).toMatchObject({
+      ok: true,
+      forced: true,
+      previousStatus: "processed",
+      result: { kind: "compared", status: "processed", wouldBe: "processed", writes: ["payment.upsert"], emailsSuppressed: 1, auditsSuppressed: 1 },
+    });
+    expect(await rowOf(id)).toMatchObject({ status: "processed" });
     expect(await paymentsForInvoice(invoice)).toBe(1);
     expect(await auditsFor(id)).toBe(1);
     expect(h.emails).toHaveLength(1);
     const replayAudits = await withRlsBypass((tx) => tx.auditLog.count({ where: { tenantId: TENANT, action: REPLAY_AUDIT_ACTION, entityId: id } }));
     expect(replayAudits).toBe(1);
+    const meta = await withRlsBypass((tx) =>
+      tx.auditLog.findFirst({ where: { tenantId: TENANT, action: REPLAY_AUDIT_ACTION, entityId: id }, select: { metadata: true } }),
+    );
+    expect(meta?.metadata).toMatchObject({ forced: true, result: "compared", wouldBe: "processed", writesRolledBack: ["payment.upsert"] });
+  });
+
+  it("RP-8: a forced look rolls back every write, even a non-idempotent one, and runStripeEvent refuses the forced mode", async () => {
+    const id = evtId("cmp");
+    expect((await runStripeEvent(invoiceEvent(id, `in_${STAMP}_cmp`), naiveProcessor)).kind).toBe("processed");
+    expect(await paymentsFor(id)).toBe(1);
+    const before = await rowOf(id);
+    // naiveProcessor would insert a SECOND Payment if it were applied.
+    const cmp = await compareStripeEvent(invoiceEvent(id, `in_${STAMP}_cmp`), naiveProcessor);
+    expect(cmp).toMatchObject({ kind: "compared", status: "processed", wouldBe: "processed", writes: ["payment.create"] });
+    expect(await paymentsFor(id)).toBe(1);
+    expect(await auditsFor(id)).toBe(1);
+    const after = await rowOf(id);
+    expect(after).toEqual(before); // attempts, status, lastAttemptAt: all unchanged
+    await expect(runStripeEvent(invoiceEvent(id, "x"), naiveProcessor, { mode: "replay_forced" as never })).rejects.toThrow(/compare-only/);
+    expect(await compareStripeEvent({ ...invoiceEvent(`${id}_absent`, "x") }, naiveProcessor)).toEqual({ kind: "missing" });
+  });
+
+  it("RP-5: recorded, lookups fail, nothing processed: the row is received with the attempt counted; a later delivery passing its record counts one more", async () => {
+    const id = evtId("rp5");
+    const first = await recordReceived(invoiceEvent(id, `in_${STAMP}_rp5`));
+    expect(first).toMatchObject({ status: "received", attempts: 1, alreadyProcessed: false });
+    expect(await rowOf(id)).toMatchObject({ status: "received", attempts: 1, lastError: null });
+    const second = await recordReceived(invoiceEvent(id, `in_${STAMP}_rp5`));
+    const r = await runStripeEvent(invoiceEvent(id, `in_${STAMP}_rp5`), naiveProcessor, { recorded: second });
+    expect(r.kind).toBe("processed");
+    expect(await rowOf(id)).toMatchObject({ status: "processed", attempts: 2 });
+    expect(await paymentsFor(id)).toBe(1);
   });
 
   it("replay refuses before calling Stripe: unknown id, short reason, wrong mode, mismatched event, withdrawn club, no processor", async () => {

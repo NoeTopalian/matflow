@@ -980,7 +980,7 @@ model StripeEvent {
   // data.object.id — what the event is about (a subscription, invoice, charge…).
   objectId         String?
   // Stripe's event.created (unix seconds): ordering, never our clock.
-  created          Int       @default(0)
+  created          BigInt    @default(0)
   // CHECK: received | processed | failed | ignored_foreign | ignored_stale | ignored_mode | replayed
   status           String    @default("received")
   attempts         Int       @default(0)

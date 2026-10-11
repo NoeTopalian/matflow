@@ -262,7 +262,8 @@ describe.skipIf(!HAS_DB)("pay-pd: operator Stripe sync routes on Postgres", () =
     expect(handlerAudits).toBe(1);
     const grant = await grantFor(true);
     const r = await replay({ reason: "forced convergence check", force: true }, grant);
-    expect(r).toMatchObject({ status: 200, body: { ok: true, result: "processed", status: "replayed", forced: true } });
+    // Compare-only (review RP-8): reported, rolled back, the row stays replayed.
+    expect(r).toMatchObject({ status: 200, body: { ok: true, result: "compared", status: "replayed", forced: true, wouldBe: "processed", writesRolledBack: ["payment.upsert"] } });
     expect(await payments()).toBe(1);
     expect(await auditCount("member.payment.succeeded")).toBe(1);
     expect(await auditCount("stripe.event.replayed")).toBe(2);
