@@ -143,6 +143,19 @@ test.afterAll(async () => {
 async function login(browser: Browser, email: string, expectUrl: RegExp): Promise<Page> {
   const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const page = await ctx.newPage();
+  // Browser-side errors (including the payment step's Payment Element load
+  // errors) go to the run log so a failure says why.
+  const who = email.split("@")[0].split("-").pop();
+  page.on("console", (m) => {
+    if (m.type() === "error") console.log(`[browser:${who}] ${m.text().slice(0, 400)}`);
+  });
+  page.on("pageerror", (e) => console.log(`[pageerror:${who}] ${e.message.slice(0, 400)}`));
+  page.on("requestfailed", (r) => {
+    if (/stripe/.test(r.url())) console.log(`[requestfailed:${who}] ${r.url().split("?")[0]} ${r.failure()?.errorText}`);
+  });
+  page.on("response", (r) => {
+    if (/api\.stripe\.com/.test(r.url())) console.log(`[stripe-api:${who}] ${r.status()} ${r.url().split("?")[0]}`);
+  });
   await page.goto(`/login?club=${STAMP}`);
   await page.waitForSelector("input[type='email']", { timeout: 60_000 });
   await page.fill("input[type='email']", email);
@@ -174,10 +187,12 @@ async function completeThreeDS(page: Page) {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     for (const frame of page.frames() as Frame[]) {
-      const btn = frame.locator("#test-source-authorize-3ds");
-      if (await btn.count().catch(() => 0)) {
-        await btn.click();
-        return;
+      // Stripe's "3D Secure 2 Test Page" (COMPLETE / FAIL); older pages used #test-source-authorize-3ds.
+      for (const btn of [frame.locator("#test-source-authorize-3ds"), frame.getByRole("button", { name: /^complete$/i })]) {
+        if (await btn.count().catch(() => 0)) {
+          await btn.first().click();
+          return;
+        }
       }
     }
     await page.waitForTimeout(500);
@@ -196,7 +211,7 @@ function sign(payload: string) {
  * in creation order. Waits until Stripe has produced both the subscription's
  * move to `active` and the invoice's payment.
  */
-async function deliverRealEvents(page: Page, subscriptionId: string): Promise<string[]> {
+async function deliverRealEvents(page: Page, subscriptionId: string, until: "paid" | "failed" = "paid"): Promise<string[]> {
   const sub = await stripe.subscriptions.retrieve(subscriptionId, {}, onAcct());
   const invoiceId = typeof sub.latest_invoice === "string" ? sub.latest_invoice : sub.latest_invoice?.id;
   const wanted = new Set(["customer.subscription.created", "customer.subscription.updated", "invoice.payment_succeeded", "invoice.payment_failed", "invoice.payment_action_required"]);
@@ -210,7 +225,8 @@ async function deliverRealEvents(page: Page, subscriptionId: string): Promise<st
     });
     const active = events.some((e) => e.type === "customer.subscription.updated" && (e.data.object as { status?: string }).status === "active");
     const paid = events.some((e) => e.type === "invoice.payment_succeeded");
-    if (active && paid) break;
+    if (until === "paid" && active && paid) break;
+    if (until === "failed" && events.some((e) => e.type === "invoice.payment_failed")) break;
     await new Promise((r) => setTimeout(r, 2000));
   }
   events.sort((a, b) => a.created - b.created);
@@ -288,7 +304,7 @@ test("1. staff subscribes a member and takes the first payment with 4242", async
   expect((await mappingRow(sub)).status).toBe("incomplete");
 
   await fillCard(page, "4242 4242 4242 4242");
-  await page.getByRole("button", { name: /^pay /i }).click();
+  await page.getByRole("button", { name: /^pay £/i }).click();
   await expect(page.getByTestId("confirm-subscription-payment")).toHaveAttribute("data-stage", /recording|paid|unrecorded/, { timeout: 90_000 });
   await deliverRealEvents(page, sub);
   // The drawer announces success only once MatFlow has the payment, then closes.
@@ -300,7 +316,7 @@ test("2. 3-D Secure card: the authentication modal completes and the payment suc
   const page = await login(browser, fx.ownerEmail, /dashboard/);
   const sub = await staffStart(page, fx.members.m2.id);
   await fillCard(page, "4000 0025 0000 3155");
-  await page.getByRole("button", { name: /^pay /i }).click();
+  await page.getByRole("button", { name: /^pay £/i }).click();
   await completeThreeDS(page);
   await expect(page.getByTestId("confirm-subscription-payment")).toHaveAttribute("data-stage", /recording|paid|unrecorded/, { timeout: 90_000 });
   await deliverRealEvents(page, sub);
@@ -315,10 +331,22 @@ test("3. decline shows Stripe's message; retry with 4242 succeeds on the same Pa
   const piBefore = (before.latest_invoice as Stripe.Invoice).payments?.data?.[0]?.payment?.payment_intent;
 
   await fillCard(page, "4000 0000 0000 0002");
-  await page.getByRole("button", { name: /^pay /i }).click();
+  await page.getByRole("button", { name: /^pay £/i }).click();
   const alert = page.getByTestId("confirm-subscription-payment").getByRole("alert");
   await expect(alert).toContainText(/declined/i, { timeout: 60_000 });
   expect((await memberRow(fx.members.m3.id)).paymentStatus).toBe("pending");
+  // What MatFlow records when Stripe reports the declined FIRST payment (the
+  // real invoice.payment_failed, delivered now rather than after the retry).
+  // Observed and logged, not asserted: the rule belongs to lane PC's handler.
+  await deliverRealEvents(page, sub, "failed");
+  const afterDecline = await memberRow(fx.members.m3.id);
+  const mails = await sql<{ templateId: string; status: string }>(
+    `SELECT "templateId", status FROM "EmailLog" WHERE "tenantId" = $1 ORDER BY "createdAt"`,
+    [TENANT],
+  ).catch(() => []);
+  const failedRows = await paymentFor(fx.members.m3.id);
+  console.log(`[pay-pb] after a declined first payment: member=${JSON.stringify(afterDecline)} payments=${JSON.stringify(failedRows)} emails=${JSON.stringify(mails)}`);
+  expect(afterDecline.status).toBe("active");
 
   await fillCard(page, "4242 4242 4242 4242");
   await page.getByRole("button", { name: /try again/i }).click();
@@ -341,8 +369,10 @@ test("4. abandonment: Pay later leaves it pending with no entitlement; the membe
   await expect(cardFrame(staff).locator('input[name="number"]')).toBeVisible({ timeout: 60_000 });
   await staff.getByRole("button", { name: /pay later/i }).click();
   await expect(staff.getByText(/first payment has not been taken/i)).toBeVisible();
-  // Close the drawer altogether.
-  await staff.getByRole("dialog").getByRole("button", { name: /^close$/i }).last().click();
+  // Close the drawer altogether (Escape: in test mode Stripe's developer-tools
+  // badge sits over the footer's Close button).
+  await staff.keyboard.press("Escape");
+  await expect(staff.getByRole("dialog")).toHaveCount(0);
 
   // Nothing was taken; the person's record is untouched; Stripe still waits.
   expect(await memberRow(fx.members.m4.id)).toMatchObject({ status: "active", paymentStatus: "pending", stripeSubscriptionId: sub });
@@ -361,7 +391,7 @@ test("4. abandonment: Pay later leaves it pending with no entitlement; the membe
   await staff.getByRole("button", { name: /start membership/i }).first().click();
   await staff.getByRole("button", { name: /take the first payment/i }).click();
   await fillCard(staff, "4242 4242 4242 4242");
-  await staff.getByRole("button", { name: /^pay /i }).click();
+  await staff.getByRole("button", { name: /^pay £/i }).click();
   await expect(staff.getByTestId("confirm-subscription-payment")).toHaveAttribute("data-stage", /recording|paid|unrecorded/, { timeout: 90_000 });
   await deliverRealEvents(staff, sub);
   await expect(staff.getByText(/first payment received/i)).toBeVisible({ timeout: 60_000 });
@@ -382,7 +412,7 @@ test("5. a confirmed guardian subscribes their child and pays the first invoice"
   const sub = kid.stripeSubscriptionId!;
   createdSubs.push(sub);
   await fillCard(page, "4242 4242 4242 4242");
-  await page.getByRole("button", { name: /^pay /i }).click();
+  await page.getByRole("button", { name: /^pay £/i }).click();
   await expect(page.getByTestId("confirm-subscription-payment")).toHaveAttribute("data-stage", /recording|paid|unrecorded/, { timeout: 90_000 });
   await deliverRealEvents(page, sub);
   await expect(page.getByText(/first payment received/i)).toBeVisible({ timeout: 60_000 });
@@ -404,7 +434,7 @@ test("6. an adult member self-subscribes from the member portal and pays", async
   expect(sub).toMatch(/^sub_/);
   createdSubs.push(sub);
   await fillCard(page, "4242 4242 4242 4242");
-  await page.getByRole("button", { name: /^pay /i }).click();
+  await page.getByRole("button", { name: /^pay £/i }).click();
   await expect(page.getByTestId("confirm-subscription-payment")).toHaveAttribute("data-stage", /recording|paid|unrecorded/, { timeout: 90_000 });
   await deliverRealEvents(page, sub);
   await expect(page.getByText(/payment received/i)).toBeVisible({ timeout: 60_000 });
