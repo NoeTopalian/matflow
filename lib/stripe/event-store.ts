@@ -47,6 +47,10 @@ export const STRIPE_EVENT_STATUSES = [
   "failed",
   "ignored_foreign",
   "ignored_stale",
+  // Lane PC (11 Oct 2026): a verified event whose livemode differs from the
+  // platform key's mode (a test-mode event on the live Connect endpoint).
+  // Acknowledged and recorded, never applied.
+  "ignored_mode",
   "replayed",
 ] as const;
 export type StripeEventStatus = (typeof STRIPE_EVENT_STATUSES)[number];
@@ -56,13 +60,14 @@ export const TERMINAL_STRIPE_EVENT_STATUSES: ReadonlySet<StripeEventStatus> = ne
   "processed",
   "ignored_foreign",
   "ignored_stale",
+  "ignored_mode",
   "replayed",
 ]);
 
 /** Statuses an operator replay (or a Stripe retry) may still process. */
 export const REPLAYABLE_STRIPE_EVENT_STATUSES: ReadonlySet<StripeEventStatus> = new Set(["received", "failed"]);
 
-export type IgnoredKind = "ignored_foreign" | "ignored_stale";
+export type IgnoredKind = "ignored_foreign" | "ignored_stale" | "ignored_mode";
 
 /** The parts of a Stripe event the store keeps. Never the payload. */
 export type StoreEventInput = {
