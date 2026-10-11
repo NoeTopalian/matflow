@@ -1,0 +1,136 @@
+SF-01	FIXED-after-hub-RUNTIME	FIXED — APPROV	ab5f928	AH-G7 session-revocation check fails open on a database error
+SF-02	UNFIXED/OTHER	BLOCKED — perm		Production runtime database role unknown (SEC-021 / SEC-068)
+SF-03	FIXED-unlocated	PASS (not expl		AH-G6 owner-route body not strict (SEC-019)
+SF-04	FIXED-unlocated	PASS — not a d		Contact-email route refuses no-login records — meaning of each record state; Sean's scenario reproducible and correctabl
+SF-05	FIXED-after-hub-RUNTIME	FIXED — APPROV	ab5f928	AH-D2 tokens not subject-bound (SEC-003 / SEC-004)
+SF-06	FIXED-after-hub-RUNTIME	FIXED for the 	1e68155,35e031a	AH-D1 attendance fallback may match a same-name hand-added member (SEC-053)
+SF-07	UNFIXED/OTHER	IMPROVED — APP		AH-R3 writer inventory misses upsert / raw SQL / nested forms (SEC-029)
+SF-08	UNFIXED/OTHER	Transfer: APPR	ab5f928	AH-R7 transfer revocation not DB-tested; no standalone revoke-all control (SEC-013 / SEC-032)
+SF-09	UNFIXED/OTHER	AH-C2 OPEN Low		AH-C2 / AH-G5 / remaining AH-G6: version-at-check, grant expiry labels, audit actor attribution, refusal logging
+SF-10	UNFIXED/OTHER	FAIL (for Noe)		Old-deployment retirement incomplete (SEC-066 / SEC-067)
+SF-11	FIXED-unlocated	FIXED (overrid		mysql2 / prisma advisory called not applicable (SEC-057 / SEC-058)
+SF-12	FIXED-unlocated	PASS on adviso		Native code declared not applicable — sharp / libvips / Node (SEC-050 / SEC-064)
+SF-13	FIXED-unlocated	PASS		Final candidate includes docs beyond the tested source — equivalence of 2a6487e to build c837e38
+SF-14	UNFIXED/OTHER	Local fingerpr	fa3c460,4b06d31	7 May 2026 credential leak in PUBLIC git history (a Neon password, a Resend key, a CRON_SECRET, a Stripe key prefix); ro
+SF-15	UNFIXED/OTHER	FAIL		Public repository with unprotected `main`; a push deploys AND migrates production; no CI gate on deploys; no build prove
+SF-16	UNFIXED/OTHER	OPEN (for Noe)		Blob token stored Non-sensitive and scoped to Production+Preview+Development; production signing and payment secrets als
+SF-17	UNFIXED/OTHER	FAIL (extended		CRON_SECRET unset in production → retention, class-instance and monthly-report crons answer 503 and do nothing (SEC-072)
+SF-18	UNFIXED/OTHER	FAIL		No DMARC record and no apex SPF for matflow.studio (SEC-070)
+SF-19	UNFIXED/OTHER	CONFIRMED; TES		Backup workflow has never succeeded (no Actions secrets); Neon PITR is the only recovery (SEC-085/086)
+SF-20	UNFIXED/OTHER	OPEN		Install scripts run on Vercel with production env; postinstall-downloaded binaries (Prisma engines) sit outside lockfile
+SF-21	FIXED-unlocated	FIXED AWAITING		CI hardening: Semgrep unpinned; ci.yml/e2e.yml lack `permissions:` blocks; no `engines`/.nvmrc; local Node 25 EOL (SEC-0
+SF-22	UNFIXED/OTHER	OPEN		Two unit tests reuse the real leaked Stripe key PREFIX as a fixture (cannot authenticate)
+SF-23	FIXED-unlocated	FIXED AWAITING		Two concurrent ownership transfers (owner × owner, or owner × operator) left a club with TWO owners (SEC-032)
+SF-24	FIXED-unlocated	FIXED AWAITING		15 member write handlers did not themselves refuse a read-only support session (proxy.ts refuses first — not reachable t
+SF-25	FIXED-after-hub-RUNTIME	FIXED (both de	2ec8d88	`scripts/setup-test-accounts.mjs` reset the totalbjj owner's login address AND password against whatever `.env` loads (p
+SF-26	FIXED-after-hub-RUNTIME	FIXED — APPROV	2bdac83	Test-harness defects: `tests/unit/security.test.ts` staff-creation cells fail at HEAD under both roles (mock tx client l
+SF-27	FIXED-after-hub-RUNTIME	FIXED — APPROV	ab5f928,75da8b5	Two concurrent recovery-code redemptions both succeeded (session version bumped twice); recovery with no authenticator s
+SF-28	FIXED-after-hub-RUNTIME	FIXED — APPROV	ab5f928	/api/blob-image accepted a URL on ANY Vercel Blob store carrying the caller tenant prefix, sent our BLOB_READ_WRITE_TOKE
+SF-29	FIXED-after-hub-RUNTIME	FIXED — APPROV	ab5f928	Payments CSV export (every member name, email, payments) sent no Cache-Control (SEC-047)
+SF-30	FIXED-after-hub-RUNTIME	APPROVED WITH 	ebd761d,ebd761d	CSP still allows unsafe-inline scripts — the largest remaining XSS amplifier (SEC-041 / SEC-044)
+SF-31	UNFIXED/OTHER	handed to lane		Import planner: an offering/venue/person named constructor, toString or __proto__ picks up an inherited decision (previe
+SF-32	FIXED-after-hub-RUNTIME	FIXED (ab5f928	ab5f928	DELETE /api/initiatives/[id]/attachments had no origin check (not browser-exploitable: preflight never granted, SameSite
+SF-33	FIXED-after-hub-RUNTIME	FIXED on five 	ab5f928	Six routes threw 500 on a JSON body of null / array / string before any effect (SEC-019)
+SF-34	UNFIXED/OTHER	OPEN		Push-subscription endpoint check accepts any https host incl. bare IPs (dormant: VAPID unset) (SEC-039)
+SF-35	FIXED-after-hub-RUNTIME	FIXED — APPROV	5259d3b,5344c91	Account-locked message appears only for real accounts after 10 failures — an existence oracle (SEC-002); comments call i
+SF-36	UNFIXED/OTHER	Interim refusa	af803d5,03ef584	Google sign-in (ENABLE_GOOGLE_OAUTH) admits members with no password, which the magic-link door refuses; enabled-in-prod
+SF-37	FIXED-after-hub-RUNTIME	APPROVED by R3	af803d5,75da8b5	app/api/auth/totp/verify and app/api/member/totp/verify skip the revocation check (only re-issue a half-signed-in token 
+SF-38	FIXED-after-hub-RUNTIME	FIXED (swept i	ab5f928	lib/csv.ts formula guard missed LF and full-width ＝ ＋ － ＠ (SEC-052)
+SF-39	FIXED-unlocated	FIXED — APPROV		scripts/test-resend.mjs read the repo .env (production keys) and sent through Resend directly, ignoring EMAIL_DELIVERY=o
+SF-40	UNFIXED/OTHER	SF-113 FIXED b	9f573ff,1e68155	/api/upload decoding bounded only by sharp default 268 MP and no rate limit: 8 KB PNG → 67 MP in 396 ms / 60 MB; ~1.6 s 
+SF-41	FIXED-after-hub-RUNTIME	FIXED (untrack	1e68155	.omc/project-memory.json was tracked in the repository: tool state that records the session commands (tripped the secret
+SF-42	FIXED-after-hub-RUNTIME	FIXED — APPROV	ebd761d	Lane D proposals not yet applied: blob-image should inline only png/jpeg/webp (SVG as attachment — also lane C); promote
+SF-43	UNFIXED/OTHER	NOT RUN / BLOC		Stripe test-mode entitlement run (SEC-090) and the Excel save-and-reopen CSV check (SEC-052) not performed; SEC-092/094–
+SF-44	FIXED-after-hub-RUNTIME	APPROVED by R3	af803d5,75da8b5	Review R-1: with the fail-closed revocation check, a database fault now signs the browser OUT — proxy.ts runs under the 
+SF-45	FIXED-unlocated	RESOLVED		Review R-2: two lane C tests (canary sweep sixth route; SF_C2_FIXED) depended on lane D code committed later — ab5f928 w
+SF-46	FIXED-unlocated	FIXED		Review R-3: AH-G6 strict body had no regression pin (the test accepted 200 or 400)
+SF-47	FIXED-unlocated	FIXED		Review R-4: auth/totp/setup and member/totp/setup coerced a numeric or array `code` past the six-digit regex → otplib To
+SF-48	UNFIXED/OTHER	BLOCKED (needs		Review R-5: after the blob-store pin, URLs on any OTHER Blob store (an old or second store) stop proxying and are skippe
+SF-49	UNFIXED/OTHER	OPEN (lane F: 		Review R-6: transfer cell 8b once answered 500 after a Postgres lock timeout on the TEST branch (the app sets no lock_ti
+SF-50	UNFIXED/OTHER	OPEN (next ite		Review minors: waiver links not subject-bound; revoke-all for a staff user does not end that person's own member session
+SF-51	UNFIXED/OTHER	R at 35e031a: 	35e031a,3be9490	Review of lane D (R): a false match STILL commits through the real route on both roles when the true person differs by a
+SF-52	FIXED-after-hub-RUNTIME	FIXED — APPROV	35e031a	Review of lane D (R): CSV guard residuals — leading space, NBSP, BOM, zero-width space, U+FE66, ideographic space, a cel
+SF-53	UNFIXED/OTHER	OPEN		Review of lane D (R): the 50 MP upload budget is not pinned to the route (sec-d-image-bounds tests sharp directly); just
+SF-54	FIXED-after-hub-RUNTIME	APPROVED by R 	3be9490	Released-address rule depends on the audit trail: a change made by raw SQL or a script, a change made before digests exi
+SF-55	UNFIXED/OTHER	OPEN (document		foldName residual: Cyrillic а/е, Greek ο, dotless ı, ß vs ss are not unified by NFKD folding — each alone lets a name es
+SF-56	FIXED-after-hub-RUNTIME	FIXED — APPROV	2bdac83	pg pool connectionTimeoutMillis was 0: with every connection busy, a query waited until the function maximum duration an
+SF-57	UNFIXED/OTHER	v2 SQL APPROVE	ea73c2c	Under both roles, in a rolled-back probe, the app database role could change an audit row action, back-date createdAt by
+SF-58	UNFIXED/OTHER	PARTIALLY FIXE		Suite assurance: CI runs database tests as a superuser (only rls-foundation under a restricted role) so every both-roles
+SF-59	UNFIXED/OTHER	Burst case CLO	03ef584,75da8b5	Anyone who knows a login address can keep re-locking it (~every 75 min, ~10 requests); recovery depends on the owner; ma
+SF-60	UNFIXED/OTHER	OPEN		Audit secret scrub checks only top-level keys and is case-sensitive; the raw first X-Forwarded-For entry is stored as th
+SF-61	UNFIXED/OTHER	OPEN (document		DSAR erase needs only an owner session — no step-up (SEC-084); no per-club quota on imports/exports (SEC-078); SET LOCAL
+SF-62	UNFIXED/OTHER	B4 (c922972, r	c922972,d4ea9fc	Under matflow_app the application role can set `app.bypass_rls` for ITSELF (a plain session setting), after which every 
+SF-63	FIXED-unlocated	FIXED for rest		Database-target guards read only `new URL(url).hostname`: an UPPER-CASE host, a `?host=` parameter or `?options=endpoint
+SF-64	FIXED-after-hub-tooling	APPROVED WITH 	ea73c2c	restore-verify.mjs fingerprint misses tampers that keep row counts: a changed policy USING expression (only policyname:c
+SF-65	UNFIXED/OTHER	OPEN — propose		Member has no createdAt column; the held-since check derives creation time from the immutable cuid v1 id (a non-cuid id 
+SF-66	UNFIXED/OTHER	ACCEPTED		Behaviour change: a hand-added member created AFTER their own bookings now always needs an owner decision on import (nev
+SF-67	UNFIXED/OTHER	D2 (190caa6): 	190caa6,788d29a	Review of lane D third pass (R): C3 residual — a member created before the bookings who takes over the address afterward
+SF-68	UNFIXED/OTHER	PARTIAL — code	75da8b5	LOGIN_THROTTLE_ENABLED has been set on Production since 23 Sep with an unreadable value; if false, the six newest builds
+SF-69	UNFIXED/OTHER	OPEN — rotate 		Blob read-write token: stored non-sensitive on Production, Preview and Development; every deployed build's blob-image pr
+SF-70	UNFIXED/OTHER	PREPARED, noth		Containment plan prepared (CONTAINMENT-CHECKLIST.md): steps 0–10 in safe order — fingerprint check → dashboard revocatio
+SF-71	UNFIXED/OTHER	RECORDED		Serving build runs nodejs24.x (patch UNKNOWN read-only); npm skipped 5 dependency install scripts in the serving build (
+SF-72	UNFIXED/OTHER	OPEN — propose		GitHub: 0 secret-scanning alerts with validity checks OFF (so the public leak was never flagged); main unprotected, 0 ru
+SF-73	UNFIXED/OTHER	OPEN — phase 3		The runtime role may UPDATE Operator.passwordHash, the _prisma_migrations ledger and PlatformConfig (tables without RLS 
+SF-74	UNFIXED/OTHER	D3 (1c4d242): 	1c4d242,190caa6	Chain (B2 03-chain): with the runtime password the bypass lets an attacker rewrite/back-date/delete any club's audit row
+SF-75	UNFIXED/OTHER	OPEN — Noe dec		Rollout dependency: production DATABASE_URL uses the direct host and one identity for app and migrations (E2); B2 phase 
+SF-76	UNFIXED/OTHER	EVIDENCE REPAI	5259d3b,03ef584	The iteration-1 final sweep log records tr's exit status, not vitest's (`${PIPESTATUS[0]}` read after a `res=$(…)` subst
+SF-77	UNFIXED/OTHER	OPEN — Noe: ad		The weekly dump job (db-backup.yml) failed at Validate secrets on all 22 recorded runs — no dump ever taken — and its --
+SF-78	UNFIXED/OTHER	RECORDED — Noe		Six migrations (20260923220000 … 20260930100000) were edited by d403f30 (BEGIN/COMMIT wrapper) after TEST had applied th
+SF-79	FIXED-after-hub-tooling	FIXED — APPROV	5f87b11,4b06d31	scripts/readiness/db-target.mjs refused the three URL override forms but pg 8.20 also applies PGOPTIONS, PGHOST and PGHO
+SF-80	FIXED-after-hub-RUNTIME	APPROVED WITH 	190caa6	A restored copy of TEST holds 6 clubs already past the 30-day purge grace (the first retention cron run would hard-delet
+SF-81	FIXED-unlocated	FIXED (this co		Ledger hygiene: the SF-52 row had 8 cells under a 6-column header (an unescaped pipe character inside the cmd example) a
+SF-82	FIXED-after-hub-tooling	APPROVED WITH 	4b06d31,3a4c5d2	Secret scanner (SEC-062) misses variable names RLS_CONTEXT_SIGNING_KEY, OPERATOR_PASSWORD, MATFLOW_PROD_PASSWORD, TEST_P
+SF-83	FIXED-after-hub-tooling	FIXED — APPROV	af803d5,4b06d31	scripts/readiness/ops-blob-host-count.mjs TLS guard is defeated: it reads the FIRST sslmode while pg-connection-string a
+SF-84	FIXED-after-hub-tooling	FIXED — APPROV	af803d5,4b06d31	scripts/readiness/ops-credential-fingerprint.mjs: (i) an unknown positional argument is echoed back in full, so a secret
+SF-85	FIXED-after-hub-tooling	FIXED — APPROV	af803d5,4b06d31	test-skip-gate.mjs `--expect=<glob>` fails open: a glob that matches nothing (typo, wrong cwd) reports `expected 0, PASS
+SF-86	FIXED-after-hub-tooling	FIXED — APPROV	af803d5,4b06d31	/api/upload sets sharp `limitInputPixels: 50_000_000` correctly but no test pins it — sec-d-image-bounds runs its own co
+SF-87	UNFIXED/OTHER	Count note (B4	5b2b6ad	A session-level app.* setting left on a Neon pooler server connection still reaches any statement that does not go throu
+SF-88	UNFIXED/OTHER	OPEN — add `IF		B2 proposal P2 phase 1 grants matflow_system to CURRENT_USER and nothing asserts the runtime role is not a member (it wo
+SF-89	FIXED-after-hub-tooling	FIXED — APPROV	af803d5,4b06d31	Operator readiness scripts were steerable by URL parameters and the environment: ops-blob-host-count read the first sslm
+SF-90	UNFIXED/OTHER	OPEN — needs a		Member second-factor codes are not single-use: /api/member/totp/verify keeps no record of spent codes (User has totpLast
+SF-91	FIXED-after-hub-RUNTIME	APPROVED WITH 	1c4d242,190caa6	Member DELETE and staff DELETE wrote the address release digest AFTER the deletion transaction committed, and the family
+SF-92	FIXED-after-hub-RUNTIME	FIXED — APPROV	5259d3b,03ef584	ImportSourceMapping changes kept no prior value and raw-written mappings were trusted: with the runtime password (SF-62 
+SF-93	FIXED-after-hub-RUNTIME	FIXED (patch 0	190caa6	The attendance-import engine and contact-email test teardowns did not delete the new provenance audit rows (62 orphan ro
+SF-94	FIXED-after-hub-tooling	FIXED — APPROV	3a4c5d2	tests/unit/readiness-scripts-release-verify.test.ts reads the untracked .vercel/project.json, so the full unit suite fai
+SF-95	FIXED-after-hub-tooling	FIXED — APPROV	3a4c5d2	backup-restore.mjs matches migration checksums against line-ending-normalised text but replays the RAW bytes: a fresh Wi
+SF-96	FIXED-after-hub-tooling	FIXED — APPROV	3a4c5d2	restore-verify fingerprint misses seven tamper classes: ALTER ROLE matflow_app SET app.bypass_rls=on (switches RLS off f
+SF-97	FIXED-after-hub-tooling	FIXED — APPROV	3a4c5d2	coverage-reconcile accepts an N/A row with an empty evidence cell (the column is never read) and counts a reviewer cell 
+SF-98	FIXED-after-hub-RUNTIME	FIXED — APPROV	ebd761d	Both TOTP verify routes threw 500 on a null body, and a code sent as an array {code:[123456]} slipped past the six-digit
+SF-99	FIXED-after-hub-RUNTIME	FIXED — APPROV	ebd761d	/api/members/[id]/hold read an unparsable, null, array or string body as {} and wrote an OPEN-ENDED hold, which pauses S
+SF-100	FIXED-after-hub-RUNTIME	FIXED — APPROV	ebd761d	zod v4 probes Function("") at startup, so every page that builds a zod schema (/login, /apply) already logged an enforce
+SF-101	UNFIXED/OTHER	OPEN — table i		About 100 routes still use strip-mode (non-strict) zod schemas and 25 query routes are not on zod at all; the canary swe
+SF-102	UNFIXED/OTHER	harness part F	3a4c5d2	Import provenance and other keyed digests are computed with an EMPTY key in the test environment (neither NEXTAUTH_SECRE
+SF-103	FIXED-unlocated	FIXED by the l		Two unit failures sat at HEAD ebd761d unrelated to any lane: the journeys manifest did not claim the new csp-report rout
+SF-104	FIXED-after-hub-RUNTIME	FIXED — APPROV	9d6f1c3	/api/csp-report: the 20 KB cap and the Content-Length pre-check are unpinned — raising CSP_REPORT_MAX_BYTES to 32 KB and
+SF-105	UNFIXED/OTHER	RECORDED (C3, 	9d6f1c3	Behind the proxy Next 16 buffers request bodies up to proxyClientMaxBodySize (10 MB default) before any handler runs, so
+SF-106	UNFIXED/OTHER	C4 (9f573ff): 	9f573ff,9d6f1c3	lib/rate-limit.ts database path is count-then-insert: a concurrent burst overshoots the limit by up to the concurrency (
+SF-107	FIXED-after-hub-RUNTIME	FIXED (C3, 9d6	9d6f1c3	lib/csp.ts header comment claims enforcing can only make the effective policy stricter; in enforce mode the nonce policy
+SF-108	UNFIXED/OTHER	OPEN — hardeni		Behind proxy.ts the upload routes receive up to 10 MB before a 413/401/429 can be sent, and Next's proxyClientMaxBodySiz
+SF-109	UNFIXED/OTHER	PARTIAL — tool	1f16afd,ed567c4	scripts/seed-demo-rich.mjs hard-codes DEMO_PASSWORD (16 random-looking characters, fingerprint b94e8093ff12), gives it t
+SF-110	FIXED-after-hub-RUNTIME	FIXED — APPROV	9f573ff,a49925b	The production build is a function of every non-gitignored file: Tailwind v4 scans the whole tree for class candidates, 
+SF-111	FIXED-after-hub-RUNTIME	FIXED — APPROV	03ef584,03ef584	The per-address lockout cap (SF-59) is not atomic: lockoutState() reads the count, bcrypt runs, then recordFailure() ins
+SF-112	FIXED-after-hub-RUNTIME	FIXED — APPROV	03ef584,5259d3b	Derived signing sub-keys are HMAC(root, context) and /api/account/pending-tenant signs its cookie as HMAC(root, slug): a
+SF-113	FIXED-after-hub-RUNTIME	FIXED — APPROV	9f573ff,1bad6ee	A burst that saturates the pg pool makes Prisma throw Unable to start a transaction in the given time; checkRateLimit th
+SF-114	FIXED-after-hub-RUNTIME	FIXED — APPROV	5259d3b,9f573ff	The SF-110 Tailwind exclusion covers docs/ only: a file with a backslash-plus-hex path planted under tests/, scripts/rea
+SF-115	UNFIXED/OTHER	OPEN — D-lane 		DSAR erase with ?strategy=cascade deletes children through deleteMemberCascade with no release digest of their addresses
+SF-116	FIXED-after-hub-RUNTIME	FIXED (A4, 03e	03ef584	With NEXTAUTH_SECRET set to an empty string and AUTH_SECRET set, a TEST run signs with a key of length 0: setup-test-db 
+SF-117	UNFIXED/OTHER	CLASSIFIED (DE		Reviewer R6 hit one tool refusal — cmd's rd on a quoted worktree path was blocked by a hook because, with empty variable
+SF-118	UNFIXED/OTHER	L1: the bucket		Under a burst at one address every waiting lockout reservation holds a pooled connection while queueing on the per-addre
+SF-119	UNFIXED/OTHER	R9: sec-c3 and	704ab57	While the pg pool is saturated by a burst on ONE security bucket, every other security bucket on the same instance is re
+SF-120	FIXED-after-hub-RUNTIME	FIXED — APPROV	1f16afd,ed567c4	The over-limit warning on DATABASE answers logs the whole bucket key, including the e-mail address for forgot-password, 
+SF-121	FIXED-unlocated	PASS (A5, test		A4's own suites do not cover the mutant an exempt (known-device) request skips the network cap — under it 39 wrong guess
+SF-122	UNFIXED/OTHER	RECORDED as DE		Permission classifier DENIED the launch of follow-up lane M1 on 10 Oct (~09:30 UTC): the brief bundled the SF-120 log-fa
+SF-123	UNFIXED/OTHER	RECORDED — any		Lane B3's measurement left two poisoned matflow_app backends on the TEST pooler for ~2–3 minutes (one with app.bypass_rl
+SF-124	UNFIXED/OTHER	Side-by-side c		The two audit-protection designs conflict: F2's SF-57 v2 patch 0002 grants the purge function to matflow_app and require
+SF-125	UNFIXED/OTHER	OPEN — exclude		After SF-62 phase 1 the signing-key pads live in matflow_sec.context_key, and db-backup.yml dumps every table, so the we
+SF-126	UNFIXED/OTHER	OPEN — phase-1		Under the proposed phase 2 a refused signed context fails silently: reads return empty and writes fail as a generic 500,
+SF-127	FIXED-after-hub-RUNTIME	FIXED — APPROV	1f16afd,ed567c4	All three scheduled crons share CRON_SECRET and the retention sweep had no per-job gate, so setting the secret would hav
+SF-128	FIXED-after-hub-RUNTIME	FIXED — APPROV	704ab57,704ab57	The e2e spec lg-3-machines-and-sweep neither sets nor expects RETENTION_CRON_ENABLED: its 503 branch requires /not confi
+SF-129	FIXED-after-hub-RUNTIME	FIXED — APPROV	704ab57,704ab57	Rotation-tool hardening (TEST-only tool): the env-file name refusal of .env is case-bypassable on Windows (.ENV reads .e
+SF-130	FIXED-after-hub-RUNTIME	FIXED — APPROV	704ab57,704ab57	No test pins the convention that every checkRateLimit call site starts its bucket with a literal family (all 82 do today
+SF-131	UNFIXED/OTHER	BLOCKED (DENIA		Neon's proxy accepts both endpoint=<id> and project=<id> as a password-field routing prefix (parse_endpoint_param strips
+SF-132	UNFIXED/OTHER	BLOCKED (DENIA		Node 24.21 scans the whole argv for --env-file even after the script name: it does not load the file but opens it and ex
+SF-133	UNFIXED/OTHER	BLOCKED (DENIA		lg-3 detects a server/spec gate disagreement only after its first live bearer call; with reuseExistingServer true locall
+SF-134	UNFIXED/OTHER	BLOCKED (DENIA		The SF-130 scanner misses an aliased import (import { checkRateLimit as rl }), namespace imports, element access, and a 
+SF-135	UNFIXED/OTHER	Production ser	1ca92c0,1ca92c0	On a QUIET TEST branch (no other lane running) the burst suites still exit non-zero in about half their runs although ev
+SF-136	FIXED-unlocated	FIXED AWAITING	1ca92c0	When Prisma's $transaction maxWait expires mid-start, adapter-pg releases the client WITHOUT a ROLLBACK, so the connecti
