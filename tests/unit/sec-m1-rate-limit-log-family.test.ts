@@ -57,6 +57,16 @@ const h = vi.hoisted(() => ({ mode: "ok" as "ok" | "down", rows: new Map<string,
 
 vi.mock("@/lib/prisma", () => {
   const tag = (kind: "lock" | "insert") => (_s: TemplateStringsArray, ...values: unknown[]): Op => ({ kind, values });
+  const runOps = async (ops: Op[]) => {
+    if (h.mode !== "ok") throw down();
+    const insert = ops.find((o) => o.kind === "insert")!;
+    const bucket = insert.values[0] as string;
+    const max = insert.values[4] as number;
+    const n = h.rows.get(bucket) ?? 0;
+    const inserted = n < max ? 1 : 0;
+    if (inserted) h.rows.set(bucket, n + 1);
+    return ops.map((o) => (o.kind === "insert" ? [{ count: n, inserted, oldestAgeMs: 1_000 }] : 1));
+  };
   const down = () => Object.assign(new Error("connect ECONNREFUSED (secm1 fake)"), { code: "ECONNREFUSED" });
   return {
     prisma: {
@@ -70,15 +80,22 @@ vi.mock("@/lib/prisma", () => {
       },
       $executeRaw: tag("lock"),
       $queryRaw: tag("insert"),
-      $transaction: async (ops: Op[]) => {
-        if (h.mode !== "ok") throw down();
-        const insert = ops.find((o) => o.kind === "insert")!;
-        const bucket = insert.values[0] as string;
-        const max = insert.values[4] as number;
-        const n = h.rows.get(bucket) ?? 0;
-        const inserted = n < max ? 1 : 0;
-        if (inserted) h.rows.set(bucket, n + 1);
-        return ops.map((o) => (o.kind === "insert" ? [{ count: n, inserted, oldestAgeMs: 1_000 }] : 1));
+      $transaction: async (arg: Op[] | ((tx: unknown) => Promise<unknown>)) => {
+        // SF-135 (lane L1): checkRateLimit runs the same two statements in an INTERACTIVE transaction now (its bounds are
+        // owned there, not by Prisma's timer). The callback's statements are recorded as the same ops and answered by
+        // the same rules below; nothing asserted about them changes.
+        if (typeof arg === "function") {
+          const recorded: Op[] = [];
+          return arg({
+            $executeRaw: async (s: TemplateStringsArray, ...v: unknown[]) => (recorded.push(tag("lock")(s, ...v)), 1),
+            $queryRaw: async (s: TemplateStringsArray, ...v: unknown[]) => {
+              recorded.push(tag("insert")(s, ...v));
+              const out = (await runOps(recorded)) as unknown[];
+              return out[out.length - 1];
+            },
+          });
+        }
+        return runOps(arg);
       },
     },
   };

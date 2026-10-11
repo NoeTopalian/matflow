@@ -34,13 +34,28 @@ vi.mock("@/lib/prisma", () => ({
     // only ever passed through the memory fallback (a TypeError on prisma.$transaction) — found by lane C4.
     $executeRaw: vi.fn(() => ({ kind: "lock" })),
     $queryRaw: vi.fn((_s: TemplateStringsArray, ...values: unknown[]) => ({ kind: "insert", values })),
-    $transaction: vi.fn(async (ops: Array<{ kind: string; values?: unknown[] }>) => {
-      if (db.down) throw outage();
-      const max = ops[1].values![4] as number;
-      const count = db.hits;
-      const inserted = count < max ? 1 : 0;
-      db.hits += inserted;
-      return [1, [{ count, inserted, oldestAgeMs: 0 }]];
+    $transaction: vi.fn(async (arg: Array<{ kind: string; values?: unknown[] }> | ((tx: unknown) => Promise<unknown>)) => {
+      // SF-135 (lane L1): checkRateLimit runs the same two statements in an INTERACTIVE transaction now (its bounds are
+      // owned there, not by Prisma's timer). The callback's statements are recorded as the same ops and answered by the
+      // same rules; nothing asserted about them changes.
+      const run = async (ops: Array<{ kind: string; values?: unknown[] }>) => {
+        if (db.down) throw outage();
+        const max = ops[1].values![4] as number;
+        const count = db.hits;
+        const inserted = count < max ? 1 : 0;
+        db.hits += inserted;
+        return [1, [{ count, inserted, oldestAgeMs: 0 }]];
+      };
+      if (typeof arg !== "function") return run(arg);
+      const recorded: Array<{ kind: string; values?: unknown[] }> = [];
+      return arg({
+        $executeRaw: async () => (recorded.push({ kind: "lock" }), 1),
+        $queryRaw: async (_s: TemplateStringsArray, ...values: unknown[]) => {
+          recorded.push({ kind: "insert", values });
+          const out = (await run(recorded)) as unknown[];
+          return out[out.length - 1];
+        },
+      });
     }),
   },
 }));

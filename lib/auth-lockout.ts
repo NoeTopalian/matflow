@@ -148,15 +148,62 @@ export type LockoutState =
 
 /**
  * A burst against one address queues on the lock INSIDE the transaction, so
- * Prisma's defaults (2 s to start, 5 s in all) refuse the tail of a burst
+ * Prisma's defaults (2 s to start, 5 s in all) refused the tail of a burst
  * with a transaction error (fail closed, but a needless refusal for the real
- * person). Same ceiling as withTenantContext's maxWait. An interactive
- * transaction rather than the batch form C3 uses, because Prisma 7 with the
- * pg driver adapter applies these two options only to the interactive form
+ * person). An interactive transaction rather than a batch, because Prisma 7
+ * with the pg driver adapter applies its options only to the interactive form
  * (measured: the batch form still expired at 5000 ms). Same statements, same
  * round trips: BEGIN, lock, conditional insert, COMMIT.
+ *
+ * THE BOUND IS OWNED HERE, NOT BY PRISMA'S TIMER (SF-135, lane L1, 11 Oct
+ * 2026). The burst suites exited 1 with every cell green: an unhandled
+ * "Connection terminated unexpectedly" / ConnectionClosed from Prisma's own
+ * transaction-timeout timer, whose ROLLBACK queues behind a statement still in
+ * flight (it never interrupts it) and rejects with no handler when the
+ * connection then fails — while the statement's own rejection reached the
+ * caller as a refusal. lib/rate-limit.ts (checkDbRateLimit) has the full
+ * account; the construction is the same here:
+ *  - the lock statement sets lock_timeout and statement_timeout
+ *    transaction-locally (set_config(…, true): reset by COMMIT/ROLLBACK,
+ *    nothing left on the pooled connection), RESERVE_TX_BOUND_MS each, the
+ *    same 10 s ceiling the old Prisma timer nominally gave;
+ *  - Prisma's transaction timeout is beyond those bounds, so Prisma's timer
+ *    never fires under our statements; maxWait (the wait to start) stays
+ *    10 s, as before (see lib/rate-limit.ts on the start-timeout discard).
+ * Any failure of the transaction — a dead connection, a bound reached,
+ * anything unexpected — is thrown as a LockoutReservationError with a reason,
+ * after one log line that names only the reason (never the address, the
+ * network or the bucket key). The caller refuses the sign-in on any throw.
  */
-const RESERVE_TX_OPTIONS = { maxWait: 10_000, timeout: 10_000 } as const;
+export const RESERVE_TX_BOUND_MS = 10_000;
+const PRISMA_TIMER_OUT_OF_REACH_MS = 60 * 60 * 1000;
+const RESERVE_TX_OPTIONS = { maxWait: 10_000, timeout: PRISMA_TIMER_OUT_OF_REACH_MS } as const;
+
+export type LockoutReservationFailure = "unreachable" | "pool-timeout" | "lock-timeout" | "statement-timeout" | "error";
+
+/** A reservation that could not be completed. The attempt holds no slot and must be refused. */
+export class LockoutReservationError extends Error {
+  readonly reason: LockoutReservationFailure;
+  constructor(reason: LockoutReservationFailure, cause: unknown) {
+    super(`lockout reservation failed (${reason})`, { cause });
+    this.name = "LockoutReservationError";
+    this.reason = reason;
+  }
+}
+
+function reservationFailureReason(err: unknown): LockoutReservationFailure {
+  const e = err as { code?: unknown; message?: unknown; meta?: { code?: unknown }; cause?: { originalCode?: unknown } } | null;
+  const code = typeof e?.code === "string" ? e.code : "";
+  const sqlState = String(e?.meta?.code ?? e?.cause?.originalCode ?? "");
+  const msg = typeof e?.message === "string" ? e.message : "";
+  if (/^P10(0[0-2]|17)$/.test(code) || /reach database|ECONNREFUSED|ENOTFOUND|connection terminated|ConnectionClosed|server has closed the connection|not queryable/i.test(msg)) {
+    return "unreachable";
+  }
+  if (code === "P2024" || /timeout exceeded when trying to connect|timed out fetching a new connection/i.test(msg)) return "pool-timeout";
+  if (sqlState === "55P03" || /\b55P03\b|lock timeout/i.test(msg)) return "lock-timeout";
+  if (sqlState === "57014" || /\b57014\b|statement timeout/i.test(msg)) return "statement-timeout";
+  return "error";
+}
 
 type ReserveResult = { reservation: LockoutReservation } | { refused: "pair" | "addr" };
 
@@ -172,8 +219,26 @@ type ReserveResult = { reservation: LockoutReservation } | { refused: "pair" | "
 async function reserve(keys: LockoutKeys, addrExempt: boolean): Promise<ReserveResult> {
   const pairId = `lk_${randomUUID()}`;
   const addrId = `lk_${randomUUID()}`;
-  const rows = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LOCKOUT_LOCK_NS}::int4, hashtext(${keys.addr}::text))`;
+  let rows: Array<{ pairCount: number; addrCount: number; inserted: number }>;
+  try {
+    rows = await reserveTx(keys, addrExempt, pairId, addrId);
+  } catch (err) {
+    const reason = reservationFailureReason(err);
+    console.error(`[auth-lockout] reservation failed reason=${reason} outcome=refused`);
+    throw new LockoutReservationError(reason, err);
+  }
+  const row = rows[0];
+  if (!row) throw new Error("lockout reservation returned no row");
+  if (Number(row.inserted) === 2) {
+    return { reservation: { pairId, addrId, addrCountAfter: Number(row.addrCount) + 1 } };
+  }
+  return { refused: Number(row.pairCount) >= PAIR_MAX ? "pair" : "addr" };
+}
+
+/** The transaction itself: the bounded lock (10000 ms = RESERVE_TX_BOUND_MS), then the one conditional insert. */
+function reserveTx(keys: LockoutKeys, addrExempt: boolean, pairId: string, addrId: string) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`WITH bound AS MATERIALIZED (SELECT set_config('lock_timeout', '10000ms', true) AS lt, set_config('statement_timeout', '10000ms', true) AS st) SELECT pg_advisory_xact_lock(${LOCKOUT_LOCK_NS}::int4, hashtext(${keys.addr}::text)) FROM bound`;
     return tx.$queryRaw<Array<{ pairCount: number; addrCount: number; inserted: number }>>`
       WITH clock AS (
         SELECT (statement_timestamp() AT TIME ZONE 'UTC') AS t
@@ -198,12 +263,6 @@ async function reserve(keys: LockoutKeys, addrExempt: boolean): Promise<ReserveR
       )
       SELECT go.pn AS "pairCount", go.an AS "addrCount", (SELECT count(*)::int FROM ins) AS "inserted" FROM go`;
   }, RESERVE_TX_OPTIONS);
-  const row = rows[0];
-  if (!row) throw new Error("lockout reservation returned no row");
-  if (Number(row.inserted) === 2) {
-    return { reservation: { pairId, addrId, addrCountAfter: Number(row.addrCount) + 1 } };
-  }
-  return { refused: Number(row.pairCount) >= PAIR_MAX ? "pair" : "addr" };
 }
 
 /**

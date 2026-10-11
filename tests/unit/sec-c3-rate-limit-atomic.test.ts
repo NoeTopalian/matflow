@@ -22,6 +22,11 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => {
   const tag = (kind: "lock" | "insert") => (s: TemplateStringsArray, ...values: unknown[]): Op => ({ kind, sql: s.join("?"), values });
+  const runOps = async (ops: Op[]) => {
+    if (h.down) throw new Error("connect ECONNREFUSED (secc3 fake)");
+    h.transactions.push(ops);
+    return ops.map((o) => (o.kind === "insert" ? h.insertResult : 1));
+  };
   return {
     prisma: {
       rateLimitHit: {
@@ -37,10 +42,22 @@ vi.mock("@/lib/prisma", () => {
       },
       $executeRaw: tag("lock"),
       $queryRaw: tag("insert"),
-      $transaction: async (ops: Op[]) => {
-        if (h.down) throw new Error("connect ECONNREFUSED (secc3 fake)");
-        h.transactions.push(ops);
-        return ops.map((o) => (o.kind === "insert" ? h.insertResult : 1));
+      $transaction: async (arg: Op[] | ((tx: unknown) => Promise<unknown>)) => {
+        // SF-135 (lane L1): checkRateLimit runs the same two statements in an INTERACTIVE transaction now (its bounds are
+        // owned there, not by Prisma's timer). The callback's statements are recorded as the same ops and answered by
+        // the same rules below; nothing asserted about them changes.
+        if (typeof arg === "function") {
+          const recorded: Op[] = [];
+          return arg({
+            $executeRaw: async (s: TemplateStringsArray, ...v: unknown[]) => (recorded.push(tag("lock")(s, ...v)), 1),
+            $queryRaw: async (s: TemplateStringsArray, ...v: unknown[]) => {
+              recorded.push(tag("insert")(s, ...v));
+              const out = (await runOps(recorded)) as unknown[];
+              return out[out.length - 1];
+            },
+          });
+        }
+        return runOps(arg);
       },
     },
   };

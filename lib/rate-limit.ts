@@ -62,7 +62,48 @@ export const RATE_LIMIT_LOCK_NS = 0x524c4854;
  * min ~270–290 ms, median 340–580 ms, vs ~100 / 120–140 ms before; refused
  * ~60 ms both. On a same-region pooler that is a few milliseconds. Only
  * callers of the SAME bucket ever wait on each other.
+ *
+ * THE BOUND ON THIS TRANSACTION IS OWNED HERE, NOT BY PRISMA'S TIMER (SF-135,
+ * lane L1, 11 Oct 2026). The burst suites exited 1 with every cell green: an
+ * unhandled "Connection terminated unexpectedly" (or DriverAdapterError
+ * ConnectionClosed) whose stack is Prisma's own transaction-timeout timer —
+ * TransactionManager's timer callback closes the transaction by sending
+ * ROLLBACK on the SAME pg client, and nothing awaits that callback. When the
+ * timer fires while one of our statements is still in flight (a lock queue, or
+ * a network stall), the ROLLBACK can only queue behind the statement — it never
+ * interrupts it — and when the connection then fails, pg rejects both: the
+ * statement's rejection comes back here (a refusal below), the timer's has no
+ * handler. Plain Node exits on that; the Next.js server logs it as
+ * unhandledRejection and carries on (evidence/L1). The old batch form ran under
+ * Prisma's client-wide 5 s timer, which the batch form cannot override.
+ *
+ * So, in this one interactive transaction (same statements, same round trips:
+ * BEGIN, lock, conditional insert, COMMIT):
+ *  - the lock statement first sets lock_timeout and statement_timeout with
+ *    set_config(…, true) — transaction-local, reset by COMMIT or ROLLBACK, so
+ *    nothing is left on the pooled connection — bounding the wait for the bucket
+ *    lock and every later statement on the server (a refusal, reason
+ *    lock-timeout / statement-timeout, below);
+ *  - Prisma's transaction timeout is set beyond those bounds, so Prisma never
+ *    fires its timer under a statement of ours;
+ *  - maxWait (the wait to START the transaction) stays at Prisma's default
+ *    2 s, unchanged: when it expires the caller gets P2028 (a store failure,
+ *    handled below) and Prisma discards the start without an unhandled
+ *    rejection. That discard has its own defect — adapter-pg releases a client
+ *    whose BEGIN completed late without a ROLLBACK, measured in
+ *    tests/integration/sec-l1-start-timeout-db — reported separately with its
+ *    remedy, because raising maxWait past the pool deadline changes how a
+ *    saturating burst is refused (tests/integration/sec-c4-rate-limit-saturation-db).
+ * A connection that dies under the transaction now fails the statement this
+ * function awaits — and only that: checkRateLimit refuses (security buckets),
+ * rethrows (failClosed) or falls back to the seeded memory store
+ * (non-security), and logs the family. The pool drops the dead client.
  */
+export const STORE_TX_BOUND_MS = 5_000;
+/** Beyond any bound above; Prisma's timer must never be the one that ends this transaction. */
+const PRISMA_TIMER_OUT_OF_REACH_MS = 60 * 60 * 1000;
+const STORE_TX_OPTIONS = { maxWait: 2_000, timeout: PRISMA_TIMER_OUT_OF_REACH_MS } as const;
+
 async function checkDbRateLimit(
   bucket: string,
   max: number,
@@ -83,9 +124,11 @@ async function checkDbRateLimit(
   }
 
   const id = `rl_${globalThis.crypto.randomUUID()}`;
-  const [, result] = await prisma.$transaction([
-    prisma.$executeRaw`SELECT pg_advisory_xact_lock(${RATE_LIMIT_LOCK_NS}::int4, hashtext(${bucket}::text))`,
-    prisma.$queryRaw<Array<{ count: number; inserted: number; oldestAgeMs: number | null }>>`
+  // The two bounds are literals in the SQL text (5000 ms = STORE_TX_BOUND_MS; pinned by
+  // tests/unit/sec-l1-store-tx-bound): the MATERIALIZED CTE runs set_config before the outer SELECT asks for the lock.
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`WITH bound AS MATERIALIZED (SELECT set_config('lock_timeout', '5000ms', true) AS lt, set_config('statement_timeout', '5000ms', true) AS st) SELECT pg_advisory_xact_lock(${RATE_LIMIT_LOCK_NS}::int4, hashtext(${bucket}::text)) FROM bound`;
+    return tx.$queryRaw<Array<{ count: number; inserted: number; oldestAgeMs: number | null }>>`
       WITH clock AS (
         SELECT (statement_timestamp() AT TIME ZONE 'UTC') AS t
       ), win AS (
@@ -102,8 +145,8 @@ async function checkDbRateLimit(
       SELECT win.n AS "count",
              (SELECT count(*)::int FROM ins) AS "inserted",
              (extract(epoch FROM (clock.t - win.oldest)) * 1000)::float8 AS "oldestAgeMs"
-      FROM win, clock`,
-  ]);
+      FROM win, clock`;
+  }, STORE_TX_OPTIONS);
   const row = result[0];
   if (!row || Number(row.inserted) !== 1) {
     const age = row?.oldestAgeMs;
@@ -175,6 +218,13 @@ function bucketFamily(bucket: string): string {
 /** Retry-After for a refusal caused by a store failure: transient by nature, never longer than the window. */
 const STORE_FAILURE_RETRY_AFTER_S = 30;
 
+/** The Postgres SQLSTATE behind a Prisma raw-query error, where Prisma carries one (meta.code / cause.originalCode). */
+function pgCode(err: unknown): string {
+  const e = err as { meta?: { code?: unknown }; cause?: { originalCode?: unknown } } | null;
+  const c = e?.meta?.code ?? e?.cause?.originalCode;
+  return typeof c === "string" ? c : "";
+}
+
 function storeFailureReason(err: unknown): string {
   const e = err as { code?: unknown; message?: unknown } | null;
   const code = typeof e?.code === "string" ? e.code : "";
@@ -186,9 +236,12 @@ function storeFailureReason(err: unknown): string {
   ) {
     return "pool-timeout";
   }
-  if (/^P10(0[0-2]|17)$/.test(code) || /reach database|ECONNREFUSED|ENOTFOUND|connection terminated/i.test(msg)) {
+  if (/^P10(0[0-2]|17)$/.test(code) || /reach database|ECONNREFUSED|ENOTFOUND|connection terminated|ConnectionClosed|server has closed the connection|not queryable/i.test(msg)) {
     return "unreachable";
   }
+  // The transaction's own server-side bounds (STORE_TX_BOUND_MS): 55P03 lock_not_available, 57014 query_canceled.
+  if (/\b55P03\b|lock timeout/i.test(msg) || pgCode(err) === "55P03") return "lock-timeout";
+  if (/\b57014\b|statement timeout/i.test(msg) || pgCode(err) === "57014") return "statement-timeout";
   return "error";
 }
 
