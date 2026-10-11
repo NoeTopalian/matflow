@@ -1,18 +1,16 @@
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse } from "next/server";
-import { sendEmail } from "@/lib/email";
-import { logAudit } from "@/lib/audit-log";
 import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
 import { HANDLED_STRIPE_EVENT_TYPES } from "@/lib/stripe/handled-events";
 import { packCreditsAfterRefund } from "@/lib/pack-refund";
-import * as Sentry from "@sentry/nextjs";
 
 import { resolveInvoicePaymentIds, resolveMandateCustomerId, resolveSubscriptionsUsingPaymentMethod, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
 import { subscriptionStatusToPaymentStatus } from "@/lib/stripe/subscription-status";
 import { readPauseCollection } from "@/lib/member-hold";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { classifyStripeKey } from "@/lib/stripe/key-mode";
+import { runStripeEvent, StripeEventRetryableError, type QueuedAudit, type QueuedEmail } from "@/lib/stripe/event-store";
 import {
   invoiceSubscriptionId,
   isTerminalSubscriptionStatus,
@@ -29,11 +27,11 @@ export const runtime = "nodejs";
 // inside that. Eight other routes in this repo set theirs; this one did not.
 export const maxDuration = 15;
 
-// Thrown inside the processing transaction when the event can't be attributed
-// yet (no connected account, or the account isn't linked to a tenant). It rolls
-// the tx back — claim included — and maps to a 409 so Stripe RETRIES rather than
+// "Not attributable yet" (no connected account, or the account isn't linked to
+// a tenant) is thrown as StripeEventRetryableError (lib/stripe/event-store.ts):
+// the processing transaction rolls back, the event's store row is recorded
+// failed with the reason, and the answer is a 409 so Stripe RETRIES rather than
 // us acking-and-dropping (which would take money but never deliver the goods).
-class WebhookRetryableError extends Error {}
 
 // What happened to a verified, attributable event (payments lane PC, 11 Oct
 // 2026). "ignored_foreign": the object maps to nothing MatFlow created,
@@ -104,15 +102,11 @@ export async function POST(req: NextRequest) {
   // notification (A3H-2). The account-status refresh is likewise deferred
   // (Tier 2.5): it does network I/O + opens its own transaction, which would
   // self-deadlock on the connection_limit=1 pool if run inside this tx.
-  const pendingEmails: Array<Parameters<typeof sendEmail>[0]> = [];
-  const pendingAuditLogs: Array<{
-    tenantId: string;
-    userId: string | null;
-    action: string;
-    entityType: string;
-    entityId: string;
-    metadata: Record<string, unknown>;
-  }> = [];
+  // Lane PC wiring of lane PD's store: the processor RETURNS these; the store
+  // writes the audit rows inside the processing transaction (durable) and
+  // sends the emails after it commits.
+  const pendingEmails: QueuedEmail[] = [];
+  const pendingAuditLogs: QueuedAudit[] = [];
   // P0-1: resolve the real PaymentIntent/Charge for invoice events.
   //
   // Invoice on apiVersion 2026-03-25.dahlia has neither a `charge` nor a
@@ -222,23 +216,24 @@ export async function POST(req: NextRequest) {
   let accountStatusRefresh: { tenantId: string; stripeAccountId: string } | null = null;
   let outcome = "processed" as WebhookOutcome;
 
-  // Tier 1.1 (atomic idempotency): claim the event id AND process it in ONE
-  // transaction. If the function crashes / times out mid-flight, the whole tx —
-  // claim included — rolls back, so Stripe's redelivery reprocesses cleanly. A
-  // P2002 on the claim is a genuine duplicate. The previous design committed the
-  // claim in a separate transaction first and relied on a best-effort
-  // compensating delete; a crash in that gap orphaned the claim and silently
-  // dropped the payment event forever.
-  try {
-    await withRlsBypass(async (tx) => {
-      await tx.stripeEvent.create({ data: { eventId: event.id, type: event.type } });
-
+  // Durable processing (lane PD's store, wired by lane PC, 11 Oct 2026).
+  // runStripeEvent records the event in its OWN transaction first (so a failed
+  // handler still leaves a row: status failed, lastError), then opens the
+  // processing transaction, locks the row (FOR UPDATE SKIP LOCKED — a second
+  // concurrent delivery is told "in progress", never processes twice), runs
+  // the processor below, writes its audit rows and the terminal status
+  // (processed / ignored_foreign / ignored_stale) in the SAME commit as its
+  // effects, and only then sends emails and runs the post-commit jobs.
+  // A duplicate is now recognised by the row's status — no longer by a P2002,
+  // which used to ack (and silently drop) any unique violation inside a
+  // handler as if it were a duplicate delivery.
+  const run = await runStripeEvent(event, async (_event, { tx }) => {
       // Tier 2.4: the event must be attributable to a connected account + tenant.
       // If not (event.account missing, or the connect-callback write hasn't landed
       // yet / a disconnect→reconnect window), THROW so the tx rolls back and
       // Stripe retries — acking 200 here would mean money taken, nothing delivered.
       if (!stripeAccountId) {
-        throw new WebhookRetryableError("Event missing connected account");
+        throw new StripeEventRetryableError("Event missing connected account");
       }
       const tenant = await tx.tenant.findFirst({
         where: { stripeAccountId },
@@ -246,7 +241,7 @@ export async function POST(req: NextRequest) {
       });
       const tenantId = tenant?.id ?? null;
       if (!tenantId) {
-        throw new WebhookRetryableError("Connected account not linked to a tenant yet");
+        throw new StripeEventRetryableError("Connected account not linked to a tenant yet");
       }
     async function findMember(customerId: string) {
       // Audit iter-1-database A8I1-S-4 [High]: refuse to look up without
@@ -1541,72 +1536,59 @@ export async function POST(req: NextRequest) {
         });
       }
     }
-    });  // close withRlsBypass wrapper
-  } catch (err) {
-    // Genuine duplicate delivery: the claim row already existed, so the unique
-    // constraint fired on stripeEvent.create. Already processed — ack and skip.
-    if ((err as { code?: string }).code === "P2002") {
+    // Audit iter-1-member-lifecycle A3H-2 + A3H-9: side-effects are RETURNED,
+    // never dispatched here — the store writes the audit rows in this
+    // transaction and sends the emails only after it commits, so a rollback
+    // can never fire a notification. Tier 2.5: the account-status refresh does
+    // network I/O and opens its own transaction, so it runs after the commit.
+    const refresh = accountStatusRefresh as { tenantId: string; stripeAccountId: string } | null;
+    return {
+      outcome,
+      tenantId,
+      emails: pendingEmails,
+      audits: pendingAuditLogs,
+      after: refresh ? [() => refreshStripeAccountStatus(refresh.tenantId, refresh.stripeAccountId)] : [],
+    };
+  });
+
+  switch (run.kind) {
+    case "processed":
+    case "ignored_foreign":
+    case "ignored_stale":
+      // Lane PC: an acknowledged event that changed nothing is said out loud,
+      // and recorded on its StripeEvent row with the same status.
+      if (run.kind !== "processed") {
+        console.info("[stripe-webhook] event acknowledged without effect", {
+          eventId: event.id,
+          type: event.type,
+          outcome: run.kind,
+          objectId: typeof obj.id === "string" ? obj.id : null,
+        });
+      }
+      return NextResponse.json({ received: true, outcome: run.kind, status: run.status });
+    case "already_processed":
       return NextResponse.json({ received: true, alreadyProcessed: true });
-    }
-    // Tier 2.4: not-yet-attributable event — the tx rolled back (no claim kept).
-    // Return 409 so Stripe retries; the connect-callback / reconnect write should
-    // have landed by the next attempt.
-    if (err instanceof WebhookRetryableError) {
-      console.warn("[stripe-webhook] retryable — asking Stripe to redeliver", {
+    case "in_progress":
+      // Another delivery of this id holds the row: Stripe's retry will find it
+      // terminal (that delivery committed) or claimable (it rolled back).
+      return NextResponse.json({ error: "Event is being processed" }, { status: 409 });
+    case "failed":
+      if (run.retryable) {
+        // Tier 2.4: not attributable yet — recorded failed; 409 so Stripe retries.
+        console.warn("[stripe-webhook] retryable — asking Stripe to redeliver", {
+          eventId: event.id,
+          type: event.type,
+          reason: run.error,
+        });
+        return NextResponse.json({ error: run.error }, { status: 409 });
+      }
+      // Real processing failure: rolled back, recorded failed on the row, sent
+      // to Sentry by the store (Tier 1.3), and Stripe retries on the 500.
+      console.error("[stripe-webhook] processing failed", {
         eventId: event.id,
         type: event.type,
-        reason: err.message,
+        error: run.error,
       });
-      return NextResponse.json({ error: err.message }, { status: 409 });
-    }
-    // Real processing failure. The whole tx (claim included) rolled back, so
-    // Stripe will retry. Tier 1.3: surface to Sentry — a silent webhook outage
-    // (e.g. a wrong signing secret, or a DB blip) otherwise stops ALL payment /
-    // subscription / dispute sync with no operational signal.
-    console.error("[stripe-webhook] processing failed", {
-      eventId: event.id,
-      type: event.type,
-      error: (err as Error)?.message,
-    });
-    Sentry.captureException(err, {
-      tags: { area: "stripe-webhook", eventType: event.type },
-      extra: { eventId: event.id },
-    });
-    return NextResponse.json({ error: "Processing failed" }, { status: 500 });
+      return NextResponse.json({ error: "Processing failed" }, { status: 500 });
   }
-
-  // Audit iter-1-member-lifecycle A3H-2 + A3H-9: dispatch side-effects only
-  // AFTER the transaction has committed. All fire-and-forget so any individual
-  // failure does not affect the 200 response to Stripe.
-  for (const email of pendingEmails) {
-    sendEmail(email).catch(() => {});
-  }
-  for (const entry of pendingAuditLogs) {
-    void logAudit({ ...entry, req }).catch(() => {});
-  }
-  // Tier 2.5: account.updated status refresh — network call + its own tx, run
-  // here (after the processing tx released the pooled connection) instead of
-  // inside it. Failure is non-fatal: the lazy refresh-on-checkout backstop in
-  // ensureCanAcceptCharges re-hydrates it later.
-  // `as` re-widens past the flow-narrowing TS applies to a variable only ever
-  // assigned inside a closure (it otherwise narrows to null → the truthy branch
-  // becomes `never`).
-  const refresh = accountStatusRefresh as { tenantId: string; stripeAccountId: string } | null;
-  if (refresh) {
-    await refreshStripeAccountStatus(refresh.tenantId, refresh.stripeAccountId).catch(() => {});
-  }
-
-  // Lane PC: an acknowledged event that changed nothing is said out loud, so
-  // "Stripe says X, MatFlow shows Y" is findable. Lane PD's event store will
-  // record this outcome on the StripeEvent row (markIgnored); until it lands
-  // the log line and the response body carry it.
-  if (outcome !== "processed") {
-    console.info("[stripe-webhook] event acknowledged without effect", {
-      eventId: event.id,
-      type: event.type,
-      outcome,
-      objectId: typeof obj.id === "string" ? obj.id : null,
-    });
-  }
-  return NextResponse.json({ received: true, outcome });
 }

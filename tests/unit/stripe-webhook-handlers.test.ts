@@ -53,7 +53,12 @@ vi.mock("@/lib/prisma-tenant", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    stripeEvent: { create: vi.fn(), delete: vi.fn() },
+    // Lane PC wired lane PD's store (lib/stripe/event-store.ts) into the route:
+    // the event row is written by a raw INSERT … ON CONFLICT and locked with
+    // SELECT … FOR UPDATE SKIP LOCKED, then marked with update/updateMany.
+    // stripeEvent.create is no longer called by the route.
+    stripeEvent: { create: vi.fn(), delete: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
+    $queryRaw: vi.fn(),
     tenant: { findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
     user: { findMany: vi.fn() },
     member: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
@@ -109,6 +114,14 @@ beforeEach(() => {
   // to leak into the next; invoice and PaymentIntent events now consult it, so
   // every test starts with no Payment on record unless it sets one.
   mockPaymentFindFirst.mockResolvedValue(null as never);
+  // Lane PC: the store's raw statements — a new event is inserted as
+  // "received" and the processing transaction's row lock succeeds.
+  vi.mocked(prisma.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) => {
+    const sql = strings.join("?");
+    if (sql.includes('INSERT INTO "StripeEvent"')) return [{ status: "received", attempts: 1, tenantId: null }];
+    if (sql.includes("FOR UPDATE SKIP LOCKED")) return [{ status: "received" }];
+    return [{ n: 1 }];
+  }) as never);
   mockStripeEventCreate.mockResolvedValue({ id: "evt-row-1" } as never);
   mockTenantFindFirst.mockResolvedValue({ id: "tenant-A" } as never);
   // Defaults so dispute branches that fan out owner emails don't explode when a
@@ -1119,6 +1132,8 @@ describe("Stripe webhook: idempotency claim", () => {
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(200);
     expect(mockStripeEventCreate).not.toHaveBeenCalled();
+    // Lane PC: and no store row either (the store's INSERT never runs).
+    expect(vi.mocked(prisma.$queryRaw)).not.toHaveBeenCalled();
     const body = await res.json();
     expect(body.ignored).toBe(true);
   });
@@ -1143,12 +1158,25 @@ describe("Stripe webhook: idempotency claim", () => {
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(500);
     expect(sentryCaptureMock).toHaveBeenCalled();
+    // Lane PC wiring: the failure is now recorded durably on the event's row.
+    expect(vi.mocked(prisma.stripeEvent.updateMany)).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ eventId: "evt-rollback" }),
+      data: expect.objectContaining({ status: "failed" }),
+    }));
   });
 
-  it("acks 200 alreadyProcessed when the claim hits the unique constraint (duplicate delivery)", async () => {
-    // Tier 1.1: the P2002 now surfaces from stripeEvent.create INSIDE the tx and
-    // is caught at the bottom — a genuine duplicate is acked, not reprocessed.
-    mockStripeEventCreate.mockRejectedValueOnce({ code: "P2002" } as never);
+  it("acks 200 alreadyProcessed when the event's store row is already processed (duplicate delivery)", async () => {
+    // Tier 1.1, now through lane PD's store (wired by lane PC, 11 Oct 2026): a
+    // duplicate is recognised by the StripeEvent row's terminal status, not by
+    // a P2002 — which used to ack ANY unique violation inside a handler as a
+    // duplicate. The conditional INSERT matches nothing, the row reads
+    // "processed", and nothing is reprocessed.
+    vi.mocked(prisma.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) => {
+      const sql = strings.join("?");
+      if (sql.includes('INSERT INTO "StripeEvent"')) return [];
+      return [{ status: "processed" }];
+    }) as never);
+    vi.mocked(prisma.stripeEvent.findUnique).mockResolvedValueOnce({ status: "processed", attempts: 1, tenantId: "tenant-A" } as never);
     constructEventMock.mockReturnValue({
       id: "evt-dup",
       type: "invoice.payment_succeeded",

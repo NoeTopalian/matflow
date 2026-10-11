@@ -27,6 +27,25 @@ vi.mock("@/lib/prisma-tenant", () => ({
           db.claimed.push(data.eventId);
           return {};
         },
+        // Payments lane PC (11 Oct 2026) wired lane PD's event store into the
+        // route: the event row is now recorded by the raw INSERT below and
+        // marked with update/updateMany; these keep the recorder's meaning
+        // ("claimed" = an event row recorded for processing).
+        findUnique: async () => ({ status: "processed", attempts: 1, tenantId: "t_secd" }),
+        update: async () => ({}),
+        updateMany: async () => ({ count: 1 }),
+      },
+      $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = strings.join("?");
+        if (sql.includes('INSERT INTO "StripeEvent"')) {
+          const eventId = String(values[1]);
+          // Already recorded and processed: the conditional upsert matches nothing.
+          if (db.duplicate || db.claimed.includes(eventId)) return [];
+          db.claimed.push(eventId);
+          return [{ status: "received", attempts: 1, tenantId: "t_secd" }];
+        }
+        if (sql.includes("FOR UPDATE SKIP LOCKED")) return [{ status: "received" }];
+        return [{ n: 1 }];
       },
       tenant: { findFirst: async () => ({ id: "t_secd" }), findUnique: async () => null, updateMany: async () => ({ count: 0 }) },
       user: { findMany: async () => [] },
