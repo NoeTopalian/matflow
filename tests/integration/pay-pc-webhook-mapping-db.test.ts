@@ -151,7 +151,7 @@ describe.skipIf(!HAS_DB)("pay-pc: subscription and invoice events move only the 
     const older = subEvent("customer.subscription.updated", SUB.mf, "active", 2500);
     const r2 = await deliver(older);
     expect(await member(MEM.A)).toMatchObject({ paymentStatus: "overdue" });
-    expect(await mapping(SUB.mf)).toMatchObject({ status: "past_due", lastEventCreated: 3000 });
+    expect(await mapping(SUB.mf)).toMatchObject({ status: "past_due", lastEventCreated: BigInt(3000) });
     // A newer one restores it, and no fresh retrieve was needed for any of them.
     const r3 = await deliver(subEvent("customer.subscription.updated", SUB.mf, "active", 3100));
     expect(await member(MEM.A)).toMatchObject({ paymentStatus: "paid" });
@@ -303,10 +303,11 @@ describe.skipIf(!HAS_DB)("pay-pc: subscription and invoice events move only the 
     const foreign = await deliver({ id: evtId("voided"), type: "invoice.voided", data: { object: { id: `in_${STAMP}_void_tu`, object: "invoice", customer: CUS, parent: { type: "subscription_details", subscription_details: { subscription: SUB.tu, metadata: {} } } } } });
     expect(await member(MEM.F)).toEqual(before);
     expect([mapped.body.outcome, foreign.body.outcome]).toEqual(["processed", "ignored_foreign"]);
-    // And the voided invoice with a Payment row (the failed first invoice above) is voided.
+    // And voiding the invoice whose attempt FAILED (the first invoice above) leaves it failed with no refund
     const r = await deliver({ id: evtId("voided"), type: "invoice.voided", data: { object: { id: `in_${STAMP}_first`, object: "invoice", customer: CUS, parent: { type: "subscription_details", subscription_details: { subscription: SUB.f, metadata: {} } } } } });
     const pay = await withRlsBypass((tx) => tx.payment.findFirst({ where: { tenantId: TENANT, stripeInvoiceId: `in_${STAMP}_first` } }));
-    expect(pay).toMatchObject({ status: "refunded", refundedAmountPence: 3000 });
+    // amount: no money was taken (review RP-4; round 3 had asserted "refunded").
+    expect(pay).toMatchObject({ status: "failed", refundedAmountPence: null });
     expect(r.body.outcome).toBe("processed");
   });
 
@@ -319,7 +320,7 @@ describe.skipIf(!HAS_DB)("pay-pc: subscription and invoice events move only the 
     const insert = sql.slice(start, end);
     expect(insert).toMatch(/ON CONFLICT \("stripeSubscriptionId"\) DO NOTHING$/);
     class Rollback extends Error {}
-    let seen: Array<{ memberId: string; source: string; status: string; stripeAccountId: string; lastEventCreated: number | null }> = [];
+    let seen: Array<{ memberId: string; source: string; status: string; stripeAccountId: string; lastEventCreated: bigint | null }> = [];
     await withRlsBypass(async (tx) => {
       await tx.member.create({ data: { id: MEM.E, tenantId: TENANT, email: `${STAMP}-e@example.test`, name: "PC e", stripeSubscriptionId: `sub_${STAMP}_legacy` } });
       await tx.$executeRawUnsafe(insert);
