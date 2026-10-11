@@ -1,65 +1,121 @@
-// SF-135 side probe (lane L1, 11 Oct 2026): what Prisma 7.4.2 + @prisma/adapter-pg do with a pooled client when an
-// interactive transaction's maxWait expires BEFORE the driver finished starting it. Prisma throws
-// TransactionStartTimeoutError to the caller and, when the start later completes, calls the adapter's
-// transaction.rollback() — which in adapter-pg only RELEASES the client (it sends no ROLLBACK; the engine normally sends
-// it first). The question: does that client go back to the pool still inside the BEGIN, and does a later plain write
-// on it survive?
+// SF-136 (lane L1, 11 Oct 2026; cycle 2): what happens to a pooled client when an interactive transaction's maxWait
+// expires BEFORE the driver finished starting it.
 //
-// Own pool of ONE client (so the next query is on the same connection), own synthetic secl1- rows, nothing SET; the
-// abandoned transaction ends when this test closes its own pool. TEST branch only through the guarded runners.
-import { describe, it, expect, afterAll } from "vitest";
+// Library behaviour (cell 1, observation): Prisma 7.4.2 throws TransactionStartTimeoutError (P2028) to the caller and,
+// when the start later completes, calls the adapter's transaction.rollback() — which in @prisma/adapter-pg only RELEASES
+// the client (no ROLLBACK statement on this path). The client goes back to the pool inside its BEGIN; an autocommit
+// write on it is held in a transaction nobody owns and is lost when the client closes. Still true of the library.
+//
+// The owning boundary (cell 2, the property): application code opens transactions only through withTenantContext /
+// withRlsBypass (lib/prisma-tenant.ts), checkDbRateLimit (lib/rate-limit.ts) and reserveTx (lib/auth-lockout.ts) —
+// pinned by tests/unit/sec-l1-store-tx-bound — and none of them lets Prisma abandon a start any more: a caller that
+// cannot get a connection waits for the pool's own deadline instead. Cell 2 holds the only connection of a one-client
+// pool past the OLD 2 s maxWait a caller asks for, releases it, and checks that the pool's client is not left inside a
+// transaction and that the next autocommit write persists.
+//
+// Own pools only (the Prisma client the library code uses here is built as lib/prisma.ts builds it, with max 1), own
+// synthetic secl1- rows, nothing SET on any connection; an abandoned transaction is ended by this test's own ROLLBACK or
+// pool close. TEST branch only through the guarded runners.
+import { vi, describe, it, expect, afterAll } from "vitest";
 import { appendFileSync } from "node:fs";
+
+const inj = vi.hoisted(() => ({ pool: undefined as unknown }));
+vi.mock("@/lib/prisma", async (orig) => {
+  const real = await orig<typeof import("@/lib/prisma")>();
+  const pg = (await import("pg")).default;
+  const { PrismaPg } = await import("@prisma/adapter-pg");
+  const { PrismaClient } = await import("@prisma/client");
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ...real.prismaPoolConfig(), max: 1 });
+  inj.pool = pool;
+  return { ...real, prisma: new PrismaClient({ adapter: new PrismaPg(pool), log: [] }) };
+});
+
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
-import { prismaPoolConfig } from "@/lib/prisma";
+import { prisma, prismaPoolConfig } from "@/lib/prisma";
+import { withTenantContext } from "@/lib/prisma-tenant";
 
 const ON_TEST = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
 const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
-const BUCKET = `secl1:start-${ROLE}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const STAMP = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const BUCKET = (cell: string) => `secl1:start-${ROLE}-${STAMP}-${cell}`;
 const OUT = process.env.L1_EVIDENCE_OUT;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+function report(tag: string, data: Record<string, unknown>) {
+  const line = `${tag} ${JSON.stringify(data)}`;
+  console.log(line);
+  if (OUT) appendFileSync(OUT, line + "\n");
+}
 
-describe.skipIf(!ON_TEST)(`Prisma start-timeout discard path (${ROLE})`, () => {
+describe.skipIf(!ON_TEST)(`SF-136: a start that times out never leaves a client inside a BEGIN (${ROLE})`, () => {
   const checker = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  const written: string[] = [];
+  const visibleToOthers = async (b: string) =>
+    (await checker.query(`SELECT count(*)::int AS n FROM "RateLimitHit" WHERE bucket = $1`, [b])).rows[0].n as number;
+
   afterAll(async () => {
-    const del = await checker.query(`DELETE FROM "RateLimitHit" WHERE bucket = $1`, [BUCKET]);
-    const left = await checker.query(`SELECT count(*)::int AS n FROM "RateLimitHit" WHERE bucket = $1`, [BUCKET]);
+    const del = await checker.query(`DELETE FROM "RateLimitHit" WHERE bucket = ANY($1::text[])`, [written]);
+    const left = await checker.query(`SELECT count(*)::int AS n FROM "RateLimitHit" WHERE bucket = ANY($1::text[])`, [written]);
     await checker.end();
-    const line = `L1-START-TEARDOWN ${JSON.stringify({ role: ROLE, deleted: del.rowCount, left: left.rows[0].n })}`;
-    console.log(line);
-    if (OUT) appendFileSync(OUT, line + "\n");
+    report("L1-START-TEARDOWN", { role: ROLE, buckets: written.length, deleted: del.rowCount, left: left.rows[0].n });
     expect(left.rows[0].n).toBe(0);
   }, 60_000);
 
-  it("maxWait expires during the start: is the client returned inside a transaction, and is a later plain write lost?", async () => {
+  it("library observation: Prisma + adapter-pg with maxWait 1 ms return the client inside its BEGIN; a later plain write is lost on close", async () => {
+    const b = BUCKET("lib");
+    written.push(b);
     const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ...prismaPoolConfig(), max: 1 });
-    const prisma = new PrismaClient({ adapter: new PrismaPg(pool), log: [] });
+    const own = new PrismaClient({ adapter: new PrismaPg(pool), log: [] });
     let startErr = "";
     try {
-      await prisma.$transaction(async (tx) => tx.$queryRaw`SELECT 1`, { maxWait: 1, timeout: 5_000 });
+      await own.$transaction(async (tx) => tx.$queryRaw`SELECT 1`, { maxWait: 1, timeout: 5_000 });
     } catch (e) {
       startErr = `${(e as { code?: string }).code ?? ""} ${String((e as Error).message).slice(0, 60)}`;
     }
-    // Let the abandoned start finish (connect + BEGIN) and be "rolled back" (released).
     for (let i = 0; i < 100 && pool.idleCount === 0; i++) await sleep(100);
-    // The only client in the pool: is it inside a transaction? (now() is the transaction start; a fresh implicit
-    // transaction has now() = statement_timestamp().)
-    const probe = await pool.query(`SELECT (now() <> statement_timestamp()) AS in_tx`);
-    const inTx = probe.rows[0].in_tx as boolean;
-    // A plain write through Prisma on that client (it auto-commits on a healthy client).
-    await prisma.rateLimitHit.create({ data: { bucket: BUCKET } });
-    const seenFromOwnClient = await prisma.rateLimitHit.count({ where: { bucket: BUCKET } });
-    await prisma.$disconnect();
-    await pool.end(); // the pool is this test's own; its end closes the abandoned transaction
+    const inTx = (await pool.query(`SELECT (now() <> statement_timestamp()) AS in_tx`)).rows[0].in_tx as boolean;
+    await own.rateLimitHit.create({ data: { bucket: b } });
+    const seenByOwnClient = await own.rateLimitHit.count({ where: { bucket: b } });
+    await own.$disconnect();
+    await pool.end(); // this test's own pool; closing it ends the abandoned transaction
     await sleep(500);
-    const r = await checker.query(`SELECT count(*)::int AS n FROM "RateLimitHit" WHERE bucket = $1`, [BUCKET]);
-    const persisted = r.rows[0].n as number;
-    const line = `L1-START-DISCARD ${JSON.stringify({ role: ROLE, startErr, clientReturnedInsideTransaction: inTx, plainWriteSeenBeforeClose: seenFromOwnClient, plainWritePersistedAfterClose: persisted })}`;
-    console.log(line);
-    if (OUT) appendFileSync(OUT, line + "\n");
+    const persisted = await visibleToOthers(b);
+    report("L1-START-LIBRARY", { role: ROLE, startErr, clientReturnedInsideTransaction: inTx, plainWriteSeenByOwnClient: seenByOwnClient, plainWritePersistedAfterClose: persisted });
     expect(startErr).toMatch(/P2028|Unable to start a transaction/i);
-    // Recorded, not asserted either way: this is an observation of library behaviour (see the report).
-    expect(typeof inTx).toBe("boolean");
+    expect(typeof inTx).toBe("boolean"); // recorded: the library defect itself is not L1's to change
+  }, 60_000);
+
+  it("withTenantContext asked for maxWait 2 s while the pool's only connection is busy for 4 s: it waits for the pool, succeeds, and leaves no client inside a BEGIN; the next plain write persists", async () => {
+    const b = BUCKET("tenant");
+    written.push(b);
+    const pool = inj.pool as pg.Pool;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    // The test's own holder takes the only connection (a transaction with its own generous limits).
+    const holder = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1`;
+      await gate;
+    }, { maxWait: 60_000, timeout: 120_000 });
+    for (let i = 0; i < 100 && !(pool.totalCount === 1 && pool.idleCount === 0); i++) await sleep(50);
+    const started = Date.now();
+    const call = withTenantContext(`secl1-start-${STAMP}`, (tx) => tx.$queryRaw<{ one: number }[]>`SELECT 1::int AS one`, { maxWait: 2_000 }).then(
+      (v) => ({ ok: true as const, v, ms: Date.now() - started }),
+      (e: unknown) => ({ ok: false as const, err: `${(e as { code?: string }).code ?? ""} ${String((e as Error).message).slice(0, 60)}`, ms: Date.now() - started }),
+    );
+    await sleep(4_000);
+    release();
+    await holder;
+    const outcome = await call;
+    await sleep(1_000); // a discarded start (old code) would finish and be "rolled back" (released) by now
+    const inTx = (await prisma.$queryRaw<{ in_tx: boolean }[]>`SELECT (now() <> statement_timestamp()) AS in_tx`)[0].in_tx;
+    await prisma.rateLimitHit.create({ data: { bucket: b } });
+    const persisted = await visibleToOthers(b);
+    // If the client WAS left inside a transaction (the old code), end it here so the run cleans up after itself.
+    if (inTx) await prisma.$executeRaw`ROLLBACK`;
+    report("L1-START-TENANT", { role: ROLE, outcome, clientLeftInsideTransaction: inTx, plainWritePersistedForOthers: persisted, pool: { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount } });
+    expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
+    expect(inTx, "no client back in the pool inside a BEGIN").toBe(false);
+    expect(persisted, "the next autocommit write persists").toBe(1);
   }, 60_000);
 });

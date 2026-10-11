@@ -5,8 +5,10 @@
  *  - both transactions (checkRateLimit's and the lockout reservation's) are INTERACTIVE, their lock statement sets
  *    lock_timeout and statement_timeout with set_config(…, true) — transaction-local, never session — to the declared
  *    bound, inside a MATERIALIZED CTE that runs before the lock is requested;
- *  - Prisma's transaction timeout is beyond the bound (plus the pool's own connection deadline), so Prisma's timer is
- *    never what ends the transaction; maxWait (the wait to start) is unchanged;
+ *  - Prisma's transaction timeout AND maxWait are beyond the bound (plus the pool's own connection deadline), so
+ *    Prisma's timer is never what ends the transaction and Prisma never abandons a half-finished start (SF-136);
+ *  - cycle 2: lib/prisma-tenant.ts (withTenantContext / withRlsBypass) is bounded the same way, in its first statement,
+ *    with the caller's budget kept as a typed refusal to commit; and no other code opens a transaction;
  *  - a failed reservation is THROWN as LockoutReservationError with a reason and one log line without the address,
  *    the network or the key — including an unexpected failure (it is never turned into a quiet answer);
  *  - a failed rate-limit transaction on a security bucket is a refusal, logged with the reason.
@@ -51,6 +53,15 @@ vi.mock("@/lib/prisma", async (orig) => {
 import { POOL_CONNECTION_TIMEOUT_MS } from "@/lib/prisma";
 import { checkRateLimit, STORE_TX_BOUND_MS } from "@/lib/rate-limit";
 import { lockoutKeys, lockoutState, LockoutReservationError, RESERVE_TX_BOUND_MS } from "@/lib/auth-lockout";
+import {
+  withTenantContext,
+  withRlsBypass,
+  TenantTransactionBudgetError,
+  TENANT_STATEMENT_BOUND_MS,
+  TENANT_STATEMENT_BOUND_EXTENDED_MS,
+} from "@/lib/prisma-tenant";
+import path from "node:path";
+import fs from "node:fs";
 
 const EMAIL = "secl1-unit@example.test";
 const IP = "192.0.2.55";
@@ -92,7 +103,7 @@ describe("the bound is the transaction's own, server-side and transaction-local"
     });
   }
 
-  it("Prisma's transaction timeout is out of reach of the bounds (both transactions, interactive); maxWait unchanged", async () => {
+  it("Prisma's timeout and maxWait are out of reach of the bounds (both transactions, interactive)", async () => {
     await checkRateLimit("secl1u:rl", 5, 60_000);
     await lockoutState(lockoutKeys("secl1-club", EMAIL, IP), async () => false);
     expect(h.options).toHaveLength(2);
@@ -102,8 +113,75 @@ describe("the bound is the transaction's own, server-side and transaction-local"
       expect(o?.timeout).toBeGreaterThan(POOL_CONNECTION_TIMEOUT_MS + 3 * bound);
       expect(o?.timeout).toBeLessThanOrEqual(2_147_483_647); // a larger Node timer delay would fire at once
     }
-    // The wait to START is unchanged by SF-135 (2 s as Prisma's default had it; 10 s for the reservation as before).
-    expect(h.options.map((o) => o?.maxWait)).toEqual([2_000, 10_000]);
+    // SF-136: Prisma never abandons a start; the pool's own deadline bounds the wait for a connection.
+    for (const o of h.options) expect(o?.maxWait).toBeGreaterThan(POOL_CONNECTION_TIMEOUT_MS + 3 * RESERVE_TX_BOUND_MS);
+  });
+});
+
+describe("cycle 2: tenant transactions own their bound (lib/prisma-tenant.ts)", () => {
+  const first = () => h.sql[0];
+  for (const [name, run] of [
+    ["withTenantContext", (opts?: { timeout?: number }) => withTenantContext("tenant-A", async () => "ok", opts)],
+    ["withRlsBypass", (opts?: { timeout?: number }) => withRlsBypass(async () => "ok", opts)],
+  ] as const) {
+    it(`${name}: default budget → the FIRST statement sets lock_timeout and statement_timeout = ${TENANT_STATEMENT_BOUND_MS} ms, transaction-local`, async () => {
+      await run();
+      expect(first()).toContain(`set_config('lock_timeout', '${TENANT_STATEMENT_BOUND_MS}ms', true)`);
+      expect(first()).toContain(`set_config('statement_timeout', '${TENANT_STATEMENT_BOUND_MS}ms', true)`);
+      expect(first(), "the bypass setting stays in the same statement").toMatch(/set_config\('app\.bypass_rls', '(on|off)', true\)/);
+      expect(first()).not.toMatch(/,\s*false\s*\)/);
+    });
+    it(`${name}: a larger caller budget → the extended bound (${TENANT_STATEMENT_BOUND_EXTENDED_MS} ms)`, async () => {
+      await run({ timeout: 45_000 });
+      expect(first()).toContain(`set_config('statement_timeout', '${TENANT_STATEMENT_BOUND_EXTENDED_MS}ms', true)`);
+      expect(first()).toContain(`set_config('lock_timeout', '${TENANT_STATEMENT_BOUND_EXTENDED_MS}ms', true)`);
+    });
+    it(`${name}: Prisma's timeout and maxWait are out of reach whatever the caller passes`, async () => {
+      await run({ timeout: 45_000 });
+      const o = h.options[0];
+      expect(o?.timeout).toBeGreaterThan(POOL_CONNECTION_TIMEOUT_MS + 3 * TENANT_STATEMENT_BOUND_EXTENDED_MS);
+      expect(o?.maxWait).toBeGreaterThan(POOL_CONNECTION_TIMEOUT_MS + 3 * TENANT_STATEMENT_BOUND_EXTENDED_MS);
+      expect(o?.timeout).toBeLessThanOrEqual(2_147_483_647);
+    });
+  }
+
+  it("a callback that overruns its budget is refused (typed, P2028) so nothing commits; within budget it returns", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const slow = withTenantContext("tenant-A", async () => {
+        vi.setSystemTime(Date.now() + 16_000);
+        return "late";
+      });
+      await expect(slow).rejects.toBeInstanceOf(TenantTransactionBudgetError);
+      await expect(slow).rejects.toMatchObject({ code: "P2028", budgetMs: 15_000 });
+      const ok = await withTenantContext("tenant-A", async () => "fine", { timeout: 30_000 });
+      expect(ok).toBe("fine");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an error from the callback is the caller's, unchanged (no wrapping, no retry)", async () => {
+    const boom = Object.assign(new Error("unique"), { code: "P2002" });
+    await expect(withTenantContext("tenant-A", async () => { throw boom; })).rejects.toBe(boom);
+    expect(h.options).toHaveLength(1);
+  });
+
+  it("source invariant: no code outside the three owned boundaries opens a Prisma transaction", () => {
+    const owned = new Set(["lib/prisma-tenant.ts", "lib/rate-limit.ts", "lib/auth-lockout.ts"].map((f) => path.normalize(f)));
+    const offenders: string[] = [];
+    const walk = (p: string) => {
+      if (!fs.existsSync(p)) return;
+      const st = fs.statSync(p);
+      if (st.isDirectory()) { for (const e of fs.readdirSync(p)) walk(path.join(p, e)); return; }
+      if (!/\.(ts|tsx|mjs|js)$/.test(p)) return;
+      const rel = path.normalize(path.relative(process.cwd(), p));
+      if (owned.has(rel)) return;
+      const src = fs.readFileSync(p, "utf8").split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+      if (/\$transaction\s*\(/.test(src)) offenders.push(rel);
+    };
+    for (const r of ["app", "lib", "auth.ts", "proxy.ts"]) walk(path.resolve(process.cwd(), r));
+    expect(offenders).toEqual([]);
   });
 });
 

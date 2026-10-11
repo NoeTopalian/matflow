@@ -1,0 +1,44 @@
+PROPOSAL ONLY — NOT APPLIED, NOT RUN (lib/prisma.ts is outside lane L1's scope).
+
+SF-136 defence in depth. Cycle 2 closes the start-timeout path at the owning boundaries: every application transaction
+is opened by withTenantContext / withRlsBypass / checkDbRateLimit / reserveTx, and none of them lets Prisma abandon a
+start any more (maxWait out of reach; the pool's own 10 s deadline bounds the wait) — pinned by
+tests/unit/sec-l1-store-tx-bound ("no code outside the three owned boundaries opens a Prisma transaction") and proved
+by tests/integration/sec-l1-start-timeout-db (both roles). The library defect itself remains: a future caller that
+passes a short maxWait straight to prisma.$transaction would reopen it. This patch makes the pool refuse to keep ANY
+client that is released while the server says it is inside a transaction (ReadyForQuery status 'T' or 'E'), whoever
+released it: the client is ended, so the server rolls the transaction back, and pg-pool drops it (pg-pool 3.13
+_release() emits 'release' and then removes a client whose _ending is set). It relies on two pg internals
+(client.connection's 'readyForQuery' message and client._ending), so it needs a unit test against the pinned pg
+version before it is applied.
+
+--- a/lib/prisma.ts
++++ b/lib/prisma.ts
+@@
+ import { PrismaClient } from "@prisma/client";
+ import { PrismaPg } from "@prisma/adapter-pg";
++import pg from "pg";
+@@
+-  // Pool options (max, keepAlive, connection deadline): prismaPoolConfig() above.
+-  const adapter = new PrismaPg({ connectionString: url, ...prismaPoolConfig() });
++  // Pool options (max, keepAlive, connection deadline): prismaPoolConfig() above.
++  const pool = new pg.Pool({ connectionString: url, ...prismaPoolConfig() });
++  // SF-136: never keep a client that comes back inside a transaction (adapter-pg's discard of a late-started
++  // transaction releases the client without a ROLLBACK). The server's ReadyForQuery status says where it stands.
++  pool.on("connect", (client) => {
++    const conn = (client as unknown as { connection: { on(e: "readyForQuery", f: (m: { status: string }) => void): void } }).connection;
++    conn.on("readyForQuery", (m) => {
++      (client as unknown as { __txStatus?: string }).__txStatus = m.status;
++    });
++  });
++  pool.on("release", (_err, client) => {
++    const status = (client as unknown as { __txStatus?: string }).__txStatus;
++    if (status === "T" || status === "E") {
++      console.error(`[prisma] pooled client released inside a transaction (status=${status}); closing it`);
++      // end() sets _ending synchronously, so pg-pool removes the client instead of idling it. Its own failure is
++      // observed and logged here, where the promise is created (no unhandled rejection, nothing hidden).
++      client.end().catch((e: Error) => console.error(`[prisma] closing that client failed: ${e.message}`));
++    }
++  });
++  const adapter = new PrismaPg(pool);
+   return new PrismaClient({

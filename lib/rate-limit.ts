@@ -86,14 +86,18 @@ export const RATE_LIMIT_LOCK_NS = 0x524c4854;
  *    lock-timeout / statement-timeout, below);
  *  - Prisma's transaction timeout is set beyond those bounds, so Prisma never
  *    fires its timer under a statement of ours;
- *  - maxWait (the wait to START the transaction) stays at Prisma's default
- *    2 s, unchanged: when it expires the caller gets P2028 (a store failure,
- *    handled below) and Prisma discards the start without an unhandled
- *    rejection. That discard has its own defect — adapter-pg releases a client
- *    whose BEGIN completed late without a ROLLBACK, measured in
- *    tests/integration/sec-l1-start-timeout-db — reported separately with its
- *    remedy, because raising maxWait past the pool deadline changes how a
- *    saturating burst is refused (tests/integration/sec-c4-rate-limit-saturation-db).
+ *  - maxWait (the wait to START the transaction) is out of reach too (SF-136,
+ *    cycle 2): when Prisma's maxWait expired before the driver had finished
+ *    starting the transaction, Prisma later discarded the late start through
+ *    adapter-pg, which only releases the client — it went back to the pool
+ *    inside its BEGIN and the next autocommit write on it was lost
+ *    (tests/integration/sec-l1-start-timeout-db). The wait for a connection is
+ *    now bounded by the pool's own deadline (connectionTimeoutMillis, 10 s,
+ *    lib/prisma.ts), which refuses without handing out a client: a store
+ *    failure here, reason pool-timeout. Trade-off: a burst that saturates the
+ *    pool now WAITS up to that deadline instead of being refused at 2 s
+ *    (tests/integration/sec-c4-rate-limit-saturation-db forces the saturation
+ *    instead of assuming a burst causes it).
  * A connection that dies under the transaction now fails the statement this
  * function awaits — and only that: checkRateLimit refuses (security buckets),
  * rethrows (failClosed) or falls back to the seeded memory store
@@ -102,7 +106,7 @@ export const RATE_LIMIT_LOCK_NS = 0x524c4854;
 export const STORE_TX_BOUND_MS = 5_000;
 /** Beyond any bound above; Prisma's timer must never be the one that ends this transaction. */
 const PRISMA_TIMER_OUT_OF_REACH_MS = 60 * 60 * 1000;
-const STORE_TX_OPTIONS = { maxWait: 2_000, timeout: PRISMA_TIMER_OUT_OF_REACH_MS } as const;
+const STORE_TX_OPTIONS = { maxWait: PRISMA_TIMER_OUT_OF_REACH_MS, timeout: PRISMA_TIMER_OUT_OF_REACH_MS } as const;
 
 async function checkDbRateLimit(
   bucket: string,

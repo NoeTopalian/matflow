@@ -24,8 +24,9 @@ type Tracked = { c: import("pg").PoolClient; lastSql: string };
 const inj = vi.hoisted(() => ({
   clients: [] as Tracked[],
   pool: undefined as unknown,
-  // When armed, the next client that sends the advisory-lock statement has its socket paused right then.
+  // When armed, the next client that sends a statement matching `armPattern` has its socket paused right then.
   armed: null as null | ((t: Tracked) => void),
+  armPattern: /pg_advisory_xact_lock/ as RegExp,
 }));
 
 vi.mock("@/lib/prisma", async (orig) => {
@@ -43,7 +44,7 @@ vi.mock("@/lib/prisma", async (orig) => {
       const cfg = a[0] as string | { text?: string };
       t.lastSql = (typeof cfg === "string" ? cfg : cfg?.text ?? "").replace(/\s+/g, " ");
       const result = q(...a);
-      if (inj.armed && /pg_advisory_xact_lock/.test(t.lastSql)) {
+      if (inj.armed && inj.armPattern.test(t.lastSql)) {
         const fire = inj.armed;
         inj.armed = null;
         (c as unknown as { connection: { stream: { pause: () => void } } }).connection.stream.pause();
@@ -60,6 +61,7 @@ import pg from "pg";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit, RATE_LIMIT_LOCK_NS } from "@/lib/rate-limit";
 import { lockoutKeys, lockoutState } from "@/lib/auth-lockout";
+import { withTenantContext, withRlsBypass } from "@/lib/prisma-tenant";
 
 const ON_TEST = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
 const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
@@ -73,6 +75,8 @@ const IP = (i: number) => `192.0.2.${i}`;
 // transaction, 10 s for the reservation), so on the old code the timer has fired and queued its ROLLBACK first.
 const STALL_RL_MS = 6_500;
 const STALL_LK_MS = 11_500;
+// Cycle 2: past the OLD 15 s Prisma timer of withTenantContext / withRlsBypass.
+const STALL_TX_MS = 16_500;
 
 const buckets = new Set<string>();
 const OUT = process.env.L1_EVIDENCE_OUT;
@@ -95,7 +99,8 @@ async function settledPool() {
 }
 
 /** Arms the stall: resolves with the client whose lock statement was just sent and whose socket is now paused. */
-function stallNextLock(): Promise<Tracked> {
+function stallNextLock(pattern: RegExp = /pg_advisory_xact_lock/): Promise<Tracked> {
+  inj.armPattern = pattern;
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => {
       inj.armed = null;
@@ -274,6 +279,36 @@ describe.skipIf(!ON_TEST)(`SF-135: a dropped connection under a pending transact
 
   // Visibility control (run only with L1_PLANT=1): an UNEXPECTED failure from an unrelated place must still fail the
   // run. The fix handles the expected connection failure where it is owned; it installs nothing that would hide this.
+  // Cycle 2: the sign-in flow's other transactions. A statement of a tenant (or bypass) transaction stalls past the old
+  // 15 s Prisma timer, then its connection ends: the caller gets the failure (thrown, with the tenant attached for the
+  // log), nothing else is left behind, and nothing is unhandled.
+  for (const name of ["withTenantContext", "withRlsBypass"] as const) {
+    it(`${name}: a statement stalls past the old 15 s timer, then its connection ends → the caller sees the failure, pool slot back, nothing unhandled`, async () => {
+      const started = Date.now();
+      const tag = `secl1_stall_${name.toLowerCase()}`;
+      const r = await withLogs(async () => {
+        const stalled = stallNextLock(new RegExp(tag));
+        const q = (name === "withTenantContext"
+          ? withTenantContext(`secl1-${STAMP}-tenant`, (tx) => tx.$queryRawUnsafe(`SELECT 1 AS ${tag}`))
+          : withRlsBypass((tx) => tx.$queryRawUnsafe(`SELECT 1 AS ${tag}`)));
+        const t = await settleOnStallFailure(stalled, q);
+        await sleep(STALL_TX_MS);
+        endSocket(t, "close");
+        return q;
+      });
+      const ms = Date.now() - started;
+      const control = name === "withTenantContext"
+        ? await withTenantContext(`secl1-${STAMP}-tenant`, (tx) => tx.$queryRaw<{ ok: number }[]>`SELECT 1::int AS ok`)
+        : await withRlsBypass((tx) => tx.$queryRaw<{ ok: number }[]>`SELECT 1::int AS ok`);
+      const after = await settledPool();
+      const err = r.error as (Error & { code?: string }) | undefined;
+      report("L1-DROP-TX", { role: ROLE, name, ms, resolved: r.value ?? null, threw: err ? `${err.name}${err.code ? `(${err.code})` : ""}: ${String(err.message).slice(0, 80)}` : null, control, poolAfter: after });
+      expect(err, "the caller sees the failure").toBeDefined();
+      expect(control).toEqual([{ ok: 1 }]);
+      expect(after.waiting).toBe(0);
+    }, 60_000);
+  }
+
   it.runIf(process.env.L1_PLANT === "1")("planted: an unrelated rejection nobody handles still fails the run", async () => {
     void Promise.reject(new Error("L1 planted unexpected failure (unrelated to the database)"));
     await sleep(200);

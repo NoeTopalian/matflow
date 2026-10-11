@@ -1,0 +1,156 @@
+# SF-135 cycle 2 + SF-136 (lane L1, 11 Oct 2026). Node v24.21.0. Base 33a74a2 (cycle 1 committed as 66dd63e) + working tree.
+# Final hashes (sha256, first 12): lib/rate-limit.ts cc128d043703, lib/auth-lockout.ts 09ac2e004f4e, lib/prisma-tenant.ts 98a8a43bcb77.
+
+## 1. Tenant transactions (withTenantContext / withRlsBypass) — deterministic drop, past the OLD 15 s Prisma timer
+BEFORE (HEAD lib/prisma-tenant.ts swapped in for the run, then restored; sha verified):
+run=1 role=owner file=sec-l1-connection-drop-db exit=1 tests=[ Tests 8 skipped (8)] unhandled_blocks=0 at=2026-10-11T10:02:51Z
+run=1 role=restricted file=sec-l1-connection-drop-db exit=1 tests=[ Tests 7 passed | 1 skipped (8)] unhandled_blocks=2 at=2026-10-11T10:04:43Z
+run=2 role=owner file=sec-l1-connection-drop-db exit=1 tests=[ Tests 7 passed | 1 skipped (8)] unhandled_blocks=2 at=2026-10-11T10:06:45Z
+L1-DROP-TX {"role":"owner","name":"withTenantContext","ms":16573,"resolved":null,"threw":"Error: Connection terminated unexpectedly","control":[{"ok":1}],"poolAfter":{"total":1,"idle":1,"waiting":0}}
+L1-DROP-TX {"role":"owner","name":"withRlsBypass","ms":16573,"resolved":null,"threw":"Error: Connection terminated unexpectedly","control":[{"ok":1}],"poolAfter":{"total":1,"idle":1,"waiting":0}}
+L1-DROP-TX {"role":"restricted","name":"withTenantContext","ms":16603,"resolved":null,"threw":"Error: Connection terminated unexpectedly","control":[{"ok":1}],"poolAfter":{"total":1,"idle":1,"waiting":0}}
+L1-DROP-TX {"role":"restricted","name":"withRlsBypass","ms":16565,"resolved":null,"threw":"Error: Connection terminated unexpectedly","control":[{"ok":1}],"poolAfter":{"total":1,"idle":1,"waiting":0}}
+  => restricted run 1 and owner run 2: 2 Unhandled Rejection blocks each — exactly the two tenant cells (owner run 1: beforeAll connection failure, 8 skipped; kept).
+AFTER:
+run=1 role=owner file=sec-l1-connection-drop-db exit=1 tests=[ Tests 1 failed | 6 passed | 1 skipped (8)] unhandled_blocks=0 at=2026-10-11T10:08:47Z
+run=1 role=restricted file=sec-l1-connection-drop-db exit=0 tests=[ Tests 7 passed | 1 skipped (8)] unhandled_blocks=0 at=2026-10-11T10:10:38Z
+run=2 role=owner file=sec-l1-connection-drop-db exit=0 tests=[ Tests 7 passed | 1 skipped (8)] unhandled_blocks=0 at=2026-10-11T10:12:43Z
+L1-DROP-TX {"role":"owner","name":"withTenantContext","ms":16603,"resolved":null,"threw":"Error: Connection terminated unexpectedly","control":[{"ok":1}],"poolAfter":{"total":1,"idle":1,"waiting":0}}
+L1-DROP-TX {"role":"owner","name":"withRlsBypass","ms":16564,"resolved":null,"threw":"Error: Connection terminated unexpectedly","control":[{"ok":1}],"poolAfter":{"total":1,"idle":1,"waiting":0}}
+L1-DROP-TX {"role":"restricted","name":"withTenantContext","ms":16588,"resolved":null,"threw":"Error: Connection terminated unexpectedly","control":[{"ok":1}],"poolAfter":{"total":1,"idle":1,"waiting":0}}
+L1-DROP-TX {"role":"restricted","name":"withRlsBypass","ms":16563,"resolved":null,"threw":"Error: Connection terminated unexpectedly","control":[{"ok":1}],"poolAfter":{"total":1,"idle":1,"waiting":0}}
+  => 0 Unhandled Rejections both roles; the caller receives the failure (thrown, tenant attached for the log); slot back; positive control served. owner run 1: one cycle-1 cell failed on 'timeout exceeded when trying to connect' (positive-control connection, TEST connectivity), 0 unhandled; owner run 2 clean.
+
+## 2. SF-136 — start timeout (tests/integration/sec-l1-start-timeout-db.test.ts)
+BEFORE (HEAD lib/prisma-tenant.ts):
+run=1 role=owner file=sec-l1-start-timeout-db exit=1 tests=[ Tests 1 failed | 1 passed (2)] unhandled_blocks=0 at=2026-10-11T09:47:03Z
+run=1 role=restricted file=sec-l1-start-timeout-db exit=1 tests=[ Tests 1 failed | 1 passed (2)] unhandled_blocks=0 at=2026-10-11T09:47:17Z
+L1-START-LIBRARY {"role":"owner","startErr":"P2028 Transaction API error: Unable to start a transaction in the ","clientReturnedInsideTransaction":true,"plainWriteSeenByOwnClient":1,"plainWritePersistedAfterClose":0}
+L1-START-TENANT {"role":"owner","outcome":{"ok":false,"err":"P2028 Transaction API error: Unable to start a transaction in the ","ms":2005},"clientLeftInsideTransaction":true,"plainWritePersistedForOthers":0,"pool":{"total":1,"idle":1,"waiting":0}}
+L1-START-TEARDOWN {"role":"owner","buckets":2,"deleted":0,"left":0}
+L1-START-LIBRARY {"role":"restricted","startErr":"P2028 Transaction API error: Unable to start a transaction in the ","clientReturnedInsideTransaction":true,"plainWriteSeenByOwnClient":1,"plainWritePersistedAfterClose":0}
+L1-START-TENANT {"role":"restricted","outcome":{"ok":false,"err":"P2028 Transaction API error: Unable to start a transaction in the ","ms":2003},"clientLeftInsideTransaction":true,"plainWritePersistedForOthers":0,"pool":{"total":1,"idle":1,"waiting":0}}
+L1-START-TEARDOWN {"role":"restricted","buckets":2,"deleted":0,"left":0}
+AFTER:
+run=1 role=owner file=sec-l1-start-timeout-db exit=0 tests=[ Tests 2 passed (2)] unhandled_blocks=0 at=2026-10-11T09:47:37Z
+run=1 role=restricted file=sec-l1-start-timeout-db exit=0 tests=[ Tests 2 passed (2)] unhandled_blocks=0 at=2026-10-11T09:47:50Z
+L1-START-LIBRARY {"role":"owner","startErr":"P2028 Transaction API error: Unable to start a transaction in the ","clientReturnedInsideTransaction":true,"plainWriteSeenByOwnClient":1,"plainWritePersistedAfterClose":0}
+L1-START-TENANT {"role":"owner","outcome":{"ok":true,"v":[{"one":1}],"ms":4160},"clientLeftInsideTransaction":false,"plainWritePersistedForOthers":1,"pool":{"total":1,"idle":1,"waiting":0}}
+L1-START-TEARDOWN {"role":"owner","buckets":2,"deleted":1,"left":0}
+L1-START-LIBRARY {"role":"restricted","startErr":"P2028 Transaction API error: Unable to start a transaction in the ","clientReturnedInsideTransaction":true,"plainWriteSeenByOwnClient":1,"plainWritePersistedAfterClose":0}
+L1-START-TENANT {"role":"restricted","outcome":{"ok":true,"v":[{"one":1}],"ms":4153},"clientLeftInsideTransaction":false,"plainWritePersistedForOthers":1,"pool":{"total":1,"idle":1,"waiting":0}}
+L1-START-TEARDOWN {"role":"restricted","buckets":2,"deleted":1,"left":0}
+  => the library observation is unchanged (adapter-pg still discards a late start without ROLLBACK), but no application transaction can reach it: withTenantContext waited for the pool (~4.15 s), succeeded, the pool's client is not inside a transaction and the next autocommit write persists, both roles.
+  Owning boundary: every application transaction is opened by withTenantContext/withRlsBypass, checkDbRateLimit or reserveTx (pinned by a unit source invariant), and all four now pass Prisma maxWait/timeout out of reach; the pool's own connectionTimeoutMillis (10 s) bounds the wait for a connection and refuses without handing out a client. Destroying the client at release is only reachable through pg/pg-pool internals in lib/prisma.ts: proposed, NOT applied, NOT run — patches/0001-prisma-pool-release-guard.diff (defence in depth for any future direct prisma.$transaction with a short maxWait).
+
+## 3. sec-c4-rate-limit-saturation-db — precondition adapted (authorised by the coordinator)
+Why: with maxWait out of reach a burst of 60 at pool 5 now usually completes inside the pool deadline with no store failure, so the old cell's precondition 'the burst saturates the pool' (asserted as one fallback line) could only be assumed. Now: phase 1 holds all five pool connections in the test's own open transactions while the burst runs (saturation FORCED and verified: 0 allowed, 0 rows, the fallback line observed); phase 2 releases the pool and runs the same burst (exactly 5 allowed, 5 rows).
+Runs (original failure kept beside the retry):
+run=1 role=owner file=sec-c4-rate-limit-saturation-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T09:50:25Z
+run=1 role=restricted file=sec-c4-rate-limit-saturation-db exit=1 tests=[ Tests 1 failed | 4 passed (5)] unhandled_blocks=1 at=2026-10-11T09:55:27Z
+run=2 role=restricted file=sec-c4-rate-limit-saturation-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T09:57:44Z
+run=2 role=owner file=sec-c4-rate-limit-saturation-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T09:59:04Z
+  restricted run 1: a holder could not get its connection (pool deadline) and the harness waited forever for it -> 240 s timeout + an Unhandled Rejection from the holder (test-harness defect, mine). Fixed: a holder that fails now fails the cell visibly and the holders are always settled. Runs 2: both roles 5/5.
+  owner security burst 60: saturated {"allowed":0,"rows":0,"ms":10599} free {"ms":5868} total allowed 5 rows 5 fallback lines 1
+  owner security burst 120: saturated {"allowed":0,"rows":0,"ms":10163} free {"ms":9368} total allowed 5 rows 5 fallback lines 1
+  owner non-security burst 60: saturated {"allowed":0,"rows":0,"ms":10102} free {"ms":5811} total allowed 5 rows 5 fallback lines 1
+  owner non-security burst 120: saturated {"allowed":0,"rows":0,"ms":10166} free {"ms":9583} total allowed 5 rows 5 fallback lines 0
+  owner teardown {"buckets":5,"deleted":25,"left":0}
+  restricted security burst 60: saturated {"allowed":0,"rows":0,"ms":10322} free {"ms":4569} total allowed 5 rows 5 fallback lines 1
+  restricted security burst 120: saturated {"allowed":0,"rows":0,"ms":10149} free {"ms":8571} total allowed 5 rows 5 fallback lines 1
+  restricted non-security burst 60: saturated {"allowed":0,"rows":0,"ms":10127} free {"ms":5141} total allowed 5 rows 5 fallback lines 1
+  restricted non-security burst 120: saturated {"allowed":0,"rows":0,"ms":10133} free {"ms":9812} total allowed 5 rows 5 fallback lines 0
+  restricted teardown {"buckets":5,"deleted":25,"left":0}
+Mutant (the R6 overshoot back: store failure answered from an unseeded memory count):
+run=1 role=owner file=sec-c4-rate-limit-saturation-db exit=1 tests=[ Tests 4 failed | 1 passed (5)] unhandled_blocks=0 at=2026-10-11T10:01:07Z
+  security 60: saturated phase allowed 5 rows 0 -> total allowed 10 rows 5
+  security 120: saturated phase allowed 5 rows 0 -> total allowed 10 rows 5
+  non-security 60: saturated phase allowed 5 rows 0 -> total allowed 10 rows 5
+  non-security 120: saturated phase allowed 5 rows 0 -> total allowed 10 rows 5
+  => 4 cells red (10 allowed, 5 rows): the adapted test still catches the overshoot it was written for.
+Trade-off: under saturation a rate-limited caller now waits up to the pool deadline (10 s) before a store-failure refusal instead of 2 s; in exchange no client is ever abandoned mid-start (SF-136) and fewer legitimate callers are refused on a merely busy pool (SF-119).
+
+## 4. Mutants (unit pin tests/unit/sec-l1-store-tx-bound.test.ts, 21 cells; each applied, run, restored, hash verified)
+MT1-tenant-timer-in-reach exit=1  Tests 2 failed | 19 passed (21)
+MT2-budget-not-enforced exit=1  Tests 1 failed | 20 passed (21)
+MT3-no-statement-bound exit=1  Tests 1 failed | 20 passed (21)
+MS1-rl-maxwait-in-reach exit=1  Tests 1 failed | 20 passed (21)
+MS2-reserve-maxwait-in-reach exit=1  Tests 1 failed | 20 passed (21)
+MU2-failed-reservation-admits exit=1  Tests 6 failed | 15 passed (21)
+MU3-unexpected-swallowed exit=1  Tests 1 failed | 20 passed (21)
+MD1a-rl-batch-form-back exit=1  Tests 1 failed | 20 passed (21)
+MD2-rl-failure-admits exit=1  Tests 2 failed | 19 passed (21)
+MU1-reserve-options-in-reach (timeout 10 s, maxWait out of reach) exit=1  Tests 1 failed | 20 passed (21)
+DB:
+MT4 caller maxWait honoured again (start-timeout): run=1 role=owner file=sec-l1-start-timeout-db exit=1 tests=[ Tests 1 failed | 1 passed (2)] unhandled_blocks=0 at=2026-10-11T10:15:14Z
+MT4 caller maxWait honoured again (start-timeout): run=1 role=restricted file=sec-l1-start-timeout-db exit=1 tests=[ Tests 1 failed | 1 passed (2)] unhandled_blocks=0 at=2026-10-11T10:15:27Z
+  => both roles: client left inside a BEGIN, write not persisted (red).
+MT1 tenant Prisma timer back in reach (drop): run=1 role=owner file=sec-l1-connection-drop-db exit=1 tests=[ Tests 7 passed | 1 skipped (8)] unhandled_blocks=2 at=2026-10-11T10:17:19Z
+  => 2 Unhandled Rejections (the tenant cells), exit 1 (red).
+
+## 5. Bounded repeat on the final cycle-2 tree (N = 6 per role per file; every exit code kept)
+run=1 role=owner file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_blocks=0 at=2026-10-11T10:17:49Z
+run=1 role=restricted file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T10:18:14Z
+run=1 role=owner file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:19:42Z
+run=1 role=restricted file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:21:09Z
+run=2 role=owner file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_blocks=0 at=2026-10-11T10:21:26Z
+run=2 role=restricted file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_blocks=0 at=2026-10-11T10:21:43Z
+run=2 role=owner file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:23:07Z
+run=2 role=restricted file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:24:32Z
+run=3 role=owner file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_blocks=0 at=2026-10-11T10:24:49Z
+run=3 role=restricted file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_blocks=0 at=2026-10-11T10:25:06Z
+run=3 role=owner file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:26:32Z
+run=3 role=restricted file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:28:00Z
+run=4 role=owner file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_blocks=0 at=2026-10-11T10:28:17Z
+run=4 role=restricted file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T10:28:33Z
+run=4 role=owner file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:29:58Z
+run=4 role=restricted file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:31:24Z
+run=5 role=owner file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_blocks=0 at=2026-10-11T10:31:51Z
+run=5 role=restricted file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T10:32:08Z
+run=5 role=owner file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:33:34Z
+run=5 role=restricted file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:35:01Z
+run=6 role=owner file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_blocks=0 at=2026-10-11T10:35:18Z
+run=6 role=restricted file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T10:35:43Z
+run=6 role=owner file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:37:10Z
+run=6 role=restricted file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:38:37Z
+  sec-a4-lockout-burst-db: 12/12 runs exit 0, 5/5 cells, 0 Unhandled Rejections. Before cycle 2 (cycle-1 final, rep2): 6 of 12 runs exit 1 with 14 Prisma-timer Unhandled Rejections from the sign-in flow's tenant/bypass transactions -> now 0.
+  sec-c3-rate-limit-atomic-db: 0 Unhandled Rejections; owner 6/6 exit 1 in beforeAll ('Connection terminated due to connection timeout' opening 10 warm-up connections; each owner c3 run followed an a4 restricted run), restricted 4 x 6/6 + 2 warm-up failures. Because the owner role produced no completed c3 run here, the file was repeated alone:
+run=1 role=owner file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T11:01:20Z
+run=1 role=restricted file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T11:01:46Z
+run=2 role=owner file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_blocks=0 at=2026-10-11T11:02:03Z
+run=2 role=restricted file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_blocks=0 at=2026-10-11T11:02:20Z
+run=3 role=owner file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T11:03:05Z
+run=3 role=restricted file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T11:03:21Z
+run=4 role=owner file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_blocks=0 at=2026-10-11T11:03:38Z
+run=4 role=restricted file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T11:04:43Z
+run=5 role=owner file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 1 failed | 5 passed (6)] unhandled_blocks=0 at=2026-10-11T11:05:56Z
+run=5 role=restricted file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T11:06:21Z
+run=6 role=owner file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_blocks=0 at=2026-10-11T11:06:38Z
+run=6 role=restricted file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T11:06:55Z
+  => 0 Unhandled Rejections in 12 runs. Exit 1 in 5: four beforeAll connection timeouts, and owner run 5 where the two-bucket cell got okB 4 / nB 4 (fail-safe under-allow: 5 waiters reached the 5 s lock bound, 55P03 logged reason=lock-timeout, while a holder stalled on the network). Before the fix such a waiter was refused too (Prisma's 5 s timer measured from BEGIN), so this is TEST connectivity, not a regression; it is the exactness cell's limit under a stalled holder.
+
+## 6. Regression (final cycle-2 tree, Node v24.21.0)
+Unit, no database (npx vitest run tests/unit): Test Files 476 passed (476); Tests 6554 passed | 1 skipped; exit 0 — includes sec-b2-tenant-context (statement shape: one statement, tenant the only bind parameter, bypass reset, signed context), sec-a3-failure-path-cost, sec-a4-lockout-reservation, sec-c3-rate-limit-atomic, sec-c4-rate-limit-store-failure, sec-m1-rate-limit-log-family, sec-l1-store-tx-bound (21).
+tsc --noEmit exit 0; npm run lint exit 0 (0 errors, warnings at baseline).
+DB, both roles:
+run=1 role=owner file=sec-b2-stale-bypass-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T10:38:46Z
+run=1 role=restricted file=sec-b2-stale-bypass-db exit=0 tests=[ Tests 6 passed (6)] unhandled_blocks=0 at=2026-10-11T10:38:55Z
+run=1 role=owner file=sec-b2-signed-context-db exit=0 tests=[ Tests 1 passed (1)] unhandled_blocks=0 at=2026-10-11T10:39:03Z
+run=1 role=restricted file=sec-b2-signed-context-db exit=0 tests=[ Tests 1 passed (1)] unhandled_blocks=0 at=2026-10-11T10:39:10Z
+run=1 role=owner file=sec-d3-provenance-forgery-db exit=0 tests=[ Tests 16 passed | 1 expected fail (17)] unhandled_blocks=0 at=2026-10-11T10:40:41Z
+run=1 role=restricted file=sec-d3-provenance-forgery-db exit=0 tests=[ Tests 16 passed | 1 expected fail (17)] unhandled_blocks=0 at=2026-10-11T10:42:08Z
+run=1 role=owner file=sec-a2-lockout-oracle-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:43:17Z
+run=1 role=restricted file=sec-a2-lockout-oracle-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T10:44:20Z
+run=1 role=owner file=sec-a3-lockout-oracle-db exit=0 tests=[ Tests 2 passed (2)] unhandled_blocks=0 at=2026-10-11T10:52:11Z
+run=1 role=restricted file=sec-a3-lockout-oracle-db exit=0 tests=[ Tests 2 passed (2)] unhandled_blocks=0 at=2026-10-11T11:00:40Z
+run=1 role=owner file=sec-c4-rate-limit-saturation-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T09:50:25Z
+run=1 role=restricted file=sec-c4-rate-limit-saturation-db exit=1 tests=[ Tests 1 failed | 4 passed (5)] unhandled_blocks=1 at=2026-10-11T09:55:27Z
+run=2 role=restricted file=sec-c4-rate-limit-saturation-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T09:57:44Z
+run=2 role=owner file=sec-c4-rate-limit-saturation-db exit=0 tests=[ Tests 5 passed (5)] unhandled_blocks=0 at=2026-10-11T09:59:04Z
+  sec-c3 / sec-a4 DB: section 5. sec-l1-connection-drop-db and sec-l1-start-timeout-db: sections 1-2.
+
+## 7. Fixture cleanup (count-checked, L1 window only; no other lane running)
+L1-LEFTOVERS {"window":["2026-10-11T09:14:00.000Z","2026-10-11T11:07:38.430Z"],"before":{"tenants":0,"members":0,"loginEvents":0,"auditLogs":0,"hits":200},"removed":null,"after":{"tenants":0,"hits":200}}
+L1-LEFTOVERS {"window":["2026-10-11T09:14:00.000Z","2026-10-11T11:07:00.000Z"],"before":{"tenants":0,"members":0,"loginEvents":0,"auditLogs":0,"hits":200},"removed":{"auditLogs":0,"loginEvents":0,"members":0,"tenants":0,"hits":200},"after":{"tenants":0,"hits":0}}
+L1-LEFTOVERS {"window":["2026-10-11T05:45:00.000Z","2026-10-11T11:09:49.361Z"],"before":{"tenants":0,"members":0,"loginEvents":0,"auditLogs":0,"hits":0},"removed":null,"after":{"tenants":0,"hits":0}}
+  The 200 rows are lockout counter rows the sec-a2/sec-a3 oracle suites leave for the hourly prune (per-process secret keys). Final inventory 05:45-11:09 UTC: 0 clubs, 0 rows.

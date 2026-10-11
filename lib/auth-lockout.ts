@@ -167,9 +167,11 @@ export type LockoutState =
  *    transaction-locally (set_config(…, true): reset by COMMIT/ROLLBACK,
  *    nothing left on the pooled connection), RESERVE_TX_BOUND_MS each, the
  *    same 10 s ceiling the old Prisma timer nominally gave;
- *  - Prisma's transaction timeout is beyond those bounds, so Prisma's timer
- *    never fires under our statements; maxWait (the wait to start) stays
- *    10 s, as before (see lib/rate-limit.ts on the start-timeout discard).
+ *  - Prisma's transaction timeout AND maxWait are beyond those bounds, so
+ *    Prisma's timer never fires under our statements and Prisma never
+ *    abandons a half-finished start (SF-136; lib/rate-limit.ts explains);
+ *    the wait for a connection is bounded by the pool's own 10 s deadline,
+ *    the same ceiling the old maxWait gave.
  * Any failure of the transaction — a dead connection, a bound reached,
  * anything unexpected — is thrown as a LockoutReservationError with a reason,
  * after one log line that names only the reason (never the address, the
@@ -177,7 +179,7 @@ export type LockoutState =
  */
 export const RESERVE_TX_BOUND_MS = 10_000;
 const PRISMA_TIMER_OUT_OF_REACH_MS = 60 * 60 * 1000;
-const RESERVE_TX_OPTIONS = { maxWait: 10_000, timeout: PRISMA_TIMER_OUT_OF_REACH_MS } as const;
+const RESERVE_TX_OPTIONS = { maxWait: PRISMA_TIMER_OUT_OF_REACH_MS, timeout: PRISMA_TIMER_OUT_OF_REACH_MS } as const;
 
 export type LockoutReservationFailure = "unreachable" | "pool-timeout" | "lock-timeout" | "statement-timeout" | "error";
 
