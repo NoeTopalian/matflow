@@ -157,6 +157,7 @@ export async function POST(req: Request) {
     member,
     priceId,
     requestId,
+    membershipTierId: tier.id,
     paymentMethodType: requestedMethod,
   });
 

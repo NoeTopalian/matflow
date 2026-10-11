@@ -177,8 +177,12 @@ describe("no route writes the tier before payment (RP-2)", () => {
     await kidPOST(req({ kidMemberId: "mem_1", priceId: "price_kids", requestId: "req_12345678" }));
     expect(m.create).toHaveBeenCalledTimes(3);
     for (const w of m.memberWrites) expect(JSON.stringify(w)).not.toMatch(/membershipTierId|membershipType/);
-    // And the helper is never handed a tier to write: its input carries no tier field.
-    for (const [input] of m.create.mock.calls) expect(JSON.stringify(input)).not.toMatch(/membershipTierId|membershipType/);
+    // And the helper is never handed a tier to WRITE. Since the RP-2 hand-over (lane PA request, done by lane
+    // PC round 5) each route passes the id of the tier it validated, which the helper records on the
+    // subscription mapping only; never a label, and never anything else.
+    const passed = m.create.mock.calls.map(([input]) => (input as { membershipTierId?: unknown }).membershipTierId);
+    expect(passed).toEqual(["tier_adult", expect.any(String), "tier_kids"]);
+    for (const [input] of m.create.mock.calls) expect(JSON.stringify(input)).not.toMatch(/membershipType/);
   });
 
   it("source check: no lane-PA route assigns membershipTierId or membershipType in a write", () => {
@@ -195,7 +199,11 @@ describe("no route writes the tier before payment (RP-2)", () => {
       // A `data: { … membershipTierId/membershipType … }` write, or a bare `membershipType:` assignment.
       expect(src, f).not.toMatch(/data:\s*\{[^}]*membership(TierId|Type)/);
       expect(src, f).not.toMatch(/membershipType\s*:/);
-      if (!f.endsWith("stripe/create-subscription/route.ts")) expect(src, f).not.toMatch(/membershipTierId/);
+      // The only membershipTierId allowed outside create-subscription is the pass-through of the validated
+      // tier to createSubscriptionForMember (RP-2 hand-over), which records it on the mapping, not the member.
+      if (!f.endsWith("stripe/create-subscription/route.ts")) {
+        expect(src.replace(/^[ \t]*membershipTierId: tier\.id,\r?$/m, ""), f).not.toMatch(/membershipTierId/);
+      }
     }
   });
 });

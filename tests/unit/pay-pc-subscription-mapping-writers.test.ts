@@ -131,7 +131,8 @@ describe("RP-2: the create keeps the tier and the prior payment state on the map
     tierFindFirstMock.mockResolvedValue({ id: "tier-app" });
     const out = await create();
     expect(out.ok).toBe(true);
-    expect(tierFindFirstMock).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-A", stripePriceId: "price_1" } }));
+    // Round 5: only an ACTIVE tier for the price is ever recorded.
+    expect(tierFindFirstMock).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-A", stripePriceId: "price_1", isActive: true } }));
     expect(mappingUpsertMock).toHaveBeenCalledWith(expect.objectContaining({
       create: expect.objectContaining({ membershipTierId: "tier-app", priorPaymentStatus: "paid" }),
     }));
@@ -147,5 +148,50 @@ describe("RP-2: the create keeps the tier and the prior payment state on the map
     expect(mappingUpsertMock).toHaveBeenCalledWith(expect.objectContaining({
       create: expect.objectContaining({ membershipTierId: null, priorPaymentStatus: "pending" }),
     }));
+  });
+});
+
+describe("RP-2 hand-over: the tier recorded is the caller's validated one, and never an inactive tier", () => {
+  // Two tiers share one Stripe price: an old, inactive one listed FIRST, and the active one.
+  const tiers = [
+    { id: "tier-old", tenantId: "tenant-A", stripePriceId: "price_1", isActive: false },
+    { id: "tier-new", tenantId: "tenant-A", stripePriceId: "price_1", isActive: true },
+    { id: "tier-other-club", tenantId: "tenant-B", stripePriceId: "price_1", isActive: true },
+  ];
+  beforeEach(() => {
+    memberFindUniqueMock.mockResolvedValue({ paymentStatus: "pending" });
+    // Behaves like Postgres: every condition in `where` must hold.
+    tierFindFirstMock.mockImplementation(async (a: { where: Record<string, unknown> }) =>
+      tiers.find((t) => Object.entries(a.where).every(([k, v]) => (t as Record<string, unknown>)[k] === v)) ?? null);
+  });
+  const recordedTier = () => (mappingUpsertMock.mock.calls[0][0] as { create: { membershipTierId: string | null } }).create.membershipTierId;
+
+  it("no tier given: the ACTIVE tier for the price is recorded, never the inactive one listed first", async () => {
+    await create();
+    expect(tierFindFirstMock).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-A", stripePriceId: "price_1", isActive: true } }));
+    expect(recordedTier()).toBe("tier-new");
+  });
+
+  it("a valid tier given (this club, active, same price): that tier is recorded", async () => {
+    await createSubscriptionForMember({ tenant: TENANT, member: MEMBER, priceId: "price_1", paymentMethodType: "card", requestId: "req_t1", membershipTierId: "tier-new" });
+    expect(tierFindFirstMock).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "tier-new", tenantId: "tenant-A", isActive: true, stripePriceId: "price_1" } }));
+    expect(recordedTier()).toBe("tier-new");
+  });
+
+  it("an INACTIVE tier given (even with the same price): nothing recorded, and no fallback to another tier", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const out = await createSubscriptionForMember({ tenant: TENANT, member: MEMBER, priceId: "price_1", paymentMethodType: "card", requestId: "req_t2", membershipTierId: "tier-old" });
+    expect(out.ok).toBe(true);
+    expect(recordedTier()).toBeNull();
+    expect(tierFindFirstMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("another club's tier, or a tier for a different price, is not recorded", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await createSubscriptionForMember({ tenant: TENANT, member: MEMBER, priceId: "price_1", paymentMethodType: "card", requestId: "req_t3", membershipTierId: "tier-other-club" });
+    expect(recordedTier()).toBeNull();
+    mappingUpsertMock.mockClear();
+    await createSubscriptionForMember({ tenant: TENANT, member: MEMBER, priceId: "price_2", paymentMethodType: "card", requestId: "req_t4", membershipTierId: "tier-new" });
+    expect(recordedTier()).toBeNull();
   });
 });

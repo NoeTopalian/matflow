@@ -60,6 +60,15 @@ export type CreateSubscriptionInput = {
    * ad-hoc charge (app/api/members/[id]/charge/route.ts).
    */
   requestId: string;
+  /**
+   * The tier the caller validated for this sign-up (review RP-2 hand-over from
+   * lane PA). Recorded on the subscription mapping only if it belongs to the
+   * club, is active and its stripePriceId equals `priceId`; otherwise nothing
+   * is recorded (no fallback to another tier). When absent, the ACTIVE tier
+   * whose stripePriceId is `priceId` is recorded. The webhook writes the
+   * recorded tier to the member on the first paid invoice.
+   */
+  membershipTierId?: string | null;
 };
 
 export async function createSubscriptionForMember(
@@ -208,7 +217,24 @@ export async function createSubscriptionForMember(
       // the payment state captured now). On a retried create the mapping is
       // immutable, so the state captured by the first attempt is kept.
       const before = await tx.member.findUnique({ where: { id: member.id }, select: { paymentStatus: true } });
-      const tier = await tx.membershipTier.findFirst({ where: { tenantId: tenant.id, stripePriceId: priceId }, select: { id: true } });
+      // An inactive tier that shares the price with an active one must never
+      // be recorded: the lookup is restricted to active tiers either way.
+      const tier = input.membershipTierId
+        ? await tx.membershipTier.findFirst({
+            where: { id: input.membershipTierId, tenantId: tenant.id, isActive: true, stripePriceId: priceId },
+            select: { id: true },
+          })
+        : await tx.membershipTier.findFirst({
+            where: { tenantId: tenant.id, stripePriceId: priceId, isActive: true },
+            select: { id: true },
+          });
+      if (input.membershipTierId && !tier) {
+        console.warn("[stripe/subscriptions] the given tier is not an active tier of this club for this price; no tier recorded", {
+          tenantId: tenant.id,
+          memberId: member.id,
+          membershipTierId: input.membershipTierId,
+        });
+      }
       await recordSubscriptionMapping(tx, {
         tenantId: tenant.id,
         memberId: member.id,

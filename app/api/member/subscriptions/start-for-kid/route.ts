@@ -162,8 +162,8 @@ export async function POST(req: Request) {
   if (!club.ok) return club.response;
 
   // Payments RP-2: the tier resolved above travels as its own price.
-  // createSubscriptionForMember takes no tier field; it records the tier of
-  // this priceId on the subscription mapping, and the webhook grants it on the
+  // createSubscriptionForMember records this tier (re-checked: active, this
+  // club, this priceId) on the subscription mapping, and the webhook grants it on the
   // first paid invoice. This route writes no tier onto the member.
   const outcome = await createSubscriptionForMember({
     tenant: {
@@ -183,6 +183,7 @@ export async function POST(req: Request) {
     },
     priceId,
     requestId,
+    membershipTierId: tier.id,
     paymentMethodType: requestedMethod,
   });
 
