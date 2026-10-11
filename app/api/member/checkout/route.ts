@@ -4,7 +4,7 @@ import { apiError } from "@/lib/api-error";
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { PRODUCT_PRICE_MAP } from "@/lib/products";
-import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
+import { clubAccountOrRefusal } from "@/lib/stripe/club-account";
 import { assertSameOrigin } from "@/lib/csrf";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
 import { refuseIfBilledElsewhere } from "@/lib/billing-source-server";
@@ -111,11 +111,10 @@ export async function POST(req: NextRequest) {
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: session.user.tenantId },
+      // The Stripe connection is NOT read here: the card path asks
+      // requireChargeableClubAccount, which reads id, flag and status together.
       select: {
         paymentRail: true,
-        stripeAccountId: true,
-        stripeConnected: true,
-        stripeAccountStatus: true,
         currency: true,
         // The owner's switch for "members may spend money here". The shop used
         // to ignore it entirely, so a club that had turned member purchasing
@@ -172,7 +171,12 @@ export async function POST(req: NextRequest) {
   // this line — refusing it would switch the member shop off for every club on
   // the default. Only the online card rail is refused, with the same status and
   // words as member/subscriptions/start.
-  if (tenant && !tenant.memberSelfBilling) {
+  // A failed read must not skip the owner's switch below and carry on to a
+  // card payment on defaults (lane PA, 11 Oct 2026).
+  if (!tenant) {
+    return apiError("We couldn't start checkout just now — please try again in a moment.", 503);
+  }
+  if (!tenant.memberSelfBilling) {
     return apiError("This gym manages payments centrally — please speak to staff", 403);
   }
 
@@ -187,37 +191,22 @@ export async function POST(req: NextRequest) {
     if (billedElsewhere) return billedElsewhere;
   }
 
+  // ── The club's own Stripe account, or nothing ───────────────────────────────
+  // Payments lane PA (audit §4, F2): this used to pass `{ stripeAccount }` only
+  // when `stripeConnected` was true. A club that had revoked MatFlow kept its
+  // id with the flag cleared, the status refresh failed open, and the session
+  // below was created on MatFlow's PLATFORM account. The guard now refuses a
+  // missing, disconnected, deauthorised, stale-and-unreadable or restricted
+  // account before the Order row is written, and returns the id read in the
+  // same query as the flag. That id — never `undefined` — goes to Stripe.
+  const club = await clubAccountOrRefusal(session.user.tenantId, "shop_checkout", { audience: "member" });
+  if (!club.ok) return club.response;
+  const clubAccountId = club.account.stripeAccountId;
+
   // ── Stripe checkout session ─────────────────────────────────────────────────
   try {
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(stripeKey, { apiVersion: "2026-03-25.dahlia" });
-
-    // The tenant was already loaded above to decide the rail — reusing it keeps
-    // this to one query and makes it impossible for the rail decision and the
-    // Connect decision to read two different snapshots of the same row.
-    if (!tenant?.stripeAccountId) {
-      return NextResponse.json(
-        { error: "This gym has not connected Stripe yet — checkout is unavailable." },
-        { status: 400 },
-      );
-    }
-
-    // Fix 3: refuse checkout if Stripe Connect account can't accept charges
-    // (KYC failure, requirements past due, fraud restriction). Refresh on
-    // stale cache so a fresh tenant gets the first lazy-fetch.
-    const acceptCheck = await ensureCanAcceptCharges(
-      session.user.tenantId,
-      tenant.stripeAccountId,
-      tenant.stripeAccountStatus,
-    );
-    if (!acceptCheck.ok) {
-      return NextResponse.json(
-        { error: "This gym's Stripe account requires attention. Please contact the gym." },
-        { status: 503 },
-      );
-    }
-
-    const connectedAccount = tenant.stripeConnected ? tenant.stripeAccountId : undefined;
 
     const lineItems = validatedItems.map((item: typeof validatedItems[number]) => ({
       price_data: {
@@ -291,7 +280,7 @@ export async function POST(req: NextRequest) {
           ...(memberIdForOrder ? { memberId: memberIdForOrder } : {}),
         },
       },
-      connectedAccount ? { stripeAccount: connectedAccount } : undefined,
+      { stripeAccount: clubAccountId },
     );
 
     // Best-effort, and genuinely best-effort this time: the webhook reconciles

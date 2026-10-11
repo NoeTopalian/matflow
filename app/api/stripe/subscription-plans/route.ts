@@ -3,6 +3,11 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { z } from "zod";
+import {
+  ClubAccountNotChargeable,
+  clubAccountOrRefusal,
+  requireChargeableClubAccount,
+} from "@/lib/stripe/club-account";
 
 // Defence-in-depth on the plan-creation body. Stripe itself validates
 // `unit_amount > 0` but we should reject obviously bad input before sending.
@@ -20,15 +25,16 @@ const createPlanSchema = z.object({
   intervalCount: z.number().int().min(1).max(4).optional(),
 });
 
-async function getTenantStripeAccount(tenantId: string) {
+// Payments lane PA: the Stripe connection (id, flag, status) is decided by
+// requireChargeableClubAccount; this only reads the club's currency.
+async function getTenantCurrency(tenantId: string): Promise<string> {
   const tenant = await withTenantContext(tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: tenantId },
-      select: { stripeAccountId: true, stripeConnected: true, currency: true },
+      select: { currency: true },
     }),
   );
-  if (!tenant?.stripeConnected || !tenant.stripeAccountId) return null;
-  return { id: tenant.stripeAccountId, currency: tenant.currency ?? "GBP" };
+  return tenant?.currency ?? "GBP";
 }
 
 export async function GET() {
@@ -37,9 +43,17 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const acct = await getTenantStripeAccount(session.user.tenantId);
-  if (!acct || !process.env.STRIPE_SECRET_KEY) {
+  if (!process.env.STRIPE_SECRET_KEY) {
     return NextResponse.json({ plans: [] });
+  }
+  let acctId: string;
+  try {
+    acctId = (await requireChargeableClubAccount(session.user.tenantId, { purpose: "catalogue" })).stripeAccountId;
+  } catch (e) {
+    // Unchanged contract for the settings screen (an empty list when the club
+    // has no usable connection), now with the reason so it can say why.
+    if (e instanceof ClubAccountNotChargeable) return NextResponse.json({ plans: [], reason: e.reason });
+    throw e;
   }
 
   try {
@@ -47,7 +61,7 @@ export async function GET() {
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
     const prices = await stripe.prices.list(
       { active: true, expand: ["data.product"], limit: 20 },
-      { stripeAccount: acct.id },
+      { stripeAccount: acctId },
     );
 
     const plans = prices.data.map((p) => ({
@@ -81,10 +95,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const acct = await getTenantStripeAccount(session.user.tenantId);
-  if (!acct || !process.env.STRIPE_SECRET_KEY) {
-    return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
-  }
+  const stripeKey = process.env.STRIPE_SECRET_KEY;
+  if (!stripeKey) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
+  // Payments lane PA: one guard for every Stripe call; the id it read is the
+  // only one the product and price below are created on.
+  const club = await clubAccountOrRefusal(session.user.tenantId, "catalogue", { audience: "staff" });
+  if (!club.ok) return club.response;
+  const acctId = club.account.stripeAccountId;
+  const currency = await getTenantCurrency(session.user.tenantId);
 
   let body: unknown;
   try {
@@ -104,11 +122,11 @@ export async function POST(req: Request) {
 
   try {
     const Stripe = (await import("stripe")).default;
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
+    const stripe = new Stripe(stripeKey, { apiVersion: "2026-03-25.dahlia" });
 
     const product = await stripe.products.create(
       { name: name.trim() },
-      { stripeAccount: acct.id },
+      { stripeAccount: acctId },
     );
 
     const price = await stripe.prices.create(
@@ -117,10 +135,10 @@ export async function POST(req: Request) {
         unit_amount: Math.round(amount * 100),
         // Tenant currency, not hardcoded gbp — EUR/USD gyms were getting
         // GBP-denominated plans.
-        currency: acct.currency.toLowerCase(),
+        currency: currency.toLowerCase(),
         recurring,
       },
-      { stripeAccount: acct.id },
+      { stripeAccount: acctId },
     );
 
     return NextResponse.json({ id: price.id, name: product.name, amount, interval: recurring.interval, intervalCount: recurring.interval_count });

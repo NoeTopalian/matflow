@@ -43,6 +43,10 @@ vi.mock("@/lib/api-error", () => ({
 }));
 vi.mock("@/lib/stripe-account-status", () => ({
   ensureCanAcceptCharges: vi.fn().mockResolvedValue({ ok: true }),
+  // Lane PA (11 Oct 2026): routes now reach the account through
+  // lib/stripe/club-account.ts, which refreshes a null/stale snapshot via
+  // refreshStripeAccountStatus. Stubbed healthy, as ensureCanAcceptCharges was.
+  refreshStripeAccountStatus: async () => ({ chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() }),
 }));
 vi.mock("@/auth", () => ({
   auth: vi.fn().mockResolvedValue({ user: { tenantId: "tenant-A", memberId: "mem-1", id: "user-1" } }),

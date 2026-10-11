@@ -2,7 +2,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
-import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
+import { clubAccountOrRefusal } from "@/lib/stripe/club-account";
 import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -48,21 +48,10 @@ export async function POST(req: Request) {
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: session.user.tenantId },
-      select: { stripeAccountId: true, stripeConnected: true, acceptsBacs: true, stripeAccountStatus: true },
+      // The Stripe connection is read by requireChargeableClubAccount below.
+      select: { acceptsBacs: true },
     }),
   );
-
-  if (!tenant?.stripeConnected || !tenant.stripeAccountId) {
-    return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
-  }
-
-  const acceptCheck = await ensureCanAcceptCharges(session.user.tenantId, tenant.stripeAccountId, tenant.stripeAccountStatus);
-  if (!acceptCheck.ok) {
-    return NextResponse.json(
-      { error: "This gym's Stripe account requires attention before subscriptions can be created." },
-      { status: 503 },
-    );
-  }
 
   let body: unknown;
   try {
@@ -121,11 +110,17 @@ export async function POST(req: Request) {
     );
   }
 
+  // Payments lane PA: one guard for every Stripe call, after the TeamUp bridge
+  // and the duplicate check so those answers are unchanged. The id it read in
+  // the same query as the flag and the status is the only one Stripe sees.
+  const club = await clubAccountOrRefusal(session.user.tenantId, "subscription_start", { audience: "staff" });
+  if (!club.ok) return club.response;
+
   const outcome = await createSubscriptionForMember({
     tenant: {
       id: session.user.tenantId,
-      stripeAccountId: tenant.stripeAccountId,
-      acceptsBacs: tenant.acceptsBacs,
+      stripeAccountId: club.account.stripeAccountId,
+      acceptsBacs: tenant?.acceptsBacs ?? false,
     },
     member,
     priceId,

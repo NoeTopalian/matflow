@@ -91,6 +91,8 @@ beforeEach(() => {
     currency: "EUR",
     stripeAccountId: "acct_1",
     stripeConnected: true,
+    // Lane PA: a connected club with a fresh, healthy status snapshot — the club-account guard requires all three.
+    stripeAccountStatus: { chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() },
   });
   mockMember.mockResolvedValue({
     id: "mem_1", name: "Sam", nextDueAt: null, membershipTier: null,
@@ -140,7 +142,7 @@ describe("class pack — the STRIPE PRICE carries the club's currency", () => {
   });
 
   it("falls back to GBP only when the club has no currency set", async () => {
-    mockTenant.mockResolvedValue({ currency: null, stripeAccountId: "acct_1", stripeConnected: true });
+    mockTenant.mockResolvedValue({ currency: null, stripeAccountId: "acct_1", stripeConnected: true, stripeAccountStatus: { chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() } });
     await packPOST(req(body));
     expect(mockPriceCreate.mock.calls[0][0].currency).toBe("gbp");
   });

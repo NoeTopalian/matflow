@@ -18,6 +18,7 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
+import { clubAccountOrRefusal } from "@/lib/stripe/club-account";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const csrfViolation = assertSameOrigin(req);
@@ -34,19 +35,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: session.user.tenantId },
-      select: { stripeAccountId: true, stripeConnected: true, memberSelfBilling: true },
+      select: { memberSelfBilling: true },
     }),
   );
   if (!tenant) return apiError("Tenant not found", 404);
   if (!tenant.memberSelfBilling) {
     return apiError("This gym manages payments centrally — please speak to staff", 403);
   }
-  if (!tenant.stripeConnected || !tenant.stripeAccountId) {
-    return apiError("This gym hasn't connected payments yet", 503);
-  }
   if (!process.env.STRIPE_SECRET_KEY) {
     return apiError("Stripe not configured", 503);
   }
+  // Payments lane PA: one guard for every Stripe call; the id it read is the
+  // only one used below.
+  const club = await clubAccountOrRefusal(session.user.tenantId, "billing_portal", { audience: "member" });
+  if (!club.ok) return club.response;
 
   // Composite predicate — defence-in-depth on I4. 404 not 403 so the
   // existence of another parent's kid is never disclosed.
@@ -85,7 +87,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         customer: kid.stripeCustomerId,
         return_url: returnUrl,
       },
-      { stripeAccount: tenant.stripeAccountId },
+      { stripeAccount: club.account.stripeAccountId },
     );
 
     await logAudit({

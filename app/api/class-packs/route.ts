@@ -5,6 +5,7 @@ import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { clubAccountOrRefusal } from "@/lib/stripe/club-account";
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
@@ -48,13 +49,16 @@ export async function POST(req: Request) {
       where: { id: tenantId },
       // `currency` is read so the pack is priced in the CLUB's currency —
       // see the comment at the Stripe price below for why that matters.
-      select: { stripeAccountId: true, stripeConnected: true, currency: true },
+      // The Stripe connection is read by requireChargeableClubAccount below.
+      select: { currency: true },
     }),
   );
-  if (!tenant?.stripeConnected || !tenant.stripeAccountId) {
-    return NextResponse.json({ error: "Connect Stripe before creating class packs" }, { status: 400 });
-  }
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
+  // Payments lane PA: one guard for every Stripe call; the id it read is the
+  // only one the product and price below are created on.
+  const club = await clubAccountOrRefusal(tenantId, "catalogue", { audience: "staff" });
+  if (!club.ok) return club.response;
+  const clubAccountId = club.account.stripeAccountId;
 
   const { name, description, totalCredits, validityDays, pricePence, currency, isActive } = parsed.data;
 
@@ -64,7 +68,7 @@ export async function POST(req: Request) {
 
     const product = await stripe.products.create(
       { name, description: description ?? `${totalCredits} classes valid for ${validityDays} days` },
-      { stripeAccount: tenant.stripeAccountId },
+      { stripeAccount: clubAccountId },
     );
     const price = await stripe.prices.create(
       {
@@ -84,9 +88,9 @@ export async function POST(req: Request) {
         // here. The client-supplied value is still honoured when present, since
         // the form offers it, but the club's own setting is the fallback rather
         // than a hardcoded GBP.
-        currency: (currency ?? tenant.currency ?? "GBP").toLowerCase(),
+        currency: (currency ?? tenant?.currency ?? "GBP").toLowerCase(),
       },
-      { stripeAccount: tenant.stripeAccountId },
+      { stripeAccount: clubAccountId },
     );
 
     const created = await withTenantContext(tenantId, (tx) =>
@@ -100,7 +104,7 @@ export async function POST(req: Request) {
           pricePence,
           // Must match the Stripe price above, or the local row and the thing
           // members are actually charged disagree.
-          currency: (currency ?? tenant.currency ?? "GBP").toUpperCase(),
+          currency: (currency ?? tenant?.currency ?? "GBP").toUpperCase(),
           isActive: isActive ?? true,
           stripeProductId: product.id,
           stripePriceId: price.id,

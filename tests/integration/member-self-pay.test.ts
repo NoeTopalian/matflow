@@ -32,6 +32,9 @@ vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => {}) }));
 vi.mock("@/lib/stripe-account-status", () => ({
   ensureCanAcceptCharges: vi.fn(async () => ({ ok: true })),
+  // Lane PA (11 Oct 2026): routes reach the account through lib/stripe/club-account.ts,
+  // which refreshes the fixture's non-JSON "active" snapshot via this. Stubbed healthy.
+  refreshStripeAccountStatus: vi.fn(async () => ({ chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() })),
 }));
 
 // Stripe SDK stub. The route imports Stripe via `await import("stripe")`,
@@ -213,12 +216,17 @@ describe.skipIf(!HAS_DB)("F2 member self-subscribe", () => {
     expect(body.error).toMatch(/manages payments centrally/i);
   });
 
-  it("returns 503 when Stripe is not connected", async () => {
+  // Lane PA (11 Oct 2026): every Stripe-calling route now answers a club with
+  // no usable connection through one guard, as 409 { reason: "no_account" }
+  // (was this route's own 503). 503 is kept for a temporarily unverifiable or
+  // restricted account.
+  it("returns 409 no_account when Stripe is not connected", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "u-x", memberId, tenantId: tenantBillingNoStripe, role: "member", email: "x" },
     } as never);
     const res = await startSub(jsonReq("/api/member/subscriptions/start", { priceId: STRIPE_PRICE_ID, requestId: SUB_REQUEST_ID }));
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { reason?: string }).reason).toBe("no_account");
   });
 
   it("returns 403 for a sub-account trying to self-subscribe", async () => {

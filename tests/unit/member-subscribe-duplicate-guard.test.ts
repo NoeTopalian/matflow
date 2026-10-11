@@ -48,6 +48,10 @@ const { mockAuth, mockTenant, mockMember, mockTier, mockCreate } = vi.hoisted(()
 vi.mock("@/auth", () => ({ auth: mockAuth }));
 vi.mock("@/lib/stripe-account-status", () => ({
   ensureCanAcceptCharges: async () => ({ ok: true }),
+  // Lane PA (11 Oct 2026): routes now reach the account through
+  // lib/stripe/club-account.ts, which refreshes a null/stale snapshot via
+  // refreshStripeAccountStatus. Stubbed healthy, as ensureCanAcceptCharges was.
+  refreshStripeAccountStatus: async () => ({ chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() }),
 }));
 vi.mock("@/lib/stripe/subscriptions", () => ({ createSubscriptionForMember: mockCreate }));
 // Review mode has its own tests (review-lock.test.ts); here the club is not in review.
@@ -76,6 +80,9 @@ function req(body: unknown) {
 }
 
 beforeEach(() => {
+  // Lane PA: the club-account guard refuses with no platform key (stripe_not_configured);
+  // the Stripe helper itself is mocked here, so a placeholder test key suffices.
+  process.env.STRIPE_SECRET_KEY = "sk_test_fixture";
   vi.clearAllMocks();
   mockAuth.mockResolvedValue({ user: { tenantId: TENANT, memberId: MEMBER } });
   mockTenant.mockResolvedValue({

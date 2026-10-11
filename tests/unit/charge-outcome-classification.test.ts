@@ -107,8 +107,11 @@ beforeEach(() => {
     email: null,
     stripeCustomerId: "cus_x",
   } as never);
+  // Lane PA: a connected club with a fresh, healthy status snapshot — the club-account guard requires all three.
   vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
     stripeAccountId: "acct_test",
+    stripeConnected: true,
+    stripeAccountStatus: { chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() },
     currency: "GBP",
     name: "Total BJJ",
   } as never);

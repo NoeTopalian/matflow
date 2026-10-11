@@ -54,6 +54,10 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/stripe-account-status", () => ({
   ensureCanAcceptCharges: async () => ({ ok: true }),
+  // Lane PA (11 Oct 2026): routes now reach the account through
+  // lib/stripe/club-account.ts, which refreshes a null/stale snapshot via
+  // refreshStripeAccountStatus. Stubbed healthy, as ensureCanAcceptCharges was.
+  refreshStripeAccountStatus: async () => ({ chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() }),
 }));
 
 vi.mock("@/lib/stripe/subscriptions", () => ({
@@ -82,6 +86,9 @@ function makeReq() {
 describe("POST /api/stripe/create-subscription — duplicate guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Lane PA: the club-account guard refuses with no platform key (stripe_not_configured);
+    // the Stripe helper itself is mocked here, so a placeholder test key suffices.
+    process.env.STRIPE_SECRET_KEY = "sk_test_fixture";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     mockAuth.mockResolvedValue({ user: { role: "owner", tenantId: "t_1" } } as any);
     mockTenantFindUnique.mockResolvedValue({

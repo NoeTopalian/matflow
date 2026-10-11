@@ -5,6 +5,7 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { getBaseUrl } from "@/lib/env-url";
 import { assertSameOrigin } from "@/lib/csrf";
+import { clubAccountOrRefusal } from "@/lib/stripe/club-account";
 
 export const runtime = "nodejs";
 
@@ -28,7 +29,7 @@ export async function POST(req: Request) {
     const t = m
       ? await tx.tenant.findUnique({
           where: { id: m.tenantId },
-          select: { stripeAccountId: true, stripeConnected: true, memberSelfBilling: true },
+          select: { memberSelfBilling: true },
         })
       : null;
     return { member: m, tenant: t };
@@ -42,14 +43,12 @@ export async function POST(req: Request) {
       { status: 403 },
     );
   }
-  if (!tenant?.stripeAccountId) return NextResponse.json({ error: "Gym billing not configured" }, { status: 400 });
-  // Fix 3 (T-2): refuse portal session when the connected account has been
-  // disconnected. The stripeAccountId may still be set as residual data, but
-  // calling Stripe with a stale/disconnected account would fail confusingly.
-  if (!tenant.stripeConnected) {
-    return NextResponse.json({ error: "Gym billing has been disconnected. Contact your gym." }, { status: 503 });
-  }
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
+  // Payments lane PA: one guard for every Stripe call. A disconnected,
+  // deauthorised or unverifiable club account refuses (it used to check the
+  // flag but never the status); the id it read is the only one used below.
+  const club = await clubAccountOrRefusal(member.tenantId, "billing_portal", { audience: "member" });
+  if (!club.ok) return club.response;
 
   const returnUrl = `${getBaseUrl(req)}/member/profile`;
 
@@ -58,7 +57,7 @@ export async function POST(req: Request) {
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
     const portalSession = await stripe.billingPortal.sessions.create(
       { customer: member.stripeCustomerId, return_url: returnUrl },
-      { stripeAccount: tenant.stripeAccountId },
+      { stripeAccount: club.account.stripeAccountId },
     );
 
     await logAudit({

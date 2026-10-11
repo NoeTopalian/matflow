@@ -29,7 +29,10 @@ vi.mock("@/lib/api-authz", () => ({
   requireApiOwner: async () => ({ ok: true, tenantId: "t1", userId: "u1" }),
   requireApiOwnerOrManager: async () => ({ ok: true, tenantId: "t1", userId: "u1" }),
 }));
-vi.mock("@/lib/stripe-account-status", () => ({ ensureCanAcceptCharges: m.accept }));
+// Lane PA: the account check is now lib/stripe/club-account.ts, which refreshes
+// the (null) fixture snapshot through refreshStripeAccountStatus — so m.accept
+// sits at that seam and "not called" still means "the account was never checked".
+vi.mock("@/lib/stripe-account-status", () => ({ ensureCanAcceptCharges: m.accept, refreshStripeAccountStatus: m.accept }));
 vi.mock("@/lib/rate-limit", () => ({
   checkRateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }),
   getClientIp: () => "203.0.113.9",
@@ -69,7 +72,7 @@ beforeEach(() => {
   m.tenant.mockResolvedValue(TENANT);
   m.member.mockResolvedValue({ id: "mem_1", email: "sam@example.test", name: "Sam", stripeCustomerId: "cus_1", billedBy: "matflow" });
   m.pack.mockResolvedValue({ id: "pack_1", name: "10 classes", stripePriceId: "price_1", isActive: true });
-  m.accept.mockResolvedValue({ ok: true });
+  m.accept.mockResolvedValue({ ok: true, chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() });
 });
 
 describe("class-pack purchase", () => {

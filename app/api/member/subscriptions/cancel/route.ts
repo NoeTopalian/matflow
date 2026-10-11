@@ -18,6 +18,7 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
+import { clubAccountOrRefusal } from "@/lib/stripe/club-account";
 
 export async function POST(req: Request) {
   const csrfViolation = assertSameOrigin(req);
@@ -32,9 +33,8 @@ export async function POST(req: Request) {
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: session.user.tenantId },
+      // The Stripe connection is read by requireChargeableClubAccount below.
       select: {
-        stripeAccountId: true,
-        stripeConnected: true,
         memberSelfBilling: true,
       },
     }),
@@ -43,9 +43,12 @@ export async function POST(req: Request) {
   if (!tenant.memberSelfBilling) {
     return apiError("This gym manages payments centrally — please speak to staff", 403);
   }
-  if (!tenant.stripeConnected || !tenant.stripeAccountId) {
-    return apiError("This gym hasn't connected payments yet", 503);
-  }
+  // Payments lane PA: one guard for every Stripe call, where the connected
+  // check used to be. A cancellation is not blocked by Stripe having disabled
+  // new charges, but a missing, disconnected, deauthorised or unverifiable
+  // account refuses; the id it read is the only one used below.
+  const club = await clubAccountOrRefusal(session.user.tenantId, "subscription_cancel", { audience: "member" });
+  if (!club.ok) return club.response;
 
   const member = await withTenantContext(session.user.tenantId, (tx) =>
     tx.member.findFirst({
@@ -62,7 +65,7 @@ export async function POST(req: Request) {
   }
 
   const outcome = await cancelSubscriptionAtPeriodEnd({
-    tenant: { stripeAccountId: tenant.stripeAccountId },
+    tenant: { stripeAccountId: club.account.stripeAccountId },
     stripeSubscriptionId: member.stripeSubscriptionId,
   });
   if (!outcome.ok) {

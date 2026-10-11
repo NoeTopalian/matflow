@@ -23,7 +23,7 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
-import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
+import { clubAccountOrRefusal } from "@/lib/stripe/club-account";
 import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
 import { z } from "zod";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
@@ -80,11 +80,9 @@ export async function POST(req: Request) {
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: session.user.tenantId },
+      // The Stripe connection is read by requireChargeableClubAccount below.
       select: {
-        stripeAccountId: true,
-        stripeConnected: true,
         acceptsBacs: true,
-        stripeAccountStatus: true,
         memberSelfBilling: true,
       },
     }),
@@ -92,20 +90,6 @@ export async function POST(req: Request) {
   if (!tenant) return apiError("Tenant not found", 404);
   if (!tenant.memberSelfBilling) {
     return apiError("This gym manages payments centrally — please speak to staff", 403);
-  }
-  if (!tenant.stripeConnected || !tenant.stripeAccountId) {
-    return apiError("This gym hasn't connected payments yet", 503);
-  }
-  const acceptCheck = await ensureCanAcceptCharges(
-    session.user.tenantId,
-    tenant.stripeAccountId,
-    tenant.stripeAccountStatus,
-  );
-  if (!acceptCheck.ok) {
-    return apiError(
-      "This gym's Stripe account requires attention before subscriptions can be created.",
-      503,
-    );
   }
 
   // Composite predicate — defence-in-depth on I4: a parent can ONLY subscribe
@@ -171,10 +155,16 @@ export async function POST(req: Request) {
     );
   }
 
+  // Payments lane PA: one guard for every Stripe call, after the TeamUp bridge
+  // and the plan checks. The id it read in the same query as the flag and the
+  // status is the only one Stripe sees.
+  const club = await clubAccountOrRefusal(session.user.tenantId, "subscription_start", { audience: "member" });
+  if (!club.ok) return club.response;
+
   const outcome = await createSubscriptionForMember({
     tenant: {
       id: session.user.tenantId,
-      stripeAccountId: tenant.stripeAccountId,
+      stripeAccountId: club.account.stripeAccountId,
       acceptsBacs: tenant.acceptsBacs,
     },
     member: {

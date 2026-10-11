@@ -89,7 +89,8 @@ beforeEach(() => {
     stripeChargeId: "ch_x",
     stripePaymentIntentId: "pi_x",
   } as never);
-  mockTenantFindUnique.mockResolvedValue({ stripeAccountId: "acct_test" } as never);
+  // Lane PA: a connected club with a fresh, healthy status snapshot — the club-account guard requires all three.
+  mockTenantFindUnique.mockResolvedValue({ stripeAccountId: "acct_test", stripeConnected: true, stripeAccountStatus: { chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() } } as never);
   vi.mocked(prisma.payment.updateMany).mockResolvedValue({ count: 1 } as never);
   chargesRetrieveMock.mockResolvedValue({ amount_refunded: 0 });
   refundsCreateMock.mockResolvedValue({ id: "re_xyz", amount: 5000 });

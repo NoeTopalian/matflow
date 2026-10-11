@@ -9,6 +9,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
 import { packCreditsAfterRefund } from "@/lib/pack-refund";
 import { sendEmail } from "@/lib/email";
+import { clubAccountOrRefusal } from "@/lib/stripe/club-account";
 
 // Per-tenant cap on refund operations. Caps both fat-finger UI mistakes
 // and a hostile insider scripting refunds en masse if their session were
@@ -85,7 +86,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const t = p
       ? await tx.tenant.findUnique({
           where: { id: tenantId },
-          select: { stripeAccountId: true, name: true },
+          // The Stripe connection is read by requireChargeableClubAccount below.
+          select: { name: true },
         })
       : null;
     const m = p?.memberId
@@ -110,8 +112,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!payment.stripeChargeId && !payment.stripePaymentIntentId) {
     return NextResponse.json({ error: "No Stripe charge to refund" }, { status: 400 });
   }
-  if (!tenant?.stripeAccountId) return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
+  // Payments lane PA: this route checked the account id only. One guard now
+  // decides for every Stripe call. A refund is money OUT, so it is not blocked
+  // by Stripe having disabled new charges — but a missing, disconnected,
+  // deauthorised or unverifiable account still refuses, and the id the guard
+  // read is the only one used below.
+  const club = await clubAccountOrRefusal(tenantId, "refund", { audience: "staff" });
+  if (!club.ok) return club.response;
 
   // Cheap DB-only pre-check so an obviously-oversized request never costs a
   // Stripe round-trip. It is deliberately the same predicate as the
@@ -144,7 +152,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
 
-    const stripeAccount = tenant.stripeAccountId;
+    const stripeAccount = club.account.stripeAccountId;
 
     // ── Single source of truth for what is still refundable ──────────────
     // Stripe's own amount_refunded wins where we can read it: a refund issued
@@ -203,7 +211,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ...(parsed.data.reason ? { note: parsed.data.reason } : {}),
         },
       },
-      { stripeAccount: tenant.stripeAccountId, idempotencyKey },
+      { stripeAccount, idempotencyKey },
     );
 
     const refundedAmount = refund.amount ?? refundAmount;
@@ -435,7 +443,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         to: member.email,
         vars: {
           memberName: member.name,
-          gymName: tenant.name ?? "your gym",
+          gymName: tenant?.name ?? "your gym",
           amount: formatMoney(refundedAmount, payment.currency),
           subscriptionNote,
         },

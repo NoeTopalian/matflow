@@ -10,8 +10,13 @@ import { withTenantContext } from "@/lib/prisma-tenant";
  *
  * Refresh strategy:
  *   - On `account.updated` webhook (real-time)
- *   - Lazy refresh-on-first-checkout when status is null/stale (defensive)
+ *   - Lazy refresh by the club-account guard (lib/stripe/club-account.ts) when
+ *     the status is missing, stale or unreadable
  *   - Optional nightly cron (not implemented at launch — webhook is enough)
+ *
+ * Every route that calls Stripe for a club goes through
+ * `requireChargeableClubAccount` in lib/stripe/club-account.ts, which owns the
+ * decision. This module only fetches and stores the snapshot.
  */
 export type StripeAccountStatus = {
   chargesEnabled: boolean;
@@ -22,14 +27,53 @@ export type StripeAccountStatus = {
 };
 
 /**
+ * How long a single `accounts.retrieve` may take before the refresh gives up
+ * and fails closed. It runs inline on a member's checkout, so it is short; the
+ * SDK's own default is 80 s.
+ */
+export const ACCOUNT_STATUS_REFRESH_TIMEOUT_MS = 5_000;
+
+/** The disabledReason written whenever Stripe could not be read. */
+export const STATUS_UNREADABLE = "status_unreadable";
+
+class AccountStatusTimeout extends Error {
+  constructor(ms: number) {
+    super(`accounts.retrieve did not answer within ${ms}ms`);
+    this.name = "AccountStatusTimeout";
+  }
+}
+
+function unreadable(): StripeAccountStatus {
+  return {
+    chargesEnabled: false,
+    payoutsEnabled: false,
+    requirementsPastDue: [],
+    disabledReason: STATUS_UNREADABLE,
+    refreshedAt: new Date().toISOString(),
+  };
+}
+
+/**
  * Fetch fresh account status from Stripe and persist on Tenant.stripeAccountStatus.
- * Returns the new status. Does NOT throw on Stripe errors — returns a safe-deny
- * status (chargesEnabled=false) so the calling gate fails closed.
+ * Returns the new status. Never throws on Stripe errors: ANY failure — a
+ * permission error, a timeout, a network or API error — returns a fail-closed
+ * status (chargesEnabled=false, disabledReason="status_unreadable").
+ *
+ * Payments lane PA (11 Oct 2026): a permission error used to FAIL OPEN with
+ * chargesEnabled=true, on the reasoning that a platform key missing the
+ * accounts read scope would otherwise block every club. But a revoked
+ * connection is answered the same way, and the shop then created the Checkout
+ * Session on MatFlow's own platform account (audit §4, F2). An unreadable
+ * account is an unverifiable authorisation, and that now refuses. The operator
+ * signal is kept: the log line below names the missing scope, and the stored
+ * `status_unreadable` is what /api/stripe/connect/health reports.
  */
 export async function refreshStripeAccountStatus(
   tenantId: string,
   stripeAccountId: string,
+  opts: { timeoutMs?: number } = {},
 ): Promise<StripeAccountStatus> {
+  const timeoutMs = opts.timeoutMs ?? ACCOUNT_STATUS_REFRESH_TIMEOUT_MS;
   let status: StripeAccountStatus;
   try {
     if (!process.env.STRIPE_SECRET_KEY) {
@@ -43,8 +87,20 @@ export async function refreshStripeAccountStatus(
       };
     } else {
       const Stripe = (await import("stripe")).default;
-      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
-      const account = await stripe.accounts.retrieve(stripeAccountId);
+      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+        apiVersion: "2026-03-25.dahlia",
+        timeout: timeoutMs,
+        maxNetworkRetries: 0,
+      });
+      // The SDK timeout covers the socket; the race covers everything else
+      // (DNS, a wedged agent, a mocked client) so the member is never held.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const account = await Promise.race([
+        stripe.accounts.retrieve(stripeAccountId),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new AccountStatusTimeout(timeoutMs)), timeoutMs);
+        }),
+      ]).finally(() => clearTimeout(timer));
       status = {
         chargesEnabled: account.charges_enabled === true,
         payoutsEnabled: account.payouts_enabled === true,
@@ -54,50 +110,40 @@ export async function refreshStripeAccountStatus(
       };
     }
   } catch (e) {
-    // Distinguish a *platform-config* fault from a *gym* fault.
-    //
-    // If the platform STRIPE_SECRET_KEY lacks the accounts read scope
-    // (`accounts_kyc_basic_read`), `accounts.retrieve` 403s for EVERY tenant.
-    // Failing closed here would block every gym's checkout / subscribe over a
-    // missing *read* scope — even though the same key processes charges and
-    // refunds fine. That's a worse, self-inflicted outage than the gate was
-    // built to prevent (taking payments that can't settle). So on a permission
-    // error we fail OPEN with a marker reason and log loudly for the operator.
-    // Genuine "account disabled" cases (KYC / requirements past_due) arrive as a
-    // real payload with charges_enabled=false and still fail closed above.
+    const type = (e as { type?: string })?.type;
+    const message = (e as { message?: string })?.message ?? "";
     const isPermissionError =
-      (e as { type?: string })?.type === "StripePermissionError" ||
-      /does not have the required permissions/i.test((e as { message?: string })?.message ?? "");
+      type === "StripePermissionError" || /does not have the required permissions/i.test(message);
     if (isPermissionError) {
       console.error(
-        "[stripe-account-status] CONFIG: STRIPE_SECRET_KEY lacks the accounts read scope " +
-          "(accounts_kyc_basic_read) — cannot verify Connect account status. Grant it in the " +
-          "Stripe Dashboard. Treating as chargeable to avoid blocking all gyms' revenue.",
+        "[stripe-account-status] CONFIG: accounts.retrieve was refused for permissions — either the club " +
+          "revoked MatFlow's access, or STRIPE_SECRET_KEY lacks the accounts read scope " +
+          "(accounts_kyc_basic_read). If every club shows this, grant that scope on the key in the Stripe " +
+          "Dashboard. Payments for this club are REFUSED until the status can be read.",
         { tenantId, stripeAccountId },
       );
-      status = {
-        chargesEnabled: true,
-        payoutsEnabled: true,
-        requirementsPastDue: [],
-        disabledReason: "status_unreadable",
-        refreshedAt: new Date().toISOString(),
-      };
     } else {
-      console.error("[stripe-account-status] refresh failed", { tenantId, stripeAccountId, error: e });
-      status = {
-        chargesEnabled: false,
-        payoutsEnabled: false,
-        requirementsPastDue: [],
-        disabledReason: "refresh_error",
-        refreshedAt: new Date().toISOString(),
-      };
+      console.error(
+        "[stripe-account-status] refresh failed — payments for this club are REFUSED until the status can be read",
+        {
+          tenantId,
+          stripeAccountId,
+          // The message only: a Stripe error object carries raw headers.
+          error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+        },
+      );
     }
+    status = unreadable();
   }
 
   try {
+    // Written only onto the SAME account while it is still connected. A
+    // disconnect (id nulled) or a deauthorisation webhook (flag cleared, status
+    // stamped "deauthorized") that lands while this refresh was in flight must
+    // not be overwritten by an answer about the old connection.
     await withTenantContext(tenantId, (tx) =>
-      tx.tenant.update({
-        where: { id: tenantId },
+      tx.tenant.updateMany({
+        where: { id: tenantId, stripeAccountId, stripeConnected: true },
         data: { stripeAccountStatus: status },
       }),
     );
@@ -112,9 +158,6 @@ export async function refreshStripeAccountStatus(
  * Pure check — does the cached status allow new charges?
  *
  * Fail-closed: null / undefined / missing chargesEnabled all return false.
- * The calling route should refresh and re-check before returning a 503 to
- * the user, so a fresh tenant whose status hasn't been hydrated gets a
- * chance to recover via lazy-refresh.
  */
 export function canAcceptCharges(status: unknown): boolean {
   if (!status || typeof status !== "object") return false;
@@ -123,11 +166,13 @@ export function canAcceptCharges(status: unknown): boolean {
 }
 
 /**
- * Combined helper for checkout-style routes: returns true if the tenant can
- * accept charges right now, refreshing the cache if it's missing or older
- * than the staleness window. Fails closed on errors.
+ * @deprecated Routes use `requireChargeableClubAccount` (lib/stripe/club-account.ts),
+ * which also checks the account id, the connected flag, the deauthorised stamp
+ * and the freshness of the snapshot in one read. Kept for its existing tests;
+ * do not call it from a route — it does not know whether the club is connected.
  *
- * Default staleness window: 24 hours. Webhook keeps it fresh in normal ops.
+ * Returns true if the cached status allows charges, refreshing when it is
+ * missing or older than the staleness window. Fails closed on errors.
  */
 export async function ensureCanAcceptCharges(
   tenantId: string,

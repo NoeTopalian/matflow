@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { apiError } from "@/lib/api-error";
-import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
+import { clubAccountOrRefusal } from "@/lib/stripe/club-account";
 import { getBaseUrl } from "@/lib/env-url";
 import { assertSameOrigin } from "@/lib/csrf";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
@@ -47,12 +47,8 @@ export async function POST(req: Request) {
     // club's pack is broken when in fact the club stopped members buying.
     const t = await tx.tenant.findUnique({
       where: { id: tenantId },
-      select: {
-        stripeAccountId: true,
-        stripeConnected: true,
-        stripeAccountStatus: true,
-        memberSelfBilling: true,
-      },
+      // The Stripe connection is read by requireChargeableClubAccount below.
+      select: { memberSelfBilling: true },
     });
     if (t && !t.memberSelfBilling) return { kind: "self-billing-off" as const };
 
@@ -65,7 +61,7 @@ export async function POST(req: Request) {
       where: { id: parsed.data.packId, tenantId, isActive: true },
     });
     if (!p || !p.stripePriceId) return { kind: "no-pack" as const };
-    return { kind: "ok" as const, member: m, pack: p, tenant: t };
+    return { kind: "ok" as const, member: m, pack: p };
   });
   if (lookups.kind === "self-billing-off") {
     // The same refusal member/subscriptions/start gives, so one switch means
@@ -74,10 +70,7 @@ export async function POST(req: Request) {
   }
   if (lookups.kind === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
   if (lookups.kind === "no-pack") return NextResponse.json({ error: "Pack unavailable" }, { status: 404 });
-  const { member, pack, tenant } = lookups;
-  if (!tenant?.stripeConnected || !tenant.stripeAccountId) {
-    return NextResponse.json({ error: "Stripe not connected" }, { status: 400 });
-  }
+  const { member, pack } = lookups;
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
 
   // Connection register gap 24 (30 Sep 2026): this route takes a card payment
@@ -88,14 +81,12 @@ export async function POST(req: Request) {
   const billedElsewhere = await refuseIfBilledElsewhere(tenantId, memberId);
   if (billedElsewhere) return billedElsewhere;
 
-  // Fix 3: refuse purchase if Stripe Connect account can't accept charges.
-  const acceptCheck = await ensureCanAcceptCharges(tenantId, tenant.stripeAccountId, tenant.stripeAccountStatus);
-  if (!acceptCheck.ok) {
-    return NextResponse.json(
-      { error: "This gym's Stripe account requires attention. Please contact the gym." },
-      { status: 503 },
-    );
-  }
+  // Payments lane PA: one guard for every Stripe call — missing, disconnected,
+  // deauthorised, unverifiable or restricted club accounts refuse here, and the
+  // id it returns is the only one passed to Stripe below.
+  const club = await clubAccountOrRefusal(tenantId, "class_pack_checkout", { audience: "member" });
+  if (!club.ok) return club.response;
+  const clubAccountId = club.account.stripeAccountId;
 
   const base = getBaseUrl(req);
   const successUrl = `${base}/member/profile?pack=success`;
@@ -110,7 +101,7 @@ export async function POST(req: Request) {
       // Race-safe: only one request can flip stripeCustomerId from null to a real value.
       const customer = await stripe.customers.create(
         { email: member.email, name: member.name },
-        { stripeAccount: tenant.stripeAccountId },
+        { stripeAccount: clubAccountId },
       );
       const winnerId = await withTenantContext(tenantId, async (tx) => {
         const u = await tx.member.updateMany({
@@ -143,7 +134,7 @@ export async function POST(req: Request) {
           packId: pack.id,
         },
       },
-      { stripeAccount: tenant.stripeAccountId },
+      { stripeAccount: clubAccountId },
     );
 
     return NextResponse.json({ url: checkoutSession.url });

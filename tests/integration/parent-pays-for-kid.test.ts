@@ -25,6 +25,9 @@ vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => {}) }));
 vi.mock("@/lib/stripe-account-status", () => ({
   ensureCanAcceptCharges: vi.fn(async () => ({ ok: true })),
+  // Lane PA (11 Oct 2026): routes reach the account through lib/stripe/club-account.ts,
+  // which refreshes the fixture's non-JSON "active" snapshot via this. Stubbed healthy.
+  refreshStripeAccountStatus: vi.fn(async () => ({ chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() })),
 }));
 
 // Declared as a real class, NOT `vi.fn().mockImplementation(() => ({…}))`:

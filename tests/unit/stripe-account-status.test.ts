@@ -30,7 +30,9 @@ const { txTenantUpdate, txExecuteRaw, bareTenantUpdate } = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => {
   const tx = {
     $executeRaw: txExecuteRaw,
-    tenant: { update: txTenantUpdate },
+    // Lane PA: the persist is a conditional updateMany (same account, still
+    // connected), so a racing disconnect is never overwritten.
+    tenant: { updateMany: txTenantUpdate },
   };
   return {
     prisma: {
@@ -159,7 +161,7 @@ describe("refreshStripeAccountStatus (safe-deny on errors)", () => {
     expect(txExecuteRaw).toHaveBeenCalledWith(expect.anything(), "tenant-A");
     expect(txTenantUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "tenant-A" },
+        where: { id: "tenant-A", stripeAccountId: "acct_123", stripeConnected: true },
         data: expect.objectContaining({
           stripeAccountStatus: expect.objectContaining({
             chargesEnabled: false,
@@ -173,9 +175,12 @@ describe("refreshStripeAccountStatus (safe-deny on errors)", () => {
     expect(bareTenantUpdate).not.toHaveBeenCalled();
   });
 
-  it("FAILS OPEN on a StripePermissionError (platform key lacks accounts read scope)", async () => {
-    // A restricted key missing `accounts_kyc_basic_read` 403s for every tenant.
-    // We must NOT block all gyms' checkout over a missing *read* scope.
+  it("FAILS CLOSED on a StripePermissionError (lane PA, 11 Oct 2026 — was fail-open)", async () => {
+    // This test used to assert chargesEnabled === true here. The audit
+    // (docs/payments/STRIPE-CONNECT-AUDIT-2026-10-11.md §4, F2) showed why that
+    // was wrong: a club that revoked MatFlow is answered with the same
+    // permission error, and the fail-open snapshot let the member shop create
+    // a Checkout Session on the PLATFORM account. Unreadable now refuses.
     process.env.STRIPE_SECRET_KEY = "rk_live_test";
     retrieveMock.mockRejectedValueOnce(
       Object.assign(new Error("Permission denied. The provided key does not have the required permissions"), {
@@ -184,7 +189,8 @@ describe("refreshStripeAccountStatus (safe-deny on errors)", () => {
     );
     const { refreshStripeAccountStatus } = await import("@/lib/stripe-account-status");
     const result = await refreshStripeAccountStatus("tenant-A", "acct_123");
-    expect(result.chargesEnabled).toBe(true);
+    expect(result.chargesEnabled).toBe(false);
+    expect(result.payoutsEnabled).toBe(false);
     expect(result.disabledReason).toBe("status_unreadable");
   });
 
@@ -194,6 +200,8 @@ describe("refreshStripeAccountStatus (safe-deny on errors)", () => {
     const { refreshStripeAccountStatus } = await import("@/lib/stripe-account-status");
     const result = await refreshStripeAccountStatus("tenant-A", "acct_123");
     expect(result.chargesEnabled).toBe(false);
-    expect(result.disabledReason).toBe("refresh_error");
+    // Lane PA: every failure now records the one reason, status_unreadable
+    // (was "refresh_error"); the guard still treats the old spelling as unreadable.
+    expect(result.disabledReason).toBe("status_unreadable");
   });
 });

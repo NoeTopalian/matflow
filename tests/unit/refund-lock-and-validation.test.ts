@@ -107,6 +107,8 @@ beforeEach(() => {
   vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
     stripeAccountId: "acct_test",
     name: "Total BJJ",
+    // Lane PA: a connected club with a fresh, healthy status snapshot — the club-account guard requires all three.
+    stripeConnected: true, stripeAccountStatus: { chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() },
   } as never);
   vi.mocked(prisma.payment.updateMany).mockResolvedValue({ count: 1 } as never);
   vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue(null as never);

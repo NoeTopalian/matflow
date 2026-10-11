@@ -19,6 +19,7 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { parseHoldUntil, pauseCollectionParams } from "@/lib/member-hold";
 import { refuseSupportSession } from "@/lib/support-session";
+import { clubAccountOrRefusal } from "@/lib/stripe/club-account";
 import { z } from "zod";
 
 // Lane C2 (9 Oct 2026): a JSON object with at most { until } — an ISO date, or null/absent for an
@@ -52,11 +53,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       select: { id: true, name: true, paymentStatus: true, stripeSubscriptionId: true, status: true },
     });
     if (!member) return null;
-    const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { stripeAccountId: true, stripeConnected: true } });
-    return { member, tenant };
+    return { member };
   });
   if (!found) return NextResponse.json({ error: "Member not found" }, { status: 404 });
-  const { member, tenant } = found;
+  const { member } = found;
   if (member.status === "cancelled") {
     return NextResponse.json({ error: "A cancelled membership cannot be put on hold" }, { status: 409 });
   }
@@ -67,13 +67,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let stripePaused = false;
   if (member.stripeSubscriptionId) {
     if (!process.env.STRIPE_SECRET_KEY) return apiError("Stripe is not configured", 503);
-    if (!tenant?.stripeConnected || !tenant.stripeAccountId) {
-      return NextResponse.json({ error: "This member has a Stripe subscription but the club's Stripe is not connected — reconnect under Settings → Revenue first" }, { status: 409 });
-    }
+    // Payments lane PA: one guard for every Stripe call (it checked the flag
+    // and id but never the status). The id it read is the only one used.
+    const club = await clubAccountOrRefusal(tenantId, "collection_pause", { audience: "staff" });
+    if (!club.ok) return club.response;
     try {
       const Stripe = (await import("stripe")).default;
       const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
-      await stripe.subscriptions.update(member.stripeSubscriptionId, pauseCollectionParams(parsed.until), { stripeAccount: tenant.stripeAccountId });
+      await stripe.subscriptions.update(member.stripeSubscriptionId, pauseCollectionParams(parsed.until), { stripeAccount: club.account.stripeAccountId });
       stripePaused = true;
     } catch (e) {
       return apiError("Stripe would not pause this subscription — nothing was changed", 502, e, "[members/hold]");

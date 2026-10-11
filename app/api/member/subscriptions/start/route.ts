@@ -10,7 +10,7 @@
 // Gated three ways:
 //   1. Caller must be a logged-in member with a memberId on the session
 //   2. Tenant.memberSelfBilling must be true (owner has opted in)
-//   3. Tenant Stripe Connect must be healthy (ensureCanAcceptCharges)
+//   3. Tenant Stripe Connect must be healthy (requireChargeableClubAccount)
 //
 // Cancellation is a separate route. This endpoint never deletes or modifies
 // existing subscriptions — to swap plans, the member cancels first.
@@ -20,7 +20,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
-import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
+import { clubAccountOrRefusal } from "@/lib/stripe/club-account";
 import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
 import { z } from "zod";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
@@ -79,11 +79,9 @@ export async function POST(req: Request) {
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: session.user.tenantId },
+      // The Stripe connection is read by requireChargeableClubAccount below.
       select: {
-        stripeAccountId: true,
-        stripeConnected: true,
         acceptsBacs: true,
-        stripeAccountStatus: true,
         memberSelfBilling: true,
       },
     }),
@@ -92,20 +90,12 @@ export async function POST(req: Request) {
   if (!tenant.memberSelfBilling) {
     return apiError("This gym manages payments centrally — please speak to staff", 403);
   }
-  if (!tenant.stripeConnected || !tenant.stripeAccountId) {
-    return apiError("This gym hasn't connected payments yet", 503);
-  }
-  const acceptCheck = await ensureCanAcceptCharges(
-    session.user.tenantId,
-    tenant.stripeAccountId,
-    tenant.stripeAccountStatus,
-  );
-  if (!acceptCheck.ok) {
-    return apiError(
-      "This gym's Stripe account requires attention before subscriptions can be created.",
-      503,
-    );
-  }
+  // Payments lane PA: one guard for every Stripe call, where the connected /
+  // status checks used to be (the TeamUp bridge already ran above). The id it
+  // read in the same query as the flag and the status is the only one Stripe
+  // sees.
+  const club = await clubAccountOrRefusal(session.user.tenantId, "subscription_start", { audience: "member" });
+  if (!club.ok) return club.response;
 
   // Kid/adult tier validation — MembershipTier.stripePriceId shipped in
   // migration 20260515000002, so we can now resolve the picked Stripe price
@@ -169,7 +159,7 @@ export async function POST(req: Request) {
   const outcome = await createSubscriptionForMember({
     tenant: {
       id: session.user.tenantId,
-      stripeAccountId: tenant.stripeAccountId,
+      stripeAccountId: club.account.stripeAccountId,
       acceptsBacs: tenant.acceptsBacs,
     },
     member,

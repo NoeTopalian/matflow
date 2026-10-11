@@ -123,7 +123,8 @@ beforeEach(() => {
   process.env.STRIPE_SECRET_KEY = "sk_test_x";
   csrfMock.mockReturnValue(null);
   gateMock.mockResolvedValue(OWNER);
-  tenantFindUniqueMock.mockResolvedValue({ stripeAccountId: "acct_gym", stripeConnected: true });
+  // Lane PA: a connected club with a fresh, healthy status snapshot — the club-account guard requires all three.
+  tenantFindUniqueMock.mockResolvedValue({ stripeAccountId: "acct_gym", stripeConnected: true, stripeAccountStatus: { chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() } });
   memberUpdateMock.mockResolvedValue({});
   memberUpdateManyMock.mockResolvedValue({ count: 1 });
   subscriptionsUpdateMock.mockResolvedValue({ id: "sub_1", status: "active" });

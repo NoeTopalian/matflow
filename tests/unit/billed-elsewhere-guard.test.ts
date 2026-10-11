@@ -29,7 +29,11 @@ const m = vi.hoisted(() => ({
   create: vi.fn(),
 }));
 vi.mock("@/auth", () => ({ auth: m.auth }));
-vi.mock("@/lib/stripe-account-status", () => ({ ensureCanAcceptCharges: async () => ({ ok: true }) }));
+// Lane PA: the club-account guard refreshes a null snapshot through this; stubbed healthy.
+vi.mock("@/lib/stripe-account-status", () => ({
+  ensureCanAcceptCharges: async () => ({ ok: true }),
+  refreshStripeAccountStatus: async () => ({ chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() }),
+}));
 vi.mock("@/lib/stripe/subscriptions", () => ({ createSubscriptionForMember: m.create }));
 vi.mock("@/lib/review-lock", () => ({ refuseIfReviewLocked: async () => null }));
 vi.mock("@/lib/rate-limit", () => ({

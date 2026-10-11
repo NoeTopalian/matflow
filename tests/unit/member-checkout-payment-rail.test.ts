@@ -55,6 +55,10 @@ const { mockAuth, mockTenantFindUnique, mockProductFindMany, mockOrderCreate, mo
 vi.mock("@/auth", () => ({ auth: mockAuth }));
 vi.mock("@/lib/stripe-account-status", () => ({
   ensureCanAcceptCharges: async () => ({ ok: true }),
+  // Lane PA (11 Oct 2026): routes now reach the account through
+  // lib/stripe/club-account.ts, which refreshes a null/stale snapshot via
+  // refreshStripeAccountStatus. Stubbed healthy, as ensureCanAcceptCharges was.
+  refreshStripeAccountStatus: async () => ({ chargesEnabled: true, payoutsEnabled: true, requirementsPastDue: [], disabledReason: null, refreshedAt: new Date().toISOString() }),
 }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>

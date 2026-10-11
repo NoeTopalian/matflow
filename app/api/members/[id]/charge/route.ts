@@ -12,6 +12,7 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
 import { refuseIfBilledElsewhere } from "@/lib/billing-source-server";
+import { clubAccountOrRefusal } from "@/lib/stripe/club-account";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
@@ -131,14 +132,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
     const tenant = await tx.tenant.findUnique({
       where: { id: tenantId },
-      select: { stripeAccountId: true, currency: true, name: true },
+      // The Stripe connection is read by requireChargeableClubAccount below.
+      select: { currency: true, name: true },
     });
     return { member, tenant, currency: tenant?.currency ?? "GBP" };
   });
 
   if (!member) return apiError("Member not found", 404);
   if (!member.stripeCustomerId) return apiError("Member has no saved payment method", 402);
-  if (!tenant?.stripeAccountId) return apiError("Stripe not connected for this gym", 402);
+  // Payments lane PA: this route checked the account id only, so a club that
+  // had revoked MatFlow (id kept, flag cleared) still reached Stripe. One guard
+  // now decides for every Stripe call; outcomeUnknown:false tells the drawer
+  // nothing reached Stripe, so it may discard its request id.
+  const club = await clubAccountOrRefusal(tenantId, "adhoc_charge", {
+    audience: "staff",
+    extra: { outcomeUnknown: false },
+  });
+  if (!club.ok) return club.response;
+  const clubAccountId = club.account.stripeAccountId;
 
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
     apiVersion: "2026-03-25.dahlia",
@@ -173,7 +184,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         description,
         metadata: { tenantId, memberId, type: "adhoc" },
       },
-      { stripeAccount: tenant.stripeAccountId, idempotencyKey },
+      { stripeAccount: clubAccountId, idempotencyKey },
     );
 
     paymentIntentId = pi.id;
@@ -309,7 +320,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       to: member.email,
       vars: {
         memberName: member.name,
-        gymName: tenant.name ?? "your gym",
+        gymName: tenant?.name ?? "your gym",
         amount: `${symbol}${(amountPence / 100).toFixed(2)}`,
         description: description ?? "Payment",
         paidDate: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
