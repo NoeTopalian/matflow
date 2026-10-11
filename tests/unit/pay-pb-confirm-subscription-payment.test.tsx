@@ -19,7 +19,7 @@
 //     empty form; "Pay later" calls onAbandon
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import React from "react";
 
 const s = vi.hoisted(() => ({
@@ -28,6 +28,9 @@ const s = vi.hoisted(() => ({
   mount: vi.fn(),
   submit: vi.fn(),
   confirmPayment: vi.fn(),
+  loadError: null as null | { type: string; message: string },
+  holdReady: false,
+  release: null as null | (() => void),
 }));
 
 vi.mock("@stripe/stripe-js", () => ({ loadStripe: s.loadStripe }));
@@ -39,7 +42,21 @@ const ACCT = "acct_pb_club";
 
 function fakeStripe() {
   const elements = {
-    create: vi.fn(() => ({ mount: s.mount })),
+    create: vi.fn(() => {
+      const handlers: Record<string, (e?: unknown) => void> = {};
+      return {
+        on: (ev: string, cb: (e?: unknown) => void) => {
+          handlers[ev] = cb;
+        },
+        mount: (el: unknown) => {
+          s.mount(el);
+          // Stripe fires ready (or loaderror) after the iframe loads.
+          const fire = () => (s.loadError ? handlers.loaderror?.({ error: s.loadError }) : handlers.ready?.());
+          if (s.holdReady) s.release = fire;
+          else setTimeout(fire, 0);
+        },
+      };
+    }),
     submit: s.submit,
   };
   return {
@@ -84,6 +101,9 @@ beforeEach(() => {
   s.submit.mockReset();
   s.confirmPayment.mockReset();
   s.elementsCalls.length = 0;
+  s.loadError = null;
+  s.holdReady = false;
+  s.release = null;
   s.loadStripe.mockImplementation(async () => fakeStripe());
   s.submit.mockResolvedValue({});
 });
@@ -229,6 +249,29 @@ describe("pay-pb: ConfirmSubscriptionPayment", () => {
     await screen.findByRole("alert");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(s.loadStripe).not.toHaveBeenCalled();
+  });
+
+  it("a Payment Element that fails to load is an error with a retry, not a blank form under a live Pay button", async () => {
+    stubFetch({ status: 200, body: { ...READY, stripeAccount: "acct_pb_loaderr" } });
+    s.loadError = { type: "invalid_request_error", message: "No valid payment method types for this configuration." };
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<ConfirmSubscriptionPayment subscriptionId={SUB} />);
+    const alert = await screen.findByRole("alert");
+    // Our wording, not Stripe's internals.
+    expect(alert.textContent).not.toContain("payment method types");
+    expect(screen.queryByRole("button", { name: /^pay/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /try again/i })).toBeTruthy();
+  });
+
+  it("the Pay button is not live until Stripe reports the form ready", async () => {
+    stubFetch({ status: 200, body: { ...READY, stripeAccount: "acct_pb_notready" } });
+    s.holdReady = true;
+    render(<ConfirmSubscriptionPayment subscriptionId={SUB} />);
+    await waitFor(() => expect(s.mount).toHaveBeenCalled());
+    expect(screen.getByTestId("confirm-subscription-payment").getAttribute("data-stage")).toBe("loading");
+    expect((screen.getByRole("button", { name: /pay/i }) as HTMLButtonElement).disabled).toBe(true);
+    act(() => s.release?.());
+    await ready();
   });
 
   it("Pay later calls onAbandon and confirms nothing", async () => {

@@ -240,11 +240,26 @@ export default function ConfirmSubscriptionPayment({
     const elements = stripe.elements({ clientSecret: body.clientSecret, appearance: appearanceFrom(rootRef.current) });
     elementsRef.current = elements;
     const paymentElement = elements.create("payment", { layout: "tabs" });
+    // The form is usable only once Stripe says so. A Payment Element that
+    // fails to load (no usable payment method on the club's account, a
+    // blocked network) would otherwise sit blank under a live Pay button.
+    paymentElement.on("ready", () => {
+      if (alive.current) setStage("entry");
+    });
+    paymentElement.on("loaderror", (event) => {
+      console.error("[ConfirmSubscriptionPayment] Payment Element failed to load", {
+        type: event?.error?.type,
+        code: event?.error?.code,
+        message: event?.error?.message,
+      });
+      if (!alive.current) return;
+      setStage("load_error");
+      setMessage("Stripe's payment form couldn't load for this club. Try again, or speak to the gym if it keeps happening.");
+    });
     if (containerRef.current) {
       containerRef.current.replaceChildren();
       paymentElement.mount(containerRef.current);
     }
-    setStage("entry");
   }, [subscriptionId, pollStatus]);
 
   useEffect(() => {
