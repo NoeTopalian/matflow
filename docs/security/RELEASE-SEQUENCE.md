@@ -11,6 +11,7 @@ Prepared 10 Oct 2026 22:40 Italy by the coordinator at Noe's instruction. **Noth
 Verification: the pasted redacted outputs. Recovery: none needed.
 
 ## Stage 1 — Containment that precedes any deploy (NOE)
+> 1.1 DONE 11 Oct 2026 (17:07 UK): Neon neondb_owner password reset and Resend key reissued at the providers, Vercel Production updated (CLI), current build e8afb6a redeployed (lxxo23g4i), health ok — ITERATION-2-REPORT §9. 1.2–1.4 still open.
 1.1 If 0.1 is a MATCH or 0.2 shows no rotation: rotate the Neon password and revoke/reissue the Resend key at the providers; update Vercel Production; redeploy the CURRENT build (`e8afb6a`) — never Instant Rollback (old builds keep old secrets). CONTAINMENT-CHECKLIST §4 steps 1–3.
 1.2 GitHub: secret-scanning validity checks on; apply `evidence/E2/github-ruleset-main-proposed.json` to `main` (SF-72) — required because pushing `main` deploys and migrates production.
 1.3 Admin-hub prerequisites (RELEASE-PACKAGE §2): operator authenticator enrolled and challenged; `OPERATOR_ALLOWED_IDS` set to the operator id; `MATFLOW_ADMIN_SECRET` rotated; `EMAIL_DELIVERY=off` confirmed.
