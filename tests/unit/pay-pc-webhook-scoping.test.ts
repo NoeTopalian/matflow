@@ -541,3 +541,100 @@ describe("the outcome is handed to the event store (which records it on the Stri
     expect(storeFake.statuses.get("evt_s3")).toBe("processed");
   });
 });
+
+// ── Round 3 (lane PB browser runs, lane TS events) ───────────────────────────
+
+describe("round 3: a failed FIRST invoice is not dunning", () => {
+  const failedInvoice = (id: string, extra: Record<string, unknown> = {}) => ({
+    id, type: "invoice.payment_failed",
+    data: { object: { id: "in_first", customer: "cus_payer", amount_due: 3000, currency: "gbp", parent: { type: "subscription_details", subscription_details: { subscription: "sub_matflow", metadata: {} } }, ...extra } },
+  });
+  beforeEach(() => {
+    invoicesRetrieveMock.mockResolvedValue({ id: "in_first", payments: { data: [] } });
+    db.payFindFirst.mockResolvedValue(null as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([{ email: "owner@gym.test" }] as never);
+  });
+
+  it("mapping still incomplete (declined card / 3-D Secure at sign-up): failed Payment + mapping recorded; no overdue, no emails, no audit", async () => {
+    mappings[0].status = "incomplete";
+    const r = await deliver(failedInvoice("evt_r3_first"));
+    expect(db.payUpsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ status: "failed", memberId: "mem-1", stripeInvoiceId: "in_first" }) }));
+    expect(db.mapUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "ms-1" }, data: expect.objectContaining({ lastFailedInvoiceId: "in_first", lastPaymentFailedAt: expect.any(Date) }) }));
+    expect(memberWrites()).toBe(0);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(logAuditMock).not.toHaveBeenCalled();
+    expect(r.status).toBe(200);
+    expect(r.body.outcome).toBe("processed");
+  });
+
+  it("billing_reason subscription_create is also a first attempt, even if the mapping status was not yet mirrored", async () => {
+    const r = await deliver(failedInvoice("evt_r3_create", { billing_reason: "subscription_create" }));
+    expect(memberWrites()).toBe(0);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(db.payUpsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ status: "failed" }) }));
+    expect(r.body.outcome).toBe("processed");
+  });
+
+  it("a RENEWAL failure on the active mapping still dunns: overdue, member and owner emails, audit", async () => {
+    const r = await deliver(failedInvoice("evt_r3_renewal", { billing_reason: "subscription_cycle" }));
+    expect(db.memberUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "mem-1" }, data: { paymentStatus: "overdue" } }));
+    const templates = sendEmailMock.mock.calls.map((c) => (c[0] as { templateId: string }).templateId).sort();
+    expect(templates).toEqual(["payment_failed", "payment_failed_owner"]);
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "member.payment.failed", entityId: "mem-1" }));
+    expect(db.mapUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ lastFailedInvoiceId: "in_first" }) }));
+    expect(r.body.outcome).toBe("processed");
+  });
+});
+
+describe("round 3: invoice.voided resolves through the mapping", () => {
+  const voided = (id: string, sub: string) => ({
+    id, type: "invoice.voided",
+    data: { object: { id: "in_void", customer: "cus_payer", parent: { type: "subscription_details", subscription_details: { subscription: sub, metadata: {} } } } },
+  });
+
+  it("a mapped subscription's invoice with no Payment row: processed, nothing to void, member untouched", async () => {
+    db.payFindFirst.mockResolvedValue(null as never);
+    const r = await deliver(voided("evt_r3_void_mapped", "sub_matflow"));
+    expect(db.payUpdate).not.toHaveBeenCalled();
+    expect(memberWrites()).toBe(0);
+    expect(r.body.outcome).toBe("processed");
+  });
+
+  it("it clears a pending 3-D Secure marker for that invoice", async () => {
+    db.payFindFirst.mockResolvedValue(null as never);
+    (mappings[0] as Record<string, unknown>).requiresActionInvoiceId = "in_void";
+    await deliver(voided("evt_r3_void_3ds", "sub_matflow"));
+    expect(db.mapUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "ms-1" }, data: { requiresActionInvoiceId: null, requiresActionAt: null } }));
+  });
+
+  it("no Payment row and no mapping: ignored_foreign", async () => {
+    db.payFindFirst.mockResolvedValue(null as never);
+    const r = await deliver(voided("evt_r3_void_foreign", "sub_teamup"));
+    expect(db.payUpdate).not.toHaveBeenCalled();
+    expect(r.body.outcome).toBe("ignored_foreign");
+  });
+
+  it("a Payment row on record is voided (refunded, whole amount) as before", async () => {
+    db.payFindFirst.mockResolvedValue({ id: "pay-v", status: "succeeded", amountPence: 3000, stripePaymentIntentId: null } as never);
+    const r = await deliver(voided("evt_r3_void_paid", "sub_matflow"));
+    expect(db.payUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "pay-v" }, data: expect.objectContaining({ status: "refunded", refundedAmountPence: 3000 }) }));
+    expect(r.body.outcome).toBe("processed");
+  });
+});
+
+describe("round 3: payment_intent.payment_failed never downgrades a settled payment", () => {
+  it.each(["succeeded", "refunded", "disputed"])("a %s Payment is left alone; the event is a processed no-op", async (status) => {
+    db.payFindFirst.mockResolvedValue({ id: "pay-s", tenantId: "tenant-A", status, amountPence: 1000, stripePaymentIntentId: "pi_s" } as never);
+    const r = await deliver({ id: `evt_r3_pif_${status}`, type: "payment_intent.payment_failed", data: { object: { id: "pi_s" } } });
+    expect(db.payUpdate).not.toHaveBeenCalled();
+    expect(memberWrites()).toBe(0);
+    expect(r.status).toBe(200);
+    expect(r.body.outcome).toBe("processed");
+  });
+
+  it("a pending Payment becomes failed", async () => {
+    db.payFindFirst.mockResolvedValue({ id: "pay-p", tenantId: "tenant-A", status: "pending", amountPence: 1000, stripePaymentIntentId: "pi_p" } as never);
+    await deliver({ id: "evt_r3_pif_pending", type: "payment_intent.payment_failed", data: { object: { id: "pi_p" } } });
+    expect(db.payUpdate).toHaveBeenCalledWith({ where: { id: "pay-p" }, data: { status: "failed" } });
+  });
+});

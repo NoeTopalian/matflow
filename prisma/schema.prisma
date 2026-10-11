@@ -412,6 +412,12 @@ model MemberSubscription {
   // only; never changes entitlement.
   requiresActionInvoiceId String?
   requiresActionAt        DateTime?
+  // The last failed payment attempt on this subscription. A failure of the
+  // FIRST invoice (mapping still incomplete: card declined at sign-up, 3-D
+  // Secure pending) is recorded here and on the Payment row only — the payer
+  // is on the payment form, so no overdue and no dunning emails.
+  lastPaymentFailedAt     DateTime?
+  lastFailedInvoiceId     String?
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
   // Set when Stripe reports the subscription canceled or incomplete_expired.

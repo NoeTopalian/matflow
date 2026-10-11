@@ -36,7 +36,8 @@ vi.mock("@/lib/stripe/invoice-payment", async (orig) => ({
   ...(await orig<typeof import("@/lib/stripe/invoice-payment")>()),
   resolveInvoicePaymentIds: vi.fn(async (_s: unknown, invoiceId: string) => ({ paymentIntentId: `pi_for_${invoiceId}`, chargeId: null })),
 }));
-vi.mock("@/lib/email", () => ({ sendEmail: vi.fn(async () => ({ ok: true, logId: "mail-test" })) }));
+const sendEmailMock = vi.hoisted(() => vi.fn<(m: unknown) => Promise<{ ok: boolean; logId: string }>>(async () => ({ ok: true, logId: "mail-test" })));
+vi.mock("@/lib/email", () => ({ sendEmail: sendEmailMock }));
 vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
 vi.mock("@/lib/stripe-account-status", () => ({ refreshStripeAccountStatus: vi.fn(async () => {}) }));
 
@@ -49,8 +50,8 @@ const STAMP = `paypc${Date.now().toString(36)}${Math.random().toString(36).slice
 const TENANT = `${STAMP}-t`;
 const ACCT = `acct_${STAMP}`;
 const CUS = `cus_${STAMP}`;
-const MEM = { A: `${STAMP}-a`, B: `${STAMP}-b`, C: `${STAMP}-c`, D: `${STAMP}-d`, E: `${STAMP}-e` };
-const SUB = { mf: `sub_${STAMP}_mf`, tu: `sub_${STAMP}_tu`, kid: `sub_${STAMP}_kid`, ab: `sub_${STAMP}_ab`, d: `sub_${STAMP}_d`, unknown: `sub_${STAMP}_unknown` };
+const MEM = { A: `${STAMP}-a`, B: `${STAMP}-b`, C: `${STAMP}-c`, D: `${STAMP}-d`, E: `${STAMP}-e`, F: `${STAMP}-f` };
+const SUB = { mf: `sub_${STAMP}_mf`, tu: `sub_${STAMP}_tu`, kid: `sub_${STAMP}_kid`, ab: `sub_${STAMP}_ab`, d: `sub_${STAMP}_d`, f: `sub_${STAMP}_f`, unknown: `sub_${STAMP}_unknown` };
 let evtSeq = 0;
 const evtId = (label: string) => `evt_${STAMP}_${label}_${++evtSeq}`;
 
@@ -97,12 +98,15 @@ describe.skipIf(!HAS_DB)("pay-pc: subscription and invoice events move only the 
       await mk(MEM.B, "b", { stripeSubscriptionId: SUB.kid, paymentStatus: "paid" });
       await mk(MEM.C, "c", { paymentStatus: "paid" });
       await mk(MEM.D, "d", { stripeSubscriptionId: SUB.d, paymentStatus: "pending" });
+      // Round 3: signing up in the app, first payment not yet taken.
+      await mk(MEM.F, "f", { stripeSubscriptionId: SUB.f, paymentStatus: "pending" });
       const map = (memberId: string, sub: string, status: string, source = "app") =>
         tx.memberSubscription.create({ data: { tenantId: TENANT, memberId, stripeAccountId: ACCT, stripeSubscriptionId: sub, source, status, lastEventCreated: 1000 } });
       await map(MEM.A, SUB.mf, "active", "migration");
       await map(MEM.B, SUB.kid, "active");
       await map(MEM.C, SUB.ab, "incomplete");
       await map(MEM.D, SUB.d, "incomplete");
+      await map(MEM.F, SUB.f, "incomplete");
     });
   }, 120_000);
 
@@ -267,6 +271,43 @@ describe.skipIf(!HAS_DB)("pay-pc: subscription and invoice events move only the 
     expect(n).toBe(1);
     expect(second).toMatchObject({ status: 200, body: { alreadyProcessed: true } });
     expect(first.body.outcome).toBe("processed");
+  });
+
+  it("(r3) a failed FIRST invoice on an incomplete mapping: Payment failed + mapping recorded, member not overdue, no email", async () => {
+    sendEmailMock.mockClear();
+    const invoice = `in_${STAMP}_first`;
+    const r = await deliver(invoiceEvent("invoice.payment_failed", invoice, SUB.f, 3000));
+    expect(await member(MEM.F)).toMatchObject({ paymentStatus: "pending", stripeSubscriptionId: SUB.f, status: "active" });
+    const pay = await withRlsBypass((tx) => tx.payment.findFirst({ where: { tenantId: TENANT, stripeInvoiceId: invoice } }));
+    expect(pay).toMatchObject({ status: "failed", memberId: MEM.F, amountPence: 3000 });
+    expect(await mapping(SUB.f)).toMatchObject({ status: "incomplete", lastFailedInvoiceId: invoice });
+    expect((await mapping(SUB.f))?.lastPaymentFailedAt).toBeInstanceOf(Date);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(r.body.outcome).toBe("processed");
+  });
+
+  it("(r3) a RENEWAL failure on the active mapping still dunns: overdue and the payment-failed emails", async () => {
+    sendEmailMock.mockClear();
+    const invoice = `in_${STAMP}_renewal`;
+    const r = await deliver(invoiceEvent("invoice.payment_failed", invoice, SUB.mf, 4500));
+    expect(await member(MEM.A)).toMatchObject({ paymentStatus: "overdue", stripeSubscriptionId: SUB.mf });
+    expect(await mapping(SUB.mf)).toMatchObject({ lastFailedInvoiceId: invoice });
+    const templates = sendEmailMock.mock.calls.map((c) => (c[0] as { templateId: string }).templateId);
+    expect(templates).toContain("payment_failed");
+    expect(r.body.outcome).toBe("processed");
+  });
+
+  it("(r3) invoice.voided of a mapped subscription with no Payment row: processed, nothing changes; unmapped: ignored_foreign", async () => {
+    const before = await member(MEM.F);
+    const mapped = await deliver({ id: evtId("voided"), type: "invoice.voided", data: { object: { id: `in_${STAMP}_void_nopay`, object: "invoice", customer: CUS, parent: { type: "subscription_details", subscription_details: { subscription: SUB.f, metadata: {} } } } } });
+    const foreign = await deliver({ id: evtId("voided"), type: "invoice.voided", data: { object: { id: `in_${STAMP}_void_tu`, object: "invoice", customer: CUS, parent: { type: "subscription_details", subscription_details: { subscription: SUB.tu, metadata: {} } } } } });
+    expect(await member(MEM.F)).toEqual(before);
+    expect([mapped.body.outcome, foreign.body.outcome]).toEqual(["processed", "ignored_foreign"]);
+    // And the voided invoice with a Payment row (the failed first invoice above) is voided.
+    const r = await deliver({ id: evtId("voided"), type: "invoice.voided", data: { object: { id: `in_${STAMP}_first`, object: "invoice", customer: CUS, parent: { type: "subscription_details", subscription_details: { subscription: SUB.f, metadata: {} } } } } });
+    const pay = await withRlsBypass((tx) => tx.payment.findFirst({ where: { tenantId: TENANT, stripeInvoiceId: `in_${STAMP}_first` } }));
+    expect(pay).toMatchObject({ status: "refunded", refundedAmountPence: 3000 });
+    expect(r.body.outcome).toBe("processed");
   });
 
   it("backfill: the migration's own INSERT maps a member's existing pointer as adopted (rolled back afterwards)", async () => {

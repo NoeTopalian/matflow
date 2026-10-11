@@ -374,13 +374,27 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
         outcome = "ignored_stale";
       } else {
         const member = invoiceOwner.member;
+        // Round 3 (lane PB browser runs, lane TS events): a failure of the
+        // subscription's FIRST invoice — the mapping is still "incomplete"
+        // (card declined at sign-up, or 3-D Secure still pending) — happens
+        // while the payer is on the payment form. It is recorded on the
+        // Payment row and on the mapping only: no overdue, no audit, no
+        // member or owner payment-failed email. Dunning is for renewals.
+        const firstPaymentAttempt =
+          invoiceOwner.mapping?.status === "incomplete" || obj.billing_reason === "subscription_create";
+        if (invoiceOwner.mapping) {
+          await tx.memberSubscription.update({
+            where: { id: invoiceOwner.mapping.id },
+            data: { lastPaymentFailedAt: new Date(), lastFailedInvoiceId: failedInvoiceId },
+          });
+        }
         const memberFull = await tx.member.findUnique({
           where: { id: member.id },
           select: { name: true, email: true, tenant: { select: { name: true } }, parent: { select: { email: true } } },
         });
         // Overdue only for the member's ACTIVE subscription: a failed invoice
         // of a superseded or abandoned subscription is recorded, not acted on.
-        if (member.isActive) {
+        if (member.isActive && !firstPaymentAttempt) {
           await tx.member.update({
             where: { id: member.id },
             data: { paymentStatus: "overdue" },
@@ -414,7 +428,7 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
         const amountPence = (obj.amount_due as number) ?? 0;
         const currency = ((obj.currency as string) ?? "gbp").toUpperCase();
         const failureReason = (obj.last_finalization_error as { message?: string } | null)?.message ?? null;
-        pendingAuditLogs.push({
+        if (!firstPaymentAttempt) pendingAuditLogs.push({
           tenantId: member.tenantId,
           userId: null,
           action: "member.payment.failed",
@@ -435,8 +449,8 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
           : memberFull?.parent?.email && !isSynthesisedEmail(memberFull.parent.email)
             ? memberFull.parent.email
             : null;
-        // Dunning emails only for the member's ACTIVE subscription (lane PC).
-        if (member.isActive && memberFull && failedTo) {
+        // Dunning emails only for a RENEWAL of the member's ACTIVE subscription (lane PC).
+        if (member.isActive && !firstPaymentAttempt && memberFull && failedTo) {
           const symbol = currency === "GBP" ? "£" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "";
           const portalUrl = `${baseUrl}/member/profile`;
           const formattedAmount = `${symbol}${(amountPence / 100).toFixed(2)}`;
@@ -1010,14 +1024,28 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
     } else if (event.type === "invoice.voided") {
       // Sprint 5 US-503: void = invoice cancelled before / after payment.
       // Flip the matching Payment row to refunded so the ledger reflects reality.
+      //
+      // Round 3 (lane TS run 7: voided after an incomplete subscription
+      // expired): a Payment row for the invoice is voided as before; with no
+      // Payment row, an invoice of a MAPPED subscription is MatFlow's and the
+      // void is processed as a no-op (clearing a pending 3-D Secure marker for
+      // it); only an invoice with neither is ignored_foreign.
       const invoiceId = obj.id as string;
       const existing = await tx.payment.findFirst({ where: { tenantId, stripeInvoiceId: invoiceId } });
       if (!existing) {
-        outcome = "ignored_foreign";
-        console.warn(
-          `[stripe-webhook] invoice.voided — no Payment for tenant ${tenantId} ` +
-          `(invoice=${invoiceId}). Ledger not updated.`,
-        );
+        const voidedMapping = await mappingFor(invoiceSubscriptionId(obj));
+        if (!voidedMapping) {
+          outcome = "ignored_foreign";
+          console.warn(
+            `[stripe-webhook] invoice.voided — no Payment and no MatFlow subscription for tenant ${tenantId} ` +
+            `(invoice=${invoiceId}). Ledger not updated.`,
+          );
+        } else if (voidedMapping.requiresActionInvoiceId === invoiceId) {
+          await tx.memberSubscription.update({
+            where: { id: voidedMapping.id },
+            data: { requiresActionInvoiceId: null, requiresActionAt: null },
+          });
+        }
       }
       if (existing && existing.status !== "refunded") {
         await tx.payment.update({
