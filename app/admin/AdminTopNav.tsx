@@ -7,7 +7,7 @@
  */
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, Building2, Inbox, CreditCard, Activity, ShieldCheck, LogOut, ShieldHalf } from "lucide-react";
+import { LayoutDashboard, Building2, Inbox, CreditCard, RefreshCw, Activity, ShieldCheck, LogOut, ShieldHalf } from "lucide-react";
 import {
   adminBrandMark,
   adminPalette,
@@ -23,6 +23,7 @@ const NAV_ITEMS = [
   { href: "/admin/tenants", label: "Tenants", icon: Building2 },
   { href: "/admin/applications", label: "Applications", icon: Inbox },
   { href: "/admin/billing", label: "Billing", icon: CreditCard },
+  { href: "/admin/stripe", label: "Stripe sync", icon: RefreshCw },
   { href: "/admin/activity", label: "Activity", icon: Activity },
   { href: "/admin/security", label: "Security", icon: ShieldCheck },
 ] as const;

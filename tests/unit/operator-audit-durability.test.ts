@@ -347,7 +347,8 @@ describe("retention", () => {
     expect(src).not.toMatch(/AUDIT_LOG_RETENTION_MS = 365 \* DAY_MS/);
     expect(src).toMatch(/tx\.auditLog as unknown as BatchDeletable,\s*auditLogRetentionWhere\(now\)/);
     const { AUDIT_EVIDENCE_ACTION_PREFIXES, AUDIT_EVIDENCE_RETENTION_MS } = await import("@/lib/audit-log");
-    expect(AUDIT_EVIDENCE_ACTION_PREFIXES).toEqual(["admin.", "member.dsar_erase"]);
+    // Payments lane PD (11 Oct 2026): operator replays of Stripe events ("stripe.event.") are operator evidence too.
+    expect(AUDIT_EVIDENCE_ACTION_PREFIXES).toEqual(["admin.", "member.dsar_erase", "stripe.event."]);
     expect(AUDIT_EVIDENCE_RETENTION_MS).toBe(6 * 365 * 24 * 60 * 60 * 1000);
     // Row-level behaviour on Postgres: tests/integration/audit-durability-db.test.ts.
   });

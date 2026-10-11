@@ -975,7 +975,7 @@ model StripeEvent {
   objectId         String?
   // Stripe's event.created (unix seconds): ordering, never our clock.
   created          Int       @default(0)
-  // CHECK: received | processed | failed | ignored_foreign | ignored_stale | replayed
+  // CHECK: received | processed | failed | ignored_foreign | ignored_stale | ignored_mode | replayed
   status           String    @default("received")
   attempts         Int       @default(0)
   // Truncated error message of the last failed attempt; never a payload, never PII.

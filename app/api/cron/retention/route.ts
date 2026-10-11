@@ -40,7 +40,6 @@ import { isVercelBlobUrl } from "@/lib/blob-url";
 import { DB_UPLOAD_PREFIX } from "@/lib/import-storage";
 import { purgeSoftDeletedTenants } from "@/lib/tenant-purge";
 import { auditLogRetentionWhere } from "@/lib/audit-log";
-import { runStripeReconciliation, type ReconcileResult } from "@/lib/stripe/reconcile";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -213,31 +212,16 @@ async function handle(req: Request, call: { reason: CallReason }) {
   // first-ever production run of this sweep is a one-way door — it purges a
   // year of logs, 90 days of Stripe events and any tenant past its 30-day
   // soft-delete grace in one pass — so the counts get read by a human before
-  // the scheduler is allowed to run it for real. Reconcile still runs (it is
-  // read-only). The bearer is still required: counts name tenants.
+  // the scheduler is allowed to run it for real. The bearer is still required:
+  // counts name tenants.
   const dryRun = dryRunRequested;
   const sweep = (pick: PickModel, where: object) =>
     dryRun ? countOnly(pick, where) : deleteInBatches(pick, where, elapsed);
 
-  // Stripe reconciliation runs here rather than on its own schedule: Vercel's
-  // Hobby plan allows 2 cron entries and monthly-reports + this one use both.
-  //
-  // It goes FIRST and startedAt is stamped BEFORE it, deliberately. Reconcile is
-  // read-only, bounded by a 72h lookback, and cannot resume — a truncated run
-  // just misses drops. Retention is chunked and explicitly eventually consistent:
-  // whatever it doesn't reach tonight it picks up tomorrow at a committed batch
-  // boundary. So reconcile gets guaranteed time and retention absorbs the cost,
-  // and because elapsed() counts reconcile's time, retention's own 240s soft cap
-  // still bounds the whole function inside maxDuration.
-  //
-  // Never let a reconcile failure take the retention sweep down with it.
-  let reconcile: ReconcileResult | { error: string };
-  try {
-    reconcile = await runStripeReconciliation();
-  } catch (e) {
-    reconcile = { error: (e as Error)?.message ?? "unknown" };
-    console.error("[cron/retention] Stripe reconciliation step failed", { error: reconcile.error });
-  }
+  // Stripe reconciliation no longer runs here (payments lane PD, 11 Oct 2026):
+  // it has its own schedule and switch (/api/cron/stripe-reconcile,
+  // STRIPE_RECONCILE_ENABLED), so it cannot run twice a night or sit behind the
+  // retention kill-switch.
 
   const rules: Array<{ name: string; run: () => Promise<Omit<RuleResult, "rule">> }> = [
     {
@@ -350,7 +334,6 @@ async function handle(req: Request, call: { reason: CallReason }) {
         : { note: "retention cron disabled (RETENTION_CRON_ENABLED is not \"true\"): dry run only, nothing deleted" }),
       ranAt: now.toISOString(),
       elapsedMs: elapsed(),
-      reconcile,
       results,
     },
     { status: ok ? 200 : 500 },

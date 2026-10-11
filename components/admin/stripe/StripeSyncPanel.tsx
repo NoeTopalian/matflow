@@ -84,6 +84,7 @@ const STATUS_LABEL: Record<string, string> = {
   failed: "Failed",
   ignored_foreign: "Not MatFlow's",
   ignored_stale: "Out of date",
+  ignored_mode: "Wrong mode (test/live)",
   replayed: "Replayed",
 };
 

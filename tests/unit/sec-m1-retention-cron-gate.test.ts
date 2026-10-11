@@ -150,7 +150,8 @@ describe("RETENTION_CRON_ENABLED gate (default OFF)", () => {
     expect(body.dryRun).toBe(false);
     expect(prisma.emailLog.deleteMany).toHaveBeenCalled();
     expect(body.results.find((r) => r.rule === "emailLog")?.deleted).toBe(1);
-    expect(m.reconcile).toHaveBeenCalledTimes(1);
+    // Payments lane PD (11 Oct 2026): reconciliation moved to its own cron and switch; retention no longer calls it.
+    expect(m.reconcile).not.toHaveBeenCalled();
     expect(m.purge).toHaveBeenCalledTimes(1);
     expect(m.purge.mock.calls[0][2]).toBe(false);
   });

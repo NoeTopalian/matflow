@@ -311,9 +311,10 @@ export const AUDIT_EVIDENCE_RETENTION_MS = 6 * 365 * DAY_MS;
  * Action prefixes kept for AUDIT_EVIDENCE_RETENTION_MS. `admin.` covers every
  * operator action (Danger Zone, impersonation start/end, operator sign-in,
  * TOTP enrolment, step-up, hard-delete evidence); `member.dsar_erase` covers
- * the erasure record and its request row.
+ * the erasure record and its request row; `stripe.event.` covers the
+ * operator's replay of a Stripe event (requested and outcome rows).
  */
-export const AUDIT_EVIDENCE_ACTION_PREFIXES = ["admin.", "member.dsar_erase"] as const;
+export const AUDIT_EVIDENCE_ACTION_PREFIXES = ["admin.", "member.dsar_erase", "stripe.event."] as const;
 
 /**
  * The retention cron's delete predicate for AuditLog. Rows written during a
