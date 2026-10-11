@@ -116,6 +116,10 @@ export async function GET(
           : kid.paymentStatus === "paid"
             ? ("active" as const)
             : ("pending" as const),
+        // Lane PB (11 Oct 2026): the guardian card needs the id to offer "Finish payment"
+        // after a reload of a pending ("Pay later") sign-up. An id is an opaque Stripe
+        // reference, not a secret; access to it is already scoped to the confirmed guardian.
+        stripeSubscriptionId: kid.stripeSubscriptionId ?? null,
       },
       plans: tiers,
       payments,
