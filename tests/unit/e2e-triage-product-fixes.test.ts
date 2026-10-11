@@ -42,7 +42,7 @@ describe("P1 — an oversized upload is a 413/400, never a 500", () => {
 
 describe("P3 — no failed-payment email to a child's placeholder", () => {
   it("routes a child's payment_failed to the paying parent, never the synthesised address", () => {
-    const s = src("app/api/stripe/webhook/route.ts");
+    const s = src("lib/stripe/webhook/process.ts");
     expect(s).toMatch(/isSynthesisedEmail\(memberFull\.email\)/);
     expect(s).toMatch(/memberFull\?\.parent\?\.email/);
     expect(s).toMatch(/to: failedTo,/);

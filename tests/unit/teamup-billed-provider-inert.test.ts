@@ -145,7 +145,7 @@ describe("overdue derivation never invents a debt for a TeamUp-billed member", (
 
 describe("the webhook matches members by Stripe customer id only", () => {
   it("findMember keys on stripeCustomerId and the route never looks a member up by email", () => {
-    const src = readFileSync("app/api/stripe/webhook/route.ts", "utf8");
+    const src = readFileSync("lib/stripe/webhook/process.ts", "utf8");
     const fn = src.slice(src.indexOf("async function findMember"), src.indexOf("async function findMember") + 1500);
     expect(fn).toMatch(/stripeCustomerId:\s*customerId/);
     // Every member lookup in the handler goes through findMember or an id; an

@@ -156,6 +156,9 @@ beforeEach(() => {
   // to leak into the next; invoice and PaymentIntent events now consult it, so
   // every test starts with no Payment on record unless it sets one.
   mockPaymentFindFirst.mockResolvedValue(null as never);
+  // Lane PC: the class-pack branch now looks the pack up before minting it;
+  // the refund tests set this mock, so it is reset rather than left to leak.
+  vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue(null as never);
   storeFake.runs.length = 0;
   storeFake.done.clear();
   storeFake.statuses.clear();
@@ -1739,5 +1742,83 @@ describe("Stripe webhook: subscription.updated carries pause_collection", () => 
     expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ paymentStatus: "paid", holdUntil: null }),
     }));
+  });
+});
+
+// ── Lane PC (11 Oct 2026): checkout duplicates are decided BEFORE writing ─────
+// The class-pack and shop branches used to catch a P2002 from the unique
+// stripePaymentIntentId and carry on. Postgres has already aborted the
+// transaction at that point, so the store could not mark the event: it was
+// recorded failed and retried for ever (lane PD showed this on real rows).
+// Now the class-pack branch looks for the pack first and does nothing when it
+// exists, and any unique violation fails the handler cleanly (500, recorded
+// failed, no receipt), so Stripe's retry sees the row.
+
+describe("Stripe webhook: checkout duplicates never swallow a unique violation", () => {
+  const packEvent = (id: string) => ({
+    id,
+    type: "checkout.session.completed",
+    account: "acct_test",
+    data: { object: {
+      id: "cs_pack", payment_intent: "pi_pack", currency: "gbp", amount_total: 5000,
+      metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-1", tenantId: "tenant-A" },
+    } },
+  });
+  beforeEach(() => {
+    vi.mocked(prisma.classPack.findFirst).mockResolvedValue({
+      id: "pack-1", validityDays: 30, totalCredits: 10, pricePence: 5000, currency: "gbp", name: "10pk",
+    } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", name: "Sam", email: "sam@gym.test", tenant: { name: "Gym" } } as never);
+  });
+
+  it("class pack already minted for this PaymentIntent: nothing written, no second receipt, processed", async () => {
+    constructEventMock.mockReturnValue(packEvent("evt-pack-dup"));
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({ id: "mcp-1" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+
+    expect(vi.mocked(prisma.memberClassPack.findUnique)).toHaveBeenCalledWith(expect.objectContaining({ where: { stripePaymentIntentId: "pi_pack" } }));
+    expect(vi.mocked(prisma.memberClassPack.create)).not.toHaveBeenCalled();
+    expect(mockPaymentUpsert).not.toHaveBeenCalled();
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(storeFake.statuses.get("evt-pack-dup")).toBe("processed");
+  });
+
+  it("class pack: a unique violation on create (a race) fails the handler cleanly — 500, recorded failed, no receipt", async () => {
+    constructEventMock.mockReturnValue(packEvent("evt-pack-race"));
+    vi.mocked(prisma.memberClassPack.create).mockRejectedValueOnce(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }));
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+
+    expect(res.status).toBe(500);
+    expect(storeFake.failures.get("evt-pack-race")).toMatch(/Unique constraint/);
+    expect(storeFake.done.has("evt-pack-race")).toBe(false);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it("shop order: a unique violation on the Payment mirror fails the handler cleanly — 500, recorded failed, no receipt", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-shop-race",
+      type: "checkout.session.completed",
+      account: "acct_test",
+      data: { object: { id: "cs_shop", payment_intent: "pi_shop_race", currency: "gbp", metadata: { matflowKind: "shop_order", tenantId: "tenant-A", orderRef: "ORD-9" } } },
+    });
+    vi.mocked(prisma.order.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.order.findFirst).mockResolvedValue({
+      memberId: "mem-1", totalPence: 2500, currency: "GBP",
+      member: { name: "Alex", email: "alex@example.com", tenant: { name: "Gym" } },
+    } as never);
+    mockPaymentUpsert.mockRejectedValueOnce(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }));
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+
+    expect(res.status).toBe(500);
+    expect(storeFake.failures.get("evt-shop-race")).toMatch(/Unique constraint/);
+    expect(storeFake.done.has("evt-shop-race")).toBe(false);
+    expect(sendEmailMock).not.toHaveBeenCalled();
   });
 });

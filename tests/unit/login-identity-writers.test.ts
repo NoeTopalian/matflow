@@ -54,7 +54,7 @@ const ALLOW: Record<string, [number, string]> = {
   "app/api/member/children/route.ts#member.create": [1, "a child is created on a fresh synthesised no-login address (synthesiseKidEmail): random, never shared"],
   "app/api/members/[id]/link-child/route.ts#member.updateMany": [1, "guardian link columns (parentMemberId, CONFIRMED_BY spread, derived accountType); never email"],
   "app/api/members/accept-invite/route.ts#member.update": [1, "sets the password, date of birth and derived accountType on the member the token names; never email"],
-  "app/api/stripe/webhook/route.ts#member.update": [1, "payment, hold and status columns (conditional spreads); never email"],
+  "lib/stripe/webhook/process.ts#member.update": [1, "payment and hold columns and the subscription pointer (conditional spreads); never email"],
   "lib/stripe/migrate-memberships.ts#member.updateMany": [2, "Stripe subscription linkage and tier columns (membershipTierWrite spread); never email"],
   "lib/undo-registry.ts#member.updateMany": [2, "guardian-link undo only (parentMemberId + CONFIRMED_BY spread); login addresses are not restorable (f22ac66, AH-H2)"],
 };

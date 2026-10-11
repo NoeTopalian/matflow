@@ -459,28 +459,55 @@ describe("(f) an object MatFlow does not own is acknowledged and nothing is writ
 });
 
 // ── (g) livemode must match the key's mode ───────────────────────────────────
+// Until 11 Oct 2026 a mismatch was refused with 400, which made Stripe retry a
+// test-mode event on the live endpoint for three days (and risked the endpoint
+// being disabled). It is now acknowledged with 200 and recorded in the store
+// as "ignored_mode", with nothing else read or written.
 
-describe("(g) livemode mismatch is refused before anything is claimed", () => {
-  it("a LIVE event against a TEST key -> 400, not claimed", async () => {
-    const r = await deliver({ id: "evt_g1", type: "customer.subscription.updated", livemode: true, data: { object: { id: "sub_matflow", customer: "cus_payer", status: "past_due" } } });
-    expect(r.status).toBe(400);
-    expect(storeFake.runs).toEqual([]);
+describe("(g) livemode mismatch is acknowledged and recorded as ignored_mode, nothing applied", () => {
+  function nothingRead() {
+    expect(db.mapFindFirst).not.toHaveBeenCalled();
+    expect(db.memberFindFirst).not.toHaveBeenCalled();
+    expect(db.payFindFirst).not.toHaveBeenCalled();
+    expect(invoicesRetrieveMock).not.toHaveBeenCalled();
+    expect(subscriptionsRetrieveMock).not.toHaveBeenCalled();
     expect(memberWrites()).toBe(0);
+    expect(db.mapUpdateMany).not.toHaveBeenCalled();
+  }
+
+  it("a LIVE event against a TEST key -> 200, recorded ignored_mode, nothing read or written", async () => {
+    const r = await deliver({ id: "evt_g1", type: "customer.subscription.updated", livemode: true, data: { object: { id: "sub_matflow", customer: "cus_payer", status: "canceled" } } });
+    nothingRead();
+    expect(mappings[0]).toMatchObject({ status: "active", lastEventCreated: 1000 });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ received: true, outcome: "ignored_mode" });
+    expect(storeFake.statuses.get("evt_g1")).toBe("ignored_mode");
   });
 
-  it("a TEST event against a LIVE key -> 400, not claimed", async () => {
+  it("a TEST event against a LIVE key -> 200, recorded ignored_mode, no Stripe lookup", async () => {
     process.env.STRIPE_SECRET_KEY = "rk_live_x";
-    const r = await deliver({ id: "evt_g2", type: "invoice.payment_failed", livemode: false, data: { object: { id: "in_x", customer: "cus_payer" } } });
-    expect(r.status).toBe(400);
-    expect(storeFake.runs).toEqual([]);
+    const r = await deliver({ id: "evt_g2", type: "invoice.payment_failed", livemode: false, data: { object: { id: "in_x", customer: "cus_payer", parent: { type: "subscription_details", subscription_details: { subscription: "sub_matflow", metadata: {} } } } } });
+    nothingRead();
+    expect(r.status).toBe(200);
+    expect(r.body.outcome).toBe("ignored_mode");
+    expect(storeFake.statuses.get("evt_g2")).toBe("ignored_mode");
   });
 
-  it("an event with no livemode at all -> 400", async () => {
+  it("an event with no boolean livemode is not applied either (recorded ignored_mode)", async () => {
     constructEventMock.mockReturnValue({ id: "evt_g3", type: "account.updated", account: "acct_A", created: 1, data: { object: { id: "acct_A" } } });
     const { POST } = await import("@/app/api/stripe/webhook/route");
-    const res = (await POST(req() as never)) as unknown as { status: number };
-    expect(res.status).toBe(400);
+    const res = (await POST(req() as never)) as unknown as { status: number; json: () => Promise<Record<string, unknown>> };
+    expect(res.status).toBe(200);
+    expect((await res.json()).outcome).toBe("ignored_mode");
+    expect(storeFake.statuses.get("evt_g3")).toBe("ignored_mode");
+  });
+
+  it("a key whose mode cannot be read -> 500 and nothing recorded (Stripe retries until the key is fixed)", async () => {
+    process.env.STRIPE_SECRET_KEY = "not_a_stripe_key";
+    const r = await deliver({ id: "evt_g6", type: "customer.subscription.updated", livemode: false, data: { object: { id: "sub_matflow", customer: "cus_payer", status: "past_due" } } });
+    expect(r.status).toBe(500);
     expect(storeFake.runs).toEqual([]);
+    nothingRead();
   });
 
   it("matching modes are processed (live/live and test/test)", async () => {
@@ -491,6 +518,7 @@ describe("(g) livemode mismatch is refused before anything is claimed", () => {
     const test = await deliver({ id: "evt_g5", type: "account.updated", livemode: false, data: { object: { id: "acct_A" } } });
     expect(test.status).toBe(200);
     expect(storeFake.runs).toEqual(["evt_g4", "evt_g5"]);
+    expect(storeFake.statuses.get("evt_g4")).toBe("processed");
   });
 });
 

@@ -241,12 +241,22 @@ describe.skipIf(!HAS_DB)("pay-pc: subscription and invoice events move only the 
     expect(await eventRow(e.id)).toMatchObject({ status: "ignored_foreign" });
   });
 
-  it("(g) a live-mode event against the test key: 400 and no event row", async () => {
+  it("(g) a live-mode event against the test key: 200, recorded ignored_mode, nothing applied", async () => {
+    const mapBefore = await mapping(SUB.mf);
+    const retrievesBefore = retrieveSubscription.mock.calls.length;
     const e = { ...subEvent("customer.subscription.updated", SUB.mf, "canceled", 6000), livemode: true };
     const r = await deliver(e);
     expect(await member(MEM.A)).toMatchObject({ stripeSubscriptionId: SUB.mf, paymentStatus: "paid" });
-    expect(await eventRow(e.id)).toBeNull();
-    expect(r.status).toBe(400);
+    expect(await mapping(SUB.mf)).toEqual(mapBefore);
+    expect(retrieveSubscription.mock.calls.length).toBe(retrievesBefore);
+    // Acknowledged so Stripe stops retrying; recorded so it is visible.
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ received: true, outcome: "ignored_mode" });
+    expect(await eventRow(e.id)).toMatchObject({ status: "ignored_mode", tenantId: TENANT });
+    // A redelivery is recognised and changes nothing.
+    const again = await deliver(e);
+    expect(again).toMatchObject({ status: 200 });
+    expect(await mapping(SUB.mf)).toEqual(mapBefore);
   });
 
   it("(h) duplicate delivery: processed once, the second is acknowledged as already processed", async () => {
