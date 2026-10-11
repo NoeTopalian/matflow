@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
         where: { id: session.user.tenantId },
         // Clear the cached status on every (re)connect: a stale "deauthorized" stamp from a webhook
         // would otherwise keep lane PA's guard refusing this club for up to 24 h after it reconnected.
-        data: { stripeAccountId, stripeConnected: true, stripeAccountStatus: Prisma.DbNull },
+        data: { stripeAccountId, stripeConnected: true, stripeAccountStatus: Prisma.DbNull, stripeConnectedAt: new Date() },
       }),
     );
 

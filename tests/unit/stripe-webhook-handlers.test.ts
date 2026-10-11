@@ -71,6 +71,10 @@ vi.mock("@/lib/stripe/event-store", () => {
   }
   type Out = { outcome: string; tenantId?: string | null; emails?: unknown[]; audits?: Record<string, unknown>[]; after?: Array<() => Promise<unknown>> };
   return {
+    // Review RP-5: the route records the event before its Stripe lookups and
+    // hands the record to runStripeEvent ({ recorded }).
+    recordReceived: async (event: { id: string }) => ({ eventId: event.id, status: storeFake.done.has(event.id) ? "processed" : "received", attempts: 1, tenantId: null, alreadyProcessed: storeFake.done.has(event.id) }),
+    markFailed: async () => {},
     StripeEventRetryableError,
     runStripeEvent: async (event: { id: string }, processor: (e: unknown, ctx: unknown) => Promise<Out>) => {
       storeFake.runs.push(event.id);
@@ -309,7 +313,8 @@ describe("Stripe webhook: invoice.voided", () => {
       account: "acct_test",
       data: { object: { id: "in_x" } },
     });
-    mockPaymentFindFirst.mockResolvedValue({ id: "pay-1" } as never);
+    // Review RP-4: only a SUCCEEDED payment is refunded by a void.
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-1", status: "succeeded", amountPence: 1000 } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
@@ -1350,7 +1355,11 @@ describe("Stripe webhook: invoice payment ids (P0-1)", () => {
     }));
   });
 
-  it("still records the payment when Stripe cannot resolve the ids", async () => {
+  // Review RP-5 (11 Oct 2026): this used to ack 200 and record the payment
+  // with null ids. A lookup that FAILS is now refused as retryable (409) so
+  // Stripe retries and the ids are recorded properly; an invoice that truly
+  // has no payment entry still records nulls (test above, "falls back").
+  it("refuses with 409 (Stripe retries) when Stripe cannot resolve the ids, and writes nothing", async () => {
     invoicesRetrieveMock.mockRejectedValue(new Error("Stripe unavailable"));
     constructEventMock.mockReturnValue({
       id: "evt-p01c", type: "invoice.payment_succeeded", account: "acct_test",
@@ -1360,15 +1369,11 @@ describe("Stripe webhook: invoice payment ids (P0-1)", () => {
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
 
-    // Must still ack, or Stripe retries forever — but with honest nulls, not
-    // the planted values.
-    expect(res.status).toBe(200);
-    expect(mockPaymentUpsert).toHaveBeenCalledWith(expect.objectContaining({
-      create: expect.objectContaining({
-        stripePaymentIntentId: null,
-        stripeChargeId: null,
-      }),
-    }));
+    expect(res.status).toBe(409);
+    expect(mockPaymentUpsert).not.toHaveBeenCalled();
+    expect(mockMemberUpdate).not.toHaveBeenCalled();
+    // The processor never ran: the event was recorded, not claimed or applied.
+    expect(storeFake.runs).toEqual([]);
   });
 });
 

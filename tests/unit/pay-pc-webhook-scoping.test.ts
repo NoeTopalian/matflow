@@ -62,6 +62,10 @@ vi.mock("@/lib/stripe/event-store", () => {
   }
   type Out = { outcome: string; tenantId?: string | null; emails?: unknown[]; audits?: Record<string, unknown>[]; after?: Array<() => Promise<unknown>> };
   return {
+    // Review RP-5: the route records the event before its Stripe lookups and
+    // hands the record to runStripeEvent ({ recorded }).
+    recordReceived: async (event: { id: string }) => ({ eventId: event.id, status: storeFake.done.has(event.id) ? "processed" : "received", attempts: 1, tenantId: null, alreadyProcessed: storeFake.done.has(event.id) }),
+    markFailed: async () => {},
     StripeEventRetryableError,
     runStripeEvent: async (event: { id: string }, processor: (e: unknown, ctx: unknown) => Promise<Out>) => {
       storeFake.runs.push(event.id);
@@ -91,6 +95,7 @@ vi.mock("@/lib/prisma", () => ({
     user: { findMany: vi.fn() },
     member: { findFirst: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     memberSubscription: { findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    membershipTier: { findFirst: vi.fn() },
     memberStatusEvent: { create: vi.fn() },
     payment: { findFirst: vi.fn(), update: vi.fn(), upsert: vi.fn() },
     dispute: { upsert: vi.fn() },
@@ -125,7 +130,10 @@ const db = {
 // One payer, the TeamUp replace window: customer cus_payer carries TeamUp's
 // subscription (sub_teamup, NOT MatFlow's: no mapping) and MatFlow's
 // replacement (sub_matflow, mapped to mem-1, the member's ACTIVE one).
-type Mapping = { id: string; tenantId: string; memberId: string; stripeSubscriptionId: string; status: string; lastEventCreated: number | null; endedAt: Date | null };
+type Mapping = {
+  id: string; tenantId: string; memberId: string; stripeSubscriptionId: string; status: string; lastEventCreated: number | null; endedAt: Date | null;
+  membershipTierId?: string | null; priorPaymentStatus?: string | null; firstPaidAt?: Date | null;
+};
 type MemberRow = { id: string; tenantId: string; status: string; stripeSubscriptionId: string | null; stripeCustomerId: string };
 let mappings: Mapping[];
 let members: MemberRow[];
@@ -155,6 +163,8 @@ function wireDb() {
   db.mapUpdateMany.mockImplementation((async (args: { where: { id: string; OR?: Array<{ lastEventCreated: null | { lte: number } }> }; data: Partial<Mapping> }) => {
     const m = mappings.find((x) => x.id === args.where.id);
     if (!m) return { count: 0 };
+    // Review RP-2: "first paid" is a conditional update on firstPaidAt IS NULL.
+    if ("firstPaidAt" in (args.where as Record<string, unknown>) && m.firstPaidAt) return { count: 0 };
     if (args.where.OR) {
       const ok = args.where.OR.some((c) => (c.lastEventCreated === null ? m.lastEventCreated === null : m.lastEventCreated !== null && m.lastEventCreated <= c.lastEventCreated.lte));
       if (!ok) return { count: 0 };
@@ -636,5 +646,142 @@ describe("round 3: payment_intent.payment_failed never downgrades a settled paym
     db.payFindFirst.mockResolvedValue({ id: "pay-p", tenantId: "tenant-A", status: "pending", amountPence: 1000, stripePaymentIntentId: "pi_p" } as never);
     await deliver({ id: "evt_r3_pif_pending", type: "payment_intent.payment_failed", data: { object: { id: "pi_p" } } });
     expect(db.payUpdate).toHaveBeenCalledWith({ where: { id: "pay-p" }, data: { status: "failed" } });
+  });
+});
+
+// ── Round 4 (independent review RP) ──────────────────────────────────────────
+
+describe("RP-2: entitlement follows payment, not sign-up", () => {
+  const paidInvoice = (id: string, invoice = "in_rp2") => ({
+    id, type: "invoice.payment_succeeded",
+    data: { object: { id: invoice, customer: "cus_payer", amount_paid: 5000, amount_due: 5000, currency: "gbp", parent: { type: "subscription_details", subscription_details: { subscription: "sub_matflow", metadata: {} } } } },
+  });
+  beforeEach(() => {
+    Object.assign(mappings[0], { status: "incomplete", membershipTierId: "tier-app", priorPaymentStatus: "pending", firstPaidAt: null });
+    invoicesRetrieveMock.mockResolvedValue({ id: "in_rp2", payments: { data: [] } });
+    db.payFindFirst.mockResolvedValue(null as never);
+    vi.mocked(prisma.membershipTier.findFirst).mockResolvedValue({ id: "tier-app", name: "App adult" } as never);
+  });
+
+  it("the FIRST paid invoice of the active mapping writes the mapping's tier to the member (once)", async () => {
+    await deliver(paidInvoice("evt_rp2_paid1"));
+    expect(vi.mocked(prisma.membershipTier.findFirst)).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "tier-app", tenantId: "tenant-A" } }));
+    expect(db.memberUpdate).toHaveBeenCalledWith({ where: { id: "mem-1" }, data: { membershipTierId: "tier-app", membershipType: "App adult" } });
+    expect(mappings[0].firstPaidAt).toBeInstanceOf(Date);
+    db.memberUpdate.mockClear();
+    await deliver(paidInvoice("evt_rp2_paid2", "in_rp2_next"));
+    expect(db.memberUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ membershipTierId: expect.anything() }) }));
+  });
+
+  it("no tier is written for a mapping that is not the member's active one", async () => {
+    members[0].stripeSubscriptionId = "sub_other";
+    await deliver(paidInvoice("evt_rp2_notactive"));
+    expect(db.memberUpdate).not.toHaveBeenCalled();
+    expect(mappings[0].firstPaidAt).toBeInstanceOf(Date);
+  });
+
+  it("a deleted tier is not written (and the event still processes)", async () => {
+    vi.mocked(prisma.membershipTier.findFirst).mockResolvedValue(null as never);
+    const r = await deliver(paidInvoice("evt_rp2_notier"));
+    expect(db.memberUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ membershipTierId: expect.anything() }) }));
+    expect(r.body.outcome).toBe("processed");
+  });
+
+  it("incomplete_expired of a never-paid ACTIVE mapping restores the prior paymentStatus and clears the pointer", async () => {
+    mappings[0].priorPaymentStatus = "paid"; // a desk payer who tried the app
+    await deliver({ id: "evt_rp2_exp", type: "customer.subscription.updated", data: { object: { id: "sub_matflow", customer: "cus_payer", status: "incomplete_expired" } } });
+    expect(db.memberUpdate).toHaveBeenCalledWith({ where: { id: "mem-1" }, data: { stripeSubscriptionId: null, paymentStatus: "paid", holdUntil: null } });
+  });
+
+  it("deleted (canceled) before any payment also restores the prior state", async () => {
+    await deliver({ id: "evt_rp2_del", type: "customer.subscription.deleted", data: { object: { id: "sub_matflow", customer: "cus_payer", status: "canceled" } } });
+    expect(db.memberUpdate).toHaveBeenCalledWith({ where: { id: "mem-1" }, data: { stripeSubscriptionId: null, paymentStatus: "pending" } });
+  });
+
+  it("a mapping that WAS paid ends as cancelled, not restored", async () => {
+    Object.assign(mappings[0], { status: "active", firstPaidAt: new Date("2026-10-01") });
+    await deliver({ id: "evt_rp2_paidend", type: "customer.subscription.deleted", data: { object: { id: "sub_matflow", customer: "cus_payer", status: "canceled" } } });
+    expect(db.memberUpdate).toHaveBeenCalledWith({ where: { id: "mem-1" }, data: { stripeSubscriptionId: null, paymentStatus: "cancelled" } });
+  });
+
+  it("a staff-cancelled member still has the pointer cleared on expiry, without a payment-state write", async () => {
+    members[0].status = "cancelled";
+    mappings[0].priorPaymentStatus = "paid";
+    await deliver({ id: "evt_rp2_cancelled", type: "customer.subscription.updated", data: { object: { id: "sub_matflow", customer: "cus_payer", status: "incomplete_expired" } } });
+    expect(db.memberUpdate).toHaveBeenCalledWith({ where: { id: "mem-1" }, data: { stripeSubscriptionId: null } });
+  });
+});
+
+describe("RP-4: a void refunds only money that was taken", () => {
+  const voided = (id: string) => ({
+    id, type: "invoice.voided",
+    data: { object: { id: "in_void4", customer: "cus_payer", parent: { type: "subscription_details", subscription_details: { subscription: "sub_matflow", metadata: {} } } } },
+  });
+  it("a FAILED Payment stays failed with no refundedAmountPence", async () => {
+    db.payFindFirst.mockResolvedValue({ id: "pay-f", status: "failed", amountPence: 3000, stripePaymentIntentId: null } as never);
+    await deliver(voided("evt_rp4_failed"));
+    expect(db.payUpdate).not.toHaveBeenCalled();
+  });
+  it("a PENDING Payment is closed as failed with no refundedAmountPence", async () => {
+    db.payFindFirst.mockResolvedValue({ id: "pay-p", status: "pending", amountPence: 3000, stripePaymentIntentId: null } as never);
+    await deliver(voided("evt_rp4_pending"));
+    expect(db.payUpdate).toHaveBeenCalledWith({ where: { id: "pay-p" }, data: { status: "failed", failureReason: "Invoice voided" } });
+  });
+  it("a SUCCEEDED Payment becomes refunded for its whole amount", async () => {
+    db.payFindFirst.mockResolvedValue({ id: "pay-s", status: "succeeded", amountPence: 3000, stripePaymentIntentId: null } as never);
+    await deliver(voided("evt_rp4_succeeded"));
+    expect(db.payUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "pay-s" }, data: expect.objectContaining({ status: "refunded", refundedAmountPence: 3000 }) }));
+  });
+});
+
+describe("RP-5 / RP-7: a failed Stripe lookup is retried, never read as 'not MatFlow's'", () => {
+  it("the same-second fresh subscription retrieve failing -> 409, processor never run, nothing applied", async () => {
+    mappings[0].lastEventCreated = 2000;
+    subscriptionsRetrieveMock.mockRejectedValue(new Error("stripe down"));
+    const r = await deliver({ id: "evt_rp7", type: "customer.subscription.updated", created: 2000, data: { object: { id: "sub_matflow", customer: "cus_payer", status: "canceled" } } });
+    expect(r.status).toBe(409);
+    expect(storeFake.runs).toEqual([]);
+    expect(memberWrites()).toBe(0);
+    expect(mappings[0].status).toBe("active");
+  });
+  it("the invoice payment-id lookup failing -> 409, no Payment write", async () => {
+    invoicesRetrieveMock.mockRejectedValue(new Error("timeout"));
+    const r = await deliver({ id: "evt_rp5_inv", type: "invoice.payment_failed", data: { object: { id: "in_x", customer: "cus_payer", amount_due: 1, currency: "gbp", parent: { type: "subscription_details", subscription_details: { subscription: "sub_matflow", metadata: {} } } } } });
+    expect(r.status).toBe(409);
+    expect(db.payUpsert).not.toHaveBeenCalled();
+    expect(storeFake.runs).toEqual([]);
+  });
+  it("the mandate's subscription lookup failing -> 409 (was: empty list -> ignored_foreign)", async () => {
+    paymentMethodsRetrieveMock.mockResolvedValue({ id: "pm_1", customer: "cus_payer" });
+    subscriptionsListMock.mockRejectedValue(new Error("stripe down"));
+    const r = await deliver({ id: "evt_rp5_mandate", type: "mandate.updated", data: { object: { id: "mandate_1", status: "inactive", payment_method: "pm_1" } } });
+    expect(r.status).toBe(409);
+    expect(storeFake.runs).toEqual([]);
+    expect(storeFake.statuses.get("evt_rp5_mandate")).toBeUndefined();
+  });
+  it("the pre-transaction Stripe client is bounded: 5 s timeout, no SDK retries", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/stripe/webhook/process.ts", "utf8");
+    expect(src).toMatch(/timeout:\s*5_000,\s*\n\s*maxNetworkRetries:\s*0/);
+  });
+});
+
+describe("RP-9: a deauthorisation from an earlier connection is ignored", () => {
+  it("event.created before Tenant.stripeConnectedAt -> ignored_stale, club stays connected", async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ name: "Gym", stripeConnectedAt: new Date(3000 * 1000) } as never);
+    const r = await deliver({ id: "evt_rp9_old", type: "account.application.deauthorized", created: 2000, data: { object: { id: "ca_x" } } });
+    expect(vi.mocked(prisma.tenant.updateMany)).not.toHaveBeenCalled();
+    expect(r.body.outcome).toBe("ignored_stale");
+  });
+  it("event.created after the connection -> applied (club disconnected)", async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ name: "Gym", stripeConnectedAt: new Date(1000 * 1000) } as never);
+    const r = await deliver({ id: "evt_rp9_new", type: "account.application.deauthorized", created: 2000, data: { object: { id: "ca_x" } } });
+    expect(vi.mocked(prisma.tenant.updateMany)).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ stripeConnected: false }) }));
+    expect(r.body.outcome).toBe("processed");
+  });
+  it("no stripeConnectedAt on record (connected before the column existed) -> applied", async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ name: "Gym", stripeConnectedAt: null } as never);
+    await deliver({ id: "evt_rp9_none", type: "account.application.deauthorized", created: 2000, data: { object: { id: "ca_x" } } });
+    expect(vi.mocked(prisma.tenant.updateMany)).toHaveBeenCalled();
   });
 });

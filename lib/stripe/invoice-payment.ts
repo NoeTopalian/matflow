@@ -1,4 +1,15 @@
 import type Stripe from "stripe";
+import { StripeEventRetryableError } from "@/lib/stripe/event-store";
+
+/**
+ * A Stripe lookup the webhook needs could not be made (network, timeout,
+ * Stripe error). Review RP-5/RP-7 (11 Oct 2026): this is thrown as a RETRYABLE
+ * error so the delivery is answered non-2xx and Stripe retries it. Returning
+ * an empty result instead (as these helpers used to) let the handler decide
+ * "nothing maps" and record the event as ignored_foreign — final, and wrong.
+ * The message is a code, never Stripe's text.
+ */
+export class StripeLookupError extends StripeEventRetryableError {}
 
 export type InvoicePaymentIds = {
   paymentIntentId: string | null;
@@ -29,8 +40,8 @@ export const NO_INVOICE_PAYMENT: InvoicePaymentIds = {
  * `charge.refunded`, `invoice.voided` and dispute linking with nothing to
  * match on.
  *
- * Returns nulls rather than throwing: a webhook that cannot resolve the ids
- * must still record the payment and ack, or Stripe retries forever. The caller
+ * A lookup failure throws StripeLookupError (retryable, review RP-5); an
+ * invoice that genuinely has no payment entry returns nulls. The caller
  * gets the same shape either way and the failure is logged.
  */
 export async function resolveInvoicePaymentIds(
@@ -75,11 +86,11 @@ export async function resolveInvoicePaymentIds(
 
     return { paymentIntentId, chargeId };
   } catch (err) {
-    console.error("[stripe-webhook] could not resolve invoice payment ids", {
+    console.error("[stripe-webhook] could not resolve invoice payment ids — Stripe will retry", {
       invoiceId,
       error: err instanceof Error ? err.message : String(err),
     });
-    return NO_INVOICE_PAYMENT;
+    throw new StripeLookupError("stripe_lookup_failed:invoice_payments");
   }
 }
 
@@ -92,8 +103,8 @@ export async function resolveInvoicePaymentIds(
  * the BACS mandate-failure path has never fired. Mandate does carry
  * `payment_method`, and that PaymentMethod carries the customer.
  *
- * Returns null rather than throwing, for the same reason as above: the webhook
- * must still ack.
+ * A lookup failure throws StripeLookupError (retryable), as above; a payment
+ * method with no customer returns null.
  */
 export async function resolveMandateCustomerId(
   stripe: Stripe,
@@ -110,11 +121,11 @@ export async function resolveMandateCustomerId(
     if (typeof customer === "string") return customer;
     return customer?.id ?? null;
   } catch (err) {
-    console.error("[stripe-webhook] could not resolve mandate customer", {
+    console.error("[stripe-webhook] could not resolve mandate customer — Stripe will retry", {
       paymentMethodId,
       error: err instanceof Error ? err.message : String(err),
     });
-    return null;
+    throw new StripeLookupError("stripe_lookup_failed:mandate_customer");
   }
 }
 
@@ -127,7 +138,7 @@ export async function resolveMandateCustomerId(
  *
  * A subscription with no default payment method of its own collects through
  * the customer's invoice default; it is matched only when that default is the
- * same method. Returns [] rather than throwing, for the same reason as above.
+ * same method. A lookup failure throws StripeLookupError (retryable), as above.
  */
 export async function resolveSubscriptionsUsingPaymentMethod(
   stripe: Stripe,
@@ -152,11 +163,11 @@ export async function resolveSubscriptionsUsingPaymentMethod(
       })
       .map((s) => s.id);
   } catch (err) {
-    console.error("[stripe-webhook] could not list subscriptions for a mandate's payment method", {
+    console.error("[stripe-webhook] could not list subscriptions for a mandate's payment method — Stripe will retry", {
       customerId,
       paymentMethodId,
       error: err instanceof Error ? err.message : String(err),
     });
-    return [];
+    throw new StripeLookupError("stripe_lookup_failed:mandate_subscriptions");
   }
 }

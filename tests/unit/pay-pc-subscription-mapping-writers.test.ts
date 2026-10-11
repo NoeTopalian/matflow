@@ -10,7 +10,7 @@ import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 const {
   customersCreateMock, subscriptionsCreateMock, subscriptionsListMock, stripeCtorMock,
   memberUpdateMock, memberUpdateManyMock, memberFindUniqueMock, mappingUpsertMock, txLog,
-  tierUpdateManyMock, logAuditMock,
+  tierUpdateManyMock, tierFindFirstMock, logAuditMock,
 } = vi.hoisted(() => ({
   customersCreateMock: vi.fn(),
   subscriptionsCreateMock: vi.fn(),
@@ -21,6 +21,7 @@ const {
   memberFindUniqueMock: vi.fn(),
   mappingUpsertMock: vi.fn(),
   tierUpdateManyMock: vi.fn(),
+  tierFindFirstMock: vi.fn(),
   logAuditMock: vi.fn().mockResolvedValue(undefined),
   txLog: [] as Array<{ tx: number; op: string }>,
 }));
@@ -36,7 +37,7 @@ function makeTx(n: number) {
     memberSubscription: {
       upsert: (a: unknown) => { txLog.push({ tx: n, op: "memberSubscription.upsert" }); return mappingUpsertMock(a); },
     },
-    membershipTier: { updateMany: tierUpdateManyMock },
+    membershipTier: { updateMany: tierUpdateManyMock, findFirst: tierFindFirstMock },
   };
 }
 
@@ -121,5 +122,30 @@ describe("in-app create (lib/stripe/subscriptions.ts)", () => {
     expect(out.ok).toBe(false);
     expect(mappingUpsertMock).not.toHaveBeenCalled();
     expect(memberUpdateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("RP-2: the create keeps the tier and the prior payment state on the mapping, not on the member", () => {
+  it("stores the tier of the price and the member's current paymentStatus; Member.membershipTierId is not written", async () => {
+    memberFindUniqueMock.mockResolvedValue({ paymentStatus: "paid" });
+    tierFindFirstMock.mockResolvedValue({ id: "tier-app" });
+    const out = await create();
+    expect(out.ok).toBe(true);
+    expect(tierFindFirstMock).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-A", stripePriceId: "price_1" } }));
+    expect(mappingUpsertMock).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ membershipTierId: "tier-app", priorPaymentStatus: "paid" }),
+    }));
+    const memberData = (memberUpdateMock.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    expect(memberData).not.toHaveProperty("membershipTierId");
+    expect(memberData).not.toHaveProperty("membershipType");
+  });
+
+  it("a price with no MatFlow tier stores a null tier (nothing to grant on payment)", async () => {
+    memberFindUniqueMock.mockResolvedValue({ paymentStatus: "pending" });
+    tierFindFirstMock.mockResolvedValue(null);
+    await create();
+    expect(mappingUpsertMock).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ membershipTierId: null, priorPaymentStatus: "pending" }),
+    }));
   });
 });

@@ -201,6 +201,14 @@ export async function createSubscriptionForMember(
     // member's payment is "pending" until the first invoice is paid (the
     // webhook's invoice.payment_succeeded moves it to "paid").
     await withTenantContext(tenant.id, async (tx) => {
+      // Review RP-2: entitlement follows payment, not sign-up. The tier this
+      // price belongs to and the member's current payment state are kept on
+      // the mapping; Member.membershipTierId is NOT changed here (the webhook
+      // writes it when the first invoice is paid, and an unpaid end restores
+      // the payment state captured now). On a retried create the mapping is
+      // immutable, so the state captured by the first attempt is kept.
+      const before = await tx.member.findUnique({ where: { id: member.id }, select: { paymentStatus: true } });
+      const tier = await tx.membershipTier.findFirst({ where: { tenantId: tenant.id, stripePriceId: priceId }, select: { id: true } });
       await recordSubscriptionMapping(tx, {
         tenantId: tenant.id,
         memberId: member.id,
@@ -209,6 +217,8 @@ export async function createSubscriptionForMember(
         source: "app",
         status: subscription.status ?? "incomplete",
         currentPeriodEnd: subscriptionCurrentPeriodEnd(subscription as unknown as Record<string, unknown>),
+        membershipTierId: tier?.id ?? null,
+        priorPaymentStatus: before?.paymentStatus ?? null,
       });
       await tx.member.update({
         where: { id: member.id },

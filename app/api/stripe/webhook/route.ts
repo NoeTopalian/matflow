@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getBaseUrl } from "@/lib/env-url";
 import { HANDLED_STRIPE_EVENT_TYPES } from "@/lib/stripe/handled-events";
 import { classifyStripeKey } from "@/lib/stripe/key-mode";
-import { runStripeEvent } from "@/lib/stripe/event-store";
+import { markFailed, recordReceived, runStripeEvent, StripeEventRetryableError } from "@/lib/stripe/event-store";
 import { livemodeMatchesKey } from "@/lib/stripe/webhook/mapping";
 import { prepareStripeEvent, type WebhookEvent } from "@/lib/stripe/webhook/process";
 
@@ -93,7 +93,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true, outcome: "ignored_mode" });
   }
 
-  const processor = await prepareStripeEvent(event, { baseUrl: getBaseUrl(req) });
+  // Review RP-5: the event is recorded BEFORE any Stripe lookup, so a delivery
+  // whose lookups fail still leaves a row (status "received", one attempt)
+  // that reconciliation and the operator page can see. The same record is
+  // handed to runStripeEvent, so one delivery counts one attempt.
+  const recorded = await recordReceived(event);
+  if (recorded.alreadyProcessed) {
+    return NextResponse.json({ received: true, alreadyProcessed: true });
+  }
+
+  let processor: Awaited<ReturnType<typeof prepareStripeEvent<WebhookEvent>>>;
+  try {
+    processor = await prepareStripeEvent(event, { baseUrl: getBaseUrl(req) });
+  } catch (err) {
+    if (err instanceof StripeEventRetryableError) {
+      // A Stripe lookup failed or timed out (5 s, no SDK retries). Never
+      // guessed around: 409 so Stripe retries; the row stays "received".
+      console.warn("[stripe-webhook] pre-transaction lookup failed — asking Stripe to redeliver", {
+        eventId: event.id,
+        type: event.type,
+        reason: err.message,
+      });
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    // Anything else (a database read before the transaction): recorded failed.
+    await markFailed(event.id, err).catch(() => {});
+    console.error("[stripe-webhook] preparing the event failed", {
+      eventId: event.id,
+      type: event.type,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return NextResponse.json({ error: "Processing failed" }, { status: 500 });
+  }
 
   // Durable processing (lane PD's store, wired by lane PC, 11 Oct 2026).
   // runStripeEvent records the event in its OWN transaction first (so a failed
@@ -104,7 +135,7 @@ export async function POST(req: NextRequest) {
   // terminal status (processed / ignored_*) in the SAME commit as its effects,
   // and only then sends emails and runs the post-commit jobs. A duplicate is
   // recognised by the row's status, never by a unique violation.
-  const run = await runStripeEvent(event, processor);
+  const run = await runStripeEvent(event, processor, { recorded });
 
   switch (run.kind) {
     case "processed":

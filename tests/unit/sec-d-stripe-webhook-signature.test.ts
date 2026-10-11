@@ -53,6 +53,10 @@ vi.mock("@/lib/stripe/event-store", () => {
   }
   type Out = { outcome: string; emails?: Array<Record<string, unknown>> };
   return {
+    // Review RP-5: the route records the event before its Stripe lookups and
+    // hands the record to runStripeEvent ({ recorded }).
+    recordReceived: async (event: { id: string }) => ({ eventId: event.id, status: false ? "processed" : "received", attempts: 1, tenantId: null, alreadyProcessed: false }),
+    markFailed: async () => {},
     StripeEventRetryableError,
     runStripeEvent: async (event: { id: string; type: string }, processor: (e: unknown, ctx: unknown) => Promise<Out>) => {
       const { withRlsBypass } = await import("@/lib/prisma-tenant");

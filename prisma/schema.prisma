@@ -26,6 +26,10 @@ model Tenant {
   onboardingAnswers      Json?
   stripeAccountId        String?   @unique // one connected account per club; prevents webhook/refund mis-routing across tenants
   stripeConnected        Boolean   @default(false)
+  // When the club's current Stripe connection was made (OAuth callback). A
+  // deauthorisation event created BEFORE this belongs to an earlier connection
+  // and is ignored (payments lane PC, review RP-9).
+  stripeConnectedAt      DateTime?
   // ADR-001 D2: venues inside this club. Additive; a class with no location
   // belongs to all of them, so a single-venue club never notices.
   locations              Location[]
@@ -406,7 +410,7 @@ model MemberSubscription {
   currentPeriodEnd        DateTime?
   // Stripe event.created (unix seconds) of the last subscription event applied:
   // an event older than this is recorded as stale and not applied.
-  lastEventCreated        Int?
+  lastEventCreated        BigInt?
   // invoice.payment_action_required: the invoice waiting on the payer (3-D
   // Secure / authentication). Cleared when that invoice is paid. Payment state
   // only; never changes entitlement.
@@ -418,6 +422,15 @@ model MemberSubscription {
   // is on the payment form, so no overdue and no dunning emails.
   lastPaymentFailedAt     DateTime?
   lastFailedInvoiceId     String?
+  // Review RP-2: entitlement follows payment, not sign-up. The tier this
+  // subscription is FOR (written to the member only when its first invoice is
+  // paid), and the member's paymentStatus captured when MatFlow created it
+  // (restored if the subscription ends without ever being paid). No FK: a
+  // deleted tier is checked for at the moment of use.
+  membershipTierId        String?
+  priorPaymentStatus      String?
+  // First time an invoice of this subscription was paid. Null = never paid.
+  firstPaidAt             DateTime?
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
   // Set when Stripe reports the subscription canceled or incomplete_expired.

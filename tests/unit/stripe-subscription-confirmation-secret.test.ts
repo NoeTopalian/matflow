@@ -46,6 +46,9 @@ const fakeTx = {
   // Payments lane PC (11 Oct 2026): the create now writes the subscription's
   // MemberSubscription mapping in the same transaction as the pointer
   // (asserted in tests/unit/pay-pc-subscription-mapping-writers.test.ts).
+  // Review RP-2: the create reads the tier of the price and the member's
+  // current payment state to keep on the mapping.
+  membershipTier: { findFirst: async () => ({ id: "tier-1" }) },
   memberSubscription: {
     upsert: async (a: { create: { id?: string; tenantId: string; memberId: string } }) => ({ id: "ms-1", tenantId: a.create.tenantId, memberId: a.create.memberId }),
   },

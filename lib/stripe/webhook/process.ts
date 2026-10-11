@@ -21,7 +21,7 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
 import { packCreditsAfterRefund } from "@/lib/pack-refund";
-import { resolveInvoicePaymentIds, resolveMandateCustomerId, resolveSubscriptionsUsingPaymentMethod, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
+import { resolveInvoicePaymentIds, resolveMandateCustomerId, resolveSubscriptionsUsingPaymentMethod, NO_INVOICE_PAYMENT, StripeLookupError, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
 import { subscriptionStatusToPaymentStatus } from "@/lib/stripe/subscription-status";
 import { readPauseCollection } from "@/lib/member-hold";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
@@ -60,6 +60,21 @@ type WebhookOutcome = ProcessorResult["outcome"];
 
 type Tx = Prisma.TransactionClient;
 
+/**
+ * The Stripe client for the lookups made BEFORE the processing transaction
+ * (review RP-5): 5 s per request and no SDK retries, so a slow or failing
+ * Stripe cannot hold the delivery past Stripe's own 20 s window — the lookup
+ * fails, the delivery is answered non-2xx, and Stripe retries it later.
+ */
+async function preTransactionStripe() {
+  const StripeCtor = (await import("stripe")).default;
+  return new StripeCtor(process.env.STRIPE_SECRET_KEY!, {
+    apiVersion: "2026-03-25.dahlia",
+    timeout: 5_000,
+    maxNetworkRetries: 0,
+  });
+}
+
 export async function prepareStripeEvent<E extends WebhookEvent>(
   event: E,
   opts: { baseUrl?: string } = {},
@@ -92,10 +107,7 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
     stripeAccountId &&
     process.env.STRIPE_SECRET_KEY
   ) {
-    const StripeCtor = (await import("stripe")).default;
-    const stripeClient = new StripeCtor(process.env.STRIPE_SECRET_KEY, {
-      apiVersion: "2026-03-25.dahlia",
-    });
+    const stripeClient = await preTransactionStripe();
     invoicePayment = await resolveInvoicePaymentIds(stripeClient, obj.id, stripeAccountId);
   }
 
@@ -116,10 +128,7 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
     stripeAccountId &&
     process.env.STRIPE_SECRET_KEY
   ) {
-    const StripeCtor = (await import("stripe")).default;
-    const stripeClient = new StripeCtor(process.env.STRIPE_SECRET_KEY, {
-      apiVersion: "2026-03-25.dahlia",
-    });
+    const stripeClient = await preTransactionStripe();
     mandateCustomerId = await resolveMandateCustomerId(stripeClient, obj.payment_method, stripeAccountId);
     // Lane PC: the customer alone is not enough — it may also carry another
     // platform's subscription. Only the subscriptions that actually collect
@@ -160,18 +169,19 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
     });
     if (known && !isTerminalSubscriptionStatus(known.status) && orderingVerdict(known, event.created) === "fetch_fresh") {
       try {
-        const StripeCtor = (await import("stripe")).default;
-        const stripeClient = new StripeCtor(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
+        const stripeClient = await preTransactionStripe();
         const fresh = await stripeClient.subscriptions.retrieve(subscriptionId, {}, { stripeAccount: stripeAccountId });
         freshSubscription = fresh as unknown as Record<string, unknown>;
       } catch (err) {
-        // The payload is what the handler always applied; falling back to it
-        // is no worse than before, and a Stripe outage must not stall billing.
-        console.error("[stripe-webhook] fresh subscription retrieve failed — applying the event payload", {
+        // Review RP-7: the fresh state is needed precisely because the payload
+        // may be stale, so falling back to the payload could apply an old
+        // state. The delivery is refused (retryable) and Stripe retries.
+        console.error("[stripe-webhook] fresh subscription retrieve failed — Stripe will retry", {
           eventId: event.id,
           subscriptionId,
           error: err instanceof Error ? err.message : String(err),
         });
+        throw new StripeLookupError("stripe_lookup_failed:subscription");
       }
     }
   }
@@ -240,6 +250,7 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
         select: {
           id: true, tenantId: true, memberId: true, stripeSubscriptionId: true,
           status: true, lastEventCreated: true, endedAt: true, requiresActionInvoiceId: true,
+          membershipTierId: true, priorPaymentStatus: true, firstPaidAt: true,
         },
       });
     }
@@ -338,14 +349,19 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
           data: {
             status: "canceled",
             endedAt: mapping.endedAt ?? new Date(),
-            lastEventCreated: Math.max(mapping.lastEventCreated ?? 0, created ?? 0) || null,
+            lastEventCreated: Math.max(Number(mapping.lastEventCreated ?? 0), created ?? 0) || null,
           },
         });
         const owner = await mappedMember(mapping);
         if (owner?.isActive) {
+          // Review RP-2: a subscription that was never paid gave the member
+          // nothing; its end puts back the payment state they had when
+          // MatFlow created it (a desk payer is paid again). A paid one ends
+          // as "cancelled" (no coverage).
+          const endedPaymentStatus = !mapping.firstPaidAt && mapping.priorPaymentStatus ? mapping.priorPaymentStatus : "cancelled";
           await tx.member.update({
             where: { id: owner.id },
-            data: { stripeSubscriptionId: null, paymentStatus: "cancelled" },
+            data: { stripeSubscriptionId: null, paymentStatus: endedPaymentStatus },
           });
           // A3H-9 / D2: audit the Stripe-initiated end, keyed to Member.id so
           // the member's DSAR export and timeline carry it.
@@ -512,6 +528,28 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
           where: { id: invoiceOwner.mapping.id },
           data: { requiresActionInvoiceId: null, requiresActionAt: null },
         });
+      }
+      // Review RP-2: entitlement follows payment, not sign-up. The FIRST paid
+      // invoice of the member's active mapping is when the tier the sign-up
+      // was for becomes the member's tier (never at creation). The
+      // conditional update makes "first" atomic across redeliveries.
+      if (member && invoiceOwner?.mapping) {
+        const firstPaid = await tx.memberSubscription.updateMany({
+          where: { id: invoiceOwner.mapping.id, firstPaidAt: null },
+          data: { firstPaidAt: new Date() },
+        });
+        if (firstPaid.count === 1 && member.isActive && invoiceOwner.mapping.membershipTierId) {
+          const tier = await tx.membershipTier.findFirst({
+            where: { id: invoiceOwner.mapping.membershipTierId, tenantId: tenantId! },
+            select: { id: true, name: true },
+          });
+          if (tier) {
+            await tx.member.update({
+              where: { id: member.id },
+              data: { membershipTierId: tier.id, membershipType: tier.name },
+            });
+          }
+        }
       }
       // A £0 invoice is not a payment. Stripe issues one the moment a
       // subscription is created with a future `billing_cycle_anchor` and no
@@ -985,19 +1023,27 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
             // clears. Holds started from the Stripe dashboard therefore reach the
             // profile too, with their end date.
             const hold = readPauseCollection(source);
-            const paymentStatus = hold.paused ? "paused" : subscriptionStatusToPaymentStatus(status);
+            // Review RP-2: a subscription that ends without ever having been
+            // paid (incomplete_expired, or canceled before a first payment)
+            // restores the payment state the member had when MatFlow created
+            // it — a desk payer is paid again, a new member is back to what
+            // they had. Otherwise the shared status map decides.
+            const restored = ended && !mapping.firstPaidAt && mapping.priorPaymentStatus ? mapping.priorPaymentStatus : undefined;
+            const paymentStatus = restored ?? (hold.paused ? "paused" : subscriptionStatusToPaymentStatus(status));
             // Tier 3.12: don't let an 'active'/'past_due' update RESURRECT the
             // payment state of a member staff have cancelled.
             const wouldResurrectCancelled = member.status === "cancelled" && paymentStatus !== "cancelled";
-            const changes = ended || !!paymentStatus;
-            if (changes && !wouldResurrectCancelled) {
+            const writePayment = !!paymentStatus && !wouldResurrectCancelled;
+            // The pointer is cleared whenever the subscription ended, even
+            // when the payment state is left alone.
+            if (ended || writePayment) {
               await tx.member.update({
                 where: { id: member.id },
                 data: {
                   // The subscription ended: the member no longer has an active one.
                   ...(ended ? { stripeSubscriptionId: null } : {}),
-                  ...(paymentStatus ? { paymentStatus } : {}),
-                  ...(hold.paused ? { holdUntil: hold.resumesAt } : paymentStatus ? { holdUntil: null } : {}),
+                  ...(writePayment ? { paymentStatus } : {}),
+                  ...(writePayment ? (hold.paused ? { holdUntil: hold.resumesAt } : { holdUntil: null }) : {}),
                 },
               });
             }
@@ -1047,7 +1093,17 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
           });
         }
       }
-      if (existing && existing.status !== "refunded") {
+      // Review RP-4: a void returns money only if money was taken. A pending
+      // attempt is closed as failed (it can never be paid now); a failed one
+      // stays failed; neither gets a refundedAmountPence. Refunded and
+      // disputed rows are left as they are.
+      if (existing && existing.status === "pending") {
+        await tx.payment.update({
+          where: { id: existing.id },
+          data: { status: "failed", failureReason: "Invoice voided" },
+        });
+      }
+      if (existing && existing.status === "succeeded") {
         await tx.payment.update({
           where: { id: existing.id },
           // Tier 3.13: stamp the refunded amount (a void reverses the whole
@@ -1478,46 +1534,57 @@ export async function prepareStripeEvent<E extends WebhookEvent>(
       // (requireChargeableClubAccount, lib/stripe/club-account.ts) refuses on
       // the flag and on this stamp, and a stale-cache refresh against an
       // account we can no longer read now fails CLOSED (lane PA, 11 Oct 2026).
-      await tx.tenant.updateMany({
-        where: { id: tenantId },
-        data: {
-          stripeConnected: false,
-          stripeAccountStatus: {
-            chargesEnabled: false,
-            payoutsEnabled: false,
-            requirementsPastDue: [],
-            disabledReason: "deauthorized",
-            refreshedAt: new Date().toISOString(),
-          },
-        },
-      });
-      pendingAuditLogs.push({
-        tenantId,
-        userId: null,
-        action: "stripe.account.deauthorized",
-        entityType: "Tenant",
-        entityId: tenantId,
-        metadata: { stripeAccountId },
-      });
-      const deauthTenant = await tx.tenant.findUnique({
-        where: { id: tenantId },
-        select: { name: true },
-      });
-      const deauthOwners = await tx.user.findMany({
-        where: { tenantId, role: "owner" },
-        select: { email: true },
-      }).catch(() => []);
-      for (const owner of deauthOwners) {
-        if (!owner.email) continue;
-        pendingEmails.push({
-          tenantId,
-          templateId: "stripe_disconnected_owner",
-          to: owner.email,
-          vars: {
-            gymName: deauthTenant?.name ?? "your gym",
-            dashboardUrl: `${baseUrl}/dashboard/settings`,
+      // Review RP-9: a deauthorisation created BEFORE the club last connected
+      // belongs to an earlier connection (Stripe retries and reorders); applying
+      // it would disconnect a club that has just reconnected. Ignored as stale.
+      const connection = await tx.tenant.findUnique({ where: { id: tenantId }, select: { stripeConnectedAt: true } });
+      const connectedAt = connection?.stripeConnectedAt ?? null;
+      const fromEarlierConnection =
+        typeof event.created === "number" && connectedAt !== null && event.created < Math.floor(connectedAt.getTime() / 1000);
+      if (fromEarlierConnection) {
+        outcome = "ignored_stale";
+      } else {
+        await tx.tenant.updateMany({
+          where: { id: tenantId },
+          data: {
+            stripeConnected: false,
+            stripeAccountStatus: {
+              chargesEnabled: false,
+              payoutsEnabled: false,
+              requirementsPastDue: [],
+              disabledReason: "deauthorized",
+              refreshedAt: new Date().toISOString(),
+            },
           },
         });
+        pendingAuditLogs.push({
+          tenantId,
+          userId: null,
+          action: "stripe.account.deauthorized",
+          entityType: "Tenant",
+          entityId: tenantId,
+          metadata: { stripeAccountId },
+        });
+        const deauthTenant = await tx.tenant.findUnique({
+          where: { id: tenantId },
+          select: { name: true },
+        });
+        const deauthOwners = await tx.user.findMany({
+          where: { tenantId, role: "owner" },
+          select: { email: true },
+        }).catch(() => []);
+        for (const owner of deauthOwners) {
+          if (!owner.email) continue;
+          pendingEmails.push({
+            tenantId,
+            templateId: "stripe_disconnected_owner",
+            to: owner.email,
+            vars: {
+              gymName: deauthTenant?.name ?? "your gym",
+              dashboardUrl: `${baseUrl}/dashboard/settings`,
+            },
+          });
+        }
       }
     }
     // Audit iter-1-member-lifecycle A3H-2 + A3H-9: side-effects are RETURNED,

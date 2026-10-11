@@ -25,9 +25,15 @@ export type SubscriptionMapping = {
   memberId: string;
   stripeSubscriptionId: string;
   status: string;
-  lastEventCreated: number | null;
+  // BIGINT in the database (review RP-10): Prisma returns a bigint; unit
+  // fixtures pass numbers. Compared through Number() (unix seconds fit exactly).
+  lastEventCreated: bigint | number | null;
   endedAt: Date | null;
   requiresActionInvoiceId?: string | null;
+  // Review RP-2 (entitlement follows payment).
+  membershipTierId?: string | null;
+  priorPaymentStatus?: string | null;
+  firstPaidAt?: Date | null;
 };
 
 /** Statuses a Stripe subscription can never leave. */
@@ -58,6 +64,10 @@ export async function recordSubscriptionMapping(
     source: MappingSource;
     status: string;
     currentPeriodEnd: Date | null;
+    /** The tier this subscription is for; written to the member on its first paid invoice (RP-2). */
+    membershipTierId?: string | null;
+    /** The member's paymentStatus when MatFlow created it; restored if it ends never paid (RP-2). */
+    priorPaymentStatus?: string | null;
   },
 ): Promise<{ id: string }> {
   const row = await tx.memberSubscription.upsert({
@@ -70,6 +80,8 @@ export async function recordSubscriptionMapping(
       source: input.source,
       status: input.status,
       currentPeriodEnd: input.currentPeriodEnd,
+      membershipTierId: input.membershipTierId ?? null,
+      priorPaymentStatus: input.priorPaymentStatus ?? null,
     },
     update: {},
     select: { id: true, tenantId: true, memberId: true },
@@ -124,8 +136,9 @@ export function orderingVerdict(
 ): "stale" | "fetch_fresh" | "apply" {
   if (typeof eventCreated !== "number") return "fetch_fresh";
   if (mapping.lastEventCreated === null) return "fetch_fresh";
-  if (eventCreated < mapping.lastEventCreated) return "stale";
-  if (eventCreated === mapping.lastEventCreated) return "fetch_fresh";
+  const last = Number(mapping.lastEventCreated);
+  if (eventCreated < last) return "stale";
+  if (eventCreated === last) return "fetch_fresh";
   return "apply";
 }
 
