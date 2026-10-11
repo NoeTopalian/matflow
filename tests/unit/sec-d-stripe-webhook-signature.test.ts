@@ -27,25 +27,6 @@ vi.mock("@/lib/prisma-tenant", () => ({
           db.claimed.push(data.eventId);
           return {};
         },
-        // Payments lane PC (11 Oct 2026) wired lane PD's event store into the
-        // route: the event row is now recorded by the raw INSERT below and
-        // marked with update/updateMany; these keep the recorder's meaning
-        // ("claimed" = an event row recorded for processing).
-        findUnique: async () => ({ status: "processed", attempts: 1, tenantId: "t_secd" }),
-        update: async () => ({}),
-        updateMany: async () => ({ count: 1 }),
-      },
-      $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-        const sql = strings.join("?");
-        if (sql.includes('INSERT INTO "StripeEvent"')) {
-          const eventId = String(values[1]);
-          // Already recorded and processed: the conditional upsert matches nothing.
-          if (db.duplicate || db.claimed.includes(eventId)) return [];
-          db.claimed.push(eventId);
-          return [{ status: "received", attempts: 1, tenantId: "t_secd" }];
-        }
-        if (sql.includes("FOR UPDATE SKIP LOCKED")) return [{ status: "received" }];
-        return [{ n: 1 }];
       },
       tenant: { findFirst: async () => ({ id: "t_secd" }), findUnique: async () => null, updateMany: async () => ({ count: 0 }) },
       user: { findMany: async () => [] },
@@ -59,6 +40,36 @@ vi.mock("@/lib/email", () => ({ sendEmail }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => {}) }));
 vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
 vi.mock("@/lib/stripe-account-status", () => ({ refreshStripeAccountStatus: vi.fn(async () => {}) }));
+// Payments lane PC (11 Oct 2026) wired lane PD's durable event store into the
+// route (runStripeEvent records and claims the event, then runs the handler in
+// one transaction). This verification-focused file keeps its recorder: the
+// store is replaced by a minimal fake of that contract that claims through the
+// recorder's stripeEvent.create, so "claimed" and "nothing written" mean
+// exactly what they meant before. The real store is proven on real rows by
+// lane PD's DB tests.
+vi.mock("@/lib/stripe/event-store", () => {
+  class StripeEventRetryableError extends Error {
+    readonly retryable = true;
+  }
+  type Out = { outcome: string; emails?: Array<Record<string, unknown>> };
+  return {
+    StripeEventRetryableError,
+    runStripeEvent: async (event: { id: string; type: string }, processor: (e: unknown, ctx: unknown) => Promise<Out>) => {
+      const { withRlsBypass } = await import("@/lib/prisma-tenant");
+      try {
+        const out = await withRlsBypass(async (tx) => {
+          await (tx as { stripeEvent: { create: (a: unknown) => Promise<unknown> } }).stripeEvent.create({ data: { eventId: event.id, type: event.type } });
+          return processor(event, { tx, mode: "delivery", tenantId: null });
+        });
+        for (const e of out.emails ?? []) await sendEmail(e as never);
+        return { kind: out.outcome, status: out.outcome, tenantId: null, emailsSent: 0, auditsWritten: 0 };
+      } catch (err) {
+        if ((err as { code?: string }).code === "P2002") return { kind: "already_processed", status: "processed" };
+        return { kind: "failed", retryable: err instanceof StripeEventRetryableError, error: (err as Error).message };
+      }
+    },
+  };
+});
 
 import Stripe from "stripe";
 import { POST } from "@/app/api/stripe/webhook/route";

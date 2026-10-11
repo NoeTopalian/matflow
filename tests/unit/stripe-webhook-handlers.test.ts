@@ -51,14 +51,56 @@ vi.mock("@/lib/prisma-tenant", () => ({
   },
 }));
 
+// Lane PC (11 Oct 2026) wired lane PD's durable store (lib/stripe/event-store.ts)
+// into the route: the route hands its processor to runStripeEvent, which
+// records, claims, runs it inside the transaction, writes its audit rows,
+// marks the outcome, and sends its emails after commit. The store itself is
+// proven on real rows by lane PD's DB tests and by the route-level DB tests
+// (pay-pd-webhook-durability-db, pay-pc-webhook-mapping-db). Here it is
+// replaced by a small fake of that CONTRACT, so these handler tests do not
+// depend on how the store writes its row.
+const storeFake = vi.hoisted(() => ({
+  runs: [] as string[],
+  done: new Set<string>(),
+  statuses: new Map<string, string>(),
+  failures: new Map<string, string>(),
+}));
+vi.mock("@/lib/stripe/event-store", () => {
+  class StripeEventRetryableError extends Error {
+    readonly retryable = true;
+  }
+  type Out = { outcome: string; tenantId?: string | null; emails?: unknown[]; audits?: Record<string, unknown>[]; after?: Array<() => Promise<unknown>> };
+  return {
+    StripeEventRetryableError,
+    runStripeEvent: async (event: { id: string }, processor: (e: unknown, ctx: unknown) => Promise<Out>) => {
+      storeFake.runs.push(event.id);
+      if (storeFake.done.has(event.id)) return { kind: "already_processed", status: storeFake.statuses.get(event.id) ?? "processed" };
+      const { prisma: tx } = await import("@/lib/prisma");
+      const { logAudit } = await import("@/lib/audit-log");
+      const { sendEmail } = await import("@/lib/email");
+      const Sentry = await import("@sentry/nextjs");
+      let out: Out;
+      try {
+        out = await processor(event, { tx, mode: "delivery", tenantId: null });
+        for (const a of out.audits ?? []) await logAudit({ ...a, tx } as never);
+      } catch (err) {
+        const retryable = err instanceof StripeEventRetryableError;
+        storeFake.failures.set(event.id, (err as Error).message);
+        if (!retryable) Sentry.captureException(err);
+        return { kind: "failed", retryable, error: (err as Error).message };
+      }
+      storeFake.done.add(event.id);
+      storeFake.statuses.set(event.id, out.outcome);
+      for (const e of out.emails ?? []) void (sendEmail as (x: unknown) => Promise<unknown>)(e).catch(() => {});
+      for (const job of out.after ?? []) await job().catch(() => {});
+      return { kind: out.outcome, status: out.outcome, tenantId: out.tenantId ?? null, emailsSent: 0, auditsWritten: 0 };
+    },
+  };
+});
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    // Lane PC wired lane PD's store (lib/stripe/event-store.ts) into the route:
-    // the event row is written by a raw INSERT … ON CONFLICT and locked with
-    // SELECT … FOR UPDATE SKIP LOCKED, then marked with update/updateMany.
-    // stripeEvent.create is no longer called by the route.
-    stripeEvent: { create: vi.fn(), delete: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
-    $queryRaw: vi.fn(),
+    stripeEvent: { create: vi.fn(), delete: vi.fn() },
     tenant: { findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
     user: { findMany: vi.fn() },
     member: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
@@ -114,14 +156,10 @@ beforeEach(() => {
   // to leak into the next; invoice and PaymentIntent events now consult it, so
   // every test starts with no Payment on record unless it sets one.
   mockPaymentFindFirst.mockResolvedValue(null as never);
-  // Lane PC: the store's raw statements — a new event is inserted as
-  // "received" and the processing transaction's row lock succeeds.
-  vi.mocked(prisma.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) => {
-    const sql = strings.join("?");
-    if (sql.includes('INSERT INTO "StripeEvent"')) return [{ status: "received", attempts: 1, tenantId: null }];
-    if (sql.includes("FOR UPDATE SKIP LOCKED")) return [{ status: "received" }];
-    return [{ n: 1 }];
-  }) as never);
+  storeFake.runs.length = 0;
+  storeFake.done.clear();
+  storeFake.statuses.clear();
+  storeFake.failures.clear();
   mockStripeEventCreate.mockResolvedValue({ id: "evt-row-1" } as never);
   mockTenantFindFirst.mockResolvedValue({ id: "tenant-A" } as never);
   // Defaults so dispute branches that fan out owner emails don't explode when a
@@ -1132,8 +1170,8 @@ describe("Stripe webhook: idempotency claim", () => {
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(200);
     expect(mockStripeEventCreate).not.toHaveBeenCalled();
-    // Lane PC: and no store row either (the store's INSERT never runs).
-    expect(vi.mocked(prisma.$queryRaw)).not.toHaveBeenCalled();
+    // Lane PC: and the event never reaches the store (no row is recorded).
+    expect(storeFake.runs).toEqual([]);
     const body = await res.json();
     expect(body.ignored).toBe(true);
   });
@@ -1158,25 +1196,20 @@ describe("Stripe webhook: idempotency claim", () => {
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(500);
     expect(sentryCaptureMock).toHaveBeenCalled();
-    // Lane PC wiring: the failure is now recorded durably on the event's row.
-    expect(vi.mocked(prisma.stripeEvent.updateMany)).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ eventId: "evt-rollback" }),
-      data: expect.objectContaining({ status: "failed" }),
-    }));
+    // Lane PC wiring: the processor's throw reaches the store (which records
+    // it on the event's row — proven on real rows by pay-pd-webhook-durability-db)
+    // and the event is not marked done, so Stripe's retry processes it.
+    expect(storeFake.failures.get("evt-rollback")).toBe("db blew up");
+    expect(storeFake.done.has("evt-rollback")).toBe(false);
   });
 
   it("acks 200 alreadyProcessed when the event's store row is already processed (duplicate delivery)", async () => {
     // Tier 1.1, now through lane PD's store (wired by lane PC, 11 Oct 2026): a
     // duplicate is recognised by the StripeEvent row's terminal status, not by
     // a P2002 — which used to ack ANY unique violation inside a handler as a
-    // duplicate. The conditional INSERT matches nothing, the row reads
-    // "processed", and nothing is reprocessed.
-    vi.mocked(prisma.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) => {
-      const sql = strings.join("?");
-      if (sql.includes('INSERT INTO "StripeEvent"')) return [];
-      return [{ status: "processed" }];
-    }) as never);
-    vi.mocked(prisma.stripeEvent.findUnique).mockResolvedValueOnce({ status: "processed", attempts: 1, tenantId: "tenant-A" } as never);
+    // duplicate. The row already reads "processed", and nothing is reprocessed.
+    storeFake.done.add("evt-dup");
+    storeFake.statuses.set("evt-dup", "processed");
     constructEventMock.mockReturnValue({
       id: "evt-dup",
       type: "invoice.payment_succeeded",

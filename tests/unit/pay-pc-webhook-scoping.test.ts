@@ -51,12 +51,42 @@ vi.mock("@/lib/prisma-tenant", () => ({
   },
 }));
 
+// Lane PD's durable store, replaced by a fake of its CONTRACT (the route hands
+// its processor to runStripeEvent; the store runs it in a transaction, writes
+// its audits, marks the outcome, sends emails after commit). The real store is
+// proven on real rows by lane PD's DB tests and pay-pc-webhook-mapping-db.
+const storeFake = vi.hoisted(() => ({ runs: [] as string[], done: new Set<string>(), statuses: new Map<string, string>() }));
+vi.mock("@/lib/stripe/event-store", () => {
+  class StripeEventRetryableError extends Error {
+    readonly retryable = true;
+  }
+  type Out = { outcome: string; tenantId?: string | null; emails?: unknown[]; audits?: Record<string, unknown>[]; after?: Array<() => Promise<unknown>> };
+  return {
+    StripeEventRetryableError,
+    runStripeEvent: async (event: { id: string }, processor: (e: unknown, ctx: unknown) => Promise<Out>) => {
+      storeFake.runs.push(event.id);
+      if (storeFake.done.has(event.id)) return { kind: "already_processed", status: storeFake.statuses.get(event.id) };
+      const { prisma: tx } = await import("@/lib/prisma");
+      const { logAudit } = await import("@/lib/audit-log");
+      const { sendEmail } = await import("@/lib/email");
+      let out: Out;
+      try {
+        out = await processor(event, { tx, mode: "delivery", tenantId: null });
+        for (const a of out.audits ?? []) await logAudit({ ...a, tx } as never);
+      } catch (err) {
+        return { kind: "failed", retryable: err instanceof StripeEventRetryableError, error: (err as Error).message };
+      }
+      storeFake.done.add(event.id);
+      storeFake.statuses.set(event.id, out.outcome);
+      for (const e of out.emails ?? []) void (sendEmail as (x: unknown) => Promise<unknown>)(e).catch(() => {});
+      for (const job of out.after ?? []) await job().catch(() => {});
+      return { kind: out.outcome, status: out.outcome, tenantId: out.tenantId ?? null, emailsSent: 0, auditsWritten: 0 };
+    },
+  };
+});
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    // Lane PD's store (wired into the route): raw INSERT … ON CONFLICT records
-    // the event, SELECT … FOR UPDATE SKIP LOCKED claims it, update/updateMany mark it.
-    stripeEvent: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
-    $queryRaw: vi.fn(),
     tenant: { findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
     user: { findMany: vi.fn() },
     member: { findFirst: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
@@ -77,9 +107,6 @@ vi.mock("@/lib/stripe-account-status", () => ({ refreshStripeAccountStatus: vi.f
 import { prisma } from "@/lib/prisma";
 
 const db = {
-  // Every store INSERT of an event row (the "claim" as far as these tests care).
-  claim: vi.mocked(prisma.$queryRaw),
-  mark: vi.mocked(prisma.stripeEvent.update),
   tenantFindFirst: vi.mocked(prisma.tenant.findFirst),
   memberFindFirst: vi.mocked(prisma.member.findFirst),
   memberFindUnique: vi.mocked(prisma.member.findUnique),
@@ -113,12 +140,9 @@ function seed() {
 }
 
 function wireDb() {
-  db.claim.mockImplementation((async (strings: TemplateStringsArray) => {
-    const sql = strings.join("?");
-    if (sql.includes('INSERT INTO "StripeEvent"')) return [{ status: "received", attempts: 1, tenantId: "tenant-A" }];
-    if (sql.includes("FOR UPDATE SKIP LOCKED")) return [{ status: "received" }];
-    return [{ n: 1 }];
-  }) as never);
+  storeFake.runs.length = 0;
+  storeFake.done.clear();
+  storeFake.statuses.clear();
   db.tenantFindFirst.mockResolvedValue({ id: "tenant-A" } as never);
   vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ name: "Gym" } as never);
   vi.mocked(prisma.user.findMany).mockResolvedValue([] as never);
@@ -440,7 +464,7 @@ describe("(g) livemode mismatch is refused before anything is claimed", () => {
   it("a LIVE event against a TEST key -> 400, not claimed", async () => {
     const r = await deliver({ id: "evt_g1", type: "customer.subscription.updated", livemode: true, data: { object: { id: "sub_matflow", customer: "cus_payer", status: "past_due" } } });
     expect(r.status).toBe(400);
-    expect(db.claim).not.toHaveBeenCalled();
+    expect(storeFake.runs).toEqual([]);
     expect(memberWrites()).toBe(0);
   });
 
@@ -448,7 +472,7 @@ describe("(g) livemode mismatch is refused before anything is claimed", () => {
     process.env.STRIPE_SECRET_KEY = "rk_live_x";
     const r = await deliver({ id: "evt_g2", type: "invoice.payment_failed", livemode: false, data: { object: { id: "in_x", customer: "cus_payer" } } });
     expect(r.status).toBe(400);
-    expect(db.claim).not.toHaveBeenCalled();
+    expect(storeFake.runs).toEqual([]);
   });
 
   it("an event with no livemode at all -> 400", async () => {
@@ -456,7 +480,7 @@ describe("(g) livemode mismatch is refused before anything is claimed", () => {
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = (await POST(req() as never)) as unknown as { status: number };
     expect(res.status).toBe(400);
-    expect(db.claim).not.toHaveBeenCalled();
+    expect(storeFake.runs).toEqual([]);
   });
 
   it("matching modes are processed (live/live and test/test)", async () => {
@@ -466,27 +490,26 @@ describe("(g) livemode mismatch is refused before anything is claimed", () => {
     process.env.STRIPE_SECRET_KEY = "sk_test_x";
     const test = await deliver({ id: "evt_g5", type: "account.updated", livemode: false, data: { object: { id: "acct_A" } } });
     expect(test.status).toBe(200);
-    const inserts = db.claim.mock.calls.filter((c) => (c[0] as unknown as string[]).join("?").includes('INSERT INTO "StripeEvent"'));
-    expect(inserts).toHaveLength(2);
+    expect(storeFake.runs).toEqual(["evt_g4", "evt_g5"]);
   });
 });
 
 // ── the outcome is recorded on the event's store row (lane PD's StripeEvent) ──
 
-describe("the outcome reaches the StripeEvent row", () => {
-  it("ignored_foreign is written as the row status, in the processing transaction", async () => {
+describe("the outcome is handed to the event store (which records it on the StripeEvent row)", () => {
+  it("ignored_foreign is the outcome the store records", async () => {
     await deliver({ id: "evt_s1", type: "customer.subscription.updated", data: { object: { id: "sub_unknown", customer: "cus_x", status: "active" } } });
-    expect(db.mark).toHaveBeenCalledWith(expect.objectContaining({ where: { eventId: "evt_s1" }, data: expect.objectContaining({ status: "ignored_foreign" }) }));
+    expect(storeFake.statuses.get("evt_s1")).toBe("ignored_foreign");
   });
 
-  it("ignored_stale is written as the row status", async () => {
+  it("ignored_stale is the outcome the store records", async () => {
     mappings[0].lastEventCreated = 5000;
     await deliver({ id: "evt_s2", type: "customer.subscription.updated", created: 4000, data: { object: { id: "sub_matflow", customer: "cus_payer", status: "past_due" } } });
-    expect(db.mark).toHaveBeenCalledWith(expect.objectContaining({ where: { eventId: "evt_s2" }, data: expect.objectContaining({ status: "ignored_stale" }) }));
+    expect(storeFake.statuses.get("evt_s2")).toBe("ignored_stale");
   });
 
-  it("an applied event is written as processed", async () => {
+  it("an applied event is handed over as processed", async () => {
     await deliver({ id: "evt_s3", type: "customer.subscription.updated", data: { object: { id: "sub_matflow", customer: "cus_payer", status: "past_due" } } });
-    expect(db.mark).toHaveBeenCalledWith(expect.objectContaining({ where: { eventId: "evt_s3" }, data: expect.objectContaining({ status: "processed" }) }));
+    expect(storeFake.statuses.get("evt_s3")).toBe("processed");
   });
 });
