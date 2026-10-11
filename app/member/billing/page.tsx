@@ -17,7 +17,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import MemberBillingTab from "@/components/member/MemberBillingTab";
 import { ErrorState } from "@/components/ui/ErrorState";
 
@@ -83,6 +83,17 @@ export default function MemberBillingPage() {
       <p className="text-xs mb-5" style={{ color: "var(--member-text-muted)" }}>
         Your payment method, subscription and payment history.
       </p>
+
+      {/* Payments lane PB (11 Oct 2026): the way in to starting and paying for
+          a membership (app/member/membership). */}
+      <Link
+        href="/member/membership"
+        className="mb-5 flex items-center justify-between rounded-2xl border px-4 py-3 text-sm font-semibold"
+        style={{ background: "var(--member-surface)", borderColor: "var(--member-border)", color: "var(--member-text)" }}
+      >
+        Membership plans
+        <ChevronRight className="w-4 h-4" style={{ color: "var(--member-text-muted)" }} />
+      </Link>
 
       {loadError ? (
         <ErrorState
