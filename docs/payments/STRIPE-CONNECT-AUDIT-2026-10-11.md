@@ -6,6 +6,8 @@ Read-only inspection at documentation head `1a36655` (executable candidate `1ca9
 
 **Decision context (11 Oct):** Noe deferred member payments through the app "for the moment". This milestone is distinct from Sean's email correction and from the security release; shared dependencies are listed in §22.
 
+
+> **Superseded in part (11 Oct 2026 23:00 UK):** the four defects were repaired on branch `payments/stripe-defects-2026-10` (final SHA `d3f5762`, independent review APPROVED WITH RESIDUALS, not shippable until the owner removes the COEP header). The updated capability table and verdicts are in `STRIPE-REPAIR-2026-10-11.md`.
 ---
 
 ## The short answer

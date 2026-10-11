@@ -1,0 +1,21 @@
+# Payment-defect repair loop — rules for every lane (11 Oct 2026, UK)
+
+Repository C:\Users\NoeTo\Desktop\matflow. Branch **payments/stripe-defects-2026-10** (created from a0ff39c; the security candidate 1ca92c0 on security/assurance-2026-10 stays frozen and is not touched). Read `docs/payments/STRIPE-CONNECT-AUDIT-2026-10-11.md` first (the four defects, §4, §9, §11–§14, §21–§24) and the lane evidence under `docs/payments/evidence/` for file:line references. Read `CLAUDE.md` and `docs/UI-RULES.md` for repository conventions (singleton prisma client, `withTenantContext`, British English, tokens not hex, primitives from `components/ui/`).
+
+Business model — preserve exactly:
+- Each club receives its members' payments through its own connected Stripe account (direct charges with the `Stripe-Account` header, always).
+- No MatFlow transaction fee: never add `application_fee_amount`, `application_fee_percent`, `transfer_data` or `on_behalf_of`.
+- Clubs pay the MatFlow fee separately by bank transfer, checked manually: no code for it.
+- TeamUp billing unchanged: `Member.billedBy = "teamup"` semantics and `refuseIfBilledElsewhere` stay as they are; nothing replaces or cancels an existing subscription automatically.
+
+Working method (bounded loop, per defect): (1) write the regression test that reproduces the defect and run it RED first; (2) smallest justified fix; (3) run the test GREEN plus the existing tests for the files you touched; (4) negative tests; (5) record everything in your report with the exact command and exit code. A non-zero exit is a failure. A zero-test run is not evidence. Never weaken an assertion, delete a test, swallow an unexpected error, or add a skip to get green.
+
+Database: TEST branch only. Integration tests under `tests/integration/` run with the guarded runners: `bash <scratchpad>/att/run-engine.sh <file>` (owner role) and `bash <scratchpad>/q78/run-restricted.sh <file>` (restricted role matflow_app, RLS enforced). Run every new DB test under BOTH. Schema changes: edit `prisma/schema.prisma`, then create the migration with `bash <scratchpad>/pay/run-prisma.sh migrate dev --name <name>` (guarded to the TEST branch; never the default .env, which is production). Keep migrations additive; name them `2026101x…`. Run `npx prisma generate` afterwards. `<scratchpad>` = <scratchpad> (POSIX form /c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/<session>/scratchpad). Node 24 for every run: prefix PATH with `<scratchpad>/security/node24/node-v24.21.0-win-x64` (POSIX form) and print `node --version` once in your report.
+
+Stripe: TEST MODE ONLY, through the `sk_test` key in `.env.test` (read it with `dotenv`-style parsing in scripts; never print any value; refuse to run if the key does not start with `sk_test_`). Real Stripe test-mode calls are allowed for the sandbox lane and for unit-free verification scripts; application unit tests mock Stripe as the existing tests do. No live key, no production anything, no deploy, no push. Secrets never appear in output, reports or commits (the tree secret-scan runs in the unit suite and will fail the build on a literal).
+
+File ownership is strict: edit only the files your brief lists as yours (plus new files under the names it allows and tests named with your lane prefix). If you believe another lane's file must change, write the exact change you need into your report under "Requests to other lanes" and continue.
+
+Commits: commit your own files locally on this branch with the message prefix `payments(<lane>): …`, small and often. Run `npx eslint <your files>` and `npx tsc --noEmit -p .` before your final commit and record the results. Never `git add -A` (sensitive files in the root); add paths explicitly.
+
+Report: write `<scratchpad>/pay/<LANE>/REPORT.md` as you go (create it first; append after each step). Your final chat message may be discarded; the file is the deliverable. Record: defect reproduced (test name, red output excerpt, exit code), cause, fix (files, lines), green output, negative tests, both-role DB runs, lint/tsc results, commits (SHAs), what remains unproven, requests to other lanes, owner questions. If any tool call is refused, copy the refusal text into the report and continue with the rest. Do not use MCP tools whose names start with `ctx_`.

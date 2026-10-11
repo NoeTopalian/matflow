@@ -1,0 +1,22 @@
+sha=1da1e5a node=v24.21.0 2026-10-11T20:18:22Z
+== lint
+Lint passed: eslint clean, UI-RULES ratchet at or below baseline.
+(node:195360) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+lint-exit=0
+== tsc
+tsc-exit=0
+== audit
+found 0 vulnerabilities
+audit-exit=0
+== unit
+ Test Files  490 passed (490)
+      Tests  6927 passed | 1 skipped (6928)
+unit-exit=0
+== build (isolated, .env.test values)
+✓ Running next.config.ts took 774ms
+✓ Compiled successfully in 21.6s
+✓ Generating static pages using 15 workers (177/177) in 1044ms
+Route (app)
+build-exit=0
+ocXcn2UP3i_FsiHHkSVBY
