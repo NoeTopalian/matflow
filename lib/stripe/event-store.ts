@@ -367,6 +367,12 @@ export type RunResult =
  *    SUPPRESSED: the member and the club were already told the first time, and
  *    the operator's own `stripe.event.replayed` audit row is the record.
  *
+ * `opts.recorded`: the caller already ran `recordReceived` for THIS delivery
+ * (the webhook records before its pre-transaction lookups, so a lookup failure
+ * still leaves the row `received` with the attempt counted). Passing it skips
+ * runStripeEvent's own recordReceived, so one delivery is one attempt; every
+ * other behaviour is identical. Callers that pass nothing are unchanged.
+ *
  * Return codes for the webhook: processed / ignored_* / already_processed →
  * 200; in_progress → 409 (Stripe retries); failed → 409 when retryable, else
  * 500. Every failure is on the row (status failed, lastError).
@@ -374,10 +380,10 @@ export type RunResult =
 export async function runStripeEvent<E extends StoreEventInput>(
   event: E,
   processor: StripeEventProcessor<E>,
-  opts: { mode?: RunMode } = {},
+  opts: { mode?: RunMode; recorded?: RecordReceivedResult } = {},
 ): Promise<RunResult> {
   const mode = opts.mode ?? "delivery";
-  const recorded = await recordReceived(event);
+  const recorded = opts.recorded && opts.recorded.eventId === event.id ? opts.recorded : await recordReceived(event);
   if (recorded.alreadyProcessed && mode !== "replay_forced") {
     return { kind: "already_processed", status: recorded.status };
   }
