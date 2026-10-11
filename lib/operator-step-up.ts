@@ -104,6 +104,10 @@ export const STEP_UP_ACTIONS = [
   // subjectId, scope) with scope "user" | "member", or
   // stepUpTarget(tenantId, CLUB_REVOKE_SUBJECT, "club") for the whole club.
   "access.revoke_all",
+  // Operator replay of one Stripe event (payments lane PD, 11 Oct 2026).
+  // Target = stepUpTarget(tenantId, eventId); change = { force } so a grant
+  // bought for an ordinary replay cannot be spent on a forced one.
+  "stripe.event_replay",
 ] as const;
 export type StepUpAction = (typeof STEP_UP_ACTIONS)[number];
 
@@ -148,6 +152,7 @@ const CHANGE_SCHEMAS: Record<StepUpAction, z.ZodType<StepUpChange>> = {
   "owner.profile": z.object({ name: displayNameSchema }).strict(),
   "member.contact_email": z.object({ newEmail: emailField(120) }).strict(),
   "access.revoke_all": EMPTY_CHANGE,
+  "stripe.event_replay": z.object({ force: z.boolean() }).strict(),
 };
 
 /** The subject segment of a whole-club revoke-all target (never a cuid). */
@@ -279,6 +284,26 @@ export async function stepUpVersion(
         return t ? `revoke:club:${t.id}` : null;
       }
       return null;
+    }
+    case "stripe.event_replay": {
+      // What the operator decided on: this event, in this state, on this
+      // club. A Stripe retry that processes it meanwhile moves the status and
+      // the grant goes stale (refused) instead of replaying a settled event.
+      // Never `attempts` (every delivery moves it).
+      if (!subjectId) return null;
+      const e = await tx.stripeEvent.findUnique({
+        where: { eventId: subjectId },
+        select: { eventId: true, status: true, tenantId: true, stripeAccountId: true },
+      });
+      if (!e) return null;
+      if (e.tenantId && e.tenantId !== tenantId) return null;
+      if (!e.tenantId) {
+        const t = e.stripeAccountId
+          ? await tx.tenant.findFirst({ where: { stripeAccountId: e.stripeAccountId }, select: { id: true } })
+          : null;
+        if (!t || t.id !== tenantId) return null;
+      }
+      return `stripe-event:${e.eventId}:${e.status}`;
     }
     case "support.impersonate": {
       if (!subjectId) return null;

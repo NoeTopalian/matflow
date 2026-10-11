@@ -81,8 +81,14 @@ export type ReplayRequest = {
 
 export type ReplayDeps = {
   stripe: StripeEventsClient;
-  /** null until lane PC exposes the webhook's processing function. */
-  processor: StripeEventProcessor<FreshStripeEvent> | null;
+  /**
+   * The webhook’s processing function. Either a ready processor, or `prepare`,
+   * which does the handler’s network lookups for this event (outside any
+   * transaction, as the webhook does) and returns the processor. Neither set
+   * (lane PC has not exposed it yet) → refused `not_wired`, nothing changed.
+   */
+  processor?: StripeEventProcessor<FreshStripeEvent> | null;
+  prepare?: PrepareStripeEvent | null;
   /** Mode of the platform key: an event must match it. */
   keyMode: "live" | "test" | "unknown";
 };
@@ -118,6 +124,20 @@ function isFreshEvent(v: unknown): v is FreshStripeEvent {
   );
 }
 
+/** Builds the processor for one event (the webhook handler, after its network lookups). */
+export type PrepareStripeEvent = (event: FreshStripeEvent) => Promise<StripeEventProcessor<FreshStripeEvent>>;
+
+/**
+ * The webhook's processing entry point, for the replay route. NOT WIRED YET:
+ * lane PC owns app/api/stripe/webhook/route.ts and is extracting its handler
+ * as `prepareStripeEvent` (integration note in the lane PD report). The wiring
+ * is this one function body: `return (e) => prepareStripeEvent(e);`. Until
+ * then the replay route refuses with 501 before any grant is spent.
+ */
+export async function loadWebhookPrepare(): Promise<PrepareStripeEvent | null> {
+  return null;
+}
+
 export async function replayStripeEvent(r: ReplayRequest, deps: ReplayDeps): Promise<ReplayOutcome> {
   const reason = r.reason.trim();
   if (reason.length < REPLAY_REASON_MIN || reason.length > REPLAY_REASON_MAX) return refuse("reason_required");
@@ -143,7 +163,7 @@ export async function replayStripeEvent(r: ReplayRequest, deps: ReplayDeps): Pro
   if (!club) return refuse("no_club");
   if (row.tenantId && row.tenantId !== club.id) return refuse("mismatch");
   if (!club.stripeConnected) return refuse("club_disconnected");
-  if (!deps.processor) return refuse("not_wired");
+  if (!deps.processor && !deps.prepare) return refuse("not_wired");
 
   let fresh: unknown;
   try {
@@ -159,7 +179,14 @@ export async function replayStripeEvent(r: ReplayRequest, deps: ReplayDeps): Pro
   if (expectLive === null || fresh.livemode !== expectLive) return refuse("livemode_mismatch");
 
   const event: FreshStripeEvent = { ...fresh, account: row.stripeAccountId };
-  const result = await runStripeEvent(event, deps.processor, { mode: forced ? "replay_forced" : "replay" });
+  let processor: StripeEventProcessor<FreshStripeEvent>;
+  try {
+    processor = deps.processor ?? (await deps.prepare!(event));
+  } catch (err) {
+    console.warn("[stripe-replay] preparing the event failed", { eventId: r.eventId, error: sanitiseEventError(err) });
+    return refuse("stripe_unavailable");
+  }
+  const result = await runStripeEvent(event, processor, { mode: forced ? "replay_forced" : "replay" });
 
   await logAudit({
     durable: true,
