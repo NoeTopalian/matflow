@@ -559,6 +559,7 @@ describe.skipIf(!RUN)(`pay-ts: Standard account in Stripe test mode (${ROLE} rol
     rec("6b_wrong_order", { subscription: x.s.sub, deliveries, storeRowsForFailures: rows, afterSuccess: { paymentStatus: mid.member?.paymentStatus }, after: { paymentStatus: after.member?.paymentStatus, mappings: after.mappings, payments: after.payments } });
     expect(mid.member?.paymentStatus).toBe("paid");
     expect(after.member?.paymentStatus).toBe("paid");
+    expect(rows.find((r) => r.type === "invoice.payment_failed")?.status).toBe("ignored_stale");
   }, 400_000);
 
   it("run 7: abandoned first payment — the incomplete subscription is cancelled (stands in for incomplete_expired)", async () => {
@@ -567,13 +568,18 @@ describe.skipIf(!RUN)(`pay-ts: Standard account in Stripe test mode (${ROLE} rol
     const before = await memberState("abandon");
     const cus = before.member!.stripeCustomerId!;
     const cancelled = await stripe.subscriptions.cancel(s.sub, {}, so());
-    const evs = await eventsFor(mentions(cus), t0, ["customer.subscription.deleted"]);
+    // Observed 11 Oct (both roles): cancelling an incomplete subscription yields status incomplete_expired
+    // and Stripe emits customer.subscription.updated + invoice.voided — no customer.subscription.deleted.
+    const evs = await eventsFor(mentions(cus), t0, ["customer.subscription.updated", "invoice.voided"]);
     const deliveries: Delivery[] = [];
     for (const ev of evs) deliveries.push(await deliver(ev));
     const after = await memberState("abandon");
-    rec("7_abandoned", { limit: "Stripe expires an unpaid default_incomplete subscription after ~23 h (status incomplete_expired); not waited for. Cancelling it produces status 'canceled', not 'incomplete_expired'.", subscription: s.sub, statusAfterCancel: cancelled.status, deliveries, before: { paymentStatus: before.member?.paymentStatus, pointer: before.member?.stripeSubscriptionId, mappings: before.mappings }, after: { paymentStatus: after.member?.paymentStatus, status: after.member?.status, pointer: after.member?.stripeSubscriptionId, mappings: after.mappings } });
+    rec("7_abandoned", { limit: "Stripe expires an unpaid default_incomplete subscription after ~23 h; not waited for. Cancelling the incomplete subscription is the stand-in; Stripe reports the result as incomplete_expired.", deletedEventSeen: evs.some((e) => e.type === "customer.subscription.deleted"), subscription: s.sub, statusAfterCancel: cancelled.status, deliveries, before: { paymentStatus: before.member?.paymentStatus, pointer: before.member?.stripeSubscriptionId, mappings: before.mappings }, after: { paymentStatus: after.member?.paymentStatus, status: after.member?.status, pointer: after.member?.stripeSubscriptionId, mappings: after.mappings } });
     expect(after.member?.status).toBe("active");
     expect(after.member?.stripeSubscriptionId).toBeNull();
+    expect(cancelled.status).toBe("incomplete_expired");
+    expect(after.mappings.find((m) => m.stripeSubscriptionId === s.sub)?.status).toBe("incomplete_expired");
+    expect(after.member?.paymentStatus).toBe("pending");
   }, 300_000);
 
   it("run 8: duplicate delivery (sequential and concurrent) and a crash on first delivery (lane PD store)", async () => {
@@ -693,13 +699,19 @@ describe.skipIf(!RUN)(`pay-ts: Standard account in Stripe test mode (${ROLE} rol
       withGrant = { error: errShape(e) };
     }
     const rowAfterReplay = (await storeRows([target!.eventId]))[0] ?? null;
-    process.env.OPERATOR_ALLOWED_IDS = prevAllow;
+    if (prevAllow === undefined) delete process.env.OPERATOR_ALLOWED_IDS;
+    else process.env.OPERATOR_ALLOWED_IDS = prevAllow;
     rec("9b_operator_replay", {
       stepUp: "grant issued directly with issueStepUpGrant (the operator's TOTP step-up is not driven)",
       withoutGrant: { status: noGrant.status, body: redact(JSON.stringify(noGrant.body)) },
       withGrant: withGrant?.status !== undefined ? { status: withGrant.status, body: redact(JSON.stringify(withGrant.body)) } : withGrant,
       rowAfterReplay,
     });
+    // Wired since lane PD connected loadWebhookPrepare to lane PC's prepareStripeEvent (11 Oct, after cffd3b1).
+    expect(noGrant.status).toBe(403);
+    expect(withGrant?.status).toBe(200);
+    expect(["processed", "replayed", "ignored_stale", "ignored_foreign"]).toContain(rowAfterReplay?.status);
+    expect(JSON.stringify(await memberState("dup"))).toBe(JSON.stringify(after));
   }, 400_000);
 
   it("run 10: refund through the app's refund route; a real test-mode dispute", async () => {
