@@ -1023,32 +1023,18 @@ export async function POST(req: NextRequest) {
     } else if (event.type === "invoice.payment_action_required") {
       // Lane PC: a renewal is waiting on the payer (3-D Secure). Payment state
       // only: recorded on the subscription's mapping (with the invoice id, so
-      // a later surface can link the payer to it) and audited for the club.
-      // Entitlement and the member record are untouched; a failure, if it
-      // comes, arrives as invoice.payment_failed.
+      // a later surface can link the payer to it); the event's store row says
+      // it was processed. Entitlement and the member record are untouched; a
+      // failure, if it comes, arrives as invoice.payment_failed.
       const actionInvoiceId = obj.id as string;
       const priorPayment = await existingInvoicePayment(actionInvoiceId);
       const invoiceOwner = await resolveInvoiceOwner(priorPayment);
       if (!invoiceOwner) {
         outcome = "ignored_foreign";
-      } else {
-        if (invoiceOwner.mapping) {
-          await tx.memberSubscription.update({
-            where: { id: invoiceOwner.mapping.id },
-            data: { requiresActionInvoiceId: actionInvoiceId, requiresActionAt: new Date() },
-          });
-        }
-        pendingAuditLogs.push({
-          tenantId,
-          userId: null,
-          action: "member.payment.requires_action",
-          entityType: "Member",
-          entityId: invoiceOwner.member.id,
-          metadata: {
-            stripeInvoiceId: actionInvoiceId,
-            stripeSubscriptionId: invoiceOwner.mapping?.stripeSubscriptionId ?? null,
-            amountPence: (obj.amount_due as number) ?? 0,
-          },
+      } else if (invoiceOwner.mapping) {
+        await tx.memberSubscription.update({
+          where: { id: invoiceOwner.mapping.id },
+          data: { requiresActionInvoiceId: actionInvoiceId, requiresActionAt: new Date() },
         });
       }
     } else if (event.type === "invoice.voided") {
