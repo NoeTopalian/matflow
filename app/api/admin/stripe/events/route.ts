@@ -80,18 +80,28 @@ export async function GET(req: Request) {
       take: MAX_CLUBS,
     });
     const ids = tenants.map((t) => t.id);
+    // An event that failed before its account was linked to a club carries no
+    // tenantId; once the account belongs to a club, it is that club's event.
+    const accts = tenants.map((t) => t.stripeAccountId).filter((a): a is string => !!a);
     const [c24, c7, last, attention, unattributed, lastRun] = await Promise.all([
       tx.stripeEvent.groupBy({ by: ["tenantId", "status"], where: { tenantId: { in: ids }, firstSeenAt: { gte: since24h } }, _count: { _all: true } }),
       tx.stripeEvent.groupBy({ by: ["tenantId", "status"], where: { tenantId: { in: ids }, firstSeenAt: { gte: since7d } }, _count: { _all: true } }),
       tx.stripeEvent.groupBy({ by: ["tenantId"], where: { tenantId: { in: ids } }, _max: { firstSeenAt: true } }),
       tx.stripeEvent.findMany({
-        where: { tenantId: { in: ids }, status: { in: ["failed", "received"] } },
+        where: {
+          status: { in: ["failed", "received"] },
+          OR: [{ tenantId: { in: ids } }, { tenantId: null, stripeAccountId: { in: accts } }],
+        },
         orderBy: { firstSeenAt: "desc" },
-        select: EVENT_SELECT,
+        select: { ...EVENT_SELECT, stripeAccountId: true },
         take: ATTENTION_PER_CLUB * Math.max(ids.length, 1),
       }),
       tx.stripeEvent.findMany({
-        where: { tenantId: null, status: { in: ["failed", "received"] } },
+        where: {
+          tenantId: null,
+          status: { in: ["failed", "received"] },
+          OR: [{ stripeAccountId: null }, { stripeAccountId: { notIn: accts } }],
+        },
         orderBy: { firstSeenAt: "desc" },
         select: { ...EVENT_SELECT, stripeAccountId: true },
         take: ATTENTION_PER_CLUB,
@@ -111,7 +121,9 @@ export async function GET(req: Request) {
     account: accountSummary(t.stripeAccountStatus),
     counts: { last24h: counts(data.c24, t.id), last7d: counts(data.c7, t.id) },
     lastEventAt: data.last.find((l) => l.tenantId === t.id)?._max.firstSeenAt ?? null,
-    attention: data.attention.filter((e) => e.tenantId === t.id).slice(0, ATTENTION_PER_CLUB),
+    attention: data.attention
+      .filter((e) => e.tenantId === t.id || (e.tenantId === null && !!t.stripeAccountId && e.stripeAccountId === t.stripeAccountId))
+      .slice(0, ATTENTION_PER_CLUB),
   }));
 
   return NextResponse.json({

@@ -31,6 +31,7 @@ import {
   type StripeEventProcessor,
   type StripeEventStatus,
 } from "@/lib/stripe/event-store";
+import { prepareStripeEvent } from "@/lib/stripe/webhook/process";
 
 export const REPLAY_AUDIT_ACTION = "stripe.event.replayed";
 export const REPLAY_REASON_MIN = 5;
@@ -85,7 +86,7 @@ export type ReplayDeps = {
    * The webhook’s processing function. Either a ready processor, or `prepare`,
    * which does the handler’s network lookups for this event (outside any
    * transaction, as the webhook does) and returns the processor. Neither set
-   * (lane PC has not exposed it yet) → refused `not_wired`, nothing changed.
+   * → refused `not_wired`, nothing changed (the replay route always passes it).
    */
   processor?: StripeEventProcessor<FreshStripeEvent> | null;
   prepare?: PrepareStripeEvent | null;
@@ -128,14 +129,14 @@ function isFreshEvent(v: unknown): v is FreshStripeEvent {
 export type PrepareStripeEvent = (event: FreshStripeEvent) => Promise<StripeEventProcessor<FreshStripeEvent>>;
 
 /**
- * The webhook's processing entry point, for the replay route. NOT WIRED YET:
- * lane PC owns app/api/stripe/webhook/route.ts and is extracting its handler
- * as `prepareStripeEvent` (integration note in the lane PD report). The wiring
- * is this one function body: `return (e) => prepareStripeEvent(e);`. Until
- * then the replay route refuses with 501 before any grant is spent.
+ * The webhook's processing entry point, for the replay route: lane PC's
+ * `prepareStripeEvent` (lib/stripe/webhook/process.ts), the SAME code a
+ * webhook delivery runs. A replay has no request, so links in any email the
+ * handler queues use NEXTAUTH_URL (the deployment's own address).
  */
-export async function loadWebhookPrepare(): Promise<PrepareStripeEvent | null> {
-  return null;
+export async function loadWebhookPrepare(): Promise<PrepareStripeEvent> {
+  const baseUrl = process.env.NEXTAUTH_URL || undefined;
+  return (event) => prepareStripeEvent(event, baseUrl ? { baseUrl } : {});
 }
 
 export async function replayStripeEvent(r: ReplayRequest, deps: ReplayDeps): Promise<ReplayOutcome> {

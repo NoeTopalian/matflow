@@ -9,7 +9,8 @@
 // jar, rate limits, email, the NextAuth session (to drive the support-session
 // refusal), the Stripe SDK (events.retrieve serves the event fresh), and the
 // webhook's processor (lane PC has not exposed it yet — a stand-in that writes
-// a real Payment row through the upsert the real handler uses).
+// a real Payment row through the upsert the real handler uses; the REAL
+// webhook processor is driven end to end in pay-pd-replay-e2e-db.test.ts).
 //
 // Pinned: no operator → 403 and nothing read; a support session → 403; the
 // overview lists the failed event with no personal data; replay without a
@@ -18,7 +19,7 @@
 // the recorded outcome echoed, nothing re-run; a settled event without force →
 // 409 before any grant is needed; a grant for an ordinary replay cannot be
 // spent on a forced one; a forced replay creates no second Payment and no
-// second handler audit; an unwired processor → 501 with nothing spent.
+// second handler audit.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
@@ -27,7 +28,6 @@ const h = vi.hoisted(() => {
   return {
     jar: new Map<string, string>(),
     session: null as unknown,
-    wired: true,
     retrieved: [] as Array<{ id: string; acct: string }>,
     fresh: null as null | ((id: string) => unknown),
   };
@@ -62,7 +62,7 @@ vi.mock("stripe", () => ({
 }));
 vi.mock("@/lib/stripe/replay", async (orig) => {
   const real = await orig<typeof import("@/lib/stripe/replay")>();
-  return { ...real, loadWebhookPrepare: async () => (h.wired ? standInPrepare : null) };
+  return { ...real, loadWebhookPrepare: async () => standInPrepare };
 });
 
 import { prisma } from "@/lib/prisma";
@@ -211,20 +211,6 @@ describe.skipIf(!HAS_DB)("pay-pd: operator Stripe sync routes on Postgres", () =
     expect(await payments()).toBe(0);
     expect(await auditCount("stripe.event.replay.requested")).toBe(0);
     expect(h.retrieved).toEqual([]);
-  });
-
-  it("an unwired processor is refused 501 before any grant is spent", async () => {
-    h.wired = false;
-    try {
-      const grant = await grantFor(false);
-      const r = await replay({ reason: "price table fixed, replaying" }, grant);
-      expect(r.status).toBe(501);
-      expect(r.body.notWired).toBe(true);
-      expect(await auditCount("stripe.event.replay.requested")).toBe(0);
-      expect(await status()).toBe("failed");
-    } finally {
-      h.wired = true;
-    }
   });
 
   it("with a grant: fetched fresh as the club, processed once, requested + replayed audit rows on the grant's request id; the same grant echoes", async () => {

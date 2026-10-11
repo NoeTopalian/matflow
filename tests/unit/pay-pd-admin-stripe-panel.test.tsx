@@ -125,14 +125,14 @@ describe("pay-pd: operator Stripe sync panel", () => {
     installFetch((url) => {
       if (url === "/api/admin/stripe/events") return json(overview());
       if (url === "/api/admin/auth/step-up") return json({ grant: "g" });
-      return json({ error: "Replay is not connected to the webhook processor yet. Nothing was changed.", notWired: true }, 501);
+      return json({ error: "This club's Stripe access was withdrawn. The event cannot be fetched or replayed." }, 409);
     });
     render(<StripeSyncPanel />);
     fireEvent.click((await screen.findAllByRole("button", { name: "Replay" }))[0]);
     fireEvent.change(await screen.findByLabelText("Reason"), { target: { value: "price table fixed" } });
     fireEvent.change(screen.getByLabelText("Your authenticator code (confirms it is you)"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Replay event" }));
-    expect(await screen.findByText("Replay is not connected to the webhook processor yet. Nothing was changed.")).toBeTruthy();
+    expect(await screen.findByText("This club's Stripe access was withdrawn. The event cannot be fetched or replayed.")).toBeTruthy();
     expect(toastSpy).not.toHaveBeenCalled();
   });
 

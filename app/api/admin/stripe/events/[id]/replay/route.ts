@@ -4,7 +4,7 @@
 // Gate, in order: same-origin; operator authority (MFA session + allowlist,
 // lib/admin-auth.ts); a support session is refused; rate limit; a harmless
 // preflight (the event exists, belongs to a connected club, is replayable or
-// `force` is set, the processor is wired); then a fresh step-up grant bound to
+// `force` is set); then a fresh step-up grant bound to
 // THIS event, its current status and the force flag ("stripe.event_replay",
 // lib/operator-step-up.ts).
 //
@@ -72,7 +72,8 @@ const REFUSAL_STATUS: Record<ReplayRefusal, number> = {
   mismatch: 409,
   livemode_mismatch: 409,
   stripe_unavailable: 502,
-  not_wired: 501,
+  // Unreachable from this route (it always passes the webhook processor).
+  not_wired: 500,
 };
 
 async function stripeClient(): Promise<StripeEventsClient> {
@@ -128,15 +129,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (settled && !req.headers.get(STEP_UP_HEADER)) {
     return NextResponse.json({ error: ALREADY_PROCESSED }, { status: 409 });
   }
-  // The webhook's processing entry point (lib/stripe/replay.ts). Not wired
-  // until lane PC extracts it: refused 501 BEFORE any grant is spent.
-  const prepare = await loadWebhookPrepare();
-  if (!prepare) {
-    return NextResponse.json(
-      { error: "Replay is not connected to the webhook processor yet. Nothing was changed.", notWired: true },
-      { status: 501 },
-    );
-  }
   if (!process.env.STRIPE_SECRET_KEY) {
     return NextResponse.json({ error: "Stripe is not configured." }, { status: 503 });
   }
@@ -184,7 +176,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const outcome = await replayStripeEvent(
     { eventId, operatorId: stepUp.operatorId, reason, force, requestId: stepUp.requestId, req },
-    { stripe: await stripeClient(), prepare, keyMode: classifyStripeKey(process.env.STRIPE_SECRET_KEY).mode },
+    { stripe: await stripeClient(), prepare: await loadWebhookPrepare(), keyMode: classifyStripeKey(process.env.STRIPE_SECRET_KEY).mode },
   );
   if (!outcome.ok) {
     return NextResponse.json({ error: outcome.message, refusal: outcome.refusal }, { status: REFUSAL_STATUS[outcome.refusal] });
