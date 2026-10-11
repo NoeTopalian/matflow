@@ -13,7 +13,8 @@
  *     transaction BEFORE any processing: status `received`, attempts + 1. That
  *     commit survives whatever the handler does next.
  *  2. The handler runs in ONE transaction that first locks the row
- *     (`claimStripeEvent`: SELECT … FOR UPDATE SKIP LOCKED) and, in the same
+ *     (`claimStripeEvent`: a conditional UPDATE of a received/failed row, whose
+ *     row lock is held until that transaction ends) and, in the same
  *     commit as its effects, sets the terminal status (`markProcessed` /
  *     `markIgnored`). A crash or throw rolls the effects AND the terminal status
  *     back together; `markFailed` then records the error on the row in another
@@ -22,15 +23,16 @@
  *
  * Duplicate delivery: a row already processed/ignored/replayed answers
  * `already_processed` without running anything. Concurrent delivery: the row
- * lock means at most one transaction processes an id at a time; the second
- * sees the row locked (`in_progress`, mapped to a non-2xx so Stripe retries)
- * or, once the first committed, sees it terminal.
+ * lock means at most one transaction processes an id at a time. The second
+ * waits on the lock; when the first commits it finds the row terminal
+ * (`already_processed`), when the first rolls back it claims the row and
+ * processes it. A wait past the lock timeout is `in_progress` (non-2xx, so
+ * Stripe retries). No raw SQL: Prisma's conditional updateMany is the lock.
  *
  * `runStripeEvent` composes the two phases for a caller-supplied processor —
  * the webhook (lane PC wires its handler in) and operator replay
  * (lib/stripe/replay.ts) both go through it, so there is one processing path.
  */
-import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
@@ -140,46 +142,55 @@ export async function recordReceived(
       const t = await tx.tenant.findFirst({ where: { stripeAccountId: account }, select: { id: true } });
       tenantId = t?.id ?? null;
     }
-    const attemptsOnInsert = found ? 0 : 1;
-    const rows = await tx.$queryRaw<Array<{ status: string; attempts: number; tenantId: string | null }>>`
-      INSERT INTO "StripeEvent"
-        ("id", "eventId", "type", "tenantId", "stripeAccountId", "livemode", "objectId", "created",
-         "status", "attempts", "firstSeenAt", "lastAttemptAt", "processedAt", "reconcileFoundAt")
-      VALUES
-        (${randomUUID()}, ${event.id}, ${event.type}, ${tenantId}, ${account}, ${livemode}, ${objectId}, ${created},
-         'received', ${attemptsOnInsert}, now(), ${found ? null : new Date()}, now(), ${found ? new Date() : null})
-      ON CONFLICT ("eventId") DO UPDATE SET
-        "attempts" = "StripeEvent"."attempts" + ${found ? 0 : 1},
-        "lastAttemptAt" = CASE WHEN ${found} THEN "StripeEvent"."lastAttemptAt" ELSE now() END,
-        "tenantId" = COALESCE("StripeEvent"."tenantId", EXCLUDED."tenantId"),
-        "stripeAccountId" = COALESCE("StripeEvent"."stripeAccountId", EXCLUDED."stripeAccountId"),
-        "objectId" = COALESCE("StripeEvent"."objectId", EXCLUDED."objectId"),
-        "created" = CASE WHEN "StripeEvent"."created" = 0 THEN EXCLUDED."created" ELSE "StripeEvent"."created" END,
-        "livemode" = EXCLUDED."livemode"
-      WHERE "StripeEvent"."status" IN ('received', 'failed')
-      RETURNING "status", "attempts", "tenantId"`;
-    if (rows.length === 1) {
-      const r = rows[0];
-      return {
-        eventId: event.id,
-        status: r.status as StripeEventStatus,
-        attempts: Number(r.attempts),
-        tenantId: r.tenantId,
-        alreadyProcessed: false,
-      };
+    const now = new Date();
+    // INSERT … ON CONFLICT DO NOTHING: never an error inside the transaction.
+    const inserted = await tx.stripeEvent.createMany({
+      data: [
+        {
+          eventId: event.id,
+          type: event.type,
+          tenantId,
+          stripeAccountId: account,
+          livemode,
+          objectId,
+          created,
+          status: "received",
+          attempts: found ? 0 : 1,
+          firstSeenAt: now,
+          lastAttemptAt: found ? null : now,
+          processedAt: now,
+          reconcileFoundAt: found ? now : null,
+        },
+      ],
+      skipDuplicates: true,
+    });
+    if (inserted.count === 0) {
+      // Known id. A delivery counts as an attempt only while the row is still
+      // open; a terminal row is left exactly as it is.
+      if (!found) {
+        await tx.stripeEvent.updateMany({
+          where: { eventId: event.id, status: { in: ["received", "failed"] } },
+          data: { attempts: { increment: 1 }, lastAttemptAt: now, livemode },
+        });
+      }
+      // Fill what an earlier sighting did not know; never overwrite it.
+      if (tenantId) await tx.stripeEvent.updateMany({ where: { eventId: event.id, tenantId: null }, data: { tenantId } });
+      if (account) await tx.stripeEvent.updateMany({ where: { eventId: event.id, stripeAccountId: null }, data: { stripeAccountId: account } });
+      if (objectId) await tx.stripeEvent.updateMany({ where: { eventId: event.id, objectId: null }, data: { objectId } });
+      if (created) await tx.stripeEvent.updateMany({ where: { eventId: event.id, created: 0 }, data: { created } });
     }
-    // The conditional update matched nothing: the row exists and is terminal.
-    const existing = await tx.stripeEvent.findUnique({
+    const row = await tx.stripeEvent.findUnique({
       where: { eventId: event.id },
       select: { status: true, attempts: true, tenantId: true },
     });
-    if (!existing) throw new Error(`stripe event ${event.id} neither inserted nor found`);
+    if (!row) throw new Error(`stripe event ${event.id} neither inserted nor found`);
+    const status = row.status as StripeEventStatus;
     return {
       eventId: event.id,
-      status: existing.status as StripeEventStatus,
-      attempts: existing.attempts,
-      tenantId: existing.tenantId,
-      alreadyProcessed: TERMINAL_STRIPE_EVENT_STATUSES.has(existing.status as StripeEventStatus),
+      status,
+      attempts: row.attempts,
+      tenantId: row.tenantId,
+      alreadyProcessed: TERMINAL_STRIPE_EVENT_STATUSES.has(status),
     };
   });
 }
@@ -187,26 +198,34 @@ export async function recordReceived(
 export type ClaimResult =
   | { kind: "claimed"; status: StripeEventStatus }
   | { kind: "done"; status: StripeEventStatus }
-  | { kind: "busy" }
   | { kind: "missing" };
+
+/** A lock wait that ran past the transaction's lock_timeout (Postgres 55P03). */
+export function isLockTimeout(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const err = e as { code?: unknown; message?: unknown; meta?: { code?: unknown } };
+  if (err.code === "55P03" || err.meta?.code === "55P03") return true;
+  return /lock timeout|could not obtain lock/i.test(typeof err.message === "string" ? err.message : "");
+}
 
 /**
  * Phase 2, first statement of the handler transaction: lock the row.
- * `SKIP LOCKED` so a second concurrent delivery does not queue behind the first
- * (holding a pooled connection for the length of someone else's handler); it
- * is told `busy` and answers Stripe with a non-2xx, and Stripe's retry finds the
- * row terminal (first one committed) or claimable (first one rolled back).
+ *
+ * The conditional UPDATE matches only an open (received/failed) row and takes
+ * its row lock until this transaction ends. A second delivery's UPDATE waits on
+ * that lock and then re-evaluates its WHERE against the committed row: the
+ * first committed a terminal status → it matches nothing → `done`; the first
+ * rolled back → it matches → `claimed`. So two deliveries never both process.
  */
 export async function claimStripeEvent(tx: Tx, eventId: string): Promise<ClaimResult> {
-  const locked = await tx.$queryRaw<Array<{ status: string }>>`
-    SELECT "status" FROM "StripeEvent" WHERE "eventId" = ${eventId} FOR UPDATE SKIP LOCKED`;
-  if (locked.length === 1) {
-    const status = locked[0].status as StripeEventStatus;
-    return TERMINAL_STRIPE_EVENT_STATUSES.has(status) ? { kind: "done", status } : { kind: "claimed", status };
-  }
-  const exists = await tx.$queryRaw<Array<{ n: number }>>`
-    SELECT 1 AS n FROM "StripeEvent" WHERE "eventId" = ${eventId}`;
-  return exists.length === 1 ? { kind: "busy" } : { kind: "missing" };
+  const claimed = await tx.stripeEvent.updateMany({
+    where: { eventId, status: { in: ["received", "failed"] } },
+    data: { lastAttemptAt: new Date() },
+  });
+  const row = await tx.stripeEvent.findUnique({ where: { eventId }, select: { status: true } });
+  if (!row) return { kind: "missing" };
+  const status = row.status as StripeEventStatus;
+  return claimed.count === 1 ? { kind: "claimed", status } : { kind: "done", status };
 }
 
 /** Terminal success, inside the handler transaction (same commit as the effects). */
@@ -360,10 +379,18 @@ export async function runStripeEvent<E extends StoreEventInput>(
   let auditsWritten = 0;
   try {
     ({ result, finalStatus, auditsWritten } = await withRlsBypass(async (tx) => {
-      const claim = await claimStripeEvent(tx, event.id);
-      if (claim.kind === "busy") throw new EventBusyError("event is being processed by another delivery");
+      let claim: ClaimResult;
+      try {
+        claim = await claimStripeEvent(tx, event.id);
+      } catch (e) {
+        if (isLockTimeout(e)) throw new EventBusyError("event is being processed by another delivery");
+        throw e;
+      }
       if (claim.kind === "missing") throw new Error(`stripe event ${event.id} has no store row`);
       if (claim.kind === "done" && mode !== "replay_forced") throw new EventDoneError(claim.status);
+      // A forced replay of a settled row still takes the row lock, so two
+      // forced replays of one id run one after the other, never together.
+      if (claim.kind === "done") await tx.stripeEvent.update({ where: { eventId: event.id }, data: { lastAttemptAt: new Date() } });
 
       const out = await processor(event, { tx, mode, tenantId: recorded.tenantId });
       const tenantId = out.tenantId ?? recorded.tenantId ?? null;

@@ -29,6 +29,7 @@ vi.mock("@/lib/email", () => ({
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import {
   claimStripeEvent,
+  markProcessed,
   recordReceived,
   runStripeEvent,
   StripeEventRetryableError,
@@ -157,9 +158,8 @@ describe.skipIf(!HAS_DB)("pay-pd: durable Stripe event store", () => {
       runStripeEvent(invoiceEvent(id, `in_${STAMP}_conc`), slow),
       sleep(200).then(() => runStripeEvent(invoiceEvent(id, `in_${STAMP}_conc`), slow)),
     ]);
-    const kinds = [a.kind, b.kind].sort();
-    expect(kinds[0]).toMatch(/^(already_processed|in_progress)$/);
-    expect(kinds[1]).toBe("processed");
+    // The second waits on the row lock, then finds the row terminal.
+    expect([a.kind, b.kind].sort()).toEqual(["already_processed", "processed"]);
     expect(await paymentsFor(id)).toBe(1);
     expect(await auditsFor(id)).toBe(1);
     expect(h.emails).toHaveLength(1);
@@ -168,24 +168,39 @@ describe.skipIf(!HAS_DB)("pay-pd: durable Stripe event store", () => {
     expect(await paymentsFor(id)).toBe(1);
   }, 30_000);
 
-  it("the row is the lock: a second transaction cannot claim an id another holds", async () => {
+  it("the row is the lock: a second claim waits for the holder, then sees its outcome", async () => {
+    // Holder commits a terminal status → the waiting claim finds it done.
     const id = evtId("lock");
     await recordReceived(invoiceEvent(id, `in_${STAMP}_lock`));
-    let release!: () => void;
-    const held = new Promise<void>((r) => (release = r));
-    let claimedFirst: unknown;
+    const order: string[] = [];
     const holder = withRlsBypass(async (tx) => {
-      claimedFirst = await claimStripeEvent(tx, id);
-      await held;
+      order.push(`holder:${(await claimStripeEvent(tx, id)).kind}`);
+      await sleep(1500);
+      await markProcessed(tx, id);
+      order.push("holder:committing");
     });
-    await sleep(500);
-    const second = await withRlsBypass((tx) => claimStripeEvent(tx, id));
-    release();
+    await sleep(400);
+    const second = await withRlsBypass(async (tx) => {
+      const c = await claimStripeEvent(tx, id);
+      order.push(`second:${c.kind}`);
+      return c;
+    });
     await holder;
-    expect(claimedFirst).toEqual({ kind: "claimed", status: "received" });
-    expect(second).toEqual({ kind: "busy" });
-    // Released and never marked: claimable again.
-    expect(await withRlsBypass((tx) => claimStripeEvent(tx, id))).toEqual({ kind: "claimed", status: "received" });
+    expect(order).toEqual(["holder:claimed", "holder:committing", "second:done"]);
+    expect(second).toEqual({ kind: "done", status: "processed" });
+
+    // Holder rolls back (a crash) → the waiting claim gets the row.
+    const id2 = evtId("lock2");
+    await recordReceived(invoiceEvent(id2, `in_${STAMP}_lock2`));
+    const holder2 = withRlsBypass(async (tx) => {
+      await claimStripeEvent(tx, id2);
+      await sleep(1500);
+      throw new Error("simulated crash while holding the row");
+    }).then(() => "committed", () => "rolled back");
+    await sleep(400);
+    const second2 = await withRlsBypass((tx) => claimStripeEvent(tx, id2));
+    expect(await holder2).toBe("rolled back");
+    expect(second2).toEqual({ kind: "claimed", status: "received" });
     expect(await withRlsBypass((tx) => claimStripeEvent(tx, `${id}_absent`))).toEqual({ kind: "missing" });
   }, 30_000);
 

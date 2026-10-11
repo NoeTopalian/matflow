@@ -259,6 +259,8 @@ describe("route inventory", () => {
       "app/api/admin/customers/[id]/totp-reset/route.ts",
       "app/api/admin/customers/[id]/transfer-ownership/route.ts",
       "app/api/admin/impersonate/route.ts",
+      "app/api/admin/stripe/events/[id]/replay/route.ts",
+      "app/api/admin/stripe/events/route.ts",
     ]);
     expect(club.length + PUBLIC_AUTH.length + OPERATOR_ROUTES.length).toBe(ALL_ROUTES.length);
   });

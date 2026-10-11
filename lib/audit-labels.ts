@@ -196,6 +196,9 @@ export const AUDIT_LABELS: Record<string, string> = {
   "admin.tenant.soft_delete.requested": "MatFlow started closing the club",
   "admin.tenant.soft_deleted": "MatFlow closed the club",
   "admin.tenant.restored": "MatFlow restored the club",
+  // Operator replay of a Stripe event (payments lane PD, 11 Oct 2026).
+  "stripe.event.replay.requested": "MatFlow asked to reprocess a Stripe payment event",
+  "stripe.event.replayed": "MatFlow reprocessed a Stripe payment event",
   "admin.tenant.hard_deleted": "MatFlow permanently deleted a club",
   "admin.tenant.review_locked": "MatFlow put the club in review mode",
   "admin.tenant.review_unlocked": "MatFlow took the club out of review mode",

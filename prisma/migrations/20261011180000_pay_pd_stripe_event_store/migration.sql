@@ -2,6 +2,8 @@
 -- Additive only. Existing StripeEvent rows were claimed in the same transaction
 -- as their handler, so every one of them is a PROCESSED event: they are
 -- backfilled as such (status processed, one attempt, first seen = processedAt).
+BEGIN;
+
 
 -- StripeEvent: new columns. status/attempts are added with the backfill value
 -- as default, then the default is moved to the value new rows take.
@@ -71,3 +73,5 @@ ALTER TABLE "StripeReconcileRun" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "StripeReconcileRun" FORCE ROW LEVEL SECURITY;
 CREATE POLICY platform_only ON "StripeReconcileRun" AS PERMISSIVE FOR ALL
   USING (current_setting('app.bypass_rls', true) = 'on');
+
+COMMIT;
