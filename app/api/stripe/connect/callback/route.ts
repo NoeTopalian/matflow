@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { refuseSupportSession } from "@/lib/support-session";
+import { Prisma } from "@prisma/client";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -62,7 +63,9 @@ export async function GET(req: NextRequest) {
     await withTenantContext(session.user.tenantId, (tx) =>
       tx.tenant.update({
         where: { id: session.user.tenantId },
-        data: { stripeAccountId, stripeConnected: true },
+        // Clear the cached status on every (re)connect: a stale "deauthorized" stamp from a webhook
+        // would otherwise keep lane PA's guard refusing this club for up to 24 h after it reconnected.
+        data: { stripeAccountId, stripeConnected: true, stripeAccountStatus: Prisma.DbNull },
       }),
     );
 
