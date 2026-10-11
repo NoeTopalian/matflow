@@ -117,3 +117,46 @@ export async function resolveMandateCustomerId(
     return null;
   }
 }
+
+/**
+ * The subscriptions on a customer that collect through one payment method
+ * (lane PC, 11 Oct 2026). A `mandate.updated` going inactive concerns the
+ * payment method, not the customer: in the TeamUp replace window the same
+ * customer can also carry another platform's subscription. The webhook maps
+ * the returned ids through MemberSubscription and acts only on MatFlow's.
+ *
+ * A subscription with no default payment method of its own collects through
+ * the customer's invoice default; it is matched only when that default is the
+ * same method. Returns [] rather than throwing, for the same reason as above.
+ */
+export async function resolveSubscriptionsUsingPaymentMethod(
+  stripe: Stripe,
+  customerId: string,
+  paymentMethodId: string,
+  stripeAccount: string,
+): Promise<string[]> {
+  const idOf = (v: unknown): string | null =>
+    typeof v === "string" ? v : v && typeof v === "object" && typeof (v as { id?: unknown }).id === "string" ? (v as { id: string }).id : null;
+  try {
+    const subs = await stripe.subscriptions.list(
+      { customer: customerId, status: "all", limit: 100, expand: ["data.customer"] },
+      { stripeAccount },
+    );
+    return subs.data
+      .filter((s) => {
+        const own = idOf(s.default_payment_method);
+        if (own) return own === paymentMethodId;
+        const customer = s.customer as unknown as { invoice_settings?: { default_payment_method?: unknown } } | string;
+        const fallback = typeof customer === "object" ? idOf(customer.invoice_settings?.default_payment_method) : null;
+        return fallback === paymentMethodId;
+      })
+      .map((s) => s.id);
+  } catch (err) {
+    console.error("[stripe-webhook] could not list subscriptions for a mandate's payment method", {
+      customerId,
+      paymentMethodId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}

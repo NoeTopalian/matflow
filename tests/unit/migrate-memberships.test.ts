@@ -50,6 +50,12 @@ const fakeTx = {
   tenant: { findUnique: tenantFindUniqueMock },
   membershipTier: { findMany: tierFindManyMock, update: tierUpdateMock, updateMany: tierUpdateManyMock },
   member: { findMany: memberFindManyMock, updateMany: memberUpdateManyMock },
+  // Payments lane PC (11 Oct 2026): adopt/create also write the subscription's
+  // MemberSubscription mapping in the linking transaction (asserted in
+  // tests/unit/pay-pc-migration-mapping.test.ts).
+  memberSubscription: {
+    upsert: async (a: { create: { tenantId: string; memberId: string } }) => ({ id: "ms-1", tenantId: a.create.tenantId, memberId: a.create.memberId }),
+  },
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({

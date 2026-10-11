@@ -19,9 +19,21 @@ const constructEventMock = vi.fn();
 const invoicesRetrieveMock = vi.fn();
 const paymentIntentsRetrieveMock = vi.fn();
 const paymentMethodsRetrieveMock = vi.fn();
+const subscriptionsRetrieveMock = vi.fn();
+const subscriptionsListMock = vi.fn();
+// Lane PC (11 Oct 2026): the route now refuses an event whose livemode does
+// not match the key's mode, and orders subscription events by event.created.
+// Every real Stripe event carries both; these fixtures predate the checks, so
+// the harness supplies a test-mode, ordered default when a fixture omits them
+// (the dedicated livemode/ordering tests live in pay-pc-webhook-scoping).
+const withEventDefaults = (...args: unknown[]) => {
+  const e = constructEventMock(...args) as Record<string, unknown> | undefined;
+  return e && typeof e === "object" ? { livemode: false, created: 2000, ...e } : e;
+};
 vi.mock("stripe", () => ({
   default: class {
-    webhooks = { constructEvent: constructEventMock };
+    webhooks = { constructEvent: withEventDefaults };
+    subscriptions = { retrieve: subscriptionsRetrieveMock, list: subscriptionsListMock };
     invoices = { retrieve: invoicesRetrieveMock };
     paymentIntents = { retrieve: paymentIntentsRetrieveMock };
     paymentMethods = { retrieve: paymentMethodsRetrieveMock };
@@ -45,6 +57,8 @@ vi.mock("@/lib/prisma", () => ({
     tenant: { findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
     user: { findMany: vi.fn() },
     member: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    // Lane PC: subscription and invoice events resolve through this mapping.
+    memberSubscription: { findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     memberStatusEvent: { create: vi.fn(), createMany: vi.fn() },
     payment: { findFirst: vi.fn(), update: vi.fn(), upsert: vi.fn() },
     classPack: { findFirst: vi.fn() },
@@ -84,7 +98,17 @@ const mockPaymentUpsert = vi.mocked(prisma.payment.upsert);
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
-  process.env.STRIPE_SECRET_KEY = "sk_test";
+  // A recognisable test-mode key: the route checks event.livemode against it.
+  process.env.STRIPE_SECRET_KEY = "sk_test_x";
+  // Lane PC default: "sub_x" is MatFlow's subscription for mem-1 (the
+  // member's active one when the member fixture points at it).
+  vi.mocked(prisma.memberSubscription.findFirst).mockResolvedValue(SUB_X_MAPPING as never);
+  vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue([SUB_X_MAPPING] as never);
+  vi.mocked(prisma.memberSubscription.updateMany).mockResolvedValue({ count: 1 } as never);
+  // clearAllMocks keeps implementations, so a Payment row set by one test used
+  // to leak into the next; invoice and PaymentIntent events now consult it, so
+  // every test starts with no Payment on record unless it sets one.
+  mockPaymentFindFirst.mockResolvedValue(null as never);
   mockStripeEventCreate.mockResolvedValue({ id: "evt-row-1" } as never);
   mockTenantFindFirst.mockResolvedValue({ id: "tenant-A" } as never);
   // Defaults so dispute branches that fan out owner emails don't explode when a
@@ -93,6 +117,14 @@ beforeEach(() => {
   vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ name: "Gym" } as never);
   logAuditMock.mockClear();
 });
+
+// Lane PC: MatFlow's mapping for the fixtures' subscription "sub_x", and the
+// dahlia invoice shape that names it.
+const SUB_X_MAPPING = {
+  id: "ms-x", tenantId: "tenant-A", memberId: "mem-1", stripeSubscriptionId: "sub_x",
+  status: "active", lastEventCreated: 1000, endedAt: null, requiresActionInvoiceId: null,
+};
+const SUB_X_PARENT = { type: "subscription_details", subscription_details: { subscription: "sub_x", metadata: {} } };
 
 function makeReq(rawBody: string) {
   return new Request("http://localhost/api/stripe/webhook", {
@@ -114,7 +146,8 @@ describe("Stripe webhook: customer.subscription.updated", () => {
         object: { id: "sub_x", customer: "cus_x", status: "past_due" },
       },
     });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    // Lane PC: mem-1 is the holder of MatFlow's mapped "sub_x" (its active one).
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", stripeSubscriptionId: "sub_x" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
@@ -127,38 +160,37 @@ describe("Stripe webhook: customer.subscription.updated", () => {
   });
 });
 
-// ── attribution funnel: Stripe-driven cancellations (M1 webhook fast-follow) ──
-// The webhook only ever flips a member DOWN to cancelled (it never activates —
-// conversions are staff PATCH). These pin that both cancellation paths leave a
-// MemberStatusEvent so churn is visible to the funnel, and that a redelivered
-// event on an already-cancelled member writes nothing (recordStatusEvent no-ops
-// when from === to).
+// ── attribution funnel: Stripe-driven subscription ends ──────────────────────
+// Until 11 Oct 2026 both Stripe cancellation paths flipped Member.status to
+// "cancelled" and left a MemberStatusEvent (M1). Payments lane PC changed the
+// rule (audit §11/§16, Noe: "Keep payment state, membership entitlement and
+// the person's record separate"): the end of a Stripe subscription is PAYMENT
+// state — the member's pointer is cleared and paymentStatus becomes
+// "cancelled" — and Member.status is MatFlow's (staff action). These tests now
+// pin that no status flip and no status event come from the webhook.
 
 describe("Stripe webhook: MemberStatusEvent trail for cancellations", () => {
   const statusEventCreate = () => vi.mocked(prisma.memberStatusEvent.create);
 
-  it("subscription.deleted records active→cancelled with reason stripe_webhook", async () => {
+  it("subscription.deleted ends the active subscription without cancelling the member or writing a status event", async () => {
     constructEventMock.mockReturnValue({
       id: "evt-del-1",
       type: "customer.subscription.deleted",
       account: "acct_test",
       data: { object: { id: "sub_x", customer: "cus_x" } },
     });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-9", tenantId: "tenant-A", status: "active" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-9", tenantId: "tenant-A", status: "active", stripeSubscriptionId: "sub_x" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(200);
 
-    expect(statusEventCreate()).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        memberId: "mem-9",
-        fromStatus: "active",
-        toStatus: "cancelled",
-        reason: "stripe_webhook",
-        changedById: null,
-      }),
-    }));
+    expect(statusEventCreate()).not.toHaveBeenCalled();
+    expect(mockMemberUpdate).toHaveBeenCalledWith({
+      where: { id: "mem-9" },
+      data: { stripeSubscriptionId: null, paymentStatus: "cancelled" },
+    });
+    expect(mockMemberUpdateMany).not.toHaveBeenCalled();
   });
 
   it("subscription.deleted on an already-cancelled member writes no event (idempotent redelivery)", async () => {
@@ -176,28 +208,24 @@ describe("Stripe webhook: MemberStatusEvent trail for cancellations", () => {
     expect(statusEventCreate()).not.toHaveBeenCalled();
   });
 
-  it("subscription.updated to canceled records the down-to-cancelled transition", async () => {
+  it("subscription.updated to canceled clears the pointer and sets paymentStatus, with no status flip or event", async () => {
     constructEventMock.mockReturnValue({
       id: "evt-upd-1",
       type: "customer.subscription.updated",
       account: "acct_test",
       data: { object: { id: "sub_x", customer: "cus_x", status: "canceled" } },
     });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-7", tenantId: "tenant-A", status: "active" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-7", tenantId: "tenant-A", status: "active", stripeSubscriptionId: "sub_x" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(200);
 
-    expect(statusEventCreate()).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        memberId: "mem-7",
-        fromStatus: "active",
-        toStatus: "cancelled",
-        reason: "stripe_webhook",
-        changedById: null,
-      }),
-    }));
+    expect(statusEventCreate()).not.toHaveBeenCalled();
+    expect(mockMemberUpdate).toHaveBeenCalledWith({
+      where: { id: "mem-7" },
+      data: { stripeSubscriptionId: null, paymentStatus: "cancelled", holdUntil: null },
+    });
   });
 
   it("subscription.updated to past_due writes NO status event (paymentStatus only)", async () => {
@@ -207,12 +235,13 @@ describe("Stripe webhook: MemberStatusEvent trail for cancellations", () => {
       account: "acct_test",
       data: { object: { id: "sub_x", customer: "cus_x", status: "past_due" } },
     });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-7", tenantId: "tenant-A", status: "active" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-7", tenantId: "tenant-A", status: "active", stripeSubscriptionId: "sub_x" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
 
     expect(statusEventCreate()).not.toHaveBeenCalled();
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ paymentStatus: "overdue" }) }));
   });
 });
 
@@ -253,6 +282,9 @@ describe("Stripe webhook: payment_intent.succeeded", () => {
           customer: "cus_x",
           amount_received: 5000,
           currency: "gbp",
+          // Lane PC: MatFlow's ad-hoc charge (its own metadata), not "a PI on
+          // a customer we know".
+          metadata: { type: "adhoc", tenantId: "tenant-A", memberId: "mem-1" },
         },
       },
     });
@@ -294,6 +326,7 @@ describe("Stripe webhook: invoice.payment_succeeded convergence", () => {
           payment_intent: "pi_NEVER_SENT_BY_STRIPE",
           amount_paid: 1000,
           currency: "gbp",
+          parent: SUB_X_PARENT,
         },
       },
     });
@@ -303,7 +336,7 @@ describe("Stripe webhook: invoice.payment_succeeded convergence", () => {
       payments: { data: [{ status: "paid", payment: { payment_intent: "pi_x" } }] },
     });
     paymentIntentsRetrieveMock.mockResolvedValue({ id: "pi_x", latest_charge: "ch_x" });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", stripeSubscriptionId: "sub_x" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
@@ -324,11 +357,11 @@ describe("Stripe webhook: invoice.payment_succeeded convergence", () => {
       id: "evt-inv-nopi",
       type: "invoice.payment_succeeded",
       account: "acct_test",
-      data: { object: { id: "in_y", customer: "cus_x", amount_paid: 1000, currency: "gbp" } },
+      data: { object: { id: "in_y", customer: "cus_x", amount_paid: 1000, currency: "gbp", parent: SUB_X_PARENT } },
     });
     // An invoice with no payment entries — e.g. a zero-value or credited one.
     invoicesRetrieveMock.mockResolvedValue({ id: "in_y", payments: { data: [] } });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", stripeSubscriptionId: "sub_x" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
@@ -347,10 +380,10 @@ describe("Stripe webhook: invoice.payment_succeeded convergence", () => {
       id: "evt-inv-zero",
       type: "invoice.payment_succeeded",
       account: "acct_test",
-      data: { object: { id: "in_zero", customer: "cus_x", amount_paid: 0, amount_due: 0, currency: "gbp" } },
+      data: { object: { id: "in_zero", customer: "cus_x", amount_paid: 0, amount_due: 0, currency: "gbp", parent: SUB_X_PARENT } },
     });
     invoicesRetrieveMock.mockResolvedValue({ id: "in_zero", payments: { data: [] } });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", stripeSubscriptionId: "sub_x" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
@@ -844,7 +877,7 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       account: "acct_test",
       data: { object: { id: "sub_x", customer: "cus_x" } },
     });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", stripeSubscriptionId: "sub_x" } as never);
     mockMemberUpdateMany.mockResolvedValue({ count: 1 } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
@@ -856,21 +889,26 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
     }));
   });
 
-  it("D1: stamps cancelledAt when a subscription is deleted", async () => {
+  // D1 used to pin that a deleted subscription stamped Member.status
+  // "cancelled" + cancelledAt. Lane PC (11 Oct 2026) moved membership out of
+  // the webhook: cancelledAt belongs to the staff cancellation that sets
+  // Member.status, so the webhook must now write neither.
+  it("D1 (lane PC): a deleted subscription stamps neither Member.status nor cancelledAt", async () => {
     constructEventMock.mockReturnValue({
       id: "evt-subdel-ca",
       type: "customer.subscription.deleted",
       account: "acct_test",
       data: { object: { id: "sub_x", customer: "cus_x" } },
     });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
-    mockMemberUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", stripeSubscriptionId: "sub_x" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
-    expect(mockMemberUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ status: "cancelled", cancelledAt: expect.any(Date) }),
-    }));
+    expect(mockMemberUpdateMany).not.toHaveBeenCalled();
+    expect(mockMemberUpdate).toHaveBeenCalledTimes(1);
+    const data = (mockMemberUpdate.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    expect(data).not.toHaveProperty("status");
+    expect(data).not.toHaveProperty("cancelledAt");
   });
 
   it("D3: audits a failed payment even when the member has no email on file", async () => {
@@ -878,9 +916,9 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       id: "evt-fail-noemail",
       type: "invoice.payment_failed",
       account: "acct_test",
-      data: { object: { id: "in_x", customer: "cus_x", amount_due: 1000, currency: "gbp" } },
+      data: { object: { id: "in_x", customer: "cus_x", amount_due: 1000, currency: "gbp", parent: SUB_X_PARENT } },
     });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", stripeSubscriptionId: "sub_x" } as never);
     vi.mocked(prisma.member.findUnique).mockResolvedValue({ name: "No Email", email: null, tenant: { name: "Gym" } } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
@@ -963,12 +1001,17 @@ describe("Stripe webhook: out-of-order + void contingencies", () => {
       id: "evt-pi-inv", type: "payment_intent.succeeded", account: "acct_test",
       data: { object: { id: "pi_inv", customer: "cus_x", invoice: "in_x", amount_received: 5000, currency: "gbp" } },
     });
+    // Lane PC: the PI is MatFlow's through the Payment row its invoice leg wrote.
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-inv", memberId: "mem-1", status: "succeeded" } as never);
     mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "active" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
     expect(mockPaymentUpsert).not.toHaveBeenCalled(); // invoice leg owns it
-    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { paymentStatus: "paid" } }));
+    // Lane PC: a PaymentIntent no longer moves Member.paymentStatus — the
+    // subscription's invoice events do, through the mapping (this used to
+    // assert a "paid" flip here).
+    expect(mockMemberUpdate).not.toHaveBeenCalled();
   });
 
   it("3.12: payment_intent.succeeded does NOT resurrect a cancelled member", async () => {
@@ -976,6 +1019,8 @@ describe("Stripe webhook: out-of-order + void contingencies", () => {
       id: "evt-pi-canc", type: "payment_intent.succeeded", account: "acct_test",
       data: { object: { id: "pi_c", customer: "cus_x", amount_received: 5000, currency: "gbp" } },
     });
+    // Lane PC: MatFlow's own ad-hoc charge row, still pending.
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-c", memberId: "mem-1", status: "pending" } as never);
     mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "cancelled" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
@@ -989,7 +1034,7 @@ describe("Stripe webhook: out-of-order + void contingencies", () => {
       id: "evt-sub-res", type: "customer.subscription.updated", account: "acct_test",
       data: { object: { id: "sub_x", customer: "cus_x", status: "active" } },
     });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "cancelled" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "cancelled", stripeSubscriptionId: "sub_x" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
@@ -1008,9 +1053,12 @@ describe("Stripe webhook: multi-club routing", () => {
       id: "evt-mc-1",
       type: "payment_intent.succeeded",
       account: "acct_B",
-      data: { object: { id: "pi_B", customer: "cus_B", amount_received: 5000, currency: "gbp" } },
+      // Lane PC: an ad-hoc charge MatFlow made for club B (its own metadata);
+      // the customer no longer identifies the member.
+      data: { object: { id: "pi_B", customer: "cus_B", amount_received: 5000, currency: "gbp", metadata: { type: "adhoc", tenantId: "tenant-B", memberId: "mem-B" } } },
     });
     mockTenantFindFirst.mockResolvedValue({ id: "tenant-B" } as never);
+    mockPaymentFindFirst.mockResolvedValue(null as never);
     mockMemberFindFirst.mockResolvedValue({ id: "mem-B", tenantId: "tenant-B" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
@@ -1021,9 +1069,12 @@ describe("Stripe webhook: multi-club routing", () => {
     expect(mockTenantFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { stripeAccountId: "acct_B" } }),
     );
-    // Member lookup carries the resolved tenantId — can't grab another club's member.
+    // Payment and member lookups carry the resolved tenantId — can't grab another club's rows.
+    expect(mockPaymentFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ tenantId: "tenant-B", stripePaymentIntentId: "pi_B" }) }),
+    );
     expect(mockMemberFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ stripeCustomerId: "cus_B", tenantId: "tenant-B" }) }),
+      expect.objectContaining({ where: expect.objectContaining({ id: "mem-B", tenantId: "tenant-B" }) }),
     );
     expect(mockPaymentUpsert).toHaveBeenCalled();
   });
@@ -1082,9 +1133,9 @@ describe("Stripe webhook: idempotency claim", () => {
       id: "evt-rollback",
       type: "invoice.payment_succeeded",
       account: "acct_test",
-      data: { object: { id: "in_x", customer: "cus_x", amount_paid: 1000, currency: "gbp" } },
+      data: { object: { id: "in_x", customer: "cus_x", amount_paid: 1000, currency: "gbp", parent: SUB_X_PARENT } },
     });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", stripeSubscriptionId: "sub_x" } as never);
     // Force the upsert to throw — simulates a DB hiccup mid-handler.
     mockPaymentUpsert.mockRejectedValueOnce(new Error("db blew up"));
 
@@ -1135,10 +1186,12 @@ describe("Stripe webhook: invoice payment ids (P0-1)", () => {
     // upsert and the assertions below fail.
     charge: "ch_MUST_NOT_BE_USED",
     payment_intent: "pi_MUST_NOT_BE_USED",
+    // Lane PC: MatFlow's mapped subscription, so the invoice resolves to mem-1.
+    parent: SUB_X_PARENT,
   };
 
   beforeEach(() => {
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", stripeSubscriptionId: "sub_x" } as never);
     invoicesRetrieveMock.mockResolvedValue({
       id: "in_p01",
       payments: { data: [{ payment: { type: "payment_intent", payment_intent: "pi_real" } }] },
@@ -1267,6 +1320,13 @@ describe("Stripe webhook: customer resolution on mandate/detached (P1-5b)", () =
     // error against the pinned SDK. The old handler read obj.customer, always
     // got undefined, and never found a member, so this path never ran.
     paymentMethodsRetrieveMock.mockResolvedValue({ id: "pm_1", customer: "cus_mandate" });
+    // Lane PC: the customer's subscriptions that collect through pm_1 — MatFlow's
+    // sub_x — and one that does not (another platform's, on another method).
+    subscriptionsListMock.mockResolvedValue({ data: [
+      { id: "sub_x", default_payment_method: "pm_1", customer: "cus_mandate" },
+      { id: "sub_other", default_payment_method: "pm_other", customer: "cus_mandate" },
+    ] });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", stripeSubscriptionId: "sub_x" } as never);
     constructEventMock.mockReturnValue({
       id: "evt-m1", type: "mandate.updated", account: "acct_test",
       data: { object: { id: "mandate_1", status: "inactive", payment_method: "pm_1" } },
@@ -1277,7 +1337,16 @@ describe("Stripe webhook: customer resolution on mandate/detached (P1-5b)", () =
     expect(res.status).toBe(200);
 
     expect(paymentMethodsRetrieveMock).toHaveBeenCalledWith("pm_1", {}, { stripeAccount: "acct_test" });
-    expect(mockMemberFindFirst).toHaveBeenCalledWith(
+    // Lane PC: the member is reached through the subscription mapping of the
+    // subscriptions using this payment method, never by customer.
+    expect(subscriptionsListMock).toHaveBeenCalledWith(
+      expect.objectContaining({ customer: "cus_mandate" }),
+      { stripeAccount: "acct_test" },
+    );
+    expect(vi.mocked(prisma.memberSubscription.findMany)).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ tenantId: "tenant-A", stripeSubscriptionId: { in: ["sub_x"] } }),
+    }));
+    expect(mockMemberFindFirst).not.toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ stripeCustomerId: "cus_mandate" }) }),
     );
     expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({
@@ -1584,7 +1653,7 @@ describe("Stripe webhook: subscription.updated carries pause_collection", () => 
       account: "acct_test",
       data: { object: { id: "sub_x", customer: "cus_x", status: "active", pause_collection: { behavior: "void", resumes_at: 1_790_000_000 } } },
     });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "active" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "active", stripeSubscriptionId: "sub_x" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
@@ -1602,7 +1671,7 @@ describe("Stripe webhook: subscription.updated carries pause_collection", () => 
       account: "acct_test",
       data: { object: { id: "sub_x", customer: "cus_x", status: "active", pause_collection: null } },
     });
-    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "active" } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A", status: "active", stripeSubscriptionId: "sub_x" } as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);

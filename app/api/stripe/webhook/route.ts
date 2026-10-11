@@ -2,17 +2,25 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
-import { recordStatusEvent } from "@/lib/member-status";
 import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
 import { HANDLED_STRIPE_EVENT_TYPES } from "@/lib/stripe/handled-events";
 import { packCreditsAfterRefund } from "@/lib/pack-refund";
 import * as Sentry from "@sentry/nextjs";
 
-import { resolveInvoicePaymentIds, resolveMandateCustomerId, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
+import { resolveInvoicePaymentIds, resolveMandateCustomerId, resolveSubscriptionsUsingPaymentMethod, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
 import { subscriptionStatusToPaymentStatus } from "@/lib/stripe/subscription-status";
 import { readPauseCollection } from "@/lib/member-hold";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { classifyStripeKey } from "@/lib/stripe/key-mode";
+import {
+  invoiceSubscriptionId,
+  isTerminalSubscriptionStatus,
+  livemodeMatchesKey,
+  orderingVerdict,
+  subscriptionCurrentPeriodEnd,
+  type SubscriptionMapping,
+} from "@/lib/stripe/webhook/mapping";
 
 export const runtime = "nodejs";
 // Explicit rather than inherited: P0-1 added up to two Stripe round-trips to
@@ -27,6 +35,16 @@ export const maxDuration = 15;
 // us acking-and-dropping (which would take money but never deliver the goods).
 class WebhookRetryableError extends Error {}
 
+// What happened to a verified, attributable event (payments lane PC, 11 Oct
+// 2026). "ignored_foreign": the object maps to nothing MatFlow created,
+// migrated or adopted (another platform's subscription on the same customer, a
+// charge the club took outside MatFlow), so nothing on any member was written.
+// "ignored_stale": the event is older than the state already applied for the
+// same object, so applying it would move the record backwards. Both are acked
+// with 200 so Stripe stops retrying. Lane PD's event store records this value
+// on the StripeEvent row once it lands; until then it is logged and returned.
+type WebhookOutcome = "processed" | "ignored_foreign" | "ignored_stale";
+
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
   const sig = req.headers.get("stripe-signature");
@@ -36,13 +54,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing signature" }, { status: 400 });
   }
 
-  let event: { id: string; type: string; account?: string; data: { object: Record<string, unknown>; previous_attributes?: Record<string, unknown> } };
+  let event: {
+    id: string;
+    type: string;
+    account?: string;
+    livemode?: boolean;
+    created?: number;
+    data: { object: Record<string, unknown>; previous_attributes?: Record<string, unknown> };
+  };
   try {
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2026-03-25.dahlia" });
     event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret) as unknown as typeof event;
   } catch {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
+  }
+
+  // F8 (audit §12): a production Connect endpoint receives BOTH live and test
+  // events, and Stripe recommends checking `livemode`. A test-mode event must
+  // never move a live club's members (and the reverse), so an event whose mode
+  // differs from the key this deployment runs on is refused before anything is
+  // claimed or read. Fails closed when either side's mode cannot be read.
+  const keyMode = classifyStripeKey(process.env.STRIPE_SECRET_KEY).mode;
+  if (!livemodeMatchesKey(event.livemode, keyMode)) {
+    console.warn("[stripe-webhook] event mode does not match the key mode — refused", {
+      eventId: event.id,
+      type: event.type,
+      livemode: typeof event.livemode === "boolean" ? event.livemode : null,
+      keyMode,
+    });
+    return NextResponse.json({ error: "Event mode does not match this deployment" }, { status: 400 });
   }
 
   // Only claim the eventId for event types we actually handle. Claiming for
@@ -107,6 +148,7 @@ export async function POST(req: NextRequest) {
   // read was always undefined and the BACS mandate-failure path never ran.
   // The mandate does carry payment_method, which carries the customer.
   let mandateCustomerId: string | null = null;
+  let mandateSubscriptionIds: string[] = [];
   if (
     event.type === "mandate.updated" &&
     // The handler acts ONLY on an inactive mandate, so resolving the customer
@@ -122,9 +164,63 @@ export async function POST(req: NextRequest) {
       apiVersion: "2026-03-25.dahlia",
     });
     mandateCustomerId = await resolveMandateCustomerId(stripeClient, obj.payment_method, stripeAccountId);
+    // Lane PC: the customer alone is not enough — it may also carry another
+    // platform's subscription. Only the subscriptions that actually collect
+    // through THIS payment method are affected by its mandate going inactive;
+    // the handler then acts only on those that map to a MatFlow member.
+    if (mandateCustomerId) {
+      mandateSubscriptionIds = await resolveSubscriptionsUsingPaymentMethod(
+        stripeClient,
+        mandateCustomerId,
+        obj.payment_method,
+        stripeAccountId,
+      );
+    }
+  }
+
+  // Lane PC (ordering, audit §13): Stripe does not guarantee delivery order.
+  // Before a subscription.updated is applied, the mapping's lastEventCreated
+  // decides: older -> stale (decided inside the transaction, atomically); same
+  // second, or a mapping that has never had an event applied (the backfilled
+  // rows) -> retrieve the subscription FRESH from the club's account and apply
+  // that state rather than the payload's. Done here, outside the transaction,
+  // so the network call never holds a pooled connection.
+  let freshSubscription: Record<string, unknown> | null = null;
+  if (
+    event.type === "customer.subscription.updated" &&
+    typeof obj.id === "string" &&
+    stripeAccountId &&
+    process.env.STRIPE_SECRET_KEY
+  ) {
+    const subscriptionId = obj.id;
+    const known = await withRlsBypass(async (tx) => {
+      const t = await tx.tenant.findFirst({ where: { stripeAccountId }, select: { id: true } });
+      if (!t) return null;
+      return tx.memberSubscription.findFirst({
+        where: { tenantId: t.id, stripeSubscriptionId: subscriptionId },
+        select: { lastEventCreated: true, status: true },
+      });
+    });
+    if (known && !isTerminalSubscriptionStatus(known.status) && orderingVerdict(known, event.created) === "fetch_fresh") {
+      try {
+        const StripeCtor = (await import("stripe")).default;
+        const stripeClient = new StripeCtor(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
+        const fresh = await stripeClient.subscriptions.retrieve(subscriptionId, {}, { stripeAccount: stripeAccountId });
+        freshSubscription = fresh as unknown as Record<string, unknown>;
+      } catch (err) {
+        // The payload is what the handler always applied; falling back to it
+        // is no worse than before, and a Stripe outage must not stall billing.
+        console.error("[stripe-webhook] fresh subscription retrieve failed — applying the event payload", {
+          eventId: event.id,
+          subscriptionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 
   let accountStatusRefresh: { tenantId: string; stripeAccountId: string } | null = null;
+  let outcome = "processed" as WebhookOutcome;
 
   // Tier 1.1 (atomic idempotency): claim the event id AND process it in ONE
   // transaction. If the function crashes / times out mid-flight, the whole tx —
@@ -174,6 +270,77 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // ── Lane PC: verified resolution (audit §11, §13, §17) ─────────────────
+    // findMember above (by customer) is now used ONLY by payment_method.detached,
+    // which writes an audit row and nothing else; customer.deleted clears the
+    // customer link by customer id. Every other member-affecting branch resolves
+    // through a MemberSubscription mapping, a Payment row MatFlow wrote, or
+    // MatFlow's own metadata — never "whoever owns this customer".
+    async function mappingFor(subscriptionId: string | null): Promise<SubscriptionMapping | null> {
+      if (!subscriptionId) return null;
+      return tx.memberSubscription.findFirst({
+        where: { tenantId: tenantId!, stripeSubscriptionId: subscriptionId },
+        select: {
+          id: true, tenantId: true, memberId: true, stripeSubscriptionId: true,
+          status: true, lastEventCreated: true, endedAt: true, requiresActionInvoiceId: true,
+        },
+      });
+    }
+    // The member a mapping belongs to, and whether that mapping is the member's
+    // ACTIVE one (Member.stripeSubscriptionId points at it). Only the active
+    // mapping may move the member's payment state.
+    async function mappedMember(mapping: SubscriptionMapping) {
+      const m = await tx.member.findFirst({
+        where: { id: mapping.memberId, tenantId: tenantId! },
+        select: { id: true, tenantId: true, status: true, stripeSubscriptionId: true },
+      });
+      if (!m) return null;
+      return { ...m, isActive: m.stripeSubscriptionId === mapping.stripeSubscriptionId };
+    }
+    async function memberInTenant(memberId: string | null | undefined) {
+      if (!memberId) return null;
+      return tx.member.findFirst({
+        where: { id: memberId, tenantId: tenantId! },
+        select: { id: true, tenantId: true, status: true, stripeSubscriptionId: true },
+      });
+    }
+    // Invoice events: the subscription's mapping first; for an invoice with no
+    // subscription, MatFlow's own metadata; else a Payment row MatFlow already
+    // holds for this invoice (or its resolved PaymentIntent). Nothing else.
+    async function resolveInvoiceOwner(existingPayment: { memberId: string | null } | null) {
+      const subscriptionId = invoiceSubscriptionId(obj);
+      if (subscriptionId) {
+        const mapping = await mappingFor(subscriptionId);
+        if (mapping) {
+          const member = await mappedMember(mapping);
+          return member ? { member, mapping } : null;
+        }
+      } else {
+        const meta = (obj.metadata as Record<string, string> | null | undefined) ?? {};
+        if (meta.matflowTenantId === tenantId && meta.matflowMemberId) {
+          const member = await memberInTenant(meta.matflowMemberId);
+          if (member) return { member: { ...member, isActive: false }, mapping: null };
+        }
+      }
+      if (existingPayment?.memberId) {
+        const member = await memberInTenant(existingPayment.memberId);
+        if (member) return { member: { ...member, isActive: false }, mapping: null };
+      }
+      return null;
+    }
+    async function existingInvoicePayment(invoiceId: string) {
+      return tx.payment.findFirst({
+        where: {
+          tenantId: tenantId!,
+          OR: [
+            { stripeInvoiceId: invoiceId },
+            ...(invoicePayment.paymentIntentId ? [{ stripePaymentIntentId: invoicePayment.paymentIntentId }] : []),
+          ],
+        },
+        select: { id: true, status: true, memberId: true },
+      });
+    }
+
     // Fix 3 (T-1): refresh cached Tenant.stripeAccountStatus on every
     // account.updated event so checkout/portal gates see the latest
     // charges_enabled / payouts_enabled / past-due signals in seconds.
@@ -192,78 +359,76 @@ export async function POST(req: NextRequest) {
         metadata: { stripeAccountId },
       });
     } else if (event.type === "customer.subscription.deleted") {
-      const customerId = obj.customer as string;
-      if (customerId && tenantId) {
-        // Audit iter-1-member-lifecycle A3C-1: also flip Member.status to
-        // "cancelled" — previously only paymentStatus moved, leaving every
-        // self-cancelled member appearing active in counts, check-in, etc.
-        // Contract documented at /api/member/subscriptions/cancel:7-9 and
-        // lib/stripe/subscriptions.ts:138; the webhook now honours it.
-        // Audit iter-2-database A8I2-V-GAP3 [High]: refuse the no-tenant
-        // fallback (was the same cross-tenant vector as findMember which
-        // S-4 closed). The tenantId guard at the outer if() now mirrors
-        // findMember's behaviour — silent skip + 200 ack so Stripe stops
-        // retrying.
-        // D2: resolve the member first so the audit entityId is the Member.id,
-        // not the Stripe customer id. Member-scoped surfaces — notably the GDPR
-        // DSAR export (app/api/admin/dsar/export) which queries AuditLog by
-        // {entityType:"Member", entityId: memberId} — never matched a cus_… id,
-        // so this Stripe-initiated cancellation was silently dropped from the
-        // member's data export. Every sibling branch already keys on member.id.
-        const cancelledMember = await findMember(customerId);
-        const deletedSubId = (obj.id as string) ?? null;
-        await tx.member.updateMany({
-          // Tier 3.10: scope to the member who actually holds THIS subscription
-          // (obj.id), not merely the customer — a member with a different live
-          // subscription on the same Stripe customer must not be cancelled by an
-          // unrelated subscription's deletion.
-          where: {
-            stripeCustomerId: customerId,
-            tenantId,
-            ...(deletedSubId ? { stripeSubscriptionId: deletedSubId } : {}),
+      // Lane PC: resolved through the subscription's mapping, never the
+      // customer. A subscription MatFlow did not create, migrate or adopt
+      // (TeamUp's, in the replace window) is acknowledged and changes nothing.
+      //
+      // Before 11 Oct 2026 this branch set Member.status = "cancelled",
+      // cancelledAt and a MemberStatusEvent (A3C-1, D1, M1). It no longer
+      // does: the end of a Stripe subscription is PAYMENT state. On the
+      // member's ACTIVE subscription the pointer is cleared and paymentStatus
+      // becomes "cancelled" (no coverage); whether the person's membership ends
+      // is MatFlow's decision (staff action), not Stripe's. On any other
+      // mapping only that mapping ends.
+      const deletedSubId = typeof obj.id === "string" ? obj.id : null;
+      const mapping = await mappingFor(deletedSubId);
+      if (!mapping) {
+        outcome = "ignored_foreign";
+      } else {
+        const created = typeof event.created === "number" ? event.created : null;
+        await tx.memberSubscription.update({
+          where: { id: mapping.id },
+          data: {
+            status: "canceled",
+            endedAt: mapping.endedAt ?? new Date(),
+            lastEventCreated: Math.max(mapping.lastEventCreated ?? 0, created ?? 0) || null,
           },
-          // D1: stamp cancelledAt so churn/net-new analytics date the
-          // cancellation by when it happened, not by updatedAt.
-          data: { status: "cancelled", paymentStatus: "cancelled", cancelledAt: new Date(), stripeSubscriptionId: null },
         });
-        // A3H-9: audit-log the subscription deletion so the gym owner can
-        // trace the cancellation back to the Stripe event.
-        if (cancelledMember) {
-          const subId = deletedSubId;
+        const owner = await mappedMember(mapping);
+        if (owner?.isActive) {
+          await tx.member.update({
+            where: { id: owner.id },
+            data: { stripeSubscriptionId: null, paymentStatus: "cancelled" },
+          });
+          // A3H-9 / D2: audit the Stripe-initiated end, keyed to Member.id so
+          // the member's DSAR export and timeline carry it.
           pendingAuditLogs.push({
             tenantId,
             userId: null,
             action: "member.subscription.cancelled_by_stripe",
             entityType: "Member",
-            entityId: cancelledMember.id,
-            metadata: { stripeCustomerId: customerId, stripeSubscriptionId: subId },
-          });
-          // Attribution (M1): complete the conversion-funnel trail for a
-          // Stripe-driven cancellation, in the SAME tx as the status flip.
-          // recordStatusEvent no-ops when from === to, so a redelivered
-          // webhook on an already-cancelled member writes nothing (idempotent).
-          await recordStatusEvent(tx, {
-            tenantId,
-            memberId: cancelledMember.id,
-            fromStatus: cancelledMember.status,
-            toStatus: "cancelled",
-            reason: "stripe_webhook",
-            changedById: null,
+            entityId: owner.id,
+            metadata: { stripeCustomerId: (obj.customer as string) ?? null, stripeSubscriptionId: deletedSubId },
           });
         }
       }
     } else if (event.type === "invoice.payment_failed") {
-      const customerId = obj.customer as string;
-      const member = customerId ? await findMember(customerId) : null;
-      if (member) {
+      // Lane PC: the invoice's subscription mapping decides whose payment this
+      // is (F4), and a failure never overwrites an invoice already recorded as
+      // paid (F5): Stripe can deliver payment_failed after payment_succeeded
+      // for the same invoice. A failed-then-succeeded invoice still resolves to
+      // succeeded (the succeeded branch overwrites "failed").
+      const failedInvoiceId = obj.id as string;
+      const priorPayment = await existingInvoicePayment(failedInvoiceId);
+      const invoiceOwner = await resolveInvoiceOwner(priorPayment);
+      if (!invoiceOwner) {
+        outcome = "ignored_foreign";
+      } else if (priorPayment && priorPayment.status !== "failed" && priorPayment.status !== "pending") {
+        outcome = "ignored_stale";
+      } else {
+        const member = invoiceOwner.member;
         const memberFull = await tx.member.findUnique({
           where: { id: member.id },
           select: { name: true, email: true, tenant: { select: { name: true } }, parent: { select: { email: true } } },
         });
-        await tx.member.update({
-          where: { id: member.id },
-          data: { paymentStatus: "overdue" },
-        });
+        // Overdue only for the member's ACTIVE subscription: a failed invoice
+        // of a superseded or abandoned subscription is recorded, not acted on.
+        if (member.isActive) {
+          await tx.member.update({
+            where: { id: member.id },
+            data: { paymentStatus: "overdue" },
+          });
+        }
         await tx.payment.upsert({
           where: { stripeInvoiceId: obj.id as string },
           create: {
@@ -313,7 +478,8 @@ export async function POST(req: NextRequest) {
           : memberFull?.parent?.email && !isSynthesisedEmail(memberFull.parent.email)
             ? memberFull.parent.email
             : null;
-        if (memberFull && failedTo) {
+        // Dunning emails only for the member's ACTIVE subscription (lane PC).
+        if (member.isActive && memberFull && failedTo) {
           const symbol = currency === "GBP" ? "£" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "";
           const portalUrl = `${getBaseUrl(req)}/member/profile`;
           const formattedAmount = `${symbol}${(amountPence / 100).toFixed(2)}`;
@@ -357,8 +523,25 @@ export async function POST(req: NextRequest) {
         }
       }
     } else if (event.type === "invoice.payment_succeeded") {
-      const customerId = obj.customer as string;
-      const member = customerId ? await findMember(customerId) : null;
+      // Lane PC: whose payment this is comes from the subscription's mapping
+      // (or MatFlow's metadata / an existing Payment row for an invoice with no
+      // mapped subscription), never from the customer. Only the member's
+      // ACTIVE subscription moves their paymentStatus.
+      const succeededInvoiceId = obj.id as string;
+      const priorPayment = await existingInvoicePayment(succeededInvoiceId);
+      const invoiceOwner = await resolveInvoiceOwner(priorPayment);
+      if (!invoiceOwner) outcome = "ignored_foreign";
+      // A refund or dispute already recorded against this invoice's payment is
+      // later than any "succeeded": a redelivered success must not resurrect it.
+      else if (priorPayment && (priorPayment.status === "refunded" || priorPayment.status === "disputed")) outcome = "ignored_stale";
+      const member = outcome === "processed" ? invoiceOwner?.member ?? null : null;
+      // The renewal that was waiting on the payer is paid: clear the marker.
+      if (invoiceOwner?.mapping && invoiceOwner.mapping.requiresActionInvoiceId === succeededInvoiceId) {
+        await tx.memberSubscription.update({
+          where: { id: invoiceOwner.mapping.id },
+          data: { requiresActionInvoiceId: null, requiresActionAt: null },
+        });
+      }
       // A £0 invoice is not a payment. Stripe issues one the moment a
       // subscription is created with a future `billing_cycle_anchor` and no
       // proration — the shape a membership migrated from another platform
@@ -367,10 +550,12 @@ export async function POST(req: NextRequest) {
       // and the club's revenue export. The member is still confirmed paid.
       const zeroAmountInvoice = ((obj.amount_paid as number) ?? 0) === 0 && ((obj.amount_due as number) ?? 0) === 0;
       if (member && zeroAmountInvoice) {
-        await tx.member.update({
-          where: { id: member.id },
-          data: { paymentStatus: "paid" },
-        });
+        if (member.isActive) {
+          await tx.member.update({
+            where: { id: member.id },
+            data: { paymentStatus: "paid" },
+          });
+        }
       } else if (member) {
         // A3H-9: audit-log the successful payment.
         pendingAuditLogs.push({
@@ -385,10 +570,12 @@ export async function POST(req: NextRequest) {
             currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
           },
         });
-        await tx.member.update({
-          where: { id: member.id },
-          data: { paymentStatus: "paid" },
-        });
+        if (member.isActive) {
+          await tx.member.update({
+            where: { id: member.id },
+            data: { paymentStatus: "paid" },
+          });
+        }
         // A1: a subscription charge fires BOTH invoice.payment_succeeded and
         // payment_intent.succeeded. The PI leg keys its upsert on
         // stripePaymentIntentId; key THIS leg on the same PI (when present) so
@@ -606,26 +793,60 @@ export async function POST(req: NextRequest) {
             }
           }
         }
+      } else {
+        // Not a checkout MatFlow created for this club (no matching metadata).
+        outcome = "ignored_foreign";
       }
     } else if (event.type === "payment_intent.processing") {
-      // BACS Direct Debit takes ~4 working days to settle. Show "pending" state in the UI.
-      const customerId = obj.customer as string;
-      const member = customerId ? await findMember(customerId) : null;
-      if (member) {
-        await tx.member.update({
-          where: { id: member.id },
-          data: { paymentStatus: "pending" },
-        });
-      }
+      // BACS Direct Debit takes ~4 working days to settle.
+      //
+      // Lane PC: this branch used to set Member.paymentStatus = "pending" for
+      // whoever owned the CUSTOMER — which, in the replace window, included a
+      // member whose processing debit was TeamUp's. A PaymentIntent now counts
+      // as MatFlow's only through a Payment row MatFlow wrote for it or
+      // MatFlow's own metadata, and those are one-off charges whose in-flight
+      // state already lives on the Payment row ("pending"). A subscription's
+      // debit is settled by its invoice events, through the mapping. So the
+      // event is classified and nothing on the member is written; the first
+      // payment of a new subscription is "pending" from creation
+      // (lib/stripe/subscriptions.ts).
+      const processingPiId = typeof obj.id === "string" ? obj.id : null;
+      const processingRow = processingPiId
+        ? await tx.payment.findFirst({ where: { tenantId, stripePaymentIntentId: processingPiId }, select: { id: true } })
+        : null;
+      const processingMeta = (obj.metadata as Record<string, string> | null | undefined) ?? {};
+      const processingMember = !processingRow && processingMeta.tenantId === tenantId
+        ? await memberInTenant(processingMeta.memberId)
+        : null;
+      if (!processingRow && !processingMember) outcome = "ignored_foreign";
     } else if (event.type === "mandate.updated") {
       // BACS mandate status flipped (active / inactive / pending). Track on member preferredPaymentMethod.
+      //
+      // Lane PC: the mandate's customer may also pay another platform's
+      // subscription. Only MatFlow subscriptions that collect through THIS
+      // payment method (resolved before the transaction) are affected, and
+      // only the member whose ACTIVE subscription it is is marked overdue.
       const status = (obj.status as string) ?? "";
-      const member = mandateCustomerId ? await findMember(mandateCustomerId) : null;
-      if (member && status === "inactive") {
-        await tx.member.update({
-          where: { id: member.id },
-          data: { paymentStatus: "overdue", preferredPaymentMethod: "card" },
-        });
+      if (status === "inactive") {
+        const affected = mandateSubscriptionIds.length > 0
+          ? await tx.memberSubscription.findMany({
+              where: { tenantId, stripeSubscriptionId: { in: mandateSubscriptionIds }, endedAt: null },
+              select: {
+                id: true, tenantId: true, memberId: true, stripeSubscriptionId: true,
+                status: true, lastEventCreated: true, endedAt: true,
+              },
+            })
+          : [];
+        if (affected.length === 0) outcome = "ignored_foreign";
+        for (const mapping of affected) {
+          const owner = await mappedMember(mapping);
+          if (owner?.isActive) {
+            await tx.member.update({
+              where: { id: owner.id },
+              data: { paymentStatus: "overdue", preferredPaymentMethod: "card" },
+            });
+          }
+        }
       }
     } else if (event.type === "charge.refunded") {
       const chargeId = obj.id as string;
@@ -647,6 +868,7 @@ export async function POST(req: NextRequest) {
         existing = await tx.payment.findFirst({ where: { tenantId, stripePaymentIntentId: paymentIntentId } });
       }
       if (!existing) {
+        outcome = "ignored_foreign";
         // Not silence: a refund we cannot attribute is a ledger that will
         // disagree with Stripe, and nobody would otherwise know.
         console.warn(
@@ -724,61 +946,115 @@ export async function POST(req: NextRequest) {
         }
       }
     } else if (event.type === "customer.subscription.updated") {
-      // Sprint 5 US-503: keep Member.stripeSubscriptionId + paymentStatus in sync
-      // when the subscription status flips (active → past_due, paused → active, etc.)
-      const customerId = obj.customer as string;
-      const status = (obj.status as string) ?? "";
-      const subscriptionId = obj.id as string;
-      const member = customerId ? await findMember(customerId) : null;
-      if (member) {
-        // One map, shared with the membership migration that adopts existing
-        // subscriptions (lib/stripe/subscription-status.ts). Unrecognised
-        // statuses leave the column unchanged.
-        // A hold: pause_collection does NOT change `status` (it stays
-        // "active"), so the hold is read off the field itself
-        // (lib/member-hold.ts). Paused wins over the status map; when
-        // collection runs again the status map decides and the hold date
-        // clears. Holds started from the Stripe dashboard therefore reach the
-        // profile too, with their end date.
-        const hold = readPauseCollection(obj);
-        const paymentStatus = hold.paused ? "paused" : subscriptionStatusToPaymentStatus(status);
-        // Audit iter-1-member-lifecycle A3C-1: mirror subscription.deleted —
-        // when Stripe reports the subscription as canceled / incomplete_expired
-        // we also need to flip Member.status, otherwise a member who exits via
-        // this branch (vs subscription.deleted) gets the same phantom-active
-        // state. Membership status only flips down to cancelled here; reaching
-        // "active" requires explicit staff PATCH (intentional).
-        const newStatus = paymentStatus === "cancelled" ? "cancelled" : undefined;
-        // Tier 3.12: Stripe does not guarantee delivery order. Don't let a stale
-        // or out-of-order 'active'/'past_due' subscription.updated RESURRECT a
-        // member who is already cancelled — only cancel-direction updates apply
-        // to an already-cancelled member.
-        const wouldResurrectCancelled = member.status === "cancelled" && newStatus !== "cancelled";
-        if (!wouldResurrectCancelled) {
-          await tx.member.update({
-            where: { id: member.id },
-            data: {
-              stripeSubscriptionId: status === "canceled" ? null : subscriptionId,
-              ...(paymentStatus ? { paymentStatus } : {}),
-              ...(hold.paused ? { holdUntil: hold.resumesAt } : paymentStatus ? { holdUntil: null } : {}),
-              // D1: stamp cancelledAt on the down-to-cancelled flip (mirrors
-              // subscription.deleted) so churn attribution is correct.
-              ...(newStatus ? { status: newStatus, cancelledAt: new Date() } : {}),
-            },
-          });
-          if (newStatus) {
-            // Attribution (M1): record the down-to-cancelled transition into the
-            // funnel, same tx as the update. No-op when already cancelled.
-            await recordStatusEvent(tx, {
-              tenantId: member.tenantId,
-              memberId: member.id,
-              fromStatus: member.status,
-              toStatus: newStatus,
-              reason: "stripe_webhook",
-              changedById: null,
-            });
+      // Sprint 5 US-503: keep the member's payment state in sync when the
+      // subscription status flips (active → past_due, paused → active, etc.)
+      //
+      // Lane PC (audit §11 F4, §13 ordering, §16):
+      //  * resolved through the subscription's MAPPING, never the customer: a
+      //    subscription MatFlow did not create, migrate or adopt changes
+      //    nothing (ignored_foreign). It no longer re-points
+      //    Member.stripeSubscriptionId at whatever subscription changed — the
+      //    pointer is only ever set from a mapping row, and only cleared here;
+      //  * ordered: an event older than the mapping's lastEventCreated is
+      //    ignored_stale, atomically (the conditional updateMany below); a
+      //    same-second event or a never-ordered mapping uses the subscription
+      //    retrieved fresh before the transaction; a terminal mapping
+      //    (canceled / incomplete_expired) is never revived;
+      //  * separate states: the mapping always mirrors Stripe; the member's
+      //    paymentStatus moves only when this is the member's ACTIVE mapping;
+      //    Member.status is never written (it used to be set to "cancelled"
+      //    on canceled / incomplete_expired, with cancelledAt and a
+      //    MemberStatusEvent — membership is now MatFlow's decision).
+      const updatedSubId = typeof obj.id === "string" ? obj.id : null;
+      const mapping = await mappingFor(updatedSubId);
+      // Fresh state when it was fetched (same-second or never-ordered), else the payload.
+      const source = freshSubscription ?? obj;
+      const status = (source.status as string) ?? "";
+      const created = typeof event.created === "number" ? event.created : null;
+      if (!mapping) {
+        outcome = "ignored_foreign";
+      } else if (isTerminalSubscriptionStatus(mapping.status) && !isTerminalSubscriptionStatus(status)) {
+        // Stripe subscriptions never leave canceled / incomplete_expired.
+        outcome = "ignored_stale";
+      } else {
+        const ended = isTerminalSubscriptionStatus(status);
+        const applied = await tx.memberSubscription.updateMany({
+          where: {
+            id: mapping.id,
+            ...(created !== null ? { OR: [{ lastEventCreated: null }, { lastEventCreated: { lte: created } }] } : {}),
+          },
+          data: {
+            status,
+            currentPeriodEnd: subscriptionCurrentPeriodEnd(source),
+            ...(created !== null ? { lastEventCreated: created } : {}),
+            ...(ended && !mapping.endedAt ? { endedAt: new Date() } : {}),
+          },
+        });
+        if (applied.count === 0) {
+          outcome = "ignored_stale";
+        } else {
+          const member = await mappedMember(mapping);
+          if (member?.isActive) {
+            // One map, shared with the membership migration that adopts existing
+            // subscriptions (lib/stripe/subscription-status.ts). Unrecognised
+            // statuses (incomplete, unpaid, incomplete_expired) leave the column
+            // unchanged.
+            // A hold: pause_collection does NOT change `status` (it stays
+            // "active"), so the hold is read off the field itself
+            // (lib/member-hold.ts). Paused wins over the status map; when
+            // collection runs again the status map decides and the hold date
+            // clears. Holds started from the Stripe dashboard therefore reach the
+            // profile too, with their end date.
+            const hold = readPauseCollection(source);
+            const paymentStatus = hold.paused ? "paused" : subscriptionStatusToPaymentStatus(status);
+            // Tier 3.12: don't let an 'active'/'past_due' update RESURRECT the
+            // payment state of a member staff have cancelled.
+            const wouldResurrectCancelled = member.status === "cancelled" && paymentStatus !== "cancelled";
+            const changes = ended || !!paymentStatus;
+            if (changes && !wouldResurrectCancelled) {
+              await tx.member.update({
+                where: { id: member.id },
+                data: {
+                  // The subscription ended: the member no longer has an active one.
+                  ...(ended ? { stripeSubscriptionId: null } : {}),
+                  ...(paymentStatus ? { paymentStatus } : {}),
+                  ...(hold.paused ? { holdUntil: hold.resumesAt } : paymentStatus ? { holdUntil: null } : {}),
+                },
+              });
+            }
           }
         }
+      }
+    } else if (event.type === "invoice.payment_action_required") {
+      // Lane PC: a renewal is waiting on the payer (3-D Secure). Payment state
+      // only: recorded on the subscription's mapping (with the invoice id, so
+      // a later surface can link the payer to it) and audited for the club.
+      // Entitlement and the member record are untouched; a failure, if it
+      // comes, arrives as invoice.payment_failed.
+      const actionInvoiceId = obj.id as string;
+      const priorPayment = await existingInvoicePayment(actionInvoiceId);
+      const invoiceOwner = await resolveInvoiceOwner(priorPayment);
+      if (!invoiceOwner) {
+        outcome = "ignored_foreign";
+      } else {
+        if (invoiceOwner.mapping) {
+          await tx.memberSubscription.update({
+            where: { id: invoiceOwner.mapping.id },
+            data: { requiresActionInvoiceId: actionInvoiceId, requiresActionAt: new Date() },
+          });
+        }
+        pendingAuditLogs.push({
+          tenantId,
+          userId: null,
+          action: "member.payment.requires_action",
+          entityType: "Member",
+          entityId: invoiceOwner.member.id,
+          metadata: {
+            stripeInvoiceId: actionInvoiceId,
+            stripeSubscriptionId: invoiceOwner.mapping?.stripeSubscriptionId ?? null,
+            amountPence: (obj.amount_due as number) ?? 0,
+          },
+        });
       }
     } else if (event.type === "invoice.voided") {
       // Sprint 5 US-503: void = invoice cancelled before / after payment.
@@ -786,6 +1062,7 @@ export async function POST(req: NextRequest) {
       const invoiceId = obj.id as string;
       const existing = await tx.payment.findFirst({ where: { tenantId, stripeInvoiceId: invoiceId } });
       if (!existing) {
+        outcome = "ignored_foreign";
         console.warn(
           `[stripe-webhook] invoice.voided — no Payment for tenant ${tenantId} ` +
           `(invoice=${invoiceId}). Ledger not updated.`,
@@ -820,10 +1097,40 @@ export async function POST(req: NextRequest) {
       // Sprint 5 US-503: standalone payment_intent (not via invoice). Mirrors
       // invoice.payment_succeeded but keys off the PaymentIntent. The unique
       // stripePaymentIntentId on Payment makes the upsert idempotent.
-      const customerId = obj.customer as string;
-      const member = customerId ? await findMember(customerId) : null;
-      const paymentIntentId = obj.id as string;
-      if (member && paymentIntentId) {
+      //
+      // Lane PC: the PaymentIntent is MatFlow's only through a Payment row
+      // MatFlow already holds for it (ad-hoc charge, class pack, shop order,
+      // or the invoice leg of a subscription) or the ad-hoc charge's own
+      // metadata (tenantId + memberId, set by /api/members/[id]/charge for the
+      // unknown-outcome case where no row could be written). The customer no
+      // longer decides: in the replace window it also pays TeamUp. A PI that
+      // is neither is acknowledged and nothing is written; a subscription PI
+      // that arrives before its invoice event is recorded by that invoice
+      // event, keyed on the same PI.
+      //
+      // It also no longer sets Member.paymentStatus = "paid" (A3H-5): every PI
+      // this branch can attribute is a ONE-OFF charge, and a one-off payment
+      // says nothing about the member's membership standing (the mirror of
+      // payment_intent.payment_failed below). A subscription's payment state
+      // comes from its invoice events through the mapping.
+      const paymentIntentId = typeof obj.id === "string" ? obj.id : null;
+      const piRow = paymentIntentId
+        ? await tx.payment.findFirst({
+            where: { tenantId, stripePaymentIntentId: paymentIntentId },
+            select: { id: true, memberId: true, status: true },
+          })
+        : null;
+      const piMeta = (obj.metadata as Record<string, string> | null | undefined) ?? {};
+      const piMetaMember = !piRow && piMeta.type === "adhoc" && piMeta.tenantId === tenantId
+        ? await memberInTenant(piMeta.memberId)
+        : null;
+      if (!paymentIntentId || (!piRow && !piMetaMember)) {
+        outcome = "ignored_foreign";
+      } else if (piRow && (piRow.status === "refunded" || piRow.status === "disputed")) {
+        // A refund or dispute is later than the success being redelivered.
+        outcome = "ignored_stale";
+      } else {
+        const piMemberId = piRow ? piRow.memberId : piMetaMember!.id;
         // Tier 2.6: only mirror a Payment for a STANDALONE PaymentIntent. An
         // invoice-backed PI (obj.invoice set) is already recorded by the
         // invoice.payment_succeeded leg keyed on this same PI — writing one here
@@ -834,8 +1141,8 @@ export async function POST(req: NextRequest) {
           await tx.payment.upsert({
             where: { stripePaymentIntentId: paymentIntentId },
             create: {
-              tenantId: member.tenantId,
-              memberId: member.id,
+              tenantId,
+              memberId: piMemberId,
               stripePaymentIntentId: paymentIntentId,
               stripeChargeId: ((obj.latest_charge as string) ?? null),
               amountPence: (obj.amount_received as number) ?? 0,
@@ -849,17 +1156,6 @@ export async function POST(req: NextRequest) {
               stripeChargeId: ((obj.latest_charge as string) ?? null),
               paidAt: new Date(),
             },
-          });
-        }
-        // Audit iter-1-member-lifecycle A3H-5: BACS DD and other standalone
-        // PaymentIntents (not tied to an invoice) need to flip Member.paymentStatus
-        // back to "paid" — otherwise the BACS pending → succeeded flow leaves
-        // the member in `paymentStatus: "pending"` forever.
-        // Tier 3.12: but don't resurrect a CANCELLED member with a late PI.
-        if (member.status !== "cancelled") {
-          await tx.member.update({
-            where: { id: member.id },
-            data: { paymentStatus: "paid" },
           });
         }
       }
@@ -889,6 +1185,7 @@ export async function POST(req: NextRequest) {
         (event.data.previous_attributes?.customer as string | undefined) ??
         null;
       const member = customerId ? await findMember(customerId) : null;
+      if (!member) outcome = "ignored_foreign";
       if (member && tenantId) {
         // Audit iter-2 (verifier Gap 1): defer to pendingAuditLogs to match
         // the A3H-2 pattern. Previously this awaited logAudit was inside the
@@ -912,10 +1209,13 @@ export async function POST(req: NextRequest) {
       event.type === "charge.dispute.updated" ||
       event.type === "charge.dispute.closed"
     ) {
-      const customerId = (obj.customer as string) ?? null;
+      // Lane PC: the member behind a dispute is the member on the Payment row it
+      // contests, never "whoever owns this customer" (the customer may also pay
+      // another platform). A dispute on a charge MatFlow did not record is still
+      // written as the club's Dispute row and the owners are still told — it is
+      // the club's money on the club's account — but no member is touched.
       const chargeId = (obj.charge as string) ?? null;
       const disputePaymentIntentId = (obj.payment_intent as string | null) ?? null;
-      const member = customerId ? await findMember(customerId) : null;
       // B1: match the Payment by charge id first, then fall back to the
       // payment_intent — mirrors the charge.refunded reconciliation. PI-only /
       // charge-null payments (class packs, some PaymentIntents) otherwise never
@@ -946,7 +1246,7 @@ export async function POST(req: NextRequest) {
         return s;
       })();
       const evidenceDueAt = ((obj.evidence_details as { due_by?: number } | undefined)?.due_by ?? null);
-      const tenantIdForRow = member?.tenantId ?? linkedPayment?.tenantId ?? tenantId;
+      const tenantIdForRow = linkedPayment?.tenantId ?? tenantId;
       if (tenantIdForRow) {
         await tx.dispute.upsert({
           where: { stripeDisputeId: obj.id as string },
@@ -1030,7 +1330,7 @@ export async function POST(req: NextRequest) {
         // 'won' with no prior refund returns the member to paid; every other
         // dispute state is funds-at-risk/clawed-back → overdue. Mirrors the
         // invoice.payment_failed leg's overdue flip.
-        const disputeMemberId = member?.id ?? linkedPayment?.memberId ?? null;
+        const disputeMemberId = linkedPayment?.memberId ?? null;
         if (disputeMemberId) {
           const disputeMemberStatus =
             status === "won" && !linkedPayment?.refundedAmountPence ? "paid" : "overdue";
@@ -1140,6 +1440,10 @@ export async function POST(req: NextRequest) {
             metadata: { orderRef: expiredMeta.orderRef, sessionId: (obj.id as string) ?? null },
           });
         }
+      } else if (expiredMeta.matflowKind !== "class_pack" || expiredMeta.tenantId !== tenantId) {
+        // Not a checkout MatFlow created for this club. (An expired class-pack
+        // session of this club is MatFlow's, with nothing to clean up.)
+        outcome = "ignored_foreign";
       }
     } else if (event.type === "payment_intent.payment_failed") {
       // The only event that resolves a failed ad-hoc charge. Without it the
@@ -1171,6 +1475,7 @@ export async function POST(req: NextRequest) {
           },
         });
       } else if (!failedPayment) {
+        outcome = "ignored_foreign";
         // Not every failed PaymentIntent is ours — a gym can charge through
         // Stripe directly. Said out loud rather than silently skipped, so a
         // genuine mismatch is findable.
@@ -1291,5 +1596,17 @@ export async function POST(req: NextRequest) {
     await refreshStripeAccountStatus(refresh.tenantId, refresh.stripeAccountId).catch(() => {});
   }
 
-  return NextResponse.json({ received: true });
+  // Lane PC: an acknowledged event that changed nothing is said out loud, so
+  // "Stripe says X, MatFlow shows Y" is findable. Lane PD's event store will
+  // record this outcome on the StripeEvent row (markIgnored); until it lands
+  // the log line and the response body carry it.
+  if (outcome !== "processed") {
+    console.info("[stripe-webhook] event acknowledged without effect", {
+      eventId: event.id,
+      type: event.type,
+      outcome,
+      objectId: typeof obj.id === "string" ? obj.id : null,
+    });
+  }
+  return NextResponse.json({ received: true, outcome });
 }

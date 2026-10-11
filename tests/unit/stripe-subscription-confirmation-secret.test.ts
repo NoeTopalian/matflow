@@ -43,6 +43,12 @@ const fakeTx = {
     updateMany: memberUpdateManyMock,
     findUnique: memberFindUniqueMock,
   },
+  // Payments lane PC (11 Oct 2026): the create now writes the subscription's
+  // MemberSubscription mapping in the same transaction as the pointer
+  // (asserted in tests/unit/pay-pc-subscription-mapping-writers.test.ts).
+  memberSubscription: {
+    upsert: async (a: { create: { id?: string; tenantId: string; memberId: string } }) => ({ id: "ms-1", tenantId: a.create.tenantId, memberId: a.create.memberId }),
+  },
 };
 
 // The helper does `new Stripe(key, { apiVersion })`, so the mock has to be
@@ -271,7 +277,8 @@ describe("createSubscriptionForMember — persistence on success", () => {
 
     expect(memberUpdateMock).toHaveBeenCalledWith({
       where: { id: MEMBER.id },
-      data: { stripeSubscriptionId: "sub_test_9", preferredPaymentMethod: "bacs_debit" },
+      // Lane PC: "pending" until the first invoice is paid (audit §16/§24 P1).
+      data: { stripeSubscriptionId: "sub_test_9", preferredPaymentMethod: "bacs_debit", paymentStatus: "pending" },
     });
   });
 

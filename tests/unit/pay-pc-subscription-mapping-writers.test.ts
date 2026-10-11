@@ -1,0 +1,125 @@
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+
+// Payments lane PC (11 Oct 2026): every place MatFlow creates, migrates or
+// adopts a Stripe subscription writes the MemberSubscription mapping in the
+// SAME transaction as the member's pointer, and the in-app create tags the
+// subscription with MatFlow's metadata (the migration already did). Without the
+// mapping the webhook cannot tell MatFlow's subscription from another
+// platform's on the same customer.
+
+const {
+  customersCreateMock, subscriptionsCreateMock, subscriptionsListMock, stripeCtorMock,
+  memberUpdateMock, memberUpdateManyMock, memberFindUniqueMock, mappingUpsertMock, txLog,
+  tierUpdateManyMock, logAuditMock,
+} = vi.hoisted(() => ({
+  customersCreateMock: vi.fn(),
+  subscriptionsCreateMock: vi.fn(),
+  subscriptionsListMock: vi.fn(),
+  stripeCtorMock: vi.fn(),
+  memberUpdateMock: vi.fn(),
+  memberUpdateManyMock: vi.fn(),
+  memberFindUniqueMock: vi.fn(),
+  mappingUpsertMock: vi.fn(),
+  tierUpdateManyMock: vi.fn(),
+  logAuditMock: vi.fn().mockResolvedValue(undefined),
+  txLog: [] as Array<{ tx: number; op: string }>,
+}));
+
+let txCounter = 0;
+function makeTx(n: number) {
+  return {
+    member: {
+      update: (a: unknown) => { txLog.push({ tx: n, op: "member.update" }); return memberUpdateMock(a); },
+      updateMany: (a: unknown) => { txLog.push({ tx: n, op: "member.updateMany" }); return memberUpdateManyMock(a); },
+      findUnique: memberFindUniqueMock,
+    },
+    memberSubscription: {
+      upsert: (a: unknown) => { txLog.push({ tx: n, op: "memberSubscription.upsert" }); return mappingUpsertMock(a); },
+    },
+    membershipTier: { updateMany: tierUpdateManyMock },
+  };
+}
+
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: (_tenantId: string, fn: (tx: unknown) => unknown) => Promise.resolve(fn(makeTx(++txCounter))),
+}));
+vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
+vi.mock("stripe", () => ({ default: stripeCtorMock }));
+
+import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
+
+const TENANT = { id: "tenant-A", stripeAccountId: "acct_gym", acceptsBacs: true };
+const MEMBER = { id: "mem-1", email: "sam@gym.test", name: "Sam", stripeCustomerId: "cus_1" };
+const SECRET = "pi_0000000000000000000000_secret_0000000000000000000000";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  txLog.length = 0;
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  process.env.STRIPE_SECRET_KEY = "sk_test_x";
+  stripeCtorMock.mockImplementation(function (this: Record<string, unknown>) {
+    this.customers = { create: customersCreateMock };
+    this.subscriptions = { create: subscriptionsCreateMock, list: subscriptionsListMock };
+  });
+  memberUpdateMock.mockResolvedValue({ id: MEMBER.id });
+  mappingUpsertMock.mockImplementation(async (a: { create: { tenantId: string; memberId: string } }) => ({ id: "ms-1", tenantId: a.create.tenantId, memberId: a.create.memberId }));
+  subscriptionsCreateMock.mockResolvedValue({
+    id: "sub_new",
+    status: "incomplete",
+    items: { data: [{ current_period_end: 1893456000 }] },
+    latest_invoice: { id: "in_1", confirmation_secret: { client_secret: SECRET } },
+  });
+});
+afterEach(() => vi.restoreAllMocks());
+
+function create() {
+  return createSubscriptionForMember({ tenant: TENANT, member: MEMBER, priceId: "price_1", paymentMethodType: "card", requestId: "req_1" });
+}
+
+describe("in-app create (lib/stripe/subscriptions.ts)", () => {
+  it("tags the Stripe subscription with MatFlow's tenant, member and source", async () => {
+    await create();
+    const [params] = subscriptionsCreateMock.mock.calls[0];
+    expect(params.metadata).toEqual({ matflowTenantId: "tenant-A", matflowMemberId: "mem-1", matflowSource: "app" });
+  });
+
+  it("writes the mapping and the member pointer in ONE transaction, mapping first", async () => {
+    const out = await create();
+    expect(out.ok).toBe(true);
+    expect(mappingUpsertMock).toHaveBeenCalledWith(expect.objectContaining({
+      where: { stripeSubscriptionId: "sub_new" },
+      create: expect.objectContaining({
+        tenantId: "tenant-A", memberId: "mem-1", stripeAccountId: "acct_gym",
+        stripeSubscriptionId: "sub_new", source: "app", status: "incomplete",
+        currentPeriodEnd: new Date(1893456000 * 1000),
+      }),
+      update: {},
+    }));
+    const ops = txLog.filter((l) => l.op === "memberSubscription.upsert" || l.op === "member.update");
+    expect(ops.map((o) => o.op)).toEqual(["memberSubscription.upsert", "member.update"]);
+    expect(new Set(ops.map((o) => o.tx)).size).toBe(1);
+  });
+
+  it("marks the member's payment pending until the first payment lands", async () => {
+    await create();
+    expect(memberUpdateMock).toHaveBeenCalledWith({
+      where: { id: "mem-1" },
+      data: { stripeSubscriptionId: "sub_new", preferredPaymentMethod: "card", paymentStatus: "pending" },
+    });
+  });
+
+  it("refuses (and leaves the pointer alone) when the subscription is already mapped to another member", async () => {
+    mappingUpsertMock.mockResolvedValue({ id: "ms-other", tenantId: "tenant-A", memberId: "mem-OTHER" });
+    const out = await create();
+    expect(out.ok).toBe(false);
+    expect(memberUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("writes no mapping when Stripe gives no confirmation secret (nothing is persisted, as before)", async () => {
+    subscriptionsCreateMock.mockResolvedValue({ id: "sub_nosecret", status: "incomplete", latest_invoice: { id: "in_2", confirmation_secret: null } });
+    const out = await create();
+    expect(out.ok).toBe(false);
+    expect(mappingUpsertMock).not.toHaveBeenCalled();
+    expect(memberUpdateMock).not.toHaveBeenCalled();
+  });
+});

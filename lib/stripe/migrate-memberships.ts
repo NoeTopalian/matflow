@@ -5,6 +5,7 @@ import { membershipTierWrite } from "@/lib/membership-tier";
 import { cycleFromStripeRecurring, cycleLabel, type BillingCycle } from "@/lib/billing-cycle";
 import { ensureTierPrice, type TierForPrice } from "@/lib/stripe/tier-price";
 import { isLiveSubscriptionStatus, subscriptionStatusToPaymentStatus } from "@/lib/stripe/subscription-status";
+import { recordSubscriptionMapping, subscriptionCurrentPeriodEnd } from "@/lib/stripe/webhook/mapping";
 
 /**
  * Moving a club's memberships off its previous platform WITHOUT anyone
@@ -579,6 +580,19 @@ async function adoptOne(tenant: TenantForMigration, row: MigrationRow, tier: Tie
   const firstChargeAt = row.firstChargeAt ? new Date(row.firstChargeAt) : null;
   const paymentStatus = row.subscriptionStatus ? subscriptionStatusToPaymentStatus(row.subscriptionStatus) : undefined;
   await withTenantContext(tenant.id, async (tx) => {
+    // Lane PC (11 Oct 2026): the verified mapping first, in the same
+    // transaction as the link, so the webhook resolves this subscription's
+    // events to this member (and nothing else's). A failed link below rolls
+    // the mapping back with it.
+    await recordSubscriptionMapping(tx, {
+      tenantId: tenant.id,
+      memberId: row.memberId,
+      stripeAccountId: tenant.stripeAccountId!,
+      stripeSubscriptionId: row.subscriptionId!,
+      source: "adopted",
+      status: row.subscriptionStatus ?? "unknown",
+      currentPeriodEnd: firstChargeAt,
+    });
     // Compare-and-set on the link: a concurrent apply, or a webhook that
     // linked this member in the meantime, must not be overwritten.
     const linked = await tx.member.updateMany({
@@ -672,6 +686,19 @@ async function createOne(
     ));
 
   await withTenantContext(tenant.id, async (tx) => {
+    // Lane PC (11 Oct 2026): map OUR subscription (never the one it
+    // replaces) in the linking transaction, before the pointer is set. In the
+    // replace window the customer also carries the old platform's
+    // subscription; the webhook ignores that one because it has no mapping.
+    await recordSubscriptionMapping(tx, {
+      tenantId: tenant.id,
+      memberId: row.memberId,
+      stripeAccountId: tenant.stripeAccountId!,
+      stripeSubscriptionId: subscription.id,
+      source: "migration",
+      status: subscription.status ?? "unknown",
+      currentPeriodEnd: subscriptionCurrentPeriodEnd(subscription as unknown as Record<string, unknown>),
+    });
     const linked = await tx.member.updateMany({
       where: { id: row.memberId, tenantId: tenant.id, stripeSubscriptionId: null },
       data: {

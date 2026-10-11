@@ -13,6 +13,7 @@
 // loading the Member row; the helper handles the Stripe-side mechanics.
 
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { recordSubscriptionMapping, subscriptionCurrentPeriodEnd } from "@/lib/stripe/webhook/mapping";
 
 export type StripeSubscriptionMember = {
   id: string;
@@ -147,6 +148,12 @@ export async function createSubscriptionForMember(
         // The expand is REQUIRED: without it the invoice has no
         // confirmation_secret key at all (also verified).
         expand: ["latest_invoice.confirmation_secret"],
+        // Lane PC (11 Oct 2026): MatFlow's own marker on the subscription, as
+        // the migration already sets. The webhook does not trust it to find
+        // the member (the MemberSubscription mapping below does that); it
+        // makes the subscription recognisably MatFlow's in the club's
+        // dashboard and to reconciliation.
+        metadata: { matflowTenantId: tenant.id, matflowMemberId: member.id, matflowSource: "app" },
       },
       { stripeAccount, idempotencyKey: subIdempotencyKey },
     );
@@ -188,15 +195,30 @@ export async function createSubscriptionForMember(
       };
     }
 
-    await withTenantContext(tenant.id, (tx) =>
-      tx.member.update({
+    // Lane PC: the mapping and the member's pointer in ONE transaction,
+    // mapping first — the pointer is only ever set from a mapping row, and
+    // the webhook resolves this subscription's events through it. The
+    // member's payment is "pending" until the first invoice is paid (the
+    // webhook's invoice.payment_succeeded moves it to "paid").
+    await withTenantContext(tenant.id, async (tx) => {
+      await recordSubscriptionMapping(tx, {
+        tenantId: tenant.id,
+        memberId: member.id,
+        stripeAccountId: stripeAccount,
+        stripeSubscriptionId: subscription.id,
+        source: "app",
+        status: subscription.status ?? "incomplete",
+        currentPeriodEnd: subscriptionCurrentPeriodEnd(subscription as unknown as Record<string, unknown>),
+      });
+      await tx.member.update({
         where: { id: member.id },
         data: {
           stripeSubscriptionId: subscription.id,
           preferredPaymentMethod: paymentMethodType,
+          paymentStatus: "pending",
         },
-      }),
-    );
+      });
+    });
 
     return {
       ok: true,
@@ -213,8 +235,10 @@ export async function createSubscriptionForMember(
 // Cancel at end of current paid cycle. Per the deep-interview locked
 // decision (2026-05-15): no refunds on self-cancel, the member keeps the
 // access they already paid for. Stripe's cancel_at_period_end flag handles
-// the actual rollover; our webhook handler flips Member.status to cancelled
-// when the period closes.
+// the actual rollover; when the period closes the webhook clears the member's
+// subscription pointer and sets paymentStatus "cancelled". Since 11 Oct 2026
+// (payments lane PC) it no longer sets Member.status — whether the person's
+// membership ends is a MatFlow (staff) decision.
 export type CancelSubscriptionOutcome =
   | { ok: true; cancelAt: number | null }
   | { ok: false; status: number; error: string };

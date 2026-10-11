@@ -27,6 +27,9 @@ export const HANDLED_STRIPE_EVENT_TYPES = new Set<string>([
   "invoice.payment_failed",
   "invoice.payment_succeeded",
   "invoice.voided",
+  // A renewal waiting on the payer (3-D Secure). Recorded on the subscription
+  // mapping as payment state; never changes entitlement (lane PC, 11 Oct 2026).
+  "invoice.payment_action_required",
   "checkout.session.completed",
   // An abandoned cart used to sit "pending" for ever, and mark-paid accepted it.
   "checkout.session.expired",
