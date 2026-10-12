@@ -16,7 +16,7 @@ Status vocabulary: VERIFIED (read first-hand, source cited) · REPORTED (owner o
 | Hub candidate `2a6487e` / executable `c837e38` | 22 commits after production; 331 files; schema +56; six migrations | VERIFIED |
 | Reviewed security executable `704ab579ed42cef497bc38136982502aca153b75` | 118 commits and 999 files after `2a6487e`; no further migration; hub files byte-identical to `c837e38` except three lines each way in the owner login-email route (`z.strictObject`, AH-G6) | VERIFIED (CR §1, §7) |
 | Ancestry | `e8afb6a` → `2a6487e` → `704ab57` → `1ca92c0`, one line; fast-forward; no reset needed or proposed | VERIFIED |
-| Production's applied migration set | **UNVERIFIED from here.** `e8afb6a`'s tree ends at `20261003180000_attendance_history_ledger`; whether every migration up to that one is applied on production needs `prisma migrate status` against production (read-only; Noe; Stage 0) | UNVERIFIED |
+| Production's applied migration set | **VERIFIED 12 Oct 01:33 UK** (`release-stage0-readonly.mjs .env ep-bold-wave-abt39t7x`, read-only, owner-approved in manual mode): 95 migrations applied, exactly the six below missing, 0 failed or in-progress rows, one skip marker (`.20260503200000_activate_rls_enforcement.skip`); `AuditLog` = 120 rows (index build is trivial); Operator `cmoudu55l0000qktgw0r0ve2t` role `super_admin`, authenticator secret present (a fresh challenged login is still required as proof). Previously: `e8afb6a`'s tree ends at `20261003180000_attendance_history_ledger`; whether every migration up to that one is applied on production needs `prisma migrate status` against production (read-only; Noe; Stage 0) | UNVERIFIED |
 | Migrations the candidate adds | `20261006010000_operator_auth_hardening`, `20261006020000_tenant_lifecycle_safety`, `20261006040000_support_session_binding`, `20261006050000_operator_enrolment_ticket`, `20261007010000_login_email_provisional`, `20261009010000_audit_operator_request`: nullable columns without defaults, one index and one foreign key on `AuditLog`; no backfill, no NOT NULL, no drop or rename | VERIFIED (CR §7) |
 
 ## 2. `2a6487e` reconciled against the security findings
@@ -75,10 +75,10 @@ Conditions, each with evidence recorded, in order:
 - [ ] Targeted rehearsal on `704ab57` PASSED (§7), both database roles, bypass off for the auth flows, ledgers counted for FAIL rows (the drivers do not fail their exit code).
 - [ ] Residual decisions in §3 recorded.
 - [ ] Stage 0 facts read on production, read-only: `prisma migrate status` applied set; `AuditLog` row count; operator table row for Noe (immutable `Operator.id`).
-- [ ] Hub prerequisites: operator authenticator enrolled **and proven by a fresh challenged login**; recovery access prepared without sharing codes; `OPERATOR_ALLOWED_IDS` = that `Operator.id` set in Vercel Production; `MATFLOW_ADMIN_SECRET` rotated; `EMAIL_DELIVERY=off` read back; `CRON_SECRET` absent; retention dry-run only if its read-only semantics are confirmed; note that a Vercel variable takes effect only on the next deployment.
+- [ ] Hub prerequisites: operator authenticator enrolled (secret present on production) **and proven by a fresh challenged login** (pending, Noe); recovery access prepared without sharing codes; `OPERATOR_ALLOWED_IDS` = `cmoudu55l0000qktgw0r0ve2t` **SET in Vercel Production 12 Oct 01:35 UK** (Sensitive; effective at the next deployment); `MATFLOW_ADMIN_SECRET` rotated (pending, Noe — a secret value, never through the agent); `EMAIL_DELIVERY=off` read back; `CRON_SECRET` absent; retention dry-run only if its read-only semantics are confirmed; note that a Vercel variable takes effect only on the next deployment.
 - [ ] Provider-side retirement evidence for the old Neon password and Resend key captured (identifiers and timestamps).
 - [ ] Recovery and migration rehearsal (§4) done and recorded.
-- [ ] `main` ruleset applied or the PR path chosen.
+- [x] `main` ruleset: **release-safe subset applied 12 Oct 01:36 UK** (GitHub ruleset id 24901063: no deletion, no force-push, active, no bypass). The proposed pull-request, linear-history and status-check rules are deferred: with no bypass actor they would force a merge commit or rebase, changing the deployed SHA; apply them after this release or with a bypass actor.
 - [ ] Immediately before the push: `git fetch` and `git ls-remote origin main` still `e8afb6a`; `git merge-base --is-ancestor e8afb6a 704ab57` true; working tree clean; nothing else pushes.
 
 Then, on Noe's explicit "deploy 704ab57" only: a fast-forward push of exactly `704ab579ed42cef497bc38136982502aca153b75` to `main` from a clean checkout of that SHA (no force; no reset). Watch the build log for the six migration names before `next build`. After READY: `release-verify.mjs --target production --sha 704ab579ed42cef497bc38136982502aca153b75 --expect-migrations local …` **run from the dedicated `704ab57` checkout** (the flag expects every migration in the checkout it runs from — all of them, not six — so a payments checkout would wrongly expect seven more); exact SHA; `/api/health` ok; migrations finished with no failed or in-progress rows; `emailDelivery: off`; legacy transports refused; authenticated operator request succeeds; then a manual console login with the authenticator. Stop before (B) if any check fails; fix forward only.
@@ -122,11 +122,11 @@ All 9 Oct details are historical until re-read through the hub after deployment.
 | Residual recommendations | DONE, decisions PENDING | §3 | Noe |
 | Deployed-configuration verification | DONE (names/ages) | §1 | coordinator |
 | Provider-side retirement evidence | PENDING | — | Noe |
-| Production applied-migration set, `AuditLog` size, `Operator.id` | PENDING (Stage 0 read-only) | — | Noe |
+| Production applied-migration set, `AuditLog` size, `Operator.id` | DONE 12 Oct 01:33 UK (read-only, owner-approved) | §1 | coordinator |
 | Recovery branch existence/expiry; verified recovery; migration rehearsal | PENDING | §4 | Noe |
 | Targeted rehearsal on `704ab57` | BLOCKED here (no launch mechanism); hand-off ready | §7 | prompting session or Noe |
 | Hub prerequisites (MFA proven, allow-list, admin secret, mail off) | PENDING | §5 | Noe |
-| `main` ruleset | PENDING | §3 | Noe |
+| `main` ruleset | DONE (subset: deletion + non-fast-forward; PR/status rules deferred) | §5 | coordinator |
 | Deployment approval A | NOT REQUESTED yet | §5 | Noe |
 | Sean's fresh facts, replacement address, baseline, preview | PENDING (after deployment) | §6 | Noe + Sean |
 | Account-change approval B | NOT REQUESTED yet | §6 | Noe |
