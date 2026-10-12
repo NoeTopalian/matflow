@@ -82,6 +82,16 @@ What the button changes: only that staff account's login address. Their role, pa
 are. Their new address is provisional (unverified), as for any address an operator types. The owner's account cannot be
 moved this way: the owner's address changes only through the owner card.
 
+**What "unverified" means for them — say this on the call.** While their address is unverified, "Forgot password" sends
+no reset code, no emailed sign-in link is sent, Google sign-in is refused, and MatFlow sends no email of any kind to that
+address. They sign in with their password (and their authenticator, if they use one), which still works. If they forget
+their password, the club owner sets them a temporary one in Settings → Staff (it lasts 72 hours and they choose their own
+at next sign-in). No screen in MatFlow marks a staff account's address as verified today, so plan on this lasting.
+
+**If the holder is another owner account.** If the panel shows "Owner account" for the holder, it says "Another owner
+account in this club uses this address. Owner accounts are not changed from here; contact MatFlow support." and offers
+no move button for it. Stop there: a second owner row is not something this panel changes.
+
 ### Case 3: two records hold the address (a legacy duplicate)
 
 Older data can have the same address on two records, for example a member record and a coach's sign-in account. The
@@ -96,7 +106,7 @@ Codes: a duplicate needs one authenticator code for each move plus one for the o
 records. You may use 5 codes in any 10 minutes. Two resolutions back to back can therefore mean waiting up to about
 7½ minutes before the last code is accepted.
 
-**When the panel lists no records.** If the panel says "… accounts in this club already hold this address (a legacy
+**When the panel lists no records.** If the panel says "… records in this club already hold this address (a legacy
 duplicate). Nothing can be resolved here: review the records with the club first", MatFlow counted several records on
 the address but could not list them, so the panel offers no move buttons. Do not try to work round it. Contact the club to establish which records are real, and ask MatFlow support to inspect the records before
 anything is changed.
@@ -118,7 +128,7 @@ password and their authenticator.
 | Record | Signed out? | Also |
 |---|---|---|
 | The owner | Yes, on every device. | Signs in with the new address, same password and authenticator. Reset codes and sign-in links for the old and new address in this club are cancelled. |
-| A staff account you moved | Yes, on every device. | Signs in with their new address, same password and authenticator. Their outstanding reset codes and sign-in links in this club are cancelled. |
+| A staff account you moved | Yes, on every device. | Signs in with their new address, same password and authenticator. Their outstanding reset codes and sign-in links in this club are cancelled. While the address is unverified, forgot-password, emailed sign-in links and Google sign-in do not work for them; a forgotten password needs the club owner to set a temporary one (see Case 2). |
 | A member who can sign in (has a password) | Yes, on every device. | Signs in with the new contact address. |
 | A member with no password | Nothing to sign out of. | Any outstanding invite, sign-in or reset link for the old or new address in this club is cancelled. The club can send a fresh invite later. |
 | Everyone else in the club | No. | Nothing about them changes. |

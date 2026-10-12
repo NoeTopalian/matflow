@@ -110,7 +110,7 @@ import created a member row for the owner's own address, or the club typed it on
 owner's self-service answer "That email address is already in use at this club" and never say whose — on purpose. Only
 the operator console says who holds it.
 
-1. **Check.** Login email card → Change login email → type the address → **Check address**. The answer is "Free in this
+1. **Check.** **Owner's sign-in email (back office)** card → Change login email → type the address → **Check address**. The answer is "Free in this
    club", or the conflict panel: club, owner, and each holder (labelled "Member record" or "Club sign-in account"; name;
    status; whether they can sign in — a password, or a live invite / sign-in / reset link for that address; a link to
    the record; its id). A **staff** holder and a legacy **duplicate** (several rows on one address) are moved from the

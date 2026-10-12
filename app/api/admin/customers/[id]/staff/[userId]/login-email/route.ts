@@ -19,8 +19,8 @@
 //
 // Preflight (nothing written, grant unspent): operator, support, rate limit,
 // body, club, user IN this club (404 otherwise — never another club's), not
-// the owner (409 "owner": the owner's Login email card is the only door to
-// the owner's address), not a system placeholder address, address different
+// the owner (409 "owner": the "Owner's sign-in email (back office)" card is
+// the only door to the owner's address), not a system placeholder address, address different
 // from the current one, address free in this club (409 with the holder —
 // operators may see it), version unchanged.
 //
@@ -125,7 +125,7 @@ async function appliedOutcome(req: Request, operatorId: string, tenantId: string
 
 const TAKEN_MESSAGE = "That address is already held by someone else in this club, so nothing was changed. Check it again.";
 const STALE_MESSAGE = "This staff account changed since you checked it, so nothing was changed. Check the address again.";
-const OWNER_MESSAGE = "This is the club owner's sign-in account. Use the owner's Login email card; nothing was changed.";
+const OWNER_MESSAGE = "This is the club owner's sign-in account. Use the \"Owner's sign-in email (back office)\" card; nothing was changed.";
 const MANAGED_TARGET_MESSAGE = "That address is a system placeholder and cannot be used as a login address.";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string; userId: string }> }) {

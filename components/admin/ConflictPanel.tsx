@@ -221,6 +221,15 @@ const records = (n: number) => `${n} record${n === 1 ? "" : "s"}`;
 const moveButtonLabel = (h: SingleHolder) =>
   h.kind === "member" ? "Change this member's contact address" : "Change this staff account's login address";
 
+/**
+ * A sign-in account with the owner role (a second owner row; nothing in the
+ * database prevents one). The staff route refuses it and the check gives it no
+ * version, so the panel offers no move for it, only this notice.
+ */
+const isOwnerHolder = (h: SingleHolder) => h.kind === "user" && h.status.toLowerCase() === "owner";
+const OWNER_HOLDER_NOTICE =
+  "Another owner account in this club uses this address. Owner accounts are not changed from here; contact MatFlow support.";
+
 /** The "Held by" content for one holder: plain record kind, name, state, link, and a same-name note. */
 function HolderDetails({ h, ownerName }: { h: SingleHolder; ownerName: string }) {
   const k = describeRecordKind(h.kind, h.status);
@@ -517,6 +526,8 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
   // "Moved 1 of 2 records. 1 record still uses this address — move it below, …"
   const remaining = !holder ? 0 : holder.kind === "many" ? Math.max(holder.holders.length, holder.count) : 1;
   const listShown = phase === "review" && targets.length > 0;
+  // Holders this panel can offer a move for (an owner-role holder never is).
+  const anyMovable = targets.some((t) => !isOwnerHolder(t));
   const progress =
     partial && remaining > 0
       ? `Moved ${moved.length} of ${records(moved.length + remaining)}. ${records(remaining)} still ${remaining === 1 ? "uses" : "use"} this address${
@@ -553,7 +564,7 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
 
       {holder?.kind === "many" && holder.holders.length === 0 && phase !== "done" && (
         <p role="alert" style={warn}>
-          {holder.count} accounts in this club already hold this address (a legacy duplicate). Nothing can be resolved here: review the
+          {holder.count} records in this club already hold this address (a legacy duplicate). Nothing can be resolved here: review the
           records with the club first.
         </p>
       )}
@@ -562,7 +573,8 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
         <>
           {notice && <p role="status" style={{ ...warn, borderColor: adminPalette.amber }}>{notice}</p>}
           {progress && <p role="status" style={{ ...warn, borderColor: adminPalette.amber }}>{progress}</p>}
-          {single?.kind === "user" && (
+          {single && isOwnerHolder(single) && <p role="alert" style={warn}>{OWNER_HOLDER_NOTICE}</p>}
+          {single?.kind === "user" && !isOwnerHolder(single) && (
             <p style={warn}>
               This staff account holds this address and signs in to the club&apos;s dashboard with it. Moving it signs {single.name} out
               everywhere; they then sign in with the new address.
@@ -574,51 +586,63 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
               below; the owner&apos;s login address can change once the address is free.
             </p>
           )}
-          <p style={warn}>
-            A matching name is not proof that these are the same person. Verify with the club by phone (call back on the number you
-            already hold) before acting.
-          </p>
-          <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, marginTop: 8 }}>
-            <Checkbox checked={verified} onCheckedChange={setVerified} aria-label="I verified the relationship independently" />
-            <span>
-              I verified independently, with the club, whose address this is and that{" "}
-              {single?.kind === "member"
-                ? `${single.name}'s contact address`
-                : single?.kind === "user"
-                  ? `${single.name}'s login address`
-                  : "each record's address"}{" "}
-              may change.
-            </span>
-          </label>
-          <label htmlFor="conflict-verify-note" style={label}>How you verified it (recorded in the audit log, at least {REASON_MIN} characters)</label>
-          <textarea
-            id="conflict-verify-note"
-            rows={2}
-            value={verifyNote}
-            onChange={(e) => setVerifyNote(e.target.value)}
-            placeholder="e.g. call-back to the club's number on file; the owner confirmed Pat uses a personal address; ticket #123"
-            style={{ ...field, resize: "vertical" }}
-          />
-          {single && !single.version && <p style={warn}>This record cannot be changed from here. Check the address again.</p>}
+          {anyMovable && (
+            <>
+              <p style={warn}>
+                A matching name is not proof that these are the same person. Verify with the club by phone (call back on the number
+                you already hold) before acting.
+              </p>
+              <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, marginTop: 8 }}>
+                <Checkbox checked={verified} onCheckedChange={setVerified} aria-label="I verified the relationship independently" />
+                <span>
+                  I verified independently, with the club, whose address this is and that{" "}
+                  {single?.kind === "member"
+                    ? `${single.name}'s contact address`
+                    : single?.kind === "user"
+                      ? `${single.name}'s login address`
+                      : "each record's address"}{" "}
+                  may change.
+                </span>
+              </label>
+              <label htmlFor="conflict-verify-note" style={label}>How you verified it (recorded in the audit log, at least {REASON_MIN} characters)</label>
+              <textarea
+                id="conflict-verify-note"
+                rows={2}
+                value={verifyNote}
+                onChange={(e) => setVerifyNote(e.target.value)}
+                placeholder="e.g. call-back to the club's number on file; the owner confirmed Pat uses a personal address; ticket #123"
+                style={{ ...field, resize: "vertical" }}
+              />
+            </>
+          )}
+          {single && !isOwnerHolder(single) && !single.version && (
+            <p style={warn}>This record cannot be changed from here. Check the address again.</p>
+          )}
           {holder?.kind === "many" && (
             <ul aria-label="Records holding this address" style={holderList}>
               {holder.holders.map((h) => (
                 <li key={`${h.kind}:${h.id}`} style={holderItem}>
                   <span style={{ display: "block", fontSize: 12, color: adminPalette.muted, marginBottom: 2 }}>Held by</span>
                   <HolderDetails h={h} ownerName={current.owner.name} />
-                  {!h.version && <p style={warn}>This record cannot be changed from here. Check the address again.</p>}
-                  <div style={actions}>
-                    <Button variant="destructive" size="compact" onClick={() => openMove(h)} disabled={!canStartFor(h)}>
-                      {moveButtonLabel(h)}
-                    </Button>
-                  </div>
+                  {isOwnerHolder(h) ? (
+                    <p role="alert" style={warn}>{OWNER_HOLDER_NOTICE}</p>
+                  ) : (
+                    <>
+                      {!h.version && <p style={warn}>This record cannot be changed from here. Check the address again.</p>}
+                      <div style={actions}>
+                        <Button variant="destructive" size="compact" onClick={() => openMove(h)} disabled={!canStartFor(h)}>
+                          {moveButtonLabel(h)}
+                        </Button>
+                      </div>
+                    </>
+                  )}
                 </li>
               ))}
             </ul>
           )}
           <div style={actions}>
             <Button variant="secondary" size="compact" onClick={onClose} disabled={busy}>Cancel</Button>
-            {single && (
+            {single && !isOwnerHolder(single) && (
               <Button variant="destructive" size="compact" onClick={() => openMove(single)} disabled={!canStartFor(single)}>
                 {moveButtonLabel(single)}
               </Button>
@@ -758,6 +782,8 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
         <p style={hint}>
           {staff ? `${staff.name} in ${current.tenant.name}. ` : ""}Only the login address changes: their role, password and authenticator stay
           as they are. The new address is provisional (unverified), and any outstanding invite, sign-in or reset link is retired.
+          While it is unverified, password-reset codes, emailed sign-in links and Google sign-in do not work for them; if they forget
+          their password, the club owner sets a temporary one in Staff settings.
         </p>
         <label htmlFor="conflict-staff-reason" style={label}>Reason (audit-logged, at least {REASON_MIN} characters)</label>
         <textarea id="conflict-staff-reason" rows={3} value={reason} disabled={busy || !!lost} onChange={(e) => setReason(e.target.value)} style={{ ...field, resize: "vertical" }} />

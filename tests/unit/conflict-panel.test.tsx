@@ -5,7 +5,7 @@
 // re-send of the SAME grant (never an automatic retry), the honest partial
 // state with a resume point in the URL, and the resumed panel.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, cleanup, within } from "@testing-library/react";
 import React from "react";
 import "@testing-library/jest-dom";
 import userEvent from "@testing-library/user-event";
@@ -288,6 +288,10 @@ describe("ConflictPanel: staff accounts, duplicates and record labels", () => {
     expect(screen.getByRole("button", { name: "Change this staff account's login address" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Change this staff account's login address" }));
     expect(screen.getByRole("dialog")).toHaveTextContent(/Pat will be signed out everywhere/);
+    // What "unverified" means for them (final review R13), as the sign-in doors enforce it.
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "While it is unverified, password-reset codes, emailed sign-in links and Google sign-in do not work for them; if they forget their password, the club owner sets a temporary one in Staff settings.",
+    );
   });
 
   it("posts the staff move to the staff route with the step-up header, then re-checks", async () => {
@@ -328,6 +332,38 @@ describe("ConflictPanel: staff accounts, duplicates and record labels", () => {
     ] } });
     expect(screen.getAllByRole("button", { name: /Change this (member's contact|staff account's login) address/ })).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Change the owner's login address" })).toBeNull();
+  });
+
+  // Final review R13 (12 Oct 2026): a second owner row as the holder. The check
+  // gives it no version and the staff route refuses it, so the panel must not
+  // show staff wording, a dead staff button or "Check the address again".
+  const OWNER_NOTICE =
+    "Another owner account in this club uses this address. Owner accounts are not changed from here; contact MatFlow support.";
+  const secondOwner = { kind: "user" as const, id: "u2", name: "Second Owner", status: "owner", canSignIn: true, access: "password" as const, link: "/dashboard/staff" };
+
+  it("an owner-role holder gets a clear notice, not the staff move path", () => {
+    renderPanel({ holder: secondOwner });
+    expect(screen.getByText("Owner account")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(OWNER_NOTICE);
+    expect(screen.queryByText(/staff account holds this address/i)).toBeNull();
+    expect(screen.queryByText(/check the address again/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Change this (member's contact|staff account's login) address/ })).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Change the owner's login address" })).toBeNull();
+  });
+
+  it("a duplicate with an owner-role holder: the notice on that row, a move button only for the other record", () => {
+    renderPanel({ holder: { kind: "many", count: 2, holders: [
+      { kind: "member", id: "m1", name: "A", status: "active", canSignIn: true, access: "password", link: "/m1", version: V },
+      secondOwner,
+    ] } });
+    const rows = within(screen.getByRole("list", { name: "Records holding this address" })).getAllByRole("listitem");
+    expect(rows[0]).not.toHaveTextContent(OWNER_NOTICE);
+    expect(within(rows[0]).getByRole("button", { name: "Change this member's contact address" })).toBeInTheDocument();
+    expect(rows[1]).toHaveTextContent(OWNER_NOTICE);
+    expect(within(rows[1]).queryByRole("button")).toBeNull();
+    expect(rows[1]).not.toHaveTextContent(/check the address again/i);
+    expect(screen.getByRole("checkbox")).toBeInTheDocument();
   });
 
   it("duplicate: after one move the re-check still reports a holder, so the list returns; once free, the owner step opens", async () => {
