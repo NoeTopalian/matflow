@@ -236,6 +236,9 @@ export const AUDIT_LABELS: Record<string, string> = {
   // Step-up action name sent by the conflict panel (9 Oct 2026); the audit row
   // it leads to is admin.member.contact_email.changed.
   "member.contact_email": "MatFlow confirmed a change to a member's contact email",
+  // Step-up action name sent by the conflict panel for a staff holder (12 Oct
+  // 2026); the audit row it leads to comes from the staff login-email route.
+  "staff.login_email": "Change a staff account's login address",
 };
 
 /** "member.photo.add" → "Member photo add" — only for names not in the map. */

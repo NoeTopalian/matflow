@@ -7,7 +7,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
 import React from "react";
-import ConflictPanel, { loadResume, type CheckResult } from "@/components/admin/ConflictPanel";
+import "@testing-library/jest-dom";
+import userEvent from "@testing-library/user-event";
+import ConflictPanel, { loadResume, type CheckResult, type CheckedHolder } from "@/components/admin/ConflictPanel";
 
 const ADDRESS = "owner.real@club.example";
 const HELD: CheckResult = {
@@ -229,5 +231,139 @@ describe("ConflictPanel", () => {
     window.history.replaceState(null, "", "/admin/tenants/t-a?resolve=owner&member=m-pat");
     expect(loadResume("t-a")).toEqual({ urlMemberId: "m-pat", state: null });
     void waitFor;
+  });
+});
+
+// Staff-account path, duplicates path and plain record labels (hub conflict
+// resolution, 12 Oct 2026, task 4). The step-up mock answers with the REAL
+// route's success shape (app/api/admin/auth/step-up/route.ts: { ok, grant,
+// expiresAt }) and the grant travels in the real header (x-matflow-step-up);
+// the staff route mock answers with that route's shape ({ ok, userId,
+// sessionsRevoked: true, retired: { resetCodes, signInLinks } }).
+describe("ConflictPanel: staff accounts, duplicates and record labels", () => {
+  const user = userEvent.setup();
+  const V = "a".repeat(64);
+  function renderPanel(over: Partial<{ holder: CheckedHolder; owner: { id: string; name: string } }>) {
+    const result = { free: false, tenant: { id: "T", name: "Club" }, owner: over.owner ?? { id: "o1", name: "Owner" }, holder: over.holder };
+    return render(
+      <ConflictPanel
+        tenantId="T"
+        ownerUserId={result.owner.id}
+        address="owner@club.test"
+        check={result as CheckResult}
+        onOwnerChanged={() => {}}
+        onClose={() => {}}
+      />,
+    );
+  }
+  async function verifyAndStart() {
+    await user.click(screen.getByRole("checkbox", { name: /verified the relationship independently/i }));
+    await user.type(screen.getByLabelText(/How you verified it/), "Call-back to the club's number on file");
+  }
+  function mockFetchSequence(steps: { url: string; body: unknown; status?: number }[]) {
+    // `_init` is declared so mock.calls carries the request options (headers, body).
+    const fn = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      void _init;
+      const s = steps.find((x) => String(input).endsWith(x.url)) ?? steps[0];
+      return new Response(JSON.stringify(s.body), { status: s.status ?? 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fn);
+    return fn;
+  }
+
+  it("labels a member holder as a member record, and notes a shared name is a different record", async () => {
+    renderPanel({ holder: { kind: "member", id: "m1", name: "Sean Coates", status: "cancelled", canSignIn: false, access: "none", link: "/x", version: V } , owner: { id: "o1", name: "Sean Coates" } });
+    expect(screen.getByText("Member record")).toBeInTheDocument();
+    expect(screen.getByText("Member (gym customer)")).toBeInTheDocument();
+    expect(screen.getByText(/different record from the owner's sign-in account/)).toBeInTheDocument();
+  });
+
+  it("offers the staff path instead of a dead end, and warns the person will be signed out", async () => {
+    renderPanel({ holder: { kind: "user", id: "u1", name: "Pat", status: "manager", canSignIn: true, access: "password", link: "/dashboard/staff", version: V } });
+    expect(screen.getByText("Club sign-in account")).toBeInTheDocument();
+    expect(screen.getByText("Staff account (manager)")).toBeInTheDocument();
+    expect(screen.queryByText(/changed by the club in Staff settings/)).toBeNull();
+    await verifyAndStart(); // ticks the call-back checkbox, fills the note, clicks the button
+    expect(screen.getByRole("button", { name: "Change this staff account's login address" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Change this staff account's login address" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent(/Pat will be signed out everywhere/);
+  });
+
+  it("posts the staff move to the staff route with the step-up header, then re-checks", async () => {
+    const fetchMock = mockFetchSequence([
+      { url: "/api/admin/auth/step-up", body: { ok: true, grant: "GRANT", expiresAt: "2026-10-12T12:05:00.000Z" } },
+      { url: "/api/admin/customers/T/staff/u1/login-email", body: { ok: true, userId: "u1", sessionsRevoked: true, retired: { resetCodes: 0, signInLinks: 0 } } },
+      { url: "/api/admin/customers/T/login-email/check", body: { ok: true, free: true, tenant: { id: "T", name: "Club" }, owner: { id: "o1", name: "Owner" } } },
+    ]);
+    renderPanel({ holder: { kind: "user", id: "u1", name: "Pat", status: "manager", canSignIn: true, access: "password", link: "/dashboard/staff", version: V } });
+    await verifyAndStart();
+    await user.click(screen.getByRole("button", { name: "Change this staff account's login address" }));
+    await user.type(screen.getByLabelText(/new login address/i), "pat.manager@club.test");
+    await user.type(screen.getByLabelText(/reason/i), "Club confirmed by call-back");
+    await user.type(screen.getByLabelText(/authenticator code/i), "123456");
+    await user.click(screen.getByRole("button", { name: /^Change login address$/ }));
+    const calls = fetchMock.mock.calls.map(([u, init]) => ({ u: String(u), h: new Headers((init as RequestInit)?.headers) }));
+    const move = calls.find((c) => c.u.endsWith("/staff/u1/login-email"))!;
+    expect(move.h.get("x-matflow-step-up")).toBe("GRANT");
+    expect(calls.at(-1)!.u).toMatch(/\/login-email\/check$/);
+    // The grant is asked for THIS action, THIS account and THIS new address,
+    // and the move carries the version the check returned.
+    const bodies = fetchMock.mock.calls.map(([u, init]) => ({ u: String(u), b: JSON.parse(String((init as RequestInit).body)) }));
+    expect(bodies.find((c) => c.u.endsWith("/auth/step-up"))!.b).toEqual({
+      action: "staff.login_email", targetId: "T/u1/change", change: { newEmail: "pat.manager@club.test" }, code: "123456",
+    });
+    expect(bodies.find((c) => c.u.endsWith("/staff/u1/login-email"))!.b).toEqual({
+      newEmail: "pat.manager@club.test", reason: expect.stringMatching(/Club confirmed by call-back$/), version: V,
+    });
+    await screen.findByText(/the address is now free/i);
+    expect(window.location.search).toContain("staff=u1");
+    expect(window.location.search).not.toContain("member=");
+  });
+
+  it("lists every holder of a duplicate, each with its own move button, and keeps the owner step closed until free", async () => {
+    renderPanel({ holder: { kind: "many", count: 2, holders: [
+      { kind: "member", id: "m1", name: "A", status: "active", canSignIn: true, access: "password", link: "/m1", version: V },
+      { kind: "user", id: "u1", name: "B", status: "coach", canSignIn: true, access: "password", link: "/dashboard/staff", version: V },
+    ] } });
+    expect(screen.getAllByRole("button", { name: /Change this (member's contact|staff account's login) address/ })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Change the owner's login address" })).toBeNull();
+  });
+
+  it("duplicate: after one move the re-check still reports a holder, so the list returns; once free, the owner step opens", async () => {
+    const holderB = { kind: "user" as const, id: "u1", name: "B", status: "coach", canSignIn: true, access: "password" as const, link: "/dashboard/staff", version: V };
+    let checks = 0;
+    const fn = vi.fn(async (input: RequestInfo | URL) => {
+      const u = String(input);
+      const body = u.endsWith("/auth/step-up")
+        ? { ok: true, grant: "GRANT", expiresAt: "2026-10-12T12:05:00.000Z" }
+        : u.endsWith("/members/m1/contact-email")
+          ? { ok: true, memberId: "m1", canSignIn: true, retired: { resetCodes: 0, signInLinks: 0 } }
+          : u.endsWith("/staff/u1/login-email")
+            ? { ok: true, userId: "u1", sessionsRevoked: true, retired: { resetCodes: 0, signInLinks: 0 } }
+            : ++checks === 1
+              ? { ok: true, free: false, tenant: { id: "T", name: "Club" }, owner: { id: "o1", name: "Owner" }, holder: holderB }
+              : { ok: true, free: true, tenant: { id: "T", name: "Club" }, owner: { id: "o1", name: "Owner" } };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fn);
+    renderPanel({ holder: { kind: "many", count: 2, holders: [
+      { kind: "member", id: "m1", name: "A", status: "active", canSignIn: true, access: "password", link: "/m1", version: V },
+      holderB,
+    ] } });
+    await verifyAndStart();
+    await user.click(screen.getByRole("button", { name: "Change this member's contact address" }));
+    await user.type(screen.getByLabelText(/new contact address/i), "a.personal@club.test");
+    await user.type(screen.getByLabelText(/authenticator code/i), "123456");
+    await user.click(screen.getByRole("button", { name: /^Change contact address$/ }));
+    // Still held (by B): the list again, never the owner step.
+    expect(await screen.findByRole("button", { name: "Change this staff account's login address" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Change the owner's login address" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Change this staff account's login address" }));
+    await user.type(screen.getByLabelText(/new login address/i), "b.coach@club.test");
+    await user.type(screen.getByLabelText(/authenticator code/i), "654321");
+    await user.click(screen.getByRole("button", { name: /^Change login address$/ }));
+    expect(await screen.findByRole("button", { name: "Change the owner's login address" })).toBeInTheDocument();
+    expect(window.location.search).toContain("member=m1");
+    expect(window.location.search).toContain("staff=u1");
   });
 });
