@@ -27,12 +27,14 @@ Serving: `e8afb6a` on `main` (Vercel deployment `lxxo23g4i`, VERIFIED by API). `
 |---|---|---|
 | `DATABASE_URL` | rotated 11 Oct 16:58 UK; direct host | VERIFIED (age); serving build reads it |
 | `RESEND_API_KEY` | rotated 11 Oct 15:40 UK, Production only | VERIFIED |
-| `EMAIL_DELIVERY` | `off` | value last read back 9 Oct; **NOE** re-read before approval |
+| `EMAIL_DELIVERY` | `off` | stored configuration UPDATED by Noe 12 Oct 13:44 UK (`vercel env update ... --sensitive`; Vercel metadata updatedAt 12:44 UTC, type sensitive, Production); value not readable back; EFFECTIVE value verified only after the release (`GET /api/tenant/totalbjj` emailDelivery = off). The serving build `e8afb6a` has no mail switch |
 | `OPERATOR_ALLOWED_IDS` | `cmoudu55l0000qktgw0r0ve2t` | SET 12 Oct 01:35 UK; takes effect at the next deployment (this one) |
 | `MATFLOW_ADMIN_SECRET` | rotated to a fresh value | **NOE** (53 days old); effective at the next deployment; old builds keep the old value until retired |
 | `CRON_SECRET` | absent | VERIFIED absent; retention stays disabled; reconcile cron is not in this candidate's `vercel.json` |
 | `STRIPE_SECRET_KEY` | hygiene roll prepared, optional for this release | not required; no live Stripe |
 | Preview environment | no production secrets; no `DATABASE_URL` | Preview copies of shared secrets remain (containment step 8); see §7 on preview deployments |
+
+**Class window (read 12 Oct 13:52 UK, `class-window-readonly.mjs`, production, read-only):** Total BJJ has **0 active classes** and 0 future class instances, so nothing lapses; check-in is not possible for any member until the club's timetable is created (creating a class generates 56 days of instances; the Timetable's Generate 4 weeks button extends it). Not a release blocker; club onboarding. `CRON_SECRET` stays unset until `512d5e8` serves and is verified.
 
 ## 5. Recovery and migration rehearsal (NOE; required before approval)
 
