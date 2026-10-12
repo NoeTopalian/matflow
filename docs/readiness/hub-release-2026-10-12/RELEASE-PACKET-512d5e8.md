@@ -17,7 +17,7 @@ Purpose: one reviewable packet for approval (A), the deployment of exactly one e
 
 Serving: `e8afb6a` on `main` (Vercel deployment `lxxo23g4i`, VERIFIED by API). `e8afb6a..512d5e8`: the operator remediation (6–7 Oct), the admin-hub conflict workflow (9 Oct), security campaign iterations 1 and 2, the L1/L2 transaction work, and documentation. Counts to be printed at approval time from a clean checkout (`git rev-list --count e8afb6a..512d5e8`, `git diff --shortstat`). Runtime files beyond the hub and campaign: `package.json` now pins `pg` 8.20.0 exactly and overrides `pg-pool` 3.13.0 (lockfile root spec only).
 
-## 3. Migrations (six, all absent from production; VERIFIED read-only 12 Oct 01:33 UK: 95 applied, these six missing, 0 failed/in-progress, one historic skip marker `.20260503200000_activate_rls_enforcement.skip` — a marker file, not a migration row; checksum state of the applied set to be confirmed by `prisma migrate status` output in the rehearsal of §5)
+## 3. Migrations (six, all absent from production; VERIFIED read-only 12 Oct 01:33 UK: 95 applied, these six missing, 0 failed/in-progress, one historic row named `.20260503200000_activate_rls_enforcement.skip` in `_prisma_migrations` (CORRECTED 12 Oct 11:25 UK: it is a ledger ROW with no matching folder in the checkout, counted inside the 95 — so 94 real migrations plus this row; its disposition: leave it, it is finished and not rolled back, and `prisma migrate deploy` ignores rows without a local folder; `migrate status` will list it as applied-but-missing-locally); checksum state of the applied set to be confirmed by `prisma migrate status` output in the rehearsal of §5)
 
 `20261006010000_operator_auth_hardening` · `20261006020000_tenant_lifecycle_safety` · `20261006040000_support_session_binding` · `20261006050000_operator_enrolment_ticket` · `20261007010000_login_email_provisional` · `20261009010000_audit_operator_request`. Content (CR §7): nullable columns without defaults, one index and one foreign key on `AuditLog` (120 rows on production), no backfill, no NOT NULL, no drop or rename, each wrapped in BEGIN/COMMIT. They run inside the Vercel build before `next build` when `DATABASE_URL` is set. No campaign migration (SF-57, SF-62) and no payments-branch migration is included.
 
@@ -37,6 +37,8 @@ Serving: `e8afb6a` on `main` (Vercel deployment `lxxo23g4i`, VERIFIED by API). `
 ## 5. Recovery and migration rehearsal (NOE; required before approval)
 
 Facts: Neon Free plan, history retention **6 hours** (point-in-time window); no exported backup has ever succeeded; a branch is a durable restore point that outlives the window only if branch-expiry settings allow; the restore runbook has never been executed against production data.
+
+**Two branches, two purposes (CORRECTED 12 Oct 11:25 UK).** The restore point must never be migrated or booted against, otherwise it stops being a copy of production. So: (i) **`rehearsal-hub-512`** — created from production for the rehearsal below, migrated, booted, then DELETED within 24 hours (it holds a copy of personal data and inherits production's role passwords: treat its connection string as a production secret); (ii) **`pre-hub-release`** — created from production immediately before the release push, left untouched as the restore point, kept until the release is verified and Sean's correction is complete. Wherever steps 1–4 below say `pre-hub-release`, read `rehearsal-hub-512`. Authorisation first (runbook §1, AUTH items): who runs it on which machine, the 24-hour deletion deadline, that the person holds the branch connection string, and that no production configuration changes. Side-effect protection (runbook §5): a fresh worktree with no `.env*`; every provider dark at its boundary (invalid Stripe and Resend keys, no Blob token, no Sentry DSN, no `CRON_SECRET`, `TESTING_MODE=false`); fresh `AUTH_SECRET`/`NEXTAUTH_SECRET` so no production token is valid; `MAINTENANCE_MODE=true` for the first boot; bound to `127.0.0.1`; a host guard refusing `ep-bold-wave` and `ep-hidden-salad` hosts; the branch URL outside the repository. Expected `migrate status` on the fresh branch: 94 applied plus the historic `.skip` row, and 6 pending.
 
 Required, in order, with results pasted into this packet:
 1. Neon → production branch → Branches → create `pre-hub-release` (data as of now). Record creation time and the project's branch-expiry setting. If `backup-2026-10-11` exists, record it; it is from before the credential rotation and is not the release restore point.
@@ -63,6 +65,19 @@ Failure state defined: if the production build fails after `prisma migrate deplo
 | Runtime role `neondb_owner`, RLS as backstop only, audit rows editable (SF-62/73/74, SF-57) | ACCEPT as unchanged existing exposure; separate projects | ☐ |
 | Environmental revocation-check `unknown` verdicts under load on TEST (P2028 earlier; connection timeouts now) | not a candidate defect; production has a different pool/latency profile; monitored via Sentry after release | ☐ noted |
 | `main` PR + status-check protection not yet applied (D-14) | apply at approval time (manual mode) | ☐ |
+
+**Rows added 12 Oct 11:25 UK (were missing from this table; found by the assurance lanes):**
+
+| Risk | Recommendation | Decision |
+|---|---|---|
+| Owner login-email route does not refuse the synthetic `@no-login.matflow.local` / `@deleted.invalid` domains as a new owner login, and has no in-route support-session check (the proxy refuses support sessions on `/api/admin/*`, `proxy.ts:307-321`); version bound at code entry (SF-09) | ACCEPT with an operator checklist rule ("never a synthetic domain"; Sean asked not to change his own address during the window); fix in the next candidate. **Touches Sean's correction**: a typing error the code will not catch | ☐ |
+| SF-118 / SF-119 / SF-59 burst availability: a burst at one address can refuse the real owner as "Incorrect email or password" after ~13 s; a saturated pool refuses other security buckets on that instance | ACCEPT (fails closed; nobody admitted); fix in a later candidate (stop holding a connection while waiting; correct the message) | ☐ |
+| SF-90 member second-factor codes are not single-use | ACCEPT (existing; members only; needs interception); schedule the fix | ☐ |
+| Old Vercel deployments with old secrets (SF-10, C5) still accept the legacy operator secret behind Vercel SSO | ACCEPT until release verification, then delete them through the separately authorised procedure | ☐ |
+| SF-131..134 readiness-script hardening (lane denied, D-8) | ACCEPT (tooling only) | ☐ |
+| Hub journeys proven by scratchpad drivers, not repository specs | ACCEPT for this release; promote the drivers to repository specs later | ☐ |
+
+**Items that need evidence before you decide (not risks to accept):** provider-side revocation of the leaked Neon password and Resend key (section 9 of ITERATION-2-REPORT; ASSURANCE-Q01-13 Q6); the names of `ENABLE_GOOGLE_OAUTH`, `MATFLOW_CSP_ENFORCE`, `LOGIN_THROTTLE_ENABLED` in Production; whether the production demo club was seeded with the committed demo password (SF-109); production compute size and connection limit; one Sentry test event received from production.
 
 ## 7. Protected release procedure (executed only on Noe's explicit "deploy 512d5e8")
 

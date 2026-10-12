@@ -22,7 +22,7 @@ This directory exists so that a PERMITTED independent reviewer (a human, or a se
 5. Counter atomicity: lockout reservation and rate-limit conditional insert remain single statements under the per-bucket advisory lock; no window between check and write.
 6. Tenant-context cleanup: `app.current_tenant_id` / `app.bypass_rls` reset per transaction unchanged byte-for-byte relative to lane B2's reviewed behaviour.
 7. Fail-closed behaviour: every failure of the store, the lock, or the budget is a refusal on the security buckets, never an admission; the typed errors (`LockoutReservationError`, `TenantTransactionBudgetError`) are mapped to refusals by every caller.
-8. Timeout ownership: does the new design introduce an UNBOUNDED WAIT (a callback idle past its budget holds the pool connection until it returns; backstop only the server's `idle_in_transaction_session_timeout`, 5 min on TEST and UNVERIFIED in production) or merely move the original race from Prisma's timer to the server-side bound?
+8. Timeout ownership: does the new design introduce an UNBOUNDED WAIT (a callback idle past its budget holds the pool connection until it returns; backstop only the server's `idle_in_transaction_session_timeout`, 5 min on TEST and VERIFIED 300 s in production by db-role-inspect, read-only, 11 Oct 2026 16:12 UK (ITERATION-2-REPORT section 9)) or merely move the original race from Prisma's timer to the server-side bound?
 9. Persisted writes and reported outcomes under faults: for each injected fault (connection drop mid-transaction, lock timeout, statement timeout, budget exceeded, pool exhaustion) the row state after the fault matches the outcome the caller reported (no lost write, no phantom allow).
 
 ## Constraints on the reviewer

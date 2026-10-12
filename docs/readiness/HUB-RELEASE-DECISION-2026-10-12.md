@@ -76,6 +76,8 @@ Residual additions for `512d5e8` (owner decision column as in section 3): SF-139
 
 ## 5. Deployment approval (A)
 
+> **Superseded 12 Oct 2026 09:20 UK.** The candidate is `512d5e8` (section 3a), and the release path is a pull request merged as a merge commit with the tree checked against `512d5e8` (section 7b and RELEASE-PACKET-512d5e8.md section 7). The fast-forward push of `704ab57` described below is no longer the procedure; the conditions list is kept for history and is maintained in the packet.
+
 Conditions, each with evidence recorded, in order:
 - [ ] Targeted rehearsal on `704ab57` PASSED (§7), both database roles, bypass off for the auth flows, ledgers counted for FAIL rows (the drivers do not fail their exit code).
 - [ ] Residual decisions in §3 recorded.
@@ -148,6 +150,6 @@ Repository settings (read): merge commit, rebase and squash all allowed; the CI 
 | Sean's fresh facts, replacement address, baseline, preview | PENDING (after deployment) | §6 | Noe + Sean |
 | Account-change approval B | NOT REQUESTED yet | §6 | Noe |
 
-**Verdicts.** Candidate: `704ab57` is the right candidate to assess; it is NOT approved. Deployment: NOT READY (rehearsal, recovery, prerequisites, residual decisions outstanding). Account correction: NOT READY (depends on deployment; workflow fully specified). Campaign: INCOMPLETE and unchanged by this milestone; isolation, audit protection, payment and operational risks stay recorded as open.
+**Verdicts (superseded 12 Oct 09:20 UK — see section 3a and the release packet; candidate is now `512d5e8`).** Original text: Candidate: `704ab57` is the right candidate to assess; it is NOT approved. Deployment: NOT READY (rehearsal, recovery, prerequisites, residual decisions outstanding). Account correction: NOT READY (depends on deployment; workflow fully specified). Campaign: INCOMPLETE and unchanged by this milestone; isolation, audit protection, payment and operational risks stay recorded as open.
 
 **Next owner action:** arrange the targeted rehearsal on `704ab57` (hand-off in §7) and return the §3 residual decisions. Not a push.
