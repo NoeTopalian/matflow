@@ -29,7 +29,7 @@ Serving: `e8afb6a` on `main` (Vercel deployment `lxxo23g4i`, VERIFIED by API). `
 | `RESEND_API_KEY` | rotated 11 Oct 15:40 UK, Production only | VERIFIED |
 | `EMAIL_DELIVERY` | `off` | stored configuration UPDATED by Noe 12 Oct 13:44 UK (`vercel env update ... --sensitive`; Vercel metadata updatedAt 12:44 UTC, type sensitive, Production); value not readable back; EFFECTIVE value verified only after the release (`GET /api/tenant/totalbjj` emailDelivery = off). The serving build `e8afb6a` has no mail switch |
 | `OPERATOR_ALLOWED_IDS` | `cmoudu55l0000qktgw0r0ve2t` | SET 12 Oct 01:35 UK; takes effect at the next deployment (this one) |
-| `MATFLOW_ADMIN_SECRET` | rotated to a fresh value | **NOE** (53 days old); effective at the next deployment; old builds keep the old value until retired |
+| `MATFLOW_ADMIN_SECRET` | rotated to a fresh value | **DONE 12 Oct 14:28 UK (stored configuration).** Old combined Production+Preview entry removed; new random 32-byte value added for Production only, Sensitive, generated locally and never displayed or shared; owner saved it to a password manager. Read-back 14:31 UK: `MATFLOW_ADMIN_SECRET Sensitive Production 3m ago`, no Preview entry. Effective at the next deployment; the serving `e8afb6a` keeps the old value until then; `512d5e8` refuses the shared secret in production regardless |
 | `CRON_SECRET` | absent | VERIFIED absent; retention stays disabled; reconcile cron is not in this candidate's `vercel.json` |
 | `STRIPE_SECRET_KEY` | hygiene roll prepared, optional for this release | not required; no live Stripe |
 | Preview environment | no production secrets; no `DATABASE_URL` | Preview copies of shared secrets remain (containment step 8); see §7 on preview deployments |
