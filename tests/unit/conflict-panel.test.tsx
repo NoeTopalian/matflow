@@ -219,7 +219,7 @@ describe("ConflictPanel", () => {
     expect(screen.getByText(/staff account holds this address/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /change this member's contact address/i })).toBeNull();
     cleanup();
-    renderPanel({ check: { ...HELD, holder: { kind: "many", count: 2 } } });
+    renderPanel({ check: { ...HELD, holder: { kind: "many", count: 2, holders: [] } } });
     expect(screen.getByText(/legacy duplicate/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /change this member's contact address/i })).toBeNull();
   });

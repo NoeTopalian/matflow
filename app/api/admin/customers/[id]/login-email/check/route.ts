@@ -9,13 +9,16 @@
 // or the minimal detail an operator needs to resolve a conflict:
 //   { free: false, holder: { kind: "user"|"member", id, name, status,
 //     canSignIn, access, link, version? } }
-//   { free: false, holder: { kind: "many", count } }   (legacy duplicate)
+//   { free: false, holder: { kind: "many", count, holders: [each as above] } }
+//     (legacy duplicate: every holder listed, none picked)
 // `canSignIn` is computed in the read transaction from the holder's password
 // AND live email-bound credentials for the address in this club (a
 // passwordless member with an outstanding invite can still activate). A
 // member holder also carries `version`: an opaque keyed digest of the record
 // as checked, which the contact-email route compares again inside its
-// transaction (409 if the member changed in between). No address is echoed.
+// transaction (409 if the member changed in between). A non-owner staff
+// holder carries the same for the staff login-email route (staff.login_email,
+// 12 Oct 2026). No address is echoed.
 //
 // Club-facing and self-service routes keep their opaque 409 ("already in use
 // at this club"): holder detail exists only here, behind the operator gate.
@@ -54,18 +57,17 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
   NextResponse.json(body, { status, headers: { ...NO_STORE, ...headers } });
 
 type Access = "password" | "activation_pending" | "none";
-type CheckedHolder =
-  | {
-      kind: "user" | "member";
-      id: string;
-      name: string;
-      status: string;
-      canSignIn: boolean;
-      access: Access;
-      link: string;
-      version?: string;
-    }
-  | { kind: "many"; count: number };
+type CheckedSingleHolder = {
+  kind: "user" | "member";
+  id: string;
+  name: string;
+  status: string;
+  canSignIn: boolean;
+  access: Access;
+  link: string;
+  version?: string;
+};
+type CheckedHolder = CheckedSingleHolder | { kind: "many"; count: number; holders: CheckedSingleHolder[] };
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const csrfViolation = assertSameOrigin(req);
@@ -99,9 +101,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // takes is released when this read transaction ends.
     const claim = await claimLoginIdentity(tx, { tenantId, email, exclude: { userId: owner.id } });
     const now = new Date();
-    const describe = async (h: LoginIdentityHolder): Promise<CheckedHolder> => {
+    const describe = async (h: LoginIdentityHolder): Promise<CheckedSingleHolder> => {
       if (h.kind === "user") {
-        return { kind: "user", id: h.id, name: h.name, status: h.role, canSignIn: true, access: "password", link: `/dashboard/staff` };
+        // Null for an owner account (staff.login_email never applies to one),
+        // so no version is offered for it.
+        const version = await stepUpVersionDigestIn(tx, "staff.login_email", stepUpTarget(tenantId, h.id, "change"));
+        return {
+          kind: "user",
+          id: h.id,
+          name: h.name,
+          status: h.role,
+          canSignIn: true,
+          access: "password",
+          link: `/dashboard/staff`,
+          ...(version ? { version } : {}),
+        };
       }
       // Live email-bound credentials for THIS address in THIS club.
       const [links, codes] = await Promise.all([
@@ -123,8 +137,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ...(version ? { version } : {}),
       };
     };
+    // A legacy duplicate lists every holder, each described as a single one
+    // (never resolved by picking one).
     const holder: CheckedHolder | null =
-      claim.kind === "none" ? null : claim.kind === "many" ? { kind: "many", count: claim.holders.length } : await describe(claim);
+      claim.kind === "none"
+        ? null
+        : claim.kind === "many"
+          ? { kind: "many", count: claim.holders.length, holders: await Promise.all(claim.holders.map(describe)) }
+          : await describe(claim);
     return {
       kind: "ok" as const,
       tenant,

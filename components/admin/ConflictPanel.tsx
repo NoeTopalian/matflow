@@ -46,7 +46,7 @@ export type CheckedHolder =
       link: string;
       version?: string;
     }
-  | { kind: "many"; count: number };
+  | { kind: "many"; count: number; holders: Array<Exclude<CheckedHolder, { kind: "many" }>> };
 
 export type CheckResult = {
   free: boolean;

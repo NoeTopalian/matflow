@@ -814,16 +814,23 @@ describe("login-email/check: answers", () => {
     expect(b.holder).toMatchObject({ kind: "member", id: "m-quin", canSignIn: true, access: "password" });
   });
 
-  it("a staff account: kind user, its role as status", async () => {
+  it("a staff account: kind user, its role as status, and its staff.login_email version (12 Oct 2026)", async () => {
     const b = await body(await check({ email: "COACH@club.example" }));
-    expect(b.holder).toEqual({ kind: "user", id: "u-coach", name: "Cole Coach", status: "coach", canSignIn: true, access: "password", link: "/dashboard/staff" });
+    const version = await resolveStepUpVersionDigest("staff.login_email", target("t-a", "u-coach"));
+    expect(version).toMatch(/^[a-f0-9]{64}$/);
+    expect(b.holder).toEqual({ kind: "user", id: "u-coach", name: "Cole Coach", status: "coach", canSignIn: true, access: "password", link: "/dashboard/staff", version });
   });
 
-  it("a legacy duplicate (two rows on one canonical address): kind many with a count, nobody picked", async () => {
+  it("a legacy duplicate (two rows on one canonical address): kind many with a count and every holder listed, nobody picked", async () => {
     h.members.set("m-dup", { id: "m-dup", tenantId: "t-a", name: "Pat Duplicate", email: " PAT@club.example", passwordHash: null, status: "active", sessionVersion: 0 });
     const b = await body(await check({ email: OLD }));
     expect(b).toMatchObject({ free: false, holder: { kind: "many", count: 2 } });
-    expect(JSON.stringify(b.holder)).not.toMatch(/m-pat|m-dup/);
+    // Since 12 Oct 2026 the operator sees each holder (described as a single
+    // one, with its own version) so each can be moved; still no address echoed.
+    const holders = (b.holder as { holders: Array<{ id: string; version?: string }> }).holders;
+    expect(holders.map((x) => x.id).sort()).toEqual(["m-dup", "m-pat"]);
+    for (const x of holders) expect(x.version).toBe(await versionOf("t-a", x.id));
+    expect(JSON.stringify(b.holder)).not.toContain("@");
   });
 
   it("an address held only in ANOTHER club is free here (no cross-club answer)", async () => {
