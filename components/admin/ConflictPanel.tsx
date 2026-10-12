@@ -33,7 +33,10 @@
 // the person is signed out everywhere). A legacy DUPLICATE lists every holder,
 // each with its own move button; after each move the address is checked again
 // and the list returns while anything still holds it — the owner step opens
-// only once it is free. Every holder is labelled in plain words
+// only once it is free. Any re-check that is still held by records that can
+// be moved (after a move, "Check again", or a panel resumed after a reload)
+// returns to that list, so the remaining holders are never a dead end; the
+// resume trail keeps the ids of earlier moves. Every holder is labelled in plain words
 // (record-kind.ts): a club sign-in account (owner/staff) or a member record,
 // with a note when a member record merely shares the owner's name. The resume
 // point gains &staff=<id> for the staff path (ids only, as before).
@@ -198,11 +201,22 @@ function movedFromResume(r: ResumeState | null | undefined): Moved[] {
   return out;
 }
 
+/** One sentence per moved record, full stop included, so several read as separate sentences. */
 function describeMove(m: Moved): string {
   return m.kind === "member"
-    ? `The member's contact address was changed${m.result.memberId ? ` (member ${m.result.memberId})` : ""}`
-    : `The staff account's login address was changed${m.result.userId ? ` (staff account ${m.result.userId})` : ""}`;
+    ? `The member's contact address was changed${m.result.memberId ? ` (member ${m.result.memberId})` : ""}.`
+    : `The staff account's login address was changed${m.result.userId ? ` (staff account ${m.result.userId})` : ""}.`;
 }
+
+/** The records a check says hold the address and that the review step can list with a move button. */
+function movableHolders(c: CheckResult): SingleHolder[] {
+  if (c.free || !c.holder) return [];
+  return c.holder.kind === "many" ? c.holder.holders : [c.holder];
+}
+
+const STILL_HELD = "Checked again: the address is still held, so the owner's login address cannot change yet.";
+
+const records = (n: number) => `${n} record${n === 1 ? "" : "s"}`;
 
 const moveButtonLabel = (h: SingleHolder) =>
   h.kind === "member" ? "Change this member's contact address" : "Change this staff account's login address";
@@ -252,8 +266,10 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
   const targets: SingleHolder[] = !holder ? [] : holder.kind === "many" ? holder.holders : [holder];
   const single = holder && holder.kind !== "many" ? holder : null;
   // A resumed panel is opened with a FRESH check made by the card on load: it
-  // starts at the owner step if the address is free now, else it says why not.
-  const [phase, setPhase] = useState<Phase>(resume ? (check.free ? "owner_step" : "blocked") : "review");
+  // starts at the owner step if the address is free now; if it is still held
+  // by records that can be moved, it lists them (review), else it says why not.
+  const resumedHeld = !!resume && !check.free && movableHolders(check).length > 0;
+  const [phase, setPhase] = useState<Phase>(resume ? (check.free ? "owner_step" : resumedHeld ? "review" : "blocked") : "review");
   const [moved, setMoved] = useState<Moved[]>(() => movedFromResume(resume));
   const resumeRef = useRef<ResumeState>(resume ?? { address });
   const [step3, setStep3] = useState<OwnerStepResult | null>(null);
@@ -272,10 +288,15 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
   const busyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [lost, setLost] = useState<Pending | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(resumedHeld ? STILL_HELD : null);
 
-  /** Re-check the owner's address. From a duplicate list, a still-held answer returns to the list. */
-  const recheck = useCallback(async (backToList = false) => {
+  /**
+   * Re-check the owner's address (a read). Free → the owner step. Still held
+   * by records that can be moved → back to the review step, which lists them
+   * with their move buttons (also after "Check again" and on a resumed
+   * duplicate). Otherwise (an error, or nothing movable) → blocked.
+   */
+  const recheck = useCallback(async () => {
     setPhase("rechecking");
     const r = await checkLoginAddress(tenantId, address);
     if (!r.ok) {
@@ -289,8 +310,9 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
       setPhase("owner_step");
       return;
     }
-    if (backToList && r.data.holder) {
-      setNotice("Moved. The address is still held, so the owner's login address cannot change yet: move the next record below.");
+    if (movableHolders(r.data).length > 0) {
+      setError(null);
+      setNotice(STILL_HELD);
       setPhase("review");
       return;
     }
@@ -351,7 +373,6 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
     busyRef.current = true;
     setBusy(true);
     setError(null);
-    const fromList = current.holder?.kind === "many";
     try {
       let p = lost?.kind === "member" ? lost : null;
       if (!p) {
@@ -387,7 +408,7 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
       };
       recordMove({ kind: "member", result }, member.name);
       setDialog(null);
-      await recheck(fromList);
+      await recheck();
     } finally {
       setCode("");
       busyRef.current = false;
@@ -400,7 +421,6 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
     busyRef.current = true;
     setBusy(true);
     setError(null);
-    const fromList = current.holder?.kind === "many";
     try {
       let p = lost?.kind === "staff" ? lost : null;
       if (!p) {
@@ -435,7 +455,7 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
       };
       recordMove({ kind: "user", result }, staff.name);
       setDialog(null);
-      await recheck(fromList);
+      await recheck();
     } finally {
       setCode("");
       busyRef.current = false;
@@ -493,6 +513,16 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
   const canStartFor = (h: SingleHolder) => !!h.version && verified && verifyNote.trim().length >= REASON_MIN && !busy;
   const openMove = (h: SingleHolder) => openDialog(h.kind === "member" ? "member" : "staff", h);
   const partial = moved.length > 0 && step3 === null;
+  // Duplicate progress while records still hold the address (ruling R10):
+  // "Moved 1 of 2 records. 1 record still uses this address — move it below, …"
+  const remaining = !holder ? 0 : holder.kind === "many" ? Math.max(holder.holders.length, holder.count) : 1;
+  const listShown = phase === "review" && targets.length > 0;
+  const progress =
+    partial && remaining > 0
+      ? `Moved ${moved.length} of ${records(moved.length + remaining)}. ${records(remaining)} still ${remaining === 1 ? "uses" : "use"} this address${
+          listShown ? ` — move ${remaining === 1 ? "it" : "them"} below, then change the owner's login address.` : "."
+        }`
+      : null;
 
   return (
     <section aria-label="Resolve login address conflict" style={panel}>
@@ -516,7 +546,7 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
         {holder?.kind === "many" && (
           <>
             <dt style={dt}>Held by</dt>
-            <dd style={dd}>{holder.count} records in this club (listed below)</dd>
+            <dd style={dd}>{records(holder.count)} in this club{listShown ? " (listed below)" : ""}</dd>
           </>
         )}
       </dl>
@@ -531,6 +561,7 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
       {phase === "review" && targets.length > 0 && (
         <>
           {notice && <p role="status" style={{ ...warn, borderColor: adminPalette.amber }}>{notice}</p>}
+          {progress && <p role="status" style={{ ...warn, borderColor: adminPalette.amber }}>{progress}</p>}
           {single?.kind === "user" && (
             <p style={warn}>
               This staff account holds this address and signs in to the club&apos;s dashboard with it. Moving it signs {single.name} out
@@ -598,9 +629,9 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
 
       {phase === "rechecking" && <p role="status" style={muted}>Checking the address again…</p>}
 
-      {partial && phase !== "done" && (
+      {partial && !holder && phase !== "done" && (
         <p role="status" style={{ ...warn, borderColor: adminPalette.amber }}>
-          Step 1 done, step 2 not done. {moved.map(describeMove).join("; ")}; the owner&apos;s login address has not been changed yet.
+          Step 1 done, step 2 not done. {moved.map(describeMove).join(" ")} The owner&apos;s login address has not been changed yet.
           {phase === "owner_step" ? " Resume below." : ""}
         </p>
       )}
@@ -625,6 +656,7 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
               ? "The address is still held, so the owner's login address cannot be changed yet. Check the record and try again."
               : error ?? "The address could not be checked."}
           </p>
+          {progress && <p role="status" style={muted}>{progress}</p>}
           <div style={actions}>
             <Button variant="secondary" size="compact" onClick={onClose} disabled={busy}>Close</Button>
             <Button variant="secondary" size="compact" onClick={() => void recheck()} disabled={busy}>Check again</Button>

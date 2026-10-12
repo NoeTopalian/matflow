@@ -10,6 +10,7 @@ import React from "react";
 import "@testing-library/jest-dom";
 import userEvent from "@testing-library/user-event";
 import ConflictPanel, { loadResume, type CheckResult, type CheckedHolder } from "@/components/admin/ConflictPanel";
+import LoginEmailCard from "@/app/admin/tenants/[id]/LoginEmailCard";
 
 const ADDRESS = "owner.real@club.example";
 const HELD: CheckResult = {
@@ -283,7 +284,7 @@ describe("ConflictPanel: staff accounts, duplicates and record labels", () => {
     expect(screen.getByText("Club sign-in account")).toBeInTheDocument();
     expect(screen.getByText("Staff account (manager)")).toBeInTheDocument();
     expect(screen.queryByText(/changed by the club in Staff settings/)).toBeNull();
-    await verifyAndStart(); // ticks the call-back checkbox, fills the note, clicks the button
+    await verifyAndStart(); // ticks the call-back checkbox and fills the note; the lines below click the button
     expect(screen.getByRole("button", { name: "Change this staff account's login address" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Change this staff account's login address" }));
     expect(screen.getByRole("dialog")).toHaveTextContent(/Pat will be signed out everywhere/);
@@ -365,5 +366,79 @@ describe("ConflictPanel: staff accounts, duplicates and record labels", () => {
     expect(await screen.findByRole("button", { name: "Change the owner's login address" })).toBeInTheDocument();
     expect(window.location.search).toContain("member=m1");
     expect(window.location.search).toContain("staff=u1");
+  });
+
+  // Review fix round 1 (task-4-review.md, Important 1 + ruling R10).
+  it("a resumed duplicate that is still held lists the remaining holders with their move buttons, keeps the owner step closed and the resume trail", async () => {
+    const tenant = { id: "T", name: "Club" };
+    const owner = { id: "o1", name: "Owner" };
+    const m1 = { kind: "member" as const, id: "m1", name: "A", status: "active", canSignIn: true, access: "password" as const, link: "/m1", version: V };
+    const u1 = { kind: "user" as const, id: "u1", name: "B", status: "coach", canSignIn: true, access: "password" as const, link: "/dashboard/staff", version: V };
+    window.history.replaceState(null, "", "/admin/tenants/T?resolve=owner&member=m0");
+    const fn = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      void _init;
+      const u = String(input);
+      const body = u.endsWith("/auth/step-up")
+        ? { ok: true, grant: "GRANT", expiresAt: "2026-10-12T12:05:00.000Z" }
+        : u.endsWith("/staff/u1/login-email")
+          ? { ok: true, userId: "u1", sessionsRevoked: true, retired: { resetCodes: 0, signInLinks: 0 } }
+          : { ok: true, free: false, tenant, owner, holder: m1 };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fn);
+    render(
+      <ConflictPanel
+        tenantId="T"
+        ownerUserId="o1"
+        address="owner@club.test"
+        check={{ free: false, tenant, owner, holder: { kind: "many", count: 2, holders: [m1, u1] } }}
+        resume={{ address: "owner@club.test", memberId: "m0", member: { memberId: "m0", canSignIn: false } }}
+        onOwnerChanged={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    // Not a dead end: the remaining holders are listed, each with its move button.
+    expect(screen.getAllByRole("button", { name: /Change this (member's contact|staff account's login) address/ })).toHaveLength(2);
+    expect(screen.getByText("2 records in this club (listed below)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change the owner's login address" })).toBeNull();
+    // Plain progress copy (R10), never "step 1 done" while records still hold the address.
+    expect(screen.getByText("Moved 1 of 3 records. 2 records still use this address — move them below, then change the owner's login address.")).toBeInTheDocument();
+    expect(screen.queryByText(/step 1 done/i)).toBeNull();
+    expect(fn).not.toHaveBeenCalled();
+
+    // Move the staff account: the re-check still finds the member, so the
+    // review step returns with that holder, and the trail keeps member=m0.
+    await verifyAndStart();
+    await user.click(screen.getByRole("button", { name: "Change this staff account's login address" }));
+    await user.type(screen.getByLabelText(/new login address/i), "b.coach@club.test");
+    await user.type(screen.getByLabelText(/authenticator code/i), "123456");
+    await user.click(screen.getByRole("button", { name: /^Change login address$/ }));
+    expect(await screen.findByRole("button", { name: "Change this member's contact address" })).toBeInTheDocument();
+    expect(screen.getByText(/still held/i)).toBeInTheDocument();
+    expect(screen.getByText("Moved 2 of 3 records. 1 record still uses this address — move it below, then change the owner's login address.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change the owner's login address" })).toBeNull();
+    expect(window.location.search).toContain("member=m0");
+    expect(window.location.search).toContain("staff=u1");
+    expect(JSON.parse(window.sessionStorage.getItem("matflow.hub.resolve.T") ?? "{}")).toMatchObject({ memberId: "m0", staffId: "u1" });
+  });
+
+  it("a staff-only resume (URL has only &staff=) re-checks and, when free, offers the owner step", async () => {
+    const tenant = { id: "T", name: "Club" };
+    const owner = { id: "o1", name: "Owner" };
+    window.sessionStorage.setItem("matflow.hub.resolve.T", JSON.stringify({ address: "owner@club.test", staffId: "u1", staffName: "Pat", staff: { userId: "u1" } }));
+    window.history.replaceState(null, "", "/admin/tenants/T?resolve=owner&staff=u2");
+    expect(loadResume("T")).toMatchObject({ urlMemberId: null, urlStaffId: "u2", state: null }); // storage for another account is ignored
+    window.history.replaceState(null, "", "/admin/tenants/T?resolve=owner&staff=u1");
+    expect(loadResume("T")).toMatchObject({ urlMemberId: null, urlStaffId: "u1", state: { address: "owner@club.test", staffId: "u1" } });
+
+    const fn = mockFetchSequence([{ url: "/api/admin/customers/T/login-email/check", body: { ok: true, free: true, tenant, owner } }]);
+    render(<LoginEmailCard tenantId="T" ownerUserId="o1" ownerName="Owner" ownerEmail="old@club.test" provisionalSince={null} emailDelivery="off" />);
+    expect(await screen.findByRole("button", { name: "Change the owner's login address" })).toBeInTheDocument();
+    expect(fn).toHaveBeenCalledTimes(1); // one read; nothing is re-sent
+    expect(String(fn.mock.calls[0][0])).toMatch(/\/api\/admin\/customers\/T\/login-email\/check$/);
+    expect(JSON.parse(String(fn.mock.calls[0][1]?.body))).toEqual({ email: "owner@club.test" });
+    expect(
+      screen.getByText(/Step 1 done, step 2 not done\. The staff account's login address was changed \(staff account u1\)\. The owner's login address has not been changed yet\./),
+    ).toBeInTheDocument();
   });
 });
