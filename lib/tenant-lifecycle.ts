@@ -160,10 +160,16 @@ export async function claimTenantPurge(tx: Tx, tenantId: string, now: Date): Pro
  * True when a transaction gave up waiting on the Tenant row (review of lane C,
  * D3). A purge step can hold that row lock for up to its 60 s member budget,
  * longer than the 15 s default transaction budget of a competing restore or
- * duplicate run; the waiter then fails with Prisma P2028 (transaction expired
- * or could not start) or, if a lock_timeout is set, Postgres 55P03. Nothing
- * was written by the waiter — its transaction rolled back — so the honest
- * answer is "busy, try again", not an error.
+ * duplicate run. The waiter fails with Postgres 55P03 ("canceling statement
+ * due to lock timeout"): every tenant transaction sets lock_timeout BELOW its
+ * statement_timeout (10 s / 15 s, extended 45 s / 60 s — lib/prisma-tenant.ts,
+ * R10-5, lane L2 12 Oct 2026). Before that change the two were equal and the
+ * statement bound fired first, so the wait ended as 57014 and this check —
+ * correctly — did not read it as busy. A 57014 statement timeout is still NOT
+ * busy here: it also means "this query is too slow", and calling that "busy"
+ * would hide it. P2028 (the transaction budget expired, or a start timed out)
+ * is busy as before. Nothing was written by the waiter — its transaction
+ * rolled back — so the honest answer is "busy, try again", not an error.
  */
 export function isTenantRowBusyError(e: unknown): boolean {
   if (!e || typeof e !== "object") return false;

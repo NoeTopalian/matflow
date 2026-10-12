@@ -70,8 +70,17 @@ const TX_DEFAULTS: Required<TenantTxOptions> = { maxWait: 10_000, timeout: 15_00
  *  - the FIRST statement (the one that already sets the tenant context) also sets lock_timeout and
  *    statement_timeout with set_config(…, true) — transaction-local, reset by COMMIT/ROLLBACK, never left on the
  *    pooled connection: TENANT_STATEMENT_BOUND_MS for the default budget, TENANT_STATEMENT_BOUND_EXTENDED_MS when a
- *    caller asked for more than that (imports, reports, purges). A statement or lock wait past it fails as Postgres
- *    57014 / 55P03 (lib/tenant-lifecycle.ts isTenantRowBusyError already reads 55P03 as "busy, try again");
+ *    caller asked for more than that (imports, reports, purges). A statement past it fails as Postgres 57014.
+ *    lock_timeout is set BELOW it (TENANT_LOCK_BOUND_MS / TENANT_LOCK_BOUND_EXTENDED_MS; R10-5, lane L2): with the
+ *    two equal, a statement waiting on a row lock was cancelled by the statement bound first (57014, not 55P03), so
+ *    lib/tenant-lifecycle.ts isTenantRowBusyError — which reads 55P03 as "busy, try again" and, honestly, does not
+ *    read a statement timeout as busy — answered a restore blocked by a purge step with a 500. Now a lock wait fails
+ *    as 55P03 unless the statement spent more than the gap (5 s / 15 s) working before it started waiting;
+ *  - a statement error the callback SWALLOWED is not reported as success (R10-3, lane L2): Postgres aborts the whole
+ *    transaction on any statement error, and COMMIT on an aborted transaction is answered with the ROLLBACK tag and no
+ *    error, so the caller used to be told "done" while nothing persisted. After the callback returns, one liveness
+ *    statement runs before COMMIT; on an aborted transaction it fails 25P02 and the caller gets
+ *    TenantTransactionAbortedError (nothing committed). Cost: one extra round trip per transaction;
  *  - the caller's `timeout` stays the budget of the whole callback and is an ENFORCED DEADLINE (R10-1, lane L2,
  *    12 Oct 2026; withinBudget below): the callback races the budget, and at expiry the caller gets
  *    TenantTransactionBudgetError (code P2028 — the code Prisma used for the same condition, so existing handling
@@ -92,10 +101,49 @@ const TX_DEFAULTS: Required<TenantTxOptions> = { maxWait: 10_000, timeout: 15_00
  */
 const PRISMA_TIMER_OUT_OF_REACH_MS = 60 * 60 * 1000;
 const PRISMA_TX_OPTIONS = { maxWait: PRISMA_TIMER_OUT_OF_REACH_MS, timeout: PRISMA_TIMER_OUT_OF_REACH_MS } as const;
-/** Per-statement and lock-wait bound for the default budget. Literal in the SQL below (pinned by sec-l1-store-tx-bound). */
+/** Per-statement bound for the default budget. Literal in the SQL below (pinned by sec-l1-store-tx-bound). */
 export const TENANT_STATEMENT_BOUND_MS = 15_000;
 /** The same bound for callers whose budget is larger than the default (imports, reports, purges). */
 export const TENANT_STATEMENT_BOUND_EXTENDED_MS = 60_000;
+/** Lock-wait bound, strictly below the statement bound so a lock wait ends as 55P03 (R10-5). Literal in the SQL. */
+export const TENANT_LOCK_BOUND_MS = 10_000;
+/** The lock-wait bound for the extended budget. */
+export const TENANT_LOCK_BOUND_EXTENDED_MS = 45_000;
+
+/**
+ * A tenant transaction whose callback returned normally after one of its statements had failed (the callback caught
+ * the error): Postgres had already aborted the transaction, so nothing could commit. Rolled back; the cause is the
+ * liveness statement's 25P02 failure.
+ */
+export class TenantTransactionAbortedError extends Error {
+  readonly code = "25P02";
+  constructor(readonly cause: unknown) {
+    super("a statement failed inside the transaction and the callback carried on; the transaction was aborted and nothing was committed");
+    this.name = "TenantTransactionAbortedError";
+  }
+}
+
+function isAbortedTransactionError(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const err = e as { code?: unknown; message?: unknown; meta?: { code?: unknown } };
+  if (err.code === "25P02" || err.meta?.code === "25P02") return true;
+  return /25P02|current transaction is aborted/i.test(typeof err.message === "string" ? err.message : "");
+}
+
+/**
+ * R10-3: one statement after the callback and before COMMIT. On a live transaction it returns at once; on one an
+ * earlier (swallowed) statement error aborted, the server refuses it with 25P02 and the caller is told so. Uses
+ * $executeRaw, the same entry point as the transaction's first statement.
+ */
+async function refuseIfAborted(tx: TxClient, scope: string): Promise<void> {
+  try {
+    await tx.$executeRaw`SELECT 1`;
+  } catch (e) {
+    if (!isAbortedTransactionError(e)) throw e;
+    console.error(`[prisma-tenant] a statement error was swallowed inside the callback; the transaction was aborted and nothing was committed ${scope}`);
+    throw new TenantTransactionAbortedError(e);
+  }
+}
 
 /** A tenant transaction whose callback ran past its budget: rolled back, nothing committed. */
 export class TenantTransactionBudgetError extends Error {
@@ -173,9 +221,9 @@ export async function withTenantContext<T>(
       // Measured by tests/integration/sec-b2-stale-bypass-db.test.ts.
       // SF-135: the same statement bounds every later statement and lock wait of this transaction (see above).
       if (budget <= TENANT_STATEMENT_BOUND_MS) {
-        await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true), set_config('app.bypass_rls', 'off', true), set_config('lock_timeout', '15000ms', true), set_config('statement_timeout', '15000ms', true)`;
+        await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true), set_config('app.bypass_rls', 'off', true), set_config('lock_timeout', '10000ms', true), set_config('statement_timeout', '15000ms', true)`;
       } else {
-        await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true), set_config('app.bypass_rls', 'off', true), set_config('lock_timeout', '60000ms', true), set_config('statement_timeout', '60000ms', true)`;
+        await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true), set_config('app.bypass_rls', 'off', true), set_config('lock_timeout', '45000ms', true), set_config('statement_timeout', '60000ms', true)`;
       }
       if (key) {
         // Proposed design P2 (docs/security/evidence/B2): the policies accept the tenant only with a MAC bound to
@@ -185,7 +233,9 @@ export async function withTenantContext<T>(
           SELECT pg_backend_pid()::text AS pid, floor(extract(epoch FROM transaction_timestamp()) * 1000000)::bigint::text AS ts`;
         await tx.$executeRaw`SELECT set_config('app.ctx_mac', ${tenantContextMac(key, tenantId, t.pid, t.ts)}, true)`;
       }
-      return withinBudget(budget, `tenant=${tenantId}`, () => fn(tx));
+      const out = await withinBudget(budget, `tenant=${tenantId}`, () => fn(tx));
+      await refuseIfAborted(tx, `tenant=${tenantId}`);
+      return out;
     }, PRISMA_TX_OPTIONS);
   } catch (e) {
     // Stamp the tenant onto the error on its way out so the shared error path
@@ -218,10 +268,12 @@ export async function withRlsBypass<T>(
   return prisma.$transaction(async (tx) => {
     // SF-135: bounded like withTenantContext, in the same first statement.
     if (budget <= TENANT_STATEMENT_BOUND_MS) {
-      await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true), set_config('lock_timeout', '15000ms', true), set_config('statement_timeout', '15000ms', true)`;
+      await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true), set_config('lock_timeout', '10000ms', true), set_config('statement_timeout', '15000ms', true)`;
     } else {
-      await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true), set_config('lock_timeout', '60000ms', true), set_config('statement_timeout', '60000ms', true)`;
+      await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true), set_config('lock_timeout', '45000ms', true), set_config('statement_timeout', '60000ms', true)`;
     }
-    return withinBudget(budget, "scope=bypass", () => fn(tx));
+    const out = await withinBudget(budget, "scope=bypass", () => fn(tx));
+    await refuseIfAborted(tx, "scope=bypass");
+    return out;
   }, PRISMA_TX_OPTIONS);
 }

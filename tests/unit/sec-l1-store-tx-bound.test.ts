@@ -59,6 +59,8 @@ import {
   TenantTransactionBudgetError,
   TENANT_STATEMENT_BOUND_MS,
   TENANT_STATEMENT_BOUND_EXTENDED_MS,
+  TENANT_LOCK_BOUND_MS,
+  TENANT_LOCK_BOUND_EXTENDED_MS,
 } from "@/lib/prisma-tenant";
 import path from "node:path";
 import fs from "node:fs";
@@ -124,9 +126,10 @@ describe("cycle 2: tenant transactions own their bound (lib/prisma-tenant.ts)", 
     ["withTenantContext", (opts?: { timeout?: number }) => withTenantContext("tenant-A", async () => "ok", opts)],
     ["withRlsBypass", (opts?: { timeout?: number }) => withRlsBypass(async () => "ok", opts)],
   ] as const) {
-    it(`${name}: default budget → the FIRST statement sets lock_timeout and statement_timeout = ${TENANT_STATEMENT_BOUND_MS} ms, transaction-local`, async () => {
+    it(`${name}: default budget → the FIRST statement sets statement_timeout = ${TENANT_STATEMENT_BOUND_MS} ms and lock_timeout = ${TENANT_LOCK_BOUND_MS} ms (below it; R10-5), transaction-local`, async () => {
       await run();
-      expect(first()).toContain(`set_config('lock_timeout', '${TENANT_STATEMENT_BOUND_MS}ms', true)`);
+      expect(first()).toContain(`set_config('lock_timeout', '${TENANT_LOCK_BOUND_MS}ms', true)`);
+      expect(TENANT_LOCK_BOUND_MS).toBeLessThan(TENANT_STATEMENT_BOUND_MS);
       expect(first()).toContain(`set_config('statement_timeout', '${TENANT_STATEMENT_BOUND_MS}ms', true)`);
       expect(first(), "the bypass setting stays in the same statement").toMatch(/set_config\('app\.bypass_rls', '(on|off)', true\)/);
       expect(first()).not.toMatch(/,\s*false\s*\)/);
@@ -134,7 +137,8 @@ describe("cycle 2: tenant transactions own their bound (lib/prisma-tenant.ts)", 
     it(`${name}: a larger caller budget → the extended bound (${TENANT_STATEMENT_BOUND_EXTENDED_MS} ms)`, async () => {
       await run({ timeout: 45_000 });
       expect(first()).toContain(`set_config('statement_timeout', '${TENANT_STATEMENT_BOUND_EXTENDED_MS}ms', true)`);
-      expect(first()).toContain(`set_config('lock_timeout', '${TENANT_STATEMENT_BOUND_EXTENDED_MS}ms', true)`);
+      expect(first()).toContain(`set_config('lock_timeout', '${TENANT_LOCK_BOUND_EXTENDED_MS}ms', true)`);
+      expect(TENANT_LOCK_BOUND_EXTENDED_MS).toBeLessThan(TENANT_STATEMENT_BOUND_EXTENDED_MS);
     });
     it(`${name}: Prisma's timeout and maxWait are out of reach whatever the caller passes`, async () => {
       await run({ timeout: 45_000 });
