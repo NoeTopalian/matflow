@@ -91,6 +91,47 @@ Further reconciliations made by the coordinator (they override the lanes' origin
 - **`EMAIL_DELIVERY`.** One procedure (read back, edit only if not `off`) in A, C, Q5, Q13 and §26.1; the variable is verified through `GET /api/tenant/<slug>`, not the health route.
 - **Decision rows.** Packet §6 has seventeen rows (eleven plus six added 11:25 UK); Q1 and Q13 count seventeen. One further owner decision not in the packet is listed in section B and Q1 (e): the absent `CRON_SECRET`.
 
+## F. Follow-up answers (12 Oct 2026, 13:45 UK)
+
+**F.1 Did the 43 report fixes change code? No.** They changed documentation only. The final executable is unchanged: **`512d5e8d622f0a9cf514d1f5b5663e4e07c8939e`**. Since `512d5e8` the branch has further commits: all touch `docs/` only except `8d6c93c`, which adds the read-only tooling script `scripts/readiness/class-window-readonly.mjs`. The release branch is cut at `512d5e8` itself (packet section 7), so none of these enters the deployed executable. No verification is affected: the gates, the R10 review, rehearsal run 3 and the recovery-code database runs all refer to `512d5e8`'s code (`git diff 512d5e8 HEAD -- app lib auth.ts proxy.ts prisma package.json package-lock.json next.config.ts tests` is empty).
+
+**F.2 Class generation for Total BJJ.**
+- **How check-in depends on it** (code at the serving build `e8afb6a`, identical at `512d5e8`). Member self check-in, kiosk check-in and card check-in all require a pre-generated `ClassInstance` for the class and day (`app/api/checkin/route.ts`, `app/api/kiosk/[token]/checkin/route.ts`, `app/api/checkin/card/route.ts`). The member schedule returns `classInstanceId: null` when none exists, and the member home then offers no check-in. Instances are created in four ways: (a) for 56 days when a class is created or edited (`ROLLING_WINDOW_DAYS`); (b) by the timetable's **"Generate 4 weeks"** button (owner or manager; 28 days from the club's today; writes only missing rows) and the per-class "Generate schedule instances" button; (c) for today only, when a staff member opens Coach → Today (`ensureTodayInstances`); (d) nightly by the class-instances cron, which answers 503 and does nothing while `CRON_SECRET` is absent. When the window lapses, check-in fails silently for members and the register is empty (`app/api/cron/class-instances/route.ts:4-14`).
+- **Last usable scheduled class date: NOT YET ESTABLISHED for production.** It needs one read-only query of production data. The tool is `scripts/readiness/class-window-readonly.mjs` (`8d6c93c`): one READ ONLY transaction, host-guarded, printing class ids, timetable labels and dates only, with no personal data. On the TEST branch's copy of the club (a seeded timetable) it reports an earliest last instance of 2 December 2026, 51 days remaining and 164 future instances. That is the test copy, not production. Production command, which Noe runs himself or approves the coordinator running in manual mode:
+  `node scripts/readiness/class-window-readonly.mjs .env ep-bold-wave-abt39t7x totalbjj`
+  It prints each class's last generated date and `RESULT: earliest last instance = <date>; days remaining = <n>`.
+- **Smallest safe remediation** (no `CRON_SECRET` on the serving build).
+  1. If the production result shows fewer than about 21 days, Sean or a manager presses **Timetable → Generate 4 weeks** once. That extends every active class 28 days from today and writes only missing instances. Repeat every three weeks until step 2.
+  2. The durable fix, after `512d5e8` is serving and verified: set a NEW `CRON_SECRET` (Production only, Sensitive, never the leaked value), with `RETENTION_CRON_ENABLED` confirmed absent (re-read 12 Oct 13:40 UK: absent), then redeploy the same SHA. The class-instances cron then keeps 56 days ahead every night; retention stays off on its own gate; the monthly-reports cron answers 500 "AI service not configured" because `ANTHROPIC_API_KEY` is absent, so no club data goes to an AI service.
+  3. Never set `CRON_SECRET` while `e8afb6a` (which has no retention gate) or any older build is serving or could be rebuilt. If the release ever has to fall back to older code, delete `CRON_SECRET` first.
+
+**F.3 Credential revocation, tied to the specific exposed credentials.** What leaked on 7 May (commit `fa3c460`, `docs/SECURITY-AUDIT-2026-05-07.md` line 52, read with the value redacted) is a Neon password of the `npg_` form **without** a role name or host, and a full 36-character Resend key of the `re_` form. Date-based statements ("the role was updated today", "one key created today") show that something changed. They do not show that the exposed values stopped working, and they are withdrawn as revocation evidence.
+
+| Check | What it proves | What it does not prove | Status |
+|---|---|---|---|
+| N1. The password production uses now does not match the leaked password's fingerprint (`ops-credential-fingerprint.mjs`, local, value never printed; re-run 12 Oct 13:35 UK), **and** that password authenticates as `neondb_owner` on `ep-bold-wave-abt39t7x` (`db-role-inspect`, 11 Oct 16:12 UK) | A Postgres role holds exactly one password, and production's only application login role is `neondb_owner` (roles on production, read 11 Oct: `cloud_admin`, `neon_service`, `neon_superuser`, `neondb_owner`). So the leaked string is not `neondb_owner`'s current password on production and cannot authenticate as it there | That Vercel holds the same string as the local `.env`. Both came from the same reset; the serving deployment connects, so Vercel's value is a valid password, and a role has only one, so it equals the tested value | **PASS (documented inference)** |
+| N2. The test branch's credentials (`TEST_DATABASE_URL`, `RESTRICTED_DATABASE_URL`) do not match the leaked fingerprint (local, 12 Oct 13:35 UK) | The leaked password does not open the TEST branch either. A branch created from production before a reset would inherit the old password; this one does not hold it | Other branches. The project has two (production, test) per the owner's dashboard read; any branch created later inherits the current password | **PASS** |
+| N3. One connection attempt with the leaked password against `ep-bold-wave-abt39t7x` as `neondb_owner`, expecting `password authentication failed` | Direct proof, at that moment, that the exposed value no longer authenticates | — | **NOT RUN.** Requires Noe's specific approval (old-credential authentication). Recommended only if N1's inference is not accepted |
+| R1. Resend API-keys page: the owner reports one key, created 11 Oct | No key created on or before 7 May remains in the account | That the specific leaked key is the one deleted. Resend does not display the secret, so the key list is not tied to the value | REPORTED, date-based: not revocation evidence |
+| R2. One read-only Resend API call with the leaked key (for example `GET /domains`), expecting `401` with an invalid-key error name (not `restricted_api_key`, which a still-valid sending-only key would also return) | Direct proof that the exposed key no longer authenticates at Resend | — | **NOT RUN.** Requires Noe's specific approval. It is the only check tied to the specific key |
+
+Recommendation: accept N1 and N2 for Neon, a sound inference from one password per role with both facts it rests on verified. Run R2 for Resend under your explicit approval, because no other evidence ties revocation to the leaked Resend key.
+
+**F.4 The `EMAIL_DELIVERY` commands.** From the repository folder, in this order:
+
+```
+npx vercel env rm EMAIL_DELIVERY production
+npx vercel env add EMAIL_DELIVERY production
+```
+
+- The first **writes** configuration. It deletes the stored Production value of `EMAIL_DELIVERY` in the Vercel project `noetopalians-projects/matflow`, after asking you to confirm (`y`). Expected output: `Removed Environment Variable`. It has no effect on the serving deployment, which ignores this variable entirely (the switch was added on 7 Oct, after `e8afb6a`), and none on Preview.
+- The second **writes** configuration. It creates `EMAIL_DELIVERY` for Production. At `Value?` type `off`. Leave it non-sensitive (no `--sensitive` flag) so its value can be listed later; `off` is not a secret. Expected output: `Added Environment Variable EMAIL_DELIVERY to Project matflow` (Production).
+- To **read** without writing: `npx vercel env ls production` lists names, type and age only, never values. Expected afterwards: `EMAIL_DELIVERY | Encrypted | Production | a few seconds ago`. The effective value is read after the release from the public `GET https://matflow.studio/api/tenant/totalbjj` field `"emailDelivery": "off"` (release-verify `tenant.email_delivery_off`).
+- Consequence to note: until `512d5e8` serves, production mail is live with the new Resend key. Any invitation or password reset an owner triggers today is sent.
+
+**F.5 Production configuration names re-read** (12 Oct 13:40 UK; names, types and ages only): `OPERATOR_ALLOWED_IDS` present (Sensitive, set 01:35 UK); `EMAIL_DELIVERY` present (Sensitive, 4 days); `MATFLOW_ADMIN_SECRET` present on Production and Preview (53 days); `LOGIN_THROTTLE_ENABLED` present (Sensitive, 19 days, value unknown); `TESTING_MODE` present on Production and Preview (ignored in production by the code at `512d5e8`, `lib/testing-mode.ts`); `CRON_SECRET`, `RETENTION_CRON_ENABLED`, `ENABLE_GOOGLE_OAUTH` and `MATFLOW_CSP_ENFORCE` absent.
+
+
 ---
 
 # Part 1 — Questions 1–13 (lane AQ1)
@@ -471,8 +512,8 @@ Facts the steps rest on, all read at `512d5e8`:
 
 **1. `EMAIL_DELIVERY`**
 - Vercel → project → Settings → Environment Variables → filter **Production** → `EMAIL_DELIVERY`.
-- It was stored non-sensitive and read back as `off` on 9 Oct (`RELEASE-PACKAGE.md` §2.3), so the value should be viewable. It must read exactly `off`.
-- If it is not readable or not `off`: Edit → `off` → Save.
+- CORRECTED 12 Oct 13:45 UK: it is stored **Sensitive** (`vercel env ls production`, read by the coordinator at 13:40 UK: `EMAIL_DELIVERY | Hidden | Sensitive | Production | 4d ago`), so its value cannot be read back in the dashboard or the CLI. The 9 Oct statement "non-sensitive, read back as off" is superseded.
+- Re-set it deliberately to `off` (section F.4 gives the two commands). The only read-back of the effective value is after the release, from the public `GET /api/tenant/totalbjj` field `emailDelivery` (release-verify `tenant.email_delivery_off`).
 - Record the "updated" time.
 - Effective at the `512d5e8` deployment; it has no effect on `e8afb6a`.
 
@@ -1469,7 +1510,7 @@ What is sensitive: the open-finding mechanisms are a roadmap for an attacker unt
 
 | Setting | Stored (dashboard) | Effective in the serving build | How the release verifies the effective value |
 |---|---|---|---|
-| `EMAIL_DELIVERY` | non-sensitive (RELEASE-PACKAGE §2.3); last read back as off on 9 Oct; owner to re-read | none — `e8afb6a` has no `EMAIL_DELIVERY` switch and can send mail today; `off` takes effect only with the `512d5e8` deployment | `release-verify` `tenant.email_delivery_off`: public `GET /api/tenant/<slug>` reports `emailDelivery: "off"` |
+| `EMAIL_DELIVERY` | stored **Sensitive** (re-read 12 Oct 13:40 UK; value not readable); re-set to `off` before the release (F.4) | none — `e8afb6a` has no `EMAIL_DELIVERY` switch and can send mail today; `off` takes effect only with the `512d5e8` deployment | `release-verify` `tenant.email_delivery_off`: public `GET /api/tenant/<slug>` reports `emailDelivery: "off"` |
 | `OPERATOR_ALLOWED_IDS` | set 12 Oct 01:35 UK | **not effective** until the next deployment | `release-verify --expect-operator-login` (authenticated operator request succeeds); owner's own `/admin/login` |
 | `MATFLOW_ADMIN_SECRET` | 53 days; rotation pending | grants nothing in the new build's production paths; still honoured by older builds | `release-verify` "legacy transports refused" (401/403 JSON) |
 | `DATABASE_URL` / `RESEND_API_KEY` | rotated 11 Oct | serving build reads the new values (deployment created after the change) | health ok; migration state read |
@@ -1674,7 +1715,7 @@ What is sensitive: the open-finding mechanisms are a roadmap for an attacker unt
 |---|---|
 | SF-17 `CRON_SECRET` absent | At `512d5e8`, retention stays off on its own gate: `RETENTION_CRON_ENABLED` is unset, and only the exact string `"true"` enables it (one-way door, SF-127; `512d5e8:app/api/cron/retention/route.ts:131-144`). The serving build `e8afb6a` has no such gate (its route checks only `CRON_SECRET`, `:137-139`), so in production today the absent `CRON_SECRET` alone stops the sweep. Without `CRON_SECRET`, though, the class-instances cron (daily 02:40) and the monthly-reports cron also answer 503 and do nothing. ClassInstance rows then stop being generated, and members cannot check in once the current window lapses (`class-instances/route.ts:4-14`). This is the same in production today (`e8afb6a`). **Owner residual (section B; Q1 e):** either name who presses the manual "Generate" and when, or set a new `CRON_SECRET` — only after `512d5e8` is serving and verified (Q10) with `RETENTION_CRON_ENABLED` confirmed unset, and never while `e8afb6a` or any older build serves |
 | Stripe restricted live key (prefix leaked 7 May; Production and Preview) | Only a 25-character prefix leaked (CONTAINMENT C4); no live Stripe is in use (no connected account; endpoint check in 26.2); roll as hygiene, prepared separately from this release (SF-14 Stripe part) |
-| SF-18 DMARC/SPF | Mail is off; required before mail is enabled |
+| SF-18 DMARC/SPF | Mail is off only once `512d5e8` serves with `EMAIL_DELIVERY=off`; the serving build `e8afb6a` has no mail switch and sends mail today with the new Resend key. DMARC and SPF are required before mail is deliberately enabled |
 | SF-69 Blob token rotation | Must follow this release (old builds would leak a new token) |
 | SF-131..134 tooling hardening | Readiness-script residuals blocked by D-8; not runtime |
 | SF-101, SF-105/108, SF-55, SF-60, SF-61, SF-115 | Hardening or Low residuals not on the changed paths; unchanged exposure; next candidate |
