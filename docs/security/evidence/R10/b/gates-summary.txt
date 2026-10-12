@@ -1,0 +1,3 @@
+lint exit=0
+tsc exit=0
+unit exit=0
