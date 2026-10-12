@@ -904,3 +904,53 @@ test.describe("member profile Payments tab: the sticky header never covers a pay
     await auditRoute(page, url, testInfo);
   });
 });
+
+/**
+ * Members toolbar and table (owner screenshot, 12 Oct 2026, ~1900px wide):
+ *   - the toolbar's single-row xl: layout crushed the search box to its padding
+ *     and its icon and native clear button painted over the "All" and
+ *     "Cancelled" chips;
+ *   - the table grew past the content box and, with no local scroller at lg:
+ *     and up, its right-hand columns were clipped ("Missing" read "Miss").
+ * Runs in every overlap-staff-* project (desktop, the 915px tablet band and
+ * phone); the table assertions apply from sm: up, where the table renders.
+ */
+test.describe("members toolbar and table: search clear of the chips, table inside the content box", () => {
+  test("search box keeps its width and overlaps no chip; the table's last column is inside <main>", async ({ page }, testInfo) => {
+    test.skip(isMemberProject(testInfo), "staff route: runs under the overlap-staff-* projects");
+    const res = await page.goto("/dashboard/members");
+    expect(res?.status(), "members page loads").toBeLessThan(400);
+    const search = page.locator('input[aria-label="Search members"]');
+    await expect(search).toBeVisible();
+    await search.fill("a"); // the native clear (x) appears, as in the screenshot
+
+    const m = await page.evaluate(() => {
+      const inp = document.querySelector('input[aria-label="Search members"]') as HTMLInputElement;
+      const ib = inp.getBoundingClientRect();
+      const panel = inp.closest(".rounded-2xl") ?? document.body;
+      const chips = [...panel.querySelectorAll("button")]
+        .filter((b) => /·\s*\d/.test(b.textContent ?? ""))
+        .map((b) => b.getBoundingClientRect());
+      const overlapping = chips.filter((c) => !(c.right <= ib.left || c.left >= ib.right || c.bottom <= ib.top || c.top >= ib.bottom)).length;
+      const table = document.querySelector("table");
+      const main = document.querySelector("main")!.getBoundingClientRect();
+      const tableShown = !!table && (table as HTMLElement).offsetParent !== null;
+      return {
+        viewport: window.innerWidth,
+        inputWidth: ib.width,
+        chips: chips.length,
+        overlapping,
+        tableShown,
+        tableRight: tableShown ? table!.getBoundingClientRect().right : 0,
+        mainRight: main.right,
+      };
+    });
+
+    expect(m.chips, "filter chips render").toBeGreaterThan(0);
+    expect(m.overlapping, "the search box overlaps no filter chip").toBe(0);
+    if (m.viewport >= 640) expect(m.inputWidth, "the search box keeps a usable width").toBeGreaterThanOrEqual(240);
+    if (m.tableShown && m.viewport >= 1024) {
+      expect(m.tableRight, "the table ends inside <main> (nothing clipped at lg: and up)").toBeLessThanOrEqual(m.mainRight + 0.5);
+    }
+  });
+});
