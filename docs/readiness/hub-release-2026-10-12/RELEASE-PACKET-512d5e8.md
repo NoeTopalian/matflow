@@ -58,28 +58,32 @@ Failure state defined: if the production build fails after `prisma migrate deplo
 
 | Risk | Recommendation | Decision |
 |---|---|---|
-| SF-137 bare `/login` on an unknown revocation verdict (did not recur in run 3; code unchanged; cookie intact) | ACCEPT for this release as Low–Medium UX under database pressure, fix in the next candidate — or FIX FIRST (small change in `lib/authz.ts`) | ☐ |
-| SF-138 operator address in tenant audit metadata | ACCEPT (Low); fix next candidate | ☐ |
-| SF-139 budget cut classified as busy (purge reporting) | ACCEPT (Low) | ☐ |
-| SF-140 misleading guard log | ACCEPT (Info) | ☐ |
-| Stripe webhook in-transaction P2002 catches now answer 500 (duplicates never acknowledged; endpoint could be flagged) | ACCEPT on the condition that no live Stripe endpoint is created before the payments branch lands | ☐ |
-| Owner recovery-code redemption not browser-rehearsed (no driver; integration tests only) | ACCEPT with the integration-test evidence; add a driver step later | ☐ |
-| SF-30 partial CSP (`unsafe-inline` still enforced) | ACCEPT (unchanged from production) | ☐ |
-| SF-05 legacy untagged links valid until expiry (≤ 7 days) | ACCEPT (the workflow retires tokens for both addresses in the club) | ☐ |
-| Runtime role `neondb_owner`, RLS as backstop only, audit rows editable (SF-62/73/74, SF-57) | NOT an acceptance: record as existing exposure unchanged by this release, with a dated remediation plan (the SF-62 restricted-role project and SF-57 audit protection); the owner sets the review date | ☐ |
-| Environmental revocation-check `unknown` verdicts under load on TEST (P2028 earlier; connection timeouts now) | not a candidate defect; production has a different pool/latency profile; monitored via Sentry after release | ☐ |
-| `main` PR + status-check protection not yet applied (D-14) | apply at approval time (manual mode) | ☐ |
+| SF-137 bare `/login` on an unknown revocation verdict (did not recur in run 3; code unchanged; cookie intact) | ACCEPT for this release as Low–Medium UX under database pressure, fix in the next candidate — or FIX FIRST (small change in `lib/authz.ts`) | ☑ ACCEPTED, fix next candidate |
+| SF-138 operator address in tenant audit metadata | ACCEPT (Low); fix next candidate | ☑ ACCEPTED |
+| SF-139 budget cut classified as busy (purge reporting) | ACCEPT (Low) | ☑ ACCEPTED |
+| SF-140 misleading guard log | ACCEPT (Info) | ☑ ACCEPTED |
+| Stripe webhook in-transaction P2002 catches now answer 500 (duplicates never acknowledged; endpoint could be flagged) | ACCEPT on the condition that no live Stripe endpoint is created before the payments branch lands | ☑ ACCEPTED with that condition |
+| Owner recovery-code redemption not browser-rehearsed (no driver; integration tests only) | ACCEPT with the integration-test evidence; add a driver step later | ☑ ACCEPTED |
+| SF-30 partial CSP (`unsafe-inline` still enforced) | ACCEPT (unchanged from production) | ☑ ACCEPTED |
+| SF-05 legacy untagged links valid until expiry (≤ 7 days) | ACCEPT (the workflow retires tokens for both addresses in the club) | ☑ ACCEPTED |
+| Runtime role `neondb_owner`, RLS as backstop only, audit rows editable (SF-62/73/74, SF-57) | NOT an acceptance: record as existing exposure unchanged by this release, with a dated remediation plan (the SF-62 restricted-role project and SF-57 audit protection); the owner sets the review date | ☑ RECORDED as existing exposure; review date 9 Nov 2026 (set under the plan approval; owner may change it) |
+| Environmental revocation-check `unknown` verdicts under load on TEST (P2028 earlier; connection timeouts now) | not a candidate defect; production has a different pool/latency profile; monitored via Sentry after release | ☑ NOTED |
+| `main` PR + status-check protection not yet applied (D-14) | apply at approval time (manual mode) | ☑ APPROVED; applied in §7 step 3 |
 
 **Rows added 12 Oct 11:25 UK (were missing from this table; found by the assurance lanes):**
 
 | Risk | Recommendation | Decision |
 |---|---|---|
-| Owner login-email route does not refuse the synthetic `@no-login.matflow.local` / `@deleted.invalid` domains as a new owner login, and has no in-route support-session check (the proxy refuses support sessions on `/api/admin/*`, `proxy.ts:307-321`); version bound at code entry (SF-09) | ACCEPT with an operator checklist rule ("never a synthetic domain"; Sean asked not to change his own address during the window); fix in the next candidate. **Touches Sean's correction**: a typing error the code will not catch | ☐ |
-| SF-118 / SF-119 / SF-59 burst availability: a burst at one address can refuse the real owner as "Incorrect email or password" after ~13 s; a saturated pool refuses other security buckets on that instance | ACCEPT (fails closed; nobody admitted); fix in a later candidate (stop holding a connection while waiting; correct the message) | ☐ |
-| SF-90 member second-factor codes are not single-use | ACCEPT (existing; members only; needs interception); schedule the fix | ☐ |
-| Old Vercel deployments with old secrets (SF-10, C5) still accept the legacy operator secret behind Vercel SSO | ACCEPT until release verification, then delete them through the separately authorised procedure | ☐ |
-| SF-131..134 readiness-script hardening (lane denied, D-8) | ACCEPT (tooling only) | ☐ |
-| Hub journeys proven by scratchpad drivers, not repository specs | ACCEPT for this release; promote the drivers to repository specs later | ☐ |
+| Owner login-email route does not refuse the synthetic `@no-login.matflow.local` / `@deleted.invalid` domains as a new owner login, and has no in-route support-session check (the proxy refuses support sessions on `/api/admin/*`, `proxy.ts:307-321`); version bound at code entry (SF-09) | ACCEPT with an operator checklist rule ("never a synthetic domain"; Sean asked not to change his own address during the window); fix in the next candidate. **Touches Sean's correction**: a typing error the code will not catch | ☑ ACCEPTED with the checklist rule |
+| SF-118 / SF-119 / SF-59 burst availability: a burst at one address can refuse the real owner as "Incorrect email or password" after ~13 s; a saturated pool refuses other security buckets on that instance | ACCEPT (fails closed; nobody admitted); fix in a later candidate (stop holding a connection while waiting; correct the message) | ☑ ACCEPTED |
+| SF-90 member second-factor codes are not single-use | ACCEPT (existing; members only; needs interception); schedule the fix | ☑ ACCEPTED |
+| Old Vercel deployments with old secrets (SF-10, C5) still accept the legacy operator secret behind Vercel SSO | ACCEPT until release verification, then delete them through the separately authorised procedure | ☑ ACCEPTED |
+| SF-131..134 readiness-script hardening (lane denied, D-8) | ACCEPT (tooling only) | ☑ ACCEPTED |
+| Hub journeys proven by scratchpad drivers, not repository specs | ACCEPT for this release; promote the drivers to repository specs later | ☑ ACCEPTED |
+
+**Decisions recorded 12 Oct 14:33 UK:** Noe approved the plan ("approved all plan"), which accepts every row above on its stated recommendation and condition. This is NOT deployment approval (§7 needs "deploy 512d5e8") and NOT approval (B) for Sean's account change.
+
+**Credential revocation (12 Oct 14:33 UK):** Resend R2 PASS (leaked key → `400 API key is invalid`); Neon N1+N2 accepted; see ASSURANCE-REPORT F.3.
 
 **Items that need evidence before you decide (not risks to accept):** provider-side revocation of the leaked Neon password and Resend key (section 9 of ITERATION-2-REPORT; ASSURANCE-Q01-13 Q6); the names of `ENABLE_GOOGLE_OAUTH`, `MATFLOW_CSP_ENFORCE`, `LOGIN_THROTTLE_ENABLED` in Production; whether the production demo club was seeded with the committed demo password (SF-109); production compute size and connection limit; one Sentry test event received from production.
 
