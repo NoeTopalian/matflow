@@ -167,21 +167,57 @@ describe("cycle 2: tenant transactions own their bound (lib/prisma-tenant.ts)", 
     expect(h.options).toHaveLength(1);
   });
 
-  it("source invariant: no code outside the three owned boundaries opens a Prisma transaction", () => {
-    const owned = new Set(["lib/prisma-tenant.ts", "lib/rate-limit.ts", "lib/auth-lockout.ts"].map((f) => path.normalize(f)));
-    const offenders: string[] = [];
+  // R10-2 (lane L2): the opener pattern also matches the generic form `$transaction<T>(` (the old `/\$transaction\s*\(/`
+  // missed it), and scripts/ is scanned too — its callers are operator CLIs, allowed only while no runtime file imports them.
+  const OPENS_TRANSACTION = /\$transaction\s*(<[^>]*>)?\s*\(/;
+  const codeOnly = (src: string) => src.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+  const sourceFiles = (roots: string[]) => {
+    const out: string[] = [];
     const walk = (p: string) => {
       if (!fs.existsSync(p)) return;
       const st = fs.statSync(p);
       if (st.isDirectory()) { for (const e of fs.readdirSync(p)) walk(path.join(p, e)); return; }
-      if (!/\.(ts|tsx|mjs|js)$/.test(p)) return;
-      const rel = path.normalize(path.relative(process.cwd(), p));
-      if (owned.has(rel)) return;
-      const src = fs.readFileSync(p, "utf8").split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
-      if (/\$transaction\s*\(/.test(src)) offenders.push(rel);
+      if (!/\.(ts|tsx|mjs|cjs|js)$/.test(p)) return;
+      out.push(path.normalize(path.relative(process.cwd(), p)));
     };
-    for (const r of ["app", "lib", "auth.ts", "proxy.ts"]) walk(path.resolve(process.cwd(), r));
+    for (const r of roots) walk(path.resolve(process.cwd(), r));
+    return out;
+  };
+  const RUNTIME_ROOTS = ["app", "lib", "auth.ts", "proxy.ts"];
+
+  it("the opener pattern catches every spelling of a Prisma transaction call (incl. the generic form)", () => {
+    for (const s of ["prisma.$transaction(async (tx) => 1)", "prisma.$transaction (fn)", "prisma.$transaction<number>(async (tx) => 1)", "db.$transaction< { a: string } >(fn)", "prisma.$transaction([a, b])"]) {
+      expect(OPENS_TRANSACTION.test(codeOnly(s)), s).toBe(true);
+    }
+    for (const s of ["// prisma.$transaction<T>(fn)", " * prisma.$transaction(fn)", "const $transactionCount = 1"]) {
+      expect(OPENS_TRANSACTION.test(codeOnly(s)), s).toBe(false);
+    }
+  });
+
+  it("source invariant: no code outside the three owned boundaries opens a Prisma transaction", () => {
+    const owned = new Set(["lib/prisma-tenant.ts", "lib/rate-limit.ts", "lib/auth-lockout.ts"].map((f) => path.normalize(f)));
+    const offenders = sourceFiles(RUNTIME_ROOTS)
+      .filter((rel) => !owned.has(rel))
+      .filter((rel) => OPENS_TRANSACTION.test(codeOnly(fs.readFileSync(rel, "utf8"))));
     expect(offenders).toEqual([]);
+  });
+
+  it("source invariant: scripts/ that open a transaction are not imported by any runtime file (they are operator CLIs)", () => {
+    const scriptOpeners = sourceFiles(["scripts"]).filter((rel) => OPENS_TRANSACTION.test(codeOnly(fs.readFileSync(rel, "utf8"))));
+    expect(scriptOpeners.length, "scripts/ is scanned (operator CLIs open their own transactions)").toBeGreaterThan(0);
+    const scriptsDir = path.resolve(process.cwd(), "scripts") + path.sep;
+    const imported: string[] = [];
+    for (const rel of sourceFiles(RUNTIME_ROOTS)) {
+      const src = codeOnly(fs.readFileSync(rel, "utf8"));
+      for (const m of src.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["']([^"']+)["']/gm)) {
+        const spec = m[1];
+        const target = spec.startsWith("@/")
+          ? path.resolve(process.cwd(), spec.slice(2))
+          : spec.startsWith(".") ? path.resolve(path.dirname(path.resolve(process.cwd(), rel)), spec) : null;
+        if (target && (target + path.sep).startsWith(scriptsDir)) imported.push(`${rel} imports ${spec}`);
+      }
+    }
+    expect(imported).toEqual([]);
   });
 });
 

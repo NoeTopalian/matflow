@@ -72,15 +72,23 @@ const TX_DEFAULTS: Required<TenantTxOptions> = { maxWait: 10_000, timeout: 15_00
  *    pooled connection: TENANT_STATEMENT_BOUND_MS for the default budget, TENANT_STATEMENT_BOUND_EXTENDED_MS when a
  *    caller asked for more than that (imports, reports, purges). A statement or lock wait past it fails as Postgres
  *    57014 / 55P03 (lib/tenant-lifecycle.ts isTenantRowBusyError already reads 55P03 as "busy, try again");
- *  - the caller's `timeout` stays the budget of the whole callback: a callback that finishes past it is rolled back,
- *    never committed, and the caller gets TenantTransactionBudgetError (code P2028 — the code Prisma used for the
- *    same condition, so existing handling keeps working);
+ *  - the caller's `timeout` stays the budget of the whole callback and is an ENFORCED DEADLINE (R10-1, lane L2,
+ *    12 Oct 2026; withinBudget below): the callback races the budget, and at expiry the caller gets
+ *    TenantTransactionBudgetError (code P2028 — the code Prisma used for the same condition, so existing handling
+ *    keeps working) while Prisma's awaited rollback ends the transaction and releases the client. Nothing commits.
+ *    A callback IDLE past its budget (awaiting something other than the database) therefore no longer holds its
+ *    pooled connection until it returns — what Prisma's own timer used to give, now owned here and awaited;
  *  - waiting to START is bounded by the pool's own deadline (connectionTimeoutMillis, lib/prisma.ts, 10 s): Prisma
  *    never abandons a start, so no client returns to the pool inside a BEGIN. `maxWait` is accepted for
  *    compatibility; the pool deadline is what applies.
- * What Prisma's timer used to do and this does not: when a callback sat IDLE past its budget (awaiting something
- * other than the database), Prisma's ROLLBACK went out at once and freed the connection. Now the connection is held
- * until the callback returns (and is then rolled back), or until the server's idle_in_transaction_session_timeout.
+ * WHAT IS BOUNDED WHERE (R10-2): lock_timeout and statement_timeout are SERVER-SIDE bounds — Postgres cancels the
+ * statement and answers 55P03 / 57014. Nothing on the client times out a query (no pg query_timeout is set), so a
+ * STALLED SOCKET — the server's answer never arrives — is bounded only by the pool (its 10 s connection deadline, for
+ * the wait to start; keepAlive for detecting a dead peer) and by the budget deadline above. The deadline cuts the
+ * callback at the budget, but the ROLLBACK Prisma then awaits is queued on the same connection behind the stalled
+ * statement: with a stalled socket the caller is answered, and the connection freed, only when the socket fails or the
+ * server answers. With an idle callback or a healthy connection the deadline answers at the budget (+ one round trip).
+ * The server's idle_in_transaction_session_timeout (5 min on TEST, unverified in production) remains the last backstop.
  */
 const PRISMA_TIMER_OUT_OF_REACH_MS = 60 * 60 * 1000;
 const PRISMA_TX_OPTIONS = { maxWait: PRISMA_TIMER_OUT_OF_REACH_MS, timeout: PRISMA_TIMER_OUT_OF_REACH_MS } as const;
@@ -101,10 +109,41 @@ export class TenantTransactionBudgetError extends Error {
   }
 }
 
-/** Runs the callback and refuses to commit it if it overran its budget (Prisma rolls back on the throw). */
-async function withinBudget<T>(budgetMs: number, run: () => Promise<T>): Promise<T> {
+/**
+ * Runs the callback against an ENFORCED deadline (R10-1, lane L2, 12 Oct 2026). The callback races its budget: at
+ * expiry TenantTransactionBudgetError is thrown at once, so Prisma's own awaited rollback (_transactionWithCallback:
+ * catch → `await rollback()` → rethrow) ends the transaction and releases the pooled client — a callback idle past its
+ * budget (awaiting a network call, a sleep, anything that is not the database) no longer holds the slot until it
+ * returns. The callback itself cannot be cancelled: it keeps running, any statement it issues afterwards is refused by
+ * Prisma ("Transaction already closed"), and its late result or error is observed here — logged once at error level
+ * with the tenant id only (never the value, never the error text) and discarded, so nothing is unhandled. A callback
+ * that resolves past its budget before the timer fires (an event loop blocked past the deadline) is still refused.
+ */
+async function withinBudget<T>(budgetMs: number, scope: string, run: () => Promise<T>): Promise<T> {
   const started = Date.now();
-  const out = await run();
+  const work = (async () => run())();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cut: TenantTransactionBudgetError | null = null;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      cut = new TenantTransactionBudgetError(budgetMs, Date.now() - started);
+      reject(cut);
+    }, budgetMs);
+  });
+  let out: T;
+  try {
+    out = await Promise.race([work, deadline]);
+  } catch (e) {
+    if (e === cut) {
+      work.then(
+        () => console.error(`[prisma-tenant] callback finished after its budget was cut; result discarded ${scope} budgetMs=${budgetMs}`),
+        () => console.error(`[prisma-tenant] callback failed after its budget was cut; error discarded ${scope} budgetMs=${budgetMs}`),
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
   const elapsedMs = Date.now() - started;
   if (elapsedMs > budgetMs) throw new TenantTransactionBudgetError(budgetMs, elapsedMs);
   return out;
@@ -146,7 +185,7 @@ export async function withTenantContext<T>(
           SELECT pg_backend_pid()::text AS pid, floor(extract(epoch FROM transaction_timestamp()) * 1000000)::bigint::text AS ts`;
         await tx.$executeRaw`SELECT set_config('app.ctx_mac', ${tenantContextMac(key, tenantId, t.pid, t.ts)}, true)`;
       }
-      return withinBudget(budget, () => fn(tx));
+      return withinBudget(budget, `tenant=${tenantId}`, () => fn(tx));
     }, PRISMA_TX_OPTIONS);
   } catch (e) {
     // Stamp the tenant onto the error on its way out so the shared error path
@@ -183,6 +222,6 @@ export async function withRlsBypass<T>(
     } else {
       await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true), set_config('lock_timeout', '60000ms', true), set_config('statement_timeout', '60000ms', true)`;
     }
-    return withinBudget(budget, () => fn(tx));
+    return withinBudget(budget, "scope=bypass", () => fn(tx));
   }, PRISMA_TX_OPTIONS);
 }
