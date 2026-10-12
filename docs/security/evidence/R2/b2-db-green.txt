@@ -1,0 +1,5 @@
+sec-b2-stale-bypass-db owner exit=0 node=v24.21.0 role=owner head=d4ea9fc       Tests  6 passed (6) 
+sec-b2-stale-bypass-db restricted exit=0 node=v24.21.0 role=restricted head=d4ea9fc       Tests  6 passed (6) 
+sec-b2-signed-context-db owner exit=0 node=v24.21.0 role=owner head=d4ea9fc       Tests  1 passed (1) 
+sec-b2-signed-context-db restricted exit=0 node=v24.21.0 role=restricted head=d4ea9fc       Tests  1 passed (1) 
+DONE

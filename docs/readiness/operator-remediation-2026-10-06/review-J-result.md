@@ -1,0 +1,5 @@
+# Review of lane J (independent architect replay) — saved by lead
+Verdict: PASS, no blocking defect. Items 1–9 CLOSED (create-tenant temp password + verdict create precedence; Secure cookie clearing; after() for LoginEvent; LoginEvent 12-month purge; stale carrier; user.id checks; suspend step-up order; doc nit; swap name/email).
+Replay: 16 files, 138 passed (scratchpad/reviewJ/replay.log). Lane J's own full-run timeout in e2e-bypass-no-owner-escalation is a load flake (passes alone and in replay).
+Mutants (scratchpad/reviewJ/muts.log): control survived as expected; 13/13 real mutants KILLED (stop route secure/delete/maxAge/stale-carrier; clearImpersonationCookie secure; create-tenant flags/expiry/ownerUserId; verdict create precedence/named/any-owner/staff/wording).
+Residuals: R1 retention comment overclaimed (FIXED); R2 magic-link sign-ins wrote no LoginEvent (FIXED by lead, test); R3 pre-fix support stash restores no name (ACCEPTED, 30-min window across deploy); R4 legacy admin.tenant.create rows mark every owner "ACTIVATED AFTER OPERATOR RESET" (ACCEPTED, conservative).

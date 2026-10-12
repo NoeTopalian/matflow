@@ -1,0 +1,7 @@
+{"plantedIn":"none","ok":true,"bytes":122295}
+{"plantedIn":"docs/security/evidence/R6","ok":true,"bytes":122295}
+{"plantedIn":"docs","ok":true,"bytes":122295}
+{"plantedIn":"tests","ok":false,"error":"tailwindcss: <scratchpad>//security//R6//wt//app//globals."}
+{"plantedIn":"scripts/readiness","ok":false,"error":"tailwindcss: <scratchpad>//security//R6//wt//app//globals."}
+{"plantedIn":".","ok":false,"error":"tailwindcss: <scratchpad>//security//R6//wt//app//globals."}
+{"plantedIn":"components","ok":false,"error":"tailwindcss: <scratchpad>//security//R6//wt//app//globals."}

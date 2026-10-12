@@ -1,0 +1,26 @@
+# Redacted extract of the serving deployment build log (matflow-1ye6aej1o…, e8afb6a)
+# Source: vercel inspect <url> --logs (CLI 59.1.4), fetched 2026-10-09T17:30Z UTC. Raw log kept outside the repo.
+# Redaction: the datasource line keeps only the Neon endpoint id (already public in repo code) and whether the host is -pooler.
+4:2026-10-04T02:32:31.756Z  Running build in Washington, D.C., USA (East) – iad1
+5:2026-10-04T02:32:31.758Z  Build machine configuration: 2 cores, 8 GB
+6:2026-10-04T02:32:31.913Z  Cloning github.com/NoeTopalian/matflow (Branch: main, Commit: e8afb6a)
+22:2026-10-04T02:32:38.616Z  Vercel CLI 62.1.0
+23:2026-10-04T02:32:38.962Z  Installing dependencies...
+42:2026-10-04T02:32:44.374Z  npm warn install-scripts 5 packages have install scripts not yet covered by allowScripts:
+43:2026-10-04T02:32:44.375Z  npm warn install-scripts   @prisma/engines@7.10.0 (postinstall: node scripts/postinstall.js)
+44:2026-10-04T02:32:44.375Z  npm warn install-scripts   @sentry/cli@2.58.6 (postinstall: node ./scripts/install.js)
+45:2026-10-04T02:32:44.375Z  npm warn install-scripts   msw@2.12.10 (postinstall: node -e "import('./config/scripts/postinstall.js').catch(() => void 0)")
+46:2026-10-04T02:32:44.375Z  npm warn install-scripts   prisma@7.10.0 (preinstall: node scripts/preinstall-entry.js)
+47:2026-10-04T02:32:44.375Z  npm warn install-scripts   unrs-resolver@1.11.1 (postinstall: napi-postinstall unrs-resolver 1.11.1 check)
+48:2026-10-04T02:32:44.375Z  npm warn install-scripts
+49:2026-10-04T02:32:44.375Z  npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+50:2026-10-04T02:32:44.417Z  Detected Next.js version: 16.3.3
+51:2026-10-04T02:32:44.427Z  Running "npm run build"
+54:2026-10-04T02:32:44.560Z  > node scripts/maybe-migrate.mjs && next build
+56:2026-10-04T02:32:44.604Z  [build] DATABASE_URL set — running `prisma migrate deploy`
+62:2026-10-04T02:32:47.820Z  94 migrations found in prisma/migrations
+64:2026-10-04T02:32:49.347Z  Applying migration `20261003180000_attendance_history_ledger`
+372:2026-10-04T02:34:28.424Z  Build Completed in /vercel/output [2m]
+374:2026-10-04T02:34:39.603Z  Deployment completed
+60:2026-10-04T02:32:46.048Z  Datasource "db": PostgreSQL database "neondb", schema "public" at "<host>"
+# datasource host analysis: endpoint=ep-bold-wave-abt39t7x, pooler=false (no -pooler label), port not specified

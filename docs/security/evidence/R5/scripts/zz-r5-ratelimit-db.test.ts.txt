@@ -1,0 +1,55 @@
+/**
+ * Review R5 (scratch, not committed): what actually backs lib/rate-limit.ts on a REAL database
+ * (Neon TEST branch, run under both roles via the guarded runners). Measures:
+ *  (1) whether checkRateLimit reaches the RateLimitHit table at all as this role (or silently
+ *      falls back to per-instance memory);
+ *  (2) the count-then-insert overshoot under a concurrent burst (k parallel calls at max = 5).
+ * Bucket names carry the secR5 prefix; every row written is deleted in afterAll and counted.
+ */
+import { describe, it, expect, afterAll } from "vitest";
+import fs from "node:fs";
+import { prisma } from "@/lib/prisma";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+const STAMP = Date.now().toString(36);
+const role = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
+const out: Record<string, unknown> = { role, host: new URL(process.env.DATABASE_URL ?? "postgres://x@none/x").host };
+const buckets: string[] = [];
+
+afterAll(async () => {
+  let deleted = 0;
+  for (const b of buckets) {
+    try { deleted += (await prisma.rateLimitHit.deleteMany({ where: { bucket: b } })).count; } catch (e) { out.cleanupError = String(e).slice(0, 120); }
+  }
+  out.deleted = deleted;
+  fs.writeFileSync(process.env.R5_OUT ?? `r5-ratelimit-${role}.json`, JSON.stringify(out, null, 1));
+});
+
+describe(`R5 rate-limit backing on TEST (${role})`, () => {
+  it("sequential: the DB path is used (rows appear) and the 6th call at max=5 is refused", async () => {
+    const b = `secR5-rl-seq-${role}-${STAMP}`;
+    buckets.push(b);
+    const verdicts: boolean[] = [];
+    for (let i = 0; i < 6; i++) verdicts.push((await checkRateLimit(b, 5, 60_000)).allowed);
+    let rows: number | string;
+    try { rows = await prisma.rateLimitHit.count({ where: { bucket: b } }); } catch (e) { rows = `ERR ${String(e).slice(0, 100)}`; }
+    out.sequential = { verdicts, rows };
+    expect(verdicts).toEqual([true, true, true, true, true, false]);
+  });
+
+  for (const k of [10, 20]) {
+    it(`concurrent burst of ${k} at max=5: how many pass?`, async () => {
+      const b = `secR5-rl-burst${k}-${role}-${STAMP}`;
+      buckets.push(b);
+      // Warm the pool so every call has a connection ready.
+      await Promise.all(Array.from({ length: 10 }, () => prisma.$queryRaw`SELECT 1`));
+      const res = await Promise.all(Array.from({ length: k }, () => checkRateLimit(b, 5, 60_000)));
+      const allowed = res.filter((r) => r.allowed).length;
+      let rows: number | string;
+      try { rows = await prisma.rateLimitHit.count({ where: { bucket: b } }); } catch (e) { rows = `ERR ${String(e).slice(0, 100)}`; }
+      const backends = await prisma.$queryRaw<Array<{ n: bigint }>>`SELECT count(*)::bigint n FROM pg_stat_activity WHERE usename = current_user`;
+      (out as Record<string, unknown>)[`burst${k}`] = { allowed, rows, backendsForRole: Number(backends[0].n) };
+      expect(allowed).toBeGreaterThanOrEqual(5);
+    });
+  }
+});

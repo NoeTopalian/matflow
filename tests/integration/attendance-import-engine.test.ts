@@ -90,7 +90,9 @@ async function mkClub(label: string): Promise<Club> {
       tx.member.create({ data: { tenantId: t.id, name, email, externalRef, ...extra }, select: { id: true } }).then((r) => r.id);
     const m: Record<string, string> = {};
     m.alice = await mk("Alice Adams", E("alice"), teamupPersonKey("Alice Adams", E("alice")));
-    m.ben = await mk("Ben Brown", E("ben"), null); // matched on name AND email
+    // Created before the export's bookings (cuid v1 time in the id): the name+address fallback now requires it (SF-54).
+    const benId = `c${new Date("2025-01-15T10:00:00Z").getTime().toString(36).padStart(8, "0")}${Array.from({ length: 16 }, () => "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("")}`;
+    m.ben = await mk("Ben Brown", E("ben"), null, { id: benId }); // matched on name AND email
     m.pat = await mk("Pat Parker", E("pat"), teamupPersonKey("Pat Parker", E("pat")));
     // A child: synthesised no-login address, externalRef on the PARENT's email (as the members import stores it).
     m.kit = await mk("Kit Parker", synthesiseKidEmail(), teamupPersonKey("Kit Parker", E("pat")), { accountType: "kids", parentMemberId: m.pat });
@@ -316,6 +318,8 @@ describe.skipIf(!HAS_DB)("attendance-import engine on the test database", () => 
         await tx.classInstance.deleteMany({ where: { class: { tenantId } } });
         await tx.classSchedule.deleteMany({ where: { class: { tenantId } } });
         await tx.importSourceMapping.deleteMany({ where: { tenantId } });
+        // Mapping-provenance rows (lane D2, SF-74) are written by saveDecisions in the club's audit trail.
+        await tx.auditLog.deleteMany({ where: { tenantId, action: "import.mapping.changed" } });
         await tx.class.deleteMany({ where: { tenantId } });
         await tx.importJob.deleteMany({ where: { tenantId } });
         await tx.member.deleteMany({ where: { tenantId, parentMemberId: { not: null } } });

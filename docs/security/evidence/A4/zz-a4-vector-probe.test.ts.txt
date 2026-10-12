@@ -1,0 +1,31 @@
+// TEMPORARY lane A4 probe: prints fixed-key vectors on HEAD. Deleted after the values are recorded.
+import { it, vi } from "vitest";
+
+const FIXED = "secA4-fixed-vector-key-0123456789abcdef0123456789abcdef";
+
+it("vectors", async () => {
+  vi.stubEnv("NEXTAUTH_SECRET", FIXED);
+  vi.stubEnv("AUTH_SECRET", "");
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-10T00:00:00.000Z"));
+  vi.resetModules();
+  const ai = await import("@/lib/attendance-import");
+  const kiosk = await import("@/lib/kiosk-token");
+  const card = await import("@/lib/card-token");
+  const th = await import("@/lib/token-hash");
+  const { createHmac } = await import("node:crypto");
+  const digest = ai.sourceKeyDigest("person", "secA4|vector|person");
+  const canonical = ai.provenanceCanonical({ tenantId: "t-secA4", mappingId: "map-secA4", kind: "person", sourceKeyDigest: digest, before: null, after: { action: "member", targetId: "m-secA4" }, createdAtMs: 1760054400000, prev: ai.MAPPING_PROVENANCE_GENESIS });
+  const key = createHmac("sha256", FIXED).update(ai.PROVENANCE_KEY_CONTEXT).digest();
+  const proof = createHmac("sha256", key).update(canonical).digest("hex");
+  const out = {
+    sourceKeyDigest: digest,
+    provenanceProof: proof,
+    kiosk: kiosk.signKioskMemberToken({ tenantId: "t-secA4", memberId: "m-secA4" }),
+    card: card.signCardToken({ tenantId: "t-secA4", memberId: "m-secA4", cardVersion: 3 }),
+    hashTokenSample: th.hashToken("0f1e2d3c4b5a69788796a5b4c3d2e1f0"),
+    hashTokenEmail: th.hashToken("matflow.support@example.test"),
+  };
+  (await import("node:fs")).writeFileSync(process.env.A4_VEC_OUT ?? "a4-vectors.json", JSON.stringify(out, null, 1));
+  vi.useRealTimers();
+});

@@ -9,6 +9,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { del } from "@vercel/blob";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { STAFF_ROLES } from "@/lib/authz";
+import { refuseSupportSession } from "@/lib/support-session";
 
 // Lane 1 iter-2 L1-I2-S-06 [High] fix: restrict photoUrl to safe origins.
 // Previous `z.string().min(1).max(3_500_000)` accepted ANY string including
@@ -50,6 +51,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // Symmetric with demote, which used ["owner", "manager", "admin"] — a
@@ -182,29 +184,36 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
 
     if (parsed.data.photoUrl && result.kind === "updated") {
-      await withTenantContext(session.user.tenantId, async (tx) => {
+      // R10-1 (lane L2): the blob delete is a network call with the SDK's own
+      // retries and no request timeout, so it must not run while a tenant
+      // transaction (and its pooled connection) is open. The transaction only
+      // removes the rows and hands back the blob URLs; the delete runs after it
+      // has committed — the Stripe webhook's post-commit pattern.
+      const blobUrls = await withTenantContext(session.user.tenantId, async (tx) => {
         const oldPhotos = await tx.memberPhoto.findMany({
           where: { memberRankId: result.value.id, kind: "promotion" },
           select: { id: true, url: true },
         });
-        if (oldPhotos.length > 0) {
-          // Blob uploads are private since Bug 3, so their host carries no
-          // `.public.` label — the old regex matched nothing and every replaced
-          // promotion photo leaked as an orphaned blob. isVercelBlobUrl also
-          // skips the inline `data:` URLs the upload route falls back to.
-          const blobUrls = oldPhotos.map((p) => p.url).filter(isVercelBlobUrl);
-          if (blobUrls.length > 0) {
-            try {
-              await del(blobUrls);
-            } catch (e) {
-              console.warn("[rank/route] orphan blob delete failed (best-effort):", e);
-            }
-          }
-          await tx.memberPhoto.deleteMany({
-            where: { id: { in: oldPhotos.map((p) => p.id) } },
-          });
-        }
+        if (oldPhotos.length === 0) return [];
+        await tx.memberPhoto.deleteMany({
+          where: { id: { in: oldPhotos.map((p) => p.id) } },
+        });
+        // Blob uploads are private since Bug 3, so their host carries no
+        // `.public.` label — the old regex matched nothing and every replaced
+        // promotion photo leaked as an orphaned blob. isVercelBlobUrl also
+        // skips the inline `data:` URLs the upload route falls back to.
+        return oldPhotos.map((p) => p.url).filter(isVercelBlobUrl);
       });
+      if (blobUrls.length > 0) {
+        // Best-effort and after commit: a failure is logged, never fails the
+        // request, and never re-enters the transaction (the rows are gone; an
+        // orphaned blob is the only cost).
+        try {
+          await del(blobUrls);
+        } catch (e) {
+          console.warn("[rank/route] orphan blob delete failed after commit (best-effort):", e);
+        }
+      }
     }
 
     if (parsed.data.photoUrl) {
@@ -236,7 +245,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       });
     }
 
-    void sendPushToMember(memberId, {
+    void sendPushToMember(session.user.tenantId, memberId, {
       title: "Belt promotion!",
       body: `You've been awarded ${result.value.rankSystem.name}${result.value.stripes ? ` · ${result.value.stripes} stripe${result.value.stripes !== 1 ? "s" : ""}` : ""}.`,
       url: "/member/profile",

@@ -49,8 +49,10 @@ import { z } from "zod";
 import { del } from "@vercel/blob";
 import { Prisma } from "@prisma/client";
 import { requireApiRole } from "@/lib/api-authz";
+import { refuseSupportSession } from "@/lib/support-session";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
+import { emailDigest } from "@/lib/login-email";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
@@ -71,6 +73,7 @@ export async function POST(req: Request) {
   if (csrfViolation) return csrfViolation;
   const gate = await requireApiRole(["owner"]);
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session (lib/support-session.ts)
   const { session } = gate;
   const tenantId = session!.user.tenantId;
   const reviewLocked = await refuseIfReviewLocked(tenantId, "erase");
@@ -206,6 +209,35 @@ export async function POST(req: Request) {
       }
       reassignToParentId = target.id;
     }
+  }
+
+  // Durable audit, step 1 (operator audit 5 Oct 2026, Q9). The Stripe call
+  // below is outside any DB transaction, so the request is recorded first, in
+  // its own transaction; if that row cannot be written, nothing happens — no
+  // Stripe change, no erasure.
+  try {
+    await logAudit({
+      durable: true,
+      outcome: "requested",
+      tenantId,
+      userId: ownerUserId,
+      action: "member.dsar_erase.requested",
+      entityType: "Member",
+      entityId: memberId,
+      metadata: {
+        gdprBasis: "Article 17 right to erasure",
+        hasStripeSubscription: !!member.stripeSubscriptionId,
+        activeChildren,
+        childStrategy: activeChildren > 0 ? childStrategyParam : null,
+      },
+      req,
+    });
+  } catch (err) {
+    console.error("[dsar/erase] audit-log write failed; refusing to erase", err);
+    return NextResponse.json(
+      { error: "Audit-log write failed; erasure not performed. Try again." },
+      { status: 500 },
+    );
   }
 
   // Audit iter-1-member-lifecycle A3H-7: cancel the Stripe subscription
@@ -369,56 +401,64 @@ export async function POST(req: Request) {
     importSourceMappings: scope.importSourceMappings,
   };
 
-  // P1 (assessment item #4, 2026-05-07): write the audit row BEFORE the
-  // destructive erasure, with both awaited. If the audit-log write throws,
-  // we refuse to erase — the GDPR Article 17 fulfilment evidence must exist
-  // before the data is destroyed. Previously this was fire-and-forget
-  // (`void logAudit(...).catch(() => {})`), which meant a failed audit
-  // write could silently swallow the only proof-of-fulfilment.
-  try {
-    await logAudit({
-      tenantId,
-      userId: ownerUserId,
-      action: "member.dsar_erase",
-      entityType: "Member",
-      entityId: memberId,
-      metadata: {
-        // Audit P3-6: HMAC-SHA256 (lib/token-hash), not the old 32-bit
-        // hashSnippet — that one was brute-forceable over the email space,
-        // i.e. weak pseudonymisation in the fulfilment record itself.
-        originalEmailHash: member.email ? hashToken(member.email) : null,
-        gdprBasis: "Article 17 right to erasure",
-        // Audit iter-1-member-lifecycle A3H-7: capture the Stripe-side
-        // outcome so the fulfilment record proves the card stopped being
-        // charged. cancelAt is the period-end timestamp (Unix seconds) at
-        // which Stripe will close the subscription.
-        stripeSubscriptionCancelled: stripeCancelOutcome.performed,
-        stripeSubscriptionCancelAt: stripeCancelOutcome.cancelAt,
-        // Audit P0-3: per-surface scope of the erase, so the fulfilment
-        // record proves WHAT was destroyed, not just that an erase ran.
-        erasedCounts,
-        // The guardian decision, in the fulfilment record: who chose what for
-        // the children, so an Article 17 audit can answer "and the kids?".
-        // Ids, never names — the record is itself personal data.
-        activeChildren,
-        childStrategy: activeChildren > 0 ? childStrategyParam : null,
-        childReassignedTo: reassignToParentId,
-      },
-      req,
-    });
-  } catch (err) {
-    console.error("[dsar/erase] audit-log write failed; refusing to erase", err);
-    return NextResponse.json(
-      { error: "Audit-log write failed; erasure not performed. Try again." },
-      { status: 500 },
-    );
-  }
+  // Durable audit, step 2. P1 (assessment item #4, 2026-05-07) meant to
+  // refuse the erase when this row could not be written, but `logAudit` was
+  // fire-and-forget and never threw, so that guard was unreachable (operator
+  // audit 5 Oct 2026, Q9-1). The fulfilment record is now the FIRST statement
+  // of the erase transaction below: it commits with the erasure or neither
+  // happens.
+  const fulfilmentRecord = {
+    tenantId,
+    userId: ownerUserId,
+    action: "member.dsar_erase",
+    entityType: "Member",
+    entityId: memberId,
+    metadata: {
+      // Audit P3-6: HMAC-SHA256 (lib/token-hash), not the old 32-bit
+      // hashSnippet — that one was brute-forceable over the email space,
+      // i.e. weak pseudonymisation in the fulfilment record itself.
+      originalEmailHash: member.email ? hashToken(member.email) : null,
+      // The address the erasure releases, in the keyed login-email digest every release path writes (the attendance
+      // import refuses a released address — SF-54). A keyed digest, like originalEmailHash: no address is kept.
+      releasedEmailSha256: member.email ? emailDigest(member.email) : null,
+      gdprBasis: "Article 17 right to erasure",
+      // Audit iter-1-member-lifecycle A3H-7: capture the Stripe-side
+      // outcome so the fulfilment record proves the card stopped being
+      // charged. cancelAt is the period-end timestamp (Unix seconds) at
+      // which Stripe will close the subscription.
+      stripeSubscriptionCancelled: stripeCancelOutcome.performed,
+      stripeSubscriptionCancelAt: stripeCancelOutcome.cancelAt,
+      // Audit P0-3: per-surface scope of the erase, so the fulfilment
+      // record proves WHAT was destroyed, not just that an erase ran.
+      erasedCounts,
+      // The guardian decision, in the fulfilment record: who chose what for
+      // the children, so an Article 17 audit can answer "and the kids?".
+      // Ids, never names — the record is itself personal data.
+      activeChildren,
+      childStrategy: activeChildren > 0 ? childStrategyParam : null,
+      childReassignedTo: reassignToParentId,
+    },
+    req,
+  };
 
   // Every DB scrub/delete runs inside ONE tenant transaction: a partial erase
   // is worse than no erase (it reports success while PII survives on some
   // surfaces). Blob deletion is deliberately NOT in here — the Blob API is not
   // transactional and a network blip there must not roll back the DB erase.
-  await withTenantContext(tenantId, async (tx) => {
+  const erasedOk = await withTenantContext(tenantId, async (tx) => {
+    await logAudit({ ...fulfilmentRecord, tx });
+
+    // Lane D3 (review R4 residual 1): every predicate and the release digest above were built from a read in an
+    // EARLIER transaction. Lock the row and re-read it before anything is scrubbed: if the address (or the source
+    // identity) changed in between, erasing now would release the NEW address with the OLD one digested and leave the
+    // new address's tokens and imported history behind — refuse instead; the throw rolls the fulfilment row back with
+    // everything else. The lock also holds off a concurrent change until the erasure commits.
+    const [locked] = await tx.$queryRaw<{ email: string; name: string; externalRef: string | null }[]>`
+      SELECT email, name, "externalRef" FROM "Member" WHERE id = ${memberId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+    if (!locked || locked.email !== originalEmail || locked.externalRef !== originalExternalRef || locked.name !== member.name) {
+      throw new ErasureSubjectChanged();
+    }
+
     // The children are resolved FIRST and inside the same transaction, so the
     // club can never end up with a scrubbed guardian and a child still pointing
     // at them. `orphan` is deliberately not offered: the database CHECK
@@ -569,7 +609,40 @@ export async function POST(req: Request) {
       where: { tenantId, recipient: { equals: originalEmail, mode: "insensitive" } },
       data: { recipient: sentinelEmail },
     });
-  });
+  }).then(
+    () => true as const,
+    (err: unknown) => {
+      if (err instanceof ErasureSubjectChanged) return "changed" as const;
+      console.error("[dsar/erase] erase transaction failed; nothing was erased", err);
+      return false as const;
+    },
+  );
+  if (erasedOk === "changed") {
+    return NextResponse.json(
+      {
+        error:
+          "This member's details changed while the erasure was being prepared, so nothing was erased. " +
+          (stripeCancelOutcome.performed
+            ? "The member's Stripe subscription is already set to stop renewing. "
+            : "") +
+          "Review the member and try again.",
+      },
+      { status: 409 },
+    );
+  }
+  if (!erasedOk) {
+    return NextResponse.json(
+      {
+        error:
+          "Erasure failed and nothing was erased (the audit record and the erasure commit together). " +
+          (stripeCancelOutcome.performed
+            ? "The member's Stripe subscription is already set to stop renewing. "
+            : "") +
+          "Try again.",
+      },
+      { status: 500 },
+    );
+  }
 
   // Blob files, AFTER the DB commit. Best-effort per file: the rows are
   // already gone/nulled, so a Blob API failure leaves an orphaned file, not
@@ -593,6 +666,13 @@ export async function POST(req: Request) {
       reassignedTo: reassignToParentId,
     },
   });
+}
+
+/** The member's address or source identity changed between the pre-erase read and the locked read in the erase. */
+class ErasureSubjectChanged extends Error {
+  constructor() {
+    super("erasure subject changed since it was read");
+  }
 }
 
 /**

@@ -1,0 +1,6 @@
+v24.21.0
+sec-d2-import-attacker-model-db | owner exit 0: Tests  12 passed | 6 expected fail (18) | restricted exit 0: Tests  12 passed | 6 expected fail (18)
+sec-d2-deletion-provenance-db | owner exit 0: Tests  16 passed (16) | restricted exit 0: Tests  16 passed (16)
+attendance-import-engine | owner exit 0: Tests  19 passed (19) | restricted exit 0: Tests  19 passed (19)
+sec-d-attendance-misbinding-db | owner exit 0: Tests  23 passed (23) | restricted exit 0: Tests  23 passed (23)
+contact-email-change-imports-db | owner exit 0: Tests  7 passed (7) | restricted exit 0: Tests  7 passed (7)

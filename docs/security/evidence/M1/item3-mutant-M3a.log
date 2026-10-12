@@ -1,0 +1,126 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:108052) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts (6 tests | 4 failed) 14800ms
+     × dry run lists exactly the four demo ids in the tenant and changes nothing 1665ms
+     × --confirm rotates exactly the four: new bcrypt(12) hashes, sessionVersion +1, four audit rows, no other User row written; old sessions revoked 1332ms
+     × a second --confirm rotates again 3547ms
+     × an unknown slug exits 3 and writes nothing 1460ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > dry run lists exactly the four demo ids in the tenant and changes nothing
+AssertionError: expected 'target: TEST ep-hidden-salad-abom7cg4…' to contain 'would rotate 4 accounts'
+
+- Expected
++ Received
+
+- would rotate 4 accounts
++ target: TEST ep-hidden-salad-abom7cg4 (pooled) role=neondb_owner
++ tenant: secm1-mv2umkeodca9-a id=cmv2uml070000dgtgiz7ewtt7
++ candidates (5):
++   cmv2uml5d0002dgtghoosde6j  role=owner  local=s***@demo.matflow  digest=0a647571f039
++   cmv2uml700003dgtggthjuipx  role=manager  local=s***@demo.matflow  digest=524cce430dda
++   cmv2uml8g0004dgtg67735gv1  role=coach  local=s***@demo.matflow  digest=16e599a5100f
++   cmv2umlao0005dgtgfdhi59uq  role=admin  local=s***@demo.matflow  digest=7e4b27cde0ff
++   cmv2umlfn0007dgtgl23r796v  role=owner  local=s***@demo.matflow  digest=ef4541e9d286
++ mode: dry run — would rotate 5 accounts (nothing changed)
++
++ (node:146288) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
++ In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
++
++ To prepare for this change:
++ - If you want the current behavior, explicitly use 'sslmode=verify-full'
++ - If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
++
++ See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
++ (Use `node --trace-warnings ...` to show where the warning was created)
++
+
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts:136:17
+    134|     const { status, out } = tool([]);
+    135|     expect(status).toBe(0);
+    136|     expect(out).toContain("would rotate 4 accounts");
+       |                 ^
+    137|     expect(out).toContain("target: TEST ep-hidden-salad-abom7cg4");
+    138|     // The tool connected as the runner's role (matflow_app under RLS_…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > --confirm rotates exactly the four: new bcrypt(12) hashes, sessionVersion +1, four audit rows, no other User row written; old sessions revoked
+AssertionError: tool aborted: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts:164:78
+    162|   it("--confirm rotates exactly the four: new bcrypt(12) hashes, sessi…
+    163|     const { status, out } = tool(["--confirm", "--ids", demo().map((s)…
+    164|     expect(status, out.includes("ABORTED") ? "tool aborted" : "tool fa…
+       |                                                                              ^
+    165|     expect(out).toContain("rotated 4 accounts");
+    166|     console.log(`[sec-m1] confirm output (sanitised by construction):\…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > a second --confirm rotates again
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts:206:20
+    204|   it("a second --confirm rotates again", async () => {
+    205|     const { status, out } = tool(["--confirm"]);
+    206|     expect(status).toBe(0);
+       |                    ^
+    207|     const r2 = await rows();
+    208|     expectClean(out, [r0, r1, r2]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > an unknown slug exits 3 and writes nothing
+AssertionError: expected [] to have a length of 8 but got +0
+
+- Expected
++ Received
+
+- 8
++ 0
+
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts:222:28
+    220|     const r = spawnSync(process.execPath, [SCRIPT, "--slug", `${STAMP}…
+    221|     expect(r.status).toBe(3);
+    222|     expect(await audits()).toHaveLength(8);
+       |                            ^
+    223|   }, 180_000);
+    224| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 2 passed (6)
+   Start at  21:30:35
+   Duration  15.50s (transform 121ms, setup 71ms, import 285ms, tests 14.80s, environment 0ms)
+
+M3a exit=1

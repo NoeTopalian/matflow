@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
+import { refuseSupportSession } from "@/lib/support-session";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -39,6 +40,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // despite its name).
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session (lib/support-session.ts)
   const ctx = gate;
   const { id: memberId } = await params;
 

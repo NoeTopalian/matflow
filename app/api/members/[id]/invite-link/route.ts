@@ -22,10 +22,12 @@ import { randomBytes } from "crypto";
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { hashToken } from "@/lib/token-hash";
+import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
 import { assertSameOrigin } from "@/lib/csrf";
 import { getBaseUrl } from "@/lib/env-url";
 import { logAudit } from "@/lib/audit-log";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { refuseSupportSession } from "@/lib/support-session";
 
 export const runtime = "nodejs";
 
@@ -36,6 +38,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (csrf) return csrf;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!["owner", "manager"].includes(session.user.role)) {
     return NextResponse.json({ error: "Only the owner or a manager can show an invite link." }, { status: 403 });
@@ -66,7 +69,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: `${member.name} already has a login. They can use "Forgot password?" on the sign-in screen.` }, { status: 409 });
   }
 
-  const rawToken = randomBytes(24).toString("hex");
+  // Bound to THIS member (AH-D2, lib/auth-token-binding.ts).
+  const rawToken = mintSubjectBoundToken({ purpose: "first_time_signup", tenantId, subject: { kind: "member", id: memberId } });
   const tokenHash = hashToken(rawToken);
   const expiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_MS);
 

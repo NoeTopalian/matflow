@@ -6,8 +6,9 @@
 //   2. Upsert by (subjectId, deviceHash). Touch lastSeenAt; capture ipApprox/uaSummary
 //      on first sight.
 //   3. "Is new" iff: no row existed pre-upsert OR existing row has disownedAt set.
-//   4. If new AND notifyOnNewLogin not opted out (server-side override for owners):
-//      sign a disown token and send the login_new_device email.
+//   4. If new AND notifyOnNewLogin not opted out (server-side override for owners)
+//      AND NEXT_PUBLIC_ENABLE_LOGIN_NOTIFICATIONS === "true": sign a disown token
+//      and send the login_new_device email. Steps 1-2 run whatever the flag says.
 //
 // All errors are swallowed — login responses must never block on this. Same
 // best-effort posture as logAudit.
@@ -78,7 +79,12 @@ export function verifyDisownToken(
 }
 
 export async function recordLoginEvent(args: RecordArgs): Promise<void> {
-  if (!loginNotificationsEnabled()) return;
+  // The sign-in RECORD is always kept; only the new-device EMAIL is gated on
+  // the flag (E2E flow 9, 6 Oct 2026). This used to return here when the flag
+  // was off — and it is off in production — so no LoginEvent row was ever
+  // written, and scripts/readiness/activation-verdict.mjs, which reads one as
+  // evidence the owner signed in themselves, could never say ACTIVATED.
+  const notificationsOn = loginNotificationsEnabled();
 
   try {
     const { subject } = args;
@@ -104,8 +110,10 @@ export async function recordLoginEvent(args: RecordArgs): Promise<void> {
           data: {
             lastSeenAt: now,
             // Re-arm: a previously-disowned fingerprint reappearing is again
-            // a "new device" event from the user's perspective.
-            disownedAt: null,
+            // a "new device" event from the user's perspective. Only when the
+            // email that re-arming exists for can actually be sent; with
+            // notifications off the disowned mark is left for when they are on.
+            ...(notificationsOn ? { disownedAt: null } : {}),
             // Backfill in case earlier rows lacked these (shouldn't happen
             // post-launch, but cheap to keep).
             ipApprox: existing.ipApprox ?? ipApprox,
@@ -130,13 +138,13 @@ export async function recordLoginEvent(args: RecordArgs): Promise<void> {
       return { eventId: created.id, isNew: true };
     });
 
-    if (!isNew || !shouldNotify) return;
+    if (!notificationsOn || !isNew || !shouldNotify) return;
 
     const token = signDisownToken(eventId);
     const baseUrl = args.appUrl.replace(/\/$/, "");
     const disownLink = `${baseUrl}/api/auth/disown-login/${token}`;
 
-    await sendEmail({
+    const sent = await sendEmail({
       tenantId: subject.tenantId,
       templateId: "login_new_device",
       to: subject.email,
@@ -148,6 +156,11 @@ export async function recordLoginEvent(args: RecordArgs): Promise<void> {
         disownLink,
       },
     });
+
+    // "Alert sent" is recorded only when it was (7 Oct 2026, mail-dark): with
+    // email off or a failed send, the EmailLog row says why and the LoginEvent
+    // row above is still the sign-in evidence.
+    if (sent?.ok !== true) return;
 
     await logAudit({
       tenantId: subject.tenantId,

@@ -15,16 +15,24 @@ vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/rate-limit", () => ({
   checkRateLimit: vi.fn().mockResolvedValue({ allowed: true, retryAfterSeconds: 0 }),
+  getClientIp: () => "203.0.113.9",
 }));
 
-const { findUniqueMock, updateMock } = vi.hoisted(() => ({
+const { findUniqueMock, updateMock, auditCreateMock } = vi.hoisted(() => ({
   findUniqueMock: vi.fn(),
   updateMock: vi.fn().mockResolvedValue({}),
+  auditCreateMock: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_tenantId: string, fn: (tx: unknown) => unknown) =>
-    Promise.resolve(fn({ user: { findUnique: findUniqueMock, update: updateMock } })),
+    Promise.resolve(
+      fn({
+        user: { findUnique: findUniqueMock, update: updateMock, updateMany: async () => ({ count: 1 }), findFirst: async () => ({ id: "staff" }) },
+        // Lane D (6 Oct 2026): enrolment writes its audit row in this transaction.
+        auditLog: { create: auditCreateMock },
+      }),
+    ),
 }));
 vi.mock("next-auth/jwt", () => ({
   getToken: vi.fn().mockResolvedValue(null),
@@ -33,7 +41,8 @@ vi.mock("next-auth/jwt", () => ({
 vi.mock("otplib", () => ({
   generateSecret: vi.fn().mockReturnValue("MOCK-SECRET"),
   generateURI: vi.fn().mockReturnValue("otpauth://totp/test"),
-  verifySync: vi.fn(({ token }: { token: string }) => ({ valid: token === "123456" })),
+  // timeStep: the routes now SPEND the code via consumeUserTotp (single use, 7 Oct 2026).
+  verifySync: vi.fn(({ token }: { token: string }) => ({ valid: token === "123456", timeStep: 1 })),
 }));
 vi.mock("qrcode", () => ({
   default: { toDataURL: vi.fn().mockResolvedValue("data:image/png;base64,STUB") },
@@ -71,6 +80,27 @@ describe("POST /api/auth/totp/setup — fresh enrolment", () => {
     const data = updateMock.mock.calls[0][0].data as Record<string, unknown>;
     expect(data.totpEnabled).toBe(true);
     expect(data.totpRecoveryCodes).toBe(Prisma.JsonNull);
+  });
+
+  // Operator audit 5 Oct 2026 (Q4-b / Q9): enrolment wrote no audit row at all.
+  it("writes an enrolment audit row in the same transaction, with no secret, code or recovery material", async () => {
+    findUniqueMock.mockResolvedValueOnce({ totpSecret: "MOCK-SECRET" });
+    const res = await enrol("123456");
+    expect(res.status).toBe(200);
+    expect(auditCreateMock).toHaveBeenCalledTimes(1);
+    const row = auditCreateMock.mock.calls[0][0].data as Record<string, unknown>;
+    expect(row).toMatchObject({ action: "auth.totp.enrolled", entityType: "User", entityId: "u-owner", userId: "u-owner", tenantId: "tenant-A" });
+    expect(row.metadata).toMatchObject({ outcome: "succeeded", actorType: "user", actor: "u-owner" });
+    const text = JSON.stringify(row);
+    expect(text).not.toContain("MOCK-SECRET");
+    expect(text).not.toContain("123456");
+    expect(text).not.toMatch(/recovery/i);
+  });
+
+  it("an audit insert failure fails the enrolment (the row and the factor commit together)", async () => {
+    findUniqueMock.mockResolvedValueOnce({ totpSecret: "MOCK-SECRET" });
+    auditCreateMock.mockRejectedValueOnce(new Error("db down"));
+    await expect(enrol("123456")).rejects.toThrow("db down");
   });
 
   it("touches nothing when the code is wrong", async () => {

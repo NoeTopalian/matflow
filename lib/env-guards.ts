@@ -15,6 +15,8 @@
  * dev loop friction-free.
  */
 
+import { emailDeliveryMisconfigured, isEmailDeliveryOn } from "@/lib/email-delivery";
+
 type Severity = "error" | "warn";
 
 const REQUIRED: { name: string; severity: Severity; reason: string }[] = [
@@ -23,7 +25,8 @@ const REQUIRED: { name: string; severity: Severity; reason: string }[] = [
   { name: "DATABASE_URL", severity: "error", reason: "Postgres connection — every route needs it" },
 
   // Email delivery. Without this, password resets, magic links, and
-  // member invites silently fail.
+  // member invites silently fail. Not required when EMAIL_DELIVERY=off
+  // (see DELIVERY_ONLY below).
   { name: "RESEND_API_KEY", severity: "error", reason: "Password resets + magic links + invites won't send" },
 
   // Stripe. Without secret key, Connect health endpoint reports unready
@@ -33,9 +36,11 @@ const REQUIRED: { name: string; severity: Severity; reason: string }[] = [
   { name: "STRIPE_WEBHOOK_SECRET", severity: "error", reason: "All Stripe webhook events will be rejected (signature mismatch)" },
   { name: "STRIPE_CLIENT_ID", severity: "error", reason: "Owner Stripe Connect OAuth start will fail" },
 
-  // Admin tenant bootstrap. Without it, /api/admin/create-tenant always
-  // returns 401 and you can't create new gym tenants.
-  { name: "MATFLOW_ADMIN_SECRET", severity: "error", reason: "/api/admin/create-tenant will reject every request" },
+  // MATFLOW_ADMIN_SECRET is deliberately NOT required (6 Oct 2026): the shared
+  // secret grants nothing in production (lib/admin-auth.ts
+  // sharedAdminSecretPermitted); operators sign in by name with an
+  // authenticator, and create-tenant accepts that session. Requiring it here
+  // kept a dead credential alive in Vercel.
 
   // Sentry. Warn-only — Sentry is optional infrastructure, but operating
   // production without it means errors land in Vercel logs only.
@@ -66,6 +71,12 @@ const REQUIRED: { name: string; severity: Severity; reason: string }[] = [
   { name: "ANTHROPIC_API_KEY", severity: "warn", reason: "Monthly reports (cron and the generate button) answer 503" },
 ];
 
+// Only meaningful while MatFlow is sending email. With EMAIL_DELIVERY=off
+// (lib/email-delivery.ts) nothing is sent by design, so a missing key is not a
+// misconfiguration — refusing to boot over it would make the mail-dark switch
+// unusable on a deploy that has no Resend account yet.
+const DELIVERY_ONLY = new Set(["RESEND_API_KEY", "RESEND_WEBHOOK_SECRET"]);
+
 export function runProductionEnvGuards(): void {
   if (process.env.NODE_ENV !== "production") return;
   if (process.env.NEXT_PHASE === "phase-production-build") return;
@@ -73,7 +84,22 @@ export function runProductionEnvGuards(): void {
   const missing: typeof REQUIRED = [];
   const missingWarn: typeof REQUIRED = [];
 
+  const deliveryOff = !isEmailDeliveryOn();
+  if (emailDeliveryMisconfigured()) {
+    console.warn(
+      `[env-guards] EMAIL_DELIVERY is set to a value that is not "on" or "off" — it is treated as OFF. Set it to "on" or "off".`,
+    );
+  }
+  if (deliveryOff) {
+    console.warn(
+      "[env-guards] EMAIL_DELIVERY=off — NO email will be sent: member and staff invites, password reset codes, " +
+        "sign-in links, receipts, refund notices, owner alerts (payment failed, chargeback, Stripe disconnected) " +
+        "and waiver links are all suppressed and logged to EmailLog as 'suppressed'. Set EMAIL_DELIVERY=on to send.",
+    );
+  }
+
   for (const v of REQUIRED) {
+    if (deliveryOff && DELIVERY_ONLY.has(v.name)) continue;
     const val = process.env[v.name];
     if (val && val.trim().length > 0) continue;
     if (v.severity === "error") missing.push(v);

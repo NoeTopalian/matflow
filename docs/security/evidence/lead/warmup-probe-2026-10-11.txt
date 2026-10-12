@@ -1,0 +1,16 @@
+(node:175160) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+[owner] host=pooled
+ sequential: owner seq#1 ok 1129ms | owner seq#2 ok 315ms | owner seq#3 ok 215ms | owner seq#4 ok 227ms | owner seq#5 ok 247ms | owner seq#6 ok 208ms | owner seq#7 ok 242ms | owner seq#8 ok 245ms | owner seq#9 ok 278ms | owner seq#10 ok 235ms
+ concurrent: owner conc#1 ok 305ms | owner conc#2 ok 356ms | owner conc#3 ok 350ms | owner conc#4 ok 355ms | owner conc#5 ok 352ms | owner conc#6 ok 354ms | owner conc#7 ok 349ms | owner conc#8 ok 290ms | owner conc#9 ok 353ms | owner conc#10 ok 350ms
+ summary: seq ok=10/10 max=1129ms; conc ok=10/10 max=356ms
+[restricted] host=pooled
+ sequential: restricted seq#1 ok 256ms | restricted seq#2 ok 224ms | restricted seq#3 ok 548ms | restricted seq#4 ok 257ms | restricted seq#5 ok 567ms | restricted seq#6 ok 273ms | restricted seq#7 ok 282ms | restricted seq#8 ok 236ms | restricted seq#9 ok 510ms | restricted seq#10 ok 244ms
+ concurrent: restricted conc#1 ok 656ms | restricted conc#2 ok 626ms | restricted conc#3 ok 688ms | restricted conc#4 ok 604ms | restricted conc#5 ok 631ms | restricted conc#6 ok 603ms | restricted conc#7 ok 310ms | restricted conc#8 ok 387ms | restricted conc#9 ok 387ms | restricted conc#10 ok 387ms
+ summary: seq ok=10/10 max=567ms; conc ok=10/10 max=688ms

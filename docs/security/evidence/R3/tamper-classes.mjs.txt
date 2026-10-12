@@ -1,0 +1,63 @@
+// R3: one tamper per fingerprint class F2 lists, plus classes F2 does not list. Isolated PGlite restore only.
+import fs from "node:fs";
+import path from "node:path";
+import { createRequire } from "node:module";
+import { takeFingerprint, compareFingerprints } from "./scripts/readiness/restore-verify.mjs";
+const pg = createRequire(import.meta.url)("pg");
+const [exportDir, portArg] = process.argv.slice(2);
+const baseline = JSON.parse(fs.readFileSync(path.join(exportDir, "baseline-fingerprint.json"), "utf8"));
+const owner = baseline.tables.AuditLog.owner;
+const c = new pg.Client({ host: "127.0.0.1", port: Number(portArg), user: "postgres", database: "postgres", ssl: false });
+await c.connect();
+const avail = (await c.query(`select name from pg_available_extensions where installed_version is null order by name limit 1`)).rows[0]?.name;
+const fnSig = "matflow_lowercase_email()";
+const L = (listed, name, stmts) => ({ listed, name, stmts });
+const cases = [
+  L(true, "positive control (no tamper)", []),
+  L(true, "policy expression", [`ALTER POLICY tenant_isolation ON "Member" USING (true)`]),
+  L(true, "trigger definition (BEFORE INSERT only)", [`DROP TRIGGER "User_email_lowercase" ON "User"`, `CREATE TRIGGER "User_email_lowercase" BEFORE INSERT ON "User" FOR EACH ROW EXECUTE FUNCTION matflow_lowercase_email()`]),
+  L(true, "trigger enabled state", [`ALTER TABLE "Member" DISABLE TRIGGER USER`]),
+  L(true, "function source", [`CREATE OR REPLACE FUNCTION ${fnSig} RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$`]),
+  L(true, "function owner", [`ALTER FUNCTION ${fnSig} OWNER TO matflow_app`]),
+  L(true, "function SECURITY DEFINER", [`ALTER FUNCTION ${fnSig} SECURITY DEFINER`]),
+  L(true, "function search_path config", [`ALTER FUNCTION ${fnSig} SET search_path = public, pg_temp`]),
+  L(true, "function ACL", [`REVOKE EXECUTE ON FUNCTION ${fnSig} FROM PUBLIC`]),
+  L(true, "table owner", [`ALTER TABLE "Tenant" OWNER TO matflow_app`]),
+  L(true, "table ACL", [`GRANT TRUNCATE ON "Member" TO matflow_app`]),
+  L(true, "role flag (BYPASSRLS)", [`ALTER ROLE matflow_app BYPASSRLS`]),
+  L(true, "role membership", [`GRANT "${owner}" TO matflow_app`]),
+  L(true, "schema ACL", [`GRANT CREATE ON SCHEMA public TO matflow_app`]),
+  L(true, `extension (${avail ?? "none available"})`, avail ? [`CREATE EXTENSION "${avail}"`] : []),
+  L(true, "event trigger", [`CREATE FUNCTION public.zz_r3_evt() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN END $$`, `CREATE EVENT TRIGGER zz_r3_evt ON ddl_command_start EXECUTE FUNCTION public.zz_r3_evt()`]),
+  L(true, "migration checksum", [`UPDATE _prisma_migrations SET checksum = repeat('0',64) WHERE migration_name = (SELECT min(migration_name) FROM _prisma_migrations)`]),
+  L(true, "content hash (row rewritten, count kept)", [`UPDATE "Member" SET name = name || ' ' WHERE id = (SELECT id FROM "Member" ORDER BY id LIMIT 1)`]),
+  L(true, "RLS flags (NO FORCE)", [`ALTER TABLE "Member" NO FORCE ROW LEVEL SECURITY`]),
+  L(true, "foreign key dropped", [`ALTER TABLE "Member" DROP CONSTRAINT IF EXISTS "Member_tenantId_fkey"`]),
+  // Classes F2 does not list:
+  L(false, "column-level grant (UPDATE (action) on AuditLog)", [`GRANT UPDATE ("action") ON "AuditLog" TO matflow_app`]),
+  L(false, "rewrite rule (INSERT into AuditLog DO INSTEAD NOTHING)", [`CREATE RULE zz_r3_drop AS ON INSERT TO "AuditLog" DO INSTEAD NOTHING`]),
+  L(false, "role default setting (matflow_app: app.bypass_rls = on)", [`ALTER ROLE matflow_app SET app.bypass_rls = 'on'`]),
+  L(false, "database default setting (app.bypass_rls = on)", [`DO $$ BEGIN EXECUTE format('ALTER DATABASE %I SET app.bypass_rls = %L', current_database(), 'on'); END $$`]),
+  L(false, "default privileges for future tables", [`ALTER DEFAULT PRIVILEGES FOR ROLE "${owner}" IN SCHEMA public GRANT ALL ON TABLES TO matflow_app`]),
+  L(false, "view over User granted to the runtime role", [`CREATE VIEW public.zz_r3_view AS SELECT * FROM "User"`, `GRANT SELECT ON public.zz_r3_view TO matflow_app`]),
+  L(false, "sequence/other-schema function shadow (new schema + role search_path)", [`CREATE SCHEMA zz_r3`, `CREATE FUNCTION zz_r3.btrim(text) RETURNS text LANGUAGE sql AS $$ SELECT 'x' $$`, `ALTER ROLE matflow_app SET search_path = zz_r3, public`]),
+];
+const out = [];
+for (const k of cases) {
+  await c.query("BEGIN");
+  try {
+    for (const s of k.stmts) await c.query(s);
+    await c.query(`SET LOCAL ROLE "${owner}"`);
+    const fp = await takeFingerprint(c, { contentHash: true });
+    const r = compareFingerprints(baseline, fp);
+    const expectPass = k.stmts.length === 0;
+    out.push({ listed: k.listed, case: k.name, got: r.verdict, caught: (r.verdict === "PASS") === expectPass, firstFail: r.fails[0] ?? null });
+  } catch (e) {
+    out.push({ listed: k.listed, case: k.name, got: "ERROR", error: String(e.message).slice(0, 160) });
+  } finally {
+    await c.query("ROLLBACK");
+  }
+  console.log(JSON.stringify(out.at(-1)));
+}
+await c.end();
+console.log(JSON.stringify({ cases: out.length, listedCaught: out.filter((o) => o.listed && o.caught).length, listedTotal: out.filter((o) => o.listed).length, unlistedCaught: out.filter((o) => !o.listed && o.caught).length, unlistedTotal: out.filter((o) => !o.listed).length, node: process.version }));

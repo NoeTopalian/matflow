@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# usage: sweep-db.sh owner|restricted  — every sec-a*, sec-a2*, sec-a3*, sec-a4*, sec-d3* DB file, one at a time.
+S=<scratchpad>
+A=$S/security/A4
+ROLE=$1
+OUTSUM=$A/sweep-db-$ROLE.txt
+: > $OUTSUM
+cd /c/Users/NoeTo/Desktop/matflow
+for f in $(ls tests/integration | grep -E '^sec-(a|a2|a3|a4|d3)-.*-db/.test/.ts$'); do
+  n=$(basename $f .test.ts)
+  export A3_OUT=$A/a3-oracle-$ROLE.json
+  timeout 2400 bash $A/run.sh $ROLE tests/integration/$f sweep-$ROLE-$n > /dev/null
+  rc=$?
+  echo "$f rc=$rc $(grep -E '^ +Tests ' $A/sweep-$ROLE-$n.log | tr -s ' ')" >> $OUTSUM
+done
+echo SWEEP-DONE >> $OUTSUM

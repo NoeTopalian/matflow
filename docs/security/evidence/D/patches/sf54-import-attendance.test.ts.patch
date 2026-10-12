@@ -1,0 +1,15 @@
+diff --git a/tests/unit/import-attendance.test.ts b/tests/unit/import-attendance.test.ts
+index c3250ba..fad3065 100644
+--- a/tests/unit/import-attendance.test.ts
++++ b/tests/unit/import-attendance.test.ts
+@@ -115,7 +115,9 @@ const NOW = new Date("2025-11-01T00:00:00Z");
+ 
+ function planRows(rows: AttendanceRow[], over: Partial<Parameters<typeof planAttendanceImport>[1]> = {}): AttendancePlan {
+   return planAttendanceImport(rows, {
+-    timezone: TZ, now: NOW, members: MEMBERS, classes: CLASSES, locations: LOCATIONS, decisions: DECISIONS, isSynthesisedEmail: SYNTH, ...over,
++    timezone: TZ, now: NOW, classes: CLASSES, locations: LOCATIONS, decisions: DECISIONS, isSynthesisedEmail: SYNTH, ...over,
++    // SF-54: the name+address fallback needs a member created before the bookings; roster members default to 2020.
++    members: (over.members ?? MEMBERS).map((m) => ({ createdAt: "2020-01-01T00:00:00Z", ...m })),
+   });
+ }
+ const plan = (...rows: string[]) => planRows(parse(...rows).rows);

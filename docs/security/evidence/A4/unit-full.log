@@ -1,0 +1,79 @@
+node v24.21.0 mode=unit file=tests/unit head=7ce179c at=2026-10-10T05:26:53Z
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-c-static-guards.test.ts (13 tests | 1 failed) 584ms
+     × the reviewed raw-SQL call sites are exactly these (values interpolated as bind parameters only) 51ms
+06:27:35 [vite] (ssr) warning: invalid import "../../app/api/admin/customers/[id]/${c.file}/route". A file extension must be included in the static part of the import. For example: import(`./foo/${bar}.js`).
+  Plugin: vite:dynamic-import-vars
+  File: C:/Users/NoeTo/Desktop/matflow/tests/unit/operator-step-up.test.ts
+(node:103768) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:121332) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:128952) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-c-static-guards.test.ts > SEC-033 raw SQL is parameterised > the reviewed raw-SQL call sites are exactly these (values interpolated as bind parameters only)
+AssertionError: expected [ …(12) ] to deeply equal [ …(11) ]
+
+- Expected
++ Received
+
+@@ -4,10 +4,11 @@
+    "app/api/member/children/[id]/route.ts",
+    "app/api/member/class-subscriptions/[classId]/route.ts",
+    "app/api/members/[id]/route.ts",
+    "app/api/staff/[id]/route.ts",
+    "lib/attendance-import.ts",
++   "lib/auth-lockout.ts",
+    "lib/checkin.ts",
+    "lib/login-email.ts",
+    "lib/prisma-tenant.ts",
+    "lib/rate-limit.ts",
+  ]
+
+ ❯ tests/unit/sec-c-static-guards.test.ts:46:69
+     44|   });
+     45|   it("the reviewed raw-SQL call sites are exactly these (values interp…
+     46|     expect(hits(//$(queryRaw|executeRaw)/s*(<[^`]*>)?/s*`/).sort()).to…
+       |                                                                     ^
+     47|       "app/api/admin/dsar/erase/route.ts", // lane D3: SELECT … FOR UP…
+     48|       "app/api/health/route.ts",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 466 passed (467)
+      Tests  1 failed | 6467 passed (6468)
+   Start at  06:26:55
+   Duration  301.41s (transform 14.73s, setup 4.50s, import 67.53s, tests 106.78s, environment 40.80s)
+
+EXIT 1

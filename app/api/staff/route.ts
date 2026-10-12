@@ -7,6 +7,10 @@ import bcrypt from "bcryptjs";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { apiError } from "@/lib/api-error";
+import { refuseSupportSession } from "@/lib/support-session";
+import { tempPasswordExpiresAt } from "@/lib/temp-password";
+import { staffPasswordSchema } from "@/lib/password-policy";
+import { LoginIdentityTaken, claimLoginIdentity } from "@/lib/login-email";
 
 // Lane 1 iter-1 S-01 [Critical] fix: password is now REQUIRED. The previous
 // `.optional()` allowed the owner to omit the password and have the server
@@ -20,8 +24,13 @@ const createSchema = z.object({
   // the product looks the address up lowercased.
   email: emailField(),
   role: z.enum(["manager", "coach", "admin"]),
-  password: z.string().min(8),
+  // Same strength rule as every other staff password door (lib/password-policy.ts,
+  // 8 Oct 2026; was 8+ characters of anything). Still temporary — see below.
+  password: staffPasswordSchema,
 });
+
+const WEAK_TEMP_PASSWORD =
+  "The temporary password needs at least 10 characters, with an upper-case letter, a lower-case letter and a number.";
 
 export async function GET() {
   const session = await auth();
@@ -63,6 +72,7 @@ export async function POST(req: Request) {
   if (csrfViolation) return csrfViolation;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const isOwner = session.user.role === "owner";
@@ -77,7 +87,10 @@ export async function POST(req: Request) {
 
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
+    const flat = parsed.error.flatten();
+    // The owner sees `error` as a toast: name the password rule rather than "Invalid data".
+    const error = flat.fieldErrors.password ? WEAK_TEMP_PASSWORD : "Invalid data";
+    return NextResponse.json({ error, details: flat }, { status: 400 });
   }
 
   const { name, email, role, password } = parsed.data;
@@ -86,8 +99,14 @@ export async function POST(req: Request) {
   const passwordHash = await bcrypt.hash(password, 12);
 
   try {
-    const user = await withTenantContext(session.user.tenantId, (tx) =>
-      tx.user.create({
+    const user = await withTenantContext(session.user.tenantId, async (tx) => {
+      // One login identity per club across staff AND members (AH-01, 9 Oct
+      // 2026). Before this, a staff row created on a member's address took the
+      // member's sign-in over (auth.ts prefers the User row). Claim lock held
+      // to commit, so a concurrent member writer of the same address waits.
+      const claim = await claimLoginIdentity(tx, { tenantId: session.user.tenantId, email });
+      if (claim.kind !== "none") throw new LoginIdentityTaken(claim);
+      return tx.user.create({
         data: {
           tenantId: session.user.tenantId,
           email,
@@ -100,10 +119,12 @@ export async function POST(req: Request) {
           // the operator's owner reset uses. End-user round 2 (2.1): the
           // manager kept the owner's temp password indefinitely.
           mustChangePassword: true,
+          // ...and it expires: 72 h to sign in and replace it (lib/temp-password.ts).
+          tempPasswordExpiresAt: tempPasswordExpiresAt(),
         },
         select: { id: true, name: true, email: true, role: true, createdAt: true, mustChangePassword: true },
-      }),
-    );
+      });
+    });
 
     await logAudit({
       tenantId: session.user.tenantId,
@@ -119,8 +140,9 @@ export async function POST(req: Request) {
       { status: 201 }
     );
   } catch (e: unknown) {
-    if ((e as { code?: string }).code === "P2002") {
-      return NextResponse.json({ error: "A user with that email already exists" }, { status: 409 });
+    if (e instanceof LoginIdentityTaken || (e as { code?: string }).code === "P2002") {
+      // Opaque: whether a staff member or a member holds it is not said.
+      return NextResponse.json({ error: "That email address is already in use at this club." }, { status: 409 });
     }
     return NextResponse.json({ error: "Failed to create staff member" }, { status: 500 });
   }

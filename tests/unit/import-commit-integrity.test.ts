@@ -9,6 +9,7 @@
  *     deletions, so a failure never follows "removed" with "nothing removed".
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { addLoginClaimSql } from "./login-claim-fake";
 
 const h = vi.hoisted(() => ({
   gate: vi.fn(),
@@ -27,7 +28,7 @@ vi.mock("next/server", () => ({
   },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
-vi.mock("@/lib/api-authz", () => ({ requireApiOwner: () => h.gate() }));
+vi.mock("@/lib/api-authz", () => ({ refuseSupportSession: () => null, requireApiOwner: () => h.gate() }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendEmail: (...a: unknown[]) => h.email(...a) }));
@@ -42,7 +43,7 @@ vi.mock("@/lib/import-storage", () => ({
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) => {
     h.txCalls += 1;
-    return fn(makeTx());
+    return fn(addLoginClaimSql(makeTx()));
   },
 }));
 

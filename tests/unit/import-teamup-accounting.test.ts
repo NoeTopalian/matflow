@@ -13,6 +13,7 @@
  *   membership-history records · duplicates · quarantined · excluded.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { addLoginClaimSql } from "./login-claim-fake";
 import { parseTeamUp } from "@/lib/importers/teamup";
 import { buildExceptionRows } from "@/lib/importers/teamup-exceptions";
 
@@ -29,7 +30,7 @@ vi.mock("@/lib/email", () => ({ sendEmail: async () => ({ ok: true }) }));
 vi.mock("@/lib/member-status", () => ({ recordStatusEventsBulk: vi.fn(async () => {}) }));
 vi.mock("@/lib/api-error", () => ({ apiError: (message: string, status: number) => ({ status, json: async () => ({ error: message }) }) }));
 vi.mock("@/lib/import-storage", () => ({ readImportFile: async (url: string) => h.files.get(url) ?? null, deleteImportFile: async () => {} }));
-vi.mock("@/lib/prisma-tenant", () => ({ withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) => fn(makeTx()) }));
+vi.mock("@/lib/prisma-tenant", () => ({ withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) => fn(addLoginClaimSql(makeTx())) }));
 
 type Row = Record<string, unknown> & { id: string };
 let db: { jobs: Row[]; members: Row[] };

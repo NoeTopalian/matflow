@@ -8,7 +8,11 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { adminCard, adminContainer, adminNavLink, adminPage, adminPalette } from "../../admin-theme";
 import AdminTopNav from "../../AdminTopNav";
 import LoginAsOwnerButton from "./LoginAsOwnerButton";
-import DangerZone from "./DangerZone";
+import DangerZone, { type DeletionState } from "./DangerZone";
+import LoginEmailCard from "./LoginEmailCard";
+import OwnerProfileCard from "./OwnerProfileCard";
+import { softDeleteCutoff } from "@/lib/tenant-lifecycle";
+import { emailDeliveryMode } from "@/lib/email-delivery";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,12 +39,13 @@ export default async function AdminTenantDetailPage({
         country: true,
         createdAt: true,
         deletedAt: true,
+        purgeStartedAt: true,
         reviewLockedAt: true,
         stripeConnected: true,
         stripeAccountId: true,
         users: {
           where: { role: "owner" },
-          select: { id: true, email: true, name: true, totpEnabled: true, lockedUntil: true },
+          select: { id: true, email: true, name: true, totpEnabled: true, lockedUntil: true, loginEmailProvisionalSince: true },
           orderBy: { createdAt: "asc" },
         },
         _count: { select: { members: true, classes: true } },
@@ -52,6 +57,16 @@ export default async function AdminTenantDetailPage({
   const owner = tenant.users[0];
   const isSuspended = tenant.subscriptionStatus === "suspended";
   const isDeleted = tenant.deletedAt !== null;
+  // Restore is possible only inside the 30-day window and before a purge has
+  // claimed the club (lib/tenant-lifecycle.ts); the Danger Zone must not offer
+  // it otherwise (review of lane C, D5).
+  const deletionState: DeletionState = !tenant.deletedAt
+    ? "live"
+    : tenant.purgeStartedAt
+      ? "in-progress"
+      : tenant.deletedAt < softDeleteCutoff(new Date())
+        ? "window-expired"
+        : "recoverable";
 
   return (
     <div style={adminPage}>
@@ -72,7 +87,7 @@ export default async function AdminTenantDetailPage({
 
         {owner ? (
           <div style={card}>
-            <h2 style={cardTitle}>Login as owner</h2>
+            <h2 style={cardTitle}>View as owner (read-only)</h2>
             <p style={cardDesc}>
               Take over the owner account temporarily to investigate or fix a customer issue.
               Every action is audit-logged with both your operator context and{" "}
@@ -118,8 +133,29 @@ export default async function AdminTenantDetailPage({
             isSuspended={isSuspended}
             reviewLockedAt={tenant.reviewLockedAt ? tenant.reviewLockedAt.toISOString() : null}
             isDeleted={isDeleted}
+            deletionState={deletionState}
           />
         </div>
+
+        {owner && (
+          <div style={{ marginTop: 16 }}>
+            <LoginEmailCard
+              tenantId={tenant.id}
+              ownerUserId={owner.id}
+              ownerName={owner.name}
+              ownerEmail={owner.email}
+              provisionalSince={owner.loginEmailProvisionalSince ? owner.loginEmailProvisionalSince.toISOString() : null}
+              emailDelivery={emailDeliveryMode()}
+              disabled={isDeleted}
+            />
+          </div>
+        )}
+
+        {owner && (
+          <div style={{ marginTop: 16 }}>
+            <OwnerProfileCard tenantId={tenant.id} ownerUserId={owner.id} ownerName={owner.name} disabled={isDeleted} />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,0 +1,277 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const h = vi.hoisted(() => ({
+  hits: [] as Array<{ bucket: string; hitAt: Date }>,
+  dbDown: false,
+  principal: { tenantId: "tenant-c2", userId: "user-c2" },
+  session: null as null | { user: Record<string, unknown> },
+  sharpCalls: 0,
+  put: [] as Array<{ path: string; contentType?: string }>,
+  attachments: [] as Array<Record<string, unknown>>,
+  importJobs: [] as Array<Record<string, unknown>>,
+  emails: 0,
+}));
+
+vi.mock("@/lib/prisma", () => {
+  const rateLimitHit = {
+    groupBy: async ({ where }: { where: { bucket: string; hitAt: { gte: Date } } }) => {
+      if (h.dbDown) throw new Error("connect ECONNREFUSED (secC2 fake)");
+      const rows = h.hits.filter((x) => x.bucket === where.bucket && x.hitAt >= where.hitAt.gte);
+      if (rows.length === 0) return [];
+      return [{ bucket: where.bucket, _count: { _all: rows.length }, _min: { hitAt: rows.reduce((a, b) => (a.hitAt < b.hitAt ? a : b)).hitAt } }];
+    },
+    create: async ({ data }: { data: { bucket: string } }) => {
+      if (h.dbDown) throw new Error("connect ECONNREFUSED (secC2 fake)");
+      h.hits.push({ bucket: data.bucket, hitAt: new Date() });
+      return {};
+    },
+    deleteMany: async () => ({ count: 0 }),
+  };
+  return { prisma: { rateLimitHit } };
+});
+
+const tx = {
+  member: { findFirst: async ({ where }: { where: { id: string; tenantId: string } }) => (where.id.startsWith("m-c2") ? { id: where.id } : null) },
+  initiative: { findFirst: async () => ({ id: "init-c2" }) },
+  initiativeAttachment: {
+    create: async ({ data }: { data: Record<string, unknown> }) => {
+      const row = { id: `att-${h.attachments.length}`, ...data };
+      h.attachments.push(row);
+      return row;
+    },
+    deleteMany: async () => ({ count: 1 }),
+  },
+  importJob: {
+    create: async ({ data }: { data: Record<string, unknown> }) => {
+      const row = { id: `job-${h.importJobs.length}`, createdAt: new Date(), ...data };
+      h.importJobs.push(row);
+      return row;
+    },
+    findFirst: async () => null,
+  },
+  tenant: { findUnique: async () => ({ name: "C2 Club", slug: "c2-club", timezone: "Europe/London" }) },
+  user: { findUnique: async () => ({ name: "C2 Owner", email: "owner@c2.example" }) },
+};
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async <T,>(_t: string, fn: (t: unknown) => Promise<T>) => fn(tx),
+  withRlsBypass: async <T,>(fn: (t: unknown) => Promise<T>) => fn(tx),
+}));
+vi.mock("@/lib/api-authz", () => ({
+  requireApiOwner: async () => ({ ok: true, session: {}, role: "owner", ...h.principal }),
+  requireApiOwnerOrManager: async () => ({ ok: true, session: {}, role: "owner", ...h.principal }),
+}));
+vi.mock("@/auth", () => ({ auth: async () => h.session }));
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+vi.mock("@/lib/audit-log", () => ({ logAudit: async () => undefined }));
+vi.mock("@/lib/email", () => ({ sendEmail: async () => { h.emails++; return { ok: true }; } }));
+vi.mock("@/lib/email-delivery", () => ({ isEmailDeliveryOn: () => true }));
+vi.mock("@vercel/blob", () => ({
+  put: async (path: string, _body: unknown, opts: { contentType?: string }) => {
+    h.put.push({ path, contentType: opts?.contentType });
+    return { url: `https://store-c2.private.blob.vercel-storage.com/${path}` };
+  },
+}));
+vi.mock("@/lib/import-storage", () => ({
+  importStorageAvailable: () => true,
+  putImportFile: async (path: string) => { h.put.push({ path }); return { url: `https://store-c2.private.blob.vercel-storage.com/${path}` }; },
+  sha256: () => "c2".repeat(32),
+}));
+
+import { normaliseUploadFilename, formFields, UPLOAD_LIMITS } from "@/lib/upload-guard";
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 1, 2, 3, 4, 5, 6, 7, 8]);
+const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+const SVG = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(document.domain)</script></svg>');
+const PDF = new TextEncoder().encode("%PDF-1.7\n%secC2\n1 0 obj<<>>endobj\n");
+
+type Part = [string, string | File];
+function form(parts: Part[]): FormData {
+  const fd = new FormData();
+  for (const [k, v] of parts) fd.append(k, v);
+  return fd;
+}
+const file = (bytes: Uint8Array, name: string, type: string) => new File([bytes as BlobPart], name, { type });
+
+/** A request whose body records whether anyone read it. */
+function trackedReq(url: string, method: string, headers: Record<string, string>) {
+  const state = { read: false };
+  // highWaterMark 0: the stream pulls only when someone actually reads it.
+  const body = new ReadableStream({ pull(c) { state.read = true; c.enqueue(new Uint8Array(8)); c.close(); } }, { highWaterMark: 0 });
+  const req = new Request(url, { method, headers, body, duplex: "half" } as RequestInit);
+  return { req, state };
+}
+
+function seed(bucket: string, n: number) {
+  for (let i = 0; i < n; i++) h.hits.push({ bucket, hitAt: new Date() });
+}
+
+async function uploadRoute() {
+  return (await import("@/app/api/upload/route")).POST;
+}
+const upReq = (fd: FormData, q = "") => new Request(`http://localhost/api/upload${q}`, { method: "POST", body: fd });
+
+beforeEach(() => {
+  h.hits.length = 0;
+  h.dbDown = false;
+  h.principal = { tenantId: "tenant-c2", userId: "user-c2" };
+  h.session = null;
+  h.sharpCalls = 0;
+  h.put.length = 0;
+  h.attachments.length = 0;
+  h.importJobs.length = 0;
+  h.emails = 0;
+  process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_secC2store_fakeTokenNeverUsed";
+});
+
+// ── Review R5 attack cells (scratch, not committed). REAL sharp (not mocked). ─────────────────
+import zlib from "node:zlib";
+function crc32(buf: Buffer) {
+  let c, crc = 0xffffffff;
+  for (let n = 0; n < buf.length; n++) {
+    c = (crc ^ buf[n]) & 0xff;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+function chunk(type: string, data: Buffer) {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+  const td = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(td));
+  return Buffer.concat([len, td, crc]);
+}
+/** A PNG whose IHDR declares w x h (1-bit greyscale), with a tiny IDAT: few bytes, many declared pixels. */
+function pngHeader(w: number, hgt: number) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(hgt, 4); ihdr[8] = 1; ihdr[9] = 0; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  const idat = zlib.deflateSync(Buffer.alloc(16));
+  return new Uint8Array(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", idat), chunk("IEND", Buffer.alloc(0))]));
+}
+async function realPng() {
+  const sharp = (await import("sharp")).default;
+  return new Uint8Array(await sharp({ create: { width: 4, height: 4, channels: 3, background: "#123456" } }).png().toBuffer());
+}
+const warns: string[] = [];
+beforeEach(() => {
+  warns.length = 0;
+  vi.spyOn(console, "warn").mockImplementation((...a: unknown[]) => { warns.push(a.map((x) => (x instanceof Error ? x.message : String(x))).join(" ")); });
+});
+const R5: Array<Record<string, unknown>> = [];
+async function multipartBytes(fd: FormData) {
+  const probe = new Request("http://localhost/api/upload", { method: "POST", body: fd });
+  return { buf: new Uint8Array(await probe.arrayBuffer()), type: probe.headers.get("content-type")! };
+}
+
+describe("R5 /api/upload attacks (real sharp)", () => {
+  it("positive control: a real 4x4 PNG is decoded, re-encoded to WebP and stored under a server-built name", async () => {
+    const POST = await uploadRoute();
+    const res = await POST(upReq(form([["file", file(await realPng(), "a.png", "image/png")]])));
+    R5.push({ cell: "positive real png", status: res.status, put: h.put.map((p) => p.path) });
+    expect(res.status).toBe(200);
+    expect(h.put[0].path).toMatch(/^tenants\/tenant-c2\/[0-9a-f]{24}\.webp$/);
+  });
+
+  it("Content-Length LARGER than the body but under the cap: the parsed body decides", async () => {
+    const POST = await uploadRoute();
+    const { buf, type } = await multipartBytes(form([["file", file(await realPng(), "a.png", "image/png")]]));
+    const r = new Request("http://localhost/api/upload", { method: "POST", body: buf, headers: { "content-type": type, "content-length": String(buf.length + 1_000_000) } });
+    const res = await POST(r);
+    R5.push({ cell: "CL > body, under cap", declared: buf.length + 1_000_000, actual: buf.length, status: res.status });
+    expect(res.status).toBe(200);
+  });
+
+  it("Content-Length LARGER than the cap with a tiny body: 413 before anything", async () => {
+    const POST = await uploadRoute();
+    const { buf, type } = await multipartBytes(form([["file", file(await realPng(), "a.png", "image/png")]]));
+    const r = new Request("http://localhost/api/upload", { method: "POST", body: buf, headers: { "content-type": type, "content-length": String(50 * 1024 * 1024) } });
+    const res = await POST(r);
+    R5.push({ cell: "CL > cap, tiny body", status: res.status, hits: h.hits.length });
+    expect(res.status).toBe(413);
+    expect(h.hits).toHaveLength(0);
+  });
+
+  it("Content-Length SMALLER than the body (5 MB body, declared 100): the per-file size check still refuses", async () => {
+    const POST = await uploadRoute();
+    const big = new Uint8Array(5 * 1024 * 1024); big.set(await realPng());
+    const { buf, type } = await multipartBytes(form([["file", file(big, "a.png", "image/png")]]));
+    const r = new Request("http://localhost/api/upload", { method: "POST", body: buf, headers: { "content-type": type, "content-length": "100" } });
+    const res = await POST(r);
+    R5.push({ cell: "CL < body (5 MB body, CL 100)", status: res.status, error: (await res.json()).error, put: h.put.length });
+    expect(res.status).toBe(400);
+    expect(h.put).toHaveLength(0);
+  });
+
+  it("chunked 6 MB body with no Content-Length: refused by the file-size check, but the body IS read (residual)", async () => {
+    const POST = await uploadRoute();
+    const big = new Uint8Array(6 * 1024 * 1024); big.set(await realPng());
+    const { buf, type } = await multipartBytes(form([["file", file(big, "a.png", "image/png")]]));
+    const stream = new ReadableStream({ start(c) { for (let i = 0; i < buf.length; i += 65536) c.enqueue(buf.slice(i, i + 65536)); c.close(); } });
+    const r = new Request("http://localhost/api/upload", { method: "POST", body: stream, duplex: "half", headers: { "content-type": type } } as RequestInit);
+    const res = await POST(r);
+    R5.push({ cell: "chunked 6 MB, no CL", status: res.status, put: h.put.length, hitsSpent: h.hits.length });
+    expect(res.status).toBe(400);
+    expect(h.put).toHaveLength(0);
+  });
+
+  it("declared raster with SVG bytes, SVG with a script, and a PNG-magic/SVG polyglot: refused, nothing stored", async () => {
+    const POST = await uploadRoute();
+    const svg = new TextEncoder().encode('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(document.cookie)</script></svg>');
+    const out: Record<string, number> = {};
+    for (const type of ["image/png", "image/jpeg", "image/webp", "image/svg+xml", "image/svg+xml; charset=utf-8", "IMAGE/PNG", "text/xml"]) {
+      out[type] = (await POST(upReq(form([["file", file(svg, "a.svg", type)]])))).status;
+    }
+    const poly = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...svg]);
+    const polyRes = await POST(upReq(form([["file", file(poly, "a.png", "image/png")]])));
+    R5.push({ cell: "svg variants", statuses: out, polyglot: polyRes.status, sharpWarns: warns.filter((w) => w.includes("sharp")).length, put: h.put.length });
+    expect(Object.values(out).every((s) => s === 400)).toBe(true);
+    expect(polyRes.status).toBe(400);
+    expect(h.put).toHaveLength(0);
+  });
+
+  it("hostile filenames are never used: the stored key is server-built", async () => {
+    const POST = await uploadRoute();
+    const png = await realPng();
+    for (const name of ["../../../tenants/other/x.png", "..\\..\\x.png", "a\u0000.png", "inv\u202Egnp.svg", "/etc/passwd", "C:\\x\\y.png"]) {
+      const res = await POST(upReq(form([["file", file(png, name, "image/png")]])));
+      expect(res.status, name).toBe(200);
+    }
+    R5.push({ cell: "filenames", put: h.put.map((p) => p.path) });
+    expect(h.put.every((p) => /^tenants\/tenant-c2\/[0-9a-f]{24}\.webp$/.test(p.path))).toBe(true);
+  });
+
+  it("pixel bound: 50,000,001 declared pixels hits the limit; 50,000,000 does not hit the LIMIT", async () => {
+    const POST = await uploadRoute();
+    const over = await POST(upReq(form([["file", file(pngHeader(3561, 14041), "o.png", "image/png")]])));
+    const overWarn = warns.find((w) => w.includes("sharp")) ?? "";
+    warns.length = 0;
+    const at = await POST(upReq(form([["file", file(pngHeader(10000, 5000), "a.png", "image/png")]])));
+    const atWarn = warns.find((w) => w.includes("sharp")) ?? "";
+    R5.push({ cell: "pixels", over: over.status, overWarn: overWarn.slice(0, 160), at: at.status, atWarn: atWarn.slice(0, 160), put: h.put.length });
+    expect(over.status).toBe(400);
+    expect(overWarn).toMatch(/pixel limit/i);
+    expect(atWarn).not.toMatch(/pixel limit/i);
+    expect(h.put).toHaveLength(0);
+  });
+
+  it("duplicate / mistyped fields are 400", async () => {
+    const POST = await uploadRoute();
+    const png = await realPng();
+    const a = await POST(upReq(form([["file", file(png, "a.png", "image/png")], ["file", file(png, "b.png", "image/png")]])));
+    h.session = { user: { id: "user-m", tenantId: "tenant-c2", role: "member", memberId: "m-c2-self" } };
+    const b = await POST(upReq(form([["file", file(png, "a.png", "image/png")], ["targetMemberId", "m-c2-other"], ["targetMemberId", "m-c2-self"]]), "?purpose=profile-pic"));
+    const c = await POST(upReq(form([["file", file(png, "a.png", "image/png")], ["targetMemberId", "m-c2-self"]]), "?purpose=profile-pic&purpose=branding"));
+    const d = await POST(upReq(form([["file", "not-a-file"]])));
+    const e = await POST(upReq(form([["targetMemberId", "m-c2-self"]]), "?purpose=profile-pic"));
+    const f = await POST(upReq(form([["file", file(png, "a.png", "image/png")], ["targetMemberId", file(png, "t.png", "image/png")]]), "?purpose=profile-pic"));
+    const g = await POST(upReq(form([["file", file(png, "a.png", "image/png")]]), "?purpose=profile-pic%00"));
+    const statuses = [a.status, b.status, c.status, d.status, e.status, f.status, g.status];
+    R5.push({ cell: "duplicates/mistyped", statuses, put: h.put.length });
+    expect(statuses).toEqual([400, 400, 400, 400, 400, 400, 400]);
+    expect(h.put).toHaveLength(0);
+  });
+
+  it("dump", async () => {
+    const fs = await import("node:fs");
+    fs.writeFileSync(process.env.R5_OUT ?? "r5-upload.json", JSON.stringify(R5, null, 1));
+  });
+});

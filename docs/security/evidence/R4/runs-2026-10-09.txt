@@ -1,0 +1,133 @@
+# R4 runs, 9 Oct 2026, Node v24.21.0, scratch worktree at 15bd0c8, TEST (ep-hidden-salad) via R4 copies of att/run-engine.sh (owner) and q78/run-restricted.sh (matflow_app, RLS_ENFORCED=1)
+## TEST counts before (read-only)
+{"host":"ep-hidden-salad-abom7cg4-pooler","label":"before","orphanProvenanceRows":[{"via":"decide","n":54},{"via":"import.commit","n":6},{"via":"import.rollback","n":2}],"provenanceRowsTotal":62,"orphanAuditRowsAll":198,"fixtureTenants":0,"fixtureMembers":0,"fixtureUsers":0}
+## item 1: D2 DB suites, both roles, normal + SEC_D2_STRICT=1
+am-owner exit=0  Tests 12 passed | 6 expected fail (18) [sec-d2] role neondb_owner RLS_ENFORCED=0 STRICT=0 [sec-d2] teardown: 19 clubs removed, 0 rows left 
+am-strict-owner exit=1  Tests 6 failed | 12 passed (18) [sec-d2] role neondb_owner RLS_ENFORCED=0 STRICT=1 [sec-d2] teardown: 19 clubs removed, 0 rows left 
+del-owner exit=0  Tests 16 passed (16) [sec-d2p] role neondb_owner RLS_ENFORCED=0 [sec-d2p] teardown: 16 clubs removed, 0 rows left 
+am-restricted exit=0  Tests 12 passed | 6 expected fail (18) [sec-d2] role matflow_app RLS_ENFORCED=1 STRICT=0 [sec-d2] teardown: 19 clubs removed, 0 rows left 
+am-strict-restricted exit=1  Tests 6 failed | 12 passed (18) [sec-d2] role matflow_app RLS_ENFORCED=1 STRICT=1 [sec-d2] teardown: 19 clubs removed, 0 rows left 
+del-restricted exit=0  Tests 16 passed (16) [sec-d2p] role matflow_app RLS_ENFORCED=1 [sec-d2p] teardown: 16 clubs removed, 0 rows left 
+{"host":"ep-hidden-salad-abom7cg4-pooler","label":"after-item1","orphanProvenanceRows":[{"via":"decide","n":54},{"via":"import.commit","n":6},{"via":"import.rollback","n":2}],"provenanceRowsTotal":62,"orphanAuditRowsAll":198,"fixtureTenants":0,"fixtureMembers":0,"fixtureUsers":0}
+### strict-mode failure reason per OPEN cell (both roles identical)
+failed  OPEN (a) RAW TAKEOVER: victim removed and an old record renamed + re-addressed by raw SQL (no audit rows) → bo  ::  AssertionError: raw-SQL takeover bound the victim's history to the attacker: expected 1 to be +0 // Object.is equality
+failed  OPEN (a) ACQUISITION ROW BACK-DATED: release row deleted and the attacker's own address-change row back-dated   ::  AssertionError: a back-dated acquisition bound the victim's history to the attacker: expected 1 to be +0 // Object.is equality
+failed  OPEN (a) ACQUISITION ROW DELETED: release and acquisition rows both deleted → bound [closed by SF-57 v2]  ::  AssertionError: deleted provenance rows bound the victim's history to the attacker: expected 1 to be +0 // Object.is equality
+failed  OPEN (a) FORGED CREATION TIME: victim removed by raw SQL; a record inserted with a back-dated cuid at the addr  ::  AssertionError: a forged creation time bound the victim's history: expected 1 to be +0 // Object.is equality
+failed  OPEN (c) FORGED DECISION + FORGED PROVENANCE: with the signing key the provenance row can be forged → bound [n  ::  AssertionError: forged provenance bound the victim's history: expected 1 to be +0 // Object.is equality
+failed  OPEN (a) externalRef SET: an attacker-chosen member's externalRef set to the victim's source key → bound by ex  ::  AssertionError: a planted externalRef bound the victim's history: expected 1 to be +0 // Object.is equality
+## R4 probes (secure assertions; red = finding)
+provenance-probe-db-owner exit=1  Tests 2 failed | 4 passed (6) [secr4] role neondb_owner RLS_ENFORCED=0 keyLen=0 [secr4] teardown: 7 clubs removed, 0 rows left 
+provenance-probe-db-restricted exit=1  Tests 2 failed | 4 passed (6) [secr4] role matflow_app RLS_ENFORCED=1 keyLen=0 [secr4] teardown: 7 clubs removed, 0 rows left 
+deletion-fault-db-owner exit=1  Tests 3 failed | 10 passed (13) [secr4d] role neondb_owner RLS_ENFORCED=0 [secr4d] teardown: 13 clubs removed, 0 rows left 
+deletion-fault-db-restricted exit=1  Tests 3 failed | 10 passed (13) [secr4d] role matflow_app RLS_ENFORCED=1 [secr4d] teardown: 13 clubs removed, 0 rows left 
+{"host":"ep-hidden-salad-abom7cg4-pooler","label":"after-zz-r4-provenance-probe-db","orphanProvenanceRows":[{"via":"decide","n":54},{"via":"import.commit","n":6},{"via":"import.rollback","n":2}],"provenanceRowsTotal":62,"orphanAuditRowsAll":198,"fixtureTenants":0,"fixtureMembers":0,"fixtureUsers":0}
+== provenance-probe-db-owner.json
+passed  CONTROL: a saved decision binds as decided
+failed  P1 (a) COPIED DIGEST: re-point by raw UPDATE + INSERT a provenance row with the digest copied from the legitim  ::  AssertionError: P1: a copied digest vouched for a re-pointed decision: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+failed  P2 (a)+(b) DIGEST MINTED IN THE ATTACKER'S OWN CLUB via the real decide route, copied into the victim club ->   ::  AssertionError: P2: a digest minted in another club vouched for a forged decision: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+passed  P3 WRONG-KEY DIGEST: a provenance row with the right target but a digest under another key -> pending
+passed  P4 OLDER MATCHING ROW: owner decided mal, then right; raw UPDATE back to mal -> the latest row disagrees -> pe
+passed  P5 KEY ROTATION: a decision saved under K1 is held pending when the process signs with K2; re-deciding under K
+== provenance-probe-db-restricted.json
+passed  CONTROL: a saved decision binds as decided
+failed  P1 (a) COPIED DIGEST: re-point by raw UPDATE + INSERT a provenance row with the digest copied from the legitim  ::  AssertionError: P1: a copied digest vouched for a re-pointed decision: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+failed  P2 (a)+(b) DIGEST MINTED IN THE ATTACKER'S OWN CLUB via the real decide route, copied into the victim club ->   ::  AssertionError: P2: a digest minted in another club vouched for a forged decision: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+passed  P3 WRONG-KEY DIGEST: a provenance row with the right target but a digest under another key -> pending
+passed  P4 OLDER MATCHING ROW: owner decided mal, then right; raw UPDATE back to mal -> the latest row disagrees -> pe
+passed  P5 KEY ROTATION: a decision saved under K1 is held pending when the process signs with K2; re-deciding under K
+== deletion-fault-db-owner.json
+passed  member DELETE: positive control (no fault) — removed, digest recorded, 200
+passed  member DELETE: DB-layer fault at the release audit insert, AFTER the deletion statements -> whole transaction 
+passed  child DELETE: positive control (no fault) — removed, digest recorded, 200
+passed  child DELETE: DB-layer fault at the release audit insert, AFTER the deletion statements -> whole transaction r
+passed  staff DELETE: positive control (no fault) — removed, digest recorded, 200
+passed  staff DELETE: DB-layer fault at the release audit insert, AFTER the deletion statements -> whole transaction r
+passed  DSAR erase: positive control (no fault) — removed, digest recorded, 200
+passed  DSAR erase: DB-layer fault at the release audit insert, AFTER the deletion statements -> whole transaction rol
+passed  members-import rollback: positive control (no fault) — removed, digest recorded, 200
+passed  members-import rollback: DB-layer fault at the release audit insert, AFTER the deletion statements -> whole tr
+failed  member DELETE: RACE — the address is changed (committed, separate connection) after the pre-read and before th  ::  AssertionError: member DELETE: the address actually released carries no release digest: expected false to be true // Object.is equality
+failed  DSAR erase: RACE — the address is changed (committed, separate connection) after the pre-read and before the d  ::  AssertionError: DSAR erase: the address actually released carries no release digest: expected false to be true // Object.is equality
+failed  child DELETE: RACE — the address is changed (committed, separate connection) after the pre-read and before the  ::  AssertionError: child DELETE: the address actually released carries no release digest: expected false to be true // Object.is equality
+== deletion-fault-db-restricted.json
+passed  member DELETE: positive control (no fault) — removed, digest recorded, 200
+passed  member DELETE: DB-layer fault at the release audit insert, AFTER the deletion statements -> whole transaction 
+passed  child DELETE: positive control (no fault) — removed, digest recorded, 200
+passed  child DELETE: DB-layer fault at the release audit insert, AFTER the deletion statements -> whole transaction r
+passed  staff DELETE: positive control (no fault) — removed, digest recorded, 200
+passed  staff DELETE: DB-layer fault at the release audit insert, AFTER the deletion statements -> whole transaction r
+passed  DSAR erase: positive control (no fault) — removed, digest recorded, 200
+passed  DSAR erase: DB-layer fault at the release audit insert, AFTER the deletion statements -> whole transaction rol
+passed  members-import rollback: positive control (no fault) — removed, digest recorded, 200
+passed  members-import rollback: DB-layer fault at the release audit insert, AFTER the deletion statements -> whole tr
+failed  member DELETE: RACE — the address is changed (committed, separate connection) after the pre-read and before th  ::  AssertionError: member DELETE: the address actually released carries no release digest: expected false to be true // Object.is equality
+failed  DSAR erase: RACE — the address is changed (committed, separate connection) after the pre-read and before the d  ::  AssertionError: DSAR erase: the address actually released carries no release digest: expected false to be true // Object.is equality
+failed  child DELETE: RACE — the address is changed (committed, separate connection) after the pre-read and before the  ::  AssertionError: child DELETE: the address actually released carries no release digest: expected false to be true // Object.is equality
+### op order under the DB-layer fault (owner run; restricted identical in shape)
+[secr4d] member DELETE ops: member.findFirst > member.findFirst > member.findMany > member.findFirst > importedBooking.deleteMany > importSourceMapping.deleteMany > member.deleteMany > user.findFirst > auditLog.create
+[secr4d] child DELETE ops: member.findFirst > member.findFirst > member.findFirst > importedBooking.deleteMany > importSourceMapping.deleteMany > member.deleteMany > user.findFirst > auditLog.create
+[secr4d] staff DELETE ops: user.findFirst > user.deleteMany > user.findFirst > auditLog.create
+[secr4d] DSAR erase ops: member.findFirst > member.count > user.findFirst > auditLog.create > importedBooking.count > importSourceMapping.count > user.findFirst > auditLog.create
+[secr4d] members-import rollback ops: member.findMany > member.findMany > member.deleteMany > user.findFirst > auditLog.create
+[secr4d] race member DELETE fired=true ops: member.findFirst > member.findFirst > member.findMany > member.findFirst > importedBooking.deleteMany > importSourceMapping.deleteMany > member.deleteMany > user.findFirst > auditLog.create
+[secr4d] race member DELETE: status 200 newHeld=0 digestOld=true digestNew=false
+[secr4d] race DSAR erase fired=true ops: member.findFirst > member.count > user.findFirst > auditLog.create > importedBooking.count > importSourceMapping.count > user.findFirst > auditLog.create > importedBooking.deleteMany > importSourceMapping.deleteMany > member.update
+[secr4d] race DSAR erase: status 200 newHeld=0 digestOld=true digestNew=false
+[secr4d] race child DELETE fired=true ops: member.findFirst > member.findFirst > member.findFirst > importedBooking.deleteMany > importSourceMapping.deleteMany > member.deleteMany > user.findFirst > auditLog.create
+[secr4d] race child DELETE: status 200 newHeld=0 digestOld=true digestNew=false
+## item 2: mutants on lib/attendance-import.ts (restricted role); each restored by git checkout, git diff clean
+M1 applied to lib/attendance-import.ts
+M1 sec-d2-import-attacker-model-db exit=1  Tests 3 failed | 9 passed | 6 expected fail (18) [sec-d2] teardown: 19 clubs removed, 0 rows left 
+M1 zz-r4-provenance-probe-db exit=1  Tests 5 failed | 1 passed (6) [secr4] teardown: 7 clubs removed, 0 rows left 
+M1 restored: git diff clean
+M2 applied to lib/attendance-import.ts
+M2 sec-d2-import-attacker-model-db exit=1  Tests 1 failed | 11 passed | 6 expected fail (18) [sec-d2] teardown: 19 clubs removed, 0 rows left 
+M2 zz-r4-provenance-probe-db exit=1  Tests 2 failed | 4 passed (6) [secr4] teardown: 7 clubs removed, 0 rows left 
+M2 restored: git diff clean
+M3 applied to lib/attendance-import.ts
+M3 sec-d2-import-attacker-model-db exit=0  Tests 12 passed | 6 expected fail (18) [sec-d2] teardown: 19 clubs removed, 0 rows left 
+M3 zz-r4-provenance-probe-db exit=1  Tests 4 failed | 2 passed (6) [secr4] teardown: 7 clubs removed, 0 rows left 
+M3 restored: git diff clean
+M4 applied to lib/attendance-import.ts
+M4 sec-d2-import-attacker-model-db exit=0  Tests 12 passed | 6 expected fail (18) [sec-d2] teardown: 19 clubs removed, 0 rows left 
+M4 zz-r4-provenance-probe-db exit=1  Tests 3 failed | 3 passed (6) [secr4] teardown: 7 clubs removed, 0 rows left 
+M4 restored: git diff clean
+{"host":"ep-hidden-salad-abom7cg4-pooler","label":"after-mutants","orphanProvenanceRows":[{"via":"decide","n":54},{"via":"import.commit","n":6},{"via":"import.rollback","n":2}],"provenanceRowsTotal":62,"orphanAuditRowsAll":198,"fixtureTenants":0,"fixtureMembers":0,"fixtureUsers":0}
+== mut-M1-sec-d2-import-attacker-model-db.json
+failed  (a) RE-POINTED DECISION: an owner's saved decision re-pointed by raw UPDATE (no provenance) is not trusted → p  ::  AssertionError: a re-pointed decision bound the victim's history to the attacker: expected 1 to be +0 // Object.is equality
+failed  (a) CROSS-CLUB RE-POINT: club B's runtime connection with the bypass re-points club A's decision → club A's im  ::  AssertionError: a cross-club re-point bound history: expected 1 to be +0 // Object.is equality
+failed  (a) FORGED DECISION: a person mapping inserted by raw SQL with no provenance is not trusted → pending  ::  AssertionError: a forged decision bound the victim's history: expected 1 to be +0 // Object.is equality
+== mut-M1-zz-r4-provenance-probe-db.json
+failed  P1 (a) COPIED DIGEST: re-point by raw UPDATE + INSERT a provenance row with the digest copied from the legitim  ::  AssertionError: P1: a copied digest vouched for a re-pointed decision: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+failed  P2 (a)+(b) DIGEST MINTED IN THE ATTACKER'S OWN CLUB via the real decide route, copied into the victim club ->   ::  AssertionError: P2: a digest minted in another club vouched for a forged decision: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+failed  P3 WRONG-KEY DIGEST: a provenance row with the right target but a digest under another key -> pending  ::  AssertionError: expected [] to include 'cmv1f55fd001tt0tg0rxeiwwy'
+failed  P4 OLDER MATCHING ROW: owner decided mal, then right; raw UPDATE back to mal -> the latest row disagrees -> pe  ::  AssertionError: P4: an older provenance row vouched although a newer one disagrees: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+failed  P5 KEY ROTATION: a decision saved under K1 is held pending when the process signs with K2; re-deciding under K  ::  AssertionError: expected { action: 'member', …(1) } to deeply equal { action: 'pending' }
+== mut-M2-sec-d2-import-attacker-model-db.json
+failed  (b) PROVENANCE IS ATOMIC: if the provenance row cannot be written, the decision is not stored either  ::  Error: promise resolved "null" instead of rejecting
+== mut-M2-zz-r4-provenance-probe-db.json
+failed  P1 (a) COPIED DIGEST: re-point by raw UPDATE + INSERT a provenance row with the digest copied from the legitim  ::  AssertionError: P1: a copied digest vouched for a re-pointed decision: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+failed  P2 (a)+(b) DIGEST MINTED IN THE ATTACKER'S OWN CLUB via the real decide route, copied into the victim club ->   ::  AssertionError: P2: a digest minted in another club vouched for a forged decision: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+== mut-M3-sec-d2-import-attacker-model-db.json
+== mut-M3-zz-r4-provenance-probe-db.json
+failed  P1 (a) COPIED DIGEST: re-point by raw UPDATE + INSERT a provenance row with the digest copied from the legitim  ::  AssertionError: P1: a copied digest vouched for a re-pointed decision: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+failed  P2 (a)+(b) DIGEST MINTED IN THE ATTACKER'S OWN CLUB via the real decide route, copied into the victim club ->   ::  AssertionError: P2: a digest minted in another club vouched for a forged decision: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+failed  P3 WRONG-KEY DIGEST: a provenance row with the right target but a digest under another key -> pending  ::  AssertionError: expected [] to include 'cmv1fevhs001tlgtgapn8n6kn'
+failed  P5 KEY ROTATION: a decision saved under K1 is held pending when the process signs with K2; re-deciding under K  ::  AssertionError: expected { action: 'member', …(1) } to deeply equal { action: 'pending' }
+== mut-M4-sec-d2-import-attacker-model-db.json
+== mut-M4-zz-r4-provenance-probe-db.json
+failed  P1 (a) COPIED DIGEST: re-point by raw UPDATE + INSERT a provenance row with the digest copied from the legitim  ::  AssertionError: P1: a copied digest vouched for a re-pointed decision: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+failed  P2 (a)+(b) DIGEST MINTED IN THE ATTACKER'S OWN CLUB via the real decide route, copied into the victim club ->   ::  AssertionError: P2: a digest minted in another club vouched for a forged decision: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+failed  P4 OLDER MATCHING ROW: owner decided mal, then right; raw UPDATE back to mal -> the latest row disagrees -> pe  ::  AssertionError: P4: an older provenance row vouched although a newer one disagrees: expected { attendance: 1, …(3) } to deeply equal { Object (attendance, memberId, ...) }
+## item 5: regression at 15bd0c8 (both roles) + unit
+tree check done (empty = clean tracked files)
+attendance-import-engine owner exit=0  Tests 19 passed (19)
+attendance-import-engine restricted exit=0  Tests 19 passed (19)
+sec-d-attendance-misbinding-db owner exit=0  Tests 23 passed (23)
+sec-d-attendance-misbinding-db restricted exit=0  Tests 23 passed (23)
+contact-email-change-imports-db owner exit=0  Tests 7 passed (7)
+contact-email-change-imports-db restricted exit=0  Tests 7 passed (7)
+unit (sec-d-* + import-attendance*) exit=0  Test Files 11 passed (11)  Tests 373 passed (373) 
+{"host":"ep-hidden-salad-abom7cg4-pooler","label":"after-regression","orphanProvenanceRows":[{"via":"decide","n":54},{"via":"import.commit","n":6},{"via":"import.rollback","n":2}],"provenanceRowsTotal":62,"orphanAuditRowsAll":198,"fixtureTenants":0,"fixtureMembers":0,"fixtureUsers":0}
+unit files: tests/unit/import-attendance-route.test.ts tests/unit/import-attendance.test.ts tests/unit/sec-d-attendance-ambiguity.test.ts tests/unit/sec-d-attendance-route-body-shape.test.ts tests/unit/sec-d-csv-formula-injection.test.ts tests/unit/sec-d-guardian-adopt-audit.test.ts tests/unit/sec-d-image-bounds.test.ts tests/unit/sec-d-import-security-state.test.ts tests/unit/sec-d-mail-holds.test.ts tests/unit/sec-d-release-digests.test.ts tests/unit/sec-d-stripe-webhook-signature.test.ts 

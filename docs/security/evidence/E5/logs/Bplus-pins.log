@@ -1,0 +1,430 @@
+node=v24.21.0 sha=2a6487e start=2026-10-10T09:26:19Z cmd=npx vitest run tests/unit/sec-a-revocation-fail-closed.test.ts tests/unit/session-revocation.test.ts tests/unit/sec-b2-tenant-context.test.ts tests/unit/sec-c2-blob-image-inline.test.ts tests/unit/sec-a4-subkey-separation.test.ts tests/unit/sec-a4-empty-secret.test.ts tests/unit/sec-c4-tailwind-sources.test.ts tests/unit/sec-r-db-target-guard.test.ts tests/unit/sec-e3-ops-guards.test.ts tests/unit/sec-e3-setup-test-db-guard.test.ts tests/unit/sec-f2-restore-verify-compare.test.ts tests/unit/sec-f2-skip-gate.test.ts tests/unit/sec-f3-restore-verify-catalogue.test.ts tests/unit/sec-f3-secret-scan-residuals.test.ts tests/unit/sec-f3-setup-test-db-secret.test.ts --reporter=verbose
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/E5/wt
+
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses duplicate sslmode, the last one weakens (require then no-verify) 5ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses duplicate sslmode, the last one disables TLS 1ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses percent-encoded key (ssl%6dode=no-verify) 1ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses percent-encoded key alone 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses upper-case key 1ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses ssl=0 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses ssl=false 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses sslrootcert (pg-connection-string reads the file at parse time) 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses uselibpqcompat 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses host override 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses encoded host override 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses upper-case hostaddr 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses options 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses endpoint 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses sslmode=verify-ca (no CA pinned: weaker than verify-full) 1ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > positive control: the standard Neon URL forms are accepted and become an explicit, verified-TLS config 5ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses PGOPTIONS in the environment (node-postgres applies PG* variables to an explicit config) 1ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses PGHOST in the environment (node-postgres applies PG* variables to an explicit config) 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses PGHOSTADDR in the environment (node-postgres applies PG* variables to an explicit config) 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses PGSSLMODE in the environment (node-postgres applies PG* variables to an explicit config) 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses PGUSER in the environment (node-postgres applies PG* variables to an explicit config) 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses PGSSLROOTCERT in the environment (node-postgres applies PG* variables to an explicit config) 0ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > refuses a URL without a password or database rather than letting pg fill the gap from the environment 1ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-blob-host-count: TLS and target cannot be steered by the URL (R2 owed 1) > the CLI connects with the explicit config, never with connectionString 1ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-credential-fingerprint: never echoes an argument; parses env lines as dotenv does (R2 owed 2) > an unknown positional argument (a secret pasted by mistake) is not echoed — only its position 141ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-credential-fingerprint: never echoes an argument; parses env lines as dotenv does (R2 owed 2) > a secret given where a --var NAME belongs is not echoed 211ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-credential-fingerprint: never echoes an argument; parses env lines as dotenv does (R2 owed 2) > an unreadable --from-env-file path is not echoed (a secret pasted as the path) 83ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-credential-fingerprint: never echoes an argument; parses env lines as dotenv does (R2 owed 2) > the option is --from-env-file: Node itself intercepts --env-file even after the script path (and prints the path) 116ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-credential-fingerprint: never echoes an argument; parses env lines as dotenv does (R2 owed 2) > a missing option value is reported without echoing anything 94ms
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-credential-fingerprint: never echoes an argument; parses env lines as dotenv does (R2 owed 2) > KEY="value" # comment, KEY='value' # comment and KEY=value # comment yield the bare value, which MATCHes its own fingerprint 2ms
+(node:133420) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ tests/unit/sec-e3-ops-guards.test.ts > ops-credential-fingerprint: never echoes an argument; parses env lines as dotenv does (R2 owed 2) > CLI: a quoted + commented line holding a leaked-form value is evaluated on the bare value (no trace in output) 118ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > positive control: identical fingerprints pass 4ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > FAILS: policy expression changed under the same name 1ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > FAILS: trigger disabled 0ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > FAILS: function body replaced under the same name 0ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > FAILS: BYPASSRLS granted to the app role 0ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > FAILS: extra table grant 0ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > FAILS: owner changed 0ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > FAILS: row content rewritten with the count kept 0ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > FAILS: migration checksum differs 0ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > FAILS: security state rewound 0ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > FAILS: outstanding link re-opened 0ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > FAILS: event trigger planted 0ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > compareFingerprints (SF-64) > --expect-revoked passes only when every session was bumped and nothing is outstanding 0ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > connection guards of the F2 scripts (refused before any connection) > PGOPTIONS / PGHOST / PGHOSTADDR in the environment are refused (pg would apply PGOPTIONS to a TEST URL) 1ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > connection guards of the F2 scripts (refused before any connection) > backup-export refuses production with no override, and an output directory inside the repository 547ms
+ ✓ tests/unit/sec-f2-restore-verify-compare.test.ts > connection guards of the F2 scripts (refused before any connection) > backup-post-restore refuses production and the shared TEST branch 350ms
+ ✓ tests/unit/sec-c4-tailwind-sources.test.ts > SF-110: Tailwind scans an explicit allow-list (app, components, lib) — never tests/, scripts/, docs/ > globals.css turns automatic detection off and lists only application source 2ms
+ ✓ tests/unit/sec-c4-tailwind-sources.test.ts > SF-110: Tailwind scans an explicit allow-list (app, components, lib) — never tests/, scripts/, docs/ > the scanner the build constructs reads application files (positive control) and nothing outside app/, components/, lib/ 212ms
+ ✓ tests/unit/sec-c4-tailwind-sources.test.ts > SF-110: Tailwind scans an explicit allow-list (app, components, lib) — never tests/, scripts/, docs/ > with evidence planted in tests/ and scripts/, no candidate carries the backslash-hex escape and the CSS still builds 290ms
+ ✓ tests/unit/sec-c4-tailwind-sources.test.ts > SF-110: Tailwind scans an explicit allow-list (app, components, lib) — never tests/, scripts/, docs/ > detector check: the pre-fix configuration (auto-detect, docs/ excluded) DOES read the plants 205ms
+ ✓ tests/unit/sec-c4-tailwind-sources.test.ts > SF-110: .vercelignore keeps evidence, tests and tooling out of the deployment upload > lists docs/, tests/, scripts/ and .omc/ and still ships the one script the build command runs 1ms
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: statement timeout (57014) > answers this request as signed out: auth() is null, never a session
+[auth] session-revocation check failed — request REFUSED (fail closed) {
+  subject: 'user',
+  error: 'canceling statement due to statement timeout'
+}
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: statement timeout (57014) > refuses the API gate (401), the page gate (/login) and a protected mutation, with no write
+[auth] session-revocation check failed — request REFUSED (fail closed) {
+  subject: 'user',
+  error: 'canceling statement due to statement timeout'
+}
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: statement timeout (57014) > reports it as fail-CLOSED
+[auth] session-revocation check failed — request REFUSED (fail closed) {
+  subject: 'user',
+  error: 'canceling statement due to statement timeout'
+}
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: statement timeout (57014) > recovers on the next request once the lookup works (the cookie was never cleared server-side)
+[auth] session-revocation check failed — request REFUSED (fail closed) {
+  subject: 'user',
+  error: 'canceling statement due to statement timeout'
+}
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: statement timeout (57014) > a member session fails closed the same way
+[auth] session-revocation check failed — request REFUSED (fail closed) {
+  subject: 'member',
+  error: 'canceling statement due to statement timeout'
+}
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: connection loss > answers this request as signed out: auth() is null, never a session
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'Connection terminated unexpectedly' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: connection loss > refuses the API gate (401), the page gate (/login) and a protected mutation, with no write
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'Connection terminated unexpectedly' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: connection loss > reports it as fail-CLOSED
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'Connection terminated unexpectedly' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: connection loss > recovers on the next request once the lookup works (the cookie was never cleared server-side)
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'Connection terminated unexpectedly' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: connection loss > a member session fails closed the same way
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'member', error: 'Connection terminated unexpectedly' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: pool exhausted > answers this request as signed out: auth() is null, never a session
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'timeout exceeded when trying to connect' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: pool exhausted > refuses the API gate (401), the page gate (/login) and a protected mutation, with no write
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'timeout exceeded when trying to connect' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: pool exhausted > reports it as fail-CLOSED
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'timeout exceeded when trying to connect' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: pool exhausted > recovers on the next request once the lookup works (the cookie was never cleared server-side)
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'timeout exceeded when trying to connect' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: pool exhausted > a member session fails closed the same way
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'member', error: 'timeout exceeded when trying to connect' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: server unreachable (P1001) > answers this request as signed out: auth() is null, never a session
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: "Can't reach database server" }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: server unreachable (P1001) > refuses the API gate (401), the page gate (/login) and a protected mutation, with no write
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: "Can't reach database server" }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: server unreachable (P1001) > reports it as fail-CLOSED
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: "Can't reach database server" }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: server unreachable (P1001) > recovers on the next request once the lookup works (the cookie was never cleared server-side)
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: "Can't reach database server" }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: server unreachable (P1001) > a member session fails closed the same way
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'member', error: "Can't reach database server" }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: permission rejection (42501) > answers this request as signed out: auth() is null, never a session
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'permission denied for table User' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: permission rejection (42501) > refuses the API gate (401), the page gate (/login) and a protected mutation, with no write
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'permission denied for table User' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: permission rejection (42501) > reports it as fail-CLOSED
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'permission denied for table User' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: permission rejection (42501) > recovers on the next request once the lookup works (the cookie was never cleared server-side)
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'permission denied for table User' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: permission rejection (42501) > a member session fails closed the same way
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'member', error: 'permission denied for table User' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: transaction timeout (P2028) > answers this request as signed out: auth() is null, never a session
+[auth] session-revocation check failed — request REFUSED (fail closed) {
+  subject: 'user',
+  error: 'Transaction API error: Transaction already closed'
+}
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: transaction timeout (P2028) > refuses the API gate (401), the page gate (/login) and a protected mutation, with no write
+[auth] session-revocation check failed — request REFUSED (fail closed) {
+  subject: 'user',
+  error: 'Transaction API error: Transaction already closed'
+}
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: transaction timeout (P2028) > reports it as fail-CLOSED
+[auth] session-revocation check failed — request REFUSED (fail closed) {
+  subject: 'user',
+  error: 'Transaction API error: Transaction already closed'
+}
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: transaction timeout (P2028) > recovers on the next request once the lookup works (the cookie was never cleared server-side)
+[auth] session-revocation check failed — request REFUSED (fail closed) {
+  subject: 'user',
+  error: 'Transaction API error: Transaction already closed'
+}
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: transaction timeout (P2028) > a member session fails closed the same way
+[auth] session-revocation check failed — request REFUSED (fail closed) {
+  subject: 'member',
+  error: 'Transaction API error: Transaction already closed'
+}
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: version as a string > is not admitted
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'malformed revocation row' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: no version at all > is not admitted
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'malformed revocation row' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: null version > is not admitted
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'malformed revocation row' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: fractional version > is not admitted
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'malformed revocation row' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: negative version > is not admitted
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'malformed revocation row' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: a bare number > is not admitted
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'malformed revocation row' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: a string > is not admitted
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'malformed revocation row' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: undefined > is not admitted
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'malformed revocation row' }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > the other fail-open paths in jwt() > a support swap that throws part-way ends the session instead of keeping a half-swapped token
+[auth] support swap/restore failed — session ended { error: "Cannot read properties of undefined (reading 'slug')" }
+
+stderr | tests/unit/sec-a-revocation-fail-closed.test.ts > the other fail-open paths in jwt() > an Edge pass never checks (Prisma is Node-only); the Node pass of the same request decides
+[auth] session-revocation check failed — request REFUSED (fail closed) { subject: 'user', error: 'must not be called at the edge' }
+
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > positive control: a healthy check admits the session (same harness) > session has the user; API gate, page gate and a protected mutation all proceed 695ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > positive control: a healthy check admits the session (same harness) > a moved version is still revoked outright 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: statement timeout (57014) > answers this request as signed out: auth() is null, never a session 1ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: statement timeout (57014) > refuses the API gate (401), the page gate (/login) and a protected mutation, with no write 1ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: statement timeout (57014) > reports it as fail-CLOSED 1ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: statement timeout (57014) > recovers on the next request once the lookup works (the cookie was never cleared server-side) 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: statement timeout (57014) > a member session fails closed the same way 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: connection loss > answers this request as signed out: auth() is null, never a session 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: connection loss > refuses the API gate (401), the page gate (/login) and a protected mutation, with no write 1ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: connection loss > reports it as fail-CLOSED 1ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: connection loss > recovers on the next request once the lookup works (the cookie was never cleared server-side) 1ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: connection loss > a member session fails closed the same way 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: pool exhausted > answers this request as signed out: auth() is null, never a session 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: pool exhausted > refuses the API gate (401), the page gate (/login) and a protected mutation, with no write 1ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: pool exhausted > reports it as fail-CLOSED 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: pool exhausted > recovers on the next request once the lookup works (the cookie was never cleared server-side) 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: pool exhausted > a member session fails closed the same way 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: server unreachable (P1001) > answers this request as signed out: auth() is null, never a session 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: server unreachable (P1001) > refuses the API gate (401), the page gate (/login) and a protected mutation, with no write 1ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: server unreachable (P1001) > reports it as fail-CLOSED 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: server unreachable (P1001) > recovers on the next request once the lookup works (the cookie was never cleared server-side) 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: server unreachable (P1001) > a member session fails closed the same way 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: permission rejection (42501) > answers this request as signed out: auth() is null, never a session 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: permission rejection (42501) > refuses the API gate (401), the page gate (/login) and a protected mutation, with no write 1ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: permission rejection (42501) > reports it as fail-CLOSED 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: permission rejection (42501) > recovers on the next request once the lookup works (the cookie was never cleared server-side) 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: permission rejection (42501) > a member session fails closed the same way 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: transaction timeout (P2028) > answers this request as signed out: auth() is null, never a session 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: transaction timeout (P2028) > refuses the API gate (401), the page gate (/login) and a protected mutation, with no write 3ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: transaction timeout (P2028) > reports it as fail-CLOSED 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: transaction timeout (P2028) > recovers on the next request once the lookup works (the cookie was never cleared server-side) 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup fails: transaction timeout (P2028) > a member session fails closed the same way 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: version as a string > is not admitted 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: no version at all > is not admitted 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: null version > is not admitted 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: fractional version > is not admitted 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: negative version > is not admitted 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: a bare number > is not admitted 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: a string > is not admitted 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > revocation lookup returns a malformed result: undefined > is not admitted 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > malformed or confused TOKENS are revoked outright > token with string version → no session 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > malformed or confused TOKENS are revoked outright > token with missing version → no session 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > malformed or confused TOKENS are revoked outright > token with fractional version → no session 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > malformed or confused TOKENS are revoked outright > a row that resolves in ANOTHER club is not this session 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > the other fail-open paths in jwt() > a legacy temporary-password token whose stamp cannot be read is not admitted this request 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > the other fail-open paths in jwt() > a support swap that throws part-way ends the session instead of keeping a half-swapped token 0ms
+ ✓ tests/unit/sec-a-revocation-fail-closed.test.ts > the other fail-open paths in jwt() > an Edge pass never checks (Prisma is Node-only); the Node pass of the same request decides 0ms
+ ✓ tests/unit/sec-f2-skip-gate.test.ts > test-skip-gate evaluate() > positive control: a clean run passes 3ms
+ ✓ tests/unit/sec-f2-skip-gate.test.ts > test-skip-gate evaluate() > a setup failure (file failed, every test skipped) FAILS even without --require-db, and is named 1ms
+ ✓ tests/unit/sec-f2-skip-gate.test.ts > test-skip-gate evaluate() > success:false with no failing file still fails (unhandled error) 0ms
+ ✓ tests/unit/sec-f2-skip-gate.test.ts > test-skip-gate evaluate() > an empty report fails 0ms
+ ✓ tests/unit/sec-f2-skip-gate.test.ts > test-skip-gate evaluate() > the fixture sweep is a maintenance tool: excluded from the expected list, its skip allowed 1ms
+ ✓ tests/unit/sec-f2-skip-gate.test.ts > test-skip-gate evaluate() > a BLOCKED required check fails by default and passes only as PASS-WITH-BLOCKED-COVERAGE 0ms
+ ✓ tests/unit/sec-f2-skip-gate.test.ts > test-skip-gate evaluate() > lane E3 (review R2): an --expect glob matching zero files FAILS, naming the glob and the cwd 141ms
+ ✓ tests/unit/sec-f2-skip-gate.test.ts > test-skip-gate evaluate() > an unlisted skip still fails under --require-db; a named --allow entry passes 0ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > harness > signs with the fixed synthetic key (vectors below are meaningless otherwise) 1ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > harness > the card module's exported context is the one this file tests 0ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > positive controls: the cookie still works > an ordinary club's cookie is minted (200) and reads back as the slug 6ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > positive controls: the cookie still works > a tampered signature reads back as nothing 1ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > positive controls: the cookie still works > the cookie signature is the documented derivation: HMAC(HMAC(root, pending-tenant context), 'pending-tenant:v1:' + slug) 1ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > positive controls: the cookie still works > documented change: a cookie in the OLD format (HMAC(root, slug)) no longer verifies (5-minute cookie; one more click) 0ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > positive controls: the cookie still works > Google sign-in off → 503 and no cookie (unchanged) 1ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > provenance: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, "matflow.import-mapping-provenance.v2") 2ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > provenance: hashToken("matflow.import-mapping-provenance.v2") is not the sub-key either 0ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > kiosk: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, "matflow.kiosk.v1") 1ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > kiosk: hashToken("matflow.kiosk.v1") is not the sub-key either 0ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > card: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, "matflow.card.v1") 0ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > card: hashToken("matflow.card.v1") is not the sub-key either 0ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > pending-tenant: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, "matflow.pending-tenant-cookie.v1") 0ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > pending-tenant: hashToken("matflow.pending-tenant-cookie.v1") is not the sub-key either 0ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > a planted dotted slug's cookie verifies as NO sub-key: kiosk and card tokens and a provenance proof minted with it are refused 5ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > no deployed token is invalidated: fixed-key vectors computed BEFORE the change (1bad6ee / 7ce179c) > provenance: source-key digest and the proof under the derived sub-key are byte-identical, and the stored proof still vouches 0ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > no deployed token is invalidated: fixed-key vectors computed BEFORE the change (1bad6ee / 7ce179c) > kiosk and card tokens: identical strings, and the stored strings still verify 0ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > no deployed token is invalidated: fixed-key vectors computed BEFORE the change (1bad6ee / 7ce179c) > hashToken: unchanged for a token and for an address that merely starts with 'matflow.' 0ms
+ ✓ tests/unit/sec-a4-subkey-separation.test.ts > registry: every root-key derivation in the code base is a registered context > each createHmac(sha256, AUTH_SECRET_VALUE).update(<X_CONTEXT>) names a context in ROOT_KEY_CONTEXTS, with a shape no other signer can produce 64ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > withTenantContext statement shape (SF-62) > sets the tenant AND switches app.bypass_rls off for the transaction, in one statement, tenant as a bind parameter 5ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > withTenantContext statement shape (SF-62) > with a signing key, binds a MAC to the transaction's backend pid and start time 2ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > withTenantContext statement shape (SF-62) > a malformed key fails closed before any transaction opens 2ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > withTenantContext statement shape (SF-62) > still refuses an empty tenant id 0ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > signed context maths agrees with the SQL formula in ctx_tenant() > tenantContextMac == sha256(k^opad || sha256(k^ipad || msg)) for a 64-byte key (the pads the database stores) 1ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > signed context maths agrees with the SQL formula in ctx_tenant() > tenantContextKey: unset -> null, 64 bytes hex -> buffer, anything else throws 0ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > source invariant: no SESSION-level app.* setting in application code > scans a non-trivial number of files 0ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > source invariant: no SESSION-level app.* setting in application code > every set_config of an app.* setting is transaction-local and there is no SET/SET SESSION of app.* 45ms
+ ✓ tests/unit/sec-b2-tenant-context.test.ts > source invariant: no SESSION-level app.* setting in application code > the detector itself flags a planted session-level setting (mutation check) 0ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > lib/auth-secret: a blank secret is unset > R6-N6: NEXTAUTH_SECRET='' with AUTH_SECRET set signs with AUTH_SECRET, not a zero-length key 4ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > lib/auth-secret: a blank secret is unset > whitespace-only NEXTAUTH_SECRET falls through to AUTH_SECRET too 1ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > lib/auth-secret: a blank secret is unset > positive control: NEXTAUTH_SECRET still wins when it is set 2ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > lib/auth-secret: a blank secret is unset > a configured secret is used VERBATIM (never trimmed): a trailing newline keeps every derived key 1ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > lib/auth-secret: a blank secret is unset > production with both unset throws at import (as before, and now for blank values too) 3ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > lib/auth-secret: a blank secret is unset > production with both empty throws at import (as before, and now for blank values too) 1ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > lib/auth-secret: a blank secret is unset > production with NEXTAUTH_SECRET empty, AUTH_SECRET whitespace throws at import (as before, and now for blank values too) 1ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > lib/auth-secret: a blank secret is unset > production with NEXTAUTH_SECRET whitespace, AUTH_SECRET unset throws at import (as before, and now for blank values too) 1ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > lib/auth-secret: a blank secret is unset > production build phase is still allowed to import without a secret (unchanged) 1ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > lib/auth-secret: a blank secret is unset > non-production with nothing usable: empty, as before (callers that must not sign refuse on their own) 0ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > tests/setup-test-db.ts: a blank NEXTAUTH_SECRET is dropped when AUTH_SECRET is set > R6-N6: TEST run with NEXTAUTH_SECRET='' and AUTH_SECRET set → NEXTAUTH_SECRET removed, AUTH_SECRET kept, nothing printed 2ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > tests/setup-test-db.ts: a blank NEXTAUTH_SECRET is dropped when AUTH_SECRET is set > whitespace-only secrets count as unset: a synthetic key is made and the blank NEXTAUTH_SECRET removed 2ms
+ ✓ tests/unit/sec-a4-empty-secret.test.ts > tests/setup-test-db.ts: a blank NEXTAUTH_SECRET is dropped when AUTH_SECRET is set > positive control: a configured NEXTAUTH_SECRET is left alone 1ms
+ ✓ tests/unit/session-revocation.test.ts > a deleted account is a revoked session > REVOKES a staff token whose User row is gone 2ms
+ ✓ tests/unit/session-revocation.test.ts > a deleted account is a revoked session > REVOKES a member token whose Member row is gone 0ms
+ ✓ tests/unit/session-revocation.test.ts > version comparison > revokes when the version has moved (password reset, log out everywhere) 0ms
+ ✓ tests/unit/session-revocation.test.ts > version comparison > allows a token whose version still matches 0ms
+ ✓ tests/unit/session-revocation.test.ts > version comparison > reads the Member table for a member session, not the User table 1ms
+ ✓ tests/unit/session-revocation.test.ts > a failure to check is not a pass > returns 'unknown' rather than 'ok' when the lookup throws 1ms
+ ✓ tests/unit/session-revocation.test.ts > a failure to check is not a pass > REPORTS the failure (and auth.ts now refuses the request: SEC-012, 9 Oct 2026) 2ms
+ ✓ tests/unit/session-revocation.test.ts > a failure to check is not a pass > returns 'unknown' when the token identifies nobody 0ms
+ ✓ tests/unit/session-revocation.test.ts > it survives the RLS role cutover > goes through withRlsBypass, not the bare client 0ms
+ ✓ tests/unit/session-revocation.test.ts > auth.ts survives the RLS role cutover > makes no bare-client tenant-data lookup 1ms
+ ✓ tests/unit/session-revocation.test.ts > auth.ts does not cache the revocation check > has no recheck interval 0ms
+ ✓ tests/unit/session-revocation.test.ts > auth.ts does not cache the revocation check > never reads sessionVersionCheckedAt back as permission to skip the check 0ms
+ ✓ tests/unit/session-revocation.test.ts > auth.ts does not cache the revocation check > still calls the revocation check on the Node-runtime path 0ms
+ ✓ tests/unit/session-revocation.test.ts > display name follows the row (8 Oct 2026, account editing) > passes the current name to the callback when the version matches 0ms
+ ✓ tests/unit/session-revocation.test.ts > display name follows the row (8 Oct 2026, account editing) > never passes a name for a revoked session 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > lower-case operator_password (R3 plant) 7ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > mixed-case Operator_Password 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > lower-case nextauth_secret 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > lower-case migration_database_url 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > SMTP_PASSWORD (R3 plant) 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > smtp_password, lower case 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > SENDGRID_API_TOKEN quoted in code 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > MAIL_SECRET in JSON 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > REDIS_PASSWORD as a YAML line 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > HOOK_TOKEN tight inside a command line 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > a SHORT human password in an env file (any non-empty value) 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > Neon URL password with 'example' inside it (R3 plant) 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > assignment value with 'example' inside it 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > the R3 'example' plant: the marker sits INSIDE one token, so the halves count as one stretch 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: ${} interpolation 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: process.env reference 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: shell variable 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: dotted reference in code 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: call expression in code 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: TypeScript type annotation 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: ternary with a message string 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: comparison 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: placeholder word 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: your-… placeholder 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: angle-bracket slot 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: replace-with assignment 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: empty value 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: migration name ending _token keyed to a checksum 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: localhost URL with 'example' password 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > negative control: 'example' between separators in a URL password 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > a human-readable hard-coded fixture in SOURCE is reported as `literal` (counted, not failing), never hidden 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > the same literal in an env/config file is a candidate 0ms
+ ✓ tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > a value a named rule already reported on the line is not repeated by the generic rule 0ms
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+ ✓ tests/unit/sec-e3-setup-test-db-guard.test.ts > tests/setup-test-db.ts > positive control: a TEST URL is mirrored into DATABASE_URL 2ms
+ ✓ tests/unit/sec-e3-setup-test-db-guard.test.ts > tests/setup-test-db.ts > refuses PGOPTIONS in the environment (node-postgres would apply it to the TEST URL) 2ms
+ ✓ tests/unit/sec-e3-setup-test-db-guard.test.ts > tests/setup-test-db.ts > refuses PGHOST in the environment (node-postgres would apply it to the TEST URL) 1ms
+ ✓ tests/unit/sec-e3-setup-test-db-guard.test.ts > tests/setup-test-db.ts > refuses PGHOSTADDR in the environment (node-postgres would apply it to the TEST URL) 2ms
+ ✓ tests/unit/sec-e3-setup-test-db-guard.test.ts > tests/setup-test-db.ts > refuses an UPPER-CASE production endpoint in TEST_DATABASE_URL (lower-casing is load-bearing) 1ms
+ ✓ tests/unit/sec-e3-setup-test-db-guard.test.ts > tests/setup-test-db.ts > strips an UPPER-CASE production DATABASE_URL when no TEST_DATABASE_URL is set 1ms
+ ✓ tests/unit/sec-f3-setup-test-db-secret.test.ts > tests/setup-test-db.ts signing secret (SF-102) > a database run with neither secret set gets a synthetic, non-empty 64-hex AUTH_SECRET and one line saying so 3ms
+ ✓ tests/unit/sec-f3-setup-test-db-secret.test.ts > tests/setup-test-db.ts signing secret (SF-102) > each process gets its own value (nothing committed to the repository is ever the key) 1ms
+ ✓ tests/unit/sec-f3-setup-test-db-secret.test.ts > tests/setup-test-db.ts signing secret (SF-102) > a configured AUTH_SECRET is left exactly as it is, and nothing is printed 1ms
+ ✓ tests/unit/sec-f3-setup-test-db-secret.test.ts > tests/setup-test-db.ts signing secret (SF-102) > a configured NEXTAUTH_SECRET is left exactly as it is, and nothing is printed 1ms
+ ✓ tests/unit/sec-f3-setup-test-db-secret.test.ts > tests/setup-test-db.ts signing secret (SF-102) > a run without a test database (the plain unit suite) is untouched — unit cells about a missing secret keep their meaning 0ms
+ ✓ tests/unit/sec-f3-setup-test-db-secret.test.ts > tests/setup-test-db.ts signing secret (SF-102) > an empty-string secret counts as unset (an empty key is exactly what SF-102 is about) 1ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > positive control: raster image/png is served inline as an image 7ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > positive control: raster image/jpeg is served inline as an image 1ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > positive control: raster image/webp is served inline as an image 1ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > positive control: raster image/gif is served inline as an image 0ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > positive control: raster image/avif is served inline as an image 0ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > positive control: raster IMAGE/WEBP; charset=binary is served inline as an image 0ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > "image/svg+xml" is served as an opaque attachment, never inline 0ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > "image/svg+xml; charset=utf-8" is served as an opaque attachment, never inline 0ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > "IMAGE/SVG+XML" is served as an opaque attachment, never inline 0ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > "text/html" is served as an opaque attachment, never inline 0ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > "application/xhtml+xml" is served as an opaque attachment, never inline 0ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > "image/x-icon" is served as an opaque attachment, never inline 0ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > "application/pdf" is served as an opaque attachment, never inline 0ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > "" is served as an opaque attachment, never inline 0ms
+ ✓ tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > every response carries a sandbox CSP (a mis-typed document opened directly stays inert) 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > positive control: identical fingerprints with every section pass 2ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > names the seven sections it compares 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: ALTER ROLE matflow_app SET app.bypass_rls = on 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: ALTER DATABASE … SET app.bypass_rls = on 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: a role setting's VALUE changed (row_security on -> off) 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: rewrite rule on AuditLog (DO INSTEAD NOTHING) 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: column grant UPDATE (action) on AuditLog 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: ALTER DEFAULT PRIVILEGES widened 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: ALTER DEFAULT PRIVILEGES removed 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: owner-created view over User granted to the runtime role 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: view definition changed under the same name 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: sequence ACL 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: new schema 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: function in another schema 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: role search_path pointed at the shadow schema 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: database ACL widened (CREATE to the runtime role) 0ms
+ ✓ tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS when the baseline has the sections and the restored fingerprint does not (or the reverse) 1ms
+(node:55416) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ tests/unit/sec-r-db-target-guard.test.ts > resolveDbTarget > accepts the TEST branch and returns the normalised host 2ms
+ ✓ tests/unit/sec-r-db-target-guard.test.ts > resolveDbTarget > refuses production unless explicitly allowed, including an UPPER-CASE host 1ms
+ ✓ tests/unit/sec-r-db-target-guard.test.ts > resolveDbTarget > refuses the three override forms outright 0ms
+ ✓ tests/unit/sec-r-db-target-guard.test.ts > resolveDbTarget > refuses a host that does not contain the expected substring, and garbage 0ms
+ ✓ tests/unit/sec-r-db-target-guard.test.ts > resolveDbTarget > lane E3 (review R2): expectHost is a positive allowlist of exact endpoint ids, not a substring 1ms
+ ✓ tests/unit/sec-r-db-target-guard.test.ts > resolveDbTarget > refuses PGOPTIONS / PGHOST / PGHOSTADDR in the environment (pg would apply them) — lane F2 0ms
+
+ Test Files  15 passed (15)
+      Tests  247 passed (247)
+   Start at  10:26:21
+   Duration  9.38s (transform 660ms, setup 200ms, import 2.49s, tests 3.52s, environment 2ms)
+
+exit=0 end=2026-10-10T09:26:30Z

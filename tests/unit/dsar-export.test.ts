@@ -75,7 +75,7 @@ const {
   logAuditMock: vi.fn(),
 }));
 
-vi.mock("@/lib/api-authz", () => ({
+vi.mock("@/lib/api-authz", () => ({ refuseSupportSession: () => null,
   requireApiOwner: async () => ({ ok: true, ...(await requireOwnerMock()) }),
 }));
 

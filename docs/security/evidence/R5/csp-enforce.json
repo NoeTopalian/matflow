@@ -1,0 +1,669 @@
+{
+  "label": "enforce",
+  "base": "http://127.0.0.1:3975",
+  "at": "2026-10-09T20:33:29.195Z",
+  "pages": [
+    {
+      "who": "anonymous",
+      "path": "/",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 14,
+        "withHeaderNonce": 14,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Gym software built for BJJ academies",
+        "h1": "The gym softwarebuilt for the mat."
+      }
+    },
+    {
+      "who": "anonymous",
+      "path": "/login",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 17,
+        "withHeaderNonce": 17,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/login",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": ""
+      }
+    },
+    {
+      "who": "anonymous",
+      "path": "/login?club=<slug>",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 17,
+        "withHeaderNonce": 17,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/login?club=<slug>",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": ""
+      }
+    },
+    {
+      "who": "anonymous",
+      "path": "/apply",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 17,
+        "withHeaderNonce": 17,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/apply",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "Get your gym on MatFlow"
+      }
+    },
+    {
+      "who": "anonymous",
+      "path": "/legal/privacy",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 16,
+        "withHeaderNonce": 16,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/legal/privacy",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "Privacy Policy | MatFlow",
+        "h1": "Privacy Policy"
+      }
+    },
+    {
+      "who": "anonymous",
+      "path": "/admin/login",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 16,
+        "withHeaderNonce": 16,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/admin/login",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "Admin sign in"
+      }
+    },
+    {
+      "who": "anonymous",
+      "path": "/kiosk/<kiosk-token>",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 16,
+        "withHeaderNonce": 16,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/kiosk/<kiosk-token>",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "secR5 Club"
+      }
+    },
+    {
+      "who": "anonymous",
+      "path": "/leaderboard/<display-token>",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 14,
+        "withHeaderNonce": 14,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/leaderboard/<display-token>",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "secR5 Club"
+      }
+    },
+    {
+      "who": "anonymous",
+      "path": "/waiver/open?token=<waiver-token>",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 16,
+        "withHeaderNonce": 16,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/waiver/open?token=<waiver-token>",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "Liability Waiver & Assumption of Risk"
+      }
+    },
+    {
+      "who": "anonymous",
+      "path": "/kiosk/r5-not-a-valid-token-xx",
+      "status": 404,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": null,
+      "browser": {
+        "finalPath": "/kiosk/r5-not-a-valid-token-xx",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "404: This page could not be found.",
+        "h1": "404"
+      }
+    },
+    {
+      "who": "anonymous",
+      "path": "/leaderboard/r5-not-a-valid-token-xx",
+      "status": 404,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": null,
+      "browser": {
+        "finalPath": "/leaderboard/r5-not-a-valid-token-xx",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "404: This page could not be found.",
+        "h1": "404"
+      }
+    },
+    {
+      "who": "owner",
+      "path": "/dashboard",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 20,
+        "withHeaderNonce": 20,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/dashboard",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "Dashboard"
+      }
+    },
+    {
+      "who": "owner",
+      "path": "/dashboard/members",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 21,
+        "withHeaderNonce": 21,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/dashboard/members",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "Members"
+      }
+    },
+    {
+      "who": "owner",
+      "path": "/dashboard/settings",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 21,
+        "withHeaderNonce": 21,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/dashboard/settings",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "Settings"
+      }
+    },
+    {
+      "who": "owner",
+      "path": "/dashboard/payments",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 18,
+        "withHeaderNonce": 18,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/dashboard/payments",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "Payments | MatFlow",
+        "h1": "Payments"
+      }
+    },
+    {
+      "who": "owner",
+      "path": "/dashboard/checkin",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 20,
+        "withHeaderNonce": 20,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/dashboard/checkin",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "Mark Attendance | MatFlow",
+        "h1": "Mark Attendance"
+      }
+    },
+    {
+      "who": "member",
+      "path": "/member/home",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 18,
+        "withHeaderNonce": 18,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/member/home",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "Good evening,secR5"
+      }
+    },
+    {
+      "who": "member",
+      "path": "/member/schedule",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 19,
+        "withHeaderNonce": 19,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/member/schedule",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "5–11 October"
+      }
+    },
+    {
+      "who": "member",
+      "path": "/member/shop",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 17,
+        "withHeaderNonce": 17,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/member/shop",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "Club Store"
+      }
+    },
+    {
+      "who": "member",
+      "path": "/member/billing",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 17,
+        "withHeaderNonce": 17,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/member/billing",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "Billing"
+      }
+    },
+    {
+      "who": "member",
+      "path": "/member/profile",
+      "status": 200,
+      "location": null,
+      "proxyRan": true,
+      "reportOnly": null,
+      "enforcing": "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint",
+      "enforcingHeaderCount": 1,
+      "nonceLen": 24,
+      "nonceDiffers": true,
+      "reportingEndpoints": "csp-endpoint=\"/api/csp-report\"",
+      "scripts": {
+        "scripts": 20,
+        "withHeaderNonce": 20,
+        "withOtherNonce": 0,
+        "without": 0,
+        "inlineEventHandlerAttrs": 0
+      },
+      "browser": {
+        "finalPath": "/member/profile",
+        "error": null,
+        "violations": 0,
+        "violationKinds": [],
+        "consoleCsp": 0,
+        "consoleSample": [],
+        "title": "MatFlow — Martial Arts Gym Management",
+        "h1": "Profile"
+      }
+    }
+  ],
+  "controls": {
+    "reportSinkGet": {
+      "status": 405,
+      "proxyRan": false
+    },
+    "injectLogin": {
+      "scriptRan": false,
+      "handlerRan": false,
+      "violations": [
+        "script-src-elem|inline|enforce",
+        "script-src-attr|inline|enforce"
+      ]
+    },
+    "injectKiosk": {
+      "scriptRan": false,
+      "handlerRan": false,
+      "violations": [
+        "script-src-elem|inline|enforce",
+        "script-src-attr|inline|enforce"
+      ]
+    },
+    "ownerLanding": "/dashboard",
+    "ownerOnKiosk": {
+      "status": 200,
+      "nonceLen": 24
+    },
+    "memberLanding": "/member/home"
+  },
+  "policies": {
+    "default-src 'self'; script-src 'self' 'nonce-<redacted>' 'strict-dynamic' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report; report-to csp-endpoint": 22
+  },
+  "summary": {
+    "pages": 21,
+    "pages200": 19,
+    "withNoncePolicy": 19,
+    "nonceDiffersEverywhere": true,
+    "scriptsWithoutHeaderNonce": 0,
+    "totalScripts": 334,
+    "inlineHandlerAttrs": 0,
+    "unsafeInlineInNoncePolicyScriptSrc": 0,
+    "violations": 0,
+    "consoleCsp": 0,
+    "distinctPolicies": 1
+  }
+}

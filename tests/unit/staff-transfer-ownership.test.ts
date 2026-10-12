@@ -22,7 +22,7 @@ vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: (...a: unknown[]) => logAuditMock(...a) }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: (...a: unknown[]) => rateLimitMock(...a) }));
 vi.mock("@/lib/prisma-tenant", () => ({
-  withTenantContext: (_t: string, fn: (tx: unknown) => unknown) => Promise.resolve(fn({ user: { findFirst: findFirstMock, update: updateMock } })),
+  withTenantContext: (_t: string, fn: (tx: unknown) => unknown) => Promise.resolve(fn({ user: { findFirst: findFirstMock, update: updateMock, updateMany: updateMock } })),
 }));
 
 import { POST } from "@/app/api/staff/[id]/transfer-ownership/route";
@@ -39,7 +39,7 @@ beforeEach(() => {
   authMock.mockResolvedValue(OWNER);
   rateLimitMock.mockResolvedValue({ allowed: true });
   findFirstMock.mockImplementation(async (args: { where: { role?: string; id?: string } }) => (args.where.role === "owner" ? me : target));
-  updateMock.mockResolvedValue({});
+  updateMock.mockResolvedValue({ count: 1 });
 });
 
 describe("POST /api/staff/[id]/transfer-ownership", () => {
@@ -47,9 +47,19 @@ describe("POST /api/staff/[id]/transfer-ownership", () => {
     const res = await POST(req({ password: "OwnerPass2026x" }), params());
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, newOwner: { id: "user-mgr" } });
-    expect(updateMock).toHaveBeenCalledWith({ where: { id: "user-owner" }, data: { role: "manager", sessionVersion: { increment: 1 } } });
-    expect(updateMock).toHaveBeenCalledWith({ where: { id: "user-mgr" }, data: { role: "owner", sessionVersion: { increment: 1 } } });
+    // Conditional on the roles read (security lane B, SEC-032): a concurrent transfer cannot leave two owners.
+    expect(updateMock).toHaveBeenCalledWith({ where: { id: "user-owner", tenantId: "tenant-A", role: "owner" }, data: { role: "manager", sessionVersion: { increment: 1 } } });
+    expect(updateMock).toHaveBeenCalledWith({ where: { id: "user-mgr", tenantId: "tenant-A", role: "manager" }, data: { role: "owner", sessionVersion: { increment: 1 } } });
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ tx: expect.anything() })); // audit in the same transaction
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "staff.ownership_transferred", entityId: "user-mgr", metadata: expect.objectContaining({ previousOwnerId: "user-owner", newOwnerId: "user-mgr", previousTargetRole: "manager" }) }));
+  });
+
+  it("a concurrent transfer that already demoted this owner: 409, nothing promoted, no audit row (SEC-032)", async () => {
+    updateMock.mockResolvedValueOnce({ count: 0 });
+    const res = await POST(req({ password: "OwnerPass2026x" }), params());
+    expect(res.status).toBe(409);
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(logAuditMock).not.toHaveBeenCalled();
   });
 
   it("a wrong password changes nothing", async () => {

@@ -1,0 +1,29 @@
+# TEST DB runs, Node v24.21.0, guarded runners (ep-hidden-salad only). Summary lines only; hosts and URLs stripped.
+== db-rotate-owner
+Test Files  1 passed (1)
+Tests  6 passed (6)
+== db-rotate-restricted
+Test Files  1 passed (1)
+Tests  6 passed (6)
+== db-rotate-owner2
+Test Files  1 passed (1)
+Tests  6 passed (6)
+== db-sec-c3-rate-limit-atomic-db-owner
+Test Files  1 passed (1)
+Tests  6 passed (6)
+== db-sec-c3-rate-limit-atomic-db-restricted
+Test Files  1 passed (1)
+Tests  6 passed (6)
+== db-sec-c4-rate-limit-saturation-db-owner
+Test Files  1 passed (1)
+Tests  5 passed (5)
+== db-sec-c4-rate-limit-saturation-db-restricted
+× security bucket, burst of 120 on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key 4460ms
+Test Files  1 failed (1)
+Tests  1 failed | 4 passed (5)
+== db-sec-c4-rate-limit-saturation-db-restricted-rerun
+Test Files  1 passed (1)
+Tests  5 passed (5)
+
+Note: a first owner attempt of sec-m1-demo-rotate-db failed in beforeAll with connect ETIMEDOUT (no fixture created; 6 skipped); a TCP probe then connected and the retry passed.
+Note: sec-c4 restricted first run: 1 failed (burst cell: allowed 3 of 5, fallback reason=pool-timeout) = R7-N1 under load; lib/rate-limit.ts unchanged by M2 (git diff empty); re-run 5/5.

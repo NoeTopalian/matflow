@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# R7 both-role sweep (brief item 5). One file at a time, owner then restricted; the exit code is the runner's own,
+# captured from the command substitution (never PIPESTATUS after a pipe). Ceiling 2400 s for the A3 oracle, 900 s otherwise.
+set -u
+SP="<scratchpad>/security/R7"
+cd "$SP/wt" || exit 1
+OUT="$SP/logs/sweep.txt"
+mkdir -p "$SP/logs/sweep"
+: > "$OUT"
+echo "sha=$(git rev-parse HEAD) start=$(date -u +%FT%TZ)" >> "$OUT"
+FILES=$(ls tests/integration/sec-a2-*.test.ts tests/integration/sec-a3-*.test.ts tests/integration/sec-a4-*.test.ts tests/integration/sec-c3-*.test.ts tests/integration/sec-c4-*.test.ts tests/integration/sec-d2-*.test.ts tests/integration/sec-d3-*.test.ts tests/integration/sec-f3-*.test.ts tests/integration/attendance-import-engine.test.ts)
+for f in $FILES; do
+  for role in owner restricted; do
+    runner="$SP/run-$role.sh"
+    b=$(basename "$f" .test.ts)
+    ceil=900; case "$b" in sec-a3-lockout-oracle-db) ceil=2400;; esac
+    t0=$(date -u +%T)
+    full=$(timeout $ceil bash "$runner" "$f" 2>&1); code=$?
+    printf '%s\n' "$full" > "$SP/logs/sweep/$role-$b.log"
+    res=$(printf '%s\n' "$full" | grep -E "^\s*(Tests|Test Files) " | tr -s ' ' | tr '\n' ' ')
+    echo "$role $f exit=$code start=$t0 end=$(date -u +%T) $res" >> "$OUT"
+  done
+done
+echo "=== end $(date -u +%FT%TZ)" >> "$OUT"
+echo "runs exit=0: $(grep -c ' exit=0 ' "$OUT") of $(grep -cE '^(owner|restricted) ' "$OUT")" >> "$OUT"
+echo "non-zero:" >> "$OUT"
+grep -E "^(owner|restricted) " "$OUT" | grep -v " exit=0 " >> "$OUT" || true

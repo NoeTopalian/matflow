@@ -1,0 +1,5 @@
+node=v24.21.0 sha=2a6487e start=2026-10-10T08:47:38Z cmd=npm run build
+▲ Next.js 16.3.8 (Turbopack)
+✓ Compiled successfully in 27.8s
+Route (app)
+exit=0 end=2026-10-10T08:49:02Z

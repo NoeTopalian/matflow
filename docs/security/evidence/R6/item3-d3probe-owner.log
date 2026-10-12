@@ -1,0 +1,91 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/R6/wtm
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:111576) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[secr6d3] role neondb_owner signingKeyLen=64 harnessRootLen=64
+ ✓ tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-1 COPIED MAC INTO A FORGED MAPPING (same club), digest re-pointed at the forged key → pending 9756ms
+ ✓ tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-1b COPIED ROW VERBATIM (legitimate digest and target) onto a forged mapping → pending 8238ms
+ ✓ tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-2 MINTED IN CLUB B, PASTED INTO CLUB A (digest, prev, createdAt and proof as minted; target re-pointed) → pending 27458ms
+ ✓ tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-3 REPLAYED LEGITIMATE ROW WITH A LATER createdAt (mapping unchanged) → its proof no longer verifies → pending (denial only) 6907ms
+ ✓ tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-4a DELETE THE NEWEST ROW, mapping NOT re-pointed (older row names another member) → pending 10190ms
+ × tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-4b DELETE THE NEWEST ROW AND RE-POINT to the older owner decision (tail truncation) → secure outcome: pending 8402ms
+   → R6-4b tail truncation rolled back to an older owner decision: expected { attendance: 1, …(2) } to deeply equal { Object (attendance, memberId, ...) }
+ ✓ tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-5 GENESIS-POINTING ROW on a mapping that already has rows (first row metadata, prev = genesis, dated now, re-pointed) → pending 8774ms
+ ✓ tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-5b GENESIS ROW WITH A FRESH CORRECT TUPLE under the real key but prev = genesis on a mapping with history → refused by the chain 2617ms
+[secr6d3] K1 pending-tenant status=200 cookieSet=true subKeyLen=32 equalsProvenanceSubKey=true
+ × tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-K1 KEY SEPARATION: a club whose slug IS the provenance key context makes /api/account/pending-tenant hand out HMAC(root, context), the provenance sub-key, as a cookie; secure outcome: a proof minted with it does NOT bind 7697ms
+   → R6-K1: a proof minted with the sub-key leaked by the pending-tenant cookie vouched: expected { attendance: 1, …(2) } to deeply equal { Object (attendance, memberId, ...) }
+[secr6d3] teardown: 10 clubs removed (36 provenance rows), 0 rows left
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-4b DELETE THE NEWEST ROW AND RE-POINT to the older owner decision (tail truncation) → secure outcome: pending
+AssertionError: R6-4b tail truncation rolled back to an older owner decision: expected { attendance: 1, …(2) } to deeply equal { Object (attendance, memberId, ...) }
+
+- Expected
++ Received
+
+  {
+-   "attendance": 0,
+-   "disposition": "pending_person",
+-   "memberId": null,
++   "attendance": 1,
++   "disposition": "attendance_created",
++   "memberId": "cm5xqdds00ci3gxfkds0n08ft",
+  }
+
+ ❯ expectNotBound tests/integration/zz-r6-d3-probe-db.test.ts:131:6
+    129|   const rows = await ledger(club);
+    130|   expect({ attendance: await attendanceOf(club, wrong), memberId: rows…
+    131|     .toEqual({ attendance: 0, memberId: null, disposition: "pending_pe…
+       |      ^
+    132| }
+    133| async function expectBound(club: Club, right: string) {
+ ❯ tests/integration/zz-r6-d3-probe-db.test.ts:302:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-K1 KEY SEPARATION: a club whose slug IS the provenance key context makes /api/account/pending-tenant hand out HMAC(root, context), the provenance sub-key, as a cookie; secure outcome: a proof minted with it does NOT bind
+AssertionError: R6-K1: a proof minted with the sub-key leaked by the pending-tenant cookie vouched: expected { attendance: 1, …(2) } to deeply equal { Object (attendance, memberId, ...) }
+
+- Expected
++ Received
+
+  {
+-   "attendance": 0,
+-   "disposition": "pending_person",
+-   "memberId": null,
++   "attendance": 1,
++   "disposition": "attendance_created",
++   "memberId": "cm5xqdds0r0mpjcgd26ht51o2",
+  }
+
+ ❯ expectNotBound tests/integration/zz-r6-d3-probe-db.test.ts:131:6
+    129|   const rows = await ledger(club);
+    130|   expect({ attendance: await attendanceOf(club, wrong), memberId: rows…
+    131|     .toEqual({ attendance: 0, memberId: null, disposition: "pending_pe…
+       |      ^
+    132| }
+    133| async function expectBound(club: Club, right: string) {
+ ❯ tests/integration/zz-r6-d3-probe-db.test.ts:361:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 7 passed (9)
+   Start at  03:58:56
+   Duration  141.20s (transform 1.35s, setup 109ms, import 37.56s, tests 101.86s, environment 0ms)
+

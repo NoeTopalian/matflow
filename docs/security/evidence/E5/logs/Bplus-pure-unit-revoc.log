@@ -1,0 +1,44 @@
+node=v24.21.0 sha=2a6487e start=2026-10-10T09:12:16Z cmd=npx vitest run tests/unit/sec-a-revocation-fail-closed.test.ts tests/unit/session-revocation.test.ts
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/E5/wt
+
+ ❯ tests/unit/session-revocation.test.ts (15 tests | 1 failed) 11ms
+     × REPORTS the failure, because revocation is failing open while it lasts 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/session-revocation.test.ts > a failure to check is not a pass > REPORTS the failure, because revocation is failing open while it lasts
+AssertionError: expected { tags: { area: 'auth', …(2) } } to match object { tags: { area: 'auth', …(2) } }
+
+- Expected
++ Received
+
+  {
+    "tags": {
+      "area": "auth",
+      "control": "session-revocation",
+-     "failMode": "open",
++     "failMode": "closed",
+    },
+  }
+
+ ❯ tests/unit/session-revocation.test.ts:97:51
+     95|     // same catch — the one failure that must never look like a blip.
+     96|     expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+     97|     expect(captureExceptionMock.mock.calls[0][1]).toMatchObject({
+       |                                                   ^
+     98|       tags: { area: "auth", control: "session-revocation", failMode: "…
+     99|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 61 passed (62)
+   Start at  10:12:19
+   Duration  1.35s (transform 212ms, setup 57ms, import 102ms, tests 784ms, environment 0ms)
+
+exit=1 end=2026-10-10T09:12:20Z

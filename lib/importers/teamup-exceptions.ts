@@ -8,7 +8,7 @@
  *
  * Nothing here is a guess: every row names its source and what it needs.
  */
-import { csvRow } from "@/lib/csv";
+import { CSV_UTF8_BOM, csvRow } from "@/lib/csv";
 import { LIVE_ENTITLEMENTS, unmatchedPlanLabels, type MemberDraft } from "@/lib/importers";
 
 export type ExceptionKind =
@@ -133,5 +133,7 @@ export function exceptionsCsv(rows: ExceptionRow[], header: { club: string; file
     csvRow(["Kind", "What it means", "Person or row", "Email", "Detail", "What to do", "Source rows"]),
     ...rows.map((r) => csvRow([r.kind, EXCEPTION_WORDS[r.kind].title, r.name, r.email ?? "", r.detail, r.action, r.sourceRows.join(" ")])),
   ];
-  return lines.join("\r\n") + "\r\n";
+  // BOM first, like every other MatFlow CSV (lib/csv csvDocument): without it
+  // Excel on Windows reads the file as ANSI and garbles accented names.
+  return CSV_UTF8_BOM + lines.join("\r\n") + "\r\n";
 }

@@ -1,0 +1,22 @@
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+ ❯ tests/unit/sec-b2-tenant-context.test.ts (9 tests | 1 failed) 82ms
+     × sets the tenant AND switches app.bypass_rls off for the transaction, in one statement, tenant as a bind parameter 11ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/unit/sec-b2-tenant-context.test.ts > withTenantContext statement shape (SF-62) > sets the tenant AND switches app.bypass_rls off for the transaction, in one statement, tenant as a bind parameter
+AssertionError: expected 'SELECT set_config(\'app.current_tenan…' to match /set_config\('app\.bypass_rls', 'off',…/
+- Expected:
+/set_config\('app\.bypass_rls', 'off', true\)/
++ Received:
+"SELECT set_config('app.current_tenant_id', $, true)"
+ ❯ tests/unit/sec-b2-tenant-context.test.ts:35:17
+     33|     const sql = sqlOf(call);
+     34|     expect(sql).toMatch(/set_config\('app\.current_tenant_id', \$, tru…
+     35|     expect(sql).toMatch(/set_config\('app\.bypass_rls', 'off', true\)/…
+       |                 ^
+     36|     expect(call.slice(1)).toEqual(["tenant-A"]);
+     37|     expect(txQueryRaw).not.toHaveBeenCalled(); // signing is off witho…
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+ Test Files  1 failed (1)
+      Tests  1 failed | 8 passed (9)
+   Start at  18:56:43
+   Duration  634ms (transform 90ms, setup 52ms, import 204ms, tests 82ms, environment 0ms)

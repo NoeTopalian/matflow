@@ -1,0 +1,75 @@
+// Reviewer R scratch (not committed): does a DB fault in the revocation lookup,
+// hit on a request through the REAL proxy.ts + REAL next-auth wrapper, clear the
+// session cookie (= sign the browser out)?
+import { vi, describe, it, expect, beforeAll } from "vitest";
+
+const h = vi.hoisted(() => ({ mode: "ok" as "ok" | "fault" }));
+process.env.AUTH_SECRET = "r-review-secret-0123456789abcdef0123456789abcdef";
+process.env.AUTH_TRUST_HOST = "true";
+
+vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
+const row = { sessionVersion: 3, name: "Coach R", tenantId: "t-r" };
+const tx = {
+  user: { findUnique: vi.fn(async () => row), findFirst: vi.fn() },
+  member: { findUnique: vi.fn(async () => row), findFirst: vi.fn() },
+  tenant: { findUnique: vi.fn() },
+};
+vi.mock("@/lib/prisma", () => ({ prisma: tx }));
+vi.mock("@/lib/prisma-tenant", () => ({
+  withRlsBypass: async (fn: (t: unknown) => unknown) => {
+    if (h.mode === "fault") {
+      const e = new Error("canceling statement due to statement timeout") as Error & { code?: string };
+      e.code = "57014";
+      throw e;
+    }
+    return fn(tx);
+  },
+  withTenantContext: async (_id: string, fn: (t: unknown) => unknown) => fn(tx),
+}));
+vi.mock("@/lib/impersonation", () => ({
+  resolveActiveImpersonation: vi.fn(async () => null),
+  hasImpersonationCookie: vi.fn(async () => false),
+}));
+vi.mock("@/lib/brand-refresh", () => ({ shouldRefreshBrand: () => false }));
+
+let proxy: (req: unknown, ev?: unknown) => Promise<Response>;
+let cookie: string;
+
+beforeAll(async () => {
+  const { encode } = await import("next-auth/jwt");
+  const tok = await encode({
+    salt: "__Secure-authjs.session-token",
+    secret: process.env.AUTH_SECRET!,
+    token: {
+      id: "u-r-coach", role: "coach", tenantId: "t-r", tenantSlug: "r-club", tenantName: "R Club",
+      sessionVersion: 3, memberId: null, mustChangePassword: false, totpPending: false,
+      requireTotpSetup: false, totpEnabled: false, name: "Coach R", brandFetchedAt: Date.now(),
+    },
+  });
+  cookie = `__Secure-authjs.session-token=${tok}`;
+  proxy = (await import("../../proxy")).default as never;
+});
+
+async function hit(path: string) {
+  const { NextRequest } = await import("next/server");
+  const req = new NextRequest(`https://localhost:3999${path}`, { headers: { cookie } });
+  const res = await proxy(req, {});
+  const sc = res.headers.getSetCookie(); console.log("ALL", path, h.mode, res.status, JSON.stringify(sc.map((c) => c.split(";")[0].slice(0, 30) + " | " + c.split(";").slice(1).join(";"))));
+  return { status: res.status, loc: res.headers.get("location"), sc };
+}
+
+describe("R-1 proxy + DB fault", () => {
+  it.each(["/dashboard", "/api/members"])("healthy lookup on %s: passes, cookie refreshed not cleared", async (p) => {
+    h.mode = "ok";
+    const r = await hit(p);
+    console.log("OK", p, r.status, r.loc, r.sc.map((c) => c.slice(0, 40) + "…" + (/(Max-Age=0|Expires=Thu, 01 Jan 1970)/i.test(c) ? " CLEAR" : " set")));
+    expect(r.sc.some((c) => /Max-Age=0|1970/i.test(c))).toBe(false);
+  });
+  it.each(["/dashboard", "/api/members"])("faulted lookup on %s: refused AND does the cookie get cleared?", async (p) => {
+    h.mode = "fault";
+    const r = await hit(p);
+    console.log("FAULT", p, r.status, r.loc, r.sc.map((c) => c.slice(0, 40) + "…" + (/(Max-Age=0|Expires=Thu, 01 Jan 1970)/i.test(c) ? " CLEAR" : " set")));
+    expect(r.status === 401 || (r.loc ?? "").includes("/login")).toBe(true);
+    expect(r.sc.some((c) => /Max-Age=0|1970/i.test(c))).toBe(true); // asserts the regression exists
+  });
+});

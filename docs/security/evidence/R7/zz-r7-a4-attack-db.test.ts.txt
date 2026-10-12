@@ -1,0 +1,283 @@
+// Reviewer R7 probe (iteration 2, closing review) — attacks on lane A4's lockout reservation (SF-111).
+// Harness pattern copied from tests/integration/sec-a4-lockout-burst-db.test.ts at 03ef584 (real lib/auth-lockout
+// functions wrapped only to COUNT verdicts); every cell is R7's own. TEST branch only, through R7 copies of the
+// guarded runners, both roles; synthetic secr7a- club; count-checked teardown. Output: one JSON line per cell,
+// appended to $R7_OUT. R7_PROD_POOL=1 forces NODE_ENV=production so the pool is the production size (5).
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+import bcrypt from "bcryptjs";
+import { appendFileSync } from "node:fs";
+import pg from "pg";
+
+vi.hoisted(() => {
+  if (process.env.R7_PROD_POOL === "1") (process.env as Record<string, string>).NODE_ENV = "production";
+});
+
+type Authorize = (credentials: Record<string, unknown>, request: Request) => Promise<Record<string, unknown> | null>;
+const captured = vi.hoisted(() => ({ authorize: undefined as undefined | Authorize }));
+vi.mock("next-auth", () => ({
+  default: (config: { providers: { authorize?: Authorize }[] }) => {
+    for (const p of config.providers) if (p?.authorize) captured.authorize = p.authorize;
+    return { handlers: {}, auth: async () => null, signIn: async () => {}, signOut: async () => {} };
+  },
+  CredentialsSignin: class extends Error {
+    code = "credentials";
+  },
+}));
+vi.mock("next-auth/providers/credentials", () => ({ default: (c: unknown) => c }));
+vi.mock("next-auth/providers/google", () => ({ default: (c: unknown) => c }));
+vi.mock("@/lib/login-event", () => ({ recordLoginEvent: async () => {} }));
+vi.mock("@sentry/nextjs", () => ({ captureException: () => {} }));
+vi.mock("next/server", async (orig) => ({
+  ...(await orig<typeof import("next/server")>()),
+  after: (fn: () => unknown) => {
+    setTimeout(() => void fn(), 0);
+  },
+}));
+const verdicts = vi.hoisted(() => ({ wrong: 0, right: 0, errors: [] as string[] }));
+vi.mock("@/lib/auth-lockout", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/auth-lockout")>();
+  return {
+    ...real,
+    lockoutState: async (...a: Parameters<typeof real.lockoutState>) => {
+      try {
+        return await real.lockoutState(...a);
+      } catch (e) {
+        verdicts.errors.push(String((e as Error)?.message ?? e).replace(/\s+/g, " ").slice(0, 100));
+        throw e;
+      }
+    },
+    recordFailure: async (...a: Parameters<typeof real.recordFailure>) => {
+      verdicts.wrong++;
+      return real.recordFailure(...a);
+    },
+    clearPairOnSuccess: async (...a: Parameters<typeof real.clearPairOnSuccess>) => {
+      verdicts.right++;
+      return real.clearPairOnSuccess(...a);
+    },
+  };
+});
+vi.mock("@/lib/rate-limit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  checkRateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }),
+}));
+
+import { withRlsBypass } from "@/lib/prisma-tenant";
+import { prisma, prismaPoolConfig } from "@/lib/prisma";
+import { lockoutKeys, ADDR_MAX, PAIR_MAX, LOCKOUT_LOCK_NS } from "@/lib/auth-lockout";
+import { deviceHash } from "@/lib/login-fingerprint";
+
+const HAS_DB = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
+const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
+const STAMP = `secr7a-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const E = (who: string) => `${STAMP}-${who}@example.test`;
+const PASSWORD = "secR7-correct-horse-battery";
+const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+const KNOWN_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+const NET = Math.floor(Math.random() * 200) + 20;
+const net = (i: number) => `198.${NET}.${i}.10`; // distinct /24 per i
+const KNOWN_IP = `100.${NET}.7.77`; // the victim's network
+const knownNetHost = (i: number) => `100.${NET}.7.${(i % 200) + 20}`; // same /24 as KNOWN_IP
+
+type Outcome = "admitted" | "refused" | `code:${string}`;
+const used: { email: string; ip: string }[] = [];
+function report(tag: string, data: Record<string, unknown>) {
+  const line = `${tag} ${JSON.stringify({ role: ROLE, nodeEnv: process.env.NODE_ENV, poolMax: prismaPoolConfig().max, ...data })}`;
+  process.stderr.write(line + "\n");
+  if (process.env.R7_OUT) appendFileSync(process.env.R7_OUT, line + "\n");
+}
+
+describe.skipIf(!HAS_DB)(`R7 attacks on the A4 lockout reservation (${ROLE})`, () => {
+  const t = { id: "", slug: "" };
+  async function attempt(email: string, password: string, ip: string, ua = UA): Promise<Outcome> {
+    used.push({ email, ip });
+    if (!captured.authorize) await import("@/auth");
+    try {
+      const r = await captured.authorize!(
+        { email, password, tenantSlug: t.slug },
+        new Request("http://localhost/api/auth/callback/credentials", { method: "POST", headers: { "x-vercel-forwarded-for": ip, "user-agent": ua } }),
+      );
+      return r ? "admitted" : "refused";
+    } catch (e) {
+      return `code:${(e as { code?: string }).code ?? "error"}`;
+    }
+  }
+  const addrCount = (email: string) => prisma.rateLimitHit.count({ where: { bucket: lockoutKeys(t.slug, email, "x").addr } });
+  const pairCount = (email: string, ip: string) => prisma.rateLimitHit.count({ where: { bucket: lockoutKeys(t.slug, email, ip).pair } });
+  const tally = (out: Outcome[]) => out.reduce<Record<string, number>>((a, o) => ((a[o] = (a[o] ?? 0) + 1), a), {});
+  const snap = () => ({ wrong: verdicts.wrong, right: verdicts.right, failClosed: verdicts.errors.length, errorKinds: [...new Set(verdicts.errors)].slice(0, 3) });
+  const reset = () => Object.assign(verdicts, { wrong: 0, right: 0, errors: [] });
+
+  beforeAll(async () => {
+    const who = await withRlsBypass((tx) => tx.$queryRaw<{ current_user: string }[]>`SELECT current_user`);
+    if (ROLE === "restricted") expect(who[0]?.current_user).toBe("matflow_app");
+    else expect(who[0]?.current_user).not.toBe("matflow_app");
+    const hash = bcrypt.hashSync(PASSWORD, 12);
+    await withRlsBypass(async (tx) => {
+      const c = await tx.tenant.create({ data: { name: `${STAMP} club`, slug: `${STAMP}-club`, onboardingCompleted: true } });
+      Object.assign(t, { id: c.id, slug: c.slug });
+      for (const w of ["rf40", "rf10", "kb-last", "kb-mid", "kn-net", "kn-burst", "kn-seed", "fc-lock", "big"]) {
+        const m = await tx.member.create({ data: { tenantId: c.id, email: E(w), name: `secR7 ${w}`, passwordHash: hash } });
+        if (w.startsWith("k")) {
+          await tx.loginEvent.create({
+            data: { tenantId: c.id, memberId: m.id, deviceHash: deviceHash(KNOWN_IP, KNOWN_UA), ipApprox: `100.${NET}.7.0`, uaSummary: "Safari 17 on macOS" },
+          });
+        }
+      }
+    });
+    await import("@/auth");
+  }, 120_000);
+
+  afterAll(async () => {
+    if (!t.id) return;
+    await new Promise((r) => setTimeout(r, 1500));
+    const buckets = [...new Set(used.flatMap(({ email, ip }) => [lockoutKeys(t.slug, email, ip).addr, lockoutKeys(t.slug, email, ip).pair]))];
+    await prisma.rateLimitHit.deleteMany({ where: { bucket: { in: buckets } } });
+    await withRlsBypass(async (tx) => {
+      await tx.auditLog.deleteMany({ where: { tenantId: t.id } });
+      await tx.loginEvent.deleteMany({ where: { tenantId: t.id } });
+      await tx.member.deleteMany({ where: { tenantId: t.id } });
+      await tx.tenant.delete({ where: { id: t.id } });
+    }, { timeout: 60_000 });
+    const left = {
+      tenants: await withRlsBypass((tx) => tx.tenant.count({ where: { slug: { startsWith: STAMP } } })),
+      members: await withRlsBypass((tx) => tx.member.count({ where: { email: { startsWith: STAMP } } })),
+      hits: await prisma.rateLimitHit.count({ where: { bucket: { in: buckets } } }),
+    };
+    report("R7-TEARDOWN", left);
+    expect(left).toEqual({ tenants: 0, members: 0, hits: 0 });
+  }, 120_000);
+
+  it("R7-1 right password FIRST in a 40-way burst: admitted, its slot refunded, at most ADDR_MAX wrong verdicts", async () => {
+    const email = E("rf40");
+    reset();
+    const out = await Promise.all(Array.from({ length: 40 }, (_, i) => attempt(email, i === 0 ? PASSWORD : `wrong-r7-${i}`, net(i))));
+    const counter = await addrCount(email);
+    const v = snap();
+    report("R7-1", { tally: tally(out), verdicts: v, rightPasswordOutcome: out[0], counter });
+    expect(v.wrong, "wrong verdicts").toBeLessThanOrEqual(ADDR_MAX);
+    expect(counter, "counter equals the wrong verdicts (the success gave its slot back)").toBe(v.wrong);
+    expect(out[0], "the right password, first in the burst").toBe("admitted");
+    expect(out.filter((o) => o === "admitted").length).toBe(1);
+  }, 600_000);
+
+  it("R7-2 right password first + 9 wrong concurrently: all judged, counter 9; the person signs in again (not locked out by their own success); one more wrong fills the cap", async () => {
+    const email = E("rf10");
+    reset();
+    const out = await Promise.all(Array.from({ length: 10 }, (_, i) => attempt(email, i === 0 ? PASSWORD : `wrong-r7b-${i}`, net(50 + i))));
+    const counter = await addrCount(email);
+    const again = await attempt(email, PASSWORD, net(70));
+    const counterAgain = await addrCount(email);
+    const wrong10 = await attempt(email, "wrong-r7b-10th", net(71));
+    const counter10 = await addrCount(email);
+    const rightAtCap = await attempt(email, PASSWORD, net(72));
+    report("R7-2", { tally: tally(out), verdicts: snap(), counter, again, counterAgain, wrong10, counter10, rightAtCap });
+    expect(out[0]).toBe("admitted");
+    expect(counter).toBe(9);
+    expect(again, "the person is not locked out by their own success").toBe("admitted");
+    expect(counterAgain).toBe(9);
+    expect(wrong10).toBe("refused");
+    expect(counter10).toBe(ADDR_MAX);
+    expect(rightAtCap, "unknown network at the cap").toBe("code:rate_limited");
+  }, 600_000);
+
+  for (const [label, pos] of [["kb-last", 39], ["kb-mid", 20]] as const) {
+    it(`R7-3 ${label}: 39 wrong from 39 networks + the known device (right password) at index ${pos}, concurrently → the known device is admitted under the address cap`, async () => {
+      const email = E(label);
+      reset();
+      const out = await Promise.all(Array.from({ length: 40 }, (_, i) =>
+        i === pos ? attempt(email, PASSWORD, KNOWN_IP, KNOWN_UA) : attempt(email, `wrong-r7c-${i}`, net(100 + i)),
+      ));
+      const counter = await addrCount(email);
+      const v = snap();
+      report("R7-3", { label, pos, tally: tally(out), verdicts: v, knownOutcome: out[pos], counter });
+      expect(out[pos], "the known device").toBe("admitted");
+      expect(v.wrong, "wrong verdicts from unknown networks").toBeLessThanOrEqual(ADDR_MAX);
+      expect(counter, "counter = wrong verdicts (the known device was refunded)").toBe(v.wrong);
+    }, 600_000);
+  }
+
+  it("R7-4 the known device is NOT exempt from the network cap: attackers on the victim's /24 with the victim's browser family (so exempt from the address cap) burst 40 → at most PAIR_MAX verdicts from that network", async () => {
+    const email = E("kn-net");
+    reset();
+    const out = await Promise.all(Array.from({ length: 40 }, (_, i) => attempt(email, `wrong-r7d-${i}`, knownNetHost(i), KNOWN_UA)));
+    const v = snap();
+    const pair = await pairCount(email, KNOWN_IP);
+    const counter = await addrCount(email);
+    const own = await attempt(email, PASSWORD, KNOWN_IP, KNOWN_UA);
+    report("R7-4", { tally: tally(out), verdicts: v, pairCounter: pair, addrCounter: counter, ownAfter: own });
+    expect(v.wrong, "verdicts from one network, exempt address").toBeLessThanOrEqual(PAIR_MAX);
+    expect(pair).toBeLessThanOrEqual(PAIR_MAX);
+    expect(own, "the person on the capped network").toBe("code:rate_limited");
+  }, 600_000);
+
+  it("R7-4b address ALREADY at its cap (so every known-device request is exempt at the read), network counter 0: 40 concurrent from the victim's /24 with the victim's browser family → at most PAIR_MAX verdicts (the exemption never lifts the network cap)", async () => {
+    const email = E("kn-burst");
+    const k = lockoutKeys(t.slug, email, KNOWN_IP);
+    used.push({ email, ip: KNOWN_IP });
+    await prisma.rateLimitHit.createMany({ data: Array.from({ length: ADDR_MAX }, () => ({ bucket: k.addr })) });
+    reset();
+    const out = await Promise.all(Array.from({ length: 40 }, (_, i) => attempt(email, i === 39 ? PASSWORD : `wrong-r7e-${i}`, knownNetHost(i), KNOWN_UA)));
+    const v = snap();
+    const pair = await pairCount(email, KNOWN_IP);
+    report("R7-4b", { tally: tally(out), verdicts: v, pairCounter: pair, addrCounter: await addrCount(email) });
+    expect(v.wrong, "wrong verdicts from one network").toBeLessThanOrEqual(PAIR_MAX);
+    expect(pair).toBeLessThanOrEqual(PAIR_MAX);
+  }, 600_000);
+
+  it("R7-5 seeded: address AND the known network at their caps → the known device with the right password is refused (network cap); from a fresh known-UA network it would not be known (control: rate_limited too)", async () => {
+    const email = E("kn-seed");
+    const k = lockoutKeys(t.slug, email, KNOWN_IP);
+    used.push({ email, ip: KNOWN_IP });
+    await prisma.rateLimitHit.createMany({ data: [
+      ...Array.from({ length: ADDR_MAX }, () => ({ bucket: k.addr })),
+      ...Array.from({ length: PAIR_MAX }, () => ({ bucket: k.pair })),
+    ] });
+    const own = await attempt(email, PASSWORD, KNOWN_IP, KNOWN_UA);
+    const otherNet = await attempt(email, PASSWORD, net(150), KNOWN_UA);
+    // Positive control on the same address: clear only the network counter → the known device is admitted.
+    await prisma.rateLimitHit.deleteMany({ where: { bucket: k.pair } });
+    const ownAfterNetCleared = await attempt(email, PASSWORD, KNOWN_IP, KNOWN_UA);
+    report("R7-5", { own, otherNet, ownAfterNetCleared, addr: await addrCount(email) });
+    expect(own).toBe("code:rate_limited");
+    expect(otherNet).toBe("code:rate_limited");
+    expect(ownAfterNetCleared).toBe("admitted");
+  }, 120_000);
+
+  it("R7-6 reservation cannot be made (address lock held 13 s by another connection): every attempt incl. the right password fails CLOSED — none admitted, none judged, no slot taken; after release the right password is admitted", async () => {
+    const email = E("fc-lock");
+    const k = lockoutKeys(t.slug, email, "x");
+    const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    await c.connect();
+    await c.query("BEGIN");
+    await c.query("SELECT pg_advisory_xact_lock($1::int4, hashtext($2::text))", [LOCKOUT_LOCK_NS, k.addr]);
+    reset();
+    const t0 = Date.now();
+    const pending = Promise.all(Array.from({ length: 6 }, (_, i) => attempt(email, i === 0 ? PASSWORD : `wrong-r7f-${i}`, net(160 + i))));
+    const releaseAfter = new Promise<void>((r) => setTimeout(async () => { await c.query("COMMIT"); await c.end(); r(); }, 13_000));
+    const out = await pending;
+    const ms = Date.now() - t0;
+    await releaseAfter;
+    const v = snap();
+    const counter = await addrCount(email);
+    const after = await attempt(email, PASSWORD, net(170));
+    report("R7-6", { tally: tally(out), verdicts: v, ms, counterDuringOutage: counter, rightAfterRelease: after });
+    expect(out.includes("admitted"), "nothing admitted while the reservation cannot be made").toBe(false);
+    expect(v.wrong + v.right, "no verdict without a reservation").toBe(0);
+    expect(counter).toBe(0);
+    expect(after).toBe("admitted");
+  }, 120_000);
+
+  it("R7-7 pool saturation: 120 concurrent at a fresh address (right password last) → at most ADDR_MAX verdicts, never an admission outside a verdict, every other answer generic", async () => {
+    const email = E("big");
+    reset();
+    const out = await Promise.all(Array.from({ length: 120 }, (_, i) => attempt(email, i === 119 ? PASSWORD : `wrong-r7g-${i}`, net(i))));
+    const counter = await addrCount(email);
+    const v = snap();
+    report("R7-7", { tally: tally(out), verdicts: v, counter, rightPasswordOutcome: out[119] });
+    expect(v.wrong + v.right).toBeLessThanOrEqual(ADDR_MAX + 1);
+    expect(v.wrong).toBeLessThanOrEqual(ADDR_MAX);
+    expect(counter).toBe(v.wrong);
+    expect(out.filter((o) => o === "admitted").length).toBe(v.right);
+    expect(out.every((o) => o === "refused" || o === "admitted" || o === "code:rate_limited")).toBe(true);
+  }, 600_000);
+});

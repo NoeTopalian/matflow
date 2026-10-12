@@ -1,0 +1,2360 @@
+[
+ {
+  "url": "/api/account/login-email",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/account/login-email",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/account/password",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/account/password",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/account/pending-tenant",
+  "method": "POST",
+  "who": "owner",
+  "status": 503,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/account/pending-tenant",
+  "method": "POST",
+  "who": "member",
+  "status": 503,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/account/profile",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/account/profile",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/auth/login",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/auth/login",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/auth/operator-login",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/auth/operator-login",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/auth/operator-totp",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/auth/operator-totp",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/auth/operator-totp/setup",
+  "method": "POST",
+  "who": "owner",
+  "status": 401,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/auth/operator-totp/setup",
+  "method": "POST",
+  "who": "member",
+  "status": 401,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/auth/step-up",
+  "method": "POST",
+  "who": "owner",
+  "status": 401,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/auth/step-up",
+  "method": "POST",
+  "who": "member",
+  "status": 401,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/create-tenant",
+  "method": "POST",
+  "who": "owner",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/create-tenant",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/force-password-reset",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/force-password-reset",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/login-email/check",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/login-email/check",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/login-email",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/login-email",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/member-totp-reset",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/member-totp-reset",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/members/[memberId]/contact-email",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/members/[memberId]/contact-email",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/owner-profile",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/owner-profile",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/review-lock",
+  "method": "POST",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 2,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/review-lock",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 409,
+  "dbCalls": 1,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/review-lock",
+  "method": "POST",
+  "who": "member",
+  "status": 200,
+  "dbCalls": 2,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/review-lock",
+  "method": "DELETE",
+  "who": "member",
+  "status": 409,
+  "dbCalls": 1,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/revoke-access",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/revoke-access",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/soft-delete",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 1,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/soft-delete",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 3,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/soft-delete",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 1,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/soft-delete",
+  "method": "DELETE",
+  "who": "member",
+  "status": 200,
+  "dbCalls": 3,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/suspend",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/suspend",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 409,
+  "dbCalls": 1,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/suspend",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/suspend",
+  "method": "DELETE",
+  "who": "member",
+  "status": 409,
+  "dbCalls": 1,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/totp-reset",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/totp-reset",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/transfer-ownership",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/customers/[id]/transfer-ownership",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/email/test",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/email/test",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/impersonate",
+  "method": "POST",
+  "who": "owner",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/impersonate",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 1,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/impersonate",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/impersonate",
+  "method": "DELETE",
+  "who": "member",
+  "status": 200,
+  "dbCalls": 1,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/import/attendance",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/import/attendance",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 404,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/import/attendance",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/import/attendance",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/import/uploads",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/admin/import/uploads",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/announcements/[id]",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 2,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/announcements/[id]",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 2,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/announcements/[id]",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/announcements/[id]",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/announcements",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/announcements",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/apply",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/apply",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/audit-log/undo-to",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/audit-log/undo-to",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/[...nextauth]",
+  "method": "POST",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/[...nextauth]",
+  "method": "POST",
+  "who": "member",
+  "status": 200,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/forgot-password",
+  "method": "POST",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/forgot-password",
+  "method": "POST",
+  "who": "member",
+  "status": 200,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/reset-password",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/reset-password",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/set-password",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/set-password",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/totp/recover",
+  "method": "POST",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/totp/recover",
+  "method": "POST",
+  "who": "member",
+  "status": 200,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/totp/recovery-codes",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/totp/recovery-codes",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/totp/setup",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/totp/setup",
+  "method": "POST",
+  "who": "member",
+  "status": 401,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/totp/verify",
+  "method": "POST",
+  "who": "owner",
+  "status": 401,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/auth/totp/verify",
+  "method": "POST",
+  "who": "member",
+  "status": 401,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/checkin/card",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/checkin/card",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/checkin",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/checkin",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/checkin",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/checkin",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/class-packs/[id]",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 2,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/class-packs/[id]",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 1,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/class-packs/[id]",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/class-packs/[id]",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/class-packs",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/class-packs",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/classes/[id]/instances/[instanceId]",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/classes/[id]/instances/[instanceId]",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/classes/[id]/instances",
+  "method": "POST",
+  "who": "owner",
+  "status": -2,
+  "dbCalls": 2,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/classes/[id]/instances",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/classes/[id]/roster",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/classes/[id]/roster",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/classes/[id]",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 5,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/classes/[id]",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 409,
+  "dbCalls": 3,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/classes/[id]",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/classes/[id]",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/classes",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/classes",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/coach/instances/[id]/attendance",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/coach/instances/[id]/attendance",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/drive/select-folder",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/drive/select-folder",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/initiatives/[id]",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 2,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/initiatives/[id]",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 1,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/initiatives/[id]",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/initiatives/[id]",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/initiatives",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/initiatives",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/instances/generate",
+  "method": "POST",
+  "who": "owner",
+  "status": -2,
+  "dbCalls": 2,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/instances/generate",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/kiosk/[token]/checkin",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/kiosk/[token]/checkin",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/locations/[id]",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 2,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/locations/[id]",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 409,
+  "dbCalls": 2,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/locations/[id]",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/locations/[id]",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/locations",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/locations",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/magic-link/request",
+  "method": "POST",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/magic-link/request",
+  "method": "POST",
+  "who": "member",
+  "status": 200,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/checkout",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/checkout",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/children/[id]/photos",
+  "method": "POST",
+  "who": "owner",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/children/[id]/photos",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/children/[id]",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/children/[id]",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/children/[id]",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/children/[id]",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/children",
+  "method": "POST",
+  "who": "owner",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/children",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/class-packs/buy",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/class-packs/buy",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/me",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/me",
+  "method": "PATCH",
+  "who": "member",
+  "status": 200,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/subscriptions/cancel-for-kid",
+  "method": "POST",
+  "who": "owner",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/subscriptions/cancel-for-kid",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/subscriptions/start-for-kid",
+  "method": "POST",
+  "who": "owner",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/subscriptions/start-for-kid",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 1,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/subscriptions/start",
+  "method": "POST",
+  "who": "owner",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/subscriptions/start",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 2,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/totp/recover",
+  "method": "POST",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/totp/recover",
+  "method": "POST",
+  "who": "member",
+  "status": 200,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/totp/setup",
+  "method": "POST",
+  "who": "owner",
+  "status": 401,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/totp/setup",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/totp/verify",
+  "method": "POST",
+  "who": "owner",
+  "status": 401,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/member/totp/verify",
+  "method": "POST",
+  "who": "member",
+  "status": 401,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/card/revoke",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/card/revoke",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/charge",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 2,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/charge",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/guardian",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/guardian",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/hold",
+  "method": "POST",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 3,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/hold",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/link-child",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/link-child",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/photos",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/photos",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/photos",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/photos",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/profile-picture",
+  "method": "PUT",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 1,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/profile-picture",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 500,
+  "dbCalls": 3,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/profile-picture",
+  "method": "PUT",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/profile-picture",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/rank/demote",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/rank/demote",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/rank",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/rank",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 3,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/totp-reset",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/totp-reset",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/unlink-child",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/unlink-child",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/waiver/sign",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 1,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/[id]/waiver/sign",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/accept-invite",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/accept-invite",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/bulk-invite",
+  "method": "POST",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 5,
+  "writes": 2,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members/bulk-invite",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/members",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/memberships/[id]",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 3,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/memberships/[id]",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 2,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/memberships/[id]",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/memberships/[id]",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/memberships",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/memberships",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/orders/[id]/mark-paid",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 1,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/orders/[id]/mark-paid",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/payments/[id]/refund",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 2,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/payments/[id]/refund",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/payments/chase",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/payments/chase",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/payments/intent",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/payments/intent",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/payments/manual",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/payments/manual",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/products/[id]",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 2,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/products/[id]",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 2,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/products/[id]",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/products/[id]",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/products",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/products",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/push/subscribe",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/push/subscribe",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/ranks/[id]",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 3,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/ranks/[id]",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 409,
+  "dbCalls": 3,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/ranks/[id]",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/ranks/[id]",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/ranks",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/ranks",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/settings/display",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/settings/display",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/settings/kiosk",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/settings/kiosk",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/settings",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/settings",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/staff/[id]",
+  "method": "PATCH",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/staff/[id]",
+  "method": "DELETE",
+  "who": "owner",
+  "status": 200,
+  "dbCalls": 2,
+  "writes": 1,
+  "leaks": 0
+ },
+ {
+  "url": "/api/staff/[id]",
+  "method": "PATCH",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/staff/[id]",
+  "method": "DELETE",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/staff/[id]/totp-reset",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/staff/[id]/totp-reset",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/staff/[id]/transfer-ownership",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/staff/[id]/transfer-ownership",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/staff",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/staff",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/stripe/create-subscription",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 2,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/stripe/create-subscription",
+  "method": "POST",
+  "who": "member",
+  "status": 401,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/stripe/migrate-memberships",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/stripe/migrate-memberships",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/stripe/subscription-plans",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 1,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/stripe/subscription-plans",
+  "method": "POST",
+  "who": "member",
+  "status": 401,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/tasks",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/tasks",
+  "method": "POST",
+  "who": "member",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/upload/delete-orphan",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/upload/delete-orphan",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/waiver/kiosk-request",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/waiver/kiosk-request",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/waiver/open",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/waiver/open",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/waiver/sign-for-child",
+  "method": "POST",
+  "who": "owner",
+  "status": 403,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/waiver/sign-for-child",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/waiver/sign",
+  "method": "POST",
+  "who": "owner",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ },
+ {
+  "url": "/api/waiver/sign",
+  "method": "POST",
+  "who": "member",
+  "status": 400,
+  "dbCalls": 0,
+  "writes": 0,
+  "leaks": 0
+ }
+]

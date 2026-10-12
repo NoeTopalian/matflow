@@ -87,6 +87,16 @@ export async function DELETE(req: Request, { params }: Params) {
   const { id } = await params;
 
   try {
+    // OWNERSHIP FIRST (finding E-3, 6 Oct 2026). The 409 below discloses two
+    // counts, and they used to be computed for any rank id at all: once a
+    // gym-A class pointed at gym B's belt (finding E-2), DELETE of that belt
+    // answered 409 with gym B's belt-holder count. Not this club's belt (or
+    // already deleted) is a 404 before anything is counted.
+    const owned = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.rankSystem.findFirst({ where: { id, tenantId: session.user.tenantId, deletedAt: null }, select: { id: true } }),
+    );
+    if (!owned) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
     // Task 8: soft-delete; refuse if classes still depend on this rank.
     const deps = await withTenantContext(session.user.tenantId, (tx) =>
       Promise.all([
@@ -97,7 +107,8 @@ export async function DELETE(req: Request, { params }: Params) {
             OR: [{ requiredRankId: id }, { maxRankId: id }],
           },
         }),
-        tx.memberRank.count({ where: { rankSystemId: id } }),
+        // MemberRank has no tenantId column: scope through the member.
+        tx.memberRank.count({ where: { rankSystemId: id, member: { tenantId: session.user.tenantId } } }),
       ]),
     );
 

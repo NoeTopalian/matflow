@@ -1,0 +1,5 @@
+ FAIL  tests/unit/sec-c-csrf-sweep.test.ts > SEC-042 every mutating route refuses a cross-site request before any effect > /api/account/login-email as owner
+Error: Test timed out in 30000ms.
+ Test Files  1 failed | 474 passed (475)
+      Tests  1 failed | 6532 passed | 1 skipped (6534)
+rerun alone: Tests  426 passed (426) exit=0

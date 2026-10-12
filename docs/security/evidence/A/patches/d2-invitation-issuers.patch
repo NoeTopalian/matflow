@@ -1,0 +1,85 @@
+diff --git a/app/api/members/route.ts b/app/api/members/route.ts
+--- a/app/api/members/route.ts
++++ b/app/api/members/route.ts
+@@ -10,6 +10,7 @@
+ import { suppressedMessage } from "@/lib/email-delivery";
+ import { randomBytes } from "crypto";
+ import { hashToken } from "@/lib/token-hash";
++import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
+ import { getBaseUrl } from "@/lib/env-url";
+ import { synthesiseKidEmail, synthesiseMemberEmail, isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+ import { MAX_KIDS_PER_PARENT, childAccountTypeFor } from "@/lib/kids-policy";
+@@ -532,7 +533,9 @@
+       try {
+         // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.
+         // The raw token goes in the invite email + URL; the DB stores only the hash.
+-        const token = randomBytes(24).toString("hex");
++        // Bound to THIS member (AH-D2, lib/auth-token-binding.ts): the
++        // invitation cannot set the password of whoever holds the address next.
++        const token = mintSubjectBoundToken({ purpose: "first_time_signup", tenantId: session.user.tenantId, subject: { kind: "member", id: member.id } });
+         const tenant = await withTenantContext(session.user.tenantId, async (tx) => {
+           await tx.magicLinkToken.create({
+             data: {
+diff --git a/app/api/members/bulk-invite/route.ts b/app/api/members/bulk-invite/route.ts
+--- a/app/api/members/bulk-invite/route.ts
++++ b/app/api/members/bulk-invite/route.ts
+@@ -17,6 +17,7 @@
+ import { refuseSupportSession } from "@/lib/support-session";
+ import { withTenantContext } from "@/lib/prisma-tenant";
+ import { hashToken } from "@/lib/token-hash";
++import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
+ import { assertSameOrigin } from "@/lib/csrf";
+ import { getBaseUrl } from "@/lib/env-url";
+ import { logAudit } from "@/lib/audit-log";
+@@ -120,7 +121,8 @@
+       continue;
+     }
+     try {
+-      const token = randomBytes(24).toString("hex");
++      // Bound to THIS member (AH-D2, lib/auth-token-binding.ts).
++      const token = mintSubjectBoundToken({ purpose: "first_time_signup", tenantId, subject: { kind: "member", id: member.id } });
+       await withTenantContext(tenantId, async (tx) => {
+         // Only the newest invite link should work.
+         await tx.magicLinkToken.updateMany({
+diff --git a/app/api/members/[id]/invite-link/route.ts b/app/api/members/[id]/invite-link/route.ts
+--- a/app/api/members/[id]/invite-link/route.ts
++++ b/app/api/members/[id]/invite-link/route.ts
+@@ -22,6 +22,7 @@
+ import { auth } from "@/auth";
+ import { withTenantContext } from "@/lib/prisma-tenant";
+ import { hashToken } from "@/lib/token-hash";
++import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
+ import { assertSameOrigin } from "@/lib/csrf";
+ import { getBaseUrl } from "@/lib/env-url";
+ import { logAudit } from "@/lib/audit-log";
+@@ -68,7 +69,8 @@
+     return NextResponse.json({ error: `${member.name} already has a login. They can use "Forgot password?" on the sign-in screen.` }, { status: 409 });
+   }
+ 
+-  const rawToken = randomBytes(24).toString("hex");
++  // Bound to THIS member (AH-D2, lib/auth-token-binding.ts).
++  const rawToken = mintSubjectBoundToken({ purpose: "first_time_signup", tenantId, subject: { kind: "member", id: memberId } });
+   const tokenHash = hashToken(rawToken);
+   const expiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_MS);
+ 
+diff --git a/app/api/admin/applications/[id]/approve/route.ts b/app/api/admin/applications/[id]/approve/route.ts
+--- a/app/api/admin/applications/[id]/approve/route.ts
++++ b/app/api/admin/applications/[id]/approve/route.ts
+@@ -18,6 +18,7 @@
+ import { sendEmail } from "@/lib/email";
+ import { isEmailDeliveryOn } from "@/lib/email-delivery";
+ import { hashToken } from "@/lib/token-hash";
++import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
+ import { getBaseUrl } from "@/lib/env-url";
+ import { getOperatorContext } from "@/lib/operator-context";
+ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+@@ -141,7 +142,8 @@
+   const deliveryOn = isEmailDeliveryOn();
+   let token: string | null = null;
+   if (deliveryOn) {
+-    token = randomBytes(32).toString("hex");
++    // Bound to THIS owner (AH-D2, lib/auth-token-binding.ts).
++    token = mintSubjectBoundToken({ purpose: "first_time_signup", tenantId, subject: { kind: "user", id: ownerUserId } });
+     const tokenHash = hashToken(token);
+     const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+     await withTenantContext(tenantId, (tx) =>

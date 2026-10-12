@@ -1,0 +1,6 @@
+{
+ "R8-MA": {"file": "lib/rate-limit.ts", "edits": [{"find": "over-limit family=${bucketFamily(bucket)} max=", "replace": "over-limit family=${bucketFamily(bucket)} key=${bucket.slice(bucket.indexOf(\":\") + 1)} max="}]},
+ "R8-MB": {"file": "lib/rate-limit.ts", "edits": [{"find": "over-limit family=${bucketFamily(bucket)} max=", "replace": "over-limit family=${bucketFamily(bucket)} ref=${process.getBuiltinModule(\"node:crypto\").createHash(\"sha256\").update(bucket).digest(\"hex\").slice(0, 16)} max="}]},
+ "R8-MC": {"file": "lib/rate-limit.ts", "edits": [{"find": "class=${cls} family=${family} outcome=", "replace": "class=${cls} family=${family} b=${bucket} outcome="}]},
+ "R8-MC2": {"file": "lib/rate-limit.ts", "edits": [{"find": "class=${cls} family=${family} outcome=", "replace": "class=${cls} family=${family} k=${bucket.split(\":\").slice(1).join(\":\")} outcome="}]}
+}

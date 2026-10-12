@@ -1,0 +1,1279 @@
+node=v24.21.0 sha=2a6487e start=2026-10-10T08:49:59Z cmd=npx vitest run tests/unit/dsar-erase-audit-durability.test.ts tests/unit/dsar-erase-completeness.test.ts tests/unit/import-attendance-route.test.ts tests/unit/import-attendance.test.ts tests/unit/import-matching-after-contact-change.test.ts tests/unit/member-delete-photo-blobs.test.ts tests/unit/member-delete-stripe-cancel.test.ts tests/unit/readiness-scripts-release-verify.test.ts tests/unit/sec-c2-request-validation.test.ts tests/unit/sec-e3-upload-limit-input-pixels.test.ts tests/unit/sec-f2-coverage-reconcile.test.ts tests/unit/sec-r-skip-gate-expected-files.test.ts tests/unit/session-revocation.test.ts tests/unit/staff-last-owner-guard.test.ts tests/unit/totp-verify-single-use.test.ts
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/E5/wt
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: refusals > 400 (bounded preview) for a file with more than 300 distinct offerings, and the upload is NOT consumed
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:390:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: refusals > accepts a file with exactly 300 distinct offerings (the bound is inclusive)
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:401:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > answers 201 with a jobId and a 64-hex planHash
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:408:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > returns a summary whose controls and byIntent reconcile with the file's rows
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:416:25
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > matches people only against its own club's members
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:430:25
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > offers only its own club's classes and locations as targets
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:438:25
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > consumes the upload
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:445:5
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > stores the job against the upload as db-upload://<uploadId>
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:451:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > marks this club's earlier attendance previews superseded, and nothing else
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:461:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > deletes the superseded preview's stored upload and its chunks
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:472:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > keeps the new preview's own upload and chunks when it supersedes an earlier one
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:482:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > leaves another club's preview upload and chunks untouched when superseding
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:491:13
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > does not delete another club's upload even when this club's stale preview points at its id
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:500:13
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > does not delete the stored file of a completed import when a new preview arrives
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:508:13
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > refuses a second preview of the same upload with 409
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:514:13
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > preview: response size > stays under 256 KB for a 15,000-row file
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:538:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > commit > 409 stale for a wrong planHash
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at previewAndDecideAll (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:158:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:550:23
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > commit > 409 stale for a missing planHash
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at previewAndDecideAll (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:158:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:558:23
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > commit > 409 stale for the planHash of before the decisions
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:565:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > commit > 409 naming every undecided offering and venue
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:573:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > commit > 409 naming the venue when only the offerings are decided
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:581:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > commit > 409 for a preview superseded by a newer file, even with its own planHash
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at previewAndDecideAll (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:158:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:603:33
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > commit > 409 busy while another tab holds the lease, creating nothing
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at previewAndDecideAll (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:158:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:620:33
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > commit > of two simultaneous commits exactly one starts; the other is told busy
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at previewAndDecideAll (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:158:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:631:33
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > commit > 202 and running for a decided, current preview
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at previewAndDecideAll (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:158:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:640:33
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > step > completes a started import, writing attendance only for the resolved member
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at previewAndDecideAll (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:158:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:683:33
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > decide: targets must belong to this club > stores a decision whose target is in this club, under this club
+TypeError: tx.$queryRaw is not a function
+    at recordMappingChange (<scratchpad>/security/E5/wt/lib/attendance-import.ts:195:35)
+    at saveDecisions (<scratchpad>/security/E5/wt/lib/attendance-import.ts:687:9)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at decide (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:272:15)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:137:29)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:716:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > POST discard > sets a preview aside as superseded and answers ok
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:757:23
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > POST discard > deletes the discarded preview's db-upload file and its chunks
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:766:15
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > POST discard > a discarded preview can no longer be committed
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at previewAndDecideAll (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:158:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:774:33
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > GET list=people paging > caps limit at 200
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewPeople (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:827:15)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:833:19
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > GET list=people paging > honours offset
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewPeople (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:827:15)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:842:19
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | tests/unit/import-attendance-route.test.ts > no response carries the stored file's address or the upload token > across a whole preview → decide → commit → step → read → export → rollback journey
+TypeError: tx.$queryRaw is not a function
+    at loadClubInputs (<scratchpad>/security/E5/wt/lib/attendance-import.ts:285:39)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at preview (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:185:18)
+    at Module.POST (<scratchpad>/security/E5/wt/app/api/admin/import/attendance/route.ts:135:30)
+    at post (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:135:85)
+    at previewSmall (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:151:13)
+    at previewAndDecideAll (<scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:158:13)
+    at <scratchpad>/security/E5/wt/tests/unit/import-attendance-route.test.ts:1156:33
+    at file:///<scratchpad>/security/E5/wt/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+ ❯ tests/unit/import-attendance-route.test.ts (186 tests | 33 failed) 1339ms
+     × 400 (bounded preview) for a file with more than 300 distinct offerings, and the upload is NOT consumed 11ms
+     × accepts a file with exactly 300 distinct offerings (the bound is inclusive) 3ms
+     × answers 201 with a jobId and a 64-hex planHash 2ms
+     × returns a summary whose controls and byIntent reconcile with the file's rows 1ms
+     × matches people only against its own club's members 1ms
+     × offers only its own club's classes and locations as targets 1ms
+     × consumes the upload 2ms
+     × stores the job against the upload as db-upload://<uploadId> 1ms
+     × marks this club's earlier attendance previews superseded, and nothing else 1ms
+     × deletes the superseded preview's stored upload and its chunks 1ms
+     × keeps the new preview's own upload and chunks when it supersedes an earlier one 1ms
+     × leaves another club's preview upload and chunks untouched when superseding 1ms
+     × does not delete another club's upload even when this club's stale preview points at its id 1ms
+     × does not delete the stored file of a completed import when a new preview arrives 1ms
+     × refuses a second preview of the same upload with 409 1ms
+     × stays under 256 KB for a 15,000-row file 28ms
+     × 409 stale for a wrong planHash 2ms
+     × 409 stale for a missing planHash 6ms
+     × 409 stale for the planHash of before the decisions 2ms
+     × 409 naming every undecided offering and venue 1ms
+     × 409 naming the venue when only the offerings are decided 1ms
+     × 409 for a preview superseded by a newer file, even with its own planHash 1ms
+     × 409 busy while another tab holds the lease, creating nothing 1ms
+     × of two simultaneous commits exactly one starts; the other is told busy 1ms
+     × 202 and running for a decided, current preview 1ms
+     × completes a started import, writing attendance only for the resolved member 1ms
+     × stores a decision whose target is in this club, under this club 1ms
+     × sets a preview aside as superseded and answers ok 1ms
+     × deletes the discarded preview's db-upload file and its chunks 1ms
+     × a discarded preview can no longer be committed 1ms
+     × caps limit at 200 1ms
+     × honours offset 1ms
+     × across a whole preview → decide → commit → step → read → export → rollback journey 2ms
+ ❯ tests/unit/sec-c2-request-validation.test.ts (58 tests | 15 failed) 15067ms
+     × /api/auth/totp/setup: unknown key role → 400, no effect 1890ms
+     × /api/auth/totp/setup: unknown key tenantId → 400, no effect 1ms
+     × /api/auth/totp/setup: nested data → 400, no effect 2ms
+     × /api/auth/totp/setup: null body → 400, no effect 2ms
+     × /api/member/totp/setup: unknown key role → 400, no effect 25ms
+     × /api/member/totp/setup: unknown key tenantId → 400, no effect 1ms
+     × /api/member/totp/setup: nested data → 400, no effect 0ms
+     × /api/member/totp/setup: null body → 400, no effect 1ms
+     × /api/admin/import/uploads: unknown key role → 400, no effect 23ms
+     × /api/admin/import/uploads: unknown key tenantId → 400, no effect 1ms
+     × /api/admin/import/uploads: nested data → 400, no effect 1ms
+     × /api/admin/import/uploads: array body → 400, no effect 0ms
+     × /api/admin/import/uploads: empty object → 400, no effect 0ms
+     × /api/auth/totp/setup: a code that is not a six-digit STRING never reaches the verifier 1ms
+     × /api/member/totp/setup: a code that is not a six-digit STRING never reaches the verifier 1ms
+ ❯ tests/unit/sec-r-skip-gate-expected-files.test.ts (3 tests | 2 failed) 352ms
+     × a run that omits an expected database file fails 115ms
+     × a run that includes every expected file passes 129ms
+stderr | tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > branding (owner, fit inside): the uploaded bytes are opened with limitInputPixels 50_000_000
+[upload] Vercel Blob unavailable — storing inline data URL BLOB_READ_WRITE_TOKEN not set
+
+stderr | tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > profile-pic (member self, cover crop): the uploaded bytes are opened with limitInputPixels 50_000_000
+[upload] Vercel Blob unavailable — storing inline data URL BLOB_READ_WRITE_TOKEN not set
+
+stderr | tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > no sharp call on the uploaded bytes is left unbounded
+[upload] Vercel Blob unavailable — storing inline data URL BLOB_READ_WRITE_TOKEN not set
+
+stderr | tests/unit/sec-e3-upload-limit-input-pixels.test.ts
+[upload] BLOB_READ_WRITE_TOKEN is not set — every upload request will return 503. Provision a Vercel Blob store and copy the token into .env.
+
+ ❯ tests/unit/sec-e3-upload-limit-input-pixels.test.ts (3 tests | 3 failed) 55ms
+     × branding (owner, fit inside): the uploaded bytes are opened with limitInputPixels 50_000_000 42ms
+     × profile-pic (member self, cover crop): the uploaded bytes are opened with limitInputPixels 50_000_000 5ms
+     × no sharp call on the uploaded bytes is left unbounded 6ms
+ ❯ tests/unit/sec-f2-coverage-reconcile.test.ts (37 tests | 1 failed) 26ms
+     × the real matrix reconciles with no UNPARSED row, deterministically 3ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 54 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: refusals > 400 (bounded preview) for a file with more than 300 distinct offerings, and the upload is NOT consumed
+AssertionError: expected 500 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 500
+
+ ❯ tests/unit/import-attendance-route.test.ts:391:22
+    389|     const id = seedUpload(csv(rows));
+    390|     const r = await post(previewBody(id));
+    391|     expect(r.status).toBe(400);
+       |                      ^
+    392|     expect(r.json.error).toContain("301 different class names");
+    393|     expect(upload(id).status).toBe("complete");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: refusals > accepts a file with exactly 300 distinct offerings (the bound is inclusive)
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ tests/unit/import-attendance-route.test.ts:402:22
+    400|     }));
+    401|     const r = await post(previewBody(seedUpload(csv(rows))));
+    402|     expect(r.status).toBe(201);
+       |                      ^
+    403|   });
+    404| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > answers 201 with a jobId and a 64-hex planHash
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ tests/unit/import-attendance-route.test.ts:409:22
+    407|   it("answers 201 with a jobId and a 64-hex planHash", async () => {
+    408|     const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    409|     expect(r.status).toBe(201);
+       |                      ^
+    410|     expect(typeof r.json.jobId).toBe("string");
+    411|     expect(r.json.planHash).toMatch(/^[0-9a-f]{64}$/);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > returns a summary whose controls and byIntent reconcile with the file's rows
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ tests/unit/import-attendance-route.test.ts:416:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > matches people only against its own club's members
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ tests/unit/import-attendance-route.test.ts:430:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > offers only its own club's classes and locations as targets
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ tests/unit/import-attendance-route.test.ts:438:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > consumes the upload
+AssertionError: expected 'complete' to be 'consumed' // Object.is equality
+
+Expected: "consumed"
+Received: "complete"
+
+ ❯ tests/unit/import-attendance-route.test.ts:446:31
+    444|     const id = seedUpload(SMALL_CSV);
+    445|     await post(previewBody(id));
+    446|     expect(upload(id).status).toBe("consumed");
+       |                               ^
+    447|   });
+    448|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > stores the job against the upload as db-upload://<uploadId>
+TypeError: Cannot read properties of undefined (reading 'fileBlobUrl')
+ ❯ tests/unit/import-attendance-route.test.ts:452:29
+    450|     const id = seedUpload(SMALL_CSV);
+    451|     const r = await post(previewBody(id));
+    452|     expect(job(r.json.jobId).fileBlobUrl).toBe(`db-upload://${id}`);
+       |                             ^
+    453|     expect(job(r.json.jobId).tenantId).toBe("t1");
+    454|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > marks this club's earlier attendance previews superseded, and nothing else
+AssertionError: expected 'preview' to be 'superseded' // Object.is equality
+
+Expected: "superseded"
+Received: "preview"
+
+ ❯ tests/unit/import-attendance-route.test.ts:462:34
+    460|     const done = seedJob({ status: "complete" });
+    461|     const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    462|     expect(job(older.id).status).toBe("superseded");
+       |                                  ^
+    463|     expect(job(otherClub.id).status).toBe("preview");
+    464|     expect(job(membersImport.id).status).toBe("preview");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > deletes the superseded preview's stored upload and its chunks
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ tests/unit/import-attendance-route.test.ts:473:22
+    471|     const older = seedJob({ status: "preview", fileBlobUrl: `db-upload…
+    472|     const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    473|     expect(r.status).toBe(201);
+       |                      ^
+    474|     expect(job(older.id).status).toBe("superseded");
+    475|     expect(h.db.tables.importUpload.some((u) => u.id === oldUpload)).t…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > keeps the new preview's own upload and chunks when it supersedes an earlier one
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ tests/unit/import-attendance-route.test.ts:483:22
+    481|     const id = seedUpload(SMALL_CSV);
+    482|     const r = await post(previewBody(id));
+    483|     expect(r.status).toBe(201);
+       |                      ^
+    484|     expect(upload(id).status).toBe("consumed");
+    485|     expect(h.db.tables.importUploadChunk.some((c) => c.uploadId === id…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > leaves another club's preview upload and chunks untouched when superseding
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ tests/unit/import-attendance-route.test.ts:491:69
+    489|     const t2Upload = seedUpload(SMALL_CSV, { tenantId: "t2", createdBy…
+    490|     const t2Job = seedJob({ tenantId: "t2", createdById: OWNER_T2.id, …
+    491|     expect((await post(previewBody(seedUpload(SMALL_CSV)))).status).to…
+       |                                                                     ^
+    492|     expect(job(t2Job.id).status).toBe("preview");
+    493|     expect(upload(t2Upload).status).toBe("complete");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > does not delete another club's upload even when this club's stale preview points at its id
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ tests/unit/import-attendance-route.test.ts:500:69
+    498|     const t2Upload = seedUpload(SMALL_CSV, { tenantId: "t2", createdBy…
+    499|     seedJob({ status: "preview", fileBlobUrl: `db-upload://${t2Upload}…
+    500|     expect((await post(previewBody(seedUpload(SMALL_CSV)))).status).to…
+       |                                                                     ^
+    501|     expect(h.db.tables.importUpload.some((u) => u.id === t2Upload)).to…
+    502|     expect(h.db.tables.importUploadChunk.filter((c) => c.uploadId === …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > does not delete the stored file of a completed import when a new preview arrives
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ tests/unit/import-attendance-route.test.ts:508:69
+    506|     const doneUpload = seedUpload(SMALL_CSV, { status: "consumed" });
+    507|     seedJob({ status: "complete", completedAt: new Date(), fileBlobUrl…
+    508|     expect((await post(previewBody(seedUpload(SMALL_CSV)))).status).to…
+       |                                                                     ^
+    509|     expect(h.db.tables.importUpload.some((u) => u.id === doneUpload)).…
+    510|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > refuses a second preview of the same upload with 409
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ tests/unit/import-attendance-route.test.ts:514:50
+    512|   it("refuses a second preview of the same upload with 409", async () …
+    513|     const id = seedUpload(SMALL_CSV);
+    514|     expect((await post(previewBody(id))).status).toBe(201);
+       |                                                  ^
+    515|     const again = await post(previewBody(id));
+    516|     expect(again.status).toBe(409);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: response size > stays under 256 KB for a 15,000-row file
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ tests/unit/import-attendance-route.test.ts:539:22
+    537|     }
+    538|     const r = await post(previewBody(seedUpload(csv(rows))));
+    539|     expect(r.status).toBe(201);
+       |                      ^
+    540|     expect(r.json.summary.rows).toBe(15_000);
+    541|     expect(r.json.summary.people.pendingListTruncated).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 stale for a wrong planHash
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ previewAndDecideAll tests/unit/import-attendance-route.test.ts:158:13
+ ❯ tests/unit/import-attendance-route.test.ts:550:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 stale for a missing planHash
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ previewAndDecideAll tests/unit/import-attendance-route.test.ts:158:13
+ ❯ tests/unit/import-attendance-route.test.ts:558:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 stale for the planHash of before the decisions
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ tests/unit/import-attendance-route.test.ts:565:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 naming every undecided offering and venue
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ tests/unit/import-attendance-route.test.ts:573:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 naming the venue when only the offerings are decided
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ tests/unit/import-attendance-route.test.ts:581:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 for a preview superseded by a newer file, even with its own planHash
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ previewAndDecideAll tests/unit/import-attendance-route.test.ts:158:13
+ ❯ tests/unit/import-attendance-route.test.ts:603:33
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 busy while another tab holds the lease, creating nothing
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ previewAndDecideAll tests/unit/import-attendance-route.test.ts:158:13
+ ❯ tests/unit/import-attendance-route.test.ts:620:33
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > of two simultaneous commits exactly one starts; the other is told busy
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ previewAndDecideAll tests/unit/import-attendance-route.test.ts:158:13
+ ❯ tests/unit/import-attendance-route.test.ts:631:33
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 202 and running for a decided, current preview
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ previewAndDecideAll tests/unit/import-attendance-route.test.ts:158:13
+ ❯ tests/unit/import-attendance-route.test.ts:640:33
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > step > completes a started import, writing attendance only for the resolved member
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ previewAndDecideAll tests/unit/import-attendance-route.test.ts:158:13
+ ❯ tests/unit/import-attendance-route.test.ts:683:33
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > decide: targets must belong to this club > stores a decision whose target is in this club, under this club
+AssertionError: expected 500 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 500
+
+ ❯ tests/unit/import-attendance-route.test.ts:717:22
+    715|   it("stores a decision whose target is in this club, under this club"…
+    716|     const r = await post({ action: "decide", decisions: [{ kind: "venu…
+    717|     expect(r.status).toBe(200);
+       |                      ^
+    718|     expect(h.db.tables.importSourceMapping).toMatchObject([{ tenantId:…
+    719|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > POST discard > sets a preview aside as superseded and answers ok
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ tests/unit/import-attendance-route.test.ts:757:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > POST discard > deletes the discarded preview's db-upload file and its chunks
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ tests/unit/import-attendance-route.test.ts:767:22
+    765|     const id = seedUpload(SMALL_CSV);
+    766|     const p = await post(previewBody(id));
+    767|     expect(p.status).toBe(201);
+       |                      ^
+    768|     await post({ action: "discard", jobId: p.json.jobId });
+    769|     expect(h.db.tables.importUpload.some((u) => u.id === id)).toBe(fal…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[29/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > POST discard > a discarded preview can no longer be committed
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ previewAndDecideAll tests/unit/import-attendance-route.test.ts:158:13
+ ❯ tests/unit/import-attendance-route.test.ts:774:33
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[30/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > GET list=people paging > caps limit at 200
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewPeople tests/unit/import-attendance-route.test.ts:828:22
+    826|     }));
+    827|     const r = await post(previewBody(seedUpload(csv(rows))));
+    828|     expect(r.status).toBe(201);
+       |                      ^
+    829|     return r.json.jobId as string;
+    830|   }
+ ❯ tests/unit/import-attendance-route.test.ts:833:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[31/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > GET list=people paging > honours offset
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewPeople tests/unit/import-attendance-route.test.ts:828:22
+    826|     }));
+    827|     const r = await post(previewBody(seedUpload(csv(rows))));
+    828|     expect(r.status).toBe(201);
+       |                      ^
+    829|     return r.json.jobId as string;
+    830|   }
+ ❯ tests/unit/import-attendance-route.test.ts:842:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[32/54]⎯
+
+ FAIL  tests/unit/import-attendance-route.test.ts > no response carries the stored file's address or the upload token > across a whole preview → decide → commit → step → read → export → rollback journey
+AssertionError: expected 500 to be 201 // Object.is equality
+
+- Expected
++ Received
+
+- 201
++ 500
+
+ ❯ previewSmall tests/unit/import-attendance-route.test.ts:152:20
+    150| async function previewSmall() {
+    151|   const r = await post(previewBody(seedUpload(SMALL_CSV)));
+    152|   expect(r.status).toBe(201);
+       |                    ^
+    153|   return r.json as { jobId: string; planHash: string; summary: Loose };
+    154| }
+ ❯ previewAndDecideAll tests/unit/import-attendance-route.test.ts:158:13
+ ❯ tests/unit/import-attendance-route.test.ts:1156:33
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[33/54]⎯
+
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: unknown key role → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: unknown key tenantId → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: nested data → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: unknown key role → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: unknown key tenantId → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: nested data → 400, no effect
+AssertionError: expected [ { target: 'totp', …(2) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/unit/sec-c2-request-validation.test.ts:149:42
+    147|         const res = await handler(req(url, body), r.ctx);
+    148|         expect(res.status).toBe(400);
+    149|         expect(h.calls.filter(r.effect)).toHaveLength(0);
+       |                                          ^
+    150|         expect(h.calls.filter((c) => /update|create|delete|upsert/i.te…
+    151|       });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[34/54]⎯
+
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: null body → 400, no effect
+TypeError: Cannot destructure property 'code' of 'body' as it is null.
+ ❯ POST app/api/auth/totp/setup/route.ts:110:11
+    108|   try { body = await req.json(); } catch { return NextResponse.json({ …
+    109|
+    110|   const { code, issueRecoveryCodes } = body as { code?: string; issueR…
+       |           ^
+    111|   if (!code || !/^\d{6}$/.test(code)) {
+    112|     return NextResponse.json({ error: "Invalid code format" }, { statu…
+ ❯ tests/unit/sec-c2-request-validation.test.ts:147:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[35/54]⎯
+
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: null body → 400, no effect
+TypeError: Cannot destructure property 'code' of 'body' as it is null.
+ ❯ POST app/api/member/totp/setup/route.ts:100:11
+     98|   let body: unknown;
+     99|   try { body = await req.json(); } catch { return NextResponse.json({ …
+    100|   const { code } = body as { code?: string };
+       |           ^
+    101|   if (!code || !/^\d{6}$/.test(code)) {
+    102|     return NextResponse.json({ error: "Invalid code format" }, { statu…
+ ❯ tests/unit/sec-c2-request-validation.test.ts:147:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[36/54]⎯
+
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: unknown key role → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: unknown key tenantId → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: nested data → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: array body → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: empty object → 400, no effect
+AssertionError: expected [ { target: 'importUpload', …(2) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/unit/sec-c2-request-validation.test.ts:149:42
+    147|         const res = await handler(req(url, body), r.ctx);
+    148|         expect(res.status).toBe(400);
+    149|         expect(h.calls.filter(r.effect)).toHaveLength(0);
+       |                                          ^
+    150|         expect(h.calls.filter((c) => /update|create|delete|upsert/i.te…
+    151|       });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[37/54]⎯
+
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: a code that is not a six-digit STRING never reaches the verifier
+TypeError: Cannot convert object to primitive value
+ ❯ POST app/api/auth/totp/setup/route.ts:111:27
+    109|
+    110|   const { code, issueRecoveryCodes } = body as { code?: string; issueR…
+    111|   if (!code || !/^\d{6}$/.test(code)) {
+       |                           ^
+    112|     return NextResponse.json({ error: "Invalid code format" }, { statu…
+    113|   }
+ ❯ tests/unit/sec-c2-request-validation.test.ts:166:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[38/54]⎯
+
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: a code that is not a six-digit STRING never reaches the verifier
+TypeError: Cannot convert object to primitive value
+ ❯ POST app/api/member/totp/setup/route.ts:101:27
+     99|   try { body = await req.json(); } catch { return NextResponse.json({ …
+    100|   const { code } = body as { code?: string };
+    101|   if (!code || !/^\d{6}$/.test(code)) {
+       |                           ^
+    102|     return NextResponse.json({ error: "Invalid code format" }, { statu…
+    103|   }
+ ❯ tests/unit/sec-c2-request-validation.test.ts:166:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[39/54]⎯
+
+ FAIL  tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > branding (owner, fit inside): the uploaded bytes are opened with limitInputPixels 50_000_000
+ FAIL  tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > profile-pic (member self, cover crop): the uploaded bytes are opened with limitInputPixels 50_000_000
+AssertionError: expected undefined to match object { limitInputPixels: 50000000 }
+
+- Expected:
+{
+  "limitInputPixels": 50000000,
+}
+
++ Received:
+undefined
+
+ ❯ tests/unit/sec-e3-upload-limit-input-pixels.test.ts:75:28
+     73|     const uploadCall = sharpMock.mock.calls.find(([input]) => Buffer.i…
+     74|     expect(uploadCall, "sharp was never called on the uploaded bytes")…
+     75|     expect(uploadCall![1]).toMatchObject({ limitInputPixels: 50_000_00…
+       |                            ^
+     76|   });
+     77|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[40/54]⎯
+
+ FAIL  tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > no sharp call on the uploaded bytes is left unbounded
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/unit/sec-e3-upload-limit-input-pixels.test.ts:83:79
+     81|       if (Buffer.isBuffer(input) && (input as Buffer).subarray(0, 8).e…
+     82|         const limit = (opts as { limitInputPixels?: unknown } | undefi…
+     83|         expect(typeof limit === "number" && limit > 0 && limit <= 50_0…
+       |                                                                               ^
+     84|       }
+     85|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[41/54]⎯
+
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile reconcileMatrix() > the real matrix reconciles with no UNPARSED row, deterministically
+Error: ENOENT: no such file or directory, open '<scratchpad>\security\E5\wt\docs\security\COVERAGE-MATRIX.md'
+ ❯ tests/unit/sec-f2-coverage-reconcile.test.ts:63:17
+     61|   });
+     62|   it("the real matrix reconciles with no UNPARSED row, deterministical…
+     63|     const src = readFileSync("docs/security/COVERAGE-MATRIX.md", "utf8…
+       |                 ^
+     64|     const a = reconcileMatrix(src, { requireReviewed: true });
+     65|     expect(a.summary.unparsed).toEqual([]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[42/54]⎯
+
+ FAIL  tests/unit/sec-r-skip-gate-expected-files.test.ts > test-skip-gate --expect > a run that omits an expected database file fails
+AssertionError: expected '{"files":1,"total":1,"passed":1,"fail…' to contain 'expected in this run but absent'
+
+- Expected
++ Received
+
+- expected in this run but absent
++ {"files":1,"total":1,"passed":1,"failed":0,"skipped":0,"requireDb":true,"allowed":[],"expected":0,"blocked":0,"verdict":"FAIL"}
++  - --expect glob "tests/integration/sec-f-pool-exhaustion-db.test.ts" matched no file under <scratchpad>\security\E5\wt
++
+
+ ❯ tests/unit/sec-r-skip-gate-expected-files.test.ts:29:19
+     27|     const r = run({ testResults: [passing("tests/unit/production-depen…
+     28|     expect(r.code).toBe(1);
+     29|     expect(r.out).toContain("expected in this run but absent");
+       |                   ^
+     30|   });
+     31|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[43/54]⎯
+
+ FAIL  tests/unit/sec-r-skip-gate-expected-files.test.ts > test-skip-gate --expect > a run that includes every expected file passes
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/unit/sec-r-skip-gate-expected-files.test.ts:34:20
+     32|   it("a run that includes every expected file passes", () => {
+     33|     const r = run({ testResults: [passing("tests/integration/sec-f-poo…
+     34|     expect(r.code).toBe(0);
+       |                    ^
+     35|     expect(r.out).toContain('"expected":1');
+     36|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[44/54]⎯
+
+
+ Test Files  5 failed | 10 passed (15)
+      Tests  54 failed | 459 passed (513)
+   Start at  09:50:22
+   Duration  30.74s (transform 1.14s, setup 209ms, import 7.92s, tests 18.88s, environment 2ms)
+
+exit=1 end=2026-10-10T08:50:53Z

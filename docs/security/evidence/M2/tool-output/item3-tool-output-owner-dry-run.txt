@@ -1,0 +1,19 @@
+target: TEST ep-hidden-salad-abom7cg4 (pooled) role=neondb_owner
+run: 25666d641b08f16a (address tags are keyed for this run only; the key is never shown or stored)
+tenant: secm1-mv2xegnkbx9j-a id=cmv2xeh78000030tgh16w1hys
+candidates (4):
+  cmv2xehc9000230tgebrokz6j  role=owner  local=***@demo.matflow  tag=d727ad38c9bb
+  cmv2xehef000330tgzq5wrvmd  role=manager  local=***@demo.matflow  tag=29de3d465cde
+  cmv2xehgk000430tg2tc9jpol  role=coach  local=***@demo.matflow  tag=c2e6d83dd449
+  cmv2xehid000530tgn5ddfyj2  role=admin  local=***@demo.matflow  tag=8c6d2d8ac7b3
+mode: dry run — would rotate 4 accounts (nothing changed)
+
+(node:151684) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)

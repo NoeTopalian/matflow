@@ -1,0 +1,28 @@
+{
+ "TEST_DATABASE_URL": {
+  "role": "neondb_owner",
+  "update_own_tenant_ctx": 1,
+  "backdate_own_tenant_ctx": 1,
+  "update_from_other_tenant_ctx": 1,
+  "read_all_tenants_with_self_set_bypass": true,
+  "delete_with_self_set_bypass": 1,
+  "truncate_privilege": true,
+  "update_privilege": true,
+  "delete_privilege": true,
+  "non_internal_triggers_on_auditlog": 0,
+  "residue": 0
+ },
+ "RESTRICTED_DATABASE_URL": {
+  "role": "matflow_app",
+  "update_own_tenant_ctx": 1,
+  "backdate_own_tenant_ctx": 1,
+  "update_from_other_tenant_ctx": 0,
+  "read_all_tenants_with_self_set_bypass": true,
+  "delete_with_self_set_bypass": 1,
+  "truncate_privilege": false,
+  "update_privilege": true,
+  "delete_privilege": true,
+  "non_internal_triggers_on_auditlog": 0,
+  "residue": 0
+ }
+}

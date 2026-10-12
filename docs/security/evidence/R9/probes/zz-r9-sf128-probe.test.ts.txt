@@ -1,0 +1,158 @@
+/**
+ * Review R9 probe (SF-128). Planted responses against lg-3's matcher, the real route's log reasons, and env-file state.
+ * Untracked scratch file in the R9 worktree only.
+ */
+import fs from "node:fs";
+import path from "node:path";
+import { execSync } from "node:child_process";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+
+vi.mock("@/lib/rate-limit", async (orig) => (await import("./sec-c4-allow-rate-limit")).allowRateLimit(orig));
+vi.mock("next/server", () => ({
+  NextResponse: {
+    json: (body: unknown, init?: { status?: number }) => ({ status: init?.status ?? 200, json: async () => body }),
+  },
+}));
+vi.mock("@vercel/blob", () => ({ del: vi.fn().mockResolvedValue(undefined) }));
+const m = vi.hoisted(() => ({ reconcile: vi.fn(), purge: vi.fn() }));
+vi.mock("@/lib/stripe/reconcile", () => ({ runStripeReconciliation: m.reconcile }));
+vi.mock("@/lib/tenant-purge", () => ({ purgeSoftDeletedTenants: m.purge }));
+vi.mock("@/lib/prisma-tenant", async () => {
+  const { prisma } = await import("@/lib/prisma");
+  return {
+    withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(prisma),
+    withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => fn(prisma),
+  };
+});
+vi.mock("@/lib/prisma", () => {
+  const model = () => ({ findMany: vi.fn(), deleteMany: vi.fn(), updateMany: vi.fn(), count: vi.fn() });
+  return {
+    prisma: {
+      auditLog: model(), emailLog: model(), loginEvent: model(), magicLinkToken: model(), passwordResetToken: model(),
+      rateLimitHit: model(), stripeEvent: model(), importUpload: model(), importJob: model(),
+    },
+  };
+});
+
+import { prisma } from "@/lib/prisma";
+import { GET } from "@/app/api/cron/retention/route";
+import { retentionBearerVerdict, retentionDryRunVerdict } from "../e2e/campaign/assess/lg-3-retention-gate";
+
+const SECRET = "secr9-cron-secret-not-real";
+type Delegate = Record<"findMany" | "deleteMany" | "updateMany" | "count", ReturnType<typeof vi.fn>>;
+const delegates = () => Object.values(prisma as unknown as Record<string, Delegate>);
+let lines: string[] = [];
+const out: Record<string, unknown> = {};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  lines = [];
+  process.env.CRON_SECRET = SECRET;
+  delete process.env.RETENTION_CRON_ENABLED;
+  for (const d of delegates()) {
+    d.findMany.mockResolvedValue([{ id: "secr9-row", tenantId: "secr9-t", fileBlobUrl: null }]);
+    d.deleteMany.mockResolvedValue({ count: 1 });
+    d.updateMany.mockResolvedValue({ count: 1 });
+    d.count.mockResolvedValue(3);
+  }
+  m.reconcile.mockResolvedValue({ ok: true });
+  m.purge.mockImplementation(async (_n: Date, _s: () => boolean, dry: boolean) =>
+    dry ? { deleted: 0, details: { candidates: 1, wouldPurge: [] } } : { deleted: 0 },
+  );
+  for (const k of ["log", "info", "warn", "error"] as const) {
+    vi.spyOn(console, k).mockImplementation((...a: unknown[]) => {
+      lines.push(a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" "));
+    });
+  }
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  delete process.env.RETENTION_CRON_ENABLED;
+});
+
+async function real(query = "") {
+  const res = await GET(new Request(`https://matflow.test/api/cron/retention${query}`, { headers: { authorization: `Bearer ${SECRET}` } }));
+  return { status: res.status, body: (await res.json()) as unknown };
+}
+const lastCall = () => lines.filter((l) => l.startsWith("[cron/retention] call ")).slice(-1)[0];
+
+describe("R9 SF-128 planted responses", () => {
+  const notConfigured = { status: 503, body: { error: "CRON_SECRET not configured" } };
+  const disabled = { status: 503, body: { error: "retention cron disabled" } };
+  it("gate believed OFF: only the named disabled 503 passes", () => {
+    const v = {
+      notConfigured: retentionBearerVerdict(notConfigured, false),
+      disabled: retentionBearerVerdict(disabled, false),
+      disabledUpper: retentionBearerVerdict({ status: 503, body: { error: "Retention cron disabled" } }, false),
+      disabled200: retentionBearerVerdict({ status: 200, body: { error: "retention cron disabled" } }, false),
+      liveSweep200: retentionBearerVerdict({ status: 200, body: { ok: true, dryRun: false, retentionEnabled: true, results: [{ rule: "x", deleted: 1 }] } }, false),
+      dryRunShaped200: retentionBearerVerdict({ status: 200, body: { ok: true, dryRun: true, retentionEnabled: false, results: [] } }, false),
+      s401: retentionBearerVerdict({ status: 401, body: { error: "Unauthorized" } }, false),
+      s500: retentionBearerVerdict({ status: 500, body: {} }, false),
+      nullBody: retentionBearerVerdict({ status: 503, body: null }, false),
+    };
+    out.off = v;
+    expect(v.disabled).toBeNull();
+    for (const [k, r] of Object.entries(v)) if (k !== "disabled") expect(r, k).not.toBeNull();
+  });
+  it("gate believed ON: only a live 200 with dryRun false, retentionEnabled true and rules passes", () => {
+    const live = { status: 200, body: { ok: true, dryRun: false, retentionEnabled: true, results: [{ rule: "x", deleted: 0 }] } };
+    const v = {
+      live: retentionBearerVerdict(live, true),
+      disabled: retentionBearerVerdict(disabled, true),
+      notConfigured: retentionBearerVerdict(notConfigured, true),
+      dryRun200: retentionBearerVerdict({ status: 200, body: { ...live.body, dryRun: true } }, true),
+      gateFalse200: retentionBearerVerdict({ status: 200, body: { ...live.body, retentionEnabled: false } }, true),
+      noRules: retentionBearerVerdict({ status: 200, body: { ...live.body, results: [] } }, true),
+      s500: retentionBearerVerdict({ status: 500, body: live.body }, true),
+    };
+    out.on = v;
+    expect(v.live).toBeNull();
+    for (const [k, r] of Object.entries(v)) if (k !== "live") expect(r, k).not.toBeNull();
+  });
+  it("dry-run verdict: real 200 dry run passes; 503s and a deletion fail", async () => {
+    const offDry = await real("?dryRun=1");
+    process.env.RETENTION_CRON_ENABLED = "true";
+    const onDry = await real("?dryRun=1");
+    const v = {
+      realOffDry: retentionDryRunVerdict(offDry, false),
+      realOnDry: retentionDryRunVerdict(onDry, true),
+      realOffDryBelievedOn: retentionDryRunVerdict(offDry, true),
+      notConfigured: retentionDryRunVerdict(notConfigured, false),
+      disabled: retentionDryRunVerdict(disabled, false),
+      deleted: retentionDryRunVerdict({ status: 200, body: { dryRun: true, retentionEnabled: false, note: "retention cron disabled; dry run", results: [{ rule: "x", deleted: 2, details: { wouldDelete: 2 } }] } }, false),
+    };
+    out.dry = v;
+    expect(v.realOffDry).toBeNull();
+    expect(v.realOnDry).toBeNull();
+    for (const k of ["realOffDryBelievedOn", "notConfigured", "disabled", "deleted"] as const) expect(v[k], k).not.toBeNull();
+    expect(delegates().reduce((n, d) => n + d.deleteMany.mock.calls.length + d.updateMany.mock.calls.length, 0)).toBe(0);
+  });
+  it("real route: the call line reason differs between disabled and not configured", async () => {
+    const a = await real();
+    const la = lastCall();
+    delete process.env.CRON_SECRET;
+    const b = await real();
+    const lb = lastCall();
+    out.lines = { disabled: { status: a.status, line: la }, notConfigured: { status: b.status, line: lb } };
+    expect(a.status).toBe(503);
+    expect(b.status).toBe(503);
+    expect(la).toMatch(/ reason=disabled$/);
+    expect(lb).toMatch(/ reason=not_configured$/);
+    expect(la.replace(/reason=\S+/, "")).toBe(lb.replace(/reason=\S+/, ""));
+  });
+  it("env files: no tracked env-like file and no local .env.test carries RETENTION_CRON_ENABLED", () => {
+    const tracked = execSync("git ls-files", { encoding: "utf8" }).split(/\r?\n/).filter((f) => /(^|\/)\.env|\.env(\.|$)/i.test(f));
+    const hits = tracked.filter((f) => /RETENTION_CRON_ENABLED/.test(fs.readFileSync(f, "utf8")));
+    const local = fs.existsSync(".env.test") && /^\s*(export\s+)?RETENTION_CRON_ENABLED\s*=/m.test(fs.readFileSync(".env.test", "utf8"));
+    const mainTree = path.join("C:/Users/NoeTo/Desktop/matflow", ".env.test");
+    const mainLocal = fs.existsSync(mainTree) && /RETENTION_CRON_ENABLED/.test(fs.readFileSync(mainTree, "utf8"));
+    out.env = { trackedEnvFiles: tracked, trackedWithGate: hits, worktreeEnvTestHasGate: local, mainTreeEnvTestHasGate: mainLocal };
+    expect(hits).toEqual([]);
+    expect(local).toBe(false);
+    expect(mainLocal).toBe(false);
+  });
+  it("write evidence", () => {
+    if (process.env.R9_OUT) fs.writeFileSync(process.env.R9_OUT, JSON.stringify(out, null, 1));
+  });
+});

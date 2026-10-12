@@ -1,0 +1,91 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-m1-retention-cron-gate.test.ts (14 tests | 10 failed) 29ms
+     × gate unset + the real bearer → 503 'retention cron disabled' before any work: zero deletes, zero reads, no reconcile, no purge 13ms
+     × gate "" is not exactly "true" → 503, zero deletes 1ms
+     × gate "false" is not exactly "true" → 503, zero deletes 1ms
+     × gate "TRUE" is not exactly "true" → 503, zero deletes 1ms
+     × gate "True" is not exactly "true" → 503, zero deletes 1ms
+     × gate "1" is not exactly "true" → 503, zero deletes 1ms
+     × gate "yes" is not exactly "true" → 503, zero deletes 1ms
+     × gate " true" is not exactly "true" → 503, zero deletes 1ms
+     × gate "true " is not exactly "true" → 503, zero deletes 1ms
+     × one log line per call, carrying the gate, the mode and the status — never the payload 4ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 10 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate unset + the real bearer → 503 'retention cron disabled' before any work: zero deletes, zero reads, no reconcile, no purge
+AssertionError: expected 200 to be 503 // Object.is equality
+
+- Expected
++ Received
+
+- 503
++ 200
+
+ ❯ tests/unit/sec-m1-retention-cron-gate.test.ts:106:24
+    104|   it("gate unset + the real bearer → 503 'retention cron disabled' bef…
+    105|     const res = await GET(req());
+    106|     expect(res.status).toBe(503);
+       |                        ^
+    107|     expect(await res.json()).toEqual({ error: "retention cron disabled…
+    108|     expect(writes()).toBe(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "false" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "TRUE" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "True" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "1" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "yes" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate " true" is not exactly "true" → 503, zero deletes
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > gate "true " is not exactly "true" → 503, zero deletes
+AssertionError: expected 200 to be 503 // Object.is equality
+
+- Expected
++ Received
+
+- 503
++ 200
+
+ ❯ tests/unit/sec-m1-retention-cron-gate.test.ts:118:26
+    116|       process.env.RETENTION_CRON_ENABLED = v;
+    117|       const res = await GET(req());
+    118|       expect(res.status).toBe(503);
+       |                          ^
+    119|       expect(writes()).toBe(0);
+    120|       expect(m.purge).not.toHaveBeenCalled();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯
+
+ FAIL  tests/unit/sec-m1-retention-cron-gate.test.ts > RETENTION_CRON_ENABLED gate (default OFF) > one log line per call, carrying the gate, the mode and the status — never the payload
+AssertionError: expected '[cron/retention] call gate=off dryRun…' to match /gate=off dryRun=0 status=503/
+
+- Expected:
+/gate=off dryRun=0 status=503/
+
++ Received:
+"[cron/retention] call gate=off dryRun=0 status=200"
+
+ ❯ tests/unit/sec-m1-retention-cron-gate.test.ts:183:22
+    181|     const calls = callLines();
+    182|     expect(calls).toHaveLength(4);
+    183|     expect(calls[0]).toMatch(/gate=off dryRun=0 status=503/);
+       |                      ^
+    184|     expect(calls[1]).toMatch(/gate=off dryRun=1 status=200/);
+    185|     expect(calls[2]).toMatch(/status=401/);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  10 failed | 4 passed (14)
+   Start at  21:23:26
+   Duration  810ms (transform 222ms, setup 57ms, import 540ms, tests 29ms, environment 0ms)
+
+M2b exit=1

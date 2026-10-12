@@ -1,0 +1,53 @@
+{
+ "role": "owner",
+ "sequential": {
+  "verdicts": [
+   true,
+   true,
+   true,
+   true,
+   true,
+   false
+  ],
+  "retryAfter": 59,
+  "rows": 5
+ },
+ "burst20_r1": {
+  "allowed": 5,
+  "rows": 5,
+  "refusedRetryMin": 58,
+  "refusedRetryMax": 60
+ },
+ "burst20_r2": {
+  "allowed": 5,
+  "rows": 5,
+  "refusedRetryMin": 58,
+  "refusedRetryMax": 60
+ },
+ "burst20_r3": {
+  "allowed": 5,
+  "rows": 5,
+  "refusedRetryMin": 58,
+  "refusedRetryMax": 60
+ },
+ "pair": {
+  "okA": 5,
+  "okB": 5,
+  "rowsA": 5,
+  "rowsB": 5
+ },
+ "window": {
+  "first": [
+   true,
+   true,
+   false
+  ],
+  "after": true,
+  "rows": 3
+ },
+ "teardown": {
+  "rowsWritten": 33,
+  "deleted": 33,
+  "left": 0
+ }
+}

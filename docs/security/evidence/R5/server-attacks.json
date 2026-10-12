@@ -1,0 +1,75 @@
+{
+ "sink20kHonestCL": {
+  "timeout": false,
+  "statusLines": [
+   "413"
+  ]
+ },
+ "sink20kChunked": {
+  "timeout": false,
+  "statusLines": [
+   "413"
+  ]
+ },
+ "sink20kLyingCL100": {
+  "timeout": false,
+  "statusLines": [
+   "400"
+  ]
+ },
+ "sinkSmallWithToken": {
+  "timeout": false,
+  "statusLines": [
+   "204"
+  ]
+ },
+ "sinkCLLargerThanBody": {
+  "timeout": true,
+  "statusLines": []
+ },
+ "ownerSignedIn": true,
+ "uploadPositive": {
+  "timeout": false,
+  "statusLines": [
+   "200"
+  ]
+ },
+ "uploadSvgAsPng": {
+  "timeout": false,
+  "statusLines": [
+   "400"
+  ]
+ },
+ "uploadCLSmallerThanBody": {
+  "error": "ECONNRESET",
+  "statusLines": [
+   "400"
+  ]
+ },
+ "uploadCLOverCap": {
+  "timeout": true,
+  "statusLines": []
+ },
+ "uploadCLLargerThanBodyUnderCap": {
+  "timeout": true,
+  "statusLines": []
+ },
+ "uploadChunked5MB": {
+  "timeout": false,
+  "statusLines": [
+   "400"
+  ]
+ },
+ "uploadNoCookie": {
+  "timeout": false,
+  "statusLines": [
+   "401"
+  ]
+ },
+ "uploadCrossOrigin": {
+  "timeout": false,
+  "statusLines": [
+   "403"
+  ]
+ }
+}

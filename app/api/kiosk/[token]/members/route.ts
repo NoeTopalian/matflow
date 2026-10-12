@@ -16,6 +16,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { signKioskMemberToken } from "@/lib/kiosk-token";
 import { ageFromDateOfBirth } from "@/lib/age";
 import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
+import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 
 export const runtime = "nodejs";
 
@@ -85,6 +86,7 @@ export async function GET(
         name: true,
         accountType: true,
         parentMemberId: true,
+        guardianConfirmedAt: true,
         waiverAccepted: true,
         membershipType: true,
         memberRanks: {
@@ -98,8 +100,10 @@ export async function GET(
         // today?" picker when a parent taps their name. Only top-level
         // Members (parentMemberId IS NULL) can have kids — we still query
         // unconditionally because the include filter is per-row anyway.
+        // Only children whose guardianship is CONFIRMED: an import only
+        // suggests a parent, and a suggestion grants nothing (lib/guardianship).
         children: {
-          where: { status: { in: ["active", "taster"] } },
+          where: { status: { in: ["active", "taster"] }, ...CONFIRMED_GUARDIAN },
           select: {
             id: true,
             name: true,
@@ -125,7 +129,8 @@ export async function GET(
       const selfTrainable =
         m.accountType !== "kids" &&
         !!m.membershipType &&
-        m.parentMemberId === null;
+        // A suggested (unconfirmed) parent link is not a parent: a junior with one trains as themselves.
+        (m.parentMemberId === null || m.guardianConfirmedAt === null);
 
       return {
         kioskMemberToken: signKioskMemberToken({ tenantId: tenant.id, memberId: m.id }),

@@ -1,0 +1,41 @@
+# RED on HEAD 55b6a1a (code = ed567c4 + lead docs commits), Node v24.21.0, before any M2 source change
+# cmd: npx vitest run tests/unit/sec-m2-retention-log-reason.test.ts tests/unit/sec-m2-lg3-retention-matcher.test.ts tests/unit/sec-m2-demo-rotate-hardening.test.ts tests/unit/sec-m2-rate-limit-family-literal.test.ts tests/unit/sec-m1-rate-limit-log-family.test.ts ; exit=1
+     × parseArgs refuses .env in any letter case (and Windows trailing dots/spaces or a stream suffix) 8ms
+     × by real path: a name that resolves to .env is refused (injected resolver: a symlink called secm2.env) 7ms
+     × by file identity: a hard link to the production .env under another name is refused 4ms
+     × positive control: an ordinary env file is admitted and its real path returned 4ms
+     × spawned: --env-file <dir>/.ENV exits 2 with the .env refusal, before reading or connecting 163ms
+     × parseArgs: confirm without ids is refused; with ids it parses; ids without confirm is still refused 1ms
+     × spawned: --confirm without --ids exits 2 and never reaches the target 145ms
+     × refused: endpoint=<prod>$pw, endpoint=<id>;pw, upper case, percent-encoded 2ms
+     × lower- and mixed-case PG* names are refused; empty values and unrelated names are not 1ms
+     × the mask is the domain only: no character of the local part 3ms
+     × the digest is keyed: no key → refused; never the unsalted SHA-256; a different key → a different tag 1ms
+     × static: the tool no longer computes an unsalted digest, keys the tag per run, and never prints the key 1ms
+     × gate off + real bearer → 503 with reason=disabled 15ms
+     × CRON_SECRET unset → 503 with reason=not_configured (the same status, a different reason) 2ms
+     × the two 503 lines are not identical (the residual R8 named) 2ms
+     × every other outcome names itself: unauthorized, dry_run (gate off and on), swept 1ms
+     × the line still carries no payload, no bearer and no count 4ms
+ FAIL  tests/unit/sec-m2-lg3-retention-matcher.test.ts [ tests/unit/sec-m2-lg3-retention-matcher.test.ts ]
+Error: Cannot find module '/tests/e2e/campaign/assess/lg-3-retention-gate' imported from tests/unit/sec-m2-lg3-retention-matcher.test.ts
+⎯⎯⎯⎯⎯⎯ Failed Tests 17 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/unit/sec-m2-demo-rotate-hardening.test.ts > SF-129 (a): the env file can never be .env > parseArgs refuses .env in any letter case (and Windows trailing dots/spaces or a stream suffix)
+ FAIL  tests/unit/sec-m2-demo-rotate-hardening.test.ts > SF-129 (a): the env file can never be .env > by real path: a name that resolves to .env is refused (injected resolver: a symlink called secm2.env)
+ FAIL  tests/unit/sec-m2-demo-rotate-hardening.test.ts > SF-129 (a): the env file can never be .env > by file identity: a hard link to the production .env under another name is refused
+ FAIL  tests/unit/sec-m2-demo-rotate-hardening.test.ts > SF-129 (a): the env file can never be .env > positive control: an ordinary env file is admitted and its real path returned
+ FAIL  tests/unit/sec-m2-demo-rotate-hardening.test.ts > SF-129 (a): the env file can never be .env > spawned: --env-file <dir>/.ENV exits 2 with the .env refusal, before reading or connecting
+ FAIL  tests/unit/sec-m2-demo-rotate-hardening.test.ts > SF-129 (b): --confirm requires --ids > parseArgs: confirm without ids is refused; with ids it parses; ids without confirm is still refused
+ FAIL  tests/unit/sec-m2-demo-rotate-hardening.test.ts > SF-129 (b): --confirm requires --ids > spawned: --confirm without --ids exits 2 and never reaches the target
+ FAIL  tests/unit/sec-m2-demo-rotate-hardening.test.ts > SF-129 (c): db-target refuses Neon's endpoint= routing form in the password > refused: endpoint=<prod>$pw, endpoint=<id>;pw, upper case, percent-encoded
+ FAIL  tests/unit/sec-m2-demo-rotate-hardening.test.ts > SF-129 (d): the tool's own libpq check is case-insensitive > lower- and mixed-case PG* names are refused; empty values and unrelated names are not
+ FAIL  tests/unit/sec-m2-demo-rotate-hardening.test.ts > SF-129 (e): nothing guessable about the address leaves the tool > the mask is the domain only: no character of the local part
+ FAIL  tests/unit/sec-m2-demo-rotate-hardening.test.ts > SF-129 (e): nothing guessable about the address leaves the tool > the digest is keyed: no key → refused; never the unsalted SHA-256; a different key → a different tag
+ FAIL  tests/unit/sec-m2-demo-rotate-hardening.test.ts > SF-129 (e): nothing guessable about the address leaves the tool > static: the tool no longer computes an unsalted digest, keys the tag per run, and never prints the key
+ FAIL  tests/unit/sec-m2-retention-log-reason.test.ts > SF-128: the retention call line distinguishes 'disabled' from 'not configured' > gate off + real bearer → 503 with reason=disabled
+ FAIL  tests/unit/sec-m2-retention-log-reason.test.ts > SF-128: the retention call line distinguishes 'disabled' from 'not configured' > CRON_SECRET unset → 503 with reason=not_configured (the same status, a different reason)
+ FAIL  tests/unit/sec-m2-retention-log-reason.test.ts > SF-128: the retention call line distinguishes 'disabled' from 'not configured' > the two 503 lines are not identical (the residual R8 named)
+ FAIL  tests/unit/sec-m2-retention-log-reason.test.ts > SF-128: the retention call line distinguishes 'disabled' from 'not configured' > every other outcome names itself: unauthorized, dry_run (gate off and on), swept
+ FAIL  tests/unit/sec-m2-retention-log-reason.test.ts > SF-128: the retention call line distinguishes 'disabled' from 'not configured' > the line still carries no payload, no bearer and no count
+ Test Files  3 failed | 2 passed (5)
+      Tests  17 failed | 10 passed | 1 skipped (28)

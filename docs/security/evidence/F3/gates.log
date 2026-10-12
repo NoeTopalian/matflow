@@ -1,0 +1,21 @@
+# Lane F3 gates, Node v24.21.0, main working tree at HEAD 52e3036 + uncommitted lane work (F3 files plus D3's in-progress files)
+## npx tsc --noEmit -p .  -> exit 0
+## npm run lint -> exit 0 (eslint clean, UI-RULES ratchet at baseline)
+## npx vitest run <15 files> -> exit 0
+tests/unit/sec-e-asset-inventory.test.ts
+tests/unit/sec-e-secret-scan.test.ts
+tests/unit/sec-e-supply-chain.test.ts
+tests/unit/sec-e3-ops-guards.test.ts
+tests/unit/sec-e3-setup-test-db-guard.test.ts
+tests/unit/sec-e3-upload-limit-input-pixels.test.ts
+tests/unit/sec-f2-coverage-reconcile.test.ts
+tests/unit/sec-f2-restore-verify-compare.test.ts
+tests/unit/sec-f2-skip-gate.test.ts
+tests/unit/sec-f3-restore-verify-catalogue.test.ts
+tests/unit/sec-f3-secret-scan-residuals.test.ts
+tests/unit/sec-f3-setup-test-db-secret.test.ts
+tests/unit/sec-r-db-target-guard.test.ts
+tests/unit/sec-r-skip-gate-expected-files.test.ts
+tests/unit/readiness-scripts-release-verify.test.ts
+ Test Files  15 passed (15)
+      Tests  293 passed (293)

@@ -1,0 +1,14 @@
+v24.21.0
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+
+ Test Files  9 passed (9)
+      Tests  186 passed (186)
+   Start at  21:22:27
+   Duration  41.75s (transform 1.26s, setup 127ms, import 31.69s, tests 8.06s, environment 1ms)
+
+exit=0

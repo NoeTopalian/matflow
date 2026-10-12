@@ -1,0 +1,57 @@
+// Reviewer R7 probe (SF-112): deployed derivations unchanged. Under fixed synthetic roots, compute the kiosk, card and
+// provenance sub-keys (through lib/auth-secret's resolution) and one token of each (kiosk and card through the real
+// signers; the provenance proof over a fixed canonical tuple), plus hashToken samples. Only sha256(sha256(value)) is
+// written — never a key or token. Run once at 5259d3b's lib files and once at the review SHA; the JSON must be equal.
+import { it, vi } from "vitest";
+import { createHash, createHmac } from "node:crypto";
+import { writeFileSync } from "node:fs";
+
+const dd = (v: string | Buffer) => createHash("sha256").update(createHash("sha256").update(v).digest("hex")).digest("hex");
+const ROOT = "secR7-fixed-vector-root-0123456789abcdef0123456789abcdef";
+const configs: Record<string, Record<string, string | undefined>> = {
+  nextauthOnly: { NEXTAUTH_SECRET: ROOT, AUTH_SECRET: undefined },
+  authOnly: { NEXTAUTH_SECRET: undefined, AUTH_SECRET: ROOT },
+  nextauthTrailingNewline: { NEXTAUTH_SECRET: ROOT + "\n", AUTH_SECRET: undefined },
+  bothSetNextauthWins: { NEXTAUTH_SECRET: ROOT, AUTH_SECRET: "secR7-other-root-ignored-0123456789abcdef" },
+};
+
+it("vectors", async () => {
+  const saved = { N: process.env.NEXTAUTH_SECRET, A: process.env.AUTH_SECRET };
+  const out: Record<string, Record<string, string>> = {};
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-10T00:00:00.000Z"));
+  try {
+    for (const [name, env] of Object.entries(configs)) {
+      for (const [k, v] of Object.entries(env)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      vi.resetModules();
+      const { AUTH_SECRET_VALUE } = await import("@/lib/auth-secret");
+      const ai = await import("@/lib/attendance-import");
+      const kiosk = await import("@/lib/kiosk-token");
+      const card = await import("@/lib/card-token");
+      const th = await import("@/lib/token-hash");
+      const sub = (ctx: string) => createHmac("sha256", AUTH_SECRET_VALUE).update(ctx).digest();
+      const digest = ai.sourceKeyDigest("person", "secR7|vector|person");
+      const canonical = ai.provenanceCanonical({ tenantId: "t-secR7", mappingId: "map-secR7", kind: "person", sourceKeyDigest: digest, before: null, after: { action: "member", targetId: "m-secR7" }, createdAtMs: 1760054400000, prev: ai.MAPPING_PROVENANCE_GENESIS });
+      out[name] = {
+        rootResolved: dd(AUTH_SECRET_VALUE),
+        provenanceSubKey: dd(sub(ai.PROVENANCE_KEY_CONTEXT)),
+        kioskSubKey: dd(sub("matflow.kiosk.v1")),
+        cardSubKey: dd(sub(card.CARD_KEY_CONTEXT)),
+        provenanceProof: dd(createHmac("sha256", sub(ai.PROVENANCE_KEY_CONTEXT)).update(canonical).digest("hex")),
+        sourceKeyDigest: dd(digest),
+        kioskToken: dd(kiosk.signKioskMemberToken({ tenantId: "t-secR7", memberId: "m-secR7" })),
+        cardToken: dd(card.signCardToken({ tenantId: "t-secR7", memberId: "m-secR7", cardVersion: 2 })),
+        hashTokenSample: dd(th.hashToken("a1b2c3d4e5f60718293a4b5c6d7e8f90")),
+        hashTokenEmail: dd(th.hashToken("someone@example.test")),
+      };
+    }
+  } finally {
+    vi.useRealTimers();
+    if (saved.N === undefined) delete process.env.NEXTAUTH_SECRET; else process.env.NEXTAUTH_SECRET = saved.N;
+    if (saved.A === undefined) delete process.env.AUTH_SECRET; else process.env.AUTH_SECRET = saved.A;
+  }
+  writeFileSync(process.env.R7_VEC_OUT ?? "r7-vectors.json", JSON.stringify(out, null, 1));
+});

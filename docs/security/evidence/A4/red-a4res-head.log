@@ -1,0 +1,185 @@
+node v24.21.0 mode=unit file=tests/unit/sec-a4-lockout-reservation.test.ts head=7ce179c at=2026-10-10T05:22:59Z
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts (12 tests | 11 failed) 555ms
+     × lock namespace is lane C3's (RATE_LIMIT_LOCK_NS), and the lock is on the ADDRESS bucket 30ms
+     × an existing member, right password: lock → reservation → bcrypt, in that order, no late insert 510ms
+     × an existing member, wrong password: lock → reservation → bcrypt, in that order, no late insert 2ms
+     × an address with no account, right password: lock → reservation → bcrypt, in that order, no late insert 1ms
+     × an address with no account, wrong password: lock → reservation → bcrypt, in that order, no late insert 1ms
+     × right password: admitted, and its address slot is deleted by id together with this network's pair counter 3ms
+     × wrong password: refused, and the reserved slot stays (it IS the recorded failure) 2ms
+     × recordFailure without a reservation refuses rather than counting late 2ms
+     × a reservation the database cannot make refuses even the RIGHT password 1ms
+     × cap filled by a concurrent burst after the read: an unknown device gets the one generic code 1ms
+     × cap filled by a concurrent burst after the read: the person's known device is still judged (exempt reservation) 1ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 11 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > lock namespace is lane C3's (RATE_LIMIT_LOCK_NS), and the lock is on the ADDRESS bucket
+AssertionError: expected undefined to be 1380730964 // Object.is equality
+
+- Expected:
+1380730964
+
++ Received:
+undefined
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:146:37
+    144|   it("lock namespace is lane C3's (RATE_LIMIT_LOCK_NS), and the lock i…
+    145|     const rl = await vi.importActual<typeof import("@/lib/rate-limit")…
+    146|     expect(lockout.LOCKOUT_LOCK_NS).toBe(rl.RATE_LIMIT_LOCK_NS);
+       |                                     ^
+    147|     await attempt("wrong-a4");
+    148|     expect(h.trace).toContain(`lock:${rl.RATE_LIMIT_LOCK_NS}`);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/11]⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > an existing member, right password: lock → reservation → bcrypt, in that order, no late insert
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > an existing member, wrong password: lock → reservation → bcrypt, in that order, no late insert
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > an address with no account, right password: lock → reservation → bcrypt, in that order, no late insert
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > an address with no account, wrong password: lock → reservation → bcrypt, in that order, no late insert
+AssertionError: expected -1 to be greater than or equal to 0
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:161:23
+    159|         const iRes = h.trace.findIndex((t) => t.startsWith("reserve:")…
+    160|         const iBcrypt = h.trace.indexOf("bcrypt");
+    161|         expect(iLock).toBeGreaterThanOrEqual(0);
+       |                       ^
+    162|         expect(iLock).toBeLessThan(iRes);
+    163|         expect(iRes, "reservation before the password is judged").toBe…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/11]⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > refund: a correct password spends nothing, a wrong one keeps its slot > right password: admitted, and its address slot is deleted by id together with this network's pair counter
+AssertionError: expected undefined to deeply equal ArrayContaining{…}
+
+- Expected:
+ArrayContaining [
+  {
+    "bucket": "authfail:pair:afd0f0ab4490da9f41a295519c5fb159eb400191",
+  },
+  {
+    "id": StringMatching /^lk_/,
+  },
+]
+
++ Received:
+undefined
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:176:22
+    174|     expect(addrHits()).toBe(5);
+    175|     const where = h.deletes.at(-1) as { OR: { bucket?: string; id?: st…
+    176|     expect(where.OR).toEqual(expect.arrayContaining([{ bucket: KEYS().…
+       |                      ^
+    177|   });
+    178|   it("wrong password: refused, and the reserved slot stays (it IS the …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/11]⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > refund: a correct password spends nothing, a wrong one keeps its slot > wrong password: refused, and the reserved slot stays (it IS the recorded failure)
+AssertionError: expected 5 to be 6 // Object.is equality
+
+- Expected
++ Received
+
+- 6
++ 5
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:181:24
+    179|     h.hits = Array.from({ length: 5 }, () => ({ bucket: KEYS().addr })…
+    180|     expect(await attempt("wrong-a4")).toBe("refused");
+    181|     expect(addrHits()).toBe(6);
+       |                        ^
+    182|     expect(h.deletes).toEqual([]);
+    183|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/11]⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > refund: a correct password spends nothing, a wrong one keeps its slot > recordFailure without a reservation refuses rather than counting late
+AssertionError: promise resolved "+0" instead of rejecting
+
+- Expected:
+Error {
+  "message": "rejected promise",
+}
+
++ Received:
+0
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:185:48
+    183|   });
+    184|   it("recordFailure without a reservation refuses rather than counting…
+    185|     await expect(lockout.recordFailure(KEYS())).rejects.toThrow(/witho…
+       |                                                ^
+    186|   });
+    187| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/11]⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > fail closed and the known-device exemption > a reservation the database cannot make refuses even the RIGHT password
+AssertionError: expected 'admitted' to be 'refused' // Object.is equality
+
+Expected: "refused"
+Received: "admitted"
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:192:37
+    190|   it("a reservation the database cannot make refuses even the RIGHT pa…
+    191|     h.reserveFails = true;
+    192|     expect(await attempt(PASSWORD)).toBe("refused");
+       |                                     ^
+    193|   });
+    194|   it("cap filled by a concurrent burst after the read: an unknown devi…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/11]⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > fail closed and the known-device exemption > cap filled by a concurrent burst after the read: an unknown device gets the one generic code
+AssertionError: expected 'admitted' to be 'code:rate_limited' // Object.is equality
+
+Expected: "code:rate_limited"
+Received: "admitted"
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:196:37
+    194|   it("cap filled by a concurrent burst after the read: an unknown devi…
+    195|     h.addrFilledByBurst = true;
+    196|     expect(await attempt(PASSWORD)).toBe("code:rate_limited");
+       |                                     ^
+    197|     expect(h.trace).toContain("known-device-lookup");
+    198|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/11]⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > fail closed and the known-device exemption > cap filled by a concurrent burst after the read: the person's known device is still judged (exempt reservation)
+AssertionError: expected [ 'bcrypt' ] to deeply equal ArrayContaining{…}
+
+- Expected
++ Received
+
+- ArrayContaining [
+-   "reserve:refused",
+-   "known-device-lookup",
+-   "reserve:granted:exempt",
++ [
++   "bcrypt",
+  ]
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:203:21
+    201|     h.known = true;
+    202|     expect(await attempt(PASSWORD)).toBe("admitted");
+    203|     expect(h.trace).toEqual(expect.arrayContaining(["reserve:refused",…
+       |                     ^
+    204|   });
+    205|   it("cap already reached at the read: an unknown device is refused WI…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/11]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  11 failed | 1 passed (12)
+   Start at  06:23:01
+   Duration  952ms (transform 292ms, setup 55ms, import 114ms, tests 555ms, environment 0ms)
+
+EXIT 1

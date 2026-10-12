@@ -7,8 +7,10 @@ import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { sendEmail } from "@/lib/email";
+import { suppressedMessage } from "@/lib/email-delivery";
 import { randomBytes } from "crypto";
 import { hashToken } from "@/lib/token-hash";
+import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
 import { getBaseUrl } from "@/lib/env-url";
 import { synthesiseKidEmail, synthesiseMemberEmail, isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { MAX_KIDS_PER_PARENT, childAccountTypeFor } from "@/lib/kids-policy";
@@ -19,6 +21,8 @@ import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
 import { initialDeskPaymentStatus } from "@/lib/payment-status";
 import { CONFIRMED_BY, guardianSuggestionSource } from "@/lib/guardianship";
+import { LoginIdentityTaken, claimLoginIdentity } from "@/lib/login-email";
+import { refuseSupportSession } from "@/lib/support-session";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -247,6 +251,7 @@ export async function POST(req: Request) {
   if (csrfViolation) return csrfViolation;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const canAdd = ["owner", "manager", "admin"].includes(session.user.role);
@@ -418,6 +423,15 @@ export async function POST(req: Request) {
 
   try {
     const member = await withTenantContext(session.user.tenantId, async (tx) => {
+      // One login identity per club across staff AND members (AH-01, 9 Oct
+      // 2026; was gap #11 in docs/readiness/MAIL-DARK-SEND-PATHS.md — a member
+      // could be created on a staff address). The claim lock is held to
+      // commit, so a concurrent staff writer of the same address waits. A
+      // child or no-email adult gets a synthesised login that nobody shares.
+      if (hasRealEmail) {
+        const claim = await claimLoginIdentity(tx, { tenantId: session.user.tenantId, email });
+        if (claim.kind !== "none") throw new LoginIdentityTaken(claim);
+      }
       const created = await tx.member.create({
         data: {
           tenantId: session.user.tenantId,
@@ -510,11 +524,18 @@ export async function POST(req: Request) {
     // token for an inbox that does not exist would hand the owner an `inviteUrl`
     // and an EmailLog row for an invite no one can ever receive.
     let inviteUrl: string | null = null;
+    // Whether the invite EMAIL actually left (7 Oct 2026, mail-dark). The
+    // screen used to say "an invite email was queued" whatever happened; with
+    // email off, or a failed send, that sentence was false.
+    let inviteEmailSent = false;
+    let inviteEmailNote: string | null = null;
     if (!isKid && hasRealEmail) {
       try {
         // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.
         // The raw token goes in the invite email + URL; the DB stores only the hash.
-        const token = randomBytes(24).toString("hex");
+        // Bound to THIS member (AH-D2, lib/auth-token-binding.ts): the
+        // invitation cannot set the password of whoever holds the address next.
+        const token = mintSubjectBoundToken({ purpose: "first_time_signup", tenantId: session.user.tenantId, subject: { kind: "member", id: member.id } });
         const tenant = await withTenantContext(session.user.tenantId, async (tx) => {
           await tx.magicLinkToken.create({
             data: {
@@ -532,7 +553,7 @@ export async function POST(req: Request) {
           });
         });
         inviteUrl = buildInviteUrl(req, token);
-        await sendEmail({
+        const sent = await sendEmail({
           tenantId: session.user.tenantId,
           templateId: "invite_member",
           to: email,
@@ -542,6 +563,8 @@ export async function POST(req: Request) {
             link: inviteUrl,
           },
         });
+        inviteEmailSent = sent?.ok === true;
+        if (!inviteEmailSent) inviteEmailNote = suppressedMessage(sent) ?? "The invite email could not be sent.";
       } catch (e) {
         // Token / email failure must not break the member creation flow.
         // The owner still gets back the new Member row; inviteUrl will be null
@@ -554,15 +577,16 @@ export async function POST(req: Request) {
     // Derived here rather than sniffed from the address by the client, so the
     // placeholder format stays a server detail.
     return NextResponse.json(
-      { ...member, inviteUrl, noEmail: !isKid && !hasRealEmail },
+      { ...member, inviteUrl, inviteEmailSent, inviteEmailNote, noEmail: !isKid && !hasRealEmail },
       { status: 201 },
     );
   } catch (e: unknown) {
-    if ((e as { code?: string }).code === "P2002") {
+    if (e instanceof LoginIdentityTaken || (e as { code?: string }).code === "P2002") {
       // Two copies of one request racing: the other one landed — return it.
       const raced = await replay();
       if (raced) return raced;
-      return NextResponse.json({ error: "A member with that email already exists" }, { status: 409 });
+      // Opaque: whose address it is (staff or member) is not said.
+      return NextResponse.json({ error: "That email address is already in use at this club." }, { status: 409 });
     }
     return apiError("Failed to create member", 500, e, "[members.POST]");
   }

@@ -45,7 +45,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
     fn({ member: { count: countMock, findFirst: findFirstMock } }),
 }));
-vi.mock("@/lib/api-authz", () => ({
+vi.mock("@/lib/api-authz", () => ({ refuseSupportSession: () => null,
   requireApiRole: vi.fn(async () => ({
     ok: true,
     session: { user: { id: "u-owner", role: "owner", tenantId: "t-A" } },

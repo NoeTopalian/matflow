@@ -1,0 +1,29 @@
+# RED: HEAD af803d5 versions of the 5 route files (lib/upload-guard.ts present); node v24.21.0
+     × a declared Content-Length over the cap is a 413 — the body is never read, nobody is authenticated, nothing decoded 16ms
+     × strict fields: unknown or duplicated multipart fields and unknown query parameters are a 400 3ms
+     × member-scoped: a duplicated targetMemberId is refused instead of picking one 2ms
+     × user budget: 30 allowed, the next is a 429 with Retry-After, body unread, nothing decoded or stored 29ms
+     × tenant budget: a club's accounts together are capped; another club is unaffected 2ms
+     × the limit is shared across instances while the database answers (a fresh module = a new Vercel instance) 10ms
+     × HONEST LIMIT: with the database down each instance falls back to its own memory budget (N instances × limit) 48ms
+     × filename is normalised (path, bidi override, control characters) and the blob key is server-built 81ms
+     × SVG (declared or disguised) is refused; unknown fields are refused 4ms
+     × over the user budget: 429 before the body is read, nothing stored 2ms
+     × DELETE: attachmentId is validated (missing, duplicated, malformed, or with extra parameters → 400) 2ms
+     × 10 hand-offs, then 429 — nothing stored, no further email 112ms
+     × a caller's own mistakes do not spend the budget; unknown fields refused; filename normalised 3ms
+     × over the user budget: 429 before the body is read; under it the request proceeds (positive control) 247ms
+     × positive control: raster IMAGE/WEBP; charset=binary is served inline as an image 9ms
+     × "image/svg+xml" is served as an opaque attachment, never inline 1ms
+     × "image/svg+xml; charset=utf-8" is served as an opaque attachment, never inline 1ms
+     × "IMAGE/SVG+XML" is served as an opaque attachment, never inline 2ms
+     × "image/x-icon" is served as an opaque attachment, never inline 1ms
+     × every response carries a sandbox CSP (a mis-typed document opened directly stays inert) 2ms
+⎯⎯⎯⎯⎯⎯ Failed Tests 20 ⎯⎯⎯⎯⎯⎯⎯
+Binary file (standard input) matches
+exit=1
+
+# GREEN: lane C2 route files restored
+ Test Files  2 passed (2)
+      Tests  46 passed (46)
+exit=0

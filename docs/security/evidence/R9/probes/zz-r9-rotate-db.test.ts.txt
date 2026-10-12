@@ -1,0 +1,125 @@
+/**
+ * Review R9 (SF-129 e) on the TEST branch, run through R9 copies of the guarded runners under both roles.
+ * Own fixtures (prefix secr9-): one tenant, three @demo.matflow staff rows with different first characters, one
+ * non-demo control. Dry run, then --confirm --ids. Asserts the tool output AND the audit rows carry no first character
+ * of any local part and no unsalted SHA-256 (any length >= 8, hex, either case) of any address or local part.
+ * Count-checked teardown.
+ */
+import fs from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+
+vi.mock("@sentry/nextjs", () => ({ captureException: () => {} }));
+import { withRlsBypass } from "@/lib/prisma-tenant";
+
+const HAS_DB = !!process.env.DATABASE_URL;
+const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
+const ROLE_VAR = ROLE === "restricted" ? "RESTRICTED_DATABASE_URL" : "TEST_DATABASE_URL";
+const STAMP = `secr9-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const SCRIPT = path.join(process.cwd(), "scripts/readiness/demo-accounts-rotate.mjs");
+const ACTION = "admin.demo_account.rotated";
+const ids = { T: "", slug: `${STAMP}-t` };
+const seeds: Array<{ id: string; email: string; demo: boolean }> = [];
+const evidence: Record<string, unknown> = { role: ROLE };
+
+function tool(args: string[]) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG[A-Z]/i.test(k))) as unknown as NodeJS.ProcessEnv;
+  const r = spawnSync(process.execPath, [SCRIPT, "--slug", ids.slug, "--var", ROLE_VAR, ...args], { env, encoding: "utf8", timeout: 180_000 });
+  return { status: r.status, out: `${r.stdout}\n${r.stderr}` };
+}
+
+/** Every forbidden derivative of an address: first char of local part patterns + unsalted SHA-256 windows. */
+function forbidden(email: string): { firstChar: RegExp[]; digests: string[] } {
+  const local = email.split("@")[0];
+  const c = local[0].toLowerCase().replace(/[^a-z0-9]/g, "\\$&");
+  const variants = [email, email.toLowerCase(), email.trim().toLowerCase(), local, local.toLowerCase()];
+  const digests = new Set<string>();
+  for (const v of variants) {
+    const h = createHash("sha256").update(v).digest("hex");
+    for (const n of [8, 10, 12, 16, 64]) digests.add(h.slice(0, n));
+  }
+  return { firstChar: [new RegExp(`local=${c}`, "i"), new RegExp(`(^|[^a-z0-9])${c}\\*\\*\\*`, "i")], digests: [...digests] };
+}
+function scan(label: string, text: string) {
+  const low = text.toLowerCase();
+  const hits: string[] = [];
+  for (const s of seeds) {
+    const f = forbidden(s.email);
+    for (const re of f.firstChar) if (re.test(text)) hits.push(`${label}: first-char pattern ${re} for seed ${s.id}`);
+    for (const d of f.digests) if (low.includes(d)) hits.push(`${label}: unsalted digest window (${d.length}) for seed ${s.id}`);
+    if (low.includes(s.email.split("@")[0].toLowerCase())) hits.push(`${label}: local part for seed ${s.id}`);
+  }
+  return hits;
+}
+
+describe.skipIf(!HAS_DB)(`R9 SF-129 (e) on TEST (${ROLE})`, () => {
+  beforeAll(async () => {
+    const url = process.env.DATABASE_URL ?? "";
+    if (!url.includes("ep-hidden-salad") || url.includes("ep-bold-wave")) throw new Error("REFUSED: not the TEST branch");
+    await withRlsBypass(async (tx) => {
+      ids.T = (await tx.tenant.create({ data: { name: `${STAMP} T`, slug: ids.slug, onboardingCompleted: true } })).id;
+      const plan = [
+        { email: `${STAMP}-owner@demo.matflow`, role: "owner", demo: true },
+        { email: `z${STAMP}-coach@demo.matflow`, role: "coach", demo: true },
+        { email: `Q${STAMP}-mgr@Demo.Matflow`, role: "manager", demo: true },
+        { email: `k${STAMP}-staff@example.test`, role: "manager", demo: false },
+      ];
+      for (const [i, p] of plan.entries()) {
+        const u = await tx.user.create({
+          data: { tenantId: ids.T, email: p.email, name: `secr9 ${p.role}`, role: p.role, passwordHash: `synthetic-secr9-not-a-hash-${i}`, sessionVersion: 0 },
+        });
+        seeds.push({ id: u.id, email: p.email, demo: p.demo });
+      }
+    }, { timeout: 60_000 });
+  }, 120_000);
+
+  afterAll(async () => {
+    if (!ids.T) return;
+    await withRlsBypass(async (tx) => {
+      await tx.auditLog.deleteMany({ where: { tenantId: ids.T } });
+      await tx.user.deleteMany({ where: { tenantId: ids.T } });
+      await tx.tenant.deleteMany({ where: { id: ids.T, slug: { startsWith: "secr9-" } } });
+    }, { timeout: 60_000 });
+    const left = await withRlsBypass(async (tx) => ({
+      tenants: await tx.tenant.count({ where: { slug: { startsWith: STAMP } } }),
+      users: await tx.user.count({ where: { tenantId: ids.T } }),
+      audits: await tx.auditLog.count({ where: { tenantId: ids.T } }),
+    }));
+    evidence.teardown = left;
+    if (process.env.R9_OUT) fs.writeFileSync(process.env.R9_OUT.replace(".json", `-${ROLE}.json`), JSON.stringify(evidence, null, 1));
+    expect(left).toEqual({ tenants: 0, users: 0, audits: 0 });
+  }, 120_000);
+
+  it("dry run then confirm: output and audit rows carry no first character and no unsalted digest", async () => {
+    const demoIds = seeds.filter((s) => s.demo).map((s) => s.id).sort();
+    const dry = tool([]);
+    expect(dry.status, dry.out).toBe(0);
+    expect(dry.out).toMatch(new RegExp(`would rotate ${demoIds.length} accounts`));
+    const conf = tool(["--confirm", "--ids", demoIds.join(",")]);
+    expect(conf.status, conf.out).toBe(0);
+    const audits = await withRlsBypass((tx) =>
+      tx.auditLog.findMany({ where: { tenantId: ids.T, action: ACTION }, select: { userId: true, metadata: true } }),
+    );
+    const auditText = JSON.stringify(audits);
+    const hits = [...scan("dry", dry.out), ...scan("confirm", conf.out), ...scan("audit", auditText)];
+    const run = /^run: ([0-9a-f]{16}) /m.exec(conf.out)?.[1];
+    const keys = audits.map((a) => Object.keys(a.metadata as object).sort().join(","));
+    evidence.result = {
+      dryExit: dry.status, confirmExit: conf.status, auditRows: audits.length, metadataKeys: [...new Set(keys)],
+      runIdMatches: audits.every((a) => (a.metadata as { runId?: string }).runId === run),
+      tagsDifferBetweenRuns: (() => {
+        const t1 = new Set([...dry.out.matchAll(/tag=([0-9a-f]{12})/g)].map((m) => m[1]));
+        const t2 = new Set([...conf.out.matchAll(/tag=([0-9a-f]{12})/g)].map((m) => m[1]));
+        return [...t1].every((t) => !t2.has(t));
+      })(),
+      forbiddenPatternsChecked: seeds.length * (2 + 5 * 5 + 1) * 3,
+      hits,
+      dryLines: dry.out.split(/\r?\n/).filter((l) => /role=|would rotate|^run:/.test(l)).map((l) => l.replace(/ [a-z0-9]{20,}  role/, " <id>  role")),
+    };
+    expect(audits.length).toBe(demoIds.length);
+    expect(new Set(keys)).toEqual(new Set(["addressTag,runId,sessionVersionBumped,target,tool"]));
+    expect(hits).toEqual([]);
+  }, 300_000);
+});

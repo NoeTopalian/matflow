@@ -1,0 +1,33 @@
+// Lead one-off: delete AuditLog rows on the TEST branch whose tenantId no longer exists (fixture teardown orphans).
+// TEST only: refuses anything but the ep-hidden-salad endpoint. Counts before, deletes in one transaction, counts after.
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire("C:/Users/NoeTo/Desktop/matflow/package.json");
+const { Client } = require("pg");
+const { parse } = require("pg-connection-string");
+for (const k of ["PGOPTIONS", "PGHOST", "PGHOSTADDR", "PGSSLMODE"]) if (process.env[k]) { console.error("REFUSED: env " + k); process.exit(2); }
+const env = fs.readFileSync("C:/Users/NoeTo/Desktop/matflow/.env.test", "utf8");
+const m = env.match(/^TEST_DATABASE_URL=(.*)$/m);
+if (!m) { console.error("REFUSED: no TEST_DATABASE_URL"); process.exit(2); }
+const url = m[1].trim().replace(/^"|"$/g, "");
+const p = parse(url);
+if (!/^ep-hidden-salad-[a-z0-9]+(-pooler)?\.[a-z0-9-]+\.aws\.neon\.tech$/i.test(p.host || "")) { console.error("REFUSED: host is not the TEST endpoint"); process.exit(2); }
+const q = new URL(url).searchParams;
+for (const k of q.keys()) if (/^(host|hostaddr|options|endpoint)$/i.test(decodeURIComponent(k))) { console.error("REFUSED: url param " + k); process.exit(2); }
+const client = new Client({ host: p.host, port: Number(p.port || 5432), user: p.user, password: p.password, database: p.database, ssl: { rejectUnauthorized: true, servername: p.host } });
+await client.connect();
+const who = await client.query("select current_user, current_database()");
+console.log("connected as", who.rows[0].current_user, "db", who.rows[0].current_database);
+const before = await client.query(`select count(*)::int as n, count(*) filter (where action = 'import.mapping.changed')::int as prov from "AuditLog" a where a."tenantId" is not null and not exists (select 1 from "Tenant" t where t.id = a."tenantId")`);
+console.log("orphans before", before.rows[0]);
+if (process.argv.includes("--delete")) {
+  await client.query("begin");
+  const del = await client.query(`delete from "AuditLog" a where a."tenantId" is not null and not exists (select 1 from "Tenant" t where t.id = a."tenantId")`);
+  await client.query("commit");
+  console.log("deleted", del.rowCount);
+  const after = await client.query(`select count(*)::int as n from "AuditLog" a where a."tenantId" is not null and not exists (select 1 from "Tenant" t where t.id = a."tenantId")`);
+  console.log("orphans after", after.rows[0]);
+} else {
+  console.log("dry run (pass --delete to remove)");
+}
+await client.end();

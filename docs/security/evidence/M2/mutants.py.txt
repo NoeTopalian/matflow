@@ -1,0 +1,83 @@
+# Lane M2 mutant runner: apply one mutant (each find must occur exactly once, or a NEW file is created), run its
+# test command, record exit code and failing test names, restore the exact original bytes, verify by sha256.
+import hashlib, json, os, subprocess, sys
+
+REPO = r"<repo>"
+OUT = sys.argv[1]
+only = sys.argv[2:] if len(sys.argv) > 2 else None
+
+M = [
+    {"id": "M2-1 route: disabled reason removed", "file": "app/api/cron/retention/route.ts",
+     "find": '    call.reason = "disabled";\n', "replace": "",
+     "test": "tests/unit/sec-m2-retention-log-reason.test.ts"},
+    {"id": "M2-2 lg-3 matcher: gate-off accepts any /not configured/ 503 (HEAD semantics)",
+     "file": "tests/e2e/campaign/assess/lg-3-retention-gate.ts",
+     "find": "    if (a.status === 503 && b.error === RETENTION_DISABLED_ERROR) return null;\n    if (a.status === 200)",
+     "replace": "    if (a.status === 503 && /not configured/i.test(String(b.error))) return null;\n    if (a.status === 200)",
+     "test": "tests/unit/sec-m2-lg3-retention-matcher.test.ts"},
+    {"id": "M2-3 tool: .env name check case-sensitive again", "file": "scripts/readiness/demo-accounts-rotate.mjs",
+     "find": '.replace(/[. ]+$/, "").toLowerCase();', "replace": '.replace(/[. ]+$/, "");',
+     "test": "tests/unit/sec-m2-demo-rotate-hardening.test.ts"},
+    {"id": "M2-4 tool: --confirm without --ids admitted", "file": "scripts/readiness/demo-accounts-rotate.mjs",
+     "find": "  if (out.confirm && !out.ids) {", "replace": "  if (false && out.confirm && !out.ids) {",
+     "test": "tests/unit/sec-m2-demo-rotate-hardening.test.ts"},
+    {"id": "M2-5 db-target: endpoint= password refusal removed", "file": "scripts/readiness/db-target.mjs",
+     "find": '  if (/^\\s*endpoint=/i.test(String(parsed.password ?? ""))) {', "replace": '  if (false && /^\\s*endpoint=/i.test(String(parsed.password ?? ""))) {',
+     "test": "tests/unit/sec-m2-demo-rotate-hardening.test.ts"},
+    {"id": "M2-6 tool: PG* check case-sensitive again", "file": "scripts/readiness/demo-accounts-rotate.mjs",
+     "find": "/^PG[A-Z]/i.test(k) && env[k]", "replace": "/^PG[A-Z]/.test(k) && env[k]",
+     "test": "tests/unit/sec-m2-demo-rotate-hardening.test.ts"},
+    {"id": "M2-7 tool: unkeyed digest fallback", "file": "scripts/readiness/demo-accounts-rotate.mjs",
+     "find": '  if (!key || key.length < 32) throw new Error("emailDigest needs the run\'s 32-byte key");',
+     "replace": '  if (!key) key = Buffer.alloc(32);',
+     "test": "tests/unit/sec-m2-demo-rotate-hardening.test.ts"},
+    {"id": "M2-8 SF-130: a new call site with the key first (planted file)", "file": "lib/secm2-mutant-planted.ts", "create":
+     'import { checkRateLimit } from "@/lib/rate-limit";\nexport async function secm2Planted(email: string) {\n  return checkRateLimit(`${email}:forgot`, 5, 60_000);\n}\n',
+     "test": "tests/unit/sec-m2-rate-limit-family-literal.test.ts"},
+    {"id": "M2-9 SF-130/M1 static: R8-MC2 (key on the store-failure path)", "file": "lib/rate-limit.ts",
+     "find": "class=${cls} family=${family} outcome=",
+     "replace": 'class=${cls} family=${family} k=${bucket.split(":").slice(1).join(":")} outcome=',
+     "test": "tests/unit/sec-m1-rate-limit-log-family.test.ts"},
+]
+
+def sha(b): return hashlib.sha256(b).hexdigest()
+
+results = []
+for m in M:
+    if only and not any(m["id"].startswith(o) for o in only):
+        continue
+    path = os.path.join(REPO, m["file"])
+    rec = {"id": m["id"], "file": m["file"]}
+    if m.get("create"):
+        assert not os.path.exists(path), "planted file already exists"
+        open(path, "w", encoding="utf8", newline="").write(m["create"])
+        orig = None
+    else:
+        orig = open(path, "rb").read()
+        text = orig.decode("utf8")
+        find, repl = m["find"], m["replace"]
+        if text.count(find) == 0 and "\r\n" in text:  # the working tree is checked out with CRLF
+            find, repl = find.replace("\n", "\r\n"), repl.replace("\n", "\r\n")
+        n = text.count(find)
+        if n != 1:
+            rec["error"] = f"find occurs {n} times"; results.append(rec); continue
+        open(path, "wb").write(text.replace(find, repl).encode("utf8"))
+        rec["orig_sha16"] = sha(orig)[:16]
+    try:
+        p = subprocess.run(["bash", "-lc", f'source "<scratchpad>/security/M2/env.sh"; npx vitest run {m["test"]} 2>&1'],
+                           capture_output=True, text=True, encoding="utf8", errors="replace", timeout=400)
+        out = p.stdout
+        rec["exit"] = p.returncode
+        rec["failed"] = [l.strip() for l in out.splitlines() if l.strip().startswith("×")]
+        rec["summary"] = [l.strip() for l in out.splitlines() if l.strip().startswith("Tests ")]
+    finally:
+        if orig is None:
+            os.remove(path); rec["restored"] = not os.path.exists(path)
+        else:
+            open(path, "wb").write(orig)
+            rec["restored"] = sha(open(path, "rb").read()) == sha(orig)
+    results.append(rec)
+    print(json.dumps({k: rec[k] for k in ("id", "exit", "restored")}), flush=True)
+
+with open(OUT, "w", encoding="utf8") as f:
+    for r in results: f.write(json.dumps(r, ensure_ascii=False) + "\n")

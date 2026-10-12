@@ -12,8 +12,10 @@ import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog"
 
 interface TopbarProps {
   user: {
-    name: string;
-    email: string;
+    // Optional at runtime: a session can arrive without a name (lane J item 9 —
+    // a support carrier had none, and every dashboard page 500'd on it).
+    name?: string | null;
+    email?: string | null;
     role: string;
     primaryColor?: string;
     tenantName?: string;
@@ -65,7 +67,8 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
   const { ask, dialogProps } = useConfirmDialog();
   const roleLabel = getRoleLabel(user.role);
   const logoPadding = logoSize === "lg" ? 3 : logoSize === "sm" ? 5 : 4;
-  const initials = user.name
+  const displayName = user.name ?? "";
+  const initials = displayName
     .split(" ")
     .map((n) => n[0])
     .join("")
@@ -172,12 +175,12 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
             <div className="flex items-center gap-2 px-2.5 py-1.5">
               <div
                 className="w-8 h-8 rounded-xl flex items-center justify-center text-[var(--tx-on-accent)] text-xs font-bold shrink-0"
-                style={{ background: `linear-gradient(135deg, var(--color-primary), ${userTone(user.name)})` }}
+                style={{ background: `linear-gradient(135deg, var(--color-primary), ${userTone(displayName)})` }}
               >
                 {initials}
               </div>
               <span className="hidden lg:block text-sm font-semibold max-w-[120px] truncate" style={{ color: "var(--tx-1)" }}>
-                {user.name.split(" ")[0] ?? "Account"}
+                {displayName.split(" ")[0] || "Account"}
               </span>
               <ChevronDown
                 className={`w-3.5 h-3.5 transition-transform ${menuOpen ? "rotate-180" : ""}`}
@@ -200,7 +203,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
                 <div className="flex items-start gap-3">
                   <div
                     className="w-11 h-11 rounded-2xl flex items-center justify-center text-[var(--tx-on-accent)] text-sm font-bold shrink-0"
-                    style={{ background: `linear-gradient(135deg, var(--color-primary), ${userTone(user.name)})` }}
+                    style={{ background: `linear-gradient(135deg, var(--color-primary), ${userTone(displayName)})` }}
                   >
                     {initials}
                   </div>

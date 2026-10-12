@@ -1,0 +1,78 @@
+// Review R5: raw-HTTP attacks against the LOCAL production server (127.0.0.1, TEST branch).
+// Usage: node server-attacks.mjs <port> <private-r5.json> <out.json>
+// Report sink: 20 KB with honest CL, 20 KB chunked, 20 KB with a LYING small CL, GET, token-in-body.
+// Upload (as the secR5 owner, same-origin): CL smaller than body, CL larger than body (timeout),
+// SVG declared image/png. Sign-in via the credentials endpoint is done through Playwright to get
+// a session cookie; the cookie value is never printed.
+import fs from "node:fs";
+import net from "node:net";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const { chromium } = require("C:/Users/NoeTo/Desktop/matflow/node_modules/@playwright/test");
+const [PORT, STATE_FILE, OUT] = process.argv.slice(2);
+const S = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+const BASE = `http://127.0.0.1:${PORT}`;
+const out = {};
+
+function raw(head, body, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    const sock = net.connect(Number(PORT), "127.0.0.1");
+    let data = "";
+    const t = setTimeout(() => { sock.destroy(); resolve({ timeout: true, statusLines: [...data.matchAll(/HTTP\/1\.1 (\d{3})/g)].map((m) => m[1]) }); }, timeoutMs);
+    sock.on("data", (d) => { data += d.toString("latin1"); });
+    sock.on("close", () => { clearTimeout(t); resolve({ timeout: false, statusLines: [...data.matchAll(/HTTP\/1\.1 (\d{3})/g)].map((m) => m[1]) }); });
+    sock.on("error", (e) => { clearTimeout(t); resolve({ error: e.code, statusLines: [...data.matchAll(/HTTP\/1\.1 (\d{3})/g)].map((m) => m[1]) }); });
+    sock.write(head);
+    if (body) sock.write(body);
+  });
+}
+const report = (pad) => Buffer.from(JSON.stringify({ "csp-report": { "document-uri": `${BASE}/kiosk/${S.kiosk}`, "blocked-uri": "inline", "effective-directive": "script-src-elem", disposition: "report", pad } }));
+
+// ── report sink ──
+const big = report("x".repeat(20 * 1024));
+const small = report("");
+out.sink20kHonestCL = await raw(`POST /api/csp-report HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/csp-report\r\nContent-Length: ${big.length}\r\nConnection: close\r\n\r\n`, big);
+const chunked = Buffer.concat([Buffer.from(big.length.toString(16) + "\r\n"), big, Buffer.from("\r\n0\r\n\r\n")]);
+out.sink20kChunked = await raw(`POST /api/csp-report HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/csp-report\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n`, chunked);
+out.sink20kLyingCL100 = await raw(`POST /api/csp-report HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/csp-report\r\nContent-Length: 100\r\nConnection: close\r\n\r\n`, big);
+out.sinkSmallWithToken = await raw(`POST /api/csp-report HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/csp-report\r\nContent-Length: ${small.length}\r\nConnection: close\r\n\r\n`, small);
+out.sinkCLLargerThanBody = await raw(`POST /api/csp-report HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/csp-report\r\nContent-Length: ${small.length + 500}\r\nConnection: close\r\n\r\n`, small, 8000);
+console.log("sink", JSON.stringify(out));
+
+// ── upload as the owner ──
+const browser = await chromium.launch();
+try {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/login?club=${S.slug}`, { waitUntil: "networkidle", timeout: 90000 });
+  await page.fill("input[type='email']", S.ownerEmail);
+  await page.fill("input[type='password']", S.pw);
+  await page.click("button[type='submit']");
+  await page.waitForURL((u) => !/^\/login\/?$/.test(u.pathname), { timeout: 90000 }).catch(() => {});
+  const cookies = (await ctx.cookies()).filter((c) => c.name.includes("session-token"));
+  const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+  out.ownerSignedIn = cookies.length > 0;
+  const sharp = require("C:/Users/NoeTo/Desktop/matflow/node_modules/sharp");
+  const png = await sharp({ create: { width: 4, height: 4, channels: 3, background: "#224466" } }).png().toBuffer();
+  const boundary = "----r5boundary";
+  const mp = (bytes, type, name = "a.png") => Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: ${type}\r\n\r\n`), bytes, Buffer.from(`\r\n--${boundary}--\r\n`)]);
+  const head = (len, extra = "") => `POST /api/upload HTTP/1.1\r\nHost: 127.0.0.1:${PORT}\r\nOrigin: ${BASE}\r\nCookie: ${cookieHeader}\r\nContent-Type: multipart/form-data; boundary=${boundary}\r\n${len === null ? "Transfer-Encoding: chunked\r\n" : `Content-Length: ${len}\r\n`}${extra}Connection: close\r\n\r\n`;
+  const okBody = mp(png, "image/png");
+  out.uploadPositive = await raw(head(okBody.length), okBody, 30000);
+  const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+  out.uploadSvgAsPng = await raw(head(mp(svg, "image/png").length), mp(svg, "image/png"), 30000);
+  const bigBody = mp(Buffer.concat([png, Buffer.alloc(5 * 1024 * 1024)]), "image/png");
+  out.uploadCLSmallerThanBody = await raw(head(100), bigBody, 30000);
+  out.uploadCLOverCap = await raw(head(10 * 1024 * 1024), okBody, 30000);
+  out.uploadCLLargerThanBodyUnderCap = await raw(head(okBody.length + 1000), okBody, 10000);
+  const chunkedBig = Buffer.concat([Buffer.from(bigBody.length.toString(16) + "\r\n"), bigBody, Buffer.from("\r\n0\r\n\r\n")]);
+  out.uploadChunked5MB = await raw(head(null), chunkedBig, 60000);
+  out.uploadNoCookie = await raw(head(okBody.length).replace(/Cookie: [^\r]*\r\n/, ""), okBody, 30000);
+  out.uploadCrossOrigin = await raw(head(okBody.length).replace(`Origin: ${BASE}`, "Origin: https://evil.example"), okBody, 30000);
+  await ctx.close();
+} finally {
+  await browser.close();
+}
+console.log("upload", JSON.stringify(Object.fromEntries(Object.entries(out).filter(([k]) => k.startsWith("upload") || k === "ownerSignedIn"))));
+fs.writeFileSync(OUT, JSON.stringify(out, null, 1));

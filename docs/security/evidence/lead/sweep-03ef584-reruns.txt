@@ -1,0 +1,5 @@
+reruns started=2026-10-10T10:05:29Z node=v24.21.0
+owner tests/integration/sec-a-step-up-expiry-db.test.ts exit=0 Tests  6 passed (6)
+owner tests/integration/sec-a2-member-recovery-race-db.test.ts exit=0 Tests  4 passed (4)
+restricted tests/integration/tenant-restore-purge-race.test.ts exit=0 Tests  5 passed (5)
+reruns finished=2026-10-10T10:07:42Z

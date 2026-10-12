@@ -1,0 +1,363 @@
+// Reviewer R6 probe (iteration 2) — attacks on lane D3's provenance MAC. The harness (lines below, up to the R6 describe)
+// is copied from tests/integration/sec-d3-provenance-forgery-db.test.ts at 5259d3b with the prefix changed to secr6d3-
+// and next/headers mocked at the cookie jar; every cell after it is R6's own.
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createHash, createHmac } from "node:crypto";
+
+// The signing key must be non-empty in this process (R4: the harness runs with none, so every "keyed" digest was an
+// HMAC with an EMPTY key). A synthetic value, set before any module reads lib/auth-secret.
+const KEY = vi.hoisted(() => {
+  if (!process.env.NEXTAUTH_SECRET && !process.env.AUTH_SECRET) process.env.NEXTAUTH_SECRET = `secr6d3-synthetic-signing-key-${Date.now()}-0123456789abcdef`;
+  return { root: process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET ?? "" };
+});
+
+const JAR = vi.hoisted(() => new Map<string, string>());
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers(),
+  cookies: async () => ({ get: (n: string) => (JAR.has(n) ? { name: n, value: JAR.get(n)! } : undefined), set: (o: { name: string; value: string }) => { JAR.set(o.name, o.value); }, delete: (n: string) => { JAR.delete(n); } }),
+}));
+vi.mock("next/server", () => ({
+  NextResponse: {
+    json: (body: unknown, init?: { status?: number }) => ({ status: init?.status ?? 200, json: async () => body, headers: new Headers() }),
+  },
+}));
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
+vi.mock("@/lib/email", () => ({ sendEmail: vi.fn(async () => ({ ok: false, logId: "mail-dark" })) }));
+vi.mock("@/lib/rate-limit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  checkRateLimit: vi.fn(async () => ({ allowed: true, retryAfterSeconds: 0 })),
+}));
+const gate = vi.hoisted(() => ({ current: null as null | { tenantId: string; userId: string } }));
+vi.mock("@/auth", () => ({
+  auth: vi.fn(async () => (gate.current ? { user: { id: gate.current.userId, tenantId: gate.current.tenantId, role: "owner" } } : null)),
+  signIn: vi.fn(), signOut: vi.fn(), handlers: {},
+}));
+vi.mock("@/lib/api-authz", async (importOriginal) => {
+  const ok = async () => {
+    if (!gate.current) throw new Error("no club in scope");
+    return { ok: true, tenantId: gate.current.tenantId, userId: gate.current.userId, session: { user: { id: gate.current.userId, tenantId: gate.current.tenantId, role: "owner" } } };
+  };
+  return { ...(await importOriginal<typeof import("@/lib/api-authz")>()), requireApiOwner: vi.fn(ok), requireApiOwnerOrManager: vi.fn(ok) };
+});
+const FILES = vi.hoisted(() => new Map<string, string>());
+vi.mock("@/lib/import-storage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/import-storage")>()),
+  readImportFile: vi.fn(async (url: string) => FILES.get(url) ?? null),
+  deleteImportFile: vi.fn(async () => {}),
+}));
+
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
+import { teamupPersonKey } from "@/lib/importers/teamup";
+import {
+  JOB_SOURCE, LEDGER_SOURCE, MAPPING_VERSION, MAPPING_PROVENANCE_GENESIS, PROVENANCE_KEY_CONTEXT,
+  buildPlan, loadClubInputs, planHashOf, provenanceCanonical, saveDecisions, sourceKeyDigest,
+} from "@/lib/attendance-import";
+import { POST } from "@/app/api/admin/import/attendance/route";
+import { POST as PENDING_TENANT_POST } from "@/app/api/account/pending-tenant/route";
+import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
+
+const HAS_DB = !!process.env.DATABASE_URL;
+const STRICT = process.env.SEC_D3_STRICT === "1";
+/** OPEN cells: the secure assertion fails today (expected failure) unless SEC_D3_STRICT=1. */
+const openIt = STRICT ? it : it.fails;
+const STAMP = `secr6d3-${Date.now().toString(36)}`;
+const N = (who: string) => `secR6D3 ${who}`;
+const E = (who: string) => `${STAMP}-${who}@example.test`;
+const VENUE = "secR6D3 Main";
+const OFFERING = "secR6D3 Adults Gi";
+const HEADER = "Customer Name,Customer Email,Event Starts At,Offering Type Name,Venue Name,Status";
+const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+const csvOf = (name: string, email: string) => [HEADER, [name, email, "2025-11-03T18:00:00+00:00", OFFERING, VENUE, "Attended"].join(",")].join("\n");
+const ACTION = "import.mapping.changed";
+
+/** The proof as a holder of `root` computes it: sub-key = HMAC(root, context); proof = HMAC(sub-key, canonical tuple). */
+const macUnder = (root: string, canonical: string) =>
+  createHmac("sha256", createHmac("sha256", root).update(PROVENANCE_KEY_CONTEXT).digest()).update(canonical).digest("hex");
+
+type Club = { tenantId: string; userId: string; classId: string; locationId: string };
+const clubs: Club[] = [];
+let seq = 0;
+
+async function mkClub(label: string): Promise<Club> {
+  const club = await withRlsBypass(async (tx) => {
+    const t = await tx.tenant.create({ data: { name: `${STAMP} ${label}`, slug: `${STAMP}-${label}`, timezone: "Europe/London", onboardingCompleted: true } });
+    const u = await tx.user.create({ data: { tenantId: t.id, email: E(`${label}-owner`), name: "secR6D3 Owner", role: "owner", passwordHash: "x" } });
+    const loc = await tx.location.create({ data: { tenantId: t.id, name: VENUE, isDefault: true } });
+    const cls = await tx.class.create({ data: { tenantId: t.id, name: OFFERING, duration: 60, isActive: true } });
+    return { tenantId: t.id, userId: u.id, classId: cls.id, locationId: loc.id };
+  });
+  clubs.push(club);
+  const err = await withTenantContext(club.tenantId, (tx) => saveDecisions(tx, club.tenantId, club.userId, [
+    { kind: "offering", sourceKey: OFFERING, action: "class", targetId: club.classId },
+    { kind: "venue", sourceKey: VENUE, action: "location", targetId: club.locationId },
+  ]));
+  if (err) throw new Error(err);
+  return club;
+}
+const idCreatedAt = (at: string) =>
+  `c${new Date(at).getTime().toString(36).padStart(8, "0")}${Array.from({ length: 16 }, () => "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("")}`;
+const mkOld = (club: Club, name: string, email: string) =>
+  withRlsBypass((tx) => tx.member.create({ data: { id: idCreatedAt("2025-01-15T10:00:00Z"), tenantId: club.tenantId, name, email }, select: { id: true } })).then((r) => r.id);
+
+async function call(club: Club, body: unknown) {
+  gate.current = { tenantId: club.tenantId, userId: club.userId };
+  const res = (await POST(new Request("http://localhost/api/admin/import/attendance", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }))) as unknown as { status: number; json: () => Promise<Record<string, unknown>> };
+  return { status: res.status, body: await res.json() };
+}
+/** Preview, commit and step the victim's one booking through the REAL route. */
+async function importVictim(club: Club, name: string, email: string) {
+  const text = csvOf(name, email);
+  const url = `test://${STAMP}/${++seq}`;
+  FILES.set(url, text);
+  const inputs = await withTenantContext(club.tenantId, (tx) => loadClubInputs(tx, club.tenantId));
+  const planHash = planHashOf(sha(text), inputs);
+  const built = buildPlan(text, inputs, new Date());
+  if (built.errors) throw new Error(built.errors.join(" "));
+  const job = await withRlsBypass((tx) => tx.importJob.create({
+    data: { tenantId: club.tenantId, createdById: club.userId, source: JOB_SOURCE, fileName: `secr6d3-${seq}.csv`, fileBlobUrl: url, status: "preview", fileHash: sha(text),
+      sourceExportedAt: new Date("2026-10-08T12:00:00Z"), sourceExportedAtProvenance: "owner_stated", mappingVersion: MAPPING_VERSION, totalRows: 1, dryRunSummary: { planHash } as never },
+    select: { id: true },
+  }));
+  const c = await call(club, { action: "commit", jobId: job.id, planHash });
+  expect(c.status, JSON.stringify(c.body)).toBe(202);
+  for (let i = 0; i < 6; i++) { const s = await call(club, { action: "step", jobId: job.id }); if (s.body.done) break; }
+  return inputs;
+}
+const ledger = (club: Club) => withRlsBypass((tx) => tx.importedBooking.findMany({ where: { tenantId: club.tenantId, source: LEDGER_SOURCE }, select: { memberId: true, matchMethod: true, disposition: true } }));
+const attendanceOf = (club: Club, memberId: string) => withRlsBypass((tx) => tx.attendanceRecord.count({ where: { tenantId: club.tenantId, memberId } }));
+async function expectNotBound(club: Club, wrong: string, why: string) {
+  const rows = await ledger(club);
+  expect({ attendance: await attendanceOf(club, wrong), memberId: rows[0]?.memberId ?? null, disposition: rows[0]?.disposition }, why)
+    .toEqual({ attendance: 0, memberId: null, disposition: "pending_person" });
+}
+async function expectBound(club: Club, right: string) {
+  expect((await ledger(club))[0]).toMatchObject({ memberId: right, matchMethod: "decision" });
+}
+const VIC = "Vic Lane";
+const decide = (club: Club, sourceKey: string, targetId: string) =>
+  withTenantContext(club.tenantId, (tx) => saveDecisions(tx, club.tenantId, club.userId, [{ kind: "person", sourceKey, action: "member", targetId }]));
+const mappingOf = (club: Club, key: string) =>
+  withRlsBypass((tx) => tx.importSourceMapping.findFirstOrThrow({ where: { tenantId: club.tenantId, kind: "person", sourceKey: key }, select: { id: true } }));
+type Row = { id: string; metadata: Record<string, unknown>; createdAt: Date };
+/** Every provenance row of a mapping, oldest first (the attacker READS these; reading needs no key). */
+const rowsOf = async (club: Club, mappingId: string): Promise<Row[]> =>
+  (await withRlsBypass((tx) => tx.auditLog.findMany({ where: { tenantId: club.tenantId, action: ACTION, entityId: mappingId }, orderBy: { createdAt: "asc" }, select: { id: true, metadata: true, createdAt: true } })))
+    .map((r) => ({ id: r.id, metadata: (r.metadata ?? {}) as Record<string, unknown>, createdAt: r.createdAt }));
+/** Insert a provenance row by raw write (prerequisite a). */
+const insertRow = (club: Club, mappingId: string, metadata: Record<string, unknown>, at?: Date) =>
+  withRlsBypass((tx) => tx.auditLog.create({ data: { tenantId: club.tenantId, action: ACTION, entityType: "ImportSourceMapping", entityId: mappingId, ...(at ? { createdAt: at } : {}), metadata: metadata as never } }));
+const forgedMapping = (club: Club, key: string, targetId: string) =>
+  withRlsBypass((tx) => tx.importSourceMapping.create({ data: { tenantId: club.tenantId, source: LEDGER_SOURCE, kind: "person", sourceKey: key, action: "member", targetId, decidedById: club.userId }, select: { id: true } }));
+/** A row correct in every field (tuple, chain, date) whose proof is computed under `root`. */
+async function forgeUnder(club: Club, root: string, mappingId: string, key: string, targetId: string, at = new Date()) {
+  const prior = await rowsOf(club, mappingId);
+  const last = prior[prior.length - 1];
+  const prev = last ? (last.metadata.proof as string) : MAPPING_PROVENANCE_GENESIS;
+  const fields = { tenantId: club.tenantId, mappingId, kind: "person", sourceKeyDigest: sourceKeyDigest("person", key), before: null, after: { action: "member", targetId }, createdAtMs: at.getTime(), prev };
+  await insertRow(club, mappingId, { kind: "person", source: LEDGER_SOURCE, sourceKeyDigest: fields.sourceKeyDigest, before: null, after: fields.after, via: "decide", prev, proof: macUnder(root, provenanceCanonical(fields)) }, at);
+}
+
+afterAll(async () => {
+  if (!HAS_DB) return;
+  const ids = clubs.map((c) => c.tenantId);
+  let provenanceRows = 0;
+  for (const tenantId of ids) {
+    await withRlsBypass(async (tx) => {
+      provenanceRows += (await tx.auditLog.deleteMany({ where: { tenantId, action: ACTION } })).count;
+      await tx.importedBooking.deleteMany({ where: { tenantId } });
+      await tx.attendanceRecord.deleteMany({ where: { tenantId } });
+      await tx.classInstance.deleteMany({ where: { class: { tenantId } } });
+      await tx.classSchedule.deleteMany({ where: { class: { tenantId } } });
+      await tx.importSourceMapping.deleteMany({ where: { tenantId } });
+      await tx.class.deleteMany({ where: { tenantId } });
+      await tx.importJob.deleteMany({ where: { tenantId } });
+      await tx.auditLog.deleteMany({ where: { tenantId } });
+      await tx.memberStatusEvent.deleteMany({ where: { tenantId } });
+      await tx.member.deleteMany({ where: { tenantId } });
+      await tx.location.deleteMany({ where: { tenantId } });
+      await tx.user.deleteMany({ where: { tenantId } });
+      await tx.tenant.delete({ where: { id: tenantId } });
+    }, { timeout: 60_000 });
+  }
+  const left = await withRlsBypass(async (tx) => ({
+    tenants: await tx.tenant.count({ where: { slug: { startsWith: STAMP } } }),
+    members: await tx.member.count({ where: { OR: [{ tenantId: { in: ids } }, { email: { startsWith: STAMP } }] } }),
+    users: await tx.user.count({ where: { email: { startsWith: STAMP } } }),
+    mappings: await tx.importSourceMapping.count({ where: { tenantId: { in: ids } } }),
+    bookings: await tx.importedBooking.count({ where: { tenantId: { in: ids } } }),
+    audit: await tx.auditLog.count({ where: { tenantId: { in: ids } } }),
+  }));
+  expect(left).toEqual({ tenants: 0, members: 0, users: 0, mappings: 0, bookings: 0, audit: 0 });
+  process.stderr.write(`[secr6d3] teardown: ${ids.length} clubs removed (${provenanceRows} provenance rows), 0 rows left\n`);
+}, 240_000);
+
+// ── R6 cells ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+const macWithSubKey = (subKey: Buffer, canonical: string) => createHmac("sha256", subKey).update(canonical).digest("hex");
+const extraTenants: string[] = [];
+afterAll(async () => {
+  if (!HAS_DB) return;
+  for (const id of extraTenants) {
+    await withRlsBypass(async (tx) => {
+      await tx.tenant.delete({ where: { id } });
+    });
+  }
+  const left = await withRlsBypass((tx) => tx.tenant.count({ where: { slug: PROVENANCE_KEY_CONTEXT } }));
+  expect(left, "R6 K1 teardown").toBe(0);
+});
+
+describe.skipIf(!HAS_DB)("R6 — attacks on the D3 provenance MAC (REAL route, TEST DB)", () => {
+  beforeAll(async () => {
+    const who = await withRlsBypass((tx) => tx.$queryRaw<{ current_user: string }[]>`SELECT current_user`);
+    if (process.env.RLS_ENFORCED === "1") expect(who[0]?.current_user).toBe("matflow_app");
+    else expect(who[0]?.current_user).not.toBe("matflow_app");
+    process.stderr.write(`[secr6d3] role ${who[0]?.current_user} signingKeyLen=${AUTH_SECRET_VALUE.length} harnessRootLen=${KEY.root.length}\n`);
+    expect(AUTH_SECRET_VALUE.length, "the process signs with a non-empty key").toBeGreaterThan(0);
+  });
+
+  it("R6-1 COPIED MAC INTO A FORGED MAPPING (same club), digest re-pointed at the forged key → pending", async () => {
+    const club = await mkClub("r1");
+    const right = await mkOld(club, N("Vee Right"), E("right"));
+    const mal = await mkOld(club, N("Mal Lory"), E("mal"));
+    const realKey = teamupPersonKey(N("Real Person"), E("real"));
+    expect(await decide(club, realKey, right)).toBeNull();
+    const [legit] = await rowsOf(club, (await mappingOf(club, realKey)).id);
+    const vkey = teamupPersonKey(N(VIC), E("vic"));
+    const forged = await forgedMapping(club, vkey, mal);
+    await insertRow(club, forged.id, { ...legit.metadata, sourceKeyDigest: sourceKeyDigest("person", vkey), after: { action: "member", targetId: mal } }, legit.createdAt);
+    const inputs = await importVictim(club, N(VIC), E("vic"));
+    expect(inputs.unprovenDecisions).toContain(forged.id);
+    await expectNotBound(club, mal, "R6-1: a copied MAC vouched for a forged mapping");
+  });
+
+  it("R6-1b COPIED ROW VERBATIM (legitimate digest and target) onto a forged mapping → pending", async () => {
+    const club = await mkClub("r1b");
+    const right = await mkOld(club, N("Vee Right"), E("right"));
+    const vkey = teamupPersonKey(N(VIC), E("vic"));
+    const realKey = teamupPersonKey(N("Real Person"), E("real"));
+    expect(await decide(club, realKey, right)).toBeNull();
+    const [legit] = await rowsOf(club, (await mappingOf(club, realKey)).id);
+    const forged = await forgedMapping(club, vkey, right);
+    await insertRow(club, forged.id, { ...legit.metadata }, legit.createdAt);
+    const inputs = await importVictim(club, N(VIC), E("vic"));
+    expect(inputs.unprovenDecisions).toContain(forged.id);
+  });
+
+  it("R6-2 MINTED IN CLUB B, PASTED INTO CLUB A (digest, prev, createdAt and proof as minted; target re-pointed) → pending", async () => {
+    const A = await mkClub("r2-a");
+    const B = await mkClub("r2-b");
+    const mal = await mkOld(A, N("Mal Lory"), E("mal"));
+    const decoy = await mkOld(B, N("Mal Lory"), E("mal-b"));
+    const vkey = teamupPersonKey(N(VIC), E("vic"));
+    const r = await call(B, { action: "decide", decisions: [{ kind: "person", sourceKey: vkey, action: "member", targetId: decoy }] });
+    expect(r.status).toBe(200);
+    const [minted] = await rowsOf(B, (await mappingOf(B, vkey)).id);
+    const forged = await forgedMapping(A, vkey, mal);
+    await insertRow(A, forged.id, { ...minted.metadata, after: { action: "member", targetId: mal } }, minted.createdAt);
+    const inputs = await importVictim(A, N(VIC), E("vic"));
+    expect(inputs.unprovenDecisions).toContain(forged.id);
+    await expectNotBound(A, mal, "R6-2: a club-B decision vouched in club A");
+  });
+
+  it("R6-3 REPLAYED LEGITIMATE ROW WITH A LATER createdAt (mapping unchanged) → its proof no longer verifies → pending (denial only)", async () => {
+    const club = await mkClub("r3");
+    const right = await mkOld(club, N("Vee Right"), E("right"));
+    const vkey = teamupPersonKey(N(VIC), E("vic"));
+    expect(await decide(club, vkey, right)).toBeNull();
+    const m = await mappingOf(club, vkey);
+    const [legit] = await rowsOf(club, m.id);
+    await insertRow(club, m.id, { ...legit.metadata, prev: legit.metadata.proof }, new Date(legit.createdAt.getTime() + 2000));
+    const inputs = await withTenantContext(club.tenantId, (tx) => loadClubInputs(tx, club.tenantId));
+    expect(inputs.decisions.person[vkey]).toEqual({ action: "pending" });
+    expect(inputs.unprovenDecisions).toContain(m.id);
+  });
+
+  it("R6-4a DELETE THE NEWEST ROW, mapping NOT re-pointed (older row names another member) → pending", async () => {
+    const club = await mkClub("r4a");
+    const mal = await mkOld(club, N("Mal Lory"), E("mal"));
+    const right = await mkOld(club, N("Vee Right"), E("right"));
+    const vkey = teamupPersonKey(N(VIC), E("vic"));
+    expect(await decide(club, vkey, mal)).toBeNull();
+    expect(await decide(club, vkey, right)).toBeNull();
+    const m = await mappingOf(club, vkey);
+    const rows = await rowsOf(club, m.id);
+    await withRlsBypass((tx) => tx.auditLog.delete({ where: { id: rows[1].id } }));
+    await importVictim(club, N(VIC), E("vic"));
+    await expectNotBound(club, right, "R6-4a: the mapping still bound after its own provenance row was deleted");
+  });
+
+  it("R6-4b DELETE THE NEWEST ROW AND RE-POINT to the older owner decision (tail truncation) → secure outcome: pending", async () => {
+    const club = await mkClub("r4b");
+    const mal = await mkOld(club, N("Mal Lory"), E("mal"));
+    const right = await mkOld(club, N("Vee Right"), E("right"));
+    const vkey = teamupPersonKey(N(VIC), E("vic"));
+    expect(await decide(club, vkey, mal)).toBeNull();
+    expect(await decide(club, vkey, right)).toBeNull();
+    const m = await mappingOf(club, vkey);
+    const rows = await rowsOf(club, m.id);
+    await withRlsBypass(async (tx) => {
+      await tx.auditLog.delete({ where: { id: rows[1].id } });
+      await tx.$executeRaw`UPDATE "ImportSourceMapping" SET "targetId" = ${mal} WHERE id = ${m.id}`;
+    });
+    await importVictim(club, N(VIC), E("vic"));
+    await expectNotBound(club, mal, "R6-4b tail truncation rolled back to an older owner decision");
+  });
+
+  it("R6-5 GENESIS-POINTING ROW on a mapping that already has rows (first row metadata, prev = genesis, dated now, re-pointed) → pending", async () => {
+    const club = await mkClub("r5");
+    const mal = await mkOld(club, N("Mal Lory"), E("mal"));
+    const right = await mkOld(club, N("Vee Right"), E("right"));
+    const vkey = teamupPersonKey(N(VIC), E("vic"));
+    expect(await decide(club, vkey, mal)).toBeNull();
+    expect(await decide(club, vkey, right)).toBeNull();
+    const m = await mappingOf(club, vkey);
+    const [first] = await rowsOf(club, m.id);
+    expect(first.metadata.prev).toBe(MAPPING_PROVENANCE_GENESIS);
+    await withRlsBypass((tx) => tx.$executeRaw`UPDATE "ImportSourceMapping" SET "targetId" = ${mal} WHERE id = ${m.id}`);
+    await insertRow(club, m.id, { ...first.metadata, prev: MAPPING_PROVENANCE_GENESIS });
+    await importVictim(club, N(VIC), E("vic"));
+    await expectNotBound(club, mal, "R6-5: a genesis-pointing copy vouched");
+  });
+
+  it("R6-5b GENESIS ROW WITH A FRESH CORRECT TUPLE under the real key but prev = genesis on a mapping with history → refused by the chain", async () => {
+    const club = await mkClub("r5b");
+    const right = await mkOld(club, N("Vee Right"), E("right"));
+    const vkey = teamupPersonKey(N(VIC), E("vic"));
+    expect(await decide(club, vkey, right)).toBeNull();
+    const m = await mappingOf(club, vkey);
+    const at = new Date(Date.now() - 500);
+    const fields = { tenantId: club.tenantId, mappingId: m.id, kind: "person", sourceKeyDigest: sourceKeyDigest("person", vkey), before: null, after: { action: "member", targetId: right }, createdAtMs: at.getTime(), prev: MAPPING_PROVENANCE_GENESIS };
+    await insertRow(club, m.id, { kind: "person", source: LEDGER_SOURCE, sourceKeyDigest: fields.sourceKeyDigest, before: null, after: fields.after, via: "decide", prev: MAPPING_PROVENANCE_GENESIS, proof: macUnder(AUTH_SECRET_VALUE, provenanceCanonical(fields)) }, at);
+    const inputs = await withTenantContext(club.tenantId, (tx) => loadClubInputs(tx, club.tenantId));
+    expect(inputs.decisions.person[vkey], "chain check: genesis prev on a mapping that has an earlier row").toEqual({ action: "pending" });
+  });
+
+  it("R6-K1 KEY SEPARATION: a club whose slug IS the provenance key context makes /api/account/pending-tenant hand out HMAC(root, context), the provenance sub-key, as a cookie; secure outcome: a proof minted with it does NOT bind", async () => {
+    const club = await mkClub("k1");
+    const mal = await mkOld(club, N("Mal Lory"), E("mal"));
+    const vkey = teamupPersonKey(N(VIC), E("vic"));
+    // Prerequisite (a): a raw INSERT of a Tenant row (the API slug validators refuse dots; the database does not).
+    const t = await withRlsBypass((tx) => tx.tenant.create({ data: { name: "secR6D3 key-context", slug: PROVENANCE_KEY_CONTEXT, onboardingCompleted: true }, select: { id: true } }));
+    extraTenants.push(t.id);
+    const saved = process.env.ENABLE_GOOGLE_OAUTH;
+    process.env.ENABLE_GOOGLE_OAUTH = "true";
+    let status = 0;
+    try {
+      JAR.clear();
+      const res = (await PENDING_TENANT_POST(new Request("http://localhost/api/account/pending-tenant", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tenantSlug: PROVENANCE_KEY_CONTEXT }) }))) as unknown as { status: number };
+      status = res.status;
+    } finally {
+      if (saved === undefined) delete process.env.ENABLE_GOOGLE_OAUTH; else process.env.ENABLE_GOOGLE_OAUTH = saved;
+    }
+    const cookie = JAR.get("pendingTenantSlug") ?? "";
+    const sig = cookie.slice(cookie.lastIndexOf(".") + 1);
+    const subKey = Buffer.from(sig, "base64url");
+    const realSubKey = createHmac("sha256", AUTH_SECRET_VALUE).update(PROVENANCE_KEY_CONTEXT).digest();
+    process.stderr.write(`[secr6d3] K1 pending-tenant status=${status} cookieSet=${cookie.length > 0} subKeyLen=${subKey.length} equalsProvenanceSubKey=${subKey.equals(realSubKey)}\n`);
+    const forged = await forgedMapping(club, vkey, mal);
+    const at = new Date(Date.now() - 500);
+    const fields = { tenantId: club.tenantId, mappingId: forged.id, kind: "person", sourceKeyDigest: sourceKeyDigest("person", vkey), before: null, after: { action: "member", targetId: mal }, createdAtMs: at.getTime(), prev: MAPPING_PROVENANCE_GENESIS };
+    await insertRow(club, forged.id, { kind: "person", source: LEDGER_SOURCE, sourceKeyDigest: fields.sourceKeyDigest, before: null, after: fields.after, via: "decide", prev: MAPPING_PROVENANCE_GENESIS, proof: macWithSubKey(subKey, provenanceCanonical(fields)) }, at);
+    await importVictim(club, N(VIC), E("vic"));
+    await expectNotBound(club, mal, "R6-K1: a proof minted with the sub-key leaked by the pending-tenant cookie vouched");
+  });
+});

@@ -1,0 +1,61 @@
+// Build and/or start a PRODUCTION build against the TEST branch.
+//   node prod-server.mjs build                 → next build with .env.test values
+//   node prod-server.mjs start <port> [nobypass] → next start; "nobypass" unsets TESTING_MODE
+// Every .env.test value is placed in the process environment first; Next never
+// overrides an existing variable from .env files, so the production .env
+// cannot leak in. Refuses anything but the test branch.
+import fs from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+const ROOT = "C:/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/R5/wt";
+const env = { ...process.env };
+for (const line of fs.readFileSync(`${ROOT}/.env.test`, "utf8").split(/\r?\n/)) {
+  const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/);
+  if (m) env[m[1]] = m[2].trim().replace(/^"|"$/g, "");
+}
+if (!env.DATABASE_URL?.includes("ep-hidden-salad")) throw new Error("refusing: DATABASE_URL is not the test branch");
+delete env.VERCEL_ENV;
+// Anything only the production .env defines is blanked so Next cannot load it.
+for (const k of ["NEXTAUTH_URL", "STRIPE_PUBLISHABLE_KEY", "secret_Key", "DEMO_MODE"]) if (env[k] === undefined) env[k] = "";
+const [cmd, port = "3948", flag, publicUrl] = process.argv.slice(2);
+if (cmd === "build") {
+  const r = spawnSync("npx next build", { cwd: ROOT, env, stdio: "inherit", shell: true });
+  process.exit(r.status ?? 1);
+}
+if (cmd === "start") {
+  // The production env guard refuses to boot without a mail key. .env.test keeps
+  // it empty on purpose (nothing may be sent from tests); a deliberately invalid
+  // key lets the build start while Resend rejects every send.
+  if (!env.RESEND_API_KEY) env.RESEND_API_KEY = "re_invalid_local_test_never_sends";
+  // flag accepts a comma-separated set, so a production-equivalent run can be
+  // BOTH restricted (matflow_app, no BYPASSRLS) AND nobypass (TESTING_MODE off).
+  const flags = (flag ?? "").split(",").map((s) => s.trim());
+  // Set, not deleted: a deleted variable would be reloaded from .env.local.
+  if (flags.includes("nobypass")) { env.TESTING_MODE = "false"; env.E2E_BYPASS_TOKEN = ""; }
+  // "restricted": run the app as matflow_app (no BYPASSRLS), as production should.
+  if (flags.includes("restricted")) {
+    if (!env.RESTRICTED_DATABASE_URL?.includes("ep-hidden-salad")) throw new Error("refusing: restricted URL is not the test branch");
+    env.DATABASE_URL = env.RESTRICTED_DATABASE_URL;
+  }
+  // "isolated" (teamup-2 rehearsal, 2 Oct 2026): no provider can be reached.
+  // Stripe, push and blob keys are blanked (the code paths answer 503 / return
+  // inert), mail keeps a deliberately invalid key (Resend rejects every send).
+  // Presence is printed by NAME only.
+  if (flags.includes("isolated")) {
+    for (const k of ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "BLOB_READ_WRITE_TOKEN", "ANTHROPIC_API_KEY"]) env[k] = "";
+    // The production guard refuses to boot without Stripe keys: give it keys
+    // Stripe cannot accept, so any attempted call fails with 401 and is logged.
+    env.STRIPE_SECRET_KEY = "sk_test_invalid_isolated_rehearsal_never_charges";
+    env.STRIPE_WEBHOOK_SECRET = "whsec_invalid_isolated_rehearsal";
+    env.STRIPE_CLIENT_ID = "ca_invalid_isolated_rehearsal";
+    env.RESEND_API_KEY = "re_invalid_local_test_never_sends";
+    env.RESEND_FROM = "";
+    const names = ["DATABASE_URL", "TESTING_MODE", "STRIPE_SECRET_KEY", "STRIPE_CLIENT_ID", "RESEND_API_KEY", "RESEND_FROM", "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "BLOB_READ_WRITE_TOKEN", "CRON_SECRET", "MATFLOW_ADMIN_SECRET"];
+    console.log("[isolated] env presence:", names.map((k) => k + "=" + (env[k] ? (k === "DATABASE_URL" ? new URL(env[k]).host : (k === "RESEND_API_KEY" || k === "STRIPE_SECRET_KEY" || k === "STRIPE_CLIENT_ID") ? "invalid-key" : "present") : "absent")).join(" "));
+  }
+  // publicUrl: the address browsers use (an https proxy in front, as on Vercel).
+  env.NEXTAUTH_URL = publicUrl || `http://localhost:${port}`;
+  env.AUTH_URL = env.NEXTAUTH_URL;
+  env.AUTH_TRUST_HOST = "true";
+  const child = spawn(`npx next start -H 127.0.0.1 -p ${port}`, { cwd: ROOT, env, stdio: "inherit", shell: true });
+  child.on("exit", (c) => process.exit(c ?? 0));
+}

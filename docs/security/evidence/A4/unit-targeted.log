@@ -1,0 +1,24 @@
+node v24.21.0 mode=unit file=tests/unit/account-lockout-counter.test.ts tests/unit/card-token-empty-secret.test.ts tests/unit/card-token.test.ts tests/unit/e2e-bypass-no-owner-escalation.test.ts tests/unit/encryption.test.ts tests/unit/google-door-bootstrap.test.ts tests/unit/google-door-provisional.test.ts tests/unit/kiosk-branding-validated.test.ts tests/unit/kiosk-classes-window.test.ts tests/unit/kiosk-member-search-pii.test.ts tests/unit/kiosk-roster-refusal.test.ts tests/unit/kiosk-tenant-admission.test.ts tests/unit/login-event-after-response.test.ts tests/unit/magic-link-bootstrap-doors.test.ts tests/unit/magic-link-security.test.ts tests/unit/owner-activation-order.test.ts tests/unit/pending-activation-enrolled-owner.test.ts tests/unit/sec-a2-google-link.test.ts tests/unit/sec-a2-lockout-flags.test.ts tests/unit/sec-a2-proxy-outage-cookie.test.ts tests/unit/sec-a3-failure-path-cost.test.ts tests/unit/sec-a3-google-door.test.ts tests/unit/sec-a3-login-copy.test.tsx tests/unit/sec-a4-empty-secret.test.ts tests/unit/sec-a4-lockout-reservation.test.ts tests/unit/sec-a4-subkey-separation.test.ts tests/unit/sec-c-static-guards.test.ts tests/unit/sec-e2-containment-redaction.test.ts tests/unit/sec-e2-mail-records.test.ts tests/unit/sec-e2-ops-scripts.test.ts tests/unit/sec-e3-ops-guards.test.ts tests/unit/sec-e3-setup-test-db-guard.test.ts tests/unit/sec-e3-upload-limit-input-pixels.test.ts tests/unit/sec-f3-restore-verify-catalogue.test.ts tests/unit/sec-f3-secret-scan-residuals.test.ts tests/unit/sec-f3-setup-test-db-secret.test.ts tests/unit/temp-password-expiry.test.ts tests/unit/totp-challenge-follows-enrolment.test.ts tests/unit/totp-mandatory-elevated.test.ts  head=7ce179c at=2026-10-10T05:33:47Z
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+(node:115296) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+
+ Test Files  39 passed (39)
+      Tests  429 passed (429)
+   Start at  06:33:50
+   Duration  133.35s (transform 5.27s, setup 460ms, import 25.22s, tests 59.41s, environment 38.67s)
+
+EXIT 0

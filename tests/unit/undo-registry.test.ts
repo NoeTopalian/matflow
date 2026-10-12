@@ -69,6 +69,26 @@ describe("decideUndo — what the owner is told", () => {
     expect(decideUndo(row("member.update", { fields: ["name"] }), false)).toEqual({ ok: false, reason: REASON.noSnapshot });
   });
 
+  it("member.update: a login-address change is not restorable from here (AH-H2, 9 Oct 2026)", () => {
+    // The staff PATCH records an address change as digests only; an undo would
+    // restore an address without the claim, the token retirement or the
+    // sign-out. Email-only → refused with its reason; email + name → the name
+    // is still put back, the address is left alone.
+    expect(decideUndo(row("member.update", { fields: ["email"], oldEmailSha256: "a".repeat(64), newEmailSha256: "b".repeat(64) }), false))
+      .toEqual({ ok: false, reason: REASON.loginAddress });
+    expect(decideUndo(row("member.update", { changes: { email: { from: "old@x.test", to: "new@x.test" } } }), false))
+      .toEqual({ ok: false, reason: REASON.loginAddress });
+    expect(decideUndo(row("member.update", { fields: ["email", "name"], changes: { name: { from: "A", to: "B" } }, oldEmailSha256: "a".repeat(64) }), false))
+      .toEqual({ ok: true });
+  });
+
+  it("member.self_update: never undone by staff — the honest reason, and the login-address reason for an address change", () => {
+    expect(decideUndo(row("member.self_update", { source: "self", changes: { name: { from: "A", to: "B" } } }), false))
+      .toEqual({ ok: false, reason: REASON.selfEdit });
+    expect(decideUndo(row("member.self_update", { source: "self", oldEmailSha256: "a".repeat(64), newEmailSha256: "b".repeat(64), unverified: true }), false))
+      .toEqual({ ok: false, reason: REASON.loginAddress });
+  });
+
   it("a member.update with a diff is reversible; with a before snapshot too", () => {
     expect(decideUndo(row("member.update", { changes: { name: { from: "A", to: "B" } } }), false)).toEqual({ ok: true });
     expect(decideUndo(row("member.update", { before: { name: "A" }, after: { name: "B" } }), false)).toEqual({ ok: true });
@@ -121,6 +141,12 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     expect(fake.member.update).toHaveBeenCalledWith({ where: { id: "m1" }, data: { name: "A", phone: "1" } });
   });
 
+  it("member.update: a legacy diff that still carries an email never writes the address back", async () => {
+    fake.member.findFirst.mockResolvedValue({ id: "m1", name: "B", email: "new@x.test" });
+    await applyUndo(tx, row("member.update", { changes: { name: { from: "A", to: "B" }, email: { from: "old@x.test", to: "new@x.test" } } }));
+    expect(fake.member.update).toHaveBeenCalledWith({ where: { id: "m1" }, data: { name: "A" } });
+  });
+
   it("member.update (diff): refused when someone changed it since", async () => {
     fake.member.findFirst.mockResolvedValue({ id: "m1", name: "C" });
     await expect(applyUndo(tx, row("member.update", { changes: { name: { from: "A", to: "B" } } }))).rejects.toBeInstanceOf(UndoStale);
@@ -150,7 +176,7 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     await expect(applyUndo(tx, row("tenant.settings.update", { before: { name: "Old" }, after: { name: "New" } }, { entityType: "Tenant", entityId: "t-OTHER" }))).rejects.toBeInstanceOf(UndoStale);
   });
 
-  it("staff.update: undoing a role or email change signs the person out everywhere", async () => {
+  it("staff.update: undoing a role change signs the person out everywhere (email is no longer restorable: S-2)", async () => {
     fake.user.findFirst.mockResolvedValue({ id: "u2", role: "manager" });
     await applyUndo(tx, row("staff.update", { before: { role: "coach" }, after: { role: "manager" } }, { entityType: "User", entityId: "u2" }));
     expect(fake.user.update).toHaveBeenCalledWith({ where: { id: "u2" }, data: { role: "coach", sessionVersion: { increment: 1 } } });

@@ -1,0 +1,2 @@
+R7-4b {"role":"owner","nodeEnv":"test","poolMax":20,"tally":{"refused":17,"code:rate_limited":23},"verdicts":{"wrong":10,"right":0,"failClosed":7,"errorKinds":[" Invalid `prisma.$queryRaw()` invocation: Transaction API error: A query cannot be executed on an ex"]},"pairCounter":10,"addrCounter":20}
+R7-TEARDOWN {"role":"owner","nodeEnv":"test","poolMax":20,"tenants":0,"members":0,"hits":0}

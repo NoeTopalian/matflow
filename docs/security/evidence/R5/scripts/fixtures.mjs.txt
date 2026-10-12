@@ -1,0 +1,79 @@
+// Review R5 synthetic fixtures on the Neon TEST branch only (ep-hidden-salad).
+//   node fixtures.mjs setup | teardown | leftovers
+// setup: secR5-<stamp> tenant + owner + member + kiosk token + display token + waiver_open token.
+// Raw tokens and the password go to private-r5.json (never printed).
+import fs from "node:fs";
+import crypto from "node:crypto";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const REPO = "C:/Users/NoeTo/Desktop/matflow";
+const pg = require(`${REPO}/node_modules/pg`);
+const bcrypt = require(`${REPO}/node_modules/bcryptjs`);
+const env = fs.readFileSync(`${REPO}/.env.test`, "utf8");
+const val = (k) => env.match(new RegExp(`^${k}\s*=\s*"?([^"\r\n]*)"?`, "m"))?.[1];
+const url = val("TEST_DATABASE_URL");
+if (!url || !url.includes("ep-hidden-salad") || url.includes("ep-bold-wave")) throw new Error("refusing: not the test branch");
+const secret = val("NEXTAUTH_SECRET") || val("AUTH_SECRET");
+if (!secret) throw new Error("no auth secret in .env.test");
+const hmac = (raw) => crypto.createHmac("sha256", secret).update(raw).digest("hex");
+const STATE = new URL("./private-r5.json", import.meta.url);
+const cmd = process.argv[2];
+const c = new pg.Client({ connectionString: url });
+await c.connect();
+try {
+  if (cmd === "setup") {
+    const stamp = Date.now().toString(36);
+    const ids = { tenant: `secR5-t-${stamp}`, user: `secR5-u-${stamp}`, member: `secR5-m-${stamp}`, mlt: `secR5-l-${stamp}` };
+    const slug = `secr5-${stamp}`;
+    const ownerEmail = `owner-${stamp}@secr5.example`;
+    const memberEmail = `member-${stamp}@secr5.example`;
+    const pw = crypto.randomBytes(18).toString("base64url");
+    const kiosk = crypto.randomBytes(24).toString("base64url");
+    const display = crypto.randomBytes(24).toString("base64url");
+    const waiver = crypto.randomBytes(24).toString("base64url");
+    const hash = bcrypt.hashSync(pw, 10);
+    await c.query("BEGIN");
+    await c.query(`INSERT INTO "Tenant"(id, name, slug, "onboardingCompleted", "subscriptionStatus", "kioskTokenHash", "displayTokenHash") VALUES ($1,$2,$3,true,'active',$4,$5)`, [ids.tenant, "secR5 Club", slug, hmac(kiosk), hmac(display)]);
+    await c.query(`INSERT INTO "User"(id, "tenantId", email, "passwordHash", name, role, "updatedAt") VALUES ($1,$2,$3,$4,$5,'owner',now())`, [ids.user, ids.tenant, ownerEmail, hash, "secR5 Owner"]);
+    await c.query(`INSERT INTO "Member"(id, "tenantId", email, name, "passwordHash", "onboardingCompleted", "waiverAccepted", "updatedAt") VALUES ($1,$2,$3,$4,$5,true,true,now())`, [ids.member, ids.tenant, memberEmail, "secR5 Member", hash]);
+    await c.query(`INSERT INTO "MagicLinkToken"(id, "tenantId", email, "tokenHash", purpose, "expiresAt") VALUES ($1,$2,$3,$4,'waiver_open', now() + interval '1 day')`, [ids.mlt, ids.tenant, memberEmail, hmac(waiver)]);
+    await c.query("COMMIT");
+    fs.writeFileSync(STATE, JSON.stringify({ ids, slug, ownerEmail, memberEmail, pw, kiosk, display, waiver }, null, 2));
+    console.log(`setup ok: tenant ${ids.tenant} slug ${slug} (credentials/tokens in private-r5.json, not printed)`);
+  } else if (cmd === "teardown") {
+    const s = JSON.parse(fs.readFileSync(STATE, "utf8"));
+    if (!s.ids.tenant.startsWith("secR5-")) throw new Error("refusing: not a review R5 id");
+    const { rows: tables } = await c.query(
+      `SELECT table_name FROM information_schema.columns WHERE table_schema='public' AND column_name='tenantId' AND table_name NOT IN ('User','Member','Tenant')`,
+    );
+    const counts = {};
+    await c.query("BEGIN");
+    for (const { table_name } of tables) {
+      await c.query("SAVEPOINT sp");
+      const r = await c.query(`DELETE FROM "${table_name}" WHERE "tenantId" = $1`, [s.ids.tenant]).catch(async (e) => { await c.query("ROLLBACK TO SAVEPOINT sp"); return { rowCount: `ERR ${e.code}` }; });
+      if (r.rowCount) counts[table_name] = r.rowCount;
+    }
+    counts.RateLimitHit = (await c.query(`DELETE FROM "RateLimitHit" WHERE bucket LIKE $1 OR bucket LIKE $2 OR bucket LIKE $3`, [`%${s.ids.user}%`, `%${s.ids.tenant}%`, `%secr5.example%`])).rowCount;
+    counts.Member = (await c.query(`DELETE FROM "Member" WHERE id = $1 AND "tenantId" = $2`, [s.ids.member, s.ids.tenant])).rowCount;
+    counts.User = (await c.query(`DELETE FROM "User" WHERE id = $1 AND "tenantId" = $2`, [s.ids.user, s.ids.tenant])).rowCount;
+    counts.Tenant = (await c.query(`DELETE FROM "Tenant" WHERE id = $1`, [s.ids.tenant])).rowCount;
+    if (counts.Member !== 1 || counts.User !== 1 || counts.Tenant !== 1) { await c.query("ROLLBACK"); throw new Error(`teardown count mismatch ${JSON.stringify(counts)}`); }
+    await c.query("COMMIT");
+    console.log("teardown ok", JSON.stringify(counts));
+  } else if (cmd === "leftovers") {
+    const s = JSON.parse(fs.readFileSync(STATE, "utf8"));
+    const cols = (await c.query(`SELECT table_name, column_name FROM information_schema.columns WHERE table_schema='public' AND column_name IN ('tenantId','userId','memberId','bucket','email')`)).rows;
+    const out = {};
+    for (const { table_name, column_name } of cols) {
+      const like = column_name === "bucket" || column_name === "email";
+      const vals = like ? [`%secr5%`, `%secR5%`] : [s.ids.tenant, s.ids.user, s.ids.member];
+      for (const v of vals) {
+        const r = await c.query(`SELECT count(*)::int n FROM "${table_name}" WHERE "${column_name}" ${like ? "LIKE" : "="} $1`, [v]).catch((e) => ({ rows: [{ n: "ERR " + e.code }] }));
+        if (r.rows[0].n) out[`${table_name}.${column_name}`] = (out[`${table_name}.${column_name}`] || 0) + r.rows[0].n;
+      }
+    }
+    console.log("leftovers", JSON.stringify(out));
+  } else console.log("usage: setup | teardown | leftovers");
+} finally {
+  await c.end();
+}

@@ -1,0 +1,20 @@
+R7-SAT-A {"role":"restricted","poolMax":5,"res":[{"burst":20,"allowed":5,"rows":5,"fallbackLines":0,"fallbackHasKey":false,"fallbackFamilyDash":true},{"burst":60,"allowed":5,"rows":5,"fallbackLines":1,"fallbackHasKey":false,"fallbackFamilyDash":true},{"burst":120,"allowed":5,"rows":5,"fallbackLines":0,"fallbackHasKey":false,"fallbackFamilyDash":true}]}
+R7-SAT-B {"role":"restricted","poolMax":5,"allowed":5,"rows":5,"fallbackLines":1,"fallbackLine":"[rate-limit] store unavailable reason=pool-timeout class=security family=forgot outcome=memory-fallback windowMs=60000 suppressedSinceLast=0","fallbackHasKey":false,"overLimitWarningsWithKey":3,"refusedFromStoreFailure":0}
+R7-SAT-C {"role":"restricted","poolMax":5,"allowedA":5,"allowedB":0,"rowsA":5,"rowsB":0,"totp":1,"apply":1,"keyInFallback":false}
+R7-SAT-D {"role":"restricted","poolMax":5,"tally":{"allowed":5,"refused":12,"threw":43},"rows":5,"fallbackLines":1,"outcomeThrown":true}
+R7-SAT-TEARDOWN {"role":"restricted","poolMax":5,"buckets":7,"deleted":30,"left":0}
+R7-SAT-A {"role":"restricted","poolMax":5,"res":[{"burst":20,"allowed":5,"rows":5,"fallbackLines":0,"fallbackHasKey":false,"fallbackFamilyDash":true},{"burst":60,"allowed":5,"rows":5,"fallbackLines":1,"fallbackHasKey":false,"fallbackFamilyDash":true},{"burst":120,"allowed":5,"rows":5,"fallbackLines":0,"fallbackHasKey":false,"fallbackFamilyDash":true}]}
+R7-SAT-B {"role":"restricted","poolMax":5,"allowed":5,"rows":5,"fallbackLines":1,"fallbackLine":"[rate-limit] store unavailable reason=pool-timeout class=security family=forgot outcome=refused windowMs=60000 suppressedSinceLast=0","fallbackHasKey":false,"overLimitWarningsWithKey":4,"refusedFromStoreFailure":111}
+R7-SAT-C {"role":"restricted","poolMax":5,"allowedA":5,"allowedB":0,"rowsA":5,"rowsB":0,"totp":1,"apply":1,"keyInFallback":false}
+R7-SAT-D {"role":"restricted","poolMax":5,"tally":{"allowed":5,"refused":15,"threw":40},"rows":5,"fallbackLines":1,"outcomeThrown":true}
+R7-SAT-TEARDOWN {"role":"restricted","poolMax":5,"buckets":7,"deleted":30,"left":0}
+R7-SAT-A {"role":"restricted","poolMax":5,"res":[{"burst":20,"allowed":5,"rows":5,"fallbackLines":0,"fallbackHasKey":false,"fallbackFamilyDash":true},{"burst":60,"allowed":5,"rows":5,"fallbackLines":0,"fallbackHasKey":false,"fallbackFamilyDash":true},{"burst":120,"allowed":5,"rows":5,"fallbackLines":0,"fallbackHasKey":false,"fallbackFamilyDash":true}]}
+R7-SAT-B {"role":"restricted","poolMax":5,"allowed":5,"rows":5,"fallbackLines":0,"fallbackLine":null,"fallbackHasKey":false,"overLimitWarningsWithKey":6,"refusedFromStoreFailure":109}
+R7-SAT-C {"role":"restricted","poolMax":5,"allowedA":5,"allowedB":0,"rowsA":5,"rowsB":0,"totp":0,"apply":0,"keyInFallback":false}
+R7-SAT-D {"role":"restricted","poolMax":5,"tally":{"allowed":5,"refused":14,"threw":41},"rows":5,"fallbackLines":0,"outcomeThrown":true}
+R7-SAT-TEARDOWN {"role":"restricted","poolMax":5,"buckets":7,"deleted":30,"left":0}
+R7-SAT-A {"role":"restricted","poolMax":5,"res":[{"burst":20,"allowed":5,"rows":5,"fallbackLines":0,"fallbackHasKey":false,"fallbackFamilyDash":true},{"burst":60,"allowed":5,"rows":5,"fallbackLines":1,"fallbackHasKey":true,"fallbackFamilyDash":false},{"burst":120,"allowed":5,"rows":5,"fallbackLines":1,"fallbackHasKey":true,"fallbackFamilyDash":false}]}
+R7-SAT-B {"role":"restricted","poolMax":5,"allowed":5,"rows":5,"fallbackLines":1,"fallbackLine":"[rate-limit] store unavailable reason=pool-timeout class=security family=forgot:<KEY>-victim@example.test outcome=refused windowMs=60000 suppressedSinceLast=0","fallbackHasKey":true,"overLimitWarningsWithKey":7,"refusedFromStoreFailure":108}
+R7-SAT-C {"role":"restricted","poolMax":5,"allowedA":5,"allowedB":4,"rowsA":5,"rowsB":4,"totp":0,"apply":0,"keyInFallback":true}
+R7-SAT-D {"role":"restricted","poolMax":5,"tally":{"allowed":5,"refused":12,"threw":43},"rows":5,"fallbackLines":1,"outcomeThrown":true}
+R7-SAT-TEARDOWN {"role":"restricted","poolMax":5,"buckets":7,"deleted":34,"left":0}

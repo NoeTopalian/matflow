@@ -1,0 +1,95 @@
+== item1-mutant-R8-MA
+× R8-L1 over-limit burst, plus-tag e-mail: 5 allowed, 115 lines with family+counts, no piece of the key 77ms
+× R8-L1 over-limit burst, unicode local part: 5 allowed, 115 lines with family+counts, no piece of the key 4ms
+× R8-L1 over-limit burst, IPv6 address: 5 allowed, 115 lines with family+counts, no piece of the key 4ms
+× R8-L1 over-limit burst, family literal inside the key: 5 allowed, 115 lines with family+counts, no piece of the key 4ms
+× a 120-request burst on an e-mail-keyed (forgot-password) bucket: 5 allowed, 115 refusals logged by family, no piece of the key 11ms
+× a 120-request burst on an IP-keyed (login) bucket: 5 allowed, 115 refusals logged by family, no piece of the key 2ms
+Tests  6 failed | 7 passed (13)
+== item1-mutant-R8-MB
+× R8-L1 over-limit burst, plus-tag e-mail: 5 allowed, 115 lines with family+counts, no piece of the key 81ms
+× R8-L1 over-limit burst, unicode local part: 5 allowed, 115 lines with family+counts, no piece of the key 4ms
+× R8-L1 over-limit burst, IPv6 address: 5 allowed, 115 lines with family+counts, no piece of the key 4ms
+× R8-L1 over-limit burst, family literal inside the key: 5 allowed, 115 lines with family+counts, no piece of the key 5ms
+× a 120-request burst on an e-mail-keyed (forgot-password) bucket: 5 allowed, 115 refusals logged by family, no piece of the key 11ms
+× a 120-request burst on an IP-keyed (login) bucket: 5 allowed, 115 refusals logged by family, no piece of the key 3ms
+Tests  6 failed | 7 passed (13)
+== item1-mutant-R8-MC
+× R8-L2 store-failure burst, plus-tag e-mail: family-only line, no piece of the key 8ms
+× R8-L2 store-failure burst, unicode local part: family-only line, no piece of the key 3ms
+× R8-L2 store-failure burst, IPv6 address: family-only line, no piece of the key 3ms
+× R8-L2 store-failure burst, family literal inside the key: family-only line, no piece of the key 2ms
+× a store-failure burst on the same e-mail-keyed (forgot-password) bucket logs the family only 7ms
+× a store-failure burst on the same IP-keyed (login) bucket logs the family only 3ms
+× static: no console call in lib/rate-limit.ts interpolates the bucket or the key 1ms
+Tests  7 failed | 6 passed (13)
+== item1-mutant-R8-MC2
+× R8-L2 store-failure burst, plus-tag e-mail: family-only line, no piece of the key 8ms
+× R8-L2 store-failure burst, unicode local part: family-only line, no piece of the key 3ms
+× R8-L2 store-failure burst, IPv6 address: family-only line, no piece of the key 3ms
+× R8-L2 store-failure burst, family literal inside the key: family-only line, no piece of the key 3ms
+× a store-failure burst on the same e-mail-keyed (forgot-password) bucket logs the family only 7ms
+× a store-failure burst on the same IP-keyed (login) bucket logs the family only 2ms
+Tests  6 failed | 7 passed (13)
+== item2-mutant-R8-M2a
+× R8-G2 gate "false" → 503, zero prisma touches 11ms
+× R8-G2 gate "TRUE" → 503, zero prisma touches 2ms
+× R8-G2 gate "1" → 503, zero prisma touches 2ms
+× R8-G2 gate " true" → 503, zero prisma touches 1ms
+× R8-G2 gate "true\n" → 503, zero prisma touches 1ms
+× R8-G2 gate "true " → 503, zero prisma touches 1ms
+× R8-G2 gate "True" → 503, zero prisma touches 1ms
+× R8-G2 gate "yes" → 503, zero prisma touches 1ms
+× R8-G2 gate "on" → 503, zero prisma touches 1ms
+× gate "false" is not exactly "true" → 503, zero deletes 7ms
+× gate "TRUE" is not exactly "true" → 503, zero deletes 1ms
+× gate "True" is not exactly "true" → 503, zero deletes 1ms
+× gate "1" is not exactly "true" → 503, zero deletes 1ms
+× gate "yes" is not exactly "true" → 503, zero deletes 1ms
+× gate " true" is not exactly "true" → 503, zero deletes 1ms
+× gate "true " is not exactly "true" → 503, zero deletes 1ms
+Tests  16 failed | 47 passed (63)
+== item2-mutant-R8-M2b
+× R8-G1 gate unset + real bearer → 503 'retention cron disabled', ZERO prisma touches, no reconcile/purge/blob 13ms
+× R8-G2 gate "" → 503, zero prisma touches 1ms
+× R8-G2 gate "false" → 503, zero prisma touches 1ms
+× R8-G2 gate "TRUE" → 503, zero prisma touches 1ms
+× R8-G2 gate "1" → 503, zero prisma touches 1ms
+× R8-G2 gate " true" → 503, zero prisma touches 1ms
+× R8-G2 gate "true\n" → 503, zero prisma touches 1ms
+× R8-G2 gate "true " → 503, zero prisma touches 1ms
+× R8-G2 gate "True" → 503, zero prisma touches 1ms
+× R8-G2 gate "yes" → 503, zero prisma touches 1ms
+× R8-G2 gate "on" → 503, zero prisma touches 1ms
+× R8-G3 ?dryRun=true / ?dryrun=1 / ?dryRun=1&dryRun=0 with gate off are NOT dry runs → 503, zero touches 1ms
+× gate unset + the real bearer → 503 'retention cron disabled' before any work: zero deletes, zero reads, no reconcile, no purge 9ms
+× gate "" is not exactly "true" → 503, zero deletes 1ms
+× gate "false" is not exactly "true" → 503, zero deletes 1ms
+× gate "TRUE" is not exactly "true" → 503, zero deletes 1ms
+× gate "True" is not exactly "true" → 503, zero deletes 1ms
+× gate "1" is not exactly "true" → 503, zero deletes 1ms
+× gate "yes" is not exactly "true" → 503, zero deletes 1ms
+× gate " true" is not exactly "true" → 503, zero deletes 1ms
+× gate "true " is not exactly "true" → 503, zero deletes 1ms
+× one log line per call, carrying the gate, the mode and the status — never the payload 2ms
+Tests  22 failed | 41 passed (63)
+== item2-mutant-R8-M2c
+× gate off + ?dryRun=1 → counts, zero deletes, and the response says the gate is off 6ms
+Tests  1 failed | 62 passed (63)
+== item2-mutant-R8-M2d
+× one log line per call, carrying the gate, the mode and the status — never the payload 6ms
+× R8-G1 gate unset + real bearer → 503 'retention cron disabled', ZERO prisma touches, no reconcile/purge/blob 12ms
+Tests  2 failed | 61 passed (63)
+== item3-mutant-R8-M3a
+× R8-T1 dry run: exit 0, exactly the four ids, nothing changed anywhere, no address/local part/hash printed 8909ms
+Tests  1 failed | 2 skipped (3)
+== item3-mutant-R8-M3b
+× R8-T3 --confirm --ids <the four>: exactly four User hashes (bcrypt 12) and versions (+1), four audit rows; every other User and every Member byte-identical; old sessio
+Tests  1 failed | 2 passed (3)
+== item3-mutant-R8-M3c
+× R8-T3 --confirm --ids <the four>: exactly four User hashes (bcrypt 12) and versions (+1), four audit rows; every other User and every Member byte-identical; old sessio
+Tests  1 failed | 2 passed (3)
+== item3-mutant-R8-M3d
+× R8-T1 dry run: exit 0, exactly the four ids, nothing changed anywhere, no address/local part/hash printed 3628ms
+× R8-T3 --confirm --ids <the four>: exactly four User hashes (bcrypt 12) and versions (+1), four audit rows; every other User and every Member byte-identical; old sessio
+Tests  2 failed | 1 passed (3)

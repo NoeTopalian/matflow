@@ -1,0 +1,48 @@
+// Review R5: does z.config({ jitless: true }) change validation results?
+// Usage: node zod-jitless.mjs <jitless|default> <out.json>
+// Runs the ten C2 schemas (copied verbatim from the route files at ebd761d) plus a few
+// representative object schemas over a fixed corpus and writes success + issue codes/paths.
+import fs from "node:fs";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const { z } = require("C:/Users/NoeTo/Desktop/matflow/node_modules/zod");
+const [mode, out] = process.argv.slice(2);
+if (mode === "jitless") z.config({ jitless: true });
+
+// Spy: count Function constructor use (the JIT path).
+let fnCalls = 0;
+const RealFunction = globalThis.Function;
+globalThis.Function = new Proxy(RealFunction, { construct(t, a) { fnCalls++; return Reflect.construct(t, a); }, apply(t, th, a) { fnCalls++; return Reflect.apply(t, th, a); } });
+
+const schemas = {
+  totpVerify: z.strictObject({ code: z.string().regex(/^\d{6}$/) }),
+  totpSetup: z.strictObject({ code: z.string().regex(/^\d{6}$/), issueRecoveryCodes: z.boolean().optional() }),
+  hold: z.strictObject({ until: z.union([z.string().max(64), z.null()]).optional() }),
+  importUploads: z.strictObject({ purpose: z.string().max(64), fileName: z.string().max(1024), bytes: z.number().finite(), sha256: z.string().max(128) }),
+  uploadQuery: z.strictObject({ purpose: z.string().regex(/^[a-z-]{1,32}$/).optional() }),
+  uploadForm: z.strictObject({ file: z.unknown().optional(), targetMemberId: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/).optional(), prefix: z.string().max(32).optional() }),
+  looseObject: z.object({ a: z.string(), b: z.number().int().min(0).optional(), c: z.array(z.string()).max(3).optional() }),
+  nested: z.object({ user: z.object({ email: z.string().email(), age: z.coerce.number().int().optional() }), tags: z.array(z.enum(["a", "b"])).default([]) }),
+  defaults: z.object({ x: z.string().default("d"), y: z.boolean().catch(false), z: z.string().transform((s) => s.trim()).optional() }),
+};
+const corpus = [
+  undefined, null, 0, 1, "", "123456", [], ["123456"], {}, { code: "123456" }, { code: 123456 }, { code: ["123456"] },
+  { code: "12345" }, { code: "1234567" }, { code: "123456", extra: 1 }, { code: "123456", issueRecoveryCodes: true },
+  { code: "123456", issueRecoveryCodes: "true" }, { until: null }, { until: "2030-01-01T00:00:00.000Z" }, { until: 5 },
+  { until: "x".repeat(65) }, { purpose: "members", fileName: "m.csv", bytes: 10, sha256: "a".repeat(64) },
+  { purpose: "members", fileName: "m.csv", bytes: Infinity, sha256: "a" }, { purpose: "members", fileName: "m.csv", bytes: "10", sha256: "a" },
+  { purpose: "branding" }, { purpose: "BRANDING" }, { purpose: "a", tenantId: "x" }, { file: "x", targetMemberId: "m_1" },
+  { targetMemberId: "bad id" }, { prefix: "p".repeat(33) }, { a: "x" }, { a: "x", b: -1 }, { a: "x", b: 1.5, c: ["1", "2", "3", "4"] },
+  { a: "x", zz: 1 }, { user: { email: "a@b.co", age: "7" } }, { user: { email: "nope" }, tags: ["c"] }, { user: { email: "a@b.co" } },
+  { x: undefined, y: "notbool", z: "  hi " }, { y: true }, Object.assign(Object.create(null), { code: "123456" }),
+  JSON.parse('{"__proto__":{"code":"123456"}}'), JSON.parse('{"code":"123456","__proto__":{"x":1}}'),
+];
+const results = {};
+for (const [name, s] of Object.entries(schemas)) {
+  results[name] = corpus.map((input) => {
+    const r = s.safeParse(input);
+    return r.success ? { ok: true, data: JSON.stringify(r.data) } : { ok: false, issues: r.error.issues.map((i) => `${i.code}@${i.path.join(".")}`).join(",") };
+  });
+}
+fs.writeFileSync(out, JSON.stringify({ mode, fnCalls, results }, null, 1));
+console.log(mode, "Function() calls during parsing:", fnCalls);

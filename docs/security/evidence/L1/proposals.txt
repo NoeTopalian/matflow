@@ -1,0 +1,68 @@
+SF-135 — what L1 did not change, and what it proposes (lane L1, 11 Oct 2026). No patch to lib/prisma.ts is needed.
+
+1. The same unhandled rejection from the sign-in flow's OTHER transactions (lib/prisma-tenant.ts; not L1's file)
+   Evidence: after the fix, sec-a4-lockout-burst-db still ends 6 of 12 runs with an Unhandled Rejection whose stack is
+   Prisma's transaction-timeout timer (verification.txt §D/§G). The reservation's own Prisma timer is now 1 h, so these
+   come from withRlsBypass (tenant lookup) and withTenantContext (subject lookup, known-device lookup, failure-count
+   update), whose Prisma timer is 15 s; the baseline runs show the withTenantContext origin directly (the rejected
+   error carries __matflowErrorContext.tenantId, repro.txt §1).
+   Why not the same construction there: their callbacks are arbitrary application code. Prisma's timer is the only
+   thing that ends such a transaction when the CALLBACK is idle (awaiting non-database work) — there its ROLLBACK goes
+   out at once and does release the connection. Moving the timer out of reach would need a server-side idle bound
+   instead (idle_in_transaction_session_timeout set transaction-locally), which ends the whole session on expiry —
+   a decision for the lead/Noe given D-5/D-6.
+   Proposal A (preferred, covers every transaction): the defect is in Prisma 7.4.2's TransactionManager — the
+   timer callback `createTimeoutIfDefined(async () => { … await this.#closeTransaction(tx, 'timed_out') … })` is never
+   awaited, so a failed close rejects with no handler although the transaction's owner already receives the failure
+   (its in-flight statement rejects; its next call or commit gets TransactionExecutionTimeoutError). Report upstream;
+   until fixed, the lead may carry a reviewed local patch of that one callback (catch + debug log) — a dependency
+   change, so not made by L1.
+   Proposal B (local, lib/prisma-tenant.ts owner): add statement_timeout to the existing first set_config statement of
+   withTenantContext/withRlsBypass (no extra round trip) below the Prisma timeout, so a healthy in-flight statement
+   always ends before the timer; this narrows the window to network stalls only. It does not close it.
+
+2. NEW (proposed SF-136): Prisma's start-timeout discard returns a client to the pool INSIDE an open transaction
+   Evidence: tests/integration/sec-l1-start-timeout-db.test.ts, both roles (repro.txt §4): maxWait expires while the
+   driver is still starting the transaction → the caller gets P2028; when the start completes, Prisma calls the
+   adapter's transaction.rollback(), which in @prisma/adapter-pg 7.4.2 only releases the client (PgTransaction.rollback
+   = cleanup + client.release(); the ROLLBACK statement is normally sent by the engine first, and is not on this path).
+   The client goes back to the pool after BEGIN: measured clientReturnedInsideTransaction=true; a plain write on it
+   was visible to that client and gone after the client closed (plainWritePersistedAfterClose=0).
+   Reach: any interactive transaction whose maxWait can expire while its pool wait or BEGIN is still pending —
+   checkRateLimit (2 s, the Prisma default it always had), the reservation and withTenantContext/withRlsBypass (10 s,
+   equal to the pool's own 10 s connection deadline). Pool saturation and slow connects, both observed on TEST, make it
+   reachable. Effect: autocommit writes issued on that pooled client are held in a transaction nobody owns until the
+   next COMMIT on it (late) or ROLLBACK/close (lost). No unhandled rejection on this path (Prisma catches it).
+   Remedy options: (a) maxWait above the pool deadline plus a BEGIN allowance for every interactive transaction, so
+   the pool refuses before Prisma abandons anything — measured side effect: a 60-request burst at pool 5 then waits
+   instead of failing within 2 s (sec-c4-rate-limit-saturation-db owner: 5 allowed / 5 rows, but 0 fallback lines,
+   which that suite's precondition cell treats as red; restricted passed) — so this needs the C4 suite's owner and a
+   decision on latency vs refusal under saturation; (b) upstream: adapter-pg's discard should send ROLLBACK or release
+   the client with an error so the pool destroys it. L1 left maxWait unchanged for this reason.
+
+3. The sign-in refusal's wording after a failed reservation (auth.ts; not L1's file)
+   A reservation that fails now throws LockoutReservationError(reason). auth.ts still maps every throw to the generic
+   "incorrect" answer (SF-118: a right password can read as incorrect). The refusal is correct; the reason shown is
+   not. Proposal: auth.ts treats LockoutReservationError as a temporary-unavailability refusal (wording for the lead).
+
+4. TEST connectivity
+   During this lane the TEST host was intermittently unreachable (connect ETIMEDOUT / ENETUNREACH at 06:55 UTC; warm-up
+   connections over the 10 s pool deadline in 3/12 baseline and 7/12 post-fix sec-c3 runs). Every such failure was
+   visible (suite error, exit 1). sec-c3's exactness cell can also go red in the fail-safe direction (allowed 4, rows 4)
+   when a holder's connection stalls while holding the bucket lock and the waiters reach the 5 s lock bound
+   (reg-sec-c3 restricted, 15 x 55P03 + one "Connection terminated unexpectedly").
+
+CYCLE 2 STATUS (11 Oct 2026, coordinator handed lib/prisma-tenant.ts to L1)
+- 1: DONE in lib/prisma-tenant.ts (cycle2.txt sections 1, 5). Proposal A (upstream Prisma fix) still recommended: it
+  would protect any future direct prisma.$transaction, which a unit source invariant now forbids in app/ and lib/.
+- 2 (SF-136): DONE at the owning boundaries (all four transaction openers pass maxWait out of reach; the pool deadline
+  bounds the wait). Defence in depth proposed, not applied: patches/0001-prisma-pool-release-guard.diff.
+  sec-c4-rate-limit-saturation-db adapted: saturation is forced and verified instead of assumed (cycle2.txt section 3).
+- 3: OWED (auth.ts untouched): a failed reservation still reads as "Incorrect email or password".
+- 4: sec-c3-rate-limit-atomic-db's warm-up opens 10 TLS connections at once and often exceeds the 10 s pool deadline
+  on this host; a sequential warm-up would make the file report on the limiter rather than on connection setup
+  (harness proposal; not changed, so every recorded exit code is from the file as reviewed).
+- New trade-off to record: a tenant/bypass callback that sits idle (non-database await) past its budget now holds its
+  pool connection until it returns (then rolls back), instead of Prisma's timer freeing it at the budget; the server's
+  idle_in_transaction_session_timeout (5 min on TEST; production unverified) is the backstop. Setting it
+  transaction-locally would end the session on expiry — a decision for the lead/Noe given D-5/D-6.

@@ -1,0 +1,20 @@
+node v24.21.0 head d4ea9fc
+GREEN exit=0 []       Tests  723 passed (723)
+  GREEN restored-clean
+M1-no-override-refusal exit=1 [ 1 file changed, 1 insertion(+), 1 deletion(-)]       Tests  1 failed | 3 passed (4)
+  M1-no-override-refusal restored-clean
+M2-no-lowercase exit=1 [ 1 file changed, 2 insertions(+), 2 deletions(-)]       Tests  2 failed | 2 passed (4)
+  M2-no-lowercase restored-clean
+M2b-no-effective-vs-url exit=0 [ 1 file changed, 1 insertion(+), 1 deletion(-)]       Tests  4 passed (4)
+  M2b-no-effective-vs-url restored-clean
+M3-no-expect exit=1 [ 1 file changed, 1 deletion(-)]       Tests  2 failed | 1 passed (3)
+  M3-no-expect restored-clean
+M4-no-pixel-limit exit=0 [ 1 file changed, 1 insertion(+), 1 deletion(-)]       Tests  24 passed (24)
+  M4-no-pixel-limit restored-clean
+M6-no-csrf-attachments exit=1 [ 1 file changed, 3 deletions(-)]       Tests  1 failed | 423 passed (424)
+  M6-no-csrf-attachments restored-clean
+M7-loose-login-email exit=1 [ 1 file changed, 3 insertions(+), 3 deletions(-)]       Tests  3 failed | 20 passed (23)
+  M7-loose-login-email restored-clean
+M8-no-sfc5-guards exit=1 [ 4 files changed, 4 deletions(-)]       Tests  1 failed | 256 passed (257)
+  M8-no-sfc5-guards restored-clean
+DONE

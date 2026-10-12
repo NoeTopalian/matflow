@@ -1,0 +1,196 @@
+// Reviewer R6 probe (iteration 2) — attacks on lane A3's SF-35 fix with shapes A3 did not test. TEST branch only,
+// through R6 copies of the guarded runners (owner; matflow_app with RLS_ENFORCED=1). Synthetic secR6- clubs,
+// count-checked teardown. Real authorize(), real bcrypt cost 12, real RateLimitHit counters, identical request shapes.
+// The per-IP brake is replaced by "allowed" (as in A2/A3/R3) except where a shape needs the network counter, which is
+// the real per-(address, network) pair counter seeded to its cap.
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+import bcrypt from "bcryptjs";
+import { writeFileSync } from "node:fs";
+
+type Authorize = (credentials: Record<string, unknown>, request: Request) => Promise<Record<string, unknown> | null>;
+const captured = vi.hoisted(() => {
+  process.env.AUTH_SECRET ??= "secR6-lockout-db-synthetic-0123456789abcdef0123456789";
+  return { authorize: undefined as undefined | Authorize };
+});
+vi.mock("next-auth", () => ({
+  default: (config: { providers: { authorize?: Authorize }[] }) => {
+    for (const p of config.providers) if (p?.authorize) captured.authorize = p.authorize;
+    return { handlers: {}, auth: async () => null, signIn: async () => {}, signOut: async () => {} };
+  },
+  CredentialsSignin: class extends Error {
+    code = "credentials";
+  },
+}));
+vi.mock("next-auth/providers/credentials", () => ({ default: (c: unknown) => c }));
+vi.mock("next-auth/providers/google", () => ({ default: (c: unknown) => c }));
+vi.mock("@/lib/login-event", () => ({ recordLoginEvent: async () => {} }));
+vi.mock("@sentry/nextjs", () => ({ captureException: () => {} }));
+vi.mock("next/server", async (orig) => ({
+  ...(await orig<typeof import("next/server")>()),
+  after: (fn: () => unknown) => {
+    setTimeout(() => void fn(), 0);
+  },
+}));
+vi.mock("@/lib/rate-limit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  checkRateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }),
+}));
+
+import { withRlsBypass } from "@/lib/prisma-tenant";
+import { prisma } from "@/lib/prisma";
+import { lockoutKeys, PAIR_MAX } from "@/lib/auth-lockout";
+
+const HAS_DB = !!process.env.DATABASE_URL;
+const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
+const STAMP = `secr6-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const E = (who: string) => `${STAMP}-${who}@example.test`.toLowerCase();
+const PASSWORD = "secR6-correct-horse-battery";
+const ATTACKER_IP = `198.51.100.${Math.floor(Math.random() * 200) + 20}`;
+const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+const OUT = process.env.R6_OUT ?? "";
+const SAMPLES = Number(process.env.R6_SAMPLES ?? 20);
+
+type Shape = { kind: string; email: string; password: string; slug: () => string; seedEmail: string; pair?: number };
+
+describe.skipIf(!HAS_DB)("R6: SF-35 oracle shapes A3 did not test", () => {
+  const A = { tenant: "", slug: "" };
+  const B = { tenant: "", slug: "" };
+  const allBuckets: string[] = [];
+
+  async function attempt(slug: string, email: string, password: string) {
+    if (!captured.authorize) await import("@/auth");
+    const t0 = performance.now();
+    let outcome: string;
+    try {
+      const r = await captured.authorize!(
+        { email, password, tenantSlug: slug },
+        new Request("http://localhost/api/auth/callback/credentials", {
+          method: "POST",
+          headers: { "x-vercel-forwarded-for": ATTACKER_IP, "user-agent": UA },
+        }),
+      );
+      outcome = r ? "admitted" : "refused";
+    } catch (e) {
+      outcome = `code:${(e as { code?: string }).code ?? "error"}`;
+    }
+    return { outcome, ms: performance.now() - t0 };
+  }
+  async function seed(slug: string, email: string, addrN: number, pairN: number) {
+    const k = lockoutKeys(slug, email, ATTACKER_IP);
+    allBuckets.push(k.addr, k.pair);
+    await prisma.rateLimitHit.deleteMany({ where: { bucket: { in: [k.addr, k.pair] } } });
+    const rows = [...Array.from({ length: addrN }, () => ({ bucket: k.addr })), ...Array.from({ length: pairN }, () => ({ bucket: k.pair }))];
+    if (rows.length) await prisma.rateLimitHit.createMany({ data: rows });
+  }
+  const median = (xs: number[]) => {
+    const s = [...xs].sort((a, b) => a - b);
+    return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+  };
+
+  beforeAll(async () => {
+    const who = await withRlsBypass((tx) => tx.$queryRaw<{ current_user: string }[]>`SELECT current_user`);
+    if (process.env.RLS_ENFORCED === "1") expect(who[0]?.current_user).toBe("matflow_app");
+    else expect(who[0]?.current_user).not.toBe("matflow_app");
+    const hash = bcrypt.hashSync(PASSWORD, 12);
+    const locked = new Date(Date.now() + 24 * 3600 * 1000);
+    await withRlsBypass(async (tx) => {
+      const ta = await tx.tenant.create({ data: { name: `${STAMP} club a`, slug: `${STAMP}-a`, onboardingCompleted: true } });
+      const tb = await tx.tenant.create({ data: { name: `${STAMP} club b`, slug: `${STAMP}-b`, onboardingCompleted: true } });
+      Object.assign(A, { tenant: ta.id, slug: ta.slug });
+      Object.assign(B, { tenant: tb.id, slug: tb.slug });
+      for (const w of ["lockedright", "lockednet", "lockedcase", "lockedspace", "seqright"]) {
+        await tx.member.create({ data: { tenantId: ta.id, email: E(w), name: `secR6 ${w}`, passwordHash: hash, lockedUntil: locked } });
+      }
+      // An operator-locked STAFF row in club B; the requests name club A.
+      await tx.user.create({ data: { tenantId: tb.id, email: E("xclubstaff"), name: "secR6 xclub", role: "manager", passwordHash: hash, lockedUntil: locked } });
+      await tx.member.create({ data: { tenantId: ta.id, email: E("open"), name: "secR6 open", passwordHash: hash } });
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    if (!A.tenant) return;
+    await new Promise((r) => setTimeout(r, 1500));
+    await prisma.rateLimitHit.deleteMany({ where: { bucket: { in: [...new Set(allBuckets)] } } });
+    for (const t of [A.tenant, B.tenant]) {
+      await withRlsBypass(async (tx) => {
+        await tx.auditLog.deleteMany({ where: { tenantId: t } });
+        await tx.loginEvent.deleteMany({ where: { tenantId: t } });
+        await tx.member.deleteMany({ where: { tenantId: t } });
+        await tx.user.deleteMany({ where: { tenantId: t } });
+        await tx.tenant.delete({ where: { id: t } });
+      }, { timeout: 60_000 });
+    }
+    const left = await withRlsBypass(async (tx) => ({
+      tenants: await tx.tenant.count({ where: { slug: { startsWith: STAMP } } }),
+      members: await tx.member.count({ where: { email: { startsWith: STAMP } } }),
+      users: await tx.user.count({ where: { email: { startsWith: STAMP } } }),
+    }));
+    const hits = await prisma.rateLimitHit.count({ where: { bucket: { in: [...new Set(allBuckets)] } } });
+    expect({ ...left, rateLimitHits: hits }).toEqual({ tenants: 0, members: 0, users: 0, rateLimitHits: 0 });
+    process.stderr.write(`[secr6-a3] teardown clean ${JSON.stringify({ ...left, rateLimitHits: hits })}\n`);
+  }, 120_000);
+
+  it("positive control: the right password for the unlocked member is admitted", async () => {
+    await seed(A.slug, E("open"), 0, 0);
+    expect((await attempt(A.slug, E("open"), PASSWORD)).outcome).toBe("admitted");
+  }, 60_000);
+
+  it("every shape answers like no account at 0/9/10/11 prior failures (code every sample; timing median of 20 recorded)", async () => {
+    const shapes: Shape[] = [
+      { kind: "ghost", email: E("ghost"), password: "wrong-password-r6", slug: () => A.slug, seedEmail: E("ghost") },
+      { kind: "lockedRightPassword", email: E("lockedright"), password: PASSWORD, slug: () => A.slug, seedEmail: E("lockedright") },
+      { kind: "lockedAndNetworkCapped", email: E("lockednet"), password: "wrong-password-r6", slug: () => A.slug, seedEmail: E("lockednet"), pair: PAIR_MAX },
+      { kind: "ghostNetworkCapped", email: E("ghostnet"), password: "wrong-password-r6", slug: () => A.slug, seedEmail: E("ghostnet"), pair: PAIR_MAX },
+      { kind: "lockedWrongCase", email: E("lockedcase").toUpperCase().replace("@EXAMPLE.TEST", "@Example.Test"), password: "wrong-password-r6", slug: () => A.slug, seedEmail: E("lockedcase") },
+      { kind: "lockedTrailingSpace", email: `${E("lockedspace")}  `, password: "wrong-password-r6", slug: () => A.slug, seedEmail: E("lockedspace") },
+      { kind: "ghostTrailingSpace", email: `${E("ghostspace")}  `, password: "wrong-password-r6", slug: () => A.slug, seedEmail: E("ghostspace") },
+      { kind: "otherClubLockedStaff", email: E("xclubstaff"), password: "wrong-password-r6", slug: () => A.slug, seedEmail: E("xclubstaff") },
+      { kind: "otherClubLockedStaffRightPw", email: E("xclubstaff"), password: PASSWORD, slug: () => A.slug, seedEmail: E("xclubstaff") },
+    ];
+    const rtt: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const t0 = performance.now();
+      await prisma.$queryRawUnsafe("SELECT 1");
+      rtt.push(performance.now() - t0);
+    }
+    const report: Record<string, unknown> = { role: ROLE, samples: SAMPLES, rttMedianMs: Math.round(median(rtt) * 10) / 10 };
+    const mismatches: string[] = [];
+    for (const n of [0, 9, 10, 11]) {
+      const res = Object.fromEntries(shapes.map((s) => [s.kind, { outcomes: [] as string[], ms: [] as number[] }]));
+      for (let i = 0; i < SAMPLES; i++) {
+        const order = shapes.map((_, j) => shapes[(i + j) % shapes.length]);
+        for (const s of order) {
+          await seed(s.slug(), s.seedEmail, n, s.pair ?? 0);
+          const a = await attempt(s.slug(), s.email, s.password);
+          res[s.kind].outcomes.push(a.outcome);
+          res[s.kind].ms.push(a.ms);
+        }
+      }
+      const level: Record<string, unknown> = {};
+      const ghostSet = JSON.stringify([...new Set(res.ghost.outcomes)]);
+      const ghostNetSet = JSON.stringify([...new Set(res.ghostNetworkCapped.outcomes)]);
+      for (const s of shapes) {
+        const set = [...new Set(res[s.kind].outcomes)];
+        level[s.kind] = { outcomes: set, medianMs: Math.round(median(res[s.kind].ms)), diffVsGhostMs: Math.round(median(res[s.kind].ms) - median(res.ghost.ms)) };
+        const ref = s.pair ? ghostNetSet : ghostSet;
+        if (JSON.stringify(set) !== ref) mismatches.push(`n=${n} ${s.kind}: ${set} vs ${ref}`);
+      }
+      report[`n${n}`] = level;
+    }
+    // From zero, right password every time on a locked row, vs a ghost with a wrong one.
+    const seq = async (slug: string, email: string, seedEmail: string, pw: string) => {
+      await seed(slug, seedEmail, 0, 0);
+      const out: string[] = [];
+      for (let i = 0; i < 12; i++) out.push((await attempt(slug, email, pw)).outcome);
+      return out;
+    };
+    const lockedRightSeq = await seq(A.slug, E("seqright"), E("seqright"), PASSWORD);
+    const ghostSeq = await seq(A.slug, E("ghostseq"), E("ghostseq"), "wrong-password-r6");
+    report.sequenceFromZero = { lockedRightPassword: lockedRightSeq.join(","), none: ghostSeq.join(",") };
+    report.mismatches = mismatches;
+    console.log("R6-A3 " + JSON.stringify(report));
+    if (OUT) writeFileSync(OUT, JSON.stringify(report, null, 2));
+    expect(mismatches, "a shape answered differently from no account").toEqual([]);
+    expect(lockedRightSeq, "locked row + right password vs no account, from zero").toEqual(ghostSeq);
+  }, 3_600_000);
+});

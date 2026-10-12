@@ -101,14 +101,19 @@ export default function TotpEnrollmentStep({
       const res = await fetch(`${apiPrefix}/setup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code, issueRecoveryCodes: true }),
       });
       if (res.ok) {
-        // Lane 1 iter-2 L1-I2-S-01 fix: pass the freshly-verified TOTP code
-        // through to the recovery-codes route. The wizard flow just verified
-        // it server-side via /api/auth/totp/setup, so it's still in the
-        // current step's window — the step-up gate accepts it.
-        await loadRecoveryCodes(code);
+        // Staff enrolment SPENDS the code (single use, 7 Oct 2026), so it
+        // cannot be replayed into /recovery-codes: the setup route issues the
+        // codes itself when asked. A route that does not (the member prefix)
+        // returns none, and the code is passed through as before.
+        const data = (await res.json().catch(() => ({}))) as { recoveryCodes?: unknown };
+        if (Array.isArray(data.recoveryCodes) && data.recoveryCodes.length > 0) {
+          setRecoveryCodes(data.recoveryCodes.filter((c): c is string => typeof c === "string"));
+        } else {
+          await loadRecoveryCodes(code);
+        }
         setPhase("recovery");
       } else {
         const data = (await res.json()) as { error?: string };

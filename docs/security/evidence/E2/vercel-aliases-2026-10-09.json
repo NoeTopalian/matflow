@@ -1,0 +1,90 @@
+{
+ "observedUTC": "2026-10-09T17:29Z",
+ "source": "vercel alias ls --format json (CLI 59.1.4) + vercel inspect <deploymentId> per branch alias (read-only)",
+ "aliases": [
+  {
+   "alias": "matflow-git-fix-upload-cap-below-p-685734-noetopalians-projects.vercel.app",
+   "targetDeploymentId": "dpl_Y3jkvjt7oREV6CHn3MLyiwC9DDdz",
+   "createdUTC": "2026-08-20T02:35Z",
+   "targetExists": "no (vercel inspect: Cannot find the deployment)"
+  },
+  {
+   "alias": "matflow-git-fix-stripe-contingencies-noetopalians-projects.vercel.app",
+   "targetDeploymentId": "dpl_3dKWRQaaKPVfr5NBVUwS2wo5jtVV",
+   "createdUTC": "2026-08-20T00:20Z",
+   "targetExists": "no (vercel inspect: Cannot find the deployment)"
+  },
+  {
+   "alias": "matflow-git-feat-dashboard-desktop-system-noetopalians-projects.vercel.app",
+   "targetDeploymentId": "dpl_GLm6XZaLWiXtz8g8zxmJtHXe1kL5",
+   "createdUTC": "2026-08-17T03:46Z",
+   "targetExists": "no (vercel inspect: Cannot find the deployment)"
+  },
+  {
+   "alias": "matflow-git-feat-ui-rules-phase-1-noetopalians-projects.vercel.app",
+   "targetDeploymentId": "dpl_G8juvrBbZ3vrbTiMNj8oDeqnFRKH",
+   "createdUTC": "2026-08-16T05:27Z",
+   "targetExists": "no (vercel inspect: Cannot find the deployment)"
+  },
+  {
+   "alias": "matflow-git-feat-storage-audit-fixes-noetopalians-projects.vercel.app",
+   "targetDeploymentId": "dpl_Ghe6ff4zxRxVj4kkuhEkf4fSciW7",
+   "createdUTC": "2026-08-16T05:16Z",
+   "targetExists": "no (vercel inspect: Cannot find the deployment)"
+  },
+  {
+   "alias": "matflow-git-feat-payments-record-noetopalians-projects.vercel.app",
+   "targetDeploymentId": "dpl_5kWhCSDf1MtczHzBVYDs2WFBsJVK",
+   "createdUTC": "2026-06-29T11:17Z",
+   "targetExists": "no (vercel inspect: Cannot find the deployment)"
+  },
+  {
+   "alias": "matflow-git-feat-payments-ar-view-noetopalians-projects.vercel.app",
+   "targetDeploymentId": "dpl_BcxetTG7BypKGbS9n2WB1vS7nVbT",
+   "createdUTC": "2026-06-29T00:48Z",
+   "targetExists": "no (vercel inspect: Cannot find the deployment)"
+  },
+  {
+   "alias": "matflow-git-feat-dashboard-today-list-noetopalians-projects.vercel.app",
+   "targetDeploymentId": "dpl_CTMWPK8uf4FhuHxdVyfWyF5gZNXU",
+   "createdUTC": "2026-06-29T00:39Z",
+   "targetExists": "no (vercel inspect: Cannot find the deployment)"
+  },
+  {
+   "alias": "matflow-git-fix-multi-club-stripe-unique-noetopalians-projects.vercel.app",
+   "targetDeploymentId": "dpl_8aVFxxy3AccpT2VNivQQJUZyfyC8",
+   "createdUTC": "2026-06-28T09:58Z",
+   "targetExists": "no (vercel inspect: Cannot find the deployment)"
+  },
+  {
+   "alias": "matflow-git-audit-loop-fixes-01-dashboard-noetopalians-projects.vercel.app",
+   "targetDeploymentId": "dpl_EHz6R7NhViWi8QpeRVHdWZRpnRqo",
+   "createdUTC": "2026-06-06T22:10Z",
+   "targetExists": "no (vercel inspect: Cannot find the deployment)"
+  },
+  {
+   "alias": "matflow.studio",
+   "targetDeploymentId": "dpl_BLsgpYdtDXe5TiNQmNEVwLdQQL2p",
+   "createdUTC": "2026-04-29T16:36Z",
+   "targetExists": "yes (serving e8afb6a)"
+  },
+  {
+   "alias": "matflow-noetopalians-projects.vercel.app",
+   "targetDeploymentId": "dpl_BLsgpYdtDXe5TiNQmNEVwLdQQL2p",
+   "createdUTC": "2026-04-24T21:01Z",
+   "targetExists": "yes (serving e8afb6a)"
+  },
+  {
+   "alias": "matflow-nine.vercel.app",
+   "targetDeploymentId": "dpl_BLsgpYdtDXe5TiNQmNEVwLdQQL2p",
+   "createdUTC": "2026-04-24T21:01Z",
+   "targetExists": "yes (serving e8afb6a)"
+  },
+  {
+   "alias": "matflow-git-main-noetopalians-projects.vercel.app",
+   "targetDeploymentId": "dpl_BLsgpYdtDXe5TiNQmNEVwLdQQL2p",
+   "createdUTC": "2026-04-18T12:44Z",
+   "targetExists": "yes (serving e8afb6a)"
+  }
+ ]
+}

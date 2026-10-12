@@ -1,0 +1,43 @@
+Lane B4 — exact commands and results (10 Oct 2026, 20:30–21:30 UTC). Read-only: no database connection, no code edit.
+Runtime for scripts: Node v24.21.0 (scratchpad/security/node24/node-v24.21.0-win-x64). Shell: Git Bash on Windows 11.
+Source: code identical to 03ef584 (HEAD 90fcbf6; `git diff --stat 03ef584 HEAD -- app lib auth.ts proxy.ts` empty).
+
+1. Call-site extraction on the working tree
+   node scratchpad/security/B4/extract.mjs <repo> scratchpad/security/B4         -> "total 116 call sites in 59 files", exit 0
+2. Same extraction on the committed tree (pins line numbers to a commit)
+   git archive HEAD app lib auth.ts proxy.ts | tar -x -C scratchpad/security/B4/tree
+   node extract.mjs scratchpad/security/B4/tree scratchpad/security/B4/head   -> "total 116 call sites in 59 files"
+   diff of the two listings (minus the total line)                            -> IDENTICAL-TO-WORKTREE
+3. Independent cross-check with ripgrep (Grep tool, pattern `withRlsBypass\(`)
+   glob {app,lib,components}/**/*.{ts,tsx}, output count                      -> 111 occurrences in 58 files
+   auth.ts                                                                    -> 5 (L441, L859, L1084, L1426, L1451)
+   total                                                                      -> 116 in 59 files (definition line excluded: `function withRlsBypass<T>(` has no "(" after the name)
+4. Classification
+   node scratchpad/security/B4/classify.mjs head/sites.json head              -> "total 116 sites in 59 files. a: 78 sites in 30 files; b: 24 sites in 21 files;
+                                                                                  e: 2 sites in 2 files; c: 12 sites in 11 files. Of class b, 2 need a resolver not in phase 1." exit 0
+   (the script throws on any unclassified site or any override key that matches no site)
+   b/c/e files union 29, a files 30, overlap 0 (node one-liner over callsite-classification.json)
+5. RLS tables vs models
+   grep -rhoE 'ALTER TABLE "?[A-Za-z_]+"? ENABLE ROW LEVEL SECURITY' prisma/migrations | sort -u   -> 47 tables
+   comm -23 models rls                                                         -> GymApplication, Operator, PlatformConfig, RateLimitHit, StripeEvent
+6. Bare Operator calls
+   grep -rnE "\bprisma\.operator\.(update|updateMany|create|delete|deleteMany|upsert)\(" app lib auth.ts proxy.ts   -> 10 writes (listed in the document)
+   grep -rnE "\bprisma\.operator\.(findUnique|findFirst|findMany)\(" ... | wc -l                                  -> 10 reads
+   grep -rnE "\bprisma\.rateLimitHit\.\w+\(" app lib | wc -l                                                      -> 5
+   grep -rn "tx\.operator\.(update|updateMany|create|delete)" app lib auth.ts                                    -> operator-totp/setup/route.ts:218, lib/operator-step-up.ts:599
+   grep -rn "consumeStepUpGrant(" app | callers                                                                  -> 11 calls in 11 files
+7. Other app facts
+   grep PlatformConfig|platformConfig in app lib auth.ts proxy.ts                -> 0
+   grep "tenantId: null" app lib auth.ts (excluding lib/audit-log.ts)            -> 7 writers, all operator flows
+   grep getReviewState|isPromotionReady across app lib components auth.ts proxy.ts tests scripts
+                                                                              -> isPromotionReady: only its definition; getReviewState: lib/review-lock.ts (refuseIfReviewLocked) + its unit test
+   grep -rln "refuseIfReviewLocked(" app                                       -> 10 files (2 under app/api/admin)
+8. Tests and tooling (full lists in tests-and-tooling-inventory.txt)
+   grep -l 'withRlsBypass(' tests/integration/*.ts | wc -l                     -> 62 files; grep -o ... | wc -l -> 649 calls
+   grep -l bypass_rls tests/integration/*.ts | wc -l                           -> 8; union with the above -> 65 of 81
+   grep -lE 'auditLog\.(deleteMany|delete)\(|DELETE FROM "AuditLog"' tests/integration/*.ts   -> 35 (34 tracked at 03ef584 + sec-m1-demo-rotate-db, untracked, lane M1)
+   grep -rlE "new PrismaClient|PrismaPg" tests/e2e                             -> 6 specs (3 with raw app.bypass_rls)
+   grep -l withRlsBypass tests/unit/* | wc -l                                  -> 123
+   grep -rlE "bypass_rls|withRlsBypass" scripts | wc -l                        -> 23
+Exit codes: every command above exited 0 (grep -c lines with ":0" filtered by a following grep -v).
+No database, server, network or production resource was touched. Nothing staged or committed.

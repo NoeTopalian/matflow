@@ -71,7 +71,7 @@ export default function SecurityClient() {
             <div style={iconBox}><ShieldCheck size={20} aria-hidden /></div>
             <div>
               <h2 style={sectionTitle}>Two-factor authentication</h2>
-              <p style={sectionCopy}>Require an authenticator code after password sign-in.</p>
+              <p style={sectionCopy}>Required for every operator. Your authenticator code is asked for at every sign-in and again before password, 2FA and ownership changes.</p>
             </div>
           </div>
 

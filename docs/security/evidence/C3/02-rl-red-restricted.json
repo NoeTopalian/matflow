@@ -1,0 +1,53 @@
+{
+ "role": "restricted",
+ "sequential": {
+  "verdicts": [
+   true,
+   true,
+   true,
+   true,
+   true,
+   false
+  ],
+  "retryAfter": 60,
+  "rows": 5
+ },
+ "burst20_r1": {
+  "allowed": 10,
+  "rows": 10,
+  "refusedRetryMin": 60,
+  "refusedRetryMax": 60
+ },
+ "burst20_r2": {
+  "allowed": 20,
+  "rows": 20,
+  "refusedRetryMin": null,
+  "refusedRetryMax": null
+ },
+ "burst20_r3": {
+  "allowed": 20,
+  "rows": 20,
+  "refusedRetryMin": null,
+  "refusedRetryMax": null
+ },
+ "pair": {
+  "okA": 10,
+  "okB": 10,
+  "rowsA": 10,
+  "rowsB": 10
+ },
+ "window": {
+  "first": [
+   true,
+   true,
+   false
+  ],
+  "after": true,
+  "rows": 3
+ },
+ "teardown": {
+  "rowsWritten": 78,
+  "deleted": 78,
+  "left": 0
+ }
+}

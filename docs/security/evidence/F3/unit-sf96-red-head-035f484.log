@@ -1,0 +1,83 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/F3/wt
+
+ ❯ tests/unit/sec-f3-restore-verify-catalogue.test.ts (17 tests | 15 failed) 12ms
+     × names the seven sections it compares 2ms
+     × FAILS: ALTER ROLE matflow_app SET app.bypass_rls = on 3ms
+     × FAILS: ALTER DATABASE … SET app.bypass_rls = on 1ms
+     × FAILS: a role setting's VALUE changed (row_security on -> off) 0ms
+     × FAILS: rewrite rule on AuditLog (DO INSTEAD NOTHING) 0ms
+     × FAILS: column grant UPDATE (action) on AuditLog 0ms
+     × FAILS: ALTER DEFAULT PRIVILEGES widened 0ms
+     × FAILS: ALTER DEFAULT PRIVILEGES removed 0ms
+     × FAILS: owner-created view over User granted to the runtime role 0ms
+     × FAILS: view definition changed under the same name 0ms
+     × FAILS: sequence ACL 0ms
+     × FAILS: new schema 0ms
+     × FAILS: role search_path pointed at the shadow schema 0ms
+     × FAILS: database ACL widened (CREATE to the runtime role) 0ms
+     × FAILS when the baseline has the sections and the restored fingerprint does not (or the reverse) 0ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 15 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > names the seven sections it compares
+TypeError: Cannot convert undefined or null to object
+ ❯ tests/unit/sec-f3-restore-verify-catalogue.test.ts:47:19
+     45|
+     46|   it("names the seven sections it compares", () => {
+     47|     expect(Object.keys(CATALOGUE_SECTIONS).sort()).toEqual(
+       |                   ^
+     48|       ["columnPrivileges", "database", "defaultPrivileges", "relations…
+     49|     );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/15]⎯
+
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: ALTER ROLE matflow_app SET app.bypass_rls = on
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: ALTER DATABASE … SET app.bypass_rls = on
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: a role setting's VALUE changed (row_security on -> off)
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: rewrite rule on AuditLog (DO INSTEAD NOTHING)
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: column grant UPDATE (action) on AuditLog
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: ALTER DEFAULT PRIVILEGES widened
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: ALTER DEFAULT PRIVILEGES removed
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: owner-created view over User granted to the runtime role
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: view definition changed under the same name
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: sequence ACL
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: new schema
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: role search_path pointed at the shadow schema
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS: database ACL widened (CREATE to the runtime role)
+AssertionError: expected 'PASS' to be 'FAIL' // Object.is equality
+
+Expected: "FAIL"
+Received: "PASS"
+
+ ❯ tests/unit/sec-f3-restore-verify-catalogue.test.ts:69:23
+     67|   ])("FAILS: %s", (_name, fn, pattern) => {
+     68|     const r = run(tamper(fn));
+     69|     expect(r.verdict).toBe("FAIL");
+       |                       ^
+     70|     expect(r.fails.join("\n")).toMatch(pattern);
+     71|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/15]⎯
+
+ FAIL  tests/unit/sec-f3-restore-verify-catalogue.test.ts > restore-verify catalogue sections (SF-96) > FAILS when the baseline has the sections and the restored fingerprint does not (or the reverse)
+TypeError: Cannot convert undefined or null to object
+ ❯ tests/unit/sec-f3-restore-verify-catalogue.test.ts:74:28
+     72|
+     73|   it("FAILS when the baseline has the sections and the restored finger…
+     74|     for (const k of Object.keys(CATALOGUE_SECTIONS)) {
+       |                            ^
+     75|       const b = base() as Record<string, unknown>;
+     76|       delete b[k];
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/15]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  15 failed | 2 passed (17)
+   Start at  22:16:52
+   Duration  577ms (transform 136ms, setup 71ms, import 159ms, tests 12ms, environment 0ms)
+

@@ -1,0 +1,108 @@
+[
+  {
+    "id": "MK1-cookie-raw-root-db-r7k1",
+    "exit": 1,
+    "seconds": 7,
+    "tests": "Tests  4 failed (4)",
+    "failed": [
+      "× slug = matflow.import-mapping-provenance.v2: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "× slug = matflow.kiosk.v1: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "× slug = matflow.card.v1: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "× slug = matflow.pending-tenant-cookie.v1: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "FAIL  tests/integration/zz-r7-k1-db.test.ts > R7-K1 per context (restricted) > slug = matflow.import-mapping-provenance.v2: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "FAIL  tests/integration/zz-r7-k1-db.test.ts > R7-K1 per context (restricted) > slug = matflow.kiosk.v1: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "FAIL  tests/integration/zz-r7-k1-db.test.ts > R7-K1 per context (restricted) > slug = matflow.card.v1: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "FAIL  tests/integration/zz-r7-k1-db.test.ts > R7-K1 per context (restricted) > slug = matflow.pending-tenant-cookie.v1: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MK1-cookie-raw-root-db-r6k1",
+    "exit": 1,
+    "seconds": 50,
+    "tests": "Tests  1 failed | 8 skipped (9)",
+    "failed": [
+      "× R6-K1 KEY SEPARATION: a club whose slug IS the provenance key context makes /api/account/pending-tenant hand out HMAC(root, context), the provenance sub-key, as a cookie; secure outcome: a proof minted with it does NOT bind",
+      "FAIL  tests/integration/zz-r6-d3-probe-db.test.ts > R6 — attacks on the D3 provenance MAC (REAL route, TEST DB) > R6-K1 KEY SEPARATION: a club whose slug IS the provenance key context makes /api/account/pending-tenant hand out HMAC(root, context), the provenan"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MK1-cookie-raw-root-unit",
+    "exit": 1,
+    "seconds": 15,
+    "tests": "Tests  8 failed | 12 passed (20)",
+    "failed": [
+      "× the cookie signature is the documented derivation: HMAC(HMAC(root, pending-tenant context), 'pending-tenant:v1:' + slug)",
+      "× documented change: a cookie in the OLD format (HMAC(root, slug)) no longer verifies (5-minute cookie; one more click)",
+      "× provenance: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, \"matflow.import-mapping-provenance.v2\")",
+      "× kiosk: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, \"matflow.kiosk.v1\")",
+      "× card: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, \"matflow.card.v1\")",
+      "× pending-tenant: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, \"matflow.pending-tenant-cookie.v1\")",
+      "× a planted dotted slug's cookie verifies as NO sub-key: kiosk and card tokens and a provenance proof minted with it are refused",
+      "× each createHmac(sha256, AUTH_SECRET_VALUE).update(<X_CONTEXT>) names a context in ROOT_KEY_CONTEXTS, with a shape no other signer can produce",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > positive controls: the cookie still works > the cookie signature is the documented derivation: HMAC(HMAC(root, pending-tenant context), 'pending-tenant:v1:' + slug)",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > positive controls: the cookie still works > documented change: a cookie in the OLD format (HMAC(root, slug)) no longer verifies (5-minute cookie; one more click)",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > provenance: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, \"matflow.import-mapping-proven",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > kiosk: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, \"matflow.kiosk.v1\")",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > card: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, \"matflow.card.v1\")",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > pending-tenant: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, \"matflow.pending-tenant-co",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > a planted dotted slug's cookie verifies as NO sub-key: kiosk and card tokens and a provenance proof minted with it are refused",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > registry: every root-key derivation in the code base is a registered context > each createHmac(sha256, AUTH_SECRET_VALUE).update(<X_CONTEXT>) names a context in ROOT_KEY_CONTEXTS, with a shape no other signer"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MK2a-cookie-message-prefix-removed-db-r7k1",
+    "exit": 0,
+    "seconds": 8,
+    "tests": "Tests  4 passed (4)",
+    "failed": [],
+    "restored": true
+  },
+  {
+    "id": "MK2a-cookie-message-prefix-removed-unit",
+    "exit": 1,
+    "seconds": 4,
+    "tests": "Tests  1 failed | 19 passed (20)",
+    "failed": [
+      "× the cookie signature is the documented derivation: HMAC(HMAC(root, pending-tenant context), 'pending-tenant:v1:' + slug)",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > positive controls: the cookie still works > the cookie signature is the documented derivation: HMAC(HMAC(root, pending-tenant context), 'pending-tenant:v1:' + slug)"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MK2b-hashtoken-context-prefix-removed-db-r7k1",
+    "exit": 1,
+    "seconds": 7,
+    "tests": "Tests  4 failed (4)",
+    "failed": [
+      "× slug = matflow.import-mapping-provenance.v2: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "× slug = matflow.kiosk.v1: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "× slug = matflow.card.v1: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "× slug = matflow.pending-tenant-cookie.v1: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "FAIL  tests/integration/zz-r7-k1-db.test.ts > R7-K1 per context (restricted) > slug = matflow.import-mapping-provenance.v2: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "FAIL  tests/integration/zz-r7-k1-db.test.ts > R7-K1 per context (restricted) > slug = matflow.kiosk.v1: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "FAIL  tests/integration/zz-r7-k1-db.test.ts > R7-K1 per context (restricted) > slug = matflow.card.v1: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token",
+      "FAIL  tests/integration/zz-r7-k1-db.test.ts > R7-K1 per context (restricted) > slug = matflow.pending-tenant-cookie.v1: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token"
+    ],
+    "restored": true
+  },
+  {
+    "id": "MK2b-hashtoken-context-prefix-removed-unit",
+    "exit": 1,
+    "seconds": 3,
+    "tests": "Tests  4 failed | 16 passed (20)",
+    "failed": [
+      "× provenance: hashToken(\"matflow.import-mapping-provenance.v2\") is not the sub-key either",
+      "× kiosk: hashToken(\"matflow.kiosk.v1\") is not the sub-key either",
+      "× card: hashToken(\"matflow.card.v1\") is not the sub-key either",
+      "× pending-tenant: hashToken(\"matflow.pending-tenant-cookie.v1\") is not the sub-key either",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > provenance: hashToken(\"matflow.import-mapping-provenance.v2\") is not the sub-key either",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > kiosk: hashToken(\"matflow.kiosk.v1\") is not the sub-key either",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > card: hashToken(\"matflow.card.v1\") is not the sub-key either",
+      "FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > pending-tenant: hashToken(\"matflow.pending-tenant-cookie.v1\") is not the sub-key either"
+    ],
+    "restored": true
+  }
+]

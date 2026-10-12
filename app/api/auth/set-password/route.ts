@@ -7,8 +7,9 @@
  * sends them here until this route clears the flag (customer simulation
  * 26 Sep 2026, F-3: the owner was never asked to choose their own password).
  *
- * Same password rules and history handling as /api/auth/reset-password. The
- * change is audited.
+ * Same password rules and history handling as /api/auth/reset-password: both
+ * use lib/password-policy.ts (8 Oct 2026; this door kept 5 previous passwords
+ * until then, now 8 — PASSWORD_HISTORY_LIMIT). The change is audited.
  *
  * Sessions (3 Oct 2026). The temporary password may have been seen by someone
  * else on the way to its owner, so choosing a new one bumps `sessionVersion`:
@@ -28,24 +29,20 @@ import { getToken, encode } from "next-auth/jwt";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { isTempPasswordExpired } from "@/lib/temp-password";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { STAFF_ROLES } from "@/lib/authz";
+import { refuseSupportSession } from "@/lib/support-session";
+import { passwordReused, recentPasswordHashes, recordPasswordHistory, staffPasswordSchema } from "@/lib/password-policy";
 
 export const runtime = "nodejs";
 
-const HISTORY_LIMIT = 5;
-
 const bodySchema = z.object({
   // Same strength as reset-password and accept-invite (verifier lane 1, 30 Sep
-  // 2026: this door alone accepted ten lower-case letters).
-  password: z
-    .string()
-    .min(10, "Use at least 10 characters")
-    .max(128)
-    .regex(/[A-Z]/, "Include an upper-case letter")
-    .regex(/[a-z]/, "Include a lower-case letter")
-    .regex(/[0-9]/, "Include a number"),
+  // 2026: this door alone accepted ten lower-case letters). Shared rule since
+  // 8 Oct 2026: lib/password-policy.ts.
+  password: staffPasswordSchema,
 });
 
 export async function POST(req: Request) {
@@ -53,6 +50,7 @@ export async function POST(req: Request) {
   if (csrf) return csrf;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!STAFF_ROLES.includes(session.user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -73,14 +71,9 @@ export async function POST(req: Request) {
   const userId: string = session.user.id;
 
   const current = await withTenantContext(tenantId, async (tx) => {
-    const user = await tx.user.findFirst({ where: { id: userId, tenantId }, select: { id: true, passwordHash: true, mustChangePassword: true } });
+    const user = await tx.user.findFirst({ where: { id: userId, tenantId }, select: { id: true, passwordHash: true, mustChangePassword: true, tempPasswordExpiresAt: true } });
     if (!user) return null;
-    const history = await tx.passwordHistory.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: "desc" },
-      take: HISTORY_LIMIT,
-      select: { passwordHash: true },
-    });
+    const history = await recentPasswordHashes(tx, user.id);
     return { user, history };
   });
   if (!current) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -91,9 +84,20 @@ export async function POST(req: Request) {
   if (current.user.mustChangePassword !== true) {
     return NextResponse.json({ error: "No password change is pending for this account." }, { status: 403 });
   }
+  // A temporary password has a deadline (6 Oct 2026). A session opened with it
+  // before the deadline cannot be used to choose a password after it: the
+  // session is setup-only, so this leaves it with nothing to do, and the owner
+  // asks MatFlow support for a new temporary password. Null = no expiry
+  // recorded (rows from before the column existed): those expire at
+  // LEGACY_TEMP_PASSWORD_DEADLINE (review D2, lib/temp-password.ts).
+  if (isTempPasswordExpired(current.user)) {
+    return NextResponse.json(
+      { error: "This temporary password has expired. Ask whoever gave it to you for a new one." },
+      { status: 403 },
+    );
+  }
 
-  const reused = [current.user.passwordHash, ...current.history.map((h) => h.passwordHash)].some((h) => bcrypt.compareSync(password, h));
-  if (reused) {
+  if (await passwordReused(password, current.user.passwordHash, current.history)) {
     return NextResponse.json({ error: "Choose a password you haven't used before." }, { status: 400 });
   }
 
@@ -104,6 +108,7 @@ export async function POST(req: Request) {
       data: {
         passwordHash: newHash,
         mustChangePassword: false,
+        tempPasswordExpiresAt: null,
         failedLoginCount: 0,
         lockedUntil: null,
         // Evicts every other session minted on the temporary password.
@@ -111,11 +116,7 @@ export async function POST(req: Request) {
       },
       select: { sessionVersion: true },
     });
-    await tx.passwordHistory.create({ data: { userId, passwordHash: current.user.passwordHash } });
-    const all = await tx.passwordHistory.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, select: { id: true } });
-    if (all.length > HISTORY_LIMIT) {
-      await tx.passwordHistory.deleteMany({ where: { id: { in: all.slice(HISTORY_LIMIT).map((h) => h.id) } } });
-    }
+    await recordPasswordHistory(tx, userId, current.user.passwordHash);
     return typeof updated?.sessionVersion === "number" ? updated.sessionVersion : null;
   });
 

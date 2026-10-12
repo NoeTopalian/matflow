@@ -1,0 +1,1609 @@
+diff --git a/lib/auth-lockout.ts b/lib/auth-lockout.ts
+index 1575bbd..ed01d85 100644
+--- a/lib/auth-lockout.ts
++++ b/lib/auth-lockout.ts
+@@ -148,15 +148,64 @@ export type LockoutState =
+ 
+ /**
+  * A burst against one address queues on the lock INSIDE the transaction, so
+- * Prisma's defaults (2 s to start, 5 s in all) refuse the tail of a burst
++ * Prisma's defaults (2 s to start, 5 s in all) refused the tail of a burst
+  * with a transaction error (fail closed, but a needless refusal for the real
+- * person). Same ceiling as withTenantContext's maxWait. An interactive
+- * transaction rather than the batch form C3 uses, because Prisma 7 with the
+- * pg driver adapter applies these two options only to the interactive form
++ * person). An interactive transaction rather than a batch, because Prisma 7
++ * with the pg driver adapter applies its options only to the interactive form
+  * (measured: the batch form still expired at 5000 ms). Same statements, same
+  * round trips: BEGIN, lock, conditional insert, COMMIT.
++ *
++ * THE BOUND IS OWNED HERE, NOT BY PRISMA'S TIMER (SF-135, lane L1, 11 Oct
++ * 2026). The burst suites exited 1 with every cell green: an unhandled
++ * "Connection terminated unexpectedly" / ConnectionClosed from Prisma's own
++ * transaction-timeout timer, whose ROLLBACK queues behind a statement still in
++ * flight (it never interrupts it) and rejects with no handler when the
++ * connection then fails — while the statement's own rejection reached the
++ * caller as a refusal. lib/rate-limit.ts (checkDbRateLimit) has the full
++ * account; the construction is the same here:
++ *  - the lock statement sets lock_timeout and statement_timeout
++ *    transaction-locally (set_config(…, true): reset by COMMIT/ROLLBACK,
++ *    nothing left on the pooled connection), RESERVE_TX_BOUND_MS each, the
++ *    same 10 s ceiling the old Prisma timer nominally gave;
++ *  - Prisma's transaction timeout AND maxWait are beyond those bounds, so
++ *    Prisma's timer never fires under our statements and Prisma never
++ *    abandons a half-finished start (SF-136; lib/rate-limit.ts explains);
++ *    the wait for a connection is bounded by the pool's own 10 s deadline,
++ *    the same ceiling the old maxWait gave.
++ * Any failure of the transaction — a dead connection, a bound reached,
++ * anything unexpected — is thrown as a LockoutReservationError with a reason,
++ * after one log line that names only the reason (never the address, the
++ * network or the bucket key). The caller refuses the sign-in on any throw.
+  */
+-const RESERVE_TX_OPTIONS = { maxWait: 10_000, timeout: 10_000 } as const;
++export const RESERVE_TX_BOUND_MS = 10_000;
++const PRISMA_TIMER_OUT_OF_REACH_MS = 60 * 60 * 1000;
++const RESERVE_TX_OPTIONS = { maxWait: PRISMA_TIMER_OUT_OF_REACH_MS, timeout: PRISMA_TIMER_OUT_OF_REACH_MS } as const;
++
++export type LockoutReservationFailure = "unreachable" | "pool-timeout" | "lock-timeout" | "statement-timeout" | "error";
++
++/** A reservation that could not be completed. The attempt holds no slot and must be refused. */
++export class LockoutReservationError extends Error {
++  readonly reason: LockoutReservationFailure;
++  constructor(reason: LockoutReservationFailure, cause: unknown) {
++    super(`lockout reservation failed (${reason})`, { cause });
++    this.name = "LockoutReservationError";
++    this.reason = reason;
++  }
++}
++
++function reservationFailureReason(err: unknown): LockoutReservationFailure {
++  const e = err as { code?: unknown; message?: unknown; meta?: { code?: unknown }; cause?: { originalCode?: unknown } } | null;
++  const code = typeof e?.code === "string" ? e.code : "";
++  const sqlState = String(e?.meta?.code ?? e?.cause?.originalCode ?? "");
++  const msg = typeof e?.message === "string" ? e.message : "";
++  if (/^P10(0[0-2]|17)$/.test(code) || /reach database|ECONNREFUSED|ENOTFOUND|connection terminated|ConnectionClosed|server has closed the connection|not queryable/i.test(msg)) {
++    return "unreachable";
++  }
++  if (code === "P2024" || /timeout exceeded when trying to connect|timed out fetching a new connection/i.test(msg)) return "pool-timeout";
++  if (sqlState === "55P03" || /\b55P03\b|lock timeout/i.test(msg)) return "lock-timeout";
++  if (sqlState === "57014" || /\b57014\b|statement timeout/i.test(msg)) return "statement-timeout";
++  return "error";
++}
+ 
+ type ReserveResult = { reservation: LockoutReservation } | { refused: "pair" | "addr" };
+ 
+@@ -172,8 +221,26 @@ type ReserveResult = { reservation: LockoutReservation } | { refused: "pair" | "
+ async function reserve(keys: LockoutKeys, addrExempt: boolean): Promise<ReserveResult> {
+   const pairId = `lk_${randomUUID()}`;
+   const addrId = `lk_${randomUUID()}`;
+-  const rows = await prisma.$transaction(async (tx) => {
+-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LOCKOUT_LOCK_NS}::int4, hashtext(${keys.addr}::text))`;
++  let rows: Array<{ pairCount: number; addrCount: number; inserted: number }>;
++  try {
++    rows = await reserveTx(keys, addrExempt, pairId, addrId);
++  } catch (err) {
++    const reason = reservationFailureReason(err);
++    console.error(`[auth-lockout] reservation failed reason=${reason} outcome=refused`);
++    throw new LockoutReservationError(reason, err);
++  }
++  const row = rows[0];
++  if (!row) throw new Error("lockout reservation returned no row");
++  if (Number(row.inserted) === 2) {
++    return { reservation: { pairId, addrId, addrCountAfter: Number(row.addrCount) + 1 } };
++  }
++  return { refused: Number(row.pairCount) >= PAIR_MAX ? "pair" : "addr" };
++}
++
++/** The transaction itself: the bounded lock (10000 ms = RESERVE_TX_BOUND_MS), then the one conditional insert. */
++function reserveTx(keys: LockoutKeys, addrExempt: boolean, pairId: string, addrId: string) {
++  return prisma.$transaction(async (tx) => {
++    await tx.$executeRaw`WITH bound AS MATERIALIZED (SELECT set_config('lock_timeout', '10000ms', true) AS lt, set_config('statement_timeout', '10000ms', true) AS st) SELECT pg_advisory_xact_lock(${LOCKOUT_LOCK_NS}::int4, hashtext(${keys.addr}::text)) FROM bound`;
+     return tx.$queryRaw<Array<{ pairCount: number; addrCount: number; inserted: number }>>`
+       WITH clock AS (
+         SELECT (statement_timestamp() AT TIME ZONE 'UTC') AS t
+@@ -198,12 +265,6 @@ async function reserve(keys: LockoutKeys, addrExempt: boolean): Promise<ReserveR
+       )
+       SELECT go.pn AS "pairCount", go.an AS "addrCount", (SELECT count(*)::int FROM ins) AS "inserted" FROM go`;
+   }, RESERVE_TX_OPTIONS);
+-  const row = rows[0];
+-  if (!row) throw new Error("lockout reservation returned no row");
+-  if (Number(row.inserted) === 2) {
+-    return { reservation: { pairId, addrId, addrCountAfter: Number(row.addrCount) + 1 } };
+-  }
+-  return { refused: Number(row.pairCount) >= PAIR_MAX ? "pair" : "addr" };
+ }
+ 
+ /**
+diff --git a/lib/prisma-tenant.ts b/lib/prisma-tenant.ts
+index 479103c..39f73f0 100644
+--- a/lib/prisma-tenant.ts
++++ b/lib/prisma-tenant.ts
+@@ -53,6 +53,67 @@ export function tenantContextMac(key: Buffer, tenantId: string, backendPid: stri
+ }
+ const TX_DEFAULTS: Required<TenantTxOptions> = { maxWait: 10_000, timeout: 15_000 };
+ 
++/**
++ * THE BOUND ON A TENANT TRANSACTION IS OWNED HERE, NOT BY PRISMA'S TIMERS (SF-135 cycle 2 + SF-136, lane L1,
++ * 11 Oct 2026). Same construction as lib/rate-limit.ts (checkDbRateLimit) and lib/auth-lockout.ts (reserveTx).
++ *
++ * Prisma 7.4.2 enforces `timeout` with a timer whose callback sends ROLLBACK on the transaction's own connection and
++ * is never awaited: when it fires under a statement still in flight it can only queue behind it, and if the
++ * connection then fails its rejection has no handler (an Unhandled Rejection — plain Node exits; Next.js logs it).
++ * The sign-in flow's tenant transactions produced exactly that under a burst (docs/security/evidence/L1). And when
++ * `maxWait` expires before the driver has finished starting the transaction, Prisma later "rolls back" the late start
++ * through adapter-pg, which only releases the client — the client goes back to the pool inside its BEGIN and the next
++ * autocommit write on it is held in a transaction nobody owns (lost on close; SF-136,
++ * tests/integration/sec-l1-start-timeout-db).
++ *
++ * So both Prisma limits are set out of reach, and the transaction is bounded where it is opened:
++ *  - the FIRST statement (the one that already sets the tenant context) also sets lock_timeout and
++ *    statement_timeout with set_config(…, true) — transaction-local, reset by COMMIT/ROLLBACK, never left on the
++ *    pooled connection: TENANT_STATEMENT_BOUND_MS for the default budget, TENANT_STATEMENT_BOUND_EXTENDED_MS when a
++ *    caller asked for more than that (imports, reports, purges). A statement or lock wait past it fails as Postgres
++ *    57014 / 55P03 (lib/tenant-lifecycle.ts isTenantRowBusyError already reads 55P03 as "busy, try again");
++ *  - the caller's `timeout` stays the budget of the whole callback: a callback that finishes past it is rolled back,
++ *    never committed, and the caller gets TenantTransactionBudgetError (code P2028 — the code Prisma used for the
++ *    same condition, so existing handling keeps working);
++ *  - waiting to START is bounded by the pool's own deadline (connectionTimeoutMillis, lib/prisma.ts, 10 s): Prisma
++ *    never abandons a start, so no client returns to the pool inside a BEGIN. `maxWait` is accepted for
++ *    compatibility; the pool deadline is what applies.
++ * What Prisma's timer used to do and this does not: when a callback sat IDLE past its budget (awaiting something
++ * other than the database), Prisma's ROLLBACK went out at once and freed the connection. Now the connection is held
++ * until the callback returns (and is then rolled back), or until the server's idle_in_transaction_session_timeout.
++ */
++const PRISMA_TIMER_OUT_OF_REACH_MS = 60 * 60 * 1000;
++const PRISMA_TX_OPTIONS = { maxWait: PRISMA_TIMER_OUT_OF_REACH_MS, timeout: PRISMA_TIMER_OUT_OF_REACH_MS } as const;
++/** Per-statement and lock-wait bound for the default budget. Literal in the SQL below (pinned by sec-l1-store-tx-bound). */
++export const TENANT_STATEMENT_BOUND_MS = 15_000;
++/** The same bound for callers whose budget is larger than the default (imports, reports, purges). */
++export const TENANT_STATEMENT_BOUND_EXTENDED_MS = 60_000;
++
++/** A tenant transaction whose callback ran past its budget: rolled back, nothing committed. */
++export class TenantTransactionBudgetError extends Error {
++  readonly code = "P2028";
++  constructor(
++    readonly budgetMs: number,
++    readonly elapsedMs: number,
++  ) {
++    super(`transaction budget exceeded (${elapsedMs} ms > ${budgetMs} ms); rolled back`);
++    this.name = "TenantTransactionBudgetError";
++  }
++}
++
++/** Runs the callback and refuses to commit it if it overran its budget (Prisma rolls back on the throw). */
++async function withinBudget<T>(budgetMs: number, run: () => Promise<T>): Promise<T> {
++  const started = Date.now();
++  const out = await run();
++  const elapsedMs = Date.now() - started;
++  if (elapsedMs > budgetMs) throw new TenantTransactionBudgetError(budgetMs, elapsedMs);
++  return out;
++}
++
++function budgetOf(options?: TenantTxOptions): number {
++  return options?.timeout ?? TX_DEFAULTS.timeout;
++}
++
+ export async function withTenantContext<T>(
+   tenantId: string,
+   fn: (tx: TxClient) => Promise<T>,
+@@ -63,6 +124,7 @@ export async function withTenantContext<T>(
+   }
+   // Read before the transaction opens so a malformed key fails closed without holding a pool connection.
+   const key = tenantContextKey();
++  const budget = budgetOf(options);
+   try {
+     return await prisma.$transaction(async (tx) => {
+       // SF-62 (security campaign iteration 2, lane B): `app.bypass_rls` is switched OFF for this transaction in the
+@@ -70,7 +132,12 @@ export async function withTenantContext<T>(
+       // compromised path calling set_config(..., false); the Neon pooler hands that connection to other clients)
+       // otherwise turned every tenant-scoped transaction on it into an all-clubs one under the deployed policies.
+       // Measured by tests/integration/sec-b2-stale-bypass-db.test.ts.
+-      await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true), set_config('app.bypass_rls', 'off', true)`;
++      // SF-135: the same statement bounds every later statement and lock wait of this transaction (see above).
++      if (budget <= TENANT_STATEMENT_BOUND_MS) {
++        await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true), set_config('app.bypass_rls', 'off', true), set_config('lock_timeout', '15000ms', true), set_config('statement_timeout', '15000ms', true)`;
++      } else {
++        await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true), set_config('app.bypass_rls', 'off', true), set_config('lock_timeout', '60000ms', true), set_config('statement_timeout', '60000ms', true)`;
++      }
+       if (key) {
+         // Proposed design P2 (docs/security/evidence/B2): the policies accept the tenant only with a MAC bound to
+         // this transaction (backend pid + transaction start), so a forged or replayed tenant setting grants nothing.
+@@ -79,8 +146,8 @@ export async function withTenantContext<T>(
+           SELECT pg_backend_pid()::text AS pid, floor(extract(epoch FROM transaction_timestamp()) * 1000000)::bigint::text AS ts`;
+         await tx.$executeRaw`SELECT set_config('app.ctx_mac', ${tenantContextMac(key, tenantId, t.pid, t.ts)}, true)`;
+       }
+-      return fn(tx);
+-    }, { ...TX_DEFAULTS, ...options });
++      return withinBudget(budget, () => fn(tx));
++    }, PRISMA_TX_OPTIONS);
+   } catch (e) {
+     // Stamp the tenant onto the error on its way out so the shared error path
+     // (lib/api-error.ts) can attribute the failure in the log without every
+@@ -108,8 +175,14 @@ export async function withRlsBypass<T>(
+   fn: (tx: TxClient) => Promise<T>,
+   options?: TenantTxOptions,
+ ): Promise<T> {
++  const budget = budgetOf(options);
+   return prisma.$transaction(async (tx) => {
+-    await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true)`;
+-    return fn(tx);
+-  }, { ...TX_DEFAULTS, ...options });
++    // SF-135: bounded like withTenantContext, in the same first statement.
++    if (budget <= TENANT_STATEMENT_BOUND_MS) {
++      await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true), set_config('lock_timeout', '15000ms', true), set_config('statement_timeout', '15000ms', true)`;
++    } else {
++      await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true), set_config('lock_timeout', '60000ms', true), set_config('statement_timeout', '60000ms', true)`;
++    }
++    return withinBudget(budget, () => fn(tx));
++  }, PRISMA_TX_OPTIONS);
+ }
+diff --git a/lib/rate-limit.ts b/lib/rate-limit.ts
+index e4ab68f..a07d9b8 100644
+--- a/lib/rate-limit.ts
++++ b/lib/rate-limit.ts
+@@ -62,7 +62,52 @@ export const RATE_LIMIT_LOCK_NS = 0x524c4854;
+  * min ~270–290 ms, median 340–580 ms, vs ~100 / 120–140 ms before; refused
+  * ~60 ms both. On a same-region pooler that is a few milliseconds. Only
+  * callers of the SAME bucket ever wait on each other.
++ *
++ * THE BOUND ON THIS TRANSACTION IS OWNED HERE, NOT BY PRISMA'S TIMER (SF-135,
++ * lane L1, 11 Oct 2026). The burst suites exited 1 with every cell green: an
++ * unhandled "Connection terminated unexpectedly" (or DriverAdapterError
++ * ConnectionClosed) whose stack is Prisma's own transaction-timeout timer —
++ * TransactionManager's timer callback closes the transaction by sending
++ * ROLLBACK on the SAME pg client, and nothing awaits that callback. When the
++ * timer fires while one of our statements is still in flight (a lock queue, or
++ * a network stall), the ROLLBACK can only queue behind the statement — it never
++ * interrupts it — and when the connection then fails, pg rejects both: the
++ * statement's rejection comes back here (a refusal below), the timer's has no
++ * handler. Plain Node exits on that; the Next.js server logs it as
++ * unhandledRejection and carries on (evidence/L1). The old batch form ran under
++ * Prisma's client-wide 5 s timer, which the batch form cannot override.
++ *
++ * So, in this one interactive transaction (same statements, same round trips:
++ * BEGIN, lock, conditional insert, COMMIT):
++ *  - the lock statement first sets lock_timeout and statement_timeout with
++ *    set_config(…, true) — transaction-local, reset by COMMIT or ROLLBACK, so
++ *    nothing is left on the pooled connection — bounding the wait for the bucket
++ *    lock and every later statement on the server (a refusal, reason
++ *    lock-timeout / statement-timeout, below);
++ *  - Prisma's transaction timeout is set beyond those bounds, so Prisma never
++ *    fires its timer under a statement of ours;
++ *  - maxWait (the wait to START the transaction) is out of reach too (SF-136,
++ *    cycle 2): when Prisma's maxWait expired before the driver had finished
++ *    starting the transaction, Prisma later discarded the late start through
++ *    adapter-pg, which only releases the client — it went back to the pool
++ *    inside its BEGIN and the next autocommit write on it was lost
++ *    (tests/integration/sec-l1-start-timeout-db). The wait for a connection is
++ *    now bounded by the pool's own deadline (connectionTimeoutMillis, 10 s,
++ *    lib/prisma.ts), which refuses without handing out a client: a store
++ *    failure here, reason pool-timeout. Trade-off: a burst that saturates the
++ *    pool now WAITS up to that deadline instead of being refused at 2 s
++ *    (tests/integration/sec-c4-rate-limit-saturation-db forces the saturation
++ *    instead of assuming a burst causes it).
++ * A connection that dies under the transaction now fails the statement this
++ * function awaits — and only that: checkRateLimit refuses (security buckets),
++ * rethrows (failClosed) or falls back to the seeded memory store
++ * (non-security), and logs the family. The pool drops the dead client.
+  */
++export const STORE_TX_BOUND_MS = 5_000;
++/** Beyond any bound above; Prisma's timer must never be the one that ends this transaction. */
++const PRISMA_TIMER_OUT_OF_REACH_MS = 60 * 60 * 1000;
++const STORE_TX_OPTIONS = { maxWait: PRISMA_TIMER_OUT_OF_REACH_MS, timeout: PRISMA_TIMER_OUT_OF_REACH_MS } as const;
++
+ async function checkDbRateLimit(
+   bucket: string,
+   max: number,
+@@ -83,9 +128,11 @@ async function checkDbRateLimit(
+   }
+ 
+   const id = `rl_${globalThis.crypto.randomUUID()}`;
+-  const [, result] = await prisma.$transaction([
+-    prisma.$executeRaw`SELECT pg_advisory_xact_lock(${RATE_LIMIT_LOCK_NS}::int4, hashtext(${bucket}::text))`,
+-    prisma.$queryRaw<Array<{ count: number; inserted: number; oldestAgeMs: number | null }>>`
++  // The two bounds are literals in the SQL text (5000 ms = STORE_TX_BOUND_MS; pinned by
++  // tests/unit/sec-l1-store-tx-bound): the MATERIALIZED CTE runs set_config before the outer SELECT asks for the lock.
++  const result = await prisma.$transaction(async (tx) => {
++    await tx.$executeRaw`WITH bound AS MATERIALIZED (SELECT set_config('lock_timeout', '5000ms', true) AS lt, set_config('statement_timeout', '5000ms', true) AS st) SELECT pg_advisory_xact_lock(${RATE_LIMIT_LOCK_NS}::int4, hashtext(${bucket}::text)) FROM bound`;
++    return tx.$queryRaw<Array<{ count: number; inserted: number; oldestAgeMs: number | null }>>`
+       WITH clock AS (
+         SELECT (statement_timestamp() AT TIME ZONE 'UTC') AS t
+       ), win AS (
+@@ -102,8 +149,8 @@ async function checkDbRateLimit(
+       SELECT win.n AS "count",
+              (SELECT count(*)::int FROM ins) AS "inserted",
+              (extract(epoch FROM (clock.t - win.oldest)) * 1000)::float8 AS "oldestAgeMs"
+-      FROM win, clock`,
+-  ]);
++      FROM win, clock`;
++  }, STORE_TX_OPTIONS);
+   const row = result[0];
+   if (!row || Number(row.inserted) !== 1) {
+     const age = row?.oldestAgeMs;
+@@ -175,6 +222,13 @@ function bucketFamily(bucket: string): string {
+ /** Retry-After for a refusal caused by a store failure: transient by nature, never longer than the window. */
+ const STORE_FAILURE_RETRY_AFTER_S = 30;
+ 
++/** The Postgres SQLSTATE behind a Prisma raw-query error, where Prisma carries one (meta.code / cause.originalCode). */
++function pgCode(err: unknown): string {
++  const e = err as { meta?: { code?: unknown }; cause?: { originalCode?: unknown } } | null;
++  const c = e?.meta?.code ?? e?.cause?.originalCode;
++  return typeof c === "string" ? c : "";
++}
++
+ function storeFailureReason(err: unknown): string {
+   const e = err as { code?: unknown; message?: unknown } | null;
+   const code = typeof e?.code === "string" ? e.code : "";
+@@ -186,9 +240,12 @@ function storeFailureReason(err: unknown): string {
+   ) {
+     return "pool-timeout";
+   }
+-  if (/^P10(0[0-2]|17)$/.test(code) || /reach database|ECONNREFUSED|ENOTFOUND|connection terminated/i.test(msg)) {
++  if (/^P10(0[0-2]|17)$/.test(code) || /reach database|ECONNREFUSED|ENOTFOUND|connection terminated|ConnectionClosed|server has closed the connection|not queryable/i.test(msg)) {
+     return "unreachable";
+   }
++  // The transaction's own server-side bounds (STORE_TX_BOUND_MS): 55P03 lock_not_available, 57014 query_canceled.
++  if (/\b55P03\b|lock timeout/i.test(msg) || pgCode(err) === "55P03") return "lock-timeout";
++  if (/\b57014\b|statement timeout/i.test(msg) || pgCode(err) === "57014") return "statement-timeout";
+   return "error";
+ }
+ 
+diff --git a/tests/integration/sec-c4-rate-limit-saturation-db.test.ts b/tests/integration/sec-c4-rate-limit-saturation-db.test.ts
+index 94aca2d..16bc471 100644
+--- a/tests/integration/sec-c4-rate-limit-saturation-db.test.ts
++++ b/tests/integration/sec-c4-rate-limit-saturation-db.test.ts
+@@ -18,6 +18,16 @@
+ //
+ // TEST branch only, through the guarded runners (owner, and matflow_app with RLS_ENFORCED=1). Every bucket carries
+ // this run's secc4 prefix; teardown deletes exactly those rows and checks the count.
++//
++// SF-136 (lane L1, cycle 2, 11 Oct 2026): checkDbRateLimit no longer lets Prisma abandon a transaction start after 2 s
++// (that discard returned the client to the pool inside its BEGIN — a lost write); a caller now waits for the pool's own
++// 10 s deadline. A burst of 60 at pool 5 therefore usually finishes inside that deadline WITHOUT any store failure, so
++// "the burst saturates the pool" can no longer be assumed. The saturation is now FORCED and verified: phase 1 holds
++// all five pool connections in the test's own open transactions while the burst runs, so every call must meet the
++// pool deadline — the burst is asserted to have been refused entirely (0 allowed, 0 rows) and the fallback line is the
++// observable; phase 2 releases the pool and runs the same burst again — exactly 5 allowed, each with its row, which is
++// the R6 property (a store failure never adds capacity: the memory store gave nothing extra in phase 1, and the
++// database decides in phase 2).
+ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+ import { writeFileSync } from "node:fs";
+ 
+@@ -72,36 +82,80 @@ describe.skipIf(!ON_TEST_BRANCH)(`SF-40 / R6-N3: rate limit when the burst satur
+     { burst: 60, cls: "non-security", family: "tenant-lookup", bucket: `tenant-lookup:${KEY}-60` },
+     { burst: 120, cls: "non-security", family: "tenant-lookup", bucket: `tenant-lookup:${KEY}-120` },
+   ];
++  /** Holds all five pool connections in the test's own open transactions until released. */
++  async function saturatePool(): Promise<() => Promise<void>> {
++    let release!: () => void;
++    const gate = new Promise<void>((r) => (release = r));
++    const ready: Promise<void>[] = [];
++    const held: Promise<unknown>[] = [];
++    for (let i = 0; i < prismaPoolConfig().max; i++) {
++      let up!: () => void;
++      const isUp = new Promise<void>((r) => (up = r));
++      const h = prisma.$transaction(async (tx) => {
++        await tx.$queryRaw`SELECT 1`;
++        up();
++        await gate;
++      }, { maxWait: 60_000, timeout: 120_000 });
++      held.push(h);
++      // A holder that cannot take its connection fails the cell here, visibly, instead of leaving it waiting.
++      ready.push(Promise.race([isUp, h.then(() => { throw new Error("a holder finished before the pool was saturated"); })]));
++    }
++    try {
++      await Promise.all(ready);
++    } catch (e) {
++      release();
++      await Promise.allSettled(held);
++      throw e;
++    }
++    return async () => {
++      release();
++      await Promise.all(held);
++    };
++  }
++
+   for (const c of cases) {
+-    it(`${c.cls} bucket, burst of ${c.burst} on ONE bucket, max 5 → exactly 5 allowed, each with its row; one fallback log, no key`, async () => {
++    it(`${c.cls} bucket, burst of ${c.burst} on ONE bucket, max 5: with the pool forced saturated nothing is allowed; once free exactly 5 allowed, each with its row; one fallback log, no key`, async () => {
+       touched.push(c.bucket);
+       const errs = vi.spyOn(console, "error").mockImplementation(() => {});
+       const warns = vi.spyOn(console, "warn").mockImplementation(() => {});
+       const t0 = performance.now();
+-      const res = await Promise.all(Array.from({ length: c.burst }, () => checkRateLimit(c.bucket, 5, 60_000)));
+-      const ms = Math.round(performance.now() - t0);
++      // Phase 1 — saturation forced and verified, not assumed.
++      const unsaturate = await saturatePool();
++      const res1 = await Promise.all(Array.from({ length: c.burst }, () => checkRateLimit(c.bucket, 5, 60_000)));
++      const ms1 = Math.round(performance.now() - t0);
++      await unsaturate();
++      const rows1 = await prisma.rateLimitHit.count({ where: { bucket: c.bucket } });
++      // Phase 2 — the store answers again: the same burst.
++      const t1 = performance.now();
++      const res2 = await Promise.all(Array.from({ length: c.burst }, () => checkRateLimit(c.bucket, 5, 60_000)));
++      const ms2 = Math.round(performance.now() - t1);
+       const lines = [...errs.mock.calls, ...warns.mock.calls].map((a) => a.map(String).join(" "));
+       errs.mockRestore();
+       warns.mockRestore();
++      const res = [...res1, ...res2];
++      const allowed1 = res1.filter((r) => r.allowed).length;
+       const allowed = res.filter((r) => r.allowed).length;
+       const refused = res.filter((r) => !r.allowed);
+       const rows = await prisma.rateLimitHit.count({ where: { bucket: c.bucket } });
+       const fallbackLines = lines.filter((l) => l.includes(FALLBACK_LOG) && l.includes(`family=${c.family}`));
+       const r = {
+-        cls: c.cls, burst: c.burst, allowed, rows, allowedWithoutRow: allowed - rows, ms,
++        cls: c.cls, burst: c.burst, saturatedPhase: { allowed: allowed1, rows: rows1, ms: ms1 }, freePhase: { ms: ms2 },
++        allowed, rows, allowedWithoutRow: allowed - rows,
+         fallbackLogLines: fallbackLines.length, fallbackLog: fallbackLines[0]?.replace(KEY, "<KEY>") ?? null,
+       };
+       (out.results as unknown[]).push(r);
++      // The saturation took effect: with every connection held past the pool deadline nothing got through — not from
++      // the database and not from the memory store.
++      expect({ allowed: allowed1, rows: rows1 }, JSON.stringify(r)).toEqual({ allowed: 0, rows: 0 });
+       expect(allowed, JSON.stringify(r)).toBe(5);
+       expect(rows, JSON.stringify(r)).toBe(5);
+       expect(refused.every((x) => x.retryAfterSeconds >= 1), JSON.stringify(r)).toBe(true);
+       // The key never reaches the fallback log; the class and family do.
+       expect(lines.filter((l) => l.includes(FALLBACK_LOG) && l.includes(KEY))).toEqual([]);
+-      // The burst MUST saturate the pool for this test to mean anything (R6 saw it on every run at pool 5), and the
+-      // limiter's own line is the observable: Prisma prints its "Unable to start a transaction" through a console
+-      // reference captured at load, out of reach of the spy. Once per window per class/family: the first burst on a
+-      // family logs exactly one line however many calls failed; the second tenant-lookup burst, inside that
+-      // window, logs none.
++      // The limiter's own line is the observable of the store failure (Prisma's own error line goes through a console
++      // reference captured at load, out of reach of the spy). Once per window per class/family: the first burst on a
++      // family logs exactly one line however many calls failed; the second tenant-lookup burst, inside that window,
++      // logs none.
+       const expected = loggedFamilies.has(c.family) ? 0 : 1;
+       expect(fallbackLines.length, JSON.stringify(r)).toBe(expected);
+       if (expected) {
+@@ -110,6 +164,6 @@ describe.skipIf(!ON_TEST_BRANCH)(`SF-40 / R6-N3: rate limit when the burst satur
+         expect(fallbackLines[0]).toContain(c.cls === "security" ? "outcome=refused" : "outcome=memory-fallback");
+       }
+       if (fallbackLines.length) loggedFamilies.add(c.family);
+-    }, 180_000);
++    }, 240_000);
+   }
+ });
+diff --git a/tests/integration/sec-l1-connection-drop-db.test.ts b/tests/integration/sec-l1-connection-drop-db.test.ts
+new file mode 100644
+index 0000000..41f14f7
+--- /dev/null
++++ b/tests/integration/sec-l1-connection-drop-db.test.ts
+@@ -0,0 +1,317 @@
++// SF-135 (lane L1, 11 Oct 2026): what happens to a rate-limit check and a lockout reservation when the pooled
++// connection that holds their transaction stalls and then drops — the shape behind the burst suites' unhandled
++// "Connection terminated unexpectedly" / "ConnectionClosed" (stack: Prisma's transaction-timeout timer → its ROLLBACK
++// on the same client → the socket ends → that ROLLBACK's rejection has no handler).
++//
++// Fault injection on THIS process's own pooled pg clients only: the Prisma client here is built exactly as
++// lib/prisma.ts builds it (PrismaPg over a pg Pool with prismaPoolConfig()), but the Pool is created in this file so
++// the test can catch the client the moment it SENDS the advisory-lock statement, pause its socket (a network stall:
++// the answer is never read) and later end it (destroy — a plain close, or an ECONNRESET). Nothing is SET on any
++// connection by the test, no other session is touched, no backend is terminated; the server rolls back the abandoned
++// transaction when the socket closes. TEST branch only through the guarded runners (owner, and matflow_app with
++// RLS_ENFORCED=1); every bucket and key is secl1-prefixed and teardown deletes exactly those rows and checks the count.
++//
++// Each cell checks the security property, not just the exit: the call is a REFUSAL (never admitted), no row is left
++// for the refused attempt, the pool gives the slot back (nothing waiting, a positive control succeeds), the outcome is
++// logged by family only (nothing logged carries a key, address or IP). The SF-135 property itself — no promise
++// rejection left without a handler — is Vitest's: this file installs NO process listener (Vitest stops reporting
++// unhandled rejections as soon as any other listener exists), so one unhandled rejection anywhere in the run is an
++// "Unhandled Rejection" block naming the cell, and exit code 1.
++import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
++import { appendFileSync } from "node:fs";
++
++type Tracked = { c: import("pg").PoolClient; lastSql: string };
++const inj = vi.hoisted(() => ({
++  clients: [] as Tracked[],
++  pool: undefined as unknown,
++  // When armed, the next client that sends a statement matching `armPattern` has its socket paused right then.
++  armed: null as null | ((t: Tracked) => void),
++  armPattern: /pg_advisory_xact_lock/ as RegExp,
++}));
++
++vi.mock("@/lib/prisma", async (orig) => {
++  const real = await orig<typeof import("@/lib/prisma")>();
++  const pg = (await import("pg")).default;
++  const { PrismaPg } = await import("@prisma/adapter-pg");
++  const { PrismaClient } = await import("@prisma/client");
++  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ...real.prismaPoolConfig() });
++  inj.pool = pool;
++  pool.on("connect", (c: import("pg").PoolClient) => {
++    const t: Tracked = { c, lastSql: "" };
++    inj.clients.push(t);
++    const q = c.query.bind(c) as (...a: unknown[]) => unknown;
++    (c as unknown as { query: (...a: unknown[]) => unknown }).query = (...a: unknown[]) => {
++      const cfg = a[0] as string | { text?: string };
++      t.lastSql = (typeof cfg === "string" ? cfg : cfg?.text ?? "").replace(/\s+/g, " ");
++      const result = q(...a);
++      if (inj.armed && inj.armPattern.test(t.lastSql)) {
++        const fire = inj.armed;
++        inj.armed = null;
++        (c as unknown as { connection: { stream: { pause: () => void } } }).connection.stream.pause();
++        fire(t);
++      }
++      return result;
++    };
++  });
++  const client = new PrismaClient({ adapter: new PrismaPg(pool), log: ["error"] });
++  return { ...real, prisma: client };
++});
++
++import pg from "pg";
++import { prisma } from "@/lib/prisma";
++import { checkRateLimit, RATE_LIMIT_LOCK_NS } from "@/lib/rate-limit";
++import { lockoutKeys, lockoutState } from "@/lib/auth-lockout";
++import { withTenantContext, withRlsBypass } from "@/lib/prisma-tenant";
++
++const ON_TEST = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
++const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
++const STAMP = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
++// One bucket family per cell: the store-failure line is logged once per window per family, so cells must not share one.
++const B = (family: string) => `${family}:${ROLE}-${STAMP}`;
++const SLUG = `secl1-${STAMP}-club`;
++const EMAIL = (cell: string) => `secl1-${STAMP}-${cell}@example.test`;
++const IP = (i: number) => `192.0.2.${i}`;
++// How long the stall lasts before the socket ends: past the OLD Prisma timers (5 s batch default for the rate-limit
++// transaction, 10 s for the reservation), so on the old code the timer has fired and queued its ROLLBACK first.
++const STALL_RL_MS = 6_500;
++const STALL_LK_MS = 11_500;
++// Cycle 2: past the OLD 15 s Prisma timer of withTenantContext / withRlsBypass.
++const STALL_TX_MS = 16_500;
++
++const buckets = new Set<string>();
++const OUT = process.env.L1_EVIDENCE_OUT;
++function report(tag: string, data: Record<string, unknown>) {
++  const line = `${tag} ${JSON.stringify(data)}`;
++  console.log(line);
++  if (OUT) appendFileSync(OUT, line + "\n");
++}
++
++const poolStats = () => {
++  const p = inj.pool as { totalCount: number; idleCount: number; waitingCount: number };
++  return { total: p.totalCount, idle: p.idleCount, waiting: p.waitingCount };
++};
++const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
++
++/** Pool counts once settled: a snapshot can catch a queued acquire (e.g. the 5 % prune) in the tick before it is served. */
++async function settledPool() {
++  for (let i = 0; i < 30 && poolStats().waiting > 0; i++) await sleep(100);
++  return poolStats();
++}
++
++/** Arms the stall: resolves with the client whose lock statement was just sent and whose socket is now paused. */
++function stallNextLock(pattern: RegExp = /pg_advisory_xact_lock/): Promise<Tracked> {
++  inj.armPattern = pattern;
++  return new Promise((resolve, reject) => {
++    const t = setTimeout(() => {
++      inj.armed = null;
++      reject(new Error("no pooled client sent the lock statement within 15 s"));
++    }, 15_000);
++    inj.armed = (x) => {
++      clearTimeout(t);
++      resolve(x);
++    };
++  });
++}
++
++/** If the stall never arms, the call under test is still awaited (its outcome reported) before the harness fails. */
++async function settleOnStallFailure<T>(stalled: Promise<Tracked>, call: Promise<T>): Promise<Tracked> {
++  try {
++    return await stalled;
++  } catch (e) {
++    const outcome = await call.then(
++      (v) => `resolved ${JSON.stringify(v)}`,
++      (err: Error) => `rejected ${err?.name}: ${String(err?.message).slice(0, 80)}`,
++    );
++    throw new Error(`${(e as Error).message}; the call itself ${outcome}`);
++  }
++}
++
++function endSocket(t: Tracked, how: "close" | "reset") {
++  const stream = (t.c as unknown as { connection: { stream: { destroy: (e?: Error) => void } } }).connection.stream;
++  if (how === "close") stream.destroy();
++  else stream.destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET", errno: -4077, syscall: "read" }));
++}
++
++/** Console lines written while fn runs (recorded AND passed through — nothing is suppressed). */
++async function withLogs<T>(fn: () => Promise<T>): Promise<{ value?: T; error?: unknown; logs: string[] }> {
++  const logs: string[] = [];
++  const spies = (["error", "warn", "log"] as const).map((m) => {
++    const orig = console[m].bind(console);
++    return vi.spyOn(console, m).mockImplementation((...a: unknown[]) => {
++      logs.push(a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" "));
++      orig(...a);
++    });
++  });
++  try {
++    return { value: await fn(), logs };
++  } catch (error) {
++    return { error, logs };
++  } finally {
++    for (const s of spies) s.mockRestore();
++  }
++}
++
++function noSecretsIn(logs: string[], secrets: string[]) {
++  for (const l of logs) for (const s of secrets) expect(l.includes(s), `a log line carries ${s.slice(0, 12)}…`).toBe(false);
++}
++
++describe.skipIf(!ON_TEST)(`SF-135: a dropped connection under a pending transaction is a refusal, handled where it is owned (${ROLE})`, () => {
++  beforeAll(async () => {
++    await Promise.all(Array.from({ length: 4 }, () => prisma.$queryRaw`SELECT 1`));
++  }, 60_000);
++
++  afterAll(async () => {
++    await sleep(1_500);
++    const list = [...buckets];
++    const before = await prisma.rateLimitHit.count({ where: { bucket: { in: list } } });
++    const del = await prisma.rateLimitHit.deleteMany({ where: { bucket: { in: list } } });
++    const left = await prisma.rateLimitHit.count({ where: { bucket: { in: list } } });
++    report("L1-DROP-TEARDOWN", { role: ROLE, buckets: list.length, rowsBefore: before, deleted: del.count, left, pool: poolStats() });
++    expect(del.count).toBe(before);
++    expect(left).toBe(0);
++  }, 120_000);
++
++  for (const [how, family] of [["close", "secl1rc"], ["reset", "secl1rr"]] as const) {
++    it(`rate limit: the lock statement's connection stalls past the old 5 s timer, then ends (${how}) → refused, no row, slot back, logged by family`, async () => {
++      const b = B(family);
++      buckets.add(b);
++      const base = poolStats();
++      const started = Date.now();
++      const r = await withLogs(async () => {
++        const stalled = stallNextLock();
++        const p = checkRateLimit(b, 5, 60_000);
++        const t = await settleOnStallFailure(stalled, p);
++        await sleep(STALL_RL_MS);
++        endSocket(t, how);
++        return p;
++      });
++      const ms = Date.now() - started;
++      await sleep(1_000);
++      const rows = await prisma.rateLimitHit.count({ where: { bucket: b } });
++      const control = await checkRateLimit(`${family}ok:${ROLE}-${STAMP}`, 5, 60_000);
++      buckets.add(`${family}ok:${ROLE}-${STAMP}`);
++      const after = await settledPool();
++      report("L1-DROP-RL", { role: ROLE, how, ms, verdict: r.value, threw: r.error ? String((r.error as Error).message).slice(0, 80) : null, rows, control, poolBefore: base, poolAfter: after, logs: r.logs.filter((l) => /rate-limit/.test(l)) });
++      expect(r.error, "a security bucket answers, it does not throw").toBeUndefined();
++      expect(r.value?.allowed, "a failed check is a refusal").toBe(false);
++      expect(r.value!.retryAfterSeconds).toBeGreaterThanOrEqual(1);
++      expect(r.value!.retryAfterSeconds).toBeLessThanOrEqual(30);
++      expect(rows, "the abandoned transaction left no hit").toBe(0);
++      expect(control.allowed, "positive control: the pool serves the next caller").toBe(true);
++      expect(after.waiting).toBe(0);
++      expect(after.total, "the dead client left the pool; nothing leaked").toBeLessThanOrEqual(base.total + 1);
++      expect(r.logs.some((l) => new RegExp(`\\[rate-limit\\] store unavailable reason=unreachable class=security family=${family} outcome=refused`).test(l)), "one family-only store-failure line naming the cause").toBe(true);
++      noSecretsIn(r.logs, [b.slice(family.length + 1)]);
++    }, 60_000);
++  }
++
++  for (const [how, n] of [["close", 31], ["reset", 32]] as const) {
++    it(`lockout reservation: the lock statement's connection stalls past the old 10 s timer, then ends (${how}) → refused (thrown, no reservation), no slot written, slot back, logged without the key`, async () => {
++      const email = EMAIL(`lk-${how}`);
++      const ip = IP(n);
++      const keys = lockoutKeys(SLUG, email, ip);
++      buckets.add(keys.addr);
++      buckets.add(keys.pair);
++      let knownCalls = 0;
++      const started = Date.now();
++      const r = await withLogs(async () => {
++        const stalled = stallNextLock();
++        const p = lockoutState(keys, async () => {
++          knownCalls++;
++          return false;
++        });
++        const t = await settleOnStallFailure(stalled, p);
++        await sleep(STALL_LK_MS);
++        endSocket(t, how);
++        return p;
++      });
++      const ms = Date.now() - started;
++      await sleep(1_000);
++      const rows = await prisma.rateLimitHit.count({ where: { bucket: { in: [keys.addr, keys.pair] } } });
++      // Positive control on a fresh address: a reservation is granted and holds both slots.
++      const ck = lockoutKeys(SLUG, EMAIL(`lk-${how}-control`), IP(40 + n));
++      buckets.add(ck.addr);
++      buckets.add(ck.pair);
++      const control = await lockoutState(ck, async () => false);
++      const controlRows = await prisma.rateLimitHit.count({ where: { bucket: { in: [ck.addr, ck.pair] } } });
++      const after = await settledPool();
++      const err = r.error as (Error & { reason?: string }) | undefined;
++      report("L1-DROP-LK", { role: ROLE, how, ms, resolved: r.value ?? null, threw: err ? `${err.name}${err.reason ? `(${err.reason})` : ""}: ${String(err.message).slice(0, 80)}` : null, rows, knownCalls, control: { blocked: control.blocked, reserved: !control.blocked && !!control.reservation }, controlRows, poolAfter: after, logs: r.logs.filter((l) => /lockout/.test(l)) });
++      // Fail closed: the caller (auth.ts) refuses the sign-in on any throw; a resolved state must never carry a slot.
++      expect(err, "a failed reservation is thrown to the caller, never a granted state").toBeDefined();
++      expect(r.value).toBeUndefined();
++      expect(err!.name).toBe("LockoutReservationError");
++      expect(err!.reason).toBe("unreachable");
++      expect(rows, "no slot was written for the refused attempt").toBe(0);
++      expect(control.blocked).toBe(false);
++      expect(controlRows, "positive control holds both slots").toBe(2);
++      expect(after.waiting).toBe(0);
++      expect(r.logs.some((l) => /\[auth-lockout\] reservation failed reason=unreachable outcome=refused/.test(l)), "one logged line naming the cause").toBe(true);
++      noSecretsIn(r.logs, [email, ip, keys.addr, keys.pair, keys.addr.slice(-40)]);
++    }, 60_000);
++  }
++
++  it("a real lock wait on a healthy connection is bounded by the transaction itself (holder on the test's own connection)", async () => {
++    const family = "secl1hl";
++    const b = B(family);
++    buckets.add(b);
++    const holder = new pg.Client({ connectionString: process.env.DATABASE_URL });
++    await holder.connect();
++    await holder.query("BEGIN");
++    await holder.query("SELECT pg_advisory_xact_lock($1::int4, hashtext($2::text))", [RATE_LIMIT_LOCK_NS, b]);
++    // The holder lets go after 25 s whatever happens, so an unbounded wait shows as a ~25 s answer, not a hang.
++    const released = sleep(25_000).then(() => holder.query("ROLLBACK"));
++    const started = Date.now();
++    const r = await withLogs(() => checkRateLimit(b, 5, 60_000));
++    const ms = Date.now() - started;
++    await released;
++    await holder.end();
++    const rows = await prisma.rateLimitHit.count({ where: { bucket: b } });
++    // The bound is transaction-local: the next statement on a pooled connection runs with the server defaults again.
++    const after = await prisma.$queryRaw<{ lt: string; st: string }[]>`SELECT current_setting('lock_timeout') AS lt, current_setting('statement_timeout') AS st`;
++    report("L1-HELDLOCK-RL", { role: ROLE, ms, verdict: r.value, threw: r.error ? String((r.error as Error).message).slice(0, 80) : null, rows, settingsAfter: after[0], logs: r.logs.filter((l) => /rate-limit/.test(l)) });
++    expect(r.value?.allowed, "refused while another transaction holds the bucket").toBe(false);
++    expect(rows).toBe(0);
++    expect(ms, "the wait is bounded by the transaction, not by the holder letting go").toBeLessThan(20_000);
++    expect(r.logs.some((l) => new RegExp(`\\[rate-limit\\] store unavailable reason=lock-timeout class=security family=${family} outcome=refused`).test(l))).toBe(true);
++    expect(after[0], "nothing left on the pooled connection").toEqual({ lt: "0", st: "0" });
++  }, 60_000);
++
++  // Visibility control (run only with L1_PLANT=1): an UNEXPECTED failure from an unrelated place must still fail the
++  // run. The fix handles the expected connection failure where it is owned; it installs nothing that would hide this.
++  // Cycle 2: the sign-in flow's other transactions. A statement of a tenant (or bypass) transaction stalls past the old
++  // 15 s Prisma timer, then its connection ends: the caller gets the failure (thrown, with the tenant attached for the
++  // log), nothing else is left behind, and nothing is unhandled.
++  for (const name of ["withTenantContext", "withRlsBypass"] as const) {
++    it(`${name}: a statement stalls past the old 15 s timer, then its connection ends → the caller sees the failure, pool slot back, nothing unhandled`, async () => {
++      const started = Date.now();
++      const tag = `secl1_stall_${name.toLowerCase()}`;
++      const r = await withLogs(async () => {
++        const stalled = stallNextLock(new RegExp(tag));
++        const q = (name === "withTenantContext"
++          ? withTenantContext(`secl1-${STAMP}-tenant`, (tx) => tx.$queryRawUnsafe(`SELECT 1 AS ${tag}`))
++          : withRlsBypass((tx) => tx.$queryRawUnsafe(`SELECT 1 AS ${tag}`)));
++        const t = await settleOnStallFailure(stalled, q);
++        await sleep(STALL_TX_MS);
++        endSocket(t, "close");
++        return q;
++      });
++      const ms = Date.now() - started;
++      const control = name === "withTenantContext"
++        ? await withTenantContext(`secl1-${STAMP}-tenant`, (tx) => tx.$queryRaw<{ ok: number }[]>`SELECT 1::int AS ok`)
++        : await withRlsBypass((tx) => tx.$queryRaw<{ ok: number }[]>`SELECT 1::int AS ok`);
++      const after = await settledPool();
++      const err = r.error as (Error & { code?: string }) | undefined;
++      report("L1-DROP-TX", { role: ROLE, name, ms, resolved: r.value ?? null, threw: err ? `${err.name}${err.code ? `(${err.code})` : ""}: ${String(err.message).slice(0, 80)}` : null, control, poolAfter: after });
++      expect(err, "the caller sees the failure").toBeDefined();
++      expect(control).toEqual([{ ok: 1 }]);
++      expect(after.waiting).toBe(0);
++    }, 60_000);
++  }
++
++  it.runIf(process.env.L1_PLANT === "1")("planted: an unrelated rejection nobody handles still fails the run", async () => {
++    void Promise.reject(new Error("L1 planted unexpected failure (unrelated to the database)"));
++    await sleep(200);
++    expect(true).toBe(true);
++  });
++});
+diff --git a/tests/integration/sec-l1-drop-probe-db.test.ts b/tests/integration/sec-l1-drop-probe-db.test.ts
+new file mode 100644
+index 0000000..6e6163c
+--- /dev/null
++++ b/tests/integration/sec-l1-drop-probe-db.test.ts
+@@ -0,0 +1,97 @@
++// SF-135 (lane L1, 11 Oct 2026): OBSERVATION probe for the post-burst connection failures. Not a gate: it runs the
++// sec-c3 burst shape against the real lib/rate-limit.ts on a Prisma client built exactly as lib/prisma.ts builds it
++// (same pg Pool options from prismaPoolConfig()), except that the pg Pool is created here so every pooled client's
++// lifecycle can be timed: when it connected, which statement it last sent and when, and when its socket ended.
++// Nothing is set on any connection; no other session is touched. TEST branch only through the guarded runners;
++// buckets carry the secl1- prefix and teardown deletes exactly those rows and checks the count.
++//
++// Prisma's transaction-manager debug channel (DEBUG=prisma:client:transactionManager, set by the runner when wanted)
++// prints "Transaction timed out." when Prisma's own timer fires; the probe correlates socket ends with it.
++import { vi, describe, it, expect, afterAll } from "vitest";
++import { appendFileSync } from "node:fs";
++
++type Life = { id: number; connectedAt: number; lastSql: string; lastSentAt: number; endedAt?: number; endedWhileActive?: boolean };
++const probe = vi.hoisted(() => ({ lives: [] as Life[], t0: Date.now(), pool: undefined as unknown }));
++
++vi.mock("@/lib/prisma", async (orig) => {
++  const real = await orig<typeof import("@/lib/prisma")>();
++  const pg = (await import("pg")).default;
++  const { PrismaPg } = await import("@prisma/adapter-pg");
++  const { PrismaClient } = await import("@prisma/client");
++  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ...real.prismaPoolConfig() });
++  probe.pool = pool;
++  let n = 0;
++  pool.on("connect", (c: import("pg").PoolClient) => {
++    const life: Life = { id: ++n, connectedAt: Date.now() - probe.t0, lastSql: "", lastSentAt: 0 };
++    probe.lives.push(life);
++    const q = c.query.bind(c) as (...a: unknown[]) => unknown;
++    (c as unknown as { query: (...a: unknown[]) => unknown }).query = (...a: unknown[]) => {
++      const cfg = a[0] as string | { text?: string };
++      life.lastSql = (typeof cfg === "string" ? cfg : cfg?.text ?? "").replace(/\s+/g, " ").trim().slice(0, 48);
++      life.lastSentAt = Date.now() - probe.t0;
++      return q(...a);
++    };
++    c.on("end", () => {
++      life.endedAt = Date.now() - probe.t0;
++      life.endedWhileActive = !!(c as unknown as { _activeQuery?: unknown })._activeQuery;
++    });
++  });
++  const client = new PrismaClient({ adapter: new PrismaPg(pool), log: ["error"] });
++  return { ...real, prisma: client };
++});
++
++import { prisma } from "@/lib/prisma";
++import { checkRateLimit } from "@/lib/rate-limit";
++
++const ON_TEST = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
++const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
++const PREFIX = `secl1-probe-${ROLE}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
++const ROUNDS = Number(process.env.L1_ROUNDS ?? 6);
++const OUT = process.env.L1_PROBE_OUT;
++function report(tag: string, data: Record<string, unknown>) {
++  const line = `${tag} ${JSON.stringify(data)}`;
++  console.log(line);
++  if (OUT) appendFileSync(OUT, line + "\n");
++}
++// No process listener here: Vitest stops reporting unhandled rejections once any other listener exists. An unhandled
++// rejection in this run is Vitest's "Unhandled Rejection" block and exit code 1.
++
++let rowsWritten = 0;
++describe.skipIf(!ON_TEST)(`L1 probe: connection lifecycle under the c3 burst (${ROLE})`, () => {
++  afterAll(async () => {
++    const del = await prisma.rateLimitHit.deleteMany({ where: { bucket: { startsWith: PREFIX } } });
++    const left = await prisma.rateLimitHit.count({ where: { bucket: { startsWith: PREFIX } } });
++    const pool = probe.pool as { totalCount: number; idleCount: number; waitingCount: number };
++    report("L1-PROBE-END", {
++      role: ROLE,
++      teardown: { rowsWritten, deleted: del.count, left },
++      pool: { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount },
++      ended: probe.lives.filter((l) => l.endedAt !== undefined),
++      clients: probe.lives.length,
++    });
++    expect(del.count).toBe(rowsWritten);
++    expect(left).toBe(0);
++  }, 120_000);
++
++  for (let r = 1; r <= ROUNDS; r++) {
++    it(`round ${r}: 20 in parallel against max 5`, async () => {
++      const b = `${PREFIX}-r${r}`;
++      const start = Date.now() - probe.t0;
++      const res = await Promise.all(
++        Array.from({ length: 20 }, async () => {
++          const s = Date.now();
++          const v = await checkRateLimit(b, 5, 60_000);
++          return { allowed: v.allowed, ms: Date.now() - s };
++        }),
++      );
++      const n = await prisma.rateLimitHit.count({ where: { bucket: b } });
++      rowsWritten += n;
++      const allowed = res.filter((x) => x.allowed).length;
++      report("L1-PROBE-ROUND", { role: ROLE, round: r, startMs: start, allowed, rows: n, maxMs: Math.max(...res.map((x) => x.ms)) });
++      // The security property, whatever the connection does: never more than max rows, and every allowance holds a
++      // row (a row without an allowance — a COMMIT that landed but whose answer was lost — is the fail-safe direction).
++      expect(n).toBeLessThanOrEqual(5);
++      expect(allowed).toBeLessThanOrEqual(n);
++    }, 120_000);
++  }
++});
+diff --git a/tests/integration/sec-l1-leftovers-db.test.ts b/tests/integration/sec-l1-leftovers-db.test.ts
+new file mode 100644
+index 0000000..16d3fd6
+--- /dev/null
++++ b/tests/integration/sec-l1-leftovers-db.test.ts
+@@ -0,0 +1,61 @@
++// Lane L1 (11 Oct 2026): inventory — and, with L1_CLEANUP=1, count-checked removal — of fixtures that L1's own runs
++// of sec-a4-lockout-burst-db / sec-c3-rate-limit-atomic-db / sec-l1-* could have left on the TEST branch when a
++// teardown itself failed on a dropped connection. Scope is exactly: synthetic clubs whose slug starts "seca4-" created
++// inside L1's run window, their members / login events / audit rows, the c3 and l1 buckets ("secc3-rl-", "secl1"),
++// and lockout counter rows ("authfail:") stamped inside L1's run window (no other lane ran in it: D-8 kept L2 unlaunched).
++// TEST branch only through the guarded runners.
++import { describe, it, expect } from "vitest";
++import { appendFileSync } from "node:fs";
++import { prisma } from "@/lib/prisma";
++import { withRlsBypass } from "@/lib/prisma-tenant";
++
++const ON_TEST = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
++const FROM = new Date(process.env.L1_WINDOW_FROM ?? "2026-10-11T05:45:00Z");
++const TO = new Date(process.env.L1_WINDOW_TO ?? new Date().toISOString());
++const CLEAN = process.env.L1_CLEANUP === "1";
++const OUT = process.env.L1_EVIDENCE_OUT;
++
++describe.skipIf(!ON_TEST)("L1 leftovers on TEST", () => {
++  it(CLEAN ? "removes L1's leftovers, count-checked" : "lists L1's leftovers", async () => {
++    const tenants = await withRlsBypass((tx) =>
++      tx.tenant.findMany({ where: { slug: { startsWith: "seca4-" }, createdAt: { gte: FROM, lte: TO } }, select: { id: true } }),
++    );
++    const ids = tenants.map((t) => t.id);
++    const before = await withRlsBypass(async (tx) => ({
++      tenants: ids.length,
++      members: await tx.member.count({ where: { tenantId: { in: ids } } }),
++      loginEvents: await tx.loginEvent.count({ where: { tenantId: { in: ids } } }),
++      auditLogs: await tx.auditLog.count({ where: { tenantId: { in: ids } } }),
++    }));
++    const hitWhere = {
++      OR: [
++        { bucket: { startsWith: "secc3-rl-" }, hitAt: { gte: FROM, lte: TO } },
++        { bucket: { startsWith: "secl1" } },
++        { bucket: { startsWith: "authfail:" }, hitAt: { gte: FROM, lte: TO } },
++      ],
++    };
++    const hitsBefore = await prisma.rateLimitHit.count({ where: hitWhere });
++    let removed: Record<string, number> | null = null;
++    if (CLEAN) {
++      const hits = await prisma.rateLimitHit.deleteMany({ where: hitWhere });
++      removed = await withRlsBypass(async (tx) => ({
++        auditLogs: (await tx.auditLog.deleteMany({ where: { tenantId: { in: ids } } })).count,
++        loginEvents: (await tx.loginEvent.deleteMany({ where: { tenantId: { in: ids } } })).count,
++        members: (await tx.member.deleteMany({ where: { tenantId: { in: ids } } })).count,
++        tenants: (await tx.tenant.deleteMany({ where: { id: { in: ids } } })).count,
++        hits: hits.count,
++      }), { timeout: 60_000 });
++    }
++    const hitsAfter = await prisma.rateLimitHit.count({ where: hitWhere });
++    const tenantsAfter = await withRlsBypass((tx) => tx.tenant.count({ where: { id: { in: ids } } }));
++    const line = `L1-LEFTOVERS ${JSON.stringify({ window: [FROM.toISOString(), TO.toISOString()], before: { ...before, hits: hitsBefore }, removed, after: { tenants: tenantsAfter, hits: hitsAfter } })}`;
++    console.log(line);
++    if (OUT) appendFileSync(OUT, line + "\n");
++    if (CLEAN) {
++      expect(removed!.tenants).toBe(before.tenants);
++      expect(removed!.members).toBe(before.members);
++      expect(removed!.hits).toBe(hitsBefore);
++      expect({ tenantsAfter, hitsAfter }).toEqual({ tenantsAfter: 0, hitsAfter: 0 });
++    }
++  }, 120_000);
++});
+diff --git a/tests/integration/sec-l1-server-settings-db.test.ts b/tests/integration/sec-l1-server-settings-db.test.ts
+new file mode 100644
+index 0000000..ef6f253
+--- /dev/null
++++ b/tests/integration/sec-l1-server-settings-db.test.ts
+@@ -0,0 +1,34 @@
++// SF-135 (lane L1, 11 Oct 2026): read-only observation of the server-side timeouts that could end a pooled connection
++// (SHOW only; nothing is set). TEST branch only through the guarded runners.
++import { describe, it, expect } from "vitest";
++import { appendFileSync } from "node:fs";
++import { prisma } from "@/lib/prisma";
++
++const ON_TEST = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
++const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
++const NAMES = [
++  "server_version",
++  "statement_timeout",
++  "lock_timeout",
++  "idle_in_transaction_session_timeout",
++  "idle_session_timeout",
++  "transaction_timeout",
++  "tcp_keepalives_idle",
++];
++
++describe.skipIf(!ON_TEST)(`L1 server settings (${ROLE})`, () => {
++  it("prints the timeouts this role runs under", async () => {
++    const out: Record<string, string> = {};
++    for (const n of NAMES) {
++      const r = await prisma.$queryRawUnsafe<{ setting: string }[]>(
++        `SELECT coalesce(current_setting($1, true), 'n/a') AS setting`,
++        n,
++      );
++      out[n] = r[0]?.setting ?? "n/a";
++    }
++    const line = `L1-SETTINGS ${JSON.stringify({ role: ROLE, ...out })}`;
++    console.log(line);
++    if (process.env.L1_EVIDENCE_OUT) appendFileSync(process.env.L1_EVIDENCE_OUT, line + "\n");
++    expect(out.server_version).not.toBe("n/a");
++  });
++});
+diff --git a/tests/integration/sec-l1-start-timeout-db.test.ts b/tests/integration/sec-l1-start-timeout-db.test.ts
+new file mode 100644
+index 0000000..ca3db50
+--- /dev/null
++++ b/tests/integration/sec-l1-start-timeout-db.test.ts
+@@ -0,0 +1,121 @@
++// SF-136 (lane L1, 11 Oct 2026; cycle 2): what happens to a pooled client when an interactive transaction's maxWait
++// expires BEFORE the driver finished starting it.
++//
++// Library behaviour (cell 1, observation): Prisma 7.4.2 throws TransactionStartTimeoutError (P2028) to the caller and,
++// when the start later completes, calls the adapter's transaction.rollback() — which in @prisma/adapter-pg only RELEASES
++// the client (no ROLLBACK statement on this path). The client goes back to the pool inside its BEGIN; an autocommit
++// write on it is held in a transaction nobody owns and is lost when the client closes. Still true of the library.
++//
++// The owning boundary (cell 2, the property): application code opens transactions only through withTenantContext /
++// withRlsBypass (lib/prisma-tenant.ts), checkDbRateLimit (lib/rate-limit.ts) and reserveTx (lib/auth-lockout.ts) —
++// pinned by tests/unit/sec-l1-store-tx-bound — and none of them lets Prisma abandon a start any more: a caller that
++// cannot get a connection waits for the pool's own deadline instead. Cell 2 holds the only connection of a one-client
++// pool past the OLD 2 s maxWait a caller asks for, releases it, and checks that the pool's client is not left inside a
++// transaction and that the next autocommit write persists.
++//
++// Own pools only (the Prisma client the library code uses here is built as lib/prisma.ts builds it, with max 1), own
++// synthetic secl1- rows, nothing SET on any connection; an abandoned transaction is ended by this test's own ROLLBACK or
++// pool close. TEST branch only through the guarded runners.
++import { vi, describe, it, expect, afterAll } from "vitest";
++import { appendFileSync } from "node:fs";
++
++const inj = vi.hoisted(() => ({ pool: undefined as unknown }));
++vi.mock("@/lib/prisma", async (orig) => {
++  const real = await orig<typeof import("@/lib/prisma")>();
++  const pg = (await import("pg")).default;
++  const { PrismaPg } = await import("@prisma/adapter-pg");
++  const { PrismaClient } = await import("@prisma/client");
++  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ...real.prismaPoolConfig(), max: 1 });
++  inj.pool = pool;
++  return { ...real, prisma: new PrismaClient({ adapter: new PrismaPg(pool), log: [] }) };
++});
++
++import pg from "pg";
++import { PrismaPg } from "@prisma/adapter-pg";
++import { PrismaClient } from "@prisma/client";
++import { prisma, prismaPoolConfig } from "@/lib/prisma";
++import { withTenantContext } from "@/lib/prisma-tenant";
++
++const ON_TEST = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
++const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
++const STAMP = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
++const BUCKET = (cell: string) => `secl1:start-${ROLE}-${STAMP}-${cell}`;
++const OUT = process.env.L1_EVIDENCE_OUT;
++const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
++function report(tag: string, data: Record<string, unknown>) {
++  const line = `${tag} ${JSON.stringify(data)}`;
++  console.log(line);
++  if (OUT) appendFileSync(OUT, line + "\n");
++}
++
++describe.skipIf(!ON_TEST)(`SF-136: a start that times out never leaves a client inside a BEGIN (${ROLE})`, () => {
++  const checker = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
++  const written: string[] = [];
++  const visibleToOthers = async (b: string) =>
++    (await checker.query(`SELECT count(*)::int AS n FROM "RateLimitHit" WHERE bucket = $1`, [b])).rows[0].n as number;
++
++  afterAll(async () => {
++    const del = await checker.query(`DELETE FROM "RateLimitHit" WHERE bucket = ANY($1::text[])`, [written]);
++    const left = await checker.query(`SELECT count(*)::int AS n FROM "RateLimitHit" WHERE bucket = ANY($1::text[])`, [written]);
++    await checker.end();
++    report("L1-START-TEARDOWN", { role: ROLE, buckets: written.length, deleted: del.rowCount, left: left.rows[0].n });
++    expect(left.rows[0].n).toBe(0);
++  }, 60_000);
++
++  it("library observation: Prisma + adapter-pg with maxWait 1 ms return the client inside its BEGIN; a later plain write is lost on close", async () => {
++    const b = BUCKET("lib");
++    written.push(b);
++    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ...prismaPoolConfig(), max: 1 });
++    const own = new PrismaClient({ adapter: new PrismaPg(pool), log: [] });
++    let startErr = "";
++    try {
++      await own.$transaction(async (tx) => tx.$queryRaw`SELECT 1`, { maxWait: 1, timeout: 5_000 });
++    } catch (e) {
++      startErr = `${(e as { code?: string }).code ?? ""} ${String((e as Error).message).slice(0, 60)}`;
++    }
++    for (let i = 0; i < 100 && pool.idleCount === 0; i++) await sleep(100);
++    const inTx = (await pool.query(`SELECT (now() <> statement_timestamp()) AS in_tx`)).rows[0].in_tx as boolean;
++    await own.rateLimitHit.create({ data: { bucket: b } });
++    const seenByOwnClient = await own.rateLimitHit.count({ where: { bucket: b } });
++    await own.$disconnect();
++    await pool.end(); // this test's own pool; closing it ends the abandoned transaction
++    await sleep(500);
++    const persisted = await visibleToOthers(b);
++    report("L1-START-LIBRARY", { role: ROLE, startErr, clientReturnedInsideTransaction: inTx, plainWriteSeenByOwnClient: seenByOwnClient, plainWritePersistedAfterClose: persisted });
++    expect(startErr).toMatch(/P2028|Unable to start a transaction/i);
++    expect(typeof inTx).toBe("boolean"); // recorded: the library defect itself is not L1's to change
++  }, 60_000);
++
++  it("withTenantContext asked for maxWait 2 s while the pool's only connection is busy for 4 s: it waits for the pool, succeeds, and leaves no client inside a BEGIN; the next plain write persists", async () => {
++    const b = BUCKET("tenant");
++    written.push(b);
++    const pool = inj.pool as pg.Pool;
++    let release!: () => void;
++    const gate = new Promise<void>((r) => (release = r));
++    // The test's own holder takes the only connection (a transaction with its own generous limits).
++    const holder = prisma.$transaction(async (tx) => {
++      await tx.$queryRaw`SELECT 1`;
++      await gate;
++    }, { maxWait: 60_000, timeout: 120_000 });
++    for (let i = 0; i < 100 && !(pool.totalCount === 1 && pool.idleCount === 0); i++) await sleep(50);
++    const started = Date.now();
++    const call = withTenantContext(`secl1-start-${STAMP}`, (tx) => tx.$queryRaw<{ one: number }[]>`SELECT 1::int AS one`, { maxWait: 2_000 }).then(
++      (v) => ({ ok: true as const, v, ms: Date.now() - started }),
++      (e: unknown) => ({ ok: false as const, err: `${(e as { code?: string }).code ?? ""} ${String((e as Error).message).slice(0, 60)}`, ms: Date.now() - started }),
++    );
++    await sleep(4_000);
++    release();
++    await holder;
++    const outcome = await call;
++    await sleep(1_000); // a discarded start (old code) would finish and be "rolled back" (released) by now
++    const inTx = (await prisma.$queryRaw<{ in_tx: boolean }[]>`SELECT (now() <> statement_timestamp()) AS in_tx`)[0].in_tx;
++    await prisma.rateLimitHit.create({ data: { bucket: b } });
++    const persisted = await visibleToOthers(b);
++    // If the client WAS left inside a transaction (the old code), end it here so the run cleans up after itself.
++    if (inTx) await prisma.$executeRaw`ROLLBACK`;
++    report("L1-START-TENANT", { role: ROLE, outcome, clientLeftInsideTransaction: inTx, plainWritePersistedForOthers: persisted, pool: { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount } });
++    expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
++    expect(inTx, "no client back in the pool inside a BEGIN").toBe(false);
++    expect(persisted, "the next autocommit write persists").toBe(1);
++  }, 60_000);
++});
+diff --git a/tests/unit/sec-c2-upload-controls.test.ts b/tests/unit/sec-c2-upload-controls.test.ts
+index 05905cf..331616c 100644
+--- a/tests/unit/sec-c2-upload-controls.test.ts
++++ b/tests/unit/sec-c2-upload-controls.test.ts
+@@ -45,16 +45,32 @@ vi.mock("@/lib/prisma", () => {
+   // shared-table path (not the memory fallback) is what these cells exercise.
+   const $executeRaw = (_s: TemplateStringsArray, ..._v: unknown[]) => ({ op: "lock" as const });
+   const $queryRaw = (_s: TemplateStringsArray, ...v: unknown[]) => ({ op: "insert" as const, bucket: v[0] as string, windowMs: Number(v[1]), max: Number(v[4]) });
+-  const $transaction = async (ops: Array<{ op: string; bucket?: string; windowMs?: number; max?: number }>) => {
+-    if (h.dbDown) throw new Error("connect ECONNREFUSED (secC2 fake)");
+-    return ops.map((o) => {
+-      if (o.op !== "insert") return 1;
+-      const since = Date.now() - o.windowMs!;
+-      const rows = h.hits.filter((x) => x.bucket === o.bucket && x.hitAt.getTime() >= since);
+-      const ok = rows.length < o.max!;
+-      if (ok) h.hits.push({ bucket: o.bucket!, hitAt: new Date() });
+-      const oldest = rows.reduce<number | null>((a, b) => (a === null || b.hitAt.getTime() < a ? b.hitAt.getTime() : a), null);
+-      return [{ count: rows.length, inserted: ok ? 1 : 0, oldestAgeMs: oldest === null ? null : Date.now() - oldest }];
++  type Op = { op: string; bucket?: string; windowMs?: number; max?: number };
++  const $transaction = async (arg: Op[] | ((tx: unknown) => Promise<unknown>)) => {
++    // SF-135 (lane L1): checkRateLimit runs the same two statements in an INTERACTIVE transaction now (its bounds are
++    // owned there, not by Prisma's timer). The callback's statements are recorded as the same ops and answered by the
++    // same rules; nothing asserted about them changes.
++    const run = async (ops: Op[]) => {
++      if (h.dbDown) throw new Error("connect ECONNREFUSED (secC2 fake)");
++      return ops.map((o) => {
++        if (o.op !== "insert") return 1;
++        const since = Date.now() - o.windowMs!;
++        const rows = h.hits.filter((x) => x.bucket === o.bucket && x.hitAt.getTime() >= since);
++        const ok = rows.length < o.max!;
++        if (ok) h.hits.push({ bucket: o.bucket!, hitAt: new Date() });
++        const oldest = rows.reduce<number | null>((a, b) => (a === null || b.hitAt.getTime() < a ? b.hitAt.getTime() : a), null);
++        return [{ count: rows.length, inserted: ok ? 1 : 0, oldestAgeMs: oldest === null ? null : Date.now() - oldest }];
++      });
++    };
++    if (typeof arg !== "function") return run(arg);
++    const recorded: Op[] = [];
++    return arg({
++      $executeRaw: async (q: TemplateStringsArray, ...v: unknown[]) => (recorded.push($executeRaw(q, ...v)), 1),
++      $queryRaw: async (q: TemplateStringsArray, ...v: unknown[]) => {
++        recorded.push($queryRaw(q, ...v));
++        const out = (await run(recorded)) as unknown[];
++        return out[out.length - 1];
++      },
+     });
+   };
+   return { prisma: { rateLimitHit, $executeRaw, $queryRaw, $transaction } };
+diff --git a/tests/unit/sec-c3-rate-limit-atomic.test.ts b/tests/unit/sec-c3-rate-limit-atomic.test.ts
+index d92578f..01b51ca 100644
+--- a/tests/unit/sec-c3-rate-limit-atomic.test.ts
++++ b/tests/unit/sec-c3-rate-limit-atomic.test.ts
+@@ -22,6 +22,11 @@ const h = vi.hoisted(() => ({
+ 
+ vi.mock("@/lib/prisma", () => {
+   const tag = (kind: "lock" | "insert") => (s: TemplateStringsArray, ...values: unknown[]): Op => ({ kind, sql: s.join("?"), values });
++  const runOps = async (ops: Op[]) => {
++    if (h.down) throw new Error("connect ECONNREFUSED (secc3 fake)");
++    h.transactions.push(ops);
++    return ops.map((o) => (o.kind === "insert" ? h.insertResult : 1));
++  };
+   return {
+     prisma: {
+       rateLimitHit: {
+@@ -37,10 +42,22 @@ vi.mock("@/lib/prisma", () => {
+       },
+       $executeRaw: tag("lock"),
+       $queryRaw: tag("insert"),
+-      $transaction: async (ops: Op[]) => {
+-        if (h.down) throw new Error("connect ECONNREFUSED (secc3 fake)");
+-        h.transactions.push(ops);
+-        return ops.map((o) => (o.kind === "insert" ? h.insertResult : 1));
++      $transaction: async (arg: Op[] | ((tx: unknown) => Promise<unknown>)) => {
++        // SF-135 (lane L1): checkRateLimit runs the same two statements in an INTERACTIVE transaction now (its bounds are
++        // owned there, not by Prisma's timer). The callback's statements are recorded as the same ops and answered by
++        // the same rules below; nothing asserted about them changes.
++        if (typeof arg === "function") {
++          const recorded: Op[] = [];
++          return arg({
++            $executeRaw: async (s: TemplateStringsArray, ...v: unknown[]) => (recorded.push(tag("lock")(s, ...v)), 1),
++            $queryRaw: async (s: TemplateStringsArray, ...v: unknown[]) => {
++              recorded.push(tag("insert")(s, ...v));
++              const out = (await runOps(recorded)) as unknown[];
++              return out[out.length - 1];
++            },
++          });
++        }
++        return runOps(arg);
+       },
+     },
+   };
+diff --git a/tests/unit/sec-c4-rate-limit-store-failure.test.ts b/tests/unit/sec-c4-rate-limit-store-failure.test.ts
+index b2e1692..bededf0 100644
+--- a/tests/unit/sec-c4-rate-limit-store-failure.test.ts
++++ b/tests/unit/sec-c4-rate-limit-store-failure.test.ts
+@@ -30,6 +30,16 @@ function storeError(): Error {
+ 
+ vi.mock("@/lib/prisma", () => {
+   const tag = (kind: "lock" | "insert") => (_s: TemplateStringsArray, ...values: unknown[]): Op => ({ kind, values });
++  const runOps = async (ops: Op[]) => {
++    if (h.mode !== "ok") throw storeError();
++    const insert = ops.find((o) => o.kind === "insert")!;
++    const bucket = insert.values[0] as string;
++    const max = insert.values[4] as number;
++    const n = h.rows.get(bucket) ?? 0;
++    const inserted = n < max ? 1 : 0;
++    if (inserted) h.rows.set(bucket, n + 1);
++    return ops.map((o) => (o.kind === "insert" ? [{ count: n, inserted, oldestAgeMs: 1_000 }] : 1));
++  };
+   return {
+     prisma: {
+       rateLimitHit: {
+@@ -42,15 +52,22 @@ vi.mock("@/lib/prisma", () => {
+       },
+       $executeRaw: tag("lock"),
+       $queryRaw: tag("insert"),
+-      $transaction: async (ops: Op[]) => {
+-        if (h.mode !== "ok") throw storeError();
+-        const insert = ops.find((o) => o.kind === "insert")!;
+-        const bucket = insert.values[0] as string;
+-        const max = insert.values[4] as number;
+-        const n = h.rows.get(bucket) ?? 0;
+-        const inserted = n < max ? 1 : 0;
+-        if (inserted) h.rows.set(bucket, n + 1);
+-        return ops.map((o) => (o.kind === "insert" ? [{ count: n, inserted, oldestAgeMs: 1_000 }] : 1));
++      $transaction: async (arg: Op[] | ((tx: unknown) => Promise<unknown>)) => {
++        // SF-135 (lane L1): checkRateLimit runs the same two statements in an INTERACTIVE transaction now (its bounds are
++        // owned there, not by Prisma's timer). The callback's statements are recorded as the same ops and answered by
++        // the same rules below; nothing asserted about them changes.
++        if (typeof arg === "function") {
++          const recorded: Op[] = [];
++          return arg({
++            $executeRaw: async (s: TemplateStringsArray, ...v: unknown[]) => (recorded.push(tag("lock")(s, ...v)), 1),
++            $queryRaw: async (s: TemplateStringsArray, ...v: unknown[]) => {
++              recorded.push(tag("insert")(s, ...v));
++              const out = (await runOps(recorded)) as unknown[];
++              return out[out.length - 1];
++            },
++          });
++        }
++        return runOps(arg);
+       },
+     },
+   };
+diff --git a/tests/unit/sec-f-provider-outage.test.ts b/tests/unit/sec-f-provider-outage.test.ts
+index bb87686..c66941b 100644
+--- a/tests/unit/sec-f-provider-outage.test.ts
++++ b/tests/unit/sec-f-provider-outage.test.ts
+@@ -34,13 +34,28 @@ vi.mock("@/lib/prisma", () => ({
+     // only ever passed through the memory fallback (a TypeError on prisma.$transaction) — found by lane C4.
+     $executeRaw: vi.fn(() => ({ kind: "lock" })),
+     $queryRaw: vi.fn((_s: TemplateStringsArray, ...values: unknown[]) => ({ kind: "insert", values })),
+-    $transaction: vi.fn(async (ops: Array<{ kind: string; values?: unknown[] }>) => {
+-      if (db.down) throw outage();
+-      const max = ops[1].values![4] as number;
+-      const count = db.hits;
+-      const inserted = count < max ? 1 : 0;
+-      db.hits += inserted;
+-      return [1, [{ count, inserted, oldestAgeMs: 0 }]];
++    $transaction: vi.fn(async (arg: Array<{ kind: string; values?: unknown[] }> | ((tx: unknown) => Promise<unknown>)) => {
++      // SF-135 (lane L1): checkRateLimit runs the same two statements in an INTERACTIVE transaction now (its bounds are
++      // owned there, not by Prisma's timer). The callback's statements are recorded as the same ops and answered by the
++      // same rules; nothing asserted about them changes.
++      const run = async (ops: Array<{ kind: string; values?: unknown[] }>) => {
++        if (db.down) throw outage();
++        const max = ops[1].values![4] as number;
++        const count = db.hits;
++        const inserted = count < max ? 1 : 0;
++        db.hits += inserted;
++        return [1, [{ count, inserted, oldestAgeMs: 0 }]];
++      };
++      if (typeof arg !== "function") return run(arg);
++      const recorded: Array<{ kind: string; values?: unknown[] }> = [];
++      return arg({
++        $executeRaw: async () => (recorded.push({ kind: "lock" }), 1),
++        $queryRaw: async (_s: TemplateStringsArray, ...values: unknown[]) => {
++          recorded.push({ kind: "insert", values });
++          const out = (await run(recorded)) as unknown[];
++          return out[out.length - 1];
++        },
++      });
+     }),
+   },
+ }));
+diff --git a/tests/unit/sec-l1-store-tx-bound.test.ts b/tests/unit/sec-l1-store-tx-bound.test.ts
+new file mode 100644
+index 0000000..03b8135
+--- /dev/null
++++ b/tests/unit/sec-l1-store-tx-bound.test.ts
+@@ -0,0 +1,238 @@
++/**
++ * SF-135 (lane L1, 11 Oct 2026) — the shape CI can check without a database. The behaviour (a stalled-then-dropped
++ * connection under the transaction is a refusal, nothing unhandled, the bound is server-side and transaction-local) is
++ * proved on Postgres under both roles by tests/integration/sec-l1-connection-drop-db.test.ts; this file pins:
++ *  - both transactions (checkRateLimit's and the lockout reservation's) are INTERACTIVE, their lock statement sets
++ *    lock_timeout and statement_timeout with set_config(…, true) — transaction-local, never session — to the declared
++ *    bound, inside a MATERIALIZED CTE that runs before the lock is requested;
++ *  - Prisma's transaction timeout AND maxWait are beyond the bound (plus the pool's own connection deadline), so
++ *    Prisma's timer is never what ends the transaction and Prisma never abandons a half-finished start (SF-136);
++ *  - cycle 2: lib/prisma-tenant.ts (withTenantContext / withRlsBypass) is bounded the same way, in its first statement,
++ *    with the caller's budget kept as a typed refusal to commit; and no other code opens a transaction;
++ *  - a failed reservation is THROWN as LockoutReservationError with a reason and one log line without the address,
++ *    the network or the key — including an unexpected failure (it is never turned into a quiet answer);
++ *  - a failed rate-limit transaction on a security bucket is a refusal, logged with the reason.
++ */
++import { describe, it, expect, vi, beforeEach } from "vitest";
++import { readFileSync } from "node:fs";
++
++type Tx = { $executeRaw: (...a: unknown[]) => Promise<unknown>; $queryRaw: (...a: unknown[]) => Promise<unknown> };
++const h = vi.hoisted(() => ({
++  fail: null as null | (() => unknown),
++  options: [] as Array<{ maxWait?: number; timeout?: number } | undefined>,
++  sql: [] as string[],
++}));
++
++vi.mock("@/lib/prisma", async (orig) => {
++  const real = await orig<typeof import("@/lib/prisma")>();
++  const count = async () => 0;
++  return {
++    ...real,
++    prisma: {
++      rateLimitHit: { count, groupBy: async () => [], deleteMany: async () => ({ count: 0 }) },
++      $transaction: async (fn: (tx: Tx) => Promise<unknown>, options?: { maxWait?: number; timeout?: number }) => {
++        h.options.push(options);
++        if (typeof fn !== "function") throw new Error("expected an interactive transaction");
++        return fn({
++          $executeRaw: async (s: unknown) => {
++            h.sql.push((s as string[]).join("?"));
++            if (h.fail) throw h.fail();
++            return 1;
++          },
++          $queryRaw: async (s: unknown) => {
++            h.sql.push((s as string[]).join("?"));
++            const text = (s as string[]).join("?");
++            return text.includes("pairCount") ? [{ pairCount: 0, addrCount: 0, inserted: 2 }] : [{ count: 0, inserted: 1, oldestAgeMs: null }];
++          },
++        });
++      },
++    },
++  };
++});
++
++import { POOL_CONNECTION_TIMEOUT_MS } from "@/lib/prisma";
++import { checkRateLimit, STORE_TX_BOUND_MS } from "@/lib/rate-limit";
++import { lockoutKeys, lockoutState, LockoutReservationError, RESERVE_TX_BOUND_MS } from "@/lib/auth-lockout";
++import {
++  withTenantContext,
++  withRlsBypass,
++  TenantTransactionBudgetError,
++  TENANT_STATEMENT_BOUND_MS,
++  TENANT_STATEMENT_BOUND_EXTENDED_MS,
++} from "@/lib/prisma-tenant";
++import path from "node:path";
++import fs from "node:fs";
++
++const EMAIL = "secl1-unit@example.test";
++const IP = "192.0.2.55";
++let logs: string[] = [];
++
++beforeEach(() => {
++  h.fail = null;
++  h.options = [];
++  h.sql = [];
++  logs = [];
++  for (const m of ["error", "warn"] as const) {
++    vi.spyOn(console, m).mockImplementation((...a: unknown[]) => {
++      logs.push(a.map(String).join(" "));
++    });
++  }
++});
++
++function lockStatementOf(file: string, fnStart: string): string {
++  const src = readFileSync(file, "utf8");
++  const i = src.indexOf(fnStart);
++  expect(i, `${fnStart} in ${file}`).toBeGreaterThanOrEqual(0);
++  const m = src.slice(i).match(/\$executeRaw`([^`]*)`/);
++  expect(m, `the lock statement in ${fnStart}`).not.toBeNull();
++  return m![1];
++}
++
++describe("the bound is the transaction's own, server-side and transaction-local", () => {
++  for (const [file, fn, bound] of [
++    ["lib/rate-limit.ts", "async function checkDbRateLimit(", STORE_TX_BOUND_MS],
++    ["lib/auth-lockout.ts", "function reserveTx(", RESERVE_TX_BOUND_MS],
++  ] as const) {
++    it(`${file}: lock_timeout and statement_timeout = ${bound} ms, set_config(…, true), in a MATERIALIZED CTE before the lock`, () => {
++      const sql = lockStatementOf(file, fn);
++      expect(sql).toMatch(/^WITH bound AS MATERIALIZED \(SELECT /);
++      expect(sql).toContain(`set_config('lock_timeout', '${bound}ms', true)`);
++      expect(sql).toContain(`set_config('statement_timeout', '${bound}ms', true)`);
++      expect(sql, "never a session-level setting on a pooled connection").not.toMatch(/,\s*false\s*\)|SET\s+(SESSION\s+)?(lock|statement)_timeout/i);
++      expect(sql).toMatch(/SELECT pg_advisory_xact_lock\(.*\) FROM bound$/);
++    });
++  }
++
++  it("Prisma's timeout and maxWait are out of reach of the bounds (both transactions, interactive)", async () => {
++    await checkRateLimit("secl1u:rl", 5, 60_000);
++    await lockoutState(lockoutKeys("secl1-club", EMAIL, IP), async () => false);
++    expect(h.options).toHaveLength(2);
++    for (const [o, bound] of [[h.options[0], STORE_TX_BOUND_MS], [h.options[1], RESERVE_TX_BOUND_MS]] as const) {
++      // The timer starts after BEGIN: the lock wait + the insert + COMMIT, each bounded, all well inside Prisma's limit
++      // (with the pool deadline added for good measure).
++      expect(o?.timeout).toBeGreaterThan(POOL_CONNECTION_TIMEOUT_MS + 3 * bound);
++      expect(o?.timeout).toBeLessThanOrEqual(2_147_483_647); // a larger Node timer delay would fire at once
++    }
++    // SF-136: Prisma never abandons a start; the pool's own deadline bounds the wait for a connection.
++    for (const o of h.options) expect(o?.maxWait).toBeGreaterThan(POOL_CONNECTION_TIMEOUT_MS + 3 * RESERVE_TX_BOUND_MS);
++  });
++});
++
++describe("cycle 2: tenant transactions own their bound (lib/prisma-tenant.ts)", () => {
++  const first = () => h.sql[0];
++  for (const [name, run] of [
++    ["withTenantContext", (opts?: { timeout?: number }) => withTenantContext("tenant-A", async () => "ok", opts)],
++    ["withRlsBypass", (opts?: { timeout?: number }) => withRlsBypass(async () => "ok", opts)],
++  ] as const) {
++    it(`${name}: default budget → the FIRST statement sets lock_timeout and statement_timeout = ${TENANT_STATEMENT_BOUND_MS} ms, transaction-local`, async () => {
++      await run();
++      expect(first()).toContain(`set_config('lock_timeout', '${TENANT_STATEMENT_BOUND_MS}ms', true)`);
++      expect(first()).toContain(`set_config('statement_timeout', '${TENANT_STATEMENT_BOUND_MS}ms', true)`);
++      expect(first(), "the bypass setting stays in the same statement").toMatch(/set_config\('app\.bypass_rls', '(on|off)', true\)/);
++      expect(first()).not.toMatch(/,\s*false\s*\)/);
++    });
++    it(`${name}: a larger caller budget → the extended bound (${TENANT_STATEMENT_BOUND_EXTENDED_MS} ms)`, async () => {
++      await run({ timeout: 45_000 });
++      expect(first()).toContain(`set_config('statement_timeout', '${TENANT_STATEMENT_BOUND_EXTENDED_MS}ms', true)`);
++      expect(first()).toContain(`set_config('lock_timeout', '${TENANT_STATEMENT_BOUND_EXTENDED_MS}ms', true)`);
++    });
++    it(`${name}: Prisma's timeout and maxWait are out of reach whatever the caller passes`, async () => {
++      await run({ timeout: 45_000 });
++      const o = h.options[0];
++      expect(o?.timeout).toBeGreaterThan(POOL_CONNECTION_TIMEOUT_MS + 3 * TENANT_STATEMENT_BOUND_EXTENDED_MS);
++      expect(o?.maxWait).toBeGreaterThan(POOL_CONNECTION_TIMEOUT_MS + 3 * TENANT_STATEMENT_BOUND_EXTENDED_MS);
++      expect(o?.timeout).toBeLessThanOrEqual(2_147_483_647);
++    });
++  }
++
++  it("a callback that overruns its budget is refused (typed, P2028) so nothing commits; within budget it returns", async () => {
++    vi.useFakeTimers({ toFake: ["Date"] });
++    try {
++      const slow = withTenantContext("tenant-A", async () => {
++        vi.setSystemTime(Date.now() + 16_000);
++        return "late";
++      });
++      await expect(slow).rejects.toBeInstanceOf(TenantTransactionBudgetError);
++      await expect(slow).rejects.toMatchObject({ code: "P2028", budgetMs: 15_000 });
++      const ok = await withTenantContext("tenant-A", async () => "fine", { timeout: 30_000 });
++      expect(ok).toBe("fine");
++    } finally {
++      vi.useRealTimers();
++    }
++  });
++
++  it("an error from the callback is the caller's, unchanged (no wrapping, no retry)", async () => {
++    const boom = Object.assign(new Error("unique"), { code: "P2002" });
++    await expect(withTenantContext("tenant-A", async () => { throw boom; })).rejects.toBe(boom);
++    expect(h.options).toHaveLength(1);
++  });
++
++  it("source invariant: no code outside the three owned boundaries opens a Prisma transaction", () => {
++    const owned = new Set(["lib/prisma-tenant.ts", "lib/rate-limit.ts", "lib/auth-lockout.ts"].map((f) => path.normalize(f)));
++    const offenders: string[] = [];
++    const walk = (p: string) => {
++      if (!fs.existsSync(p)) return;
++      const st = fs.statSync(p);
++      if (st.isDirectory()) { for (const e of fs.readdirSync(p)) walk(path.join(p, e)); return; }
++      if (!/\.(ts|tsx|mjs|js)$/.test(p)) return;
++      const rel = path.normalize(path.relative(process.cwd(), p));
++      if (owned.has(rel)) return;
++      const src = fs.readFileSync(p, "utf8").split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
++      if (/\$transaction\s*\(/.test(src)) offenders.push(rel);
++    };
++    for (const r of ["app", "lib", "auth.ts", "proxy.ts"]) walk(path.resolve(process.cwd(), r));
++    expect(offenders).toEqual([]);
++  });
++});
++
++describe("a failed reservation is thrown with a reason and logged without the key", () => {
++  const keys = lockoutKeys("secl1-club", EMAIL, IP);
++  const cases: Array<[string, () => unknown, string]> = [
++    ["dropped connection", () => new Error("Connection terminated unexpectedly"), "unreachable"],
++    ["reset connection", () => Object.assign(new Error("Server has closed the connection."), { code: "P1017" }), "unreachable"],
++    ["lock bound reached", () => Object.assign(new Error("Raw query failed. Code: `55P03`. Message: `canceling statement due to lock timeout`"), { code: "P2010", meta: { code: "55P03" } }), "lock-timeout"],
++    ["statement bound reached", () => Object.assign(new Error("Raw query failed. Code: `57014`. Message: `canceling statement due to statement timeout`"), { code: "P2010", meta: { code: "57014" } }), "statement-timeout"],
++    ["pool deadline", () => new Error("timeout exceeded when trying to connect"), "pool-timeout"],
++    // Visibility: an UNEXPECTED failure is not converted into a quiet answer — it is thrown and logged like the rest.
++    ["unexpected programming error", () => new TypeError("cannot read properties of undefined (planted)"), "error"],
++  ];
++  for (const [name, make, reason] of cases) {
++    it(`${name} → LockoutReservationError(${reason}), never a granted state`, async () => {
++      h.fail = make;
++      const err = await lockoutState(keys, async () => false).then(
++        (v) => ({ resolved: v }),
++        (e: unknown) => e,
++      );
++      expect(err).toBeInstanceOf(LockoutReservationError);
++      expect((err as LockoutReservationError).reason).toBe(reason);
++      expect(((err as Error).cause as Error).message).toBe((make() as Error).message);
++      expect(logs.filter((l) => l.includes("[auth-lockout]"))).toEqual([`[auth-lockout] reservation failed reason=${reason} outcome=refused`]);
++      for (const l of logs) for (const s of [EMAIL, IP, keys.addr, keys.pair]) expect(l.includes(s)).toBe(false);
++    });
++  }
++
++  it("positive control: a healthy store grants the reservation and logs nothing", async () => {
++    const s = await lockoutState(keys, async () => false);
++    expect(s.blocked).toBe(false);
++    expect(s.blocked === false && !!s.reservation).toBe(true);
++    expect(logs).toEqual([]);
++  });
++});
++
++describe("a failed rate-limit transaction on a security bucket is a refusal with the reason", () => {
++  it("lock bound reached → refused, Retry-After ≤ 30 s, logged reason=lock-timeout by family", async () => {
++    h.fail = () => Object.assign(new Error("Raw query failed. Code: `55P03`. Message: `canceling statement due to lock timeout`"), { code: "P2010", meta: { code: "55P03" } });
++    const r = await checkRateLimit("secl1lt:key-198.51.100.7", 5, 60_000);
++    expect(r.allowed).toBe(false);
++    expect(r.retryAfterSeconds).toBeLessThanOrEqual(30);
++    expect(logs.some((l) => /\[rate-limit\] store unavailable reason=lock-timeout class=security family=secl1lt outcome=refused/.test(l))).toBe(true);
++    for (const l of logs) expect(l.includes("198.51.100.7")).toBe(false);
++  });
++
++  it("dropped connection → refused, logged reason=unreachable", async () => {
++    h.fail = () => new Error("Connection terminated unexpectedly");
++    const r = await checkRateLimit("secl1dc:key", 5, 60_000);
++    expect(r.allowed).toBe(false);
++    expect(logs.some((l) => /reason=unreachable class=security family=secl1dc outcome=refused/.test(l))).toBe(true);
++  });
++});
+diff --git a/tests/unit/sec-m1-rate-limit-log-family.test.ts b/tests/unit/sec-m1-rate-limit-log-family.test.ts
+index 154d366..886429f 100644
+--- a/tests/unit/sec-m1-rate-limit-log-family.test.ts
++++ b/tests/unit/sec-m1-rate-limit-log-family.test.ts
+@@ -57,6 +57,16 @@ const h = vi.hoisted(() => ({ mode: "ok" as "ok" | "down", rows: new Map<string,
+ 
+ vi.mock("@/lib/prisma", () => {
+   const tag = (kind: "lock" | "insert") => (_s: TemplateStringsArray, ...values: unknown[]): Op => ({ kind, values });
++  const runOps = async (ops: Op[]) => {
++    if (h.mode !== "ok") throw down();
++    const insert = ops.find((o) => o.kind === "insert")!;
++    const bucket = insert.values[0] as string;
++    const max = insert.values[4] as number;
++    const n = h.rows.get(bucket) ?? 0;
++    const inserted = n < max ? 1 : 0;
++    if (inserted) h.rows.set(bucket, n + 1);
++    return ops.map((o) => (o.kind === "insert" ? [{ count: n, inserted, oldestAgeMs: 1_000 }] : 1));
++  };
+   const down = () => Object.assign(new Error("connect ECONNREFUSED (secm1 fake)"), { code: "ECONNREFUSED" });
+   return {
+     prisma: {
+@@ -70,15 +80,22 @@ vi.mock("@/lib/prisma", () => {
+       },
+       $executeRaw: tag("lock"),
+       $queryRaw: tag("insert"),
+-      $transaction: async (ops: Op[]) => {
+-        if (h.mode !== "ok") throw down();
+-        const insert = ops.find((o) => o.kind === "insert")!;
+-        const bucket = insert.values[0] as string;
+-        const max = insert.values[4] as number;
+-        const n = h.rows.get(bucket) ?? 0;
+-        const inserted = n < max ? 1 : 0;
+-        if (inserted) h.rows.set(bucket, n + 1);
+-        return ops.map((o) => (o.kind === "insert" ? [{ count: n, inserted, oldestAgeMs: 1_000 }] : 1));
++      $transaction: async (arg: Op[] | ((tx: unknown) => Promise<unknown>)) => {
++        // SF-135 (lane L1): checkRateLimit runs the same two statements in an INTERACTIVE transaction now (its bounds are
++        // owned there, not by Prisma's timer). The callback's statements are recorded as the same ops and answered by
++        // the same rules below; nothing asserted about them changes.
++        if (typeof arg === "function") {
++          const recorded: Op[] = [];
++          return arg({
++            $executeRaw: async (s: TemplateStringsArray, ...v: unknown[]) => (recorded.push(tag("lock")(s, ...v)), 1),
++            $queryRaw: async (s: TemplateStringsArray, ...v: unknown[]) => {
++              recorded.push(tag("insert")(s, ...v));
++              const out = (await runOps(recorded)) as unknown[];
++              return out[out.length - 1];
++            },
++          });
++        }
++        return runOps(arg);
+       },
+     },
+   };

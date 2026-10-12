@@ -1,0 +1,14 @@
+node v24.21.0 mode=unit file=tests/unit/sec-a4-subkey-separation.test.ts tests/unit/sec-a4-empty-secret.test.ts tests/unit/sec-a4-lockout-reservation.test.ts tests/unit/sec-f3-setup-test-db-secret.test.ts head=7ce179c at=2026-10-10T05:42:16Z
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+
+ Test Files  4 passed (4)
+      Tests  51 passed (51)
+   Start at  06:42:18
+   Duration  13.63s (transform 682ms, setup 132ms, import 1.16s, tests 11.32s, environment 1ms)
+
+EXIT 0

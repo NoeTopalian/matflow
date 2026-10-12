@@ -1,0 +1,270 @@
+{
+ "recoveryPoint": "2026-10-09T17:49:05.633Z",
+ "finishedAt": "2026-10-09T17:49:51.575Z",
+ "exportMs": 46424,
+ "node": "v24.21.0",
+ "sourceHostPrefix": "ep-hidden-salad-",
+ "sourceRole": "neondb_owner",
+ "pgMajor": 17,
+ "tables": 53,
+ "totalRows": 115224,
+ "totalBytes": 77332770,
+ "jsonNullsPreserved": {
+  "User.totpRecoveryCodes": 6
+ },
+ "roles": {
+  "matflow_app": {
+   "rolsuper": false,
+   "rolbypassrls": false,
+   "rolinherit": true,
+   "rolcreaterole": false,
+   "rolcreatedb": false,
+   "rolcanlogin": true,
+   "rolreplication": false,
+   "memberof": ""
+  },
+  "neondb_owner": {
+   "rolsuper": false,
+   "rolbypassrls": true,
+   "rolinherit": true,
+   "rolcreaterole": true,
+   "rolcreatedb": true,
+   "rolcanlogin": true,
+   "rolreplication": true,
+   "memberof": "matflow_app,neon_superuser"
+  },
+  "pg_database_owner": {
+   "rolsuper": false,
+   "rolbypassrls": false,
+   "rolinherit": true,
+   "rolcreaterole": false,
+   "rolcreatedb": false,
+   "rolcanlogin": false,
+   "rolreplication": false,
+   "memberof": ""
+  }
+ },
+ "tableGrants": 212,
+ "functionGrants": 0,
+ "sequences": 0,
+ "schemaPublic": {
+  "owner": "pg_database_owner",
+  "acl": "{pg_database_owner=UC/pg_database_owner,=U/pg_database_owner,matflow_app=U/pg_database_owner}"
+ },
+ "perTable": {
+  "Announcement": {
+   "rows": 12,
+   "sha256": "9fced1531455f066"
+  },
+  "AttendanceRecord": {
+   "rows": 63477,
+   "sha256": "c06efb066288d03a"
+  },
+  "AuditLog": {
+   "rows": 9858,
+   "sha256": "f153a4bcd0397741"
+  },
+  "Class": {
+   "rows": 163,
+   "sha256": "eef2c114e18f46b3"
+  },
+  "ClassInstance": {
+   "rows": 5072,
+   "sha256": "18380c8195234363"
+  },
+  "ClassPack": {
+   "rows": 5,
+   "sha256": "0c1b47fd9884d67a"
+  },
+  "ClassPackRedemption": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "ClassRoster": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "ClassSchedule": {
+   "rows": 174,
+   "sha256": "da68fdf590959859"
+  },
+  "ClassSubscription": {
+   "rows": 5,
+   "sha256": "98f61135485fc585"
+  },
+  "ClassWaitlist": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "Dispute": {
+   "rows": 6,
+   "sha256": "bbf6fd1ac6ef321a"
+  },
+  "EmailLog": {
+   "rows": 3921,
+   "sha256": "2759eebeea6a710a"
+  },
+  "GoogleDriveConnection": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "GymApplication": {
+   "rows": 46,
+   "sha256": "68a20e62cdf37a8d"
+  },
+  "ImportJob": {
+   "rows": 118,
+   "sha256": "7d3766ae703f55c1"
+  },
+  "ImportSourceMapping": {
+   "rows": 15,
+   "sha256": "c05e832061fbb59a"
+  },
+  "ImportUpload": {
+   "rows": 2,
+   "sha256": "9c74d51ae75b3086"
+  },
+  "ImportUploadChunk": {
+   "rows": 10,
+   "sha256": "682656e8d671d707"
+  },
+  "ImportedBooking": {
+   "rows": 15273,
+   "sha256": "f489e1d2d44a4bcb"
+  },
+  "ImportedMembership": {
+   "rows": 1082,
+   "sha256": "37351346177cb748"
+  },
+  "IndexedDriveFile": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "Initiative": {
+   "rows": 4,
+   "sha256": "206a876a546a92cf"
+  },
+  "InitiativeAttachment": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "Location": {
+   "rows": 42,
+   "sha256": "3c06f4d137d09bb4"
+  },
+  "LoginEvent": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "MagicLinkToken": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "Member": {
+   "rows": 3916,
+   "sha256": "638fafe23992d4f8"
+  },
+  "MemberClassPack": {
+   "rows": 3,
+   "sha256": "67ee8205cdb2513e"
+  },
+  "MemberPhoto": {
+   "rows": 9,
+   "sha256": "42d8454e59a11c53"
+  },
+  "MemberRank": {
+   "rows": 14,
+   "sha256": "cc0ebfac2f2e0dba"
+  },
+  "MemberStatusEvent": {
+   "rows": 1563,
+   "sha256": "f53b0aa432f51f56"
+  },
+  "MembershipTier": {
+   "rows": 94,
+   "sha256": "bdf91dc34c17cb1a"
+  },
+  "MonthlyReport": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "Notification": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "Operator": {
+   "rows": 1,
+   "sha256": "10bfe65e44c31b4c"
+  },
+  "Order": {
+   "rows": 9,
+   "sha256": "f0e9f7f65f83cdc7"
+  },
+  "PasswordHistory": {
+   "rows": 33,
+   "sha256": "b9e5f21c7c54fa73"
+  },
+  "PasswordResetToken": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "Payment": {
+   "rows": 9168,
+   "sha256": "a704643bc347f390"
+  },
+  "PlatformConfig": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "Product": {
+   "rows": 22,
+   "sha256": "6848702455657a1c"
+  },
+  "PushSubscription": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "RankHistory": {
+   "rows": 2,
+   "sha256": "f12112fad3a5c303"
+  },
+  "RankRequirement": {
+   "rows": 0,
+   "sha256": "e3b0c44298fc1c14"
+  },
+  "RankSystem": {
+   "rows": 35,
+   "sha256": "6c35e41e7428ae51"
+  },
+  "RateLimitHit": {
+   "rows": 116,
+   "sha256": "78fb786af88d7211"
+  },
+  "SignedWaiver": {
+   "rows": 80,
+   "sha256": "15c39e1ab7a43bfd"
+  },
+  "StripeEvent": {
+   "rows": 44,
+   "sha256": "be42e22c3e51a9cc"
+  },
+  "Task": {
+   "rows": 5,
+   "sha256": "c1167ac6a4da4596"
+  },
+  "Tenant": {
+   "rows": 141,
+   "sha256": "cdd630aba23db4de"
+  },
+  "User": {
+   "rows": 584,
+   "sha256": "df9fcadad42171ca"
+  },
+  "_prisma_migrations": {
+   "rows": 100,
+   "sha256": "26b57438e941db31"
+  }
+ },
+ "baselineFingerprintSha256": "e53ded95e37011abd38ff2d4f985b6e5fc5abb239ba27e9a412328c14b38fce1",
+ "note": "Row data stayed in the scratchpad and was deleted after the drill; only counts and hashes are recorded here."
+}

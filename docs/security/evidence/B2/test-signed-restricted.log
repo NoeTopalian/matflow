@@ -1,0 +1,6 @@
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+ ✓ tests/integration/sec-b2-signed-context-db.test.ts > signed tenant context: app MAC == SQL recomputation > matches for the same transaction and differs for another transaction, tenant or key 862ms
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  18:45:21
+   Duration  1.19s (transform 57ms, setup 29ms, import 144ms, tests 863ms, environment 0ms)

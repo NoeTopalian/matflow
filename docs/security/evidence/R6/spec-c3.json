@@ -1,0 +1,64 @@
+[
+ {
+  "id": "C3-M1 advisory lock removed",
+  "file": "lib/rate-limit.ts",
+  "find": "    prisma.$executeRaw`SELECT pg_advisory_xact_lock(${RATE_LIMIT_LOCK_NS}::int4, hashtext(${bucket}::text))`,",
+  "replace": "    prisma.$executeRaw`SELECT 1`,",
+  "cmd": [
+   "C:/Program Files/Git/bin/bash.exe",
+   "<scratchpad>/security/R6/c3-mutcmd.sh"
+  ]
+ },
+ {
+  "id": "C3-M2 session-level lock instead of transaction lock",
+  "file": "lib/rate-limit.ts",
+  "find": "SELECT pg_advisory_xact_lock(${RATE_LIMIT_LOCK_NS}",
+  "replace": "SELECT pg_advisory_lock(${RATE_LIMIT_LOCK_NS}",
+  "cmd": [
+   "C:/Program Files/Git/bin/bash.exe",
+   "<scratchpad>/security/R6/c3-mutcmd.sh"
+  ]
+ },
+ {
+  "id": "C3-M3 off by one (<=)",
+  "file": "lib/rate-limit.ts",
+  "find": "        WHERE win.n < ${max}::int",
+  "replace": "        WHERE win.n <= ${max}::int",
+  "cmd": [
+   "C:/Program Files/Git/bin/bash.exe",
+   "<scratchpad>/security/R6/c3-mutcmd.sh"
+  ]
+ },
+ {
+  "id": "C3-M4 unlocked pre-count removed",
+  "file": "lib/rate-limit.ts",
+  "find": "  if ((pre?._count?._all ?? 0) >= max) {",
+  "replace": "  if (false) {",
+  "cmd": [
+   "C:/Program Files/Git/bin/bash.exe",
+   "<scratchpad>/security/R6/c3-mutcmd.sh"
+  ]
+ },
+ {
+  "id": "C2/C3 report cap raised to 32 KB",
+  "file": "lib/csp-report.ts",
+  "find": "export const CSP_REPORT_MAX_BYTES = 16 * 1024;",
+  "replace": "export const CSP_REPORT_MAX_BYTES = 32 * 1024;",
+  "cmd": [
+   "C:/Program Files/Git/bin/bash.exe",
+   "<scratchpad>/security/R6/run-unit-m.sh",
+   "tests/unit/sec-c2-csp-report.test.ts"
+  ]
+ },
+ {
+  "id": "C2/C3 report Content-Length pre-check removed",
+  "file": "app/api/csp-report/route.ts",
+  "find": "  if (Number.isFinite(declared) && declared > CSP_REPORT_MAX_BYTES) {",
+  "replace": "  if (false) {",
+  "cmd": [
+   "C:/Program Files/Git/bin/bash.exe",
+   "<scratchpad>/security/R6/run-unit-m.sh",
+   "tests/unit/sec-c2-csp-report.test.ts"
+  ]
+ }
+]

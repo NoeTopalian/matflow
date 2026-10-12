@@ -4,7 +4,10 @@ import { randomInt } from "crypto";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
-import { hashToken } from "@/lib/token-hash";
+import { hashSubjectBoundResetCode } from "@/lib/auth-token-binding";
+import { logAudit } from "@/lib/audit-log";
+import { isLoginEmailProvisional } from "@/lib/login-email";
+import { isEmailDeliveryOn } from "@/lib/email-delivery";
 
 const RATE_LIMIT_MAX = 3;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
@@ -61,7 +64,7 @@ export async function POST(req: Request) {
     Promise.all([
       tx.user.findFirst({
         where: { email: normEmail, tenantId: tenant.id },
-        select: { id: true, mustChangePassword: true },
+        select: { id: true, mustChangePassword: true, loginEmailProvisionalSince: true },
       }),
       tx.member.findFirst({
         where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null } },
@@ -85,6 +88,30 @@ export async function POST(req: Request) {
   // reset-password, so a member sharing the address does not reopen it.
   if (user?.mustChangePassword === true) return NextResponse.json({ ok: true });
 
+  // A PROVISIONAL login email (7 Oct 2026, lib/login-email.ts) is an
+  // identifier, not a proven mailbox: whoever reads it must not be handed a
+  // reset code. Same opaque 200 as an unknown address, no token, no mail; the
+  // refusal is audited for the operator. User precedence again: a member
+  // sharing the address does not reopen the door.
+  if (isLoginEmailProvisional(user)) {
+    await logAudit({
+      tenantId: tenant.id,
+      userId: null,
+      action: "auth.password_reset.refused_provisional",
+      entityType: "User",
+      entityId: user!.id,
+      metadata: { reason: "login_email_provisional" },
+      req,
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  // Mail-dark (7 Oct 2026, lib/email-delivery.ts): with delivery off nothing
+  // can reach the person, so mint nothing and leave any earlier code alone —
+  // minting here only left orphan codes behind a suppressed send. Same opaque
+  // 200 as every other exit.
+  if (!isEmailDeliveryOn()) return NextResponse.json({ ok: true });
+
   // Generate 6-digit OTP
   const token = String(randomInt(100000, 999999));
   const expiresAt = new Date(Date.now() + 2 * 60 * 1000); // 2 minutes
@@ -100,7 +127,13 @@ export async function POST(req: Request) {
       data: {
         email: normEmail,
         tenantId: tenant.id,
-        tokenHash: hashToken(token),
+        // Committed to THIS person (AH-D2 / SEC-003, 9 Oct 2026): the stored
+        // hash covers the subject's id, so the code resets nobody else's
+        // password even if the address changes hands within its two minutes.
+        tokenHash: hashSubjectBoundResetCode(token, {
+          tenantId: tenant.id,
+          subject: user ? { kind: "user", id: user.id } : { kind: "member", id: member!.id },
+        }),
         expiresAt,
       },
     });

@@ -1,0 +1,258 @@
+[
+ {
+  "mutant": "baseline (no mutation)",
+  "exit": 0,
+  "tests": "135 passed (135)"
+ },
+ {
+  "mutant": "M1a proxy: documents get NextResponse.next() with no CSP",
+  "file": "proxy.ts",
+  "exit": 1,
+  "tests": "12 failed | 9 passed (21)",
+  "verdict": "KILLED",
+  "failing": [
+   "public document /login: report-only nonce policy on the response AND forwarded to the renderer 110ms",
+   "public document /: report-only nonce policy on the response AND forwarded to the renderer 1ms",
+   "public document /apply: report-only nonce policy on the response AND forwarded to the renderer 1ms",
+   "public document /legal/privacy: report-only nonce policy on the response AND forwarded to the renderer 1ms",
+   "public document /waiver/tok-c2: report-only nonce policy on the response AND forwarded to the renderer 1ms",
+   "public document /totalbjj: report-only nonce policy on the response AND forwarded to the renderer 0ms"
+  ]
+ },
+ {
+  "mutant": "M1b proxy: nonce policy not forwarded on the request (Next cannot stamp the nonce)",
+  "file": "proxy.ts",
+  "exit": 1,
+  "tests": "8 failed | 13 passed (21)",
+  "verdict": "KILLED",
+  "failing": [
+   "public document /login: report-only nonce policy on the response AND forwarded to the renderer 200ms",
+   "public document /: report-only nonce policy on the response AND forwarded to the renderer 2ms",
+   "public document /apply: report-only nonce policy on the response AND forwarded to the renderer 1ms",
+   "public document /legal/privacy: report-only nonce policy on the response AND forwarded to the renderer 3ms",
+   "public document /waiver/tok-c2: report-only nonce policy on the response AND forwarded to the renderer 1ms",
+   "public document /totalbjj: report-only nonce policy on the response AND forwarded to the renderer 1ms"
+  ]
+ },
+ {
+  "mutant": "M1c proxy: nonce minted once per process (reused across requests)",
+  "file": "proxy.ts",
+  "exit": 1,
+  "tests": "1 failed | 20 passed (21)",
+  "verdict": "KILLED",
+  "failing": [
+   "a fresh nonce per request 7ms",
+   "tests/unit/sec-c2-csp.test.ts > proxy.ts sends the nonce policy on documents (SF-30) > a fresh nonce per request"
+  ]
+ },
+ {
+  "mutant": "M1d proxy: client-sent CSP request headers not dropped",
+  "file": "proxy.ts",
+  "exit": 1,
+  "tests": "1 failed | 20 passed (21)",
+  "verdict": "KILLED",
+  "failing": [
+   "a client-supplied CSP or x-nonce request header cannot choose the nonce Next renders with 6ms",
+   "tests/unit/sec-c2-csp.test.ts > proxy.ts sends the nonce policy on documents (SF-30) > a client-supplied CSP or x-nonce request header cannot choose the nonce Next renders with"
+  ]
+ },
+ {
+  "mutant": "M1e lib/csp: 'unsafe-inline' added to script-src",
+  "file": "lib/csp.ts",
+  "exit": 1,
+  "tests": "1 failed | 20 passed (21)",
+  "verdict": "KILLED",
+  "failing": [
+   "scripts: nonce + strict-dynamic, never 'unsafe-inline'; 'unsafe-eval' only in development 17ms",
+   "tests/unit/sec-c2-csp.test.ts > lib/csp policy > scripts: nonce + strict-dynamic, never 'unsafe-inline'; 'unsafe-eval' only in development"
+  ]
+ },
+ {
+  "mutant": "M1f proxy: kiosk/leaderboard routed through the next-auth wrapper",
+  "file": "proxy.ts",
+  "exit": 1,
+  "tests": "2 failed | 19 passed (21)",
+  "verdict": "KILLED",
+  "failing": [
+   "/kiosk/tok-c2 receives the policy WITHOUT the next-auth wrapper running (no session work added) 5ms",
+   "/leaderboard/tok-c2 receives the policy WITHOUT the next-auth wrapper running (no session work added) 1ms",
+   "tests/unit/sec-c2-csp.test.ts > proxy.ts sends the nonce policy on documents (SF-30) > /kiosk/tok-c2 receives the policy WITHOUT the next-auth wrapper running (no session work added)",
+   "tests/unit/sec-c2-csp.test.ts > proxy.ts sends the nonce policy on documents (SF-30) > /leaderboard/tok-c2 receives the policy WITHOUT the next-auth wrapper running (no session work added)"
+  ]
+ },
+ {
+  "mutant": "M2a report route logs the raw body",
+  "file": "app/api/csp-report/route.ts",
+  "exit": 1,
+  "tests": "2 failed | 5 passed (7)",
+  "verdict": "KILLED",
+  "failing": [
+   "report-uri format: 204, counted by directive|class|disposition, no address in the log 24ms",
+   "Reporting API format (application/reports+json, batched) 4ms",
+   "tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > report-uri format: 204, counted by directive|class|disposition, no address in the log",
+   "tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > Reporting API format (application/reports+json, batched)"
+  ]
+ },
+ {
+  "mutant": "M2b report route logs the document address",
+  "file": "app/api/csp-report/route.ts",
+  "exit": 1,
+  "tests": "2 failed | 5 passed (7)",
+  "verdict": "KILLED",
+  "failing": [
+   "report-uri format: 204, counted by directive|class|disposition, no address in the log 17ms",
+   "Reporting API format (application/reports+json, batched) 3ms",
+   "tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > report-uri format: 204, counted by directive|class|disposition, no address in the log",
+   "tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > Reporting API format (application/reports+json, batched)"
+  ]
+ },
+ {
+  "mutant": "M3a cap raised to 32 KB (a 20 KB report accepted)",
+  "file": "lib/csp-report.ts",
+  "exit": 0,
+  "tests": "7 passed (7)",
+  "verdict": "SURVIVED",
+  "failing": []
+ },
+ {
+  "mutant": "M3b Content-Length check removed AND reader cap removed",
+  "file": "app/api/csp-report/route.ts",
+  "exit": 1,
+  "tests": "1 failed | 6 passed (7)",
+  "verdict": "KILLED",
+  "failing": [
+   "refuses an oversize body by Content-Length before reading it, and by actual size when chunked 13ms",
+   "tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > refuses an oversize body by Content-Length before reading it, and by actual size when chunked"
+  ]
+ },
+ {
+  "mutant": "M3c only the Content-Length pre-check removed",
+  "file": "app/api/csp-report/route.ts",
+  "exit": 0,
+  "tests": "7 passed (7)",
+  "verdict": "SURVIVED",
+  "failing": []
+ },
+ {
+  "mutant": "U1 rate-limit: DB path skipped (always per-instance memory)",
+  "file": "lib/rate-limit.ts",
+  "exit": 1,
+  "tests": "6 failed | 25 passed (31)",
+  "verdict": "KILLED",
+  "failing": [
+   "user budget: 30 allowed, the next is a 429 with Retry-After, body unread, nothing decoded or stored 24ms",
+   "tenant budget: a club's accounts together are capped; another club is unaffected 4ms",
+   "the limit is shared across instances while the database answers (a fresh module = a new Vercel instance) 7ms",
+   "over the user budget: 429 before the body is read, nothing stored 2ms",
+   "a caller's own mistakes do not spend the budget; unknown fields refused; filename normalised 4ms",
+   "over the user budget: 429 before the body is read; under it the request proceeds (positive control) 232ms"
+  ]
+ },
+ {
+  "mutant": "U2 rate-limit: memory fallback always allows",
+  "file": "lib/rate-limit.ts",
+  "exit": 1,
+  "tests": "1 failed | 30 passed (31)",
+  "verdict": "KILLED",
+  "failing": [
+   "HONEST LIMIT: with the database down each instance falls back to its own memory budget (N instances \u00d7 limit) 31ms",
+   "tests/unit/sec-c2-upload-controls.test.ts > /api/upload \u2014 per-user and per-tenant rate limits (shared DB path) > HONEST LIMIT: with the database down each instance falls back to its own memory budget (N instances \u00d7 limit)"
+  ]
+ },
+ {
+  "mutant": "U3 upload: declared Content-Length check removed",
+  "file": "app/api/upload/route.ts",
+  "exit": 1,
+  "tests": "1 failed | 30 passed (31)",
+  "verdict": "KILLED",
+  "failing": [
+   "a declared Content-Length over the cap is a 413 \u2014 the body is never read, nobody is authenticated, nothing decoded 18ms",
+   "tests/unit/sec-c2-upload-controls.test.ts > /api/upload \u2014 input limits before the body is read > a declared Content-Length over the cap is a 413 \u2014 the body is never read, nobody is authenticated, nothing decoded"
+  ]
+ },
+ {
+  "mutant": "U4 blob-image: image/svg+xml served inline",
+  "file": "app/api/blob-image/route.ts",
+  "exit": 1,
+  "tests": "3 failed | 12 passed (15)",
+  "verdict": "KILLED",
+  "failing": [
+   "\"image/svg+xml\" is served as an opaque attachment, never inline 5ms",
+   "\"image/svg+xml; charset=utf-8\" is served as an opaque attachment, never inline 2ms",
+   "\"IMAGE/SVG+XML\" is served as an opaque attachment, never inline 2ms",
+   "tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > \"image/svg+xml\" is served as an opaque attachment, never inline",
+   "tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > \"image/svg+xml; charset=utf-8\" is served as an opaque attachment, never inline",
+   "tests/unit/sec-c2-blob-image-inline.test.ts > /api/blob-image inline policy > \"IMAGE/SVG+XML\" is served as an opaque attachment, never inline"
+  ]
+ },
+ {
+  "mutant": "U5 upload-guard: duplicate multipart fields allowed (last wins)",
+  "file": "lib/upload-guard.ts",
+  "exit": 1,
+  "tests": "3 failed | 28 passed (31)",
+  "verdict": "KILLED",
+  "failing": [
+   "strict fields: unknown or duplicated multipart fields and unknown query parameters are a 400 14ms",
+   "member-scoped: a duplicated targetMemberId is refused instead of picking one 13ms",
+   "formFields refuses a field sent twice and never yields prototype keys 2ms",
+   "tests/unit/sec-c2-upload-controls.test.ts > /api/upload \u2014 input limits before the body is read > strict fields: unknown or duplicated multipart fields and unknown query parameters are a 400",
+   "tests/unit/sec-c2-upload-controls.test.ts > /api/upload \u2014 input limits before the body is read > member-scoped: a duplicated targetMemberId is refused instead of picking one",
+   "tests/unit/sec-c2-upload-controls.test.ts > lib/upload-guard helpers > formFields refuses a field sent twice and never yields prototype keys"
+  ]
+ },
+ {
+  "mutant": "U6 hold: unparsable body read as {} (the SF-C2-V2 defect restored)",
+  "file": "app/api/members/[id]/hold/route.ts",
+  "exit": 1,
+  "tests": "1 failed | 57 passed (58)",
+  "verdict": "KILLED",
+  "failing": [
+   "/api/members/[id]/hold: not JSON \u2192 400, no effect 4ms",
+   "tests/unit/sec-c2-request-validation.test.ts > strict request bodies \u2014 refused before any read, spend or write > /api/members/[id]/hold: not JSON \u2192 400, no effect"
+  ]
+ },
+ {
+  "mutant": "U7 totp verify: schema relaxed to z.object (unknown keys stripped)",
+  "file": "app/api/auth/totp/verify/route.ts",
+  "exit": 1,
+  "tests": "3 failed | 55 passed (58)",
+  "verdict": "KILLED",
+  "failing": [
+   "/api/auth/totp/verify: unknown key role \u2192 400, no effect 241ms",
+   "/api/auth/totp/verify: unknown key tenantId \u2192 400, no effect 2ms",
+   "/api/auth/totp/verify: nested data \u2192 400, no effect 1ms",
+   "tests/unit/sec-c2-request-validation.test.ts > strict request bodies \u2014 refused before any read, spend or write > /api/auth/totp/verify: unknown key role \u2192 400, no effect",
+   "tests/unit/sec-c2-request-validation.test.ts > strict request bodies \u2014 refused before any read, spend or write > /api/auth/totp/verify: unknown key tenantId \u2192 400, no effect",
+   "tests/unit/sec-c2-request-validation.test.ts > strict request bodies \u2014 refused before any read, spend or write > /api/auth/totp/verify: nested data \u2192 400, no effect"
+  ]
+ },
+ {
+  "mutant": "U8 upload: rate limit checked AFTER the body is parsed",
+  "file": "app/api/upload/route.ts",
+  "exit": 1,
+  "tests": "1 failed | 30 passed (31)",
+  "verdict": "KILLED",
+  "failing": [
+   "user budget: 30 allowed, the next is a 429 with Retry-After, body unread, nothing decoded or stored 15ms",
+   "tests/unit/sec-c2-upload-controls.test.ts > /api/upload \u2014 per-user and per-tenant rate limits (shared DB path) > user budget: 30 allowed, the next is a 429 with Retry-After, body unread, nothing decoded or stored"
+  ]
+ },
+ {
+  "mutant": "U9 upload: limitInputPixels removed",
+  "file": "app/api/upload/route.ts",
+  "exit": 1,
+  "tests": "3 failed (3)",
+  "verdict": "KILLED",
+  "failing": [
+   "branding (owner, fit inside): the uploaded bytes are opened with limitInputPixels 50_000_000 38ms",
+   "profile-pic (member self, cover crop): the uploaded bytes are opened with limitInputPixels 50_000_000 4ms",
+   "no sharp call on the uploaded bytes is left unbounded 3ms",
+   "tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > branding (owner, fit inside): the uploaded bytes are opened with limitInputPixels 50_000_000",
+   "tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > profile-pic (member self, cover crop): the uploaded bytes are opened with limitInputPixels 50_000_000",
+   "tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > no sharp call on the uploaded bytes is left unbounded"
+  ]
+ },
+ {
+  "tree_after": "clean"
+ }
+]

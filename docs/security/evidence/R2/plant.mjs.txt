@@ -1,0 +1,28 @@
+// R2 plant: synthetic random values only; prints rule/classification, never a value.
+import { randomBytes } from "node:crypto";
+import fs from "node:fs"; import path from "node:path"; import { pathToFileURL } from "node:url";
+const [,, wt, dir] = process.argv;
+const { scanText } = await import(pathToFileURL(path.join(wt, "scripts/readiness/secret-scan.mjs")).href);
+const b62 = (n) => { const a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"; let s=""; const r = randomBytes(n); for (const x of r) s += a[x % 62]; return s; };
+const hex = (n) => randomBytes(n).toString("hex");
+const cases = {
+  "MUST-CATCH stripe live key in ts": `const k = "sk_live_${b62(40)}";`,
+  "MUST-CATCH neon url in md": `DATABASE_URL=postgresql://matflow_app:npg_${b62(14)}@ep-planted-pooler.eu-west-2.aws.neon.tech/neondb?sslmode=require`,
+  "MUST-CATCH AUTH_SECRET json": `{"AUTH_SECRET": "${randomBytes(32).toString("base64url")}"}`,
+  "MUST-CATCH blob token yaml": `BLOB_READ_WRITE_TOKEN: vercel_blob_rw_${b62(16)}_${b62(30)}`,
+  "GAP? RLS_CONTEXT_SIGNING_KEY": `RLS_CONTEXT_SIGNING_KEY=${hex(64)}`,
+  "GAP? OPERATOR_PASSWORD": `OPERATOR_PASSWORD=${b62(20)}`,
+  "GAP? MIGRATION_DATABASE_URL w/ ellipsis after": `MIGRATION_DATABASE_URL=postgresql://neondb_owner:${b62(16)}@ep-planted.eu-west-2.aws.neon.tech/neondb... (see vault)`,
+  "GAP? stripe key containing 'Fake'": `sk_live_${b62(10)}Fake${b62(20)}`,
+  "SHOULD-IGNORE stripe zero placeholder": `STRIPE_SECRET_KEY=sk_test_000000000000000000000000`,
+  "SHOULD-IGNORE low-entropy CRON": `CRON_SECRET=aaaaaaaaaaaaaaaaaaaaaaaa`,
+  "SHOULD-IGNORE localhost url": `postgresql://postgres:postgres@localhost:5432/matflow`,
+  "SHOULD-IGNORE env interpolation": "AUTH_SECRET=${AUTH_SECRET_FROM_VAULT}",
+};
+let i = 0;
+for (const [name, text] of Object.entries(cases)) {
+  fs.writeFileSync(path.join(dir, `p${i++}.txt`), text + "\n");
+  const f = scanText(text + "\n", name);
+  const s = f.map((x) => `${x.rule}:${x.classification}`).join(",") || "NO FINDING";
+  console.log(`${name} -> ${s}`);
+}

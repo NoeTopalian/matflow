@@ -1,0 +1,154 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/R6/wt
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:120576) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[sec-d2] role matflow_app RLS_ENFORCED=1 STRICT=1 keyLen=64
+[sec-d2] teardown: 19 clubs removed, 0 rows left
+ ❯ tests/integration/sec-d2-import-attacker-model-db.test.ts (18 tests | 6 failed) 156535ms
+     × OPEN (a) RAW TAKEOVER: victim removed and an old record renamed + re-addressed by raw SQL (no audit rows) → bound to the attacker [closed by SF-62 P2; under (c) needs off-database provenance] 7199ms
+     × OPEN (a) ACQUISITION ROW BACK-DATED: release row deleted and the attacker's own address-change row back-dated 400 days → bound [closed by SF-57 v2: UPDATE/DELETE refused] 16784ms
+     × OPEN (a) ACQUISITION ROW DELETED: release and acquisition rows both deleted → bound [closed by SF-57 v2] 9477ms
+     × OPEN (a) FORGED CREATION TIME: victim removed by raw SQL; a record inserted with a back-dated cuid at the address → bound [a Member.createdAt column would be writable too; closed by SF-62 P2] 6582ms
+     × OPEN (c) FORGED DECISION + FORGED PROVENANCE: with the signing key the provenance row can be forged → bound [needs append-only provenance outside the runtime's reach] 6421ms
+     × OPEN (a) externalRef SET: an attacker-chosen member's externalRef set to the victim's source key → bound by external_ref [closed by SF-62 P2; (c) needs keyed attestation] 6977ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/sec-d2-import-attacker-model-db.test.ts > SF-74 / SEC-053 — attendance import under an explicit attacker model (REAL route, TEST DB) > OPEN (a) RAW TAKEOVER: victim removed and an old record renamed + re-addressed by raw SQL (no audit rows) → bound to the attacker [closed by SF-62 P2; under (c) needs off-database provenance]
+AssertionError: raw-SQL takeover bound the victim's history to the attacker: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ expectNotBound tests/integration/sec-d2-import-attacker-model-db.test.ts:191:48
+    189| /** The victim's history must not reach `wrong`; the booking stays pen…
+    190| async function expectNotBound(club: Club, wrong: string, why: string) {
+    191|   expect(await attendanceOf(club, wrong), why).toBe(0);
+       |                                                ^
+    192|   const rows = await ledger(club);
+    193|   expect(rows).toHaveLength(1);
+ ❯ tests/integration/sec-d2-import-attacker-model-db.test.ts:288:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  tests/integration/sec-d2-import-attacker-model-db.test.ts > SF-74 / SEC-053 — attendance import under an explicit attacker model (REAL route, TEST DB) > OPEN (a) ACQUISITION ROW BACK-DATED: release row deleted and the attacker's own address-change row back-dated 400 days → bound [closed by SF-57 v2: UPDATE/DELETE refused]
+AssertionError: a back-dated acquisition bound the victim's history to the attacker: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ expectNotBound tests/integration/sec-d2-import-attacker-model-db.test.ts:191:48
+    189| /** The victim's history must not reach `wrong`; the booking stays pen…
+    190| async function expectNotBound(club: Club, wrong: string, why: string) {
+    191|   expect(await attendanceOf(club, wrong), why).toBe(0);
+       |                                                ^
+    192|   const rows = await ledger(club);
+    193|   expect(rows).toHaveLength(1);
+ ❯ tests/integration/sec-d2-import-attacker-model-db.test.ts:304:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  tests/integration/sec-d2-import-attacker-model-db.test.ts > SF-74 / SEC-053 — attendance import under an explicit attacker model (REAL route, TEST DB) > OPEN (a) ACQUISITION ROW DELETED: release and acquisition rows both deleted → bound [closed by SF-57 v2]
+AssertionError: deleted provenance rows bound the victim's history to the attacker: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ expectNotBound tests/integration/sec-d2-import-attacker-model-db.test.ts:191:48
+    189| /** The victim's history must not reach `wrong`; the booking stays pen…
+    190| async function expectNotBound(club: Club, wrong: string, why: string) {
+    191|   expect(await attendanceOf(club, wrong), why).toBe(0);
+       |                                                ^
+    192|   const rows = await ledger(club);
+    193|   expect(rows).toHaveLength(1);
+ ❯ tests/integration/sec-d2-import-attacker-model-db.test.ts:316:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  tests/integration/sec-d2-import-attacker-model-db.test.ts > SF-74 / SEC-053 — attendance import under an explicit attacker model (REAL route, TEST DB) > OPEN (a) FORGED CREATION TIME: victim removed by raw SQL; a record inserted with a back-dated cuid at the address → bound [a Member.createdAt column would be writable too; closed by SF-62 P2]
+AssertionError: a forged creation time bound the victim's history: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ expectNotBound tests/integration/sec-d2-import-attacker-model-db.test.ts:191:48
+    189| /** The victim's history must not reach `wrong`; the booking stays pen…
+    190| async function expectNotBound(club: Club, wrong: string, why: string) {
+    191|   expect(await attendanceOf(club, wrong), why).toBe(0);
+       |                                                ^
+    192|   const rows = await ledger(club);
+    193|   expect(rows).toHaveLength(1);
+ ❯ tests/integration/sec-d2-import-attacker-model-db.test.ts:326:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  tests/integration/sec-d2-import-attacker-model-db.test.ts > SF-74 / SEC-053 — attendance import under an explicit attacker model (REAL route, TEST DB) > OPEN (c) FORGED DECISION + FORGED PROVENANCE: with the signing key the provenance row can be forged → bound [needs append-only provenance outside the runtime's reach]
+AssertionError: forged provenance bound the victim's history: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ expectNotBound tests/integration/sec-d2-import-attacker-model-db.test.ts:191:48
+    189| /** The victim's history must not reach `wrong`; the booking stays pen…
+    190| async function expectNotBound(club: Club, wrong: string, why: string) {
+    191|   expect(await attendanceOf(club, wrong), why).toBe(0);
+       |                                                ^
+    192|   const rows = await ledger(club);
+    193|   expect(rows).toHaveLength(1);
+ ❯ tests/integration/sec-d2-import-attacker-model-db.test.ts:382:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  tests/integration/sec-d2-import-attacker-model-db.test.ts > SF-74 / SEC-053 — attendance import under an explicit attacker model (REAL route, TEST DB) > OPEN (a) externalRef SET: an attacker-chosen member's externalRef set to the victim's source key → bound by external_ref [closed by SF-62 P2; (c) needs keyed attestation]
+AssertionError: a planted externalRef bound the victim's history: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ expectNotBound tests/integration/sec-d2-import-attacker-model-db.test.ts:191:48
+    189| /** The victim's history must not reach `wrong`; the booking stays pen…
+    190| async function expectNotBound(club: Club, wrong: string, why: string) {
+    191|   expect(await attendanceOf(club, wrong), why).toBe(0);
+       |                                                ^
+    192|   const rows = await ledger(club);
+    193|   expect(rows).toHaveLength(1);
+ ❯ tests/integration/sec-d2-import-attacker-model-db.test.ts:391:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed | 12 passed (18)
+   Start at  04:20:18
+   Duration  160.52s (transform 1.04s, setup 105ms, import 3.48s, tests 156.54s, environment 0ms)
+

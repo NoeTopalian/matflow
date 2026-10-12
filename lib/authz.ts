@@ -30,7 +30,9 @@ export const STAFF_ROLES: string[] = ["owner", "manager", "coach", "admin"];
 
 export async function requireSession(): Promise<AuthContext> {
   const session = await auth();
-  if (!session) redirect("/login");
+  // No user id is signed out too: auth.ts's session callback hands back
+  // { user: undefined } for an invalidated token (review of lane I, 6 Oct 2026).
+  if (!session?.user?.id) redirect("/login");
   return {
     session,
     tenantId: session.user.tenantId,

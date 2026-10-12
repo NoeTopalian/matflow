@@ -1,0 +1,84 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:144876) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stdout | tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > --confirm rotates exactly the four: new bcrypt(12) hashes, sessionVersion +1, four audit rows, no other User row written; old sessions revoked
+[sec-m1] confirm output (sanitised by construction):
+target: TEST ep-hidden-salad-abom7cg4 (pooled) role=neondb_owner
+tenant: secm1-mv2unyixtuse-a id=cmv2unz210000sctg0ww6xv4w
+candidates (4):
+  cmv2unz760002sctg80yj4if9  role=owner  local=s***@demo.matflow  digest=ccf9b1394768
+  cmv2unza40003sctgpdzwulnf  role=manager  local=s***@demo.matflow  digest=f39e5512d06b
+  cmv2unzbx0004sctg2l6xgg5v  role=coach  local=s***@demo.matflow  digest=0bafe8dc87c9
+  cmv2unzdt0005sctg8vpmlbni  role=admin  local=s***@demo.matflow  digest=bfd2a7aee67b
+xid=858145
+rotated 4 accounts: fresh random password (not shown, not stored), sessionVersion +1, 4 audit rows admin.demo_account.rotated
+assert: candidate id set unchanged (4); other User rows byte-identical: 603 (all tenants, same snapshot)
+
+(node:147076) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts (6 tests | 2 failed) 18951ms
+     × --confirm rotates exactly the four: new bcrypt(12) hashes, sessionVersion +1, four audit rows, no other User row written; old sessions revoked 4076ms
+     × a second --confirm rotates again 5035ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > --confirm rotates exactly the four: new bcrypt(12) hashes, sessionVersion +1, four audit rows, no other User row written; old sessions revoked
+AssertionError: control manager/A byte-identical: expected '664ab50f6eccff9b8c5baf0382b57979' to be '3c6dcddcd0bc4be64b816e97d23db4c2' // Object.is equality
+
+Expected: "3c6dcddcd0bc4be64b816e97d23db4c2"
+Received: "664ab50f6eccff9b8c5baf0382b57979"
+
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts:179:105
+    177|       expect(b.sessionVersion).toBe(s.v0 + 1);
+    178|     }
+    179|     for (const s of controls()) expect(r1.get(s.id)?.h, `control ${s.r…
+       |                                                                                                         ^
+    180|
+    181|     // Every User row in the whole database this run's transaction wro…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > a second --confirm rotates again
+AssertionError: expected 'ec60b92825fa7c6d919858c7fd2ff6d5' to be '3c6dcddcd0bc4be64b816e97d23db4c2' // Object.is equality
+
+Expected: "3c6dcddcd0bc4be64b816e97d23db4c2"
+Received: "ec60b92825fa7c6d919858c7fd2ff6d5"
+
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts:214:57
+    212|       expect(await checkSessionVersion({ userId: s.id, tokenVersion: s…
+    213|     }
+    214|     for (const s of controls()) expect(r2.get(s.id)?.h).toBe(r0.get(s.…
+       |                                                         ^
+    215|     expect(await audits()).toHaveLength(8);
+    216|   }, 180_000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 4 passed (6)
+   Start at  21:31:40
+   Duration  19.50s (transform 126ms, setup 64ms, import 273ms, tests 18.95s, environment 0ms)
+
+M3d exit=1

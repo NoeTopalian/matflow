@@ -51,7 +51,10 @@ describe("D-5 — Promotions uses the shared role gate", () => {
 
 describe("one password rule on every door", () => {
   it.each(["app/api/auth/set-password/route.ts", "app/api/members/accept-invite/route.ts"])("%s requires upper, lower and a digit", (p) => {
-    const s = src(p);
+    // 8 Oct 2026 (lane S-staff): set-password now takes the rule from the
+    // shared lib/password-policy.ts (staffPasswordSchema) — check it there.
+    const own = src(p);
+    const s = /staffPasswordSchema[\s\S]*from "@\/lib\/password-policy"/.test(own) ? src("lib/password-policy.ts") : own;
     expect(s).toMatch(/\[A-Z\]/);
     expect(s).toMatch(/\[a-z\]/);
     expect(s).toMatch(/\[0-9\]/);

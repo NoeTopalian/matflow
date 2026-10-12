@@ -1,0 +1,89 @@
+## red-misbinding-owner
+[sec-d] connected as neondb_owner; RLS_ENFORCED=0
+     × IDENTICAL NAMES: a same-name hand-added member who now holds the row's address is NOT bound; the booking stays pending 6161ms
+     × ROSTER DRIFT: a member added AFTER the commit started is not bound by a later step (the commit binds only what was previewed) 6721ms
+     × ROSTER DRIFT (re-point): a previewed match is not moved to another member by an address swap mid-commit 13246ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  3 failed | 7 passed (10)
+## red-misbinding-restricted
+[sec-d] connected as matflow_app; RLS_ENFORCED=1
+     × IDENTICAL NAMES: a same-name hand-added member who now holds the row's address is NOT bound; the booking stays pending 6165ms
+     × ROSTER DRIFT: a member added AFTER the commit started is not bound by a later step (the commit binds only what was previewed) 11408ms
+     × ROSTER DRIFT (re-point): a previewed match is not moved to another member by an address swap mid-commit 13712ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  3 failed | 7 passed (10)
+## green-misbinding-owner
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+owner exit 0
+## green-misbinding-restricted
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+restricted exit 0
+## red-csv
+     × a text cell starting with "\n" is prefixed with an apostrophe 7ms
+     × a text cell starting with "＝" is prefixed with an apostrophe 1ms
+     × a text cell starting with "＋" is prefixed with an apostrophe 1ms
+     × a text cell starting with "－" is prefixed with an apostrophe 1ms
+     × a text cell starting with "＠" is prefixed with an apostrophe 1ms
+     × property: no decoded text cell ever begins with a trigger (2,000 generated values) 1ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  6 failed | 10 passed (16)
+## green-csv
+ Test Files  16 passed (16)
+      Tests  160 passed (160)
+## red-sf-c2
+     × offering named constructor at a mapped venue is pending_offering, not committed 13ms
+     × offering named toString at a mapped venue is pending_offering, not committed 3ms
+     × offering named hasOwnProperty at a mapped venue is pending_offering, not committed 2ms
+     × offering named __proto__ at a mapped venue is pending_offering, not committed 2ms
+     × offering named valueOf at a mapped venue is pending_offering, not committed 2ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  5 failed | 14 passed (19)
+## red-sf-c5
+     × body null → 400, database untouched 26ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 passed (7)
+## stripe-sig
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+## stripe-sig-mutant
+     × signed with another secret → 400, nothing written 8ms
+     × a valid signature on a STALE timestamp (10 minutes old, tolerance 5) → 400 (replay window) 2ms
+     × raw body is what is verified: re-serialised JSON (same object, different bytes) → 400 2ms
+     × tampered field (account switched to another club's acct_) under the original signature → 400 2ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  4 failed | 5 passed (9)
+## mutant-samename
+     × identical names: a second member with the same name (on another address) makes the address holder ambiguous → pending, both offered 10ms
+     × identical names after normalisation (case, spacing) are still identical 3ms
+     × a parent and a child with one name (child on a synthesised address) → pending, not the parent 4ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  3 failed | 8 passed (11)
+## mutant-frozen
+     × a person frozen as unresolved stays pending though the live roster now matches 14ms
+     × a person absent from the frozen set is pending (no live re-match) 3ms
+     × a frozen binding keeps its member and method, even if the live roster would pick another 10ms
+     × a frozen binding to a member that no longer exists → pending 2ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  4 failed | 7 passed (11)
+## mail-holds
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+## unit-image
+ ✓ tests/unit/sec-d-image-bounds.test.ts > SEC-050/051 image decoder bounds on the upload pipeline > header check: a PNG declaring more pixels than the default limit is refused before decode, fast 13ms
+ ✓ tests/unit/sec-d-image-bounds.test.ts > SEC-050/051 image decoder bounds on the upload pipeline > default limit is the only pixel bound: a 16000 x 16000 header (256 MP, under the default) passes the header check 2ms
+ ✓ tests/unit/sec-d-image-bounds.test.ts > SEC-050/051 image decoder bounds on the upload pipeline > measured decode cost and decompression ratio of bounded 1-bit PNGs (2048², 4096², 8192²) 824ms
+[sec-d image bounds] {"over_default_limit_400MP":{"inputBytes":68,"ok":false,"ms":7,"rssGrowthMB":1,"error":"Input image exceeds pixel limit"},"under_default_limit_256MP_header":{"width":16000,"height":16000,"acceptedByHeaderCheck":true},"decode_2048":{"inputBytes":590,"pixels":4194304,"pixelsPerInputByte":7109,"ok":true,"ms":170,"rssGrowthMB":22,"outBytes":4612},"decode_4096":{"inputBytes":2116,"pixels":16777216,"pixelsPerInputByte":7929,"ok":true,"ms":215,"rssGrowthMB":30,"outBytes":4612},"decode_8192":{"inputBytes":8229,"pixels":67108864,"pixelsPerInputByte":8155,"ok":true,"ms":396,"rssGrowthMB":60,"outBytes":4612},"extrapolated_at_default_limit":{"pixels":268402689,"estimatedMs":1584,"estimatedInputBytes":32912},"proposed_limit_67MP":{"ok":false,"ms":1,"rssGrowthMB":0,"error":"Input image exceeds pixel limit"}}
+ ✓ tests/unit/sec-d-image-bounds.test.ts > SEC-050/051 image decoder bounds on the upload pipeline > PROPOSED bound: limitInputPixels 50 MP refuses a 67 MP image before decode and still accepts a 48 MP phone frame header 4ms
+ ✓ tests/unit/sec-d-image-bounds.test.ts > SEC-050/051 image decoder bounds on the upload pipeline > type confusion: libvips loads by CONTENT — a GIF/SVG/TIFF body is refused by the route's magic-byte check before sharp sees it 1ms
+ Test Files  1 passed (1)
+      Tests  5 passed (5)

@@ -6,6 +6,7 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { logAudit } from "@/lib/audit-log";
+import { refuseSupportSession } from "@/lib/support-session";
 
 export const runtime = "nodejs";
 
@@ -76,6 +77,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (csrf) return csrf;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023)
   if (!session?.user) return apiError("Unauthorized", 401);
   if (!STAFF_ROLES.includes(session.user.role)) return apiError("Forbidden", 403);
 
@@ -142,6 +144,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (csrf) return csrf;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023)
   if (!session?.user) return apiError("Unauthorized", 401);
   if (!STAFF_ROLES.includes(session.user.role)) return apiError("Forbidden", 403);
 

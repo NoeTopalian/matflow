@@ -1,0 +1,97 @@
+{
+ "queriedAt": "2026-10-09T10:41:52.093Z",
+ "packagesQueried": 1138,
+ "hits": [
+  {
+   "name": "braces",
+   "version": "3.0.3",
+   "scope": "dev",
+   "paths": [
+    "node_modules/braces"
+   ],
+   "ids": [
+    "GHSA-vfj7-8cjw-p6xm"
+   ]
+  },
+  {
+   "name": "mysql2",
+   "version": "3.15.3",
+   "scope": "prod",
+   "paths": [
+    "node_modules/mysql2"
+   ],
+   "ids": [
+    "GHSA-3f6p-5ww8-9rcr",
+    "GHSA-rgwj-5xj2-c3m3"
+   ]
+  }
+ ],
+ "details": {
+  "GHSA-vfj7-8cjw-p6xm": {
+   "id": "GHSA-vfj7-8cjw-p6xm",
+   "aliases": [
+    "CVE-2026-93687"
+   ],
+   "summary": "braces vulnerable to stack-exhaustion denial of service through deeply nested patterns",
+   "modified": "2026-10-02T22:45:04.328737432Z",
+   "severity": "HIGH",
+   "affected": [
+    {
+     "pkg": "braces",
+     "ranges": [
+      [
+       {
+        "introduced": "0"
+       },
+       {
+        "last_affected": "3.0.3"
+       }
+      ]
+     ]
+    }
+   ]
+  },
+  "GHSA-3f6p-5ww8-9rcr": {
+   "id": "GHSA-3f6p-5ww8-9rcr",
+   "summary": "MySQL2: Auth Plugin Downgrade to mysql_clear_password Leaks Plaintext Credentials",
+   "modified": "2026-09-10T03:51:14.984267513Z",
+   "severity": "HIGH",
+   "affected": [
+    {
+     "pkg": "mysql2",
+     "ranges": [
+      [
+       {
+        "introduced": "0"
+       },
+       {
+        "fixed": "3.22.0"
+       }
+      ]
+     ]
+    }
+   ]
+  },
+  "GHSA-rgwj-5xj2-c3m3": {
+   "id": "GHSA-rgwj-5xj2-c3m3",
+   "summary": "MySQL2: Unbounded zlib inflate in compressed MySQL protocol handler allows decompression-bomb DoS",
+   "modified": "2026-09-10T03:51:14.582598942Z",
+   "severity": "MODERATE",
+   "affected": [
+    {
+     "pkg": "mysql2",
+     "ranges": [
+      [
+       {
+        "introduced": "0"
+       },
+       {
+        "fixed": "3.23.1"
+       }
+      ]
+     ]
+    }
+   ]
+  }
+ }
+}

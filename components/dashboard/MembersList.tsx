@@ -523,12 +523,15 @@ export default function MembersList({ members: initial, primaryColor, role, guar
 
   // F-5: the create route already returns a one-time invite link as the
   // fallback for when email does not deliver; until now it was never shown.
-  const [inviteShare, setInviteShare] = useState<{ name: string; url: string } | null>(null);
+  // `emailNote` is null only when the server says the invite email left; with
+  // email turned off (or a failed send) it carries the reason, and the dialog
+  // must not claim an email went out (7 Oct 2026, mail-dark).
+  const [inviteShare, setInviteShare] = useState<{ name: string; url: string; emailNote: string | null } | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
-  function handleAdded(member: MemberRow, inviteUrl?: string | null) {
+  function handleAdded(member: MemberRow, inviteUrl?: string | null, emailNote?: string | null) {
     setMembers((prev) => [...prev, member].sort((a, b) => a.name.localeCompare(b.name)));
     setShowAdd(false);
-    if (inviteUrl) setInviteShare({ name: member.name, url: inviteUrl });
+    if (inviteUrl) setInviteShare({ name: member.name, url: inviteUrl, emailNote: emailNote ?? null });
   }
 
   // D4 (verifier lane 3): every count below except `cancelled` is computed
@@ -939,7 +942,13 @@ export default function MembersList({ members: initial, primaryColor, role, guar
         open={inviteShare !== null}
         onClose={() => { setInviteShare(null); setInviteCopied(false); }}
         title="Invite link"
-        description={inviteShare ? `${inviteShare.name} was added and an invite email was queued. If email does not reach them, hand them this link instead — it sets up their login, works once and expires in 7 days.` : ""}
+        description={
+          !inviteShare
+            ? ""
+            : inviteShare.emailNote === null
+              ? `${inviteShare.name} was added and an invite email was sent. If it does not reach them, hand them this link instead — it sets up their login, works once and expires in 7 days.`
+              : `${inviteShare.name} was added. ${inviteShare.emailNote} Hand them this link instead — it sets up their login, works once and expires in 7 days.`
+        }
         footer={
           inviteShare && (
             <Button
@@ -983,7 +992,7 @@ function AddMemberModal({
   onAdded,
 }: {
   onClose: () => void;
-  onAdded: (member: MemberRow, inviteUrl?: string | null) => void;
+  onAdded: (member: MemberRow, inviteUrl?: string | null, emailNote?: string | null) => void;
 }) {
   const { toast } = useToast();
   const formId = useId();
@@ -1103,7 +1112,10 @@ function AddMemberModal({
           waiverAccepted: data.waiverAccepted ?? false,
           lastVisitAt: null,
           rank: null,
-        }, typeof data.inviteUrl === "string" ? data.inviteUrl : null);
+        }, typeof data.inviteUrl === "string" ? data.inviteUrl : null,
+        data.inviteEmailSent === true
+          ? null
+          : typeof data.inviteEmailNote === "string" ? data.inviteEmailNote : "The invite email could not be sent.");
       }
     } catch {
       setFormError(describeSaveFailure(0, null, "Add Member", { idempotent: true }).message);

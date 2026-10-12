@@ -1,5 +1,10 @@
 name: CI
 
+# Least-privilege token for every job (security campaign SF-21, 9 Oct 2026): nothing here
+# writes to the repository, so the default read-write GITHUB_TOKEN is withdrawn.
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -55,7 +60,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: 24 # matches the Vercel runtime line (SF-21); local Node 25 is EOL
           cache: npm
 
       - name: Install dependencies
@@ -100,7 +105,7 @@ jobs:
       # gates. pipx is preinstalled on ubuntu-latest; rules are fetched from the
       # Semgrep registry at run time, so this step needs network.
       - name: Install Semgrep
-        run: pipx install semgrep
+        run: pipx install semgrep==1.180.0 # pinned (security campaign SF-21); bump deliberately
 
       - name: Security SAST ratchet — gating
         run: node scripts/security-scan.mjs

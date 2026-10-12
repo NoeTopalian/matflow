@@ -1,0 +1,13 @@
+[
+  {
+    "id": "MR3b-exempt-skips-pair-cap-db-r7probe-v2",
+    "exit": 1,
+    "seconds": 41,
+    "tests": "Tests  1 failed | 1 passed | 7 skipped (9)",
+    "failed": [
+      "× R7-4b address ALREADY at its cap (so every known-device request is exempt at the read), network counter 0: 40 concurrent from the victim's /24 with the victim's browser family → at most PAIR_MAX verdicts (the exemption never lifts the network cap)",
+      "FAIL  tests/integration/zz-r7-a4-attack-db.test.ts > R7 attacks on the A4 lockout reservation (restricted) > R7-4b address ALREADY at its cap (so every known-device request is exempt at the read), network counter 0: 40 concurrent from the victim's /24 with the"
+    ],
+    "restored": true
+  }
+]

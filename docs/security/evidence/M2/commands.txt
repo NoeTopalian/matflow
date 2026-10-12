@@ -1,0 +1,22 @@
+Lane M2 (SF-128, SF-129, SF-130) — authorised by Noe 10 Oct 2026 23:29 Italy. Local/TEST only. Nothing staged, committed, pushed or deployed.
+Repo HEAD at start 55b6a1a (launch named fcd5454; the lead's 55b6a1a is docs-only: DENIALS.md + FINDINGS.md). Code = ed567c4.
+Runtime: Node v24.21.0 (<scratchpad>/security/node24/node-v24.21.0-win-x64 first on PATH; printed by every script).
+Env helper: <scratchpad>/security/M2/env.sh (PATH + cd only; no secrets).
+
+lg-3 spec location (repository-wide search for "machines-and-sweep"): tests/e2e/campaign/assess/lg-3-machines-and-sweep.spec.ts
+  (tracked; `git grep machines-and-sweep` lists only docs because the file name is not in its own text; a stale copy
+   also exists under .claude/worktrees/agent-a4d55343db786aa44/ — not touched).
+
+RED on HEAD (before any source change):
+  npx vitest run tests/unit/sec-m2-retention-log-reason.test.ts tests/unit/sec-m2-lg3-retention-matcher.test.ts \
+    tests/unit/sec-m2-demo-rotate-hardening.test.ts tests/unit/sec-m2-rate-limit-family-literal.test.ts \
+    tests/unit/sec-m1-rate-limit-log-family.test.ts            -> exit 1; 17 failed | 10 passed | 1 skipped; matcher file: module missing
+  (evidence: red-head.txt). SF-130 + widened M1 static are pinning tests: green on HEAD by design; red shown by mutants M2-8/M2-9.
+
+Mutants (in place, each restored from the exact original bytes and sha256-verified; lib/rate-limit.ts git diff empty after):
+  python <scratchpad>/security/M2/mutants.py <out.jsonl> [ids]   (source: mutants.py.txt; results: mutants.jsonl)
+
+TEST DB (guarded runners, both roles):
+  bash <scratchpad>/att/run-engine.sh tests/integration/sec-m1-demo-rotate-db.test.ts          (owner)
+  bash <scratchpad>/q78/run-restricted.sh tests/integration/sec-m1-demo-rotate-db.test.ts      (matflow_app, RLS_ENFORCED=1)
+  SECM1_EVIDENCE_DIR=docs/security/evidence/M2/tool-output for the tool's own output (ids, domain-only mask, per-run tags).

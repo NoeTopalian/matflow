@@ -42,6 +42,15 @@ vi.mock("next-auth", () => ({
 }));
 vi.mock("next-auth/providers/credentials", () => ({ default: (cfg: { authorize?: Authorize }) => cfg }));
 vi.mock("next-auth/providers/google", () => ({ default: (cfg: unknown) => cfg }));
+// Lockout v2 (lane A2, SF-35/SF-59) keeps its counters in RateLimitHit; this
+// file is about something else, so the counters are stubbed open here.
+// tests/integration/sec-a2-lockout-oracle-db.test.ts drives them for real.
+vi.mock("@/lib/auth-lockout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth-lockout")>()),
+  lockoutState: async () => ({ blocked: false, addrCapped: false }),
+  recordFailure: async () => 1,
+  clearPairOnSuccess: async () => {},
+}));
 
 const { tenantFindUnique, userFindUnique, memberFindUnique, checkSessionVersion } = vi.hoisted(() => ({
   tenantFindUnique: vi.fn(),
@@ -82,6 +91,8 @@ const TENANT = {
 const owner = (mustChangePassword: boolean, totpEnabled = false) => ({
   id: "u-owner", email: "owner@example.test", name: "Owner", role: "owner", sessionVersion: 3, tenantId: "t1",
   passwordHash: HASH, failedLoginCount: 0, lockedUntil: null, totpEnabled, notifyOnNewLogin: false, mustChangePassword,
+  // A recorded future expiry, so the legacy deadline (review D2) cannot age this fixture out.
+  tempPasswordExpiresAt: new Date(Date.now() + 3_600_000),
 });
 
 async function load() {
@@ -167,8 +178,9 @@ function routeFiles(dir: string): string[] {
 describe("every write that sets mustChangePassword also evicts existing sessions", () => {
   const SETS_FLAG = /mustChangePassword\s*(:|=)\s*true/;
   const BUMPS = /sessionVersion\s*(:|=)\s*\{\s*increment:\s*1\s*\}/;
-  // Creating a brand-new staff row: there are no sessions to evict.
-  const NEW_ROW_ONLY = new Set(["app/api/staff/route.ts"]);
+  // Creating a brand-new staff row: there are no sessions to evict. Likewise
+  // the owner row create-tenant writes with its club (review of lane I, D-I2).
+  const NEW_ROW_ONLY = new Set(["app/api/staff/route.ts", "app/api/admin/create-tenant/route.ts"]);
 
   const writers = routeFiles(join(ROOT, "app"))
     .map((p) => ({ rel: relative(ROOT, p).replace(/\\/g, "/"), src: readFileSync(p, "utf8") }))

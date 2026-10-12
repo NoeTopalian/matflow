@@ -5,6 +5,8 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 // internal email dispatch, and audit logging. Cross-tenant impossible because
 // the route uses requireOwner() which injects tenantId from session.
 
+// The fake prisma below does not model the RateLimitHit store; the limiter is assumed to allow (lane C4, R6-N3).
+vi.mock("@/lib/rate-limit", async (orig) => (await import("./sec-c4-allow-rate-limit")).allowRateLimit(orig));
 vi.mock("next/server", () => ({
   NextResponse: {
     json: (body: unknown, init?: { status?: number }) => ({
@@ -95,6 +97,41 @@ describe("POST /api/onboarding/csv-handoff", () => {
     const res = await POST(makeReq());
     expect(res.status).toBe(503);
     expect(blobPutMock).not.toHaveBeenCalled();
+  });
+
+  // Mail-dark (7 Oct 2026): the confirmation promised an email ("we'll email
+  // you when they're ready") and implied the team had been told, whatever the
+  // notification sends returned.
+  it("with email turned off, the confirmation promises no email and says the team was not notified", async () => {
+    process.env.EMAIL_DELIVERY = "off";
+    try {
+      createMock.mockResolvedValueOnce({ id: "job-off", fileName: "members.csv" });
+      sendEmailMock.mockResolvedValue({ ok: false, logId: "l", suppressed: "delivery_off" });
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      const res = await POST(makeReq({}));
+      expect(res.status).toBe(201);
+      const body = await res.json();
+      expect(body.teamNotified).toBe(false);
+      expect(body.message).toMatch(/Email is turned off for this club/);
+      expect(body.message).not.toMatch(/email you when/i);
+    } finally {
+      delete process.env.EMAIL_DELIVERY;
+      sendEmailMock.mockResolvedValue({ ok: true });
+    }
+  });
+
+  it("when no notification reaches the team (delivery on), the owner is told to email us", async () => {
+    createMock.mockResolvedValueOnce({ id: "job-fail", fileName: "members.csv" });
+    sendEmailMock.mockResolvedValue({ ok: false, logId: "l" });
+    try {
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      const res = await POST(makeReq({}));
+      const body = await res.json();
+      expect(body.teamNotified).toBe(false);
+      expect(body.message).toMatch(/hello@matflow\.studio/);
+    } finally {
+      sendEmailMock.mockResolvedValue({ ok: true });
+    }
   });
 
   it("returns 400 when no file is provided", async () => {

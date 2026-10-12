@@ -1,0 +1,102 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:136996) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stdout | tests/integration/sec-b3-pooler-stale-session-db.test.ts > SF-87: session-level settings left on a pooled server connection > pooler: a set_config(..., false) from a CLOSED client A is still on the server connection the next client gets
+{"lane":"B3","cell":"pooler-closed-client","poisonedPid":1644,"reached":false,"attempts":40,"distinctPids":14,"setting":null}
+
+stdout | tests/integration/sec-b3-pooler-stale-session-db.test.ts > SF-87: session-level settings left on a pooled server connection > no poisoned server connection is left behind
+{"lane":"B3","cell":"final-sweep","reset":[],"gone":[],"remaining":[1644,925]}
+
+stdout | tests/integration/sec-b3-pooler-stale-session-db.test.ts > SF-87: session-level settings left on a pooled server connection
+{"lane":"B3","cell":"identity","currentUser":"matflow_app","rlsInForce":true,"host":"ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech","pool":{"max":20,"keepAlive":true,"connectionTimeoutMillis":10000}}
+
+stdout | tests/integration/sec-b3-pooler-stale-session-db.test.ts > SF-87: session-level settings left on a pooled server connection
+{"lane":"B3","cell":"teardown-sweep","reset":[],"gone":[],"remaining":[1644,925]}
+
+stdout | tests/integration/sec-b3-pooler-stale-session-db.test.ts > SF-87: session-level settings left on a pooled server connection
+{"lane":"B3","cell":"teardown-count","tenants":0,"members":0,"hits":0}
+
+ ❯ tests/integration/sec-b3-pooler-stale-session-db.test.ts (16 tests | 2 failed) 133201ms
+     × pooler: a set_config(..., false) from a CLOSED client A is still on the server connection the next client gets 23849ms
+     × no poisoned server connection is left behind 12848ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/sec-b3-pooler-stale-session-db.test.ts > SF-87: session-level settings left on a pooled server connection
+AssertionError: a poisoned server connection was neither reset nor retired: expected [ 1644, 925 ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   1644,
++   925,
++ ]
+
+ ❯ tests/integration/sec-b3-pooler-stale-session-db.test.ts:146:87
+    144|     out({ cell: "teardown-count", ...left });
+    145|     expect(left).toEqual({ tenants: 0, members: 0, hits: 0 });
+    146|     expect(s.remaining, "a poisoned server connection was neither rese…
+       |                                                                                       ^
+    147|     await prisma.$disconnect();
+    148|   }, 180_000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/sec-b3-pooler-stale-session-db.test.ts > SF-87: session-level settings left on a pooled server connection > pooler: a set_config(..., false) from a CLOSED client A is still on the server connection the next client gets
+AssertionError: the pooler never routed a fresh client to the poisoned server connection: expected null not to be null
+ ❯ tests/integration/sec-b3-pooler-stale-session-db.test.ts:173:99
+    171|     const r = await onPid(pid, () => withClient(async (c) => (await c.…
+    172|     out({ cell: "pooler-closed-client", poisonedPid: pid, reached: !!r…
+    173|     expect(r.hit, "the pooler never routed a fresh client to the poiso…
+       |                                                                                                   ^
+    174|     expect(r.hit!.b).toBe("on");
+    175|     await sweep();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/integration/sec-b3-pooler-stale-session-db.test.ts > SF-87: session-level settings left on a pooled server connection > no poisoned server connection is left behind
+AssertionError: expected [ 1644, 925 ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   1644,
++   925,
++ ]
+
+ ❯ tests/integration/sec-b3-pooler-stale-session-db.test.ts:297:25
+    295|     const s = await sweep();
+    296|     out({ cell: "final-sweep", ...s });
+    297|     expect(s.remaining).toEqual([]);
+       |                         ^
+    298|   }, 180_000);
+    299| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 14 passed (16)
+   Start at  09:37:28
+   Duration  133.91s (transform 136ms, setup 67ms, import 363ms, tests 133.20s, environment 0ms)
+

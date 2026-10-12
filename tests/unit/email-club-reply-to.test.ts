@@ -15,7 +15,8 @@
  */
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-const { findFirstMock, createMock, updateMock, resendSendMock, tenantFindUnique } = vi.hoisted(() => ({
+const { findFirstMock, createMock, updateMock, resendSendMock, tenantFindUnique, provisionalLookup } = vi.hoisted(() => ({
+  provisionalLookup: vi.fn(),
   findFirstMock: vi.fn(),
   createMock: vi.fn(),
   updateMock: vi.fn().mockResolvedValue({}),
@@ -39,6 +40,9 @@ vi.mock("@/lib/prisma-tenant", () => ({
         tenant: { findUnique: tenantFindUnique },
       }),
     ),
+  // Provisional-login-email lookups (recipient AND Reply-To) span every club
+  // and run through withRlsBypass (review defects 8 and 9, 7 Oct 2026).
+  withRlsBypass: (fn: (tx: unknown) => unknown) => Promise.resolve(fn({ user: { findFirst: provisionalLookup } })),
 }));
 
 import { sendEmail, CLUB_VOICED_TEMPLATES } from "@/lib/email";
@@ -58,6 +62,7 @@ beforeEach(() => {
   updateMock.mockReset().mockResolvedValue({});
   resendSendMock.mockReset().mockResolvedValue({ data: { id: "re_1" }, error: null });
   tenantFindUnique.mockReset().mockResolvedValue({ contactEmail: "info@totalbjj.co.uk", billingContactEmail: null });
+  provisionalLookup.mockReset().mockResolvedValue(null);
   process.env.RESEND_API_KEY = "re_test_key";
   process.env.RESEND_FROM = "MatFlow Studio <noreply@matflow.studio>";
 });
@@ -100,6 +105,36 @@ describe("sendEmail — club Reply-To", () => {
 
   it("a failed tenant lookup never blocks the send", async () => {
     tenantFindUnique.mockRejectedValue(new Error("db down"));
+    const r = await sendEmail({ tenantId: "t-1", templateId: "receipt", to: "tom@example.com", vars: VARS });
+    expect(r.ok).toBe(true);
+    expect(sentArgs().replyTo).toBeUndefined();
+  });
+
+  // Review defect 9 (7 Oct 2026): a Reply-To is an address members write to,
+  // so a provisional (unverified) login email is never used as one.
+  it("a provisional contact address is never the Reply-To; falls back to the billing contact", async () => {
+    tenantFindUnique.mockResolvedValue({ contactEmail: "provisional@club.example", billingContactEmail: "billing@club.example" });
+    provisionalLookup.mockImplementation(async (args: { where: { email: { equals: string } } }) =>
+      args.where.email.equals.toLowerCase() === "provisional@club.example" ? { id: "u-1", loginEmailProvisionalSince: new Date() } : null,
+    );
+    await sendEmail({ tenantId: "t-1", templateId: "receipt", to: "tom@example.com", vars: VARS });
+    expect(sentArgs().replyTo).toBe("billing@club.example");
+  });
+
+  it("no non-provisional club address means no Reply-To", async () => {
+    tenantFindUnique.mockResolvedValue({ contactEmail: "provisional@club.example", billingContactEmail: null });
+    provisionalLookup.mockImplementation(async (args: { where: { email: { equals: string } } }) =>
+      args.where.email.equals === "tom@example.com" ? null : { id: "u-1", loginEmailProvisionalSince: new Date() },
+    );
+    await sendEmail({ tenantId: "t-1", templateId: "receipt", to: "tom@example.com", vars: VARS });
+    expect(sentArgs().replyTo).toBeUndefined();
+  });
+
+  it("a failed provisional check on the Reply-To leaves it off, and the send still goes", async () => {
+    provisionalLookup.mockImplementation(async (args: { where: { email: { equals: string } } }) => {
+      if (args.where.email.equals === "tom@example.com") return null;
+      throw new Error("db down");
+    });
     const r = await sendEmail({ tenantId: "t-1", templateId: "receipt", to: "tom@example.com", vars: VARS });
     expect(r.ok).toBe(true);
     expect(sentArgs().replyTo).toBeUndefined();

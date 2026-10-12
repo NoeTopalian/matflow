@@ -1,0 +1,807 @@
+v24.21.0
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-c-static-guards.test.ts (13 tests | 1 failed) 715ms
+     × the reviewed raw-SQL call sites are exactly these (values interpolated as bind parameters only) 75ms
+22:41:31 [vite] (ssr) warning: invalid import "../../app/api/admin/customers/[id]/${c.file}/route". A file extension must be included in the static part of the import. For example: import(`./foo/${bar}.js`).
+  Plugin: vite:dynamic-import-vars
+  File: C:/Users/NoeTo/Desktop/matflow/tests/unit/operator-step-up.test.ts
+ ❯ tests/unit/operator-audit-durability.test.ts (17 tests | 1 failed) 1152ms
+     × FIXED (was GAP ISSUE Q9-1): dsar/erase's guard is reachable — the fulfilment row is the first statement of the erase transaction 4ms
+(node:106792) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ❯ tests/unit/staff-last-owner-guard.test.ts (5 tests | 1 failed) 673ms
+     × an owner row cannot be deleted, and the miss reads as not found 8ms
+(node:102552) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:108792) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/operator-audit-durability.test.ts > logAudit's contract > FIXED (was GAP ISSUE Q9-1): dsar/erase's guard is reachable — the fulfilment row is the first statement of the erase transaction
+AssertionError: expected '/**\n * POST /api/admin/dsar/erase?me…' to match /const erasedOk = await withTenantCont…/
+
+- Expected:
+/const erasedOk = await withTenantContext\(tenantId, async \(tx\) => \{\s*await logAudit\(\{ \.\.\.fulfilmentRecord, tx \}\);/
+
++ Received:
+"/**
+ * POST /api/admin/dsar/erase?memberId=...
+ *
+ * UK GDPR Article 17 right-to-erasure flow. Owner-only — the same role
+ * that handles the SAR export. Performs an irreversible PII scrub on the
+ * named Member row + soft-deletes them, while preserving aggregate
+ * audit/finance integrity (AttendanceRecord rows stay so attendance
+ * counts aren't silently corrupted; Payment rows stay for tax/dispute
+ * purposes; only the PII columns on Member itself are nulled).
+ *
+ * After erasure:
+ *   - Member.name → \"Deleted member\"
+ *   - Member.email → \"deleted-<id>@deleted.invalid\" (kept unique-safe)
+ *   - Member.phone, dateOfBirth, emergencyContact*, medicalConditions,
+ *     passwordHash, notes, waiverIpAddress, stripeCustomerId,
+ *     stripeSubscriptionId, totpSecret, totpRecoveryCodes → null/empty
+ *   - Member.status → \"cancelled\" (Member has no deletedAt column; status
+ *     is the soft-delete signal — consumers default-filter status='active')
+ *   - All linked passwords/tokens invalidated (sessionVersion bumped)
+ *
+ * Audit P0-3 (storage/memory audit 2026-08-16 §5): the erase used to touch
+ * the Member row and nothing else, so a \"completed\" Article 17 request left
+ * behind face photos (rows + blob files), signature PNGs, a live TOTP secret,
+ * EmailLog recipients, LoginEvent device history, live push channels and
+ * email-keyed auth tokens. The erase now sweeps every one of those surfaces:
+ *   - MemberPhoto — rows deleted, blob files deleted best-effort
+ *   - SignedWaiver — signer name/IP/UA/signature nulled, signature blob
+ *     deleted; contentSnapshot/titleSnapshot/acceptedAt/memberId RETAINED
+ *     under legal hold (see the comment at the scrub site)
+ *   - LoginEvent, PushSubscription, Notification — rows deleted
+ *   - Task (kind=member_note) — staff notes addressed to the member, deleted
+ *   - MagicLinkToken, PasswordResetToken — rows for the ORIGINAL email deleted
+ *   - EmailLog.recipient — rewritten to the sentinel address
+ *   - RankHistory.notes — free-text promotion notes nulled (GDPR NEW-2)
+ *   - ImportedBooking — imported attendance history deleted: rows matched to
+ *     the member, and unmatched rows whose source email (non-synthesised) or
+ *     source person key identifies them. Matched on the PRE-erase email and
+ *     externalRef, before the Member row is scrubbed. The AttendanceRecord
+ *     rows an import created stay, like every other attendance row (above).
+ *   - ImportSourceMapping (kind=person) — the owner's decision that a source
+ *     person is this member; its sourceKey embeds their source email and name
+ *   - Member.externalRef / unverifiedEmail — both hold the source identity
+ *
+ * Audit-logged as `member.dsar_erase`. Owner retains the audit row as
+ * evidence of fulfilment per GDPR fulfilment-record retention guidance.
+ */
+import { NextResponse } from \"next/server\";
+import { z } from \"zod\";
+import { del } from \"@vercel/blob\";
+import { Prisma } from \"@prisma/client\";
+import { requireApiRole } from \"@/lib/api-authz\";
+import { refuseSupportSession } from \"@/lib/support-session\";
+import { withTenantContext } from \"@/lib/prisma-tenant\";
+import { logAudit } from \"@/lib/audit-log\";
+import { emailDigest } from \"@/lib/login-email\";
+import { isVercelBlobUrl } from \"@/lib/blob-url\";
+import { hashToken } from \"@/lib/token-hash\";
+import { deleteMemberCascade } from \"@/lib/member-delete\";
+import { cancelSubscriptionAtPeriodEnd } from \"@/lib/stripe/subscriptions\";
+import { checkRateLimit } from \"@/lib/rate-limit\";
+import { assertSameOrigin } from \"@/lib/csrf\";
+import { refuseIfReviewLocked } from \"@/lib/review-lock\";
+import { isSynthesisedEmail } from \"@/lib/synthesise-kid-email\";
+import { teamupPersonKey } from \"@/lib/importers/teamup\";
+
+const querySchema = z.object({ memberId: z.string().min(1) });
+
+export async function POST(req: Request) {
+  // CSRF. The /admin path is misleading: this is gated by a TENANT
+  // owner session, not the operator plane, so an owner's browser could be made
+  // to destroy a member's personal data from another origin. Irreversible.
+  const csrfViolation = assertSameOrigin(req);
+  if (csrfViolation) return csrfViolation;
+  const gate = await requireApiRole([\"owner\"]);
+  if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session (lib/support-session.ts)
+  const { session } = gate;
+  const tenantId = session!.user.tenantId;
+  const reviewLocked = await refuseIfReviewLocked(tenantId, \"erase\");
+  if (reviewLocked) return reviewLocked;
+  const ownerUserId = session!.user.id;
+
+  // Audit iter-1-dashboard M-A4-3: rate-limit the irreversible erase action.
+  // Without this, a compromised owner session could bulk-erase every member
+  // in the tenant before detection. 5/hr per tenant is generous for the
+  // legitimate worst case (responding to multiple GDPR Article 17 requests
+  // in a short window).
+  const rl = await checkRateLimit(`dsar:erase:${tenantId}`, 5, 60 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: \"Too many DSAR erase requests. Try again later.\" },
+      { status: 429, headers: { \"Retry-After\": String(rl.retryAfterSeconds) } },
+    );
+  }
+
+  const { searchParams } = new URL(req.url);
+  const parsed = querySchema.safeParse({ memberId: searchParams.get(\"memberId\") });
+  if (!parsed.success) {
+    return NextResponse.json({ error: \"memberId is required\" }, { status: 400 });
+  }
+  const { memberId } = parsed.data;
+
+  // Audit iter-4-database A8I4-V-1 [High]: explicit select. Bare findFirst
+  // pulled passwordHash + totpSecret + totpRecoveryCodes into server memory
+  // on every Right-to-Erasure request. Not a wire-leak (response shape is
+  // controlled below) but GDPR Article 25 data-minimisation gap at the
+  // query boundary. Only id/status/email/stripeSubscriptionId are actually
+  // consumed.
+  const member = await withTenantContext(tenantId, (tx) =>
+    tx.member.findFirst({
+      where: { id: memberId, tenantId },
+      select: { id: true, status: true, email: true, name: true, stripeSubscriptionId: true, externalRef: true },
+    }),
+  );
+  if (!member) {
+    return NextResponse.json({ error: \"Member not found\" }, { status: 404 });
+  }
+  if (member.status === \"cancelled\" && member.email.startsWith(\"deleted-\")) {
+    return NextResponse.json({ error: \"Member already erased\" }, { status: 409 });
+  }
+
+  // ── Article 17 versus a live child account (Noe, 19 Sep 2026) ─────────────
+  //
+  // The erase anonymises the parent IN PLACE and never reads `parentMemberId`,
+  // so a child was left pointing at a guardian the club could no longer
+  // identify — and, because the scrub nulls exactly the three emergency-contact
+  // fields that `POST /api/waiver/sign-for-child` requires of the PARENT, no
+  // waiver could ever be signed for that child again. The screen said \"Add your
+  // emergency contact details first\", of a member who no longer exists.
+  //
+  // The vocabulary is deliberately the one the product already has for this
+  // problem — `?probe=1` then `?strategy=` on `DELETE /api/members/[id]` — so
+  // an owner meets one idea, not two. The refusal names the COUNT and never the
+  // children: a subject-access refusal must not itself disclose third-party
+  // personal data.
+  const childStrategyParam = searchParams.get(\"strategy\");
+  const isProbe = searchParams.get(\"probe\") === \"1\";
+  const activeChildren = await withTenantContext(tenantId, (tx) =>
+    tx.member.count({
+      where: { tenantId, parentMemberId: memberId, status: { not: \"cancelled\" } },
+    }),
+  );
+
+  // The probe is read-only and mutates nothing — it exists so the dashboard can
+  // show the picker before the owner commits to an irreversible action.
+  if (isProbe) {
+    return NextResponse.json({
+      memberId,
+      activeChildren,
+      strategyRequired: activeChildren > 0,
+      strategies: activeChildren > 0 ? [\"reassign\", \"cascade\"] : [],
+    });
+  }
+
+  let reassignToParentId: string | null = null;
+  if (activeChildren > 0) {
+    if (childStrategyParam !== \"reassign\" && childStrategyParam !== \"cascade\") {
+      return NextResponse.json(
+        {
+          error:
+            `This member is the named guardian for ${activeChildren} active child ` +
+            `account${activeChildren === 1 ? \"\" : \"s\"}. Choose what happens to ` +
+            `${activeChildren === 1 ? \"it\" : \"them\"} before erasing: re-link to another ` +
+            \"guardian (?strategy=reassign&toParentMemberId=…) or erase the child \" +
+            \"accounts too (?strategy=cascade).\",
+          activeChildren,
+          strategies: [\"reassign\", \"cascade\"],
+        },
+        { status: 409 },
+      );
+    }
+    if (childStrategyParam === \"reassign\") {
+      const to = searchParams.get(\"toParentMemberId\");
+      if (!to) {
+        return NextResponse.json(
+          { error: \"reassign requires toParentMemberId\" },
+          { status: 400 },
+        );
+      }
+      if (to === memberId) {
+        return NextResponse.json(
+          { error: \"Cannot re-link the children to the member being erased\" },
+          { status: 400 },
+        );
+      }
+      const target = await withTenantContext(tenantId, (tx) =>
+        tx.member.findFirst({
+          where: { id: to, tenantId },
+          select: { id: true, parentMemberId: true, accountType: true, status: true },
+        }),
+      );
+      if (!target) {
+        return NextResponse.json(
+          { error: \"That guardian was not found in this club\" },
+          { status: 400 },
+        );
+      }
+      if (target.parentMemberId !== null || target.accountType === \"kids\") {
+        return NextResponse.json(
+          { error: \"That guardian is itself a sub-account — pick a top-level member\" },
+          { status: 400 },
+        );
+      }
+      if (target.status === \"cancelled\") {
+        return NextResponse.json(
+          { error: \"That guardian's own membership is cancelled — pick an active member\" },
+          { status: 400 },
+        );
+      }
+      reassignToParentId = target.id;
+    }
+  }
+
+  // Durable audit, step 1 (operator audit 5 Oct 2026, Q9). The Stripe call
+  // below is outside any DB transaction, so the request is recorded first, in
+  // its own transaction; if that row cannot be written, nothing happens — no
+  // Stripe change, no erasure.
+  try {
+    await logAudit({
+      durable: true,
+      outcome: \"requested\",
+      tenantId,
+      userId: ownerUserId,
+      action: \"member.dsar_erase.requested\",
+      entityType: \"Member\",
+      entityId: memberId,
+      metadata: {
+        gdprBasis: \"Article 17 right to erasure\",
+        hasStripeSubscription: !!member.stripeSubscriptionId,
+        activeChildren,
+        childStrategy: activeChildren > 0 ? childStrategyParam : null,
+      },
+      req,
+    });
+  } catch (err) {
+    console.error(\"[dsar/erase] audit-log write failed; refusing to erase\", err);
+    return NextResponse.json(
+      { error: \"Audit-log write failed; erasure not performed. Try again.\" },
+      { status: 500 },
+    );
+  }
+
+  // Audit iter-1-member-lifecycle A3H-7: cancel the Stripe subscription
+  // BEFORE anonymising the member. GDPR Article 17 fulfilment requires the
+  // data-minimisation outcome: Stripe stops charging the (still-stored) card
+  // and stops holding active payment data for an \"erased\" member. Strictest
+  // interpretation per user decision 2026-05-31: if the Stripe cancel fails
+  // for any reason, refuse the erase. The operator can fix the Stripe state
+  // (network, dispute, expired key) and retry, OR cancel manually in Stripe
+  // and then re-issue the erase. Failing closed avoids the dispute risk of
+  // a \"deleted\" member whose card keeps getting charged.
+  let stripeCancelOutcome: { performed: boolean; cancelAt: number | null } = {
+    performed: false,
+    cancelAt: null,
+  };
+  if (member.stripeSubscriptionId) {
+    const tenantStripe = await withTenantContext(tenantId, (tx) =>
+      tx.tenant.findUnique({
+        where: { id: tenantId },
+        select: { stripeAccountId: true },
+      }),
+    );
+    if (!tenantStripe?.stripeAccountId) {
+      return NextResponse.json(
+        {
+          error:
+            \"Cannot erase: this member has an active Stripe subscription but the gym has no connected Stripe account. \" +
+            \"Cancel the subscription directly in Stripe first, then retry.\",
+        },
+        { status: 422 },
+      );
+    }
+    const cancelResult = await cancelSubscriptionAtPeriodEnd({
+      tenant: { stripeAccountId: tenantStripe.stripeAccountId },
+      stripeSubscriptionId: member.stripeSubscriptionId,
+    });
+    if (!cancelResult.ok) {
+      return NextResponse.json(
+        {
+          error:
+            \"Cannot erase: Stripe subscription cancellation failed (\" +
+            cancelResult.error +
+            \"). Cancel manually in Stripe, then retry.\",
+        },
+        { status: cancelResult.status },
+      );
+    }
+    stripeCancelOutcome = { performed: true, cancelAt: cancelResult.cancelAt };
+  }
+
+  // Audit P0-3: pre-flight tally of everything the erase is about to destroy.
+  // Two things need this read pass:
+  //   1. The blob URLs — MemberPhoto.url and SignedWaiver.signatureImageUrl
+  //      must be captured before their rows are deleted/nulled, otherwise the
+  //      files are orphaned in Vercel Blob forever (Blob never GCs).
+  //   2. The counts for the fulfilment record. The audit row must be written
+  //      BEFORE the destruction (see below), so the numbers it carries are
+  //      necessarily measured pre-erase. They are the rows targeted by the
+  //      erase transaction, which — for an owner-only, 5/hr action on a single
+  //      member — is the same set the transaction deletes.
+  const originalEmail = member.email;
+  const originalExternalRef = member.externalRef;
+  const sentinelEmail = `deleted-${memberId}@deleted.invalid`;
+
+  // Imported history keyed to this person. Unmatched rows (memberId NULL) carry
+  // the source's name and email, so they are matched on the PRE-erase email
+  // (never a synthesised placeholder, which identifies nobody) and on the
+  // source person key the import stamped as Member.externalRef.
+  // Unmatched rows by exact source identity only (name AND email, or the kept
+  // TeamUp identity) — a shared email alone is a parent's and a child's, and
+  // erasing one must not erase the other's history.
+  const personKeys = [originalExternalRef, isSynthesisedEmail(originalEmail) || !member.name ? null : teamupPersonKey(member.name, originalEmail)].filter((k): k is string => !!k);
+  const importedBookingWhere = {
+    tenantId,
+    OR: [{ memberId }, ...(personKeys.length ? [{ memberId: null, sourcePersonKey: { in: personKeys } }] : [])],
+  };
+  const personMappingWhere = {
+    tenantId,
+    kind: \"person\",
+    OR: [{ targetId: memberId }, ...(originalExternalRef ? [{ sourceKey: originalExternalRef }] : [])],
+  };
+
+  const scope = await withTenantContext(tenantId, async (tx) => {
+    const [
+      photos,
+      waivers,
+      loginEvents,
+      pushSubscriptions,
+      notifications,
+      memberNoteTasks,
+      magicLinkTokens,
+      passwordResetTokens,
+      emailLogs,
+      rankHistoryNotes,
+      importedBookings,
+      importSourceMappings,
+    ] = await Promise.all([
+      tx.memberPhoto.findMany({
+        where: { memberId, tenantId },
+        select: { id: true, url: true },
+      }),
+      tx.signedWaiver.findMany({
+        where: { memberId, tenantId },
+        select: { id: true, signatureImageUrl: true },
+      }),
+      tx.loginEvent.count({ where: { memberId, tenantId } }),
+      tx.pushSubscription.count({ where: { memberId, tenantId } }),
+      tx.notification.count({ where: { memberId, tenantId } }),
+      tx.task.count({ where: { tenantId, assigneeMemberId: memberId, kind: \"member_note\" } }),
+      // GDPR obs-3: the counts must use the same case-insensitive predicate as
+      // the deletes below, or the fulfilment record understates what was
+      // destroyed.
+      tx.magicLinkToken.count({
+        where: { tenantId, email: { equals: originalEmail, mode: \"insensitive\" } },
+      }),
+      tx.passwordResetToken.count({
+        where: { tenantId, email: { equals: originalEmail, mode: \"insensitive\" } },
+      }),
+      tx.emailLog.count({
+        where: { tenantId, recipient: { equals: originalEmail, mode: \"insensitive\" } },
+      }),
+      // GDPR NEW-2: free-text promotion notes. The SAR export hands these to
+      // the subject as their own personal data (export/route.ts selects
+      // RankHistory.notes), so leaving them untouched under Article 17 is
+      // self-inconsistent — and it is exactly the coach-typed-their-name risk
+      // that justified scrubbing Member.notes. RankHistory has no tenantId
+      // column; it is reached through MemberRank.memberId (RLS policy
+      // 20260503100000 joins the same way), and memberId is a global cuid.
+      tx.rankHistory.count({ where: { memberRank: { memberId }, notes: { not: null } } }),
+      tx.importedBooking.count({ where: importedBookingWhere }),
+      tx.importSourceMapping.count({ where: personMappingWhere }),
+    ]);
+    return {
+      photos,
+      waivers,
+      loginEvents,
+      pushSubscriptions,
+      notifications,
+      memberNoteTasks,
+      magicLinkTokens,
+      passwordResetTokens,
+      emailLogs,
+      rankHistoryNotes,
+      importedBookings,
+      importSourceMappings,
+    };
+  });
+
+  const erasedCounts = {
+    memberPhotos: scope.photos.length,
+    signedWaiversScrubbed: scope.waivers.length,
+    loginEvents: scope.loginEvents,
+    pushSubscriptions: scope.pushSubscriptions,
+    notifications: scope.notifications,
+    memberNoteTasks: scope.memberNoteTasks,
+    magicLinkTokens: scope.magicLinkTokens,
+    passwordResetTokens: scope.passwordResetTokens,
+    emailLogsRedacted: scope.emailLogs,
+    rankHistoryNotesScrubbed: scope.rankHistoryNotes,
+    importedBookings: scope.importedBookings,
+    importSourceMappings: scope.importSourceMappings,
+  };
+
+  // Durable audit, step 2. P1 (assessment item #4, 2026-05-07) meant to
+  // refuse the erase when this row could not be written, but `logAudit` was
+  // fire-and-forget and never threw, so that guard was unreachable (operator
+  // audit 5 Oct 2026, Q9-1). The fulfilment record is now the FIRST statement
+  // of the erase transaction below: it commits with the erasure or neither
+  // happens.
+  const fulfilmentRecord = {
+    tenantId,
+    userId: ownerUserId,
+    action: \"member.dsar_erase\",
+    entityType: \"Member\",
+    entityId: memberId,
+    metadata: {
+      // Audit P3-6: HMAC-SHA256 (lib/token-hash), not the old 32-bit
+      // hashSnippet — that one was brute-forceable over the email space,
+      // i.e. weak pseudonymisation in the fulfilment record itself.
+      originalEmailHash: member.email ? hashToken(member.email) : null,
+      // The address the erasure releases, in the keyed login-email digest every release path writes (the attendance
+      // import refuses a released address — SF-54). A keyed digest, like originalEmailHash: no address is kept.
+      releasedEmailSha256: member.email ? emailDigest(member.email) : null,
+      gdprBasis: \"Article 17 right to erasure\",
+      // Audit iter-1-member-lifecycle A3H-7: capture the Stripe-side
+      // outcome so the fulfilment record proves the card stopped being
+      // charged. cancelAt is the period-end timestamp (Unix seconds) at
+      // which Stripe will close the subscription.
+      stripeSubscriptionCancelled: stripeCancelOutcome.performed,
+      stripeSubscriptionCancelAt: stripeCancelOutcome.cancelAt,
+      // Audit P0-3: per-surface scope of the erase, so the fulfilment
+      // record proves WHAT was destroyed, not just that an erase ran.
+      erasedCounts,
+      // The guardian decision, in the fulfilment record: who chose what for
+      // the children, so an Article 17 audit can answer \"and the kids?\".
+      // Ids, never names — the record is itself personal data.
+      activeChildren,
+      childStrategy: activeChildren > 0 ? childStrategyParam : null,
+      childReassignedTo: reassignToParentId,
+    },
+    req,
+  };
+
+  // Every DB scrub/delete runs inside ONE tenant transaction: a partial erase
+  // is worse than no erase (it reports success while PII survives on some
+  // surfaces). Blob deletion is deliberately NOT in here — the Blob API is not
+  // transactional and a network blip there must not roll back the DB erase.
+  const erasedOk = await withTenantContext(tenantId, async (tx) => {
+    // Lane D3 (review R4 residual 1): every predicate and the release digest above were built from a read in an
+    // EARLIER transaction. Lock the row and re-read it here: if the address (or the source identity) changed in
+    // between, erasing now would release the NEW address with the OLD one digested and leave the new address's tokens
+    // and imported history behind — refuse instead, nothing erased. The lock also holds off a concurrent change until
+    // the erasure commits.
+    const [locked] = await tx.$queryRaw<{ email: string; name: string; externalRef: string | null }[]>`
+      SELECT email, name, \"externalRef\" FROM \"Member\" WHERE id = ${memberId} AND \"tenantId\" = ${tenantId} FOR UPDATE`;
+    if (!locked || locked.email !== originalEmail || locked.externalRef !== originalExternalRef || locked.name !== member.name) {
+      throw new ErasureSubjectChanged();
+    }
+    await logAudit({ ...fulfilmentRecord, tx });
+
+    // The children are resolved FIRST and inside the same transaction, so the
+    // club can never end up with a scrubbed guardian and a child still pointing
+    // at them. `orphan` is deliberately not offered: the database CHECK
+    // `Member_kids_must_have_parent` (migration 20260515000001) forbids a kids
+    // row with a null parent, so the two honest answers are a new guardian or
+    // the child's own erasure.
+    if (activeChildren > 0) {
+      const children = await tx.member.findMany({
+        where: { tenantId, parentMemberId: memberId, status: { not: \"cancelled\" } },
+        select: { id: true },
+      });
+      if (reassignToParentId) {
+        await tx.member.updateMany({
+          where: { tenantId, id: { in: children.map((c) => c.id) } },
+          data: { parentMemberId: reassignToParentId },
+        });
+      } else {
+        for (const child of children) {
+          await deleteMemberCascade(tx, { id: child.id, tenantId });
+        }
+      }
+    }
+
+    // Imported history goes BEFORE the scrub below overwrites the email and
+    // nulls externalRef: both predicates were built from the pre-erase values.
+    // SetNull on ImportedBooking.memberId would not do — it would leave the
+    // source name and email behind on an unmatched row.
+    await tx.importedBooking.deleteMany({ where: importedBookingWhere });
+    await tx.importSourceMapping.deleteMany({ where: personMappingWhere });
+
+    await tx.member.update({
+      where: { id: memberId },
+      data: {
+        name: \"Deleted member\",
+        // Sentinel keeps the (tenantId, email) composite unique constraint
+        // satisfied while making the row clearly inert.
+        email: sentinelEmail,
+        phone: null,
+        dateOfBirth: null,
+        emergencyContactName: null,
+        emergencyContactPhone: null,
+        emergencyContactRelation: null,
+        medicalConditions: null,
+        passwordHash: null,
+        // Audit P0-3: free-text staff notes hold the most sensitive residue on
+        // the row (injuries, disputes, safeguarding remarks).
+        notes: null,
+        waiverIpAddress: null,
+        // The source identity: externalRef is \"teamup:<email>|<name>\" and
+        // unverifiedEmail an address nobody has confirmed. Both are PII.
+        externalRef: null,
+        unverifiedEmail: null,
+        // Safe to null now — the Stripe cancellation above has already used
+        // stripeSubscriptionId. Left in place, these two IDs still resolve to
+        // the member's full identity inside the Stripe dashboard.
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+        // A live TOTP secret on an \"erased\" member is both a credential and
+        // PII. totpEnabled must drop with it, or the row claims 2FA is on with
+        // no secret to verify against.
+        // (Plain `null` is a Prisma no-op on a Json column. `DbNull` writes a
+        // real SQL NULL — the erased state — rather than the JSON literal
+        // `null` that `JsonNull` would store.)
+        totpEnabled: false,
+        totpSecret: null,
+        totpRecoveryCodes: Prisma.DbNull,
+        status: \"cancelled\",
+        // Bump sessionVersion to invalidate any existing JWT.
+        sessionVersion: { increment: 1 },
+      },
+    });
+
+    // Face photos (including a junior member's, uploaded by a parent).
+    await tx.memberPhoto.deleteMany({ where: { memberId, tenantId } });
+
+    // SignedWaiver: scrub the identifying columns but KEEP contentSnapshot,
+    // titleSnapshot, acceptedAt and memberId. Those four are the legal hold —
+    // the gym's evidence that *this* member accepted *these* terms on *that*
+    // date, needed to defend an injury claim for the statutory limitation
+    // period. GDPR Article 17(3)(e) (legal claims) covers retaining them; the
+    // signer name, IP, user-agent and signature image are not needed for that
+    // defence and so are erased.
+    await tx.signedWaiver.updateMany({
+      where: { memberId, tenantId },
+      data: {
+        signatureImageUrl: null,
+        signerName: null,
+        ipAddress: null,
+        userAgent: null,
+      },
+    });
+
+    // Device/login history and live push channels. PushSubscription carries a
+    // nullable memberId AND a nullable userId (schema: one of the two is set);
+    // members subscribe through the member portal, so member-owned rows exist
+    // and are deleted here by memberId. Staff (User) rows are a different
+    // subject and are untouched.
+    await tx.loginEvent.deleteMany({ where: { memberId, tenantId } });
+    await tx.pushSubscription.deleteMany({ where: { memberId, tenantId } });
+
+    // Notification bodies name the member. No writer exists today, but the
+    // model and the rows can outlive that — delete defensively.
+    await tx.notification.deleteMany({ where: { memberId, tenantId } });
+
+    // member_note Tasks are staff-authored notes ADDRESSED TO the member
+    // (body required, rendered on their action list) — subject data, deleted.
+    // staff_task rows never reference members and are untouched.
+    await tx.task.deleteMany({
+      where: { tenantId, assigneeMemberId: memberId, kind: \"member_note\" },
+    });
+
+    // GDPR NEW-2: free-text staff notes on each promotion/demotion. Disclosed
+    // to the subject by the SAR export as their personal data, so they must go
+    // under Article 17 too. RankHistory carries no tenantId — it is reached
+    // through MemberRank.memberId, the same join the RLS policy uses
+    // (migration 20260503100000). Only `notes` is nulled: the promotion dates
+    // and rank ids are the gym's grading record, and the Member row itself is
+    // already pseudonymised by the update above.
+    await tx.rankHistory.updateMany({
+      where: { memberRank: { memberId } },
+      data: { notes: null },
+    });
+
+    // Auth tokens are keyed by EMAIL, not memberId, so they must be matched on
+    // the original address before the sentinel overwrite above lands — hence
+    // originalEmail, captured pre-erase. They also carry IP + user-agent.
+    //
+    // GDPR obs-3: matched case-INSENSITIVELY. Email local parts are formally
+    // case-sensitive but no mail provider treats them that way, and MatFlow's
+    // own sign-up/login paths do not force a canonical case — so a token issued
+    // to \"Alice@example.com\" would have escaped an exact-equality redaction and
+    // survived the erasure.
+    await tx.magicLinkToken.deleteMany({
+      where: { tenantId, email: { equals: originalEmail, mode: \"insensitive\" } },
+    });
+    await tx.passwordResetToken.deleteMany({
+      where: { tenantId, email: { equals: originalEmail, mode: \"insensitive\" } },
+    });
+
+    // EmailLog: redact the recipient to the sentinel rather than delete the
+    // rows — the send/bounce history is the tenant's deliverability record and
+    // its aggregate integrity matters. `subject` is left untouched on purpose:
+    // rewriting it would mean parsing and mutating historical copy for an
+    // unbounded set of templates, and the residual risk (a name inside a
+    // subject line) is bounded next to the certainty of corrupting the log.
+    // (GDPR obs-3: case-insensitive, same reasoning as the tokens above.)
+    await tx.emailLog.updateMany({
+      where: { tenantId, recipient: { equals: originalEmail, mode: \"insensitive\" } },
+      data: { recipient: sentinelEmail },
+    });
+  }).then(
+    () => true as const,
+    (err: unknown) => {
+      if (err instanceof ErasureSubjectChanged) return \"changed\" as const;
+      console.error(\"[dsar/erase] erase transaction failed; nothing was erased\", err);
+      return false as const;
+    },
+  );
+  if (erasedOk === \"changed\") {
+    return NextResponse.json(
+      {
+        error:
+          \"This member's details changed while the erasure was being prepared, so nothing was erased. \" +
+          (stripeCancelOutcome.performed
+            ? \"The member's Stripe subscription is already set to stop renewing. \"
+            : \"\") +
+          \"Review the member and try again.\",
+      },
+      { status: 409 },
+    );
+  }
+  if (!erasedOk) {
+    return NextResponse.json(
+      {
+        error:
+          \"Erasure failed and nothing was erased (the audit record and the erasure commit together). \" +
+          (stripeCancelOutcome.performed
+            ? \"The member's Stripe subscription is already set to stop renewing. \"
+            : \"\") +
+          \"Try again.\",
+      },
+      { status: 500 },
+    );
+  }
+
+  // Blob files, AFTER the DB commit. Best-effort per file: the rows are
+  // already gone/nulled, so a Blob API failure leaves an orphaned file, not
+  // surviving PII linked to the member. Never abort the erase for it — the
+  // warning names the row so an operator can clean up by hand.
+  for (const photo of scope.photos) {
+    await deleteBlobBestEffort(photo.url, `MemberPhoto ${photo.id}`);
+  }
+  for (const waiver of scope.waivers) {
+    await deleteBlobBestEffort(waiver.signatureImageUrl, `SignedWaiver ${waiver.id}`);
+  }
+
+  return NextResponse.json({
+    ok: true,
+    memberId,
+    erasedAt: new Date().toISOString(),
+    erased: erasedCounts,
+    children: {
+      affected: activeChildren,
+      strategy: activeChildren > 0 ? childStrategyParam : null,
+      reassignedTo: reassignToParentId,
+    },
+  });
+}
+
+/** The member's address or source identity changed between the pre-erase read and the locked read in the erase. */
+class ErasureSubjectChanged extends Error {
+  constructor() {
+    super(\"erasure subject changed since it was read\");
+  }
+}
+
+/**
+ * Delete one blob, never throwing. Non-blob URLs are skipped: MemberPhoto.url
+ * and SignedWaiver.signatureImageUrl both accept an inline `data:` fallback,
+ * which has no file behind it and must not be handed to the Blob API.
+ */
+async function deleteBlobBestEffort(url: string | null, label: string): Promise<void> {
+  if (!url || !isVercelBlobUrl(url)) return;
+  try {
+    await del(url);
+  } catch (err) {
+    console.warn(`[dsar/erase] blob delete failed for ${label}; file orphaned`, err);
+  }
+}
+"
+
+ ❯ tests/unit/operator-audit-durability.test.ts:241:17
+    239|     expect(src).toMatch(/await logAudit\(\{\s*durable: true,[\s\S]*?ac…
+    240|     // ...and the fulfilment row opens the erase transaction.
+    241|     expect(src).toMatch(/const erasedOk = await withTenantContext\(ten…
+       |                 ^
+    242|     // logAudit no longer swallows in these modes. Behaviour, with inj…
+    243|     // failures: tests/unit/dsar-erase-audit-durability.test.ts.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/unit/sec-c-static-guards.test.ts > SEC-033 raw SQL is parameterised > the reviewed raw-SQL call sites are exactly these (values interpolated as bind parameters only)
+AssertionError: expected [ …(11) ] to deeply equal [ 'app/api/health/route.ts', …(6) ]
+
+- Expected
++ Received
+
+@@ -1,8 +1,12 @@
+  [
++   "app/api/admin/dsar/erase/route.ts",
+    "app/api/health/route.ts",
++   "app/api/member/children/[id]/route.ts",
+    "app/api/member/class-subscriptions/[classId]/route.ts",
++   "app/api/members/[id]/route.ts",
++   "app/api/staff/[id]/route.ts",
+    "lib/attendance-import.ts",
+    "lib/checkin.ts",
+    "lib/login-email.ts",
+    "lib/prisma-tenant.ts",
+    "lib/rate-limit.ts",
+
+ ❯ tests/unit/sec-c-static-guards.test.ts:46:69
+     44|   });
+     45|   it("the reviewed raw-SQL call sites are exactly these (values interp…
+     46|     expect(hits(/\$(queryRaw|executeRaw)\s*(<[^`]*>)?\s*`/).sort()).to…
+       |                                                                     ^
+     47|       "app/api/health/route.ts",
+     48|       "app/api/member/class-subscriptions/[classId]/route.ts",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/unit/staff-last-owner-guard.test.ts > staff/[id] — a club can never lose its last owner through this route > an owner row cannot be deleted, and the miss reads as not found
+AssertionError: expected 500 to be 404 // Object.is equality
+
+- Expected
++ Received
+
+- 404
++ 500
+
+ ❯ tests/unit/staff-last-owner-guard.test.ts:68:24
+     66|     const { DELETE } = await import("@/app/api/staff/[id]/route");
+     67|     const res = await DELETE(req("DELETE"), params("user-owner-2"));
+     68|     expect(res.status).toBe(404);
+       |                        ^
+     69|     expect(deleteManyMock).toHaveBeenCalledWith({ where: { id: "user-o…
+     70|     expect(logAuditMock).not.toHaveBeenCalled();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  3 failed | 457 passed (460)
+      Tests  3 failed | 6392 passed (6395)
+   Start at  22:40:03
+   Duration  364.19s (transform 16.43s, setup 2.82s, import 80.51s, tests 116.85s, environment 78.90s)
+
+unit exit 1

@@ -1,0 +1,182 @@
+import { vi, describe, it, expect, beforeEach } from "vitest";
+
+type Call = { target: string; method: string; args: unknown[] };
+const h = vi.hoisted(() => {
+  const calls: Call[] = [];
+  const state = { session: null as unknown, token: null as unknown };
+  const record: Record<string, unknown> = {
+    id: "secC2-row-1", tenantId: "secC2-tenant", name: "secC2", status: "active", paymentStatus: "paid",
+    stripeSubscriptionId: null, totpSecret: "JBSWY3DPEHPK3PXP", totpEnabled: true, totpLastUsedStep: null,
+    mustChangePassword: false, sessionVersion: 0,
+  };
+  const model = (name: string) => new Proxy({}, {
+    get(_t, method) {
+      if (method === "then" || typeof method === "symbol") return undefined;
+      return async (...args: unknown[]) => {
+        calls.push({ target: name, method: String(method), args });
+        const m = String(method);
+        if (/Many$/.test(m) && m !== "findMany") return { count: 1 };
+        if (m === "findMany") return [];
+        return { ...record };
+      };
+    },
+  });
+  const db: Record<string | symbol, unknown> = new Proxy({}, {
+    get(_t, prop) {
+      if (prop === "then" || typeof prop === "symbol") return undefined;
+      if (prop === "$transaction") return async (fn: (t: unknown) => unknown) => fn(db);
+      return model(String(prop));
+    },
+  });
+  return { calls, state, db };
+});
+
+vi.mock("@/lib/prisma", () => ({ prisma: h.db, default: h.db }));
+vi.mock("@/lib/prisma-tenant", () => ({
+  withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) => fn(h.db),
+  withRlsBypass: async (fn: (tx: unknown) => unknown) => fn(h.db),
+}));
+vi.mock("@/auth", () => ({ auth: async () => h.state.session }));
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+vi.mock("@/lib/rate-limit", () => ({
+  checkRateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }),
+  getClientIp: () => "127.0.0.1",
+}));
+vi.mock("@/lib/audit-log", () => ({ logAudit: async () => undefined }));
+vi.mock("@/lib/auth-pending-gate", () => ({ refuseRevokedPendingToken: async () => null }));
+vi.mock("next-auth/jwt", () => ({ getToken: async () => h.state.token, encode: async () => "secC2.jwt" }));
+vi.mock("@/lib/login-email", () => ({
+  consumeUserTotp: async (...args: unknown[]) => { h.calls.push({ target: "totp", method: "consumeUserTotp", args }); return false; },
+}));
+vi.mock("otplib", () => ({
+  verifySync: (...args: unknown[]) => { h.calls.push({ target: "totp", method: "verifySync", args }); return { valid: false }; },
+  generateSecret: () => "JBSWY3DPEHPK3PXP",
+  generateURI: () => "otpauth://totp/x",
+}));
+vi.mock("@/lib/recovery-codes", () => ({ generateRecoveryCodes: async () => ({ plain: [], hashed: [] }) }));
+vi.mock("@/lib/import-upload", () => ({
+  createUpload: async (...args: unknown[]) => { h.calls.push({ target: "importUpload", method: "createUpload", args }); return { ok: false, error: "refused", code: "bad_request" }; },
+  UPLOAD_REFUSAL_STATUS: { bad_request: 400 },
+}));
+vi.mock("@/lib/support-session", () => ({ refuseSupportSession: () => null }));
+vi.mock("@/lib/api-authz", () => ({
+  requireApiOwner: async () => ({ ok: true, session: {}, tenantId: "secC2-tenant", userId: "secC2-owner", role: "owner" }),
+  requireApiOwnerOrManager: async () => ({ ok: true, session: {}, tenantId: "secC2-tenant", userId: "secC2-owner", role: "owner" }),
+}));
+
+type Handler = (req: Request, ctx?: unknown) => Promise<Response>;
+const ROUTES: Record<string, { load: () => Promise<Handler>; ctx?: unknown; valid: unknown; effect: (c: Call) => boolean }> = {
+  "/api/auth/totp/verify": {
+    load: async () => (await import("@/app/api/auth/totp/verify/route")).POST as unknown as Handler,
+    valid: { code: "123456" },
+    effect: (c) => c.method === "consumeUserTotp",
+  },
+  "/api/member/totp/verify": {
+    load: async () => (await import("@/app/api/member/totp/verify/route")).POST as unknown as Handler,
+    valid: { code: "123456" },
+    effect: (c) => c.method === "verifySync",
+  },
+  "/api/auth/totp/setup": {
+    load: async () => (await import("@/app/api/auth/totp/setup/route")).POST as unknown as Handler,
+    valid: { code: "123456", issueRecoveryCodes: true },
+    effect: (c) => c.method === "consumeUserTotp",
+  },
+  "/api/member/totp/setup": {
+    load: async () => (await import("@/app/api/member/totp/setup/route")).POST as unknown as Handler,
+    valid: { code: "123456", issueRecoveryCodes: true },
+    effect: (c) => c.method === "verifySync",
+  },
+  "/api/members/[id]/hold": {
+    load: async () => (await import("@/app/api/members/[id]/hold/route")).POST as unknown as Handler,
+    ctx: { params: Promise.resolve({ id: "secC2-row-1" }) },
+    valid: { until: null },
+    effect: (c) => c.target === "member" && c.method === "updateMany",
+  },
+  "/api/admin/import/uploads": {
+    load: async () => (await import("@/app/api/admin/import/uploads/route")).POST as unknown as Handler,
+    valid: { purpose: "members", fileName: "m.csv", bytes: 10, sha256: "a".repeat(64) },
+    effect: (c) => c.method === "createUpload",
+  },
+};
+
+function req(url: string, body: string) {
+  return new Request(`http://localhost${url}`, { method: "POST", headers: { "content-type": "application/json", origin: "http://localhost" }, body });
+}
+
+beforeEach(() => {
+  h.calls.length = 0;
+  h.state.session = { user: { id: "secC2-owner", tenantId: "secC2-tenant", role: "owner", memberId: "secC2-row-1" } };
+  h.state.token = { id: "secC2-owner", tenantId: "secC2-tenant", memberId: "secC2-row-1", totpPending: true, role: "owner" };
+});
+
+const bad = (valid: Record<string, unknown>) => ({
+  "unknown key role": JSON.stringify({ ...valid, role: "owner" }),
+  "unknown key tenantId": JSON.stringify({ ...valid, tenantId: "secC2-other" }),
+  "nested data": JSON.stringify({ ...valid, data: { paymentStatus: "paid" } }),
+  "null body": "null",
+  "array body": JSON.stringify([valid]),
+  "string body": JSON.stringify("x"),
+  "not JSON": "garbage{",
+  // `{}` is refused wherever a field is required; on the hold route it is the documented
+  // open-ended hold (member-hold.test.ts), so that route is exempted from this one cell below.
+  "empty object": "{}",
+});
+const SKIP: Record<string, string> = { "/api/members/[id]/hold|empty object": "an explicit {} is an open-ended hold by contract" };
+
+// ── Review R5 attack cells (scratch, not committed) ─────────────────────────────
+const MB = "x".repeat(1024 * 1024);
+const attacks = (valid: Record<string, unknown>) => {
+  const firstKey = Object.keys(valid)[0];
+  return {
+    "extra property": JSON.stringify({ ...valid, zzR5: 1 }),
+    "wrong type (number for first field)": JSON.stringify({ ...valid, [firstKey]: 123456 }),
+    "wrong type (object for first field)": JSON.stringify({ ...valid, [firstKey]: { $gt: "" } }),
+    "wrong type (bool for first field)": JSON.stringify({ ...valid, [firstKey]: true }),
+    "null": "null",
+    "array": JSON.stringify([valid]),
+    "string": JSON.stringify("123456"),
+    "number": "123456",
+    "1 MB string body": JSON.stringify(MB),
+    "1 MB object (valid + big extra)": JSON.stringify({ ...valid, pad: MB }),
+    "1 MB value in first field": JSON.stringify({ ...valid, [firstKey]: MB }),
+    "proto key": `{"__proto__":{"admin":true},${JSON.stringify(valid).slice(1)}`,
+    "empty body": "",
+  };
+};
+const R5_RESULTS: Array<{ route: string; label: string; status: number; effect: boolean }> = [];
+describe("R5: attack matrix on the six JSON routes", () => {
+  for (const [url, r] of Object.entries(ROUTES)) {
+    for (const [label, body] of Object.entries(attacks(r.valid as Record<string, unknown>))) {
+      it(`${url}: ${label} → 400, no effect, no 5xx`, async () => {
+        const POST = await r.load();
+        const res = await POST(req(url, body), r.ctx);
+        const effect = h.calls.some(r.effect);
+        R5_RESULTS.push({ route: url, label, status: res.status, effect });
+        expect(res.status).toBe(400);
+        expect(effect).toBe(false);
+      });
+    }
+  }
+  it("hold: until of the wrong type is refused and writes nothing", async () => {
+    const r = ROUTES["/api/members/[id]/hold"];
+    const POST = await r.load();
+    for (const b of [{ until: 123 }, { until: true }, { until: ["2030-01-01"] }, { until: { a: 1 } }, { until: "x".repeat(65) }]) {
+      h.calls.length = 0;
+      const res = await POST(req("/api/members/[id]/hold", JSON.stringify(b)), r.ctx);
+      expect(res.status, JSON.stringify(b).slice(0, 40)).toBe(400);
+      expect(h.calls.some(r.effect)).toBe(false);
+    }
+  });
+  it("positive controls still reach the effect", async () => {
+    for (const [url, r] of Object.entries(ROUTES)) {
+      h.calls.length = 0;
+      const POST = await r.load();
+      await POST(req(url, JSON.stringify(r.valid)), r.ctx);
+      expect(h.calls.some(r.effect), url).toBe(true);
+    }
+  });
+  it("dump", async () => {
+    const fs = await import("node:fs");
+    fs.writeFileSync(process.env.R5_OUT ?? "r5-validation.json", JSON.stringify(R5_RESULTS, null, 1));
+  });
+});

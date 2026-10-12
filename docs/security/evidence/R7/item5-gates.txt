@@ -1,0 +1,14 @@
+sha=03ef58456c7cb9ff047680b26831ab58d8590612 node=v24.21.0 start=2026-10-10T06:07:03Z
+lint exit=0 06:09:15
+tsc exit=0 06:11:21
+unit exit=1 06:19:24
+build exit=0 06:21:00
+audit exit=0 06:21:02
+done 2026-10-10T06:21:02Z
+lint: Lint passed: eslint clean, UI-RULES ratchet at or below baseline.
+unit:  Test Files 1 failed | 466 passed (467)  Tests 1 failed | 6467 passed (6468) 
+unit failure: tests/unit/sec-c-csrf-sweep.test.ts > SEC-042 ... > /api/account/login-email as owner — Test timed out in 30000ms (first dynamic import under load: sweep + probes running)
+unit rerun of that file alone:  Test Files 1 passed (1)  Tests 426 passed (426) 
+build: ✓ Compiled successfully in 34.5s BUILD_ID=AAk3Mz2mm0dH7UYfSvAfh
+audit: found 0 vulnerabilities
+tsc: 0 output lines (exit 0)

@@ -1,0 +1,26 @@
+node=v24.21.0 sha=2a6487e start=2026-10-10T08:51:57Z cmd=npx vitest run tests/unit
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: unknown key role → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: unknown key tenantId → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: nested data → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: unknown key role → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: unknown key tenantId → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: nested data → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: null body → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: null body → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: unknown key role → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: unknown key tenantId → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: nested data → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: array body → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: empty object → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: a code that is not a six-digit STRING never reaches the verifier
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: a code that is not a six-digit STRING never reaches the verifier
+ FAIL  tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > branding (owner, fit inside): the uploaded bytes are opened with limitInputPixels 50_000_000
+ FAIL  tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > profile-pic (member self, cover crop): the uploaded bytes are opened with limitInputPixels 50_000_000
+ FAIL  tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > no sharp call on the uploaded bytes is left unbounded
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile reconcileMatrix() > the real matrix reconciles with no UNPARSED row, deterministically
+ FAIL  tests/unit/sec-r-skip-gate-expected-files.test.ts > test-skip-gate --expect > a run that omits an expected database file fails
+ FAIL  tests/unit/sec-r-skip-gate-expected-files.test.ts > test-skip-gate --expect > a run that includes every expected file passes
+ Test Files  4 failed | 419 passed (423)
+      Tests  21 failed | 5139 passed (5160)
+   Duration  331.88s (transform 13.56s, setup 4.05s, import 74.52s, tests 102.76s, environment 75.38s)
+exit=1 end=2026-10-10T08:57:31Z

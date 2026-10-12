@@ -8,6 +8,8 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { apiError } from "@/lib/api-error";
+import { z } from "zod";
+import { checkUploadRateLimit, formFields, refuseOversizeBody } from "@/lib/upload-guard";
 
 if (process.env.NODE_ENV !== "production" && !process.env.BLOB_READ_WRITE_TOKEN) {
   console.warn(
@@ -58,9 +60,8 @@ const EXT_FOR_TYPE: Record<string, string> = {
 };
 
 /**
- * feat/member-profile-pictures Track A Phase A2: authorise an upload based
- * on its declared purpose. Returns either the authenticated context or a
- * NextResponse with an error status to bail out with.
+ * feat/member-profile-pictures Track A Phase A2: the upload policy by declared
+ * purpose (enforced by uploadPrincipal + authoriseMemberTarget below).
  *
  * Branding / "" / unknown purpose → owner-only (legacy behaviour).
  * Profile-pic uploads → the caller must be:
@@ -72,70 +73,81 @@ const EXT_FOR_TYPE: Record<string, string> = {
 // waiver graphics) stays owner-only.
 const MEMBER_SCOPED_PURPOSES = ["profile-pic", "member-photo"];
 
-async function authoriseUpload(
-  purpose: string | null,
-  targetMemberId: string | null,
-): Promise<
-  | { ok: true; tenantId: string; userId: string }
-  | { ok: false; response: NextResponse }
-> {
+/**
+ * Who is uploading, decided BEFORE the body is read (security campaign
+ * iteration 2, lane C2): the principal identifies the rate-limit buckets, so a
+ * refused or throttled caller never makes the server parse a multipart body or
+ * decode an image. Owner-only purposes run the owner gate here; member-scoped
+ * purposes need a session here and the target-member check after the body.
+ */
+type Principal =
+  | { ok: true; tenantId: string; userId: string; memberScoped: false }
+  | { ok: true; tenantId: string; userId: string; memberScoped: true; callerMemberId: string | null; isStaff: boolean }
+  | { ok: false; response: NextResponse };
+
+async function uploadPrincipal(purpose: string | undefined): Promise<Principal> {
   if (!MEMBER_SCOPED_PURPOSES.includes(purpose ?? "")) {
     // Legacy branding / announcement-image / waiver-graphic uploads stay
     // owner-only. Routes that need looser auth call with a member-scoped purpose.
     const gate = await requireApiOwner();
     if (!gate.ok) return gate;
-    return { ok: true, tenantId: gate.tenantId, userId: gate.userId };
+    return { ok: true, tenantId: gate.tenantId, userId: gate.userId, memberScoped: false };
   }
-
   const session = await auth();
   if (!session?.user) {
     return { ok: false, response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
-
-  if (!targetMemberId) {
-    return {
-      ok: false,
-      response: NextResponse.json(
-        { error: "profile-pic uploads require targetMemberId" },
-        { status: 400 },
-      ),
-    };
-  }
-
-  const tenantId = session.user.tenantId;
-  const userId = session.user.id;
-  const callerMemberId = (session.user as { memberId?: string }).memberId ?? null;
   const callerRole = session.user.role;
-  const isStaff = STAFF_ROLES.includes(callerRole as (typeof STAFF_ROLES)[number]);
-  const isSelf = callerMemberId !== null && callerMemberId === targetMemberId;
+  return {
+    ok: true,
+    tenantId: session.user.tenantId,
+    userId: session.user.id,
+    memberScoped: true,
+    callerMemberId: (session.user as { memberId?: string }).memberId ?? null,
+    isStaff: STAFF_ROLES.includes(callerRole as (typeof STAFF_ROLES)[number]),
+  };
+}
 
-  if (!isStaff && !isSelf) {
-    return {
-      ok: false,
-      response: NextResponse.json(
-        { error: "You can only upload a profile picture for your own account." },
-        { status: 403 },
-      ),
-    };
+/**
+ * feat/member-profile-pictures Track A Phase A2: a member-scoped upload's
+ * caller must be staff in the same tenant as the target member, OR the member
+ * themselves (session.user.memberId === targetMemberId).
+ */
+async function authoriseMemberTarget(
+  p: Extract<Principal, { memberScoped: true }>,
+  targetMemberId: string | null,
+): Promise<NextResponse | null> {
+  if (!targetMemberId) {
+    return NextResponse.json({ error: "profile-pic uploads require targetMemberId" }, { status: 400 });
   }
-
+  const isSelf = p.callerMemberId !== null && p.callerMemberId === targetMemberId;
+  if (!p.isStaff && !isSelf) {
+    return NextResponse.json({ error: "You can only upload a profile picture for your own account." }, { status: 403 });
+  }
   // Verify the target member belongs to this tenant — defence in depth so a
   // staff session in tenant A can't smuggle a Member id from tenant B.
-  const member = await withTenantContext(tenantId, (tx) =>
+  const member = await withTenantContext(p.tenantId, (tx) =>
     tx.member.findFirst({
-      where: { id: targetMemberId, tenantId },
+      where: { id: targetMemberId, tenantId: p.tenantId },
       select: { id: true },
     }),
   );
-  if (!member) {
-    return {
-      ok: false,
-      response: NextResponse.json({ error: "Member not found in this gym" }, { status: 404 }),
-    };
-  }
-
-  return { ok: true, tenantId, userId };
+  if (!member) return NextResponse.json({ error: "Member not found in this gym" }, { status: 404 });
+  return null;
 }
+
+/** Query string: only `purpose` (lane C2 strict validation). */
+const querySchema = z.strictObject({ purpose: z.string().regex(/^[a-z-]{1,32}$/).optional() });
+/**
+ * Multipart fields. `file` is required (checked below for a clearer message);
+ * `targetMemberId` for member-scoped purposes; `prefix` is sent by the
+ * announcement composer and is ignored. Anything else is refused.
+ */
+const formSchema = z.strictObject({
+  file: z.unknown().optional(),
+  targetMemberId: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  prefix: z.string().max(32).optional(),
+});
 
 export async function POST(req: Request) {
   // CSRF guard. multipart/form-data is a "simple" content type that browsers
@@ -147,7 +159,27 @@ export async function POST(req: Request) {
   if (csrfViolation) return csrfViolation;
 
   const url = new URL(req.url);
-  const purpose = url.searchParams.get("purpose");
+  const query = querySchema.safeParse(Object.fromEntries(url.searchParams));
+  if (!query.success || url.searchParams.getAll("purpose").length > 1) {
+    return NextResponse.json({ error: "Invalid upload request" }, { status: 400 });
+  }
+  const purpose = query.data.purpose ?? null;
+
+  // Lane C2 order: declared size → who → rate limit → body → target → bytes.
+  // Nothing below reads the body until the caller is known and within budget.
+  const oversize = refuseOversizeBody(
+    req,
+    MAX_BYTES,
+    `That image is too large. The limit is ${MAX_UPLOAD_MB}MB — try a smaller photo.`,
+  );
+  if (oversize) return oversize;
+
+  const principal = await uploadPrincipal(purpose ?? undefined);
+  if (!principal.ok) return principal.response;
+  const { tenantId, userId } = principal;
+
+  const limited = await checkUploadRateLimit("image", tenantId, userId);
+  if (limited) return limited;
 
   let formData: FormData;
   try {
@@ -155,18 +187,20 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid multipart payload" }, { status: 400 });
   }
+  const fields = formFields(formData);
+  const parsedForm = fields.ok ? formSchema.safeParse(fields.fields) : null;
+  if (!parsedForm || !parsedForm.success) {
+    return NextResponse.json({ error: "Invalid upload request" }, { status: 400 });
+  }
+  const targetMemberId = parsedForm.data.targetMemberId ?? null;
 
-  const targetMemberId =
-    typeof formData.get("targetMemberId") === "string"
-      ? (formData.get("targetMemberId") as string)
-      : null;
-
-  const authz = await authoriseUpload(purpose, targetMemberId);
-  if (!authz.ok) return authz.response;
-  const { tenantId, userId } = authz;
+  if (principal.memberScoped) {
+    const refused = await authoriseMemberTarget(principal, targetMemberId);
+    if (refused) return refused;
+  }
 
   try {
-    const file = formData.get("file");
+    const file = parsedForm.data.file;
     if (!(file instanceof File)) return NextResponse.json({ error: "No file" }, { status: 400 });
     if (file.size > MAX_BYTES) {
       return NextResponse.json(
@@ -196,7 +230,9 @@ export async function POST(req: Request) {
     let processedDimensions: { width: number; height: number } | null = null;
 
     try {
-      const pipeline = sharp(uploadBuffer).rotate(); // honour EXIF orientation
+      // Decoding cost is bounded (security lane D F4, SEC-051): 50 MP, not sharp's 268 MP default — an 8 KB PNG
+      // decodes to 67 MP otherwise. A per-principal rate limit on this route is still owed (FINDINGS SF-40).
+      const pipeline = sharp(uploadBuffer, { limitInputPixels: 50_000_000 }).rotate(); // honour EXIF orientation
       const resized =
         purpose === "profile-pic"
           ? pipeline.resize(PROFILE_PIC_SIZE_PX, PROFILE_PIC_SIZE_PX, { fit: "cover" })

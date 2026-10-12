@@ -4,7 +4,10 @@
  * Creates a new gym tenant + owner account, bypassing the standard
  * application/approval funnel. Use case: known-good gym onboardings or
  * testing. Owner-supplied password (no magic-link), so the operator must
- * hand the credentials off out-of-band.
+ * hand the credentials off out-of-band. That password is TEMPORARY
+ * (mustChangePassword + a 72-hour expiry): the owner replaces it at first
+ * sign-in, and the readiness activation verdict never reads an owner created
+ * here as "ALREADY ACTIVATED" without confirmation from the owner.
  *
  * Auth: getOperatorContext() — accepts both v1 (legacy MATFLOW_ADMIN_SECRET
  * header/cookie) and v1.5 (matflow_op_session HMAC cookie).
@@ -19,6 +22,7 @@ import { getBaseUrl } from "@/lib/env-url";
 import { getOperatorContext } from "@/lib/operator-context";
 import { assertSameOrigin } from "@/lib/csrf";
 import { looksLikeSharedMailbox, SHARED_MAILBOX_WARNING } from "@/lib/email-shape";
+import { tempPasswordExpiresAt } from "@/lib/temp-password";
 
 const schema = z.object({
   gymName: z.string().min(1).max(100),
@@ -93,6 +97,12 @@ export async function POST(req: Request) {
               passwordHash,
               name: ownerName,
               role: "owner",
+              // Review of lane I, D-I2 (6 Oct 2026): the OPERATOR chose this
+              // password, so it is temporary, like a force-password-reset: the
+              // owner must replace it (proxy/API gates) within the 72-hour window
+              // (lib/temp-password.ts). A brand-new row has no sessions to evict.
+              mustChangePassword: true,
+              tempPasswordExpiresAt: tempPasswordExpiresAt(),
             },
           },
         },
@@ -106,7 +116,15 @@ export async function POST(req: Request) {
       action: "admin.tenant.create",
       entityType: "Tenant",
       entityId: tenant.id,
-      metadata: { slug: tenant.slug, name: tenant.name, operatorEmail: operator.operatorEmail },
+      // ownerUserId + ownerPasswordChosenBy: scripts/readiness/activation-verdict.mjs
+      // treats this row as an operator-issued credential for that owner (D-I2).
+      metadata: {
+        slug: tenant.slug,
+        name: tenant.name,
+        operatorEmail: operator.operatorEmail,
+        ownerUserId: tenant.users.find((u) => u.role === "owner")?.id ?? null,
+        ownerPasswordChosenBy: "operator",
+      },
       actAsUserId: operator.operatorId,
       req,
     });

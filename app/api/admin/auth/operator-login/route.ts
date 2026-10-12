@@ -2,19 +2,28 @@
  * POST /api/admin/auth/operator-login
  * Body: { email: string, password: string }
  *
- * v1.5 of /admin auth: per-operator email/password login. If TOTP is enabled,
- * this sets a short-lived challenge cookie and returns { totpRequired: true }.
- * Otherwise it issues the full HMAC-signed matflow_op_session cookie.
+ * Password step of operator sign-in. It NEVER issues a full session
+ * (operator auth hardening, 6 Oct 2026 — TOTP is mandatory for operators):
+ *
+ *   - operator has an authenticator → short-lived challenge cookie,
+ *     { totpRequired: true }; /api/admin/auth/operator-totp finishes sign-in.
+ *   - operator has none yet → short-lived ENROLMENT cookie (Path=/api/admin/auth),
+ *     { enrolmentRequired: true }; only /api/admin/auth/operator-totp/setup
+ *     accepts it, and it mints the full session once a code verifies.
+ *
+ * Previously an operator without TOTP got the full session here, on the
+ * password alone (audit 5 Oct 2026, Q1).
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { assertSameOrigin } from "@/lib/csrf";
 import {
   attemptOperatorLogin,
-  completeOperatorLogin,
+  issueOperatorEnrolmentSession,
   issueOperatorTotpChallenge,
-  issueOperatorSession,
-  operatorCookieSetHeaders,
+  operatorEnrolmentCookieClearHeaderValue,
+  operatorEnrolmentCookieSetHeaderValue,
   operatorTotpChallengeCookieClearHeaderValue,
   operatorTotpChallengeCookieSetHeaderValue,
 } from "@/lib/operator-auth";
@@ -27,6 +36,11 @@ const schema = z.object({
 });
 
 export async function POST(req: Request) {
+  // Login CSRF: refuse a cross-site form post that would sign this browser
+  // into someone else's operator account.
+  const csrf = assertSameOrigin(req);
+  if (csrf) return csrf;
+
   const ip = getClientIp(req);
   const rl = await checkRateLimit(`admin:operator-login:${ip}`, 5, 15 * 60 * 1000);
   if (!rl.allowed) {
@@ -57,15 +71,15 @@ export async function POST(req: Request) {
 
   if (result.operator.totpEnabled) {
     const challenge = issueOperatorTotpChallenge(result.operator.id, result.operator.sessionVersion);
-    return NextResponse.json(
-      { ok: true, totpRequired: true },
-      { status: 200, headers: { "Set-Cookie": operatorTotpChallengeCookieSetHeaderValue(challenge) } },
-    );
+    const res = NextResponse.json({ ok: true, totpRequired: true }, { status: 200 });
+    res.headers.append("Set-Cookie", operatorTotpChallengeCookieSetHeaderValue(challenge));
+    res.headers.append("Set-Cookie", operatorEnrolmentCookieClearHeaderValue());
+    return res;
   }
 
-  const operator = await completeOperatorLogin(result.operator.id);
-  const token = issueOperatorSession(operator.id, operator.sessionVersion);
-  const res = NextResponse.json({ ok: true }, { status: 200, headers: operatorCookieSetHeaders(token) });
+  const enrolment = issueOperatorEnrolmentSession(result.operator.id, result.operator.sessionVersion);
+  const res = NextResponse.json({ ok: true, enrolmentRequired: true }, { status: 200 });
+  res.headers.append("Set-Cookie", operatorEnrolmentCookieSetHeaderValue(enrolment));
   res.headers.append("Set-Cookie", operatorTotpChallengeCookieClearHeaderValue());
   return res;
 }

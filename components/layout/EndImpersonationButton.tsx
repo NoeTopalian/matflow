@@ -34,7 +34,7 @@ export default function EndImpersonationButton() {
         opacity: pending ? 0.6 : 1,
       }}
     >
-      {pending ? "Ending…" : "End impersonation →"}
+      {pending ? "Ending…" : "End support session"}
     </button>
   );
 }

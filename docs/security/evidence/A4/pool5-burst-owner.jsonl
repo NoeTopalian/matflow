@@ -1,0 +1,4 @@
+A4-BURST {"role":"owner","nodeEnv":"production","poolMax":5,"tally":{"refused":10,"code:rate_limited":30},"judged":10,"verdicts":{"wrong":10,"right":0,"failClosedErrors":[]},"refusedWithoutVerdict":0,"rightPasswordOutcome":"code:rate_limited","addressCounterAfter":10,"nextAttempt":"code:rate_limited"}
+A4-OVERFLOW {"role":"owner","tally":{"refused":10,"code:rate_limited":29},"verdicts":{"wrong":10,"right":0,"failClosedErrors":[]},"refusedWithoutVerdict":0,"addressCounterAfter":10,"rightPasswordAfter":"code:rate_limited"}
+A4-REFUND {"role":"owner","outcome":"admitted","seeded":5,"counterAfter":5}
+A4-KNOWN {"role":"owner","stranger":"code:rate_limited","own":"admitted","afterOwn":10,"ownWrong":"refused","afterOwnWrong":11}

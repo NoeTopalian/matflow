@@ -122,6 +122,8 @@ export async function POST(req: Request) {
   }
   let body: Record<string, unknown>;
   try { body = (await req.json()) as Record<string, unknown>; } catch { return bad("Invalid JSON"); }
+  // null, an array or a primitive is not a request (SF-C5: null threw a 500).
+  if (!body || typeof body !== "object" || Array.isArray(body)) return bad("Invalid JSON");
   const action = String(body.action ?? "");
 
   // Steps are many small calls; everything else is rare.
@@ -309,7 +311,13 @@ async function commit(req: Request, tenantId: string, userId: string, jobId: str
   const started = await withTenantContext(tenantId, async (tx) => {
     const token = await claimLease(tx, tenantId, job.id, ["preview"]);
     if (!token) return null;
-    const mappings: JobMappings = { createdClasses: {}, snapshotAt: job.sourceExportedAt?.toISOString() ?? null, decisions: inputs.decisions };
+    // Every person's resolution is frozen as committed: later steps re-plan
+    // against the live roster, and a member added or re-addressed mid-commit
+    // must not receive history the owner never previewed (AH-D1 / SEC-053).
+    const frozenPeople = Object.fromEntries(
+      built.plan.people.map((p) => [p.personKey, { memberId: p.memberId, method: p.matchMethod, decidedPending: p.decidedPending }]),
+    );
+    const mappings: JobMappings = { createdClasses: {}, snapshotAt: job.sourceExportedAt?.toISOString() ?? null, decisions: { ...inputs.decisions, frozenPeople } };
     await createHistoricalClasses(tx, tenantId, job.id, built.plan, inputs, mappings.createdClasses);
     // Today's live sessions come from the timetable (with their end times)
     // before any of today's history is attached to them.

@@ -1,5 +1,10 @@
 name: E2E (Playwright)
 
+# Least-privilege token for every job (security campaign SF-21, 9 Oct 2026): nothing here
+# writes to the repository, so the default read-write GITHUB_TOKEN is withdrawn.
+permissions:
+  contents: read
+
 # Deliberately NOT on pull_request. The suite takes ~10 minutes against a live
 # dev server and a seeded database; gating every PR on it would trade a real
 # blocker for a flaky one. It runs nightly and on demand, so regressions surface
@@ -78,16 +83,21 @@ jobs:
       # flag cannot be honoured anywhere it would matter. The postgres service
       # above is an ephemeral container local to this job.
       #
-      # The bypass is additionally gated on the request looking local
-      # (auth.ts: `isTestingMode() && isLocalhost`), which a direct request to
-      # the job's own dev server satisfies.
+      # The bypass additionally requires E2E_AUTH_BYPASS=true (lane A2, Oct 2026):
+      # it is refused whenever VERCEL or VERCEL_ENV is set and wherever
+      # isTestingMode() refuses, and no request header plays any part any more
+      # (the old x-forwarded-for / x-real-ip "looks local" check was spoofable).
       TESTING_MODE: "true"
+      E2E_AUTH_BYPASS: "true"
+      # Lane M1 v2 (10 Oct 2026): the retention sweep is OFF unless this is exactly "true"; the e2e job
+      # drives a live sweep against its own ephemeral database, so it opts in here. Production leaves it unset.
+      RETENTION_CRON_ENABLED: "true"
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: 24 # matches the Vercel runtime line (SF-21); local Node 25 is EOL
           cache: npm
 
       - name: Install dependencies

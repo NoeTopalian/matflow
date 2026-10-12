@@ -1,0 +1,12 @@
+{"case":"positive control (no tamper)","expected":"PASS","got":"PASS","caught":true,"firstFail":null}
+{"case":"policy USING expression changed, same name (SF-64 a)","expected":"FAIL","got":"FAIL","caught":true,"firstFail":"policies changed on AuditLog (name, command, roles or expression)"}
+{"case":"trigger function body replaced, same name (SF-64 b)","expected":"FAIL","got":"FAIL","caught":true,"firstFail":"function changed: matflow_lowercase_email()"}
+{"case":"trigger disabled","expected":"FAIL","got":"FAIL","caught":true,"firstFail":"triggers changed on User (definition or enabled state)"}
+{"case":"BYPASSRLS granted to the runtime role (SF-64 c)","expected":"FAIL","got":"FAIL","caught":true,"firstFail":"role changed: matflow_app"}
+{"case":"extra grant: TRUNCATE on AuditLog to the runtime role (SF-64 c)","expected":"FAIL","got":"FAIL","caught":true,"firstFail":"grants changed on AuditLog: {neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwd/neondb_owner} -> {neondb_owner=arwdDxtm/neondb_owner,matflow_app=arwdD/neondb_owner}"}
+{"case":"audit row rewritten, row count kept (SF-64 d)","expected":"FAIL","got":"FAIL","caught":true,"firstFail":"content of AuditLog differs"}
+{"case":"session version rewound on one user (security state, SF-64 e)","expected":"FAIL","got":"FAIL","caught":true,"firstFail":"content of User differs"}
+{"case":"outstanding sign-in link planted (security state)","expected":"FAIL","got":"FAIL","caught":true,"firstFail":"row count MagicLinkToken: 0 -> 1"}
+{"case":"session version rewound, fingerprint WITHOUT content hashes","expected":"FAIL","got":"FAIL","caught":true,"firstFail":"security state differs: userSessionVersionSum 251 -> 250"}
+{"cases":10,"asExpected":10,"node":"v24.21.0"}
+exit=0

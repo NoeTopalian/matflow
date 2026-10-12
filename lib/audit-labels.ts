@@ -46,6 +46,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "member.bulk_invite": "Sent login invites to members",
   "member.dsar_export": "Exported a member's data (subject access)",
   "member.dsar_erase": "Erased a member's data (right to erasure)",
+  "member.dsar_erase.requested": "Started erasing a member's data (right to erasure)",
   "member.payment.failed": "A member's payment failed",
   "member.payment.succeeded": "A member's payment succeeded",
   "member.subscription.cancel": "Member cancelled their subscription",
@@ -170,6 +171,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "auth.logout_all": "Signed out of every device",
   "auth.login.disowned": "Reported a sign-in as not theirs",
   "auth.login.new_device_notified": "New-device sign-in alert sent",
+  "auth.totp.enrolled": "Set up an authenticator",
   "auth.totp.recovery_codes.generated": "Generated authenticator recovery codes",
   "auth.totp.recovery.used": "Signed in with a recovery code",
   "auth.totp.recovery.failed": "Recovery code refused",
@@ -177,6 +179,13 @@ export const AUDIT_LABELS: Record<string, string> = {
   "auth.member.totp.recovery.used": "Member signed in with a recovery code",
   "auth.member.totp.recovery.failed": "Member recovery code refused",
   "user.password.set_own": "Set their own password",
+  "auth.magic_link.refused_provisional": "Refused a sign-in link for a provisional (unverified) login email",
+  "auth.magic_link.refused_subject": "Refused a sign-in link that was sent to a different person at this address",
+  "auth.password_reset.refused_provisional": "Refused a password reset for a provisional (unverified) login email",
+  "auth.external_signin.refused_provisional": "Refused an external sign-in for a provisional (unverified) login email",
+  "user.login_email.changed": "Changed their own login email (unverified until confirmed)",
+  "user.profile.updated": "Changed their own name",
+  "user.password.changed": "Changed their own password (signed out everywhere)",
 
   // ── Operator (MatFlow) ────────────────────────────────────────────────────
   "admin.application.approve": "MatFlow approved the club application",
@@ -184,6 +193,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "admin.tenant.create": "MatFlow created the club",
   "admin.tenant.suspended": "MatFlow suspended the club",
   "admin.tenant.reactivated": "MatFlow reactivated the club",
+  "admin.tenant.soft_delete.requested": "MatFlow started closing the club",
   "admin.tenant.soft_deleted": "MatFlow closed the club",
   "admin.tenant.restored": "MatFlow restored the club",
   "admin.tenant.hard_deleted": "MatFlow permanently deleted a club",
@@ -192,9 +202,38 @@ export const AUDIT_LABELS: Record<string, string> = {
   "admin.tenant.ownership_transferred": "MatFlow transferred club ownership",
   "admin.owner.force_password_reset": "MatFlow issued the owner a temporary password",
   "admin.owner.totp_reset": "MatFlow reset the owner's authenticator",
+  "admin.owner.login_email.marked_provisional": "MatFlow marked the owner's login email as provisional (unverified)",
+  "admin.owner.login_email.cleared_provisional": "MatFlow confirmed the owner's login email on its own verification",
+  "admin.owner.login_email.changed": "MatFlow changed the owner's login email (unverified until confirmed)",
+  "admin.owner.profile.updated": "MatFlow corrected the owner's name",
   "admin.member.totp_reset": "MatFlow reset a member's authenticator",
+  // Admin hub lane F (9 Oct 2026): resolving a login-address conflict.
+  "admin.login_email.checked": "MatFlow checked who holds a login address in the club",
+  "admin.member.contact_email.changed": "MatFlow changed a member's contact email (unverified until confirmed)",
+  "admin.access.revoked": "MatFlow signed out every session and cancelled every sign-in link or code in scope (incident revoke-all)",
   "admin.impersonate.start": "MatFlow support signed in as the owner",
   "admin.impersonate.end": "MatFlow support ended the support session",
+  "admin.operator.totp_enrolled": "A MatFlow operator set up their authenticator",
+  "admin.operator.step_up": "A MatFlow operator confirmed an action with their authenticator",
+  // Security log of a refused step-up confirmation (lib/operator-step-up.ts,
+  // 9 Oct 2026): written outside any mutation, platform-scoped (no club).
+  "admin.operator.step_up_refused": "A MatFlow operator confirmation was refused",
+  // Security row for a refused operator (lib/operator-auth.ts, admin hub lane B).
+  "admin.operator.refused": "A MatFlow operator request was refused",
+  "admin.operator.signed_in": "A MatFlow operator signed in to the operator console",
+  // A step-up action name (lib/operator-step-up.ts), sent as `action:` in the
+  // grant request by LoginAsOwnerButton, so the scan below finds it. Not an
+  // AuditLog action today; labelled so it reads well if it ever becomes one.
+  "support.impersonate": "MatFlow support confirmed a support session",
+  // Step-up action name sent by the operator Login email card (7 Oct 2026);
+  // the audit rows it leads to are admin.owner.login_email.*.
+  "owner.login_email": "MatFlow confirmed a change to the owner's login email",
+  // Step-up action name sent by the operator Owner profile card (8 Oct 2026);
+  // the audit row it leads to is admin.owner.profile.updated.
+  "owner.profile": "MatFlow confirmed a correction to the owner's name",
+  // Step-up action name sent by the conflict panel (9 Oct 2026); the audit row
+  // it leads to is admin.member.contact_email.changed.
+  "member.contact_email": "MatFlow confirmed a change to a member's contact email",
 };
 
 /** "member.photo.add" → "Member photo add" — only for names not in the map. */

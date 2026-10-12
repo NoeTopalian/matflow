@@ -1,0 +1,31 @@
+// R7 item 4: compile app/globals.css at the review SHA and 5259d3b's globals.css (same tree), as the build does,
+// extract the class selectors, diff, and check each removed class against the app source (app/, components/, lib/).
+import fs from "node:fs";
+import path from "node:path";
+import postcss from "postcss";
+import tailwind from "@tailwindcss/postcss";
+const compile = async (p) => (await postcss([tailwind({ base: process.cwd() })]).process(fs.readFileSync(p, "utf8"), { from: path.resolve(p) })).css;
+const classes = (css) => {
+  const set = new Set();
+  const root = postcss.parse(css);
+  root.walkRules((r) => {
+    for (const sel of r.selectors) for (const m of sel.matchAll(/\.((?:\\.|[A-Za-z0-9_-])+)/g)) set.add(m[1].replace(/\\(.)/g, "$1"));
+  });
+  return set;
+};
+const now = classes(await compile("app/globals.css"));
+const old = classes(await compile(process.argv[2]));
+const removed = [...old].filter((c) => !now.has(c)).sort();
+const added = [...now].filter((c) => !old.has(c)).sort();
+const files = [];
+const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.(ts|tsx)$/.test(e.name)) files.push(p); } };
+["app", "components", "lib"].forEach(walk);
+const src = files.map((f) => fs.readFileSync(f, "utf8")).join("\n");
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const usedRemoved = removed.filter((c) => new RegExp(`(^|[\\s"'\`{(])${esc(c)}(?=$|[\\s"'\`})])`).test(src));
+// The built CSS from the gates build must contain every class the compile at the review SHA produces.
+const builtFiles = fs.readdirSync(".next/static/chunks", { recursive: true }).filter((f) => String(f).endsWith(".css"));
+const built = builtFiles.map((f) => fs.readFileSync(path.join(".next/static/chunks", String(f)), "utf8")).join("\n");
+const builtSet = classes(built);
+const missingFromBuilt = [...now].filter((c) => !builtSet.has(c));
+console.log(JSON.stringify({ classesNow: now.size, classes5259d3bCss: old.size, removed: removed.length, added: added.length, removedThatAppSourceUsesAsToken: usedRemoved, builtCssFiles: builtFiles.length, builtCssClasses: builtSet.size, missingFromBuilt: missingFromBuilt.slice(0, 20), missingFromBuiltCount: missingFromBuilt.length, removedList: removed, addedList: added }, null, 1));

@@ -1,0 +1,19 @@
+/** Review R9: count-only leftover check for R9's own fixtures (secr9-) and the fixtures of tests R9 ran (secm1-). */
+import { vi, describe, it, expect } from "vitest";
+vi.mock("@sentry/nextjs", () => ({ captureException: () => {} }));
+import { withRlsBypass } from "@/lib/prisma-tenant";
+
+describe.skipIf(!process.env.DATABASE_URL)("R9 leftovers", () => {
+  it("no secr9-/secm1- tenants or users remain", async () => {
+    const url = process.env.DATABASE_URL ?? "";
+    if (!url.includes("ep-hidden-salad") || url.includes("ep-bold-wave")) throw new Error("REFUSED: not the TEST branch");
+    const c = await withRlsBypass(async (tx) => ({
+      secr9Tenants: await tx.tenant.count({ where: { slug: { startsWith: "secr9-" } } }),
+      secm1Tenants: await tx.tenant.count({ where: { slug: { startsWith: "secm1-" } } }),
+      secr9Users: await tx.user.count({ where: { email: { contains: "secr9-" } } }),
+      secm1Users: await tx.user.count({ where: { email: { contains: "secm1-" } } }),
+    }));
+    console.log(`R9 leftovers ${JSON.stringify(c)}`);
+    expect(c).toEqual({ secr9Tenants: 0, secm1Tenants: 0, secr9Users: 0, secm1Users: 0 });
+  });
+});

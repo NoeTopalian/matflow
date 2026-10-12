@@ -1,18 +1,37 @@
 /**
  * POST /api/admin/auth/login
  * Body: { secret: string }
- * Sets the matflow_admin cookie on success. Used by /admin/login page to gate /admin/*.
  *
- * Rate-limited per IP to prevent brute force.
+ * DEVELOPMENT / TEST ONLY (operator auth hardening, 6 Oct 2026). Sets the
+ * `matflow_admin` shared-secret cookie for local tooling.
+ *
+ * Wherever `sharedAdminSecretPermitted()` is false — Vercel production, any
+ * NODE_ENV=production build, anything on the production database — this route
+ * refuses BEFORE reading the body: it does not compare the secret, so it can
+ * neither grant access nor confirm a guess. Operators sign in with their own
+ * account and authenticator (/api/admin/auth/operator-login).
+ *
+ * Rate-limited per IP to prevent brute force where it is still live.
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { constantTimeEq, adminCookieSetHeaders } from "@/lib/admin-auth";
+import { assertSameOrigin } from "@/lib/csrf";
+import { constantTimeEq, adminCookieSetHeaders, sharedAdminSecretPermitted } from "@/lib/admin-auth";
 
 const schema = z.object({ secret: z.string().min(1).max(200) });
 
 export async function POST(req: Request) {
+  if (!sharedAdminSecretPermitted()) {
+    return NextResponse.json(
+      { error: "Shared-secret sign-in is disabled. Sign in with your operator account." },
+      { status: 403 },
+    );
+  }
+
+  const csrf = assertSameOrigin(req);
+  if (csrf) return csrf;
+
   const ip = getClientIp(req);
   const rl = await checkRateLimit(`admin:login:${ip}`, 5, 15 * 60 * 1000);
   if (!rl.allowed) {
@@ -34,14 +53,11 @@ export async function POST(req: Request) {
   }
 
   if (!constantTimeEq(parsed.data.secret, expected)) {
-    // Audit failed admin-login attempts so brute-force surfaces in logs.
     console.warn(`[admin/auth/login] failed admin login attempt from ip=${ip}`);
     return NextResponse.json({ error: "Invalid secret" }, { status: 401 });
   }
 
-  // Super-admin events have no tenant context — log to console (visible in
-  // Vercel logs / Sentry) instead of the tenant-scoped AuditLog table.
-  console.warn(`[admin/auth/login] successful admin login from ip=${ip}`);
+  console.warn(`[admin/auth/login] successful development admin login from ip=${ip}`);
 
   return NextResponse.json({ ok: true }, { status: 200, headers: adminCookieSetHeaders(expected) });
 }

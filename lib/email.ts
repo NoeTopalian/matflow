@@ -4,10 +4,15 @@
  *
  * Every send is logged to EmailLog. If RESEND_API_KEY is missing, sends are
  * still logged with status 'failed' so the rest of the system keeps working
- * during local dev.
+ * during local dev. With EMAIL_DELIVERY=off (lib/email-delivery.ts) nothing
+ * is sent and the row is written at status 'suppressed'.
  */
 import { Resend } from "resend";
-import { withTenantContext } from "@/lib/prisma-tenant";
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
+import { isEmailDeliveryOn, type SendEmailResult } from "@/lib/email-delivery";
+import { isLoginEmailProvisional } from "@/lib/login-email";
+
+export type { SendEmailResult } from "@/lib/email-delivery";
 
 // Audit iter-1-infra A7I1-P-3: cache the Resend client AFTER first send so
 // the constructor cost — HTTP-client setup + key validation — pays once
@@ -388,17 +393,63 @@ async function resolveClubReplyTo(tenantId: string): Promise<string | undefined>
     const t = await withTenantContext(tenantId, (tx) =>
       tx.tenant.findUnique({ where: { id: tenantId }, select: { contactEmail: true, billingContactEmail: true } }),
     );
-    const addr = t?.contactEmail?.trim() || t?.billingContactEmail?.trim() || "";
-    return addr.length > 0 ? addr : undefined;
+    // A provisional (unverified) login email is never a Reply-To: members
+    // would be writing to a mailbox nobody has shown the club reads (review
+    // defect 9, 7 Oct 2026). Skip it and try the next address.
+    for (const candidate of [t?.contactEmail?.trim(), t?.billingContactEmail?.trim()]) {
+      if (candidate && !(await isProvisionalLoginAddress(candidate))) return candidate;
+    }
+    return undefined;
   } catch {
     return undefined;
   }
 }
 
-export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; logId: string }> {
+/**
+ * True when ANY staff account, in ANY club, uses this address as a
+ * provisional login email (review defect 8, 7 Oct 2026). Deliberately not
+ * scoped to the sending tenant: system mail (`_system`, e.g. application
+ * receipts) and mail from another club must not reach the address either.
+ * Case-insensitive. Throws if the lookup cannot run — callers fail closed.
+ */
+async function isProvisionalLoginAddress(address: string): Promise<boolean> {
+  const row = await withRlsBypass((tx) =>
+    tx.user.findFirst({
+      where: {
+        email: { equals: address.trim(), mode: "insensitive" },
+        loginEmailProvisionalSince: { not: null },
+      },
+      select: { id: true, loginEmailProvisionalSince: true },
+    }),
+  );
+  return isLoginEmailProvisional(row);
+}
+
+export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
   const render = TEMPLATES[args.templateId];
   if (!render) throw new Error(`Unknown template: ${args.templateId}`);
   const { subject, html, text } = render(args.vars);
+
+  // Mail-dark switch (7 Oct 2026, lib/email-delivery.ts). Checked FIRST — before
+  // the client is built and before any lookup — so that with EMAIL_DELIVERY=off
+  // no code path can reach Resend, whatever key is configured. One EmailLog
+  // row records what would have gone out; `suppressed` lets the caller say
+  // "email is turned off" instead of "the send failed".
+  if (!isEmailDeliveryOn()) {
+    const log = await withTenantContext(args.tenantId, (tx) =>
+      tx.emailLog.create({
+        data: {
+          tenantId: args.tenantId,
+          templateId: args.templateId,
+          recipient: args.to,
+          subject,
+          status: "suppressed",
+          errorMessage: "suppressed_delivery_off: EMAIL_DELIVERY=off — nothing was sent",
+        },
+      }),
+    );
+    return { ok: false, logId: log.id, suppressed: "delivery_off" };
+  }
 
   // Mail-disabled short-circuit. With no Resend client (RESEND_API_KEY unset —
   // the test environment, or a deliberately mail-dark deploy) there is nothing
@@ -422,6 +473,49 @@ export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; log
       }),
     );
     return { ok: false, logId: log.id };
+  }
+
+  // Provisional login email (7 Oct 2026, lib/login-email.ts). An address that
+  // a staff account in ANY club uses only as a sign-in IDENTIFIER — nobody
+  // has shown the person reads that mailbox — receives nothing, whatever the
+  // template or sending tenant: not an invite, not a reset, not an owner
+  // alert, not system mail. Whoever does read it must not learn anything from
+  // MatFlow. Holds with delivery on.
+  //
+  // Fails closed: if the check cannot run, nothing is sent.
+  let provisional: boolean;
+  try {
+    provisional = await isProvisionalLoginAddress(args.to);
+  } catch (e) {
+    console.error("[email] provisional-recipient check failed — not sending", e instanceof Error ? e.message : e);
+    const log = await withTenantContext(args.tenantId, (tx) =>
+      tx.emailLog.create({
+        data: {
+          tenantId: args.tenantId,
+          templateId: args.templateId,
+          recipient: args.to,
+          subject,
+          status: "failed",
+          errorMessage: "Recipient check failed — not sent",
+        },
+      }),
+    );
+    return { ok: false, logId: log.id };
+  }
+  if (provisional) {
+    const log = await withTenantContext(args.tenantId, (tx) =>
+      tx.emailLog.create({
+        data: {
+          tenantId: args.tenantId,
+          templateId: args.templateId,
+          recipient: args.to,
+          subject,
+          status: "suppressed",
+          errorMessage: "suppressed_provisional: recipient is a provisional (unverified) login email — nothing was sent",
+        },
+      }),
+    );
+    return { ok: false, logId: log.id, suppressed: "provisional_recipient" };
   }
 
   // Bounce-aware short-circuit: if this recipient hard-bounced or marked us

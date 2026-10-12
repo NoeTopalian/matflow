@@ -1,0 +1,90 @@
+"""Review R5 mutants on the scratch worktree. Each mutant edits one file, runs the named tests,
+records exit code + failed counts, then restores the file with git checkout. Node 24 on PATH."""
+import json, os, re, subprocess, sys
+
+WT = r"<scratchpad-root>\scratchpad\security\R5\wt"
+NODE = r"<scratchpad-root>\scratchpad\security\node24\node-v24.21.0-win-x64"
+LOGS = r"<scratchpad-root>\scratchpad\security\R5\logs"
+env = dict(os.environ)
+env["PATH"] = NODE + os.pathsep + env["PATH"]
+
+CSP_TESTS = ["tests/unit/sec-c2-csp.test.ts"]
+REPORT_TESTS = ["tests/unit/sec-c2-csp-report.test.ts"]
+UPLOAD_TESTS = ["tests/unit/sec-c2-upload-controls.test.ts"]
+
+MUTANTS = [
+    ("M1a proxy: documents get NextResponse.next() with no CSP", "proxy.ts",
+     "  if (!wantsDocumentCsp(req.nextUrl.pathname)) {", "  if (true) {", CSP_TESTS),
+    ("M1b proxy: nonce policy not forwarded on the request (Next cannot stamp the nonce)", "proxy.ts",
+     "  requestHeaders.set(headerName, policy);\n  requestHeaders.set(\"x-nonce\", nonce);\n", "", CSP_TESTS),
+    ("M1c proxy: nonce minted once per process (reused across requests)", "proxy.ts",
+     "  const nonce = newNonce();", "  const nonce = ((globalThis as any).__r5n ??= newNonce());", CSP_TESTS),
+    ("M1d proxy: client-sent CSP request headers not dropped", "proxy.ts",
+     "  requestHeaders.delete(\"content-security-policy\");\n", "", CSP_TESTS),
+    ("M1e lib/csp: 'unsafe-inline' added to script-src", "lib/csp.ts",
+     "'strict-dynamic' ${SCRIPT_HOSTS", "'strict-dynamic' 'unsafe-inline' ${SCRIPT_HOSTS", CSP_TESTS),
+    ("M1f proxy: kiosk/leaderboard routed through the next-auth wrapper", "proxy.ts",
+     "  if (isTokenDocumentPath(req.nextUrl.pathname)) {", "  if (false) {", CSP_TESTS),
+    ("M2a report route logs the raw body", "app/api/csp-report/route.ts",
+     "  const counts = tallyReports(reports);", "  console.info(text);\n  const counts = tallyReports(reports);", REPORT_TESTS),
+    ("M2b report route logs the document address", "app/api/csp-report/route.ts",
+     "  const counts = tallyReports(reports);", "  console.info(String(reports[0]?.[\"document-uri\"] ?? reports[0]?.documentURL));\n  const counts = tallyReports(reports);", REPORT_TESTS),
+    ("M3a cap raised to 32 KB (a 20 KB report accepted)", "lib/csp-report.ts",
+     "export const CSP_REPORT_MAX_BYTES = 16 * 1024;", "export const CSP_REPORT_MAX_BYTES = 32 * 1024;", REPORT_TESTS),
+    ("M3b Content-Length check removed AND reader cap removed", "app/api/csp-report/route.ts",
+     "  const text = await readCappedText(req, CSP_REPORT_MAX_BYTES);", "  const text = await readCappedText(req, 1e9);", REPORT_TESTS),
+    ("M3c only the Content-Length pre-check removed", "app/api/csp-report/route.ts",
+     "  if (Number.isFinite(declared) && declared > CSP_REPORT_MAX_BYTES) {", "  if (false) {", REPORT_TESTS),
+    ("U1 rate-limit: DB path skipped (always per-instance memory)", "lib/rate-limit.ts",
+     "    result = await checkDbRateLimit(bucket, max, windowMs);", "    throw new Error(\"r5 mutant\");", UPLOAD_TESTS),
+    ("U2 rate-limit: memory fallback always allows", "lib/rate-limit.ts",
+     "  if (entry.count >= max) {\n    return { allowed: false,", "  if (false) {\n    return { allowed: false,", UPLOAD_TESTS),
+    ("U3 upload: declared Content-Length check removed", "app/api/upload/route.ts",
+     "  if (oversize) return oversize;", "", UPLOAD_TESTS),
+    ("U4 blob-image: image/svg+xml served inline", "app/api/blob-image/route.ts",
+     "\"image/gif\", \"image/avif\"]);", "\"image/gif\", \"image/avif\", \"image/svg+xml\"]);", ["tests/unit/sec-c2-blob-image-inline.test.ts"]),
+    ("U5 upload-guard: duplicate multipart fields allowed (last wins)", "lib/upload-guard.ts",
+     "    if (Object.prototype.hasOwnProperty.call(fields, k)) return { ok: false, duplicate: k };", "", UPLOAD_TESTS),
+    ("U6 hold: unparsable body read as {} (the SF-C2-V2 defect restored)", "app/api/members/[id]/hold/route.ts",
+     "  try { raw = await req.json(); } catch { return NextResponse.json({ error: \"Invalid request\" }, { status: 400 }); }",
+     "  try { raw = await req.json(); } catch { raw = {}; }", ["tests/unit/sec-c2-request-validation.test.ts"]),
+    ("U7 totp verify: schema relaxed to z.object (unknown keys stripped)", "app/api/auth/totp/verify/route.ts",
+     "const bodySchema = z.strictObject(", "const bodySchema = z.object(", ["tests/unit/sec-c2-request-validation.test.ts"]),
+    ("U8 upload: rate limit checked AFTER the body is parsed", "app/api/upload/route.ts",
+     "  const limited = await checkUploadRateLimit(\"image\", tenantId, userId);\n  if (limited) return limited;\n\n  let formData: FormData;\n  try {\n    formData = await req.formData();\n  } catch {\n    return NextResponse.json({ error: \"Invalid multipart payload\" }, { status: 400 });\n  }",
+     "  let formData: FormData;\n  try {\n    formData = await req.formData();\n  } catch {\n    return NextResponse.json({ error: \"Invalid multipart payload\" }, { status: 400 });\n  }\n  const limited = await checkUploadRateLimit(\"image\", tenantId, userId);\n  if (limited) return limited;", UPLOAD_TESTS),
+    ("U9 upload: limitInputPixels removed", "app/api/upload/route.ts",
+     "sharp(uploadBuffer, { limitInputPixels: 50_000_000 })", "sharp(uploadBuffer)", ["tests/unit/sec-e3-upload-limit-input-pixels.test.ts"]),
+]
+
+def run(tests, tag):
+    p = subprocess.run("npx vitest run " + " ".join(tests), cwd=WT, env=env, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
+    out = p.stdout + p.stderr
+    open(os.path.join(LOGS, "mutant-" + tag + ".log"), "w", encoding="utf-8").write(out)
+    m = re.search(r"Tests\s+(.*)", out)
+    fails = re.findall(r"(?:FAIL|×)\s+(.*)", out)
+    return p.returncode, (m.group(1).strip() if m else "?"), fails[:6]
+
+results = []
+code, summ, _ = run(CSP_TESTS + REPORT_TESTS + UPLOAD_TESTS + ["tests/unit/sec-c2-blob-image-inline.test.ts", "tests/unit/sec-c2-request-validation.test.ts", "tests/unit/sec-e3-upload-limit-input-pixels.test.ts"], "baseline")
+results.append({"mutant": "baseline (no mutation)", "exit": code, "tests": summ})
+print("baseline", code, summ, flush=True)
+for i, (name, rel, old, new, tests) in enumerate(MUTANTS):
+    path = os.path.join(WT, rel)
+    src = open(path, encoding="utf-8").read()
+    if src.count(old) != 1:
+        results.append({"mutant": name, "error": "anchor not found exactly once: %d" % src.count(old)})
+        print(name, "ANCHOR MISSING", flush=True)
+        continue
+    open(path, "w", encoding="utf-8", newline="").write(src.replace(old, new))
+    try:
+        code, summ, fails = run(tests, "M%02d" % i)
+    finally:
+        subprocess.run(["git", "checkout", "--", rel], cwd=WT)
+    verdict = "KILLED" if code != 0 else "SURVIVED"
+    results.append({"mutant": name, "file": rel, "exit": code, "tests": summ, "verdict": verdict, "failing": fails})
+    print(verdict, name, "|", summ, flush=True)
+dirty = subprocess.run(["git", "status", "--porcelain", "--", "proxy.ts", "lib", "app"], cwd=WT, capture_output=True, text=True).stdout
+results.append({"tree_after": dirty or "clean"})
+json.dump(results, open(os.path.join(LOGS, "mutants.json"), "w"), indent=1)
+print("tree after:", dirty or "clean")

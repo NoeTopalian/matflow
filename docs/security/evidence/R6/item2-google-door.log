@@ -1,0 +1,32 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/R6/wtm
+
+stderr | tests/integration/zz-r6-google-door.test.ts > R6: Google door — member, staff and unknown address get one answer, no token, no event, cookie intact > existing member
+[auth] Google sign-in refused: no explicit link to this account { tenantId: 't-r6', subject: 'member' }
+
+stderr | tests/integration/zz-r6-google-door.test.ts > R6: Google door — member, staff and unknown address get one answer, no token, no event, cookie intact > existing staff user (owner)
+[auth] Google sign-in refused: no explicit link to this account { tenantId: 't-r6', subject: 'user' }
+
+stdout | tests/integration/zz-r6-google-door.test.ts > R6: Google door — member, staff and unknown address get one answer, no token, no event, cookie intact > RESIDUAL probe: a bootstrap (temporary-password) staff address answers differently from an unknown address
+R6-GOOGLE bootstrap=/login?error=invalid_link unknown=/login?error=google_link_required
+
+stdout | tests/integration/zz-r6-google-door.test.ts > R6: Google door — member, staff and unknown address get one answer, no token, no event, cookie intact > RESIDUAL probe: a provisional login email answers differently from an unknown address
+R6-GOOGLE provisional=/login?error=invalid_link
+
+ ✓ tests/integration/zz-r6-google-door.test.ts > R6: Google door — member, staff and unknown address get one answer, no token, no event, cookie intact > existing member 8ms
+ ✓ tests/integration/zz-r6-google-door.test.ts > R6: Google door — member, staff and unknown address get one answer, no token, no event, cookie intact > existing staff user (owner) 2ms
+ ✓ tests/integration/zz-r6-google-door.test.ts > R6: Google door — member, staff and unknown address get one answer, no token, no event, cookie intact > unknown address 1ms
+ ✓ tests/integration/zz-r6-google-door.test.ts > R6: Google door — member, staff and unknown address get one answer, no token, no event, cookie intact > RESIDUAL probe: a bootstrap (temporary-password) staff address answers differently from an unknown address 1ms
+ ✓ tests/integration/zz-r6-google-door.test.ts > R6: Google door — member, staff and unknown address get one answer, no token, no event, cookie intact > RESIDUAL probe: a provisional login email answers differently from an unknown address 1ms
+ ✓ tests/integration/zz-r6-google-door.test.ts > R6: Google door — login-event IP in trust order; spoofed first x-forwarded-for entry ignored > only x-forwarded-for (client-written first entry 203.0.113.66) → the last hop is recorded 4ms
+ ✓ tests/integration/zz-r6-google-door.test.ts > R6: Google door — login-event IP in trust order; spoofed first x-forwarded-for entry ignored > x-vercel-forwarded-for beats x-real-ip and a spoofed x-forwarded-for (member) 1ms
+ ✓ tests/integration/zz-r6-google-door.test.ts > R6: Google door — login-event IP in trust order; spoofed first x-forwarded-for entry ignored > a forged club cookie (signature from another key) is NoTenantContext, not a sign-in 0ms
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  03:51:23
+   Duration  1.68s (transform 334ms, setup 81ms, import 1.28s, tests 22ms, environment 0ms)
+

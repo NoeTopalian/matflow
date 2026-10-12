@@ -1,0 +1,68 @@
+{
+  "role": "owner",
+  "rttMedianMs": 49.430549999999926,
+  "n0": {
+    "acct": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1408
+    },
+    "ghost": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1146
+    },
+    "diffMs": 262
+  },
+  "n9": {
+    "acct": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1335
+    },
+    "ghost": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1084
+    },
+    "diffMs": 251
+  },
+  "n10": {
+    "acct": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1086
+    },
+    "ghost": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1080
+    },
+    "diffMs": 6
+  },
+  "n11": {
+    "acct": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1215
+    },
+    "ghost": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1153
+    },
+    "diffMs": 62
+  },
+  "rowLockedVsNone": {
+    "locked": "refused,refused,refused,refused,refused,refused,refused,refused,refused,refused,refused,refused",
+    "none": "refused,refused,refused,refused,refused,refused,refused,refused,refused,refused,code:rate_limited,code:rate_limited"
+  }
+}

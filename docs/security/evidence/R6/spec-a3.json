@@ -1,0 +1,42 @@
+[
+ {
+  "id": "A3-M1 row counter skipped for locked rows",
+  "file": "auth.ts",
+  "find": "              await withTenantContext(tenant.id, async (tx) => {\n                if (user) {\n                  await tx.user.update({\n                    where: { id: user.id },\n                    data: { failedLoginCount: { increment: 1 } },",
+  "replace": "              if (!rowLocked) await withTenantContext(tenant.id, async (tx) => {\n                if (user) {\n                  await tx.user.update({\n                    where: { id: user.id },\n                    data: { failedLoginCount: { increment: 1 } },",
+  "cmd": [
+   "C:/Program Files/Git/bin/bash.exe",
+   "<scratchpad>/security/R6/a3-mutcmd.sh"
+  ]
+ },
+ {
+  "id": "A3-M2 locked-row failure counted only after the row-state branch (locked row returns first)",
+  "file": "auth.ts",
+  "find": "          if (rowLocked || !valid) {",
+  "replace": "          if (rowLocked) return null;\n          if (rowLocked || !valid) {",
+  "cmd": [
+   "C:/Program Files/Git/bin/bash.exe",
+   "<scratchpad>/security/R6/a3-mutcmd.sh"
+  ]
+ },
+ {
+  "id": "A3-M3 early return on operator (staff) lock only",
+  "file": "auth.ts",
+  "find": "          if (rowLocked || !valid) {",
+  "replace": "          if (rowLocked && user) return null;\n          if (rowLocked || !valid) {",
+  "cmd": [
+   "C:/Program Files/Git/bin/bash.exe",
+   "<scratchpad>/security/R6/a3-mutcmd.sh"
+  ]
+ },
+ {
+  "id": "A3-M4 (R6) early return when a locked row gets the RIGHT password",
+  "file": "auth.ts",
+  "find": "          if (rowLocked || !valid) {",
+  "replace": "          if (rowLocked && valid) return null;\n          if (rowLocked || !valid) {",
+  "cmd": [
+   "C:/Program Files/Git/bin/bash.exe",
+   "<scratchpad>/security/R6/a3-mutcmd.sh"
+  ]
+ }
+]

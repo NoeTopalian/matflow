@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Both-role sweep of every security database file with REAL vitest exit codes and zero-test detection (SF-76 repair).
+# Usage: final-sweep-v2.sh <worktree-dir> <out-file>
+set -u
+WT="$1"; OUT="$2"
+SP="C:/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad"
+export PATH="$SP/security/node24/node-v24.21.0-win-x64:$PATH"
+cd "$WT" || exit 1
+URL=$(grep -E '^TEST_DATABASE_URL=' .env.test | head -1 | cut -d= -f2- | tr -d '"' | tr -d '\r')
+RURL=$(grep -E '^RESTRICTED_DATABASE_URL=' .env.test | head -1 | cut -d= -f2- | tr -d '"' | tr -d '\r')
+case "$URL" in *ep-hidden-salad*) ;; *) echo "REFUSED: not the TEST branch"; exit 2;; esac
+case "$URL$RURL" in *ep-bold-wave*) echo "REFUSED: production endpoint"; exit 2;; esac
+: > "$OUT"
+echo "sha=$(git rev-parse HEAD) node=$(node --version) started=$(date -u +%FT%TZ)" >> "$OUT"
+FILES=$(ls tests/integration/*-db.test.ts; ls tests/integration/{attendance-import-engine,cross-tenant-authorisation-matrix,cross-tenant-stats,email-lowercase-invariant,operator-member-totp-reset,rls-coverage,rls-foundation,roster-cross-tenant,security,staff-cannot-clear-user-totp,staff-edit-email,tenant-isolation,tenant-restore-purge-race,totp-login-paths}.test.ts 2>/dev/null)
+ok=0; bad=0; notests=0; total=0
+for f in $FILES; do
+  for role in owner restricted; do
+    total=$((total+1))
+    if [ "$role" = owner ]; then
+      full=$(TEST_DATABASE_URL="$URL" DATABASE_URL="$URL" timeout 2400 npx vitest run "$f" 2>&1); code=$?
+    else
+      full=$(TEST_DATABASE_URL="$RURL" DATABASE_URL="$RURL" RLS_ENFORCED=1 timeout 2400 npx vitest run "$f" 2>&1); code=$?
+    fi
+    tests=$(printf '%s\n' "$full" | grep -E "^\s*Tests " | tail -1 | sed 's/^ *//')
+    passed=$(printf '%s' "$tests" | grep -oE "[0-9]+ passed" | grep -oE "[0-9]+" | head -1); passed=${passed:-0}
+    failed=$(printf '%s' "$tests" | grep -oE "[0-9]+ failed" | grep -oE "[0-9]+" | head -1); failed=${failed:-0}
+    status="OK"
+    if [ "$code" -ne 0 ]; then status="EXIT-$code"; bad=$((bad+1));
+    elif [ "$passed" -eq 0 ]; then status="NO-TESTS-RAN"; notests=$((notests+1));
+    else ok=$((ok+1)); fi
+    echo "$role $f exit=$code status=$status $tests" >> "$OUT"
+  done
+done
+echo "=== summary total=$total ok=$ok nonzero_exit=$bad no_tests_ran=$notests finished=$(date -u +%FT%TZ)" >> "$OUT"

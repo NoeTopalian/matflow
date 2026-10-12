@@ -5,6 +5,8 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { deleteMemberCascade } from "@/lib/member-delete";
+import { emailDigest } from "@/lib/login-email";
+import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { computeMemberStats } from "@/lib/member-stats";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
@@ -131,6 +133,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   } catch {
     return apiError("Invalid JSON", 400);
   }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return apiError("Invalid JSON", 400); // SF-C5
 
   // 2 Oct 2026 — administrator-controlled families. The allow-list below
   // already meant a forged field never reached the database, but it was
@@ -326,9 +329,32 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     // Composite predicate enforces parent-of-kid scoping at every step of
     // the cleanup — a parent can never reach another adult member or
     // someone else's kid through this endpoint.
-    const outcome = await withTenantContext(tenantId, (tx) =>
-      deleteMemberCascade(tx, { id: childId, tenantId, parentMemberId }),
-    );
+    const outcome = await withTenantContext(tenantId, async (tx) => {
+      const where = { id: childId, tenantId, parentMemberId };
+      // Read under a row lock (lane D3, review R4 residual 1): the digest must be of the address this transaction
+      // deletes — an address change committed between a plain read and the delete used to be released undigested.
+      const [doomed] = await tx.$queryRaw<{ email: string | null }[]>`
+        SELECT email FROM "Member" WHERE id = ${childId} AND "tenantId" = ${tenantId} AND "parentMemberId" = ${parentMemberId} FOR UPDATE`;
+      const o = await deleteMemberCascade(tx, where);
+      // The release record commits WITH the deletion (security lane D2, SF-54 / SF-74). This path wrote no release
+      // digest at all, and its audit row came after the commit: a child with a real address left it free for a
+      // same-name record with nothing telling the attendance import it had been released. A failure here rolls the
+      // deletion back. Synthesised no-login addresses are never matched on, so they carry no digest.
+      if (o.kind === "ok") {
+        const real = doomed?.email && !isSynthesisedEmail(doomed.email) ? doomed.email : null;
+        await logAudit({
+          tx,
+          tenantId,
+          userId: session.user.id ?? null,
+          action: "member.child.delete",
+          entityType: "Member",
+          entityId: childId,
+          metadata: { parentMemberId, childName: o.name, ...(real ? { releasedEmailSha256: emailDigest(real) } : {}) },
+          req,
+        });
+      }
+      return o;
+    });
 
     if (outcome.kind === "not-found") return apiError("Not found", 404);
     if (outcome.kind === "race") return apiError("Conflict — child already removed", 409);
@@ -351,16 +377,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
         console.warn("[member/children/[id] DELETE] blob cleanup skipped", e);
       }
     }
-
-    await logAudit({
-      tenantId,
-      userId: session.user.id ?? null,
-      action: "member.child.delete",
-      entityType: "Member",
-      entityId: childId,
-      metadata: { parentMemberId, childName: outcome.name },
-      req,
-    });
 
     return NextResponse.json({ ok: true });
   } catch (e) {

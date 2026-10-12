@@ -1,0 +1,22 @@
+sha=1f16afd0a433ae7997230b36377000ecf468c1ef code_changed_since_03ef584=.github/workflows/e2e.yml app/api/cron/retention/route.ts lib/rate-limit.ts scripts/readiness/demo-accounts-rotate.mjs 
+node=v24.21.0 npm=11.19.0 started=2026-10-10T20:43:51Z
+=== lint
+
+Lint passed: eslint clean, UI-RULES ratchet at or below baseline.
+lint_exit=0
+=== tsc
+tsc_exit=0
+=== unit
+     × contains no candidate secret beyond the documented fixtures 1334ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed | 470 passed (471)
+      Tests  1 failed | 6502 passed (6503)
+unit_exit=1
+=== audit
+found 0 vulnerabilities
+audit_exit=0
+=== build
+✓ Compiled successfully in 35.6s
+build_exit=0
+build_id=tcDYs3UfaNqPLERNJkLos
+finished=2026-10-10T20:52:52Z

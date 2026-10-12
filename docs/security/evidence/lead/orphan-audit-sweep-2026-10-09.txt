@@ -1,0 +1,4 @@
+connected as neondb_owner db neondb
+orphans before { n: 198, prov: 62 }
+deleted 198
+orphans after { n: 0 }

@@ -1,0 +1,3 @@
+[secd3] role matflow_app RLS_ENFORCED=1 keyLen=58 STRICT=0
+[secd3] teardown: 19 clubs removed (65 provenance rows), 0 rows left
+      Tests  16 passed | 1 expected fail (17)

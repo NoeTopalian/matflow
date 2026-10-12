@@ -1,14 +1,24 @@
-// Server component — renders a fixed red banner across the top of every
-// dashboard page when an impersonation cookie is active. Reads the cookie
-// directly (not the session) so it can show the impersonating-admin
-// context even if the session has been overridden to the target user.
+// Server component — a fixed red banner across the top of every dashboard page
+// while a SUPPORT session (operator "logged in as" this user) is live.
+//
+// It shows only when the support session is actually in force for this
+// request — resolveActiveImpersonation() checks the same bindings auth.ts does
+// (operator session, nonce, target version, club status) — so a stale cookie
+// left after a stop or an operator sign-out does not paint a banner over a
+// session that has already reverted. Support is read-only (lib/support-session.ts).
 
-import { readImpersonationCookie } from "@/lib/impersonation";
+import { resolveActiveImpersonation } from "@/lib/impersonation";
 import EndImpersonationButton from "./EndImpersonationButton";
 
 export default async function ImpersonationBanner() {
-  const imp = await readImpersonationCookie();
-  if (!imp) return null;
+  let active: Awaited<ReturnType<typeof resolveActiveImpersonation>> = null;
+  try {
+    active = await resolveActiveImpersonation();
+  } catch {
+    active = null;
+  }
+  if (!active) return null;
+  const imp = active.payload;
 
   const expiresAt = new Date(imp.exp * 1000);
   // Audit iter-1-dashboard A4H-5: Date.now() in a Server Component renders
@@ -19,6 +29,7 @@ export default async function ImpersonationBanner() {
 
   return (
     <div
+      role="status"
       style={{
         // Audit O1: `fixed` overlaid the Topbar/mobile header with no
         // compensating padding — sticky keeps the banner pinned while
@@ -39,8 +50,8 @@ export default async function ImpersonationBanner() {
       }}
     >
       <span style={{ flex: 1, minWidth: 0 }}>
-        🛠 <strong>Admin impersonation active</strong> — {minsLeft}m left ·{" "}
-        <span style={{ opacity: 0.85 }}>expires {expiresAt.toLocaleTimeString()}</span>
+        <strong>MatFlow support session, read-only</strong> — {minsLeft}m left ·{" "}
+        <span style={{ opacity: 0.85 }}>ends {expiresAt.toLocaleTimeString("en-GB")}</span>
         {imp.reason && (
           <>
             {" · "}

@@ -1,0 +1,142 @@
+// Reviewer R6 probe (iteration 2) — the Google door after lane A3. Drives the REAL signIn callback of auth.ts and the
+// REAL lib/pending-tenant-cookie against a recording cookie jar (next/headers mocked only at the jar). No database.
+import { vi, describe, it, expect, beforeEach } from "vitest";
+
+type SignIn = (args: { user: Record<string, unknown>; account: Record<string, unknown> | null; profile?: unknown }) => Promise<unknown>;
+const captured: { signIn?: SignIn; jwt?: unknown } = {};
+vi.mock("next-auth", () => ({
+  default: (config: { callbacks?: { signIn?: SignIn; jwt?: unknown } }) => {
+    if (config.callbacks?.signIn) captured.signIn = config.callbacks.signIn;
+    captured.jwt = config.callbacks?.jwt;
+    return { handlers: {}, auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() };
+  },
+  CredentialsSignin: class extends Error {
+    code = "credentials";
+  },
+}));
+vi.mock("next-auth/providers/credentials", () => ({ default: (c: unknown) => c }));
+vi.mock("next-auth/providers/google", () => ({ default: (c: unknown) => c }));
+
+const h = vi.hoisted(() => {
+  process.env.AUTH_SECRET ??= "secR6-google-door-synthetic-0123456789abcdef";
+  return {
+    userFindUnique: vi.fn(),
+    memberFindUnique: vi.fn(),
+    tenantFindUnique: vi.fn(),
+    logAudit: vi.fn(async () => {}),
+    recordLoginEvent: vi.fn(async (_args: { ip: string }) => {}),
+    link: vi.fn(async () => null as null | { userId?: string; memberId?: string }),
+    reqHeaders: new Headers(),
+    jar: new Map<string, string>(),
+    jarOps: [] as string[],
+  };
+});
+const tx = {
+  user: { findUnique: h.userFindUnique, findFirst: vi.fn(), update: vi.fn() },
+  member: { findUnique: h.memberFindUnique, findFirst: vi.fn(), update: vi.fn() },
+  tenant: { findUnique: h.tenantFindUnique },
+  loginEvent: { create: vi.fn(), findFirst: vi.fn() },
+};
+vi.mock("@/lib/prisma", () => ({ prisma: tx }));
+vi.mock("@/lib/prisma-tenant", () => ({
+  withRlsBypass: async <T,>(fn: (t: unknown) => Promise<T>) => fn(tx),
+  withTenantContext: async <T,>(_id: string, fn: (t: unknown) => Promise<T>) => fn(tx),
+}));
+vi.mock("@/lib/testing-mode", () => ({ isTestingMode: () => false, isProductionDatabase: () => false }));
+vi.mock("@/lib/login-event", () => ({ recordLoginEvent: h.recordLoginEvent }));
+vi.mock("@/lib/audit-log", () => ({ logAudit: h.logAudit }));
+vi.mock("@/lib/brand-refresh", () => ({ shouldRefreshBrand: () => false }));
+vi.mock("@sentry/nextjs", () => ({ captureException: () => {} }));
+vi.mock("@/lib/external-identity", () => ({ linkedExternalIdentity: h.link }));
+vi.mock("next/headers", () => ({
+  headers: async () => h.reqHeaders,
+  cookies: async () => ({
+    get: (name: string) => (h.jar.has(name) ? { name, value: h.jar.get(name)! } : undefined),
+    set: (o: { name: string; value: string }) => { h.jarOps.push(`set:${o.name}`); h.jar.set(o.name, o.value); },
+    delete: (name: string) => { h.jarOps.push(`delete:${name}`); h.jar.delete(name); },
+  }),
+}));
+
+const { setPendingTenantSlug } = await import("@/lib/pending-tenant-cookie");
+await import("@/auth");
+
+const TENANT = { id: "t-r6", slug: "club-r6", name: "Club R6", subscriptionStatus: "active", deletedAt: null, primaryColor: "#000000", secondaryColor: "#000000", textColor: "#ffffff" };
+const MEMBER = { id: "m-r6", tenantId: "t-r6", email: "member@example.test", name: "R6 Member", passwordHash: "x", sessionVersion: 0, totpEnabled: false, notifyOnNewLogin: false };
+const STAFF = { id: "u-r6", tenantId: "t-r6", email: "staff@example.test", name: "R6 Owner", role: "owner", sessionVersion: 0, totpEnabled: true, mustChangePassword: false, loginEmailProvisionalSince: null, notifyOnNewLogin: false };
+function google(email: string) {
+  const user: Record<string, unknown> = { email };
+  return { user, result: captured.signIn!({ user, account: { provider: "google", providerAccountId: "google-sub-secR6-0001", type: "oidc" }, profile: { email_verified: true, email, sub: "google-sub-secR6-0001" } }) };
+}
+
+beforeEach(async () => {
+  vi.clearAllMocks();
+  h.jar.clear();
+  h.jarOps.length = 0;
+  h.tenantFindUnique.mockResolvedValue(TENANT);
+  h.userFindUnique.mockResolvedValue(null);
+  h.memberFindUnique.mockResolvedValue(null);
+  h.link.mockResolvedValue(null);
+  h.reqHeaders = new Headers({ "user-agent": "secR6-agent", "x-forwarded-for": "203.0.113.66, 198.51.100.9" });
+  await setPendingTenantSlug("club-r6"); // the REAL signed cookie, as /api/account/pending-tenant sets it
+  h.jarOps.length = 0;
+});
+
+describe("R6: Google door — member, staff and unknown address get one answer, no token, no event, cookie intact", () => {
+  const cases: [string, () => void][] = [
+    ["existing member", () => h.memberFindUnique.mockResolvedValue(MEMBER)],
+    ["existing staff user (owner)", () => h.userFindUnique.mockResolvedValue(STAFF)],
+    ["unknown address", () => {}],
+  ];
+  for (const [label, arrange] of cases) {
+    it(label, async () => {
+      arrange();
+      const before = h.jar.get("pendingTenantSlug");
+      const g = google(label.includes("member") ? MEMBER.email : label.includes("staff") ? STAFF.email : "nobody@example.test");
+      expect(await g.result).toBe("/login?error=google_link_required");
+      expect(g.user.id, "no token hydration").toBeUndefined();
+      expect(g.user.role).toBeUndefined();
+      expect(g.user.tenantId).toBeUndefined();
+      expect(h.recordLoginEvent).not.toHaveBeenCalled();
+      expect(h.jarOps, "the club cookie is neither cleared nor rewritten").toEqual([]);
+      expect(h.jar.get("pendingTenantSlug")).toBe(before);
+    });
+  }
+  it("RESIDUAL probe: a bootstrap (temporary-password) staff address answers differently from an unknown address", async () => {
+    h.userFindUnique.mockResolvedValue({ ...STAFF, mustChangePassword: true });
+    const bootstrap = await google(STAFF.email).result;
+    h.userFindUnique.mockResolvedValue(null);
+    const unknown = await google("nobody@example.test").result;
+    console.log("R6-GOOGLE bootstrap=" + String(bootstrap) + " unknown=" + String(unknown));
+    expect(unknown).toBe("/login?error=google_link_required");
+  });
+  it("RESIDUAL probe: a provisional login email answers differently from an unknown address", async () => {
+    h.userFindUnique.mockResolvedValue({ ...STAFF, loginEmailProvisionalSince: new Date("2026-10-01T00:00:00Z") });
+    const provisional = await google(STAFF.email).result;
+    console.log("R6-GOOGLE provisional=" + String(provisional));
+    expect(provisional).not.toBe(true);
+  });
+});
+
+describe("R6: Google door — login-event IP in trust order; spoofed first x-forwarded-for entry ignored", () => {
+  it("only x-forwarded-for (client-written first entry 203.0.113.66) → the last hop is recorded", async () => {
+    h.userFindUnique.mockResolvedValue(STAFF);
+    h.link.mockResolvedValue({ userId: STAFF.id });
+    expect(await google(STAFF.email).result).toBe(true);
+    expect(h.recordLoginEvent).toHaveBeenCalledTimes(1);
+    expect(h.recordLoginEvent.mock.calls[0][0].ip).toBe("198.51.100.9");
+    expect(h.jarOps).toContain("delete:pendingTenantSlug"); // positive control: a real sign-in DOES consume the cookie
+  });
+  it("x-vercel-forwarded-for beats x-real-ip and a spoofed x-forwarded-for (member)", async () => {
+    h.memberFindUnique.mockResolvedValue(MEMBER);
+    h.link.mockResolvedValue({ memberId: MEMBER.id });
+    h.reqHeaders = new Headers({ "user-agent": "secR6-agent", "x-forwarded-for": "203.0.113.66", "x-real-ip": "192.0.2.44", "x-vercel-forwarded-for": "192.0.2.10, 203.0.113.67" });
+    expect(await google(MEMBER.email).result).toBe(true);
+    expect(h.recordLoginEvent.mock.calls[0][0].ip).toBe("192.0.2.10");
+  });
+  it("a forged club cookie (signature from another key) is NoTenantContext, not a sign-in", async () => {
+    h.jar.set("pendingTenantSlug", "club-r6.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    h.memberFindUnique.mockResolvedValue(MEMBER);
+    h.link.mockResolvedValue({ memberId: MEMBER.id });
+    expect(await google(MEMBER.email).result).toBe("/login?error=NoTenantContext");
+  });
+});

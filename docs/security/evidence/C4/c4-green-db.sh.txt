@@ -1,0 +1,10 @@
+S=<scratchpad>
+W='<scratchpad, Windows form>'
+export PATH="$S/security/node24/node-v24.21.0-win-x64:$PATH"
+cd <repo>
+node --version
+for r in owner restricted; do
+  if [ $r = owner ]; then R=$S/att/run-engine.sh; else R=$S/q78/run-restricted.sh; fi
+  C4_OUT="$W\security\C4\sat-final-$r.json" bash $R tests/integration/sec-c4-rate-limit-saturation-db.test.ts > $S/security/C4/sat-final-$r.log 2>&1; echo "sat $r exit=$?"; grep -E "Tests " $S/security/C4/sat-final-$r.log
+  bash $R tests/integration/sec-c3-rate-limit-atomic-db.test.ts > $S/security/C4/c3db-$r.log 2>&1; echo "c3db $r exit=$?"; grep -E "Tests |skipped" $S/security/C4/c3db-$r.log | head -3
+done

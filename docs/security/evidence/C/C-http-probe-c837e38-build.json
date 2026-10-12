@@ -1,0 +1,905 @@
+{
+ "base": "http://127.0.0.1:3963",
+ "at": "2026-10-09T11:53:43.874Z",
+ "results": {
+  "home": {
+   "path": "/",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 200,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "s-maxage=31536000",
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "text/html; charset=utf-8",
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding"
+   }
+  },
+  "login": {
+   "path": "/login",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 200,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "s-maxage=31536000",
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "text/html; charset=utf-8",
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding"
+   }
+  },
+  "health": {
+   "path": "/api/health",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 200,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "no-store",
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "application/json",
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch"
+   }
+  },
+  "dashboard_unauth": {
+   "path": "/dashboard",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   }
+  },
+  "member_unauth": {
+   "path": "/member/home",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   }
+  },
+  "admin_unauth": {
+   "path": "/admin",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "private, no-store, max-age=0, must-revalidate",
+    "location": "/admin/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   }
+  },
+  "api_members_unauth": {
+   "path": "/api/members",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 401,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "application/json",
+    "x-powered-by": null,
+    "vary": "Accept-Encoding"
+   }
+  },
+  "api_me_gym_unauth": {
+   "path": "/api/me/gym",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 401,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "private, no-store, max-age=0, must-revalidate",
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "application/json",
+    "x-powered-by": null,
+    "vary": "Accept-Encoding"
+   }
+  },
+  "api_admin_unauth": {
+   "path": "/api/admin/activity",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 403,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "private, no-store, max-age=0, must-revalidate",
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "application/json",
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch"
+   }
+  },
+  "cors_preflight_members": {
+   "path": "/api/members",
+   "method": "OPTIONS",
+   "sentHeaders": {
+    "origin": "https://evil.example",
+    "access-control-request-method": "POST",
+    "access-control-request-headers": "content-type"
+   },
+   "status": 401,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "application/json",
+    "x-powered-by": null,
+    "vary": "Accept-Encoding"
+   }
+  },
+  "cors_simple_get_health": {
+   "path": "/api/health",
+   "method": "GET",
+   "sentHeaders": {
+    "origin": "https://evil.example"
+   },
+   "status": 200,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "no-store",
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "application/json",
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch"
+   }
+  },
+  "cors_preflight_admin": {
+   "path": "/api/admin/customers/x/login-email",
+   "method": "OPTIONS",
+   "sentHeaders": {
+    "origin": "https://evil.example",
+    "access-control-request-method": "POST"
+   },
+   "status": 204,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "private, no-store, max-age=0, must-revalidate",
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch"
+   }
+  },
+  "csrf_products_xsite": {
+   "path": "/api/products",
+   "method": "POST",
+   "sentHeaders": {
+    "origin": "https://evil.example",
+    "content-type": "text/plain"
+   },
+   "status": 401,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "application/json",
+    "x-powered-by": null,
+    "vary": "Accept-Encoding"
+   }
+  },
+  "csrf_login_email_xsite": {
+   "path": "/api/admin/customers/x/login-email",
+   "method": "POST",
+   "sentHeaders": {
+    "origin": "https://evil.example",
+    "content-type": "text/plain"
+   },
+   "status": 403,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "private, no-store, max-age=0, must-revalidate",
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "application/json",
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch"
+   }
+  },
+  "host_magic_verify": {
+   "path": "/api/magic-link/verify?token=secC-invalid",
+   "method": "GET",
+   "sentHeaders": {
+    "host": "evil.example"
+   },
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "private, no-store, max-age=0, must-revalidate",
+    "location": "http://localhost:3963/login?error=invalid_link",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch"
+   }
+  },
+  "xfh_magic_verify": {
+   "path": "/api/magic-link/verify?token=secC-invalid",
+   "method": "GET",
+   "sentHeaders": {
+    "x-forwarded-host": "evil.example",
+    "x-forwarded-proto": "https"
+   },
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "private, no-store, max-age=0, must-revalidate",
+    "location": "https://localhost:3963/login?error=invalid_link",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch"
+   }
+  },
+  "host_dashboard": {
+   "path": "/dashboard",
+   "method": "GET",
+   "sentHeaders": {
+    "host": "evil.example"
+   },
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   }
+  },
+  "nextauth_callback_offsite": {
+   "path": "/api/auth/signin?callbackUrl=https%3A%2F%2Fevil.example%2F",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 302,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "private, no-store, max-age=0, must-revalidate",
+    "location": "/login?callbackUrl=http%3A%2F%2Flocalhost%3A3963",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch"
+   },
+   "bodyMentionsEvil": false
+  },
+  "legacy_checkin_redirect": {
+   "path": "/checkin/secc",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 308,
+   "headers": {
+    "content-security-policy": null,
+    "x-frame-options": null,
+    "strict-transport-security": null,
+    "x-content-type-options": null,
+    "cross-origin-opener-policy": null,
+    "cross-origin-resource-policy": null,
+    "referrer-policy": null,
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   }
+  },
+  "mw_bypass_1_middleware": {
+   "path": "/dashboard",
+   "method": "GET",
+   "sentHeaders": {
+    "x-middleware-subrequest": "middleware"
+   },
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   }
+  },
+  "mw_bypass_5_middleware": {
+   "path": "/dashboard",
+   "method": "GET",
+   "sentHeaders": {
+    "x-middleware-subrequest": "middleware:middleware:middleware:middleware:middleware"
+   },
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   }
+  },
+  "mw_bypass_5_proxy": {
+   "path": "/dashboard",
+   "method": "GET",
+   "sentHeaders": {
+    "x-middleware-subrequest": "proxy:proxy:proxy:proxy:proxy"
+   },
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   }
+  },
+  "mw_bypass_5_src_middleware": {
+   "path": "/dashboard",
+   "method": "GET",
+   "sentHeaders": {
+    "x-middleware-subrequest": "src/middleware:src/middleware:src/middleware:src/middleware:src/middleware"
+   },
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   }
+  },
+  "rsc_dashboard_unauth": {
+   "path": "/dashboard",
+   "method": "GET",
+   "sentHeaders": {
+    "rsc": "1",
+    "next-router-state-tree": "%5B%22%22%5D"
+   },
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   },
+   "bodyLooksLikeFlight": false,
+   "bodyBytes": 6
+  },
+  "rsc_query_dashboard_unauth": {
+   "path": "/dashboard?_rsc=secc1",
+   "method": "GET",
+   "sentHeaders": {
+    "rsc": "1"
+   },
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   },
+   "bodyLooksLikeFlight": false,
+   "bodyBytes": 6
+  },
+  "rsc_admin_unauth": {
+   "path": "/admin",
+   "method": "GET",
+   "sentHeaders": {
+    "rsc": "1"
+   },
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "private, no-store, max-age=0, must-revalidate",
+    "location": "/admin/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   },
+   "bodyLooksLikeFlight": false,
+   "bodyBytes": 12
+  },
+  "server_action_unknown": {
+   "path": "/login",
+   "method": "POST",
+   "sentHeaders": {
+    "next-action": "0123456789abcdef0123456789abcdef01234567",
+    "content-type": "text/plain;charset=UTF-8",
+    "origin": "http://127.0.0.1:3963"
+   },
+   "status": 404,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "text/plain",
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding"
+   },
+   "bodyHasStack": false,
+   "bodyBytes": 24
+  },
+  "reflect_login_error": {
+   "path": "/login?error=%3Cscript%3EsecCxss%3C%2Fscript%3E%22'%3E%3Cimg%20src%3Dx%20onerror%3DsecC%3E",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 200,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "s-maxage=31536000",
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "text/html; charset=utf-8",
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding"
+   },
+   "rawReflected": false
+  },
+  "reflect_404": {
+   "path": "/secc-%3Cscript%3EsecCxss%3C%2Fscript%3E%22'%3E%3Cimg%20src%3Dx%20onerror%3DsecC%3E",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   },
+   "rawReflected": false
+  },
+  "reflect_tenant_api": {
+   "path": "/api/tenant/%3Cscript%3EsecCxss%3C%2Fscript%3E%22'%3E%3Cimg%20src%3Dx%20onerror%3DsecC%3E",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 404,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "application/json",
+    "x-powered-by": null,
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch"
+   },
+   "rawReflected": false
+  },
+  "reflect_slug_page": {
+   "path": "/secc%3Cscript%3EsecCxss%3C%2Fscript%3E%22'%3E%3Cimg%20src%3Dx%20onerror%3DsecC%3E",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   },
+   "rawReflected": false
+  },
+  "traversal_/_next/static/..%2f..%2f.env": {
+   "path": "/_next/static/..%2f..%2f.env",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 404,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": "private, no-cache, no-store, max-age=0, must-revalidate",
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "text/plain; charset=utf-8",
+    "x-powered-by": null,
+    "vary": "Accept-Encoding"
+   },
+   "leakedEnv": false
+  },
+  "traversal_/_next/static/%2e%2e/%2e%2e/.env": {
+   "path": "/_next/static/%2e%2e/%2e%2e/.env",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   },
+   "leakedEnv": false
+  },
+  "traversal_/..%2f.env": {
+   "path": "/..%2f.env",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   },
+   "leakedEnv": false
+  },
+  "traversal_/.env": {
+   "path": "/.env",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   },
+   "leakedEnv": false
+  },
+  "traversal_/_next/../.env": {
+   "path": "/_next/../.env",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 307,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": "/login",
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   },
+   "leakedEnv": false
+  },
+  "traversal_/api/blob-image?url=https%3A%2F%2Fx.blob.vercel-storage.com%2Ftenants%2F..%2F..%2Fsecc": {
+   "path": "/api/blob-image?url=https%3A%2F%2Fx.blob.vercel-storage.com%2Ftenants%2F..%2F..%2Fsecc",
+   "method": "GET",
+   "sentHeaders": {},
+   "status": 401,
+   "headers": {
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.vercel-storage.com https://*.vercel-insights.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.stripe.com https://accounts.google.com; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests",
+    "x-frame-options": "DENY",
+    "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "cache-control": null,
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": "application/json",
+    "x-powered-by": null,
+    "vary": "Accept-Encoding"
+   },
+   "leakedEnv": false
+  },
+  "te_cl_conflict": {
+   "path": "/api/health",
+   "method": "GET",
+   "sentHeaders": {
+    "content-length": "4",
+    "transfer-encoding": "chunked"
+   },
+   "status": 400,
+   "headers": {
+    "content-security-policy": null,
+    "x-frame-options": null,
+    "strict-transport-security": null,
+    "x-content-type-options": null,
+    "cross-origin-opener-policy": null,
+    "cross-origin-resource-policy": null,
+    "referrer-policy": null,
+    "cache-control": null,
+    "location": null,
+    "access-control-allow-origin": null,
+    "access-control-allow-credentials": null,
+    "content-type": null,
+    "x-powered-by": null,
+    "vary": null
+   }
+  }
+ }
+}

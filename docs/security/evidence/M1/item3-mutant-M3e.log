@@ -1,0 +1,172 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:133548) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stdout | tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > dry run lists exactly the four demo ids in the tenant and changes nothing
+[sec-m1] dry-run output (sanitised by construction):
+target: TEST ep-hidden-salad-abom7cg4 (pooled) role=neondb_owner
+tenant: secm1-mv2uofzaxj2h-a id=cmv2uogq100001otgldmzicvc
+candidates (4):
+  cmv2uogur00021otgz6qq5njr  role=owner  local=secm1-mv2uofzaxj2h-owner@demo.matflow  digest=f24519acb410
+  cmv2uogwt00031otgf9z1sbi2  role=manager  local=secm1-mv2uofzaxj2h-manager@demo.matflow  digest=538103a74d0e
+  cmv2uogzf00041otgjiozz7g7  role=coach  local=secm1-mv2uofzaxj2h-coach@demo.matflow  digest=c7fb8e840741
+  cmv2uoh1o00051otga7vgf4mw  role=admin  local=secm1-mv2uofzaxj2h-admin@demo.matflow  digest=a29f4b238ab1
+mode: dry run — would rotate 4 accounts (nothing changed)
+
+(node:143280) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+stdout | tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > --confirm rotates exactly the four: new bcrypt(12) hashes, sessionVersion +1, four audit rows, no other User row written; old sessions revoked
+[sec-m1] confirm output (sanitised by construction):
+target: TEST ep-hidden-salad-abom7cg4 (pooled) role=neondb_owner
+tenant: secm1-mv2uofzaxj2h-a id=cmv2uogq100001otgldmzicvc
+candidates (4):
+  cmv2uogur00021otgz6qq5njr  role=owner  local=secm1-mv2uofzaxj2h-owner@demo.matflow  digest=f24519acb410
+  cmv2uogwt00031otgf9z1sbi2  role=manager  local=secm1-mv2uofzaxj2h-manager@demo.matflow  digest=538103a74d0e
+  cmv2uogzf00041otgjiozz7g7  role=coach  local=secm1-mv2uofzaxj2h-coach@demo.matflow  digest=c7fb8e840741
+  cmv2uoh1o00051otga7vgf4mw  role=admin  local=secm1-mv2uofzaxj2h-admin@demo.matflow  digest=a29f4b238ab1
+xid=858150
+rotated 4 accounts: fresh random password (not shown, not stored), sessionVersion +1, 4 audit rows admin.demo_account.rotated
+assert: candidate id set unchanged (4); other User rows byte-identical: 603 (all tenants, same snapshot)
+
+(node:144652) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts (6 tests | 4 failed) 16634ms
+     × dry run lists exactly the four demo ids in the tenant and changes nothing 1372ms
+     × --confirm bound to the wrong id set aborts and changes nothing 1356ms
+     × --confirm rotates exactly the four: new bcrypt(12) hashes, sessionVersion +1, four audit rows, no other User row written; old sessions revoked 4054ms
+     × a second --confirm rotates again 3940ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > dry run lists exactly the four demo ids in the tenant and changes nothing
+AssertionError: expected 'target: TEST ep-hidden-salad-abom7cg4…' to contain 'cmv2uogur00021otgz6qq5njr  role=owner…'
+
+- Expected
++ Received
+
+- cmv2uogur00021otgz6qq5njr  role=owner  local=s***@demo.matflow  digest=f24519acb410
++ target: TEST ep-hidden-salad-abom7cg4 (pooled) role=neondb_owner
++ tenant: secm1-mv2uofzaxj2h-a id=cmv2uogq100001otgldmzicvc
++ candidates (4):
++   cmv2uogur00021otgz6qq5njr  role=owner  local=secm1-mv2uofzaxj2h-owner@demo.matflow  digest=f24519acb410
++   cmv2uogwt00031otgf9z1sbi2  role=manager  local=secm1-mv2uofzaxj2h-manager@demo.matflow  digest=538103a74d0e
++   cmv2uogzf00041otgjiozz7g7  role=coach  local=secm1-mv2uofzaxj2h-coach@demo.matflow  digest=c7fb8e840741
++   cmv2uoh1o00051otga7vgf4mw  role=admin  local=secm1-mv2uofzaxj2h-admin@demo.matflow  digest=a29f4b238ab1
++ mode: dry run — would rotate 4 accounts (nothing changed)
++
++ (node:143280) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
++ In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
++
++ To prepare for this change:
++ - If you want the current behavior, explicitly use 'sslmode=verify-full'
++ - If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
++
++ See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
++ (Use `node --trace-warnings ...` to show where the warning was created)
++
+
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts:143:19
+    141|     console.log(`[sec-m1] dry-run output (sanitised by construction):\…
+    142|     for (const s of demo()) {
+    143|       expect(out).toContain(`${s.id}  role=${s.role}  local=s***@demo.…
+       |                   ^
+    144|     }
+    145|     for (const s of controls()) expect(out).not.toContain(s.id);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > --confirm bound to the wrong id set aborts and changes nothing
+AssertionError: a full address was printed: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ expectClean tests/integration/sec-m1-demo-rotate-db.test.ts:71:79
+     69|   const low = out.toLowerCase();
+     70|   for (const s of seeds) {
+     71|     expect(low.includes(s.email.toLowerCase()), "a full address was pr…
+       |                                                                               ^
+     72|     expect(low.includes(s.email.split("@")[0].toLowerCase()), "a local…
+     73|   }
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts:156:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > --confirm rotates exactly the four: new bcrypt(12) hashes, sessionVersion +1, four audit rows, no other User row written; old sessions revoked
+AssertionError: a full address was printed: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ expectClean tests/integration/sec-m1-demo-rotate-db.test.ts:71:79
+     69|   const low = out.toLowerCase();
+     70|   for (const s of seeds) {
+     71|     expect(low.includes(s.email.toLowerCase()), "a full address was pr…
+       |                                                                               ^
+     72|     expect(low.includes(s.email.split("@")[0].toLowerCase()), "a local…
+     73|   }
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts:170:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/integration/sec-m1-demo-rotate-db.test.ts > SF-109 demo-account rotation tool on TEST (owner) > a second --confirm rotates again
+AssertionError: a full address was printed: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ expectClean tests/integration/sec-m1-demo-rotate-db.test.ts:71:79
+     69|   const low = out.toLowerCase();
+     70|   for (const s of seeds) {
+     71|     expect(low.includes(s.email.toLowerCase()), "a full address was pr…
+       |                                                                               ^
+     72|     expect(low.includes(s.email.split("@")[0].toLowerCase()), "a local…
+     73|   }
+ ❯ tests/integration/sec-m1-demo-rotate-db.test.ts:208:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 2 passed (6)
+   Start at  21:32:03
+   Duration  17.22s (transform 139ms, setup 74ms, import 304ms, tests 16.63s, environment 0ms)
+
+M3e exit=1

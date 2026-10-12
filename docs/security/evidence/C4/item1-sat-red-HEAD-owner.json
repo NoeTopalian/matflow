@@ -1,0 +1,55 @@
+{
+ "role": "owner",
+ "nodeEnv": "production",
+ "results": [
+  {
+   "cls": "security",
+   "burst": 60,
+   "allowed": 10,
+   "rows": 5,
+   "allowedWithoutRow": 5,
+   "ms": 3059,
+   "prismaTimeouts": 0,
+   "fallbackLogLines": 0,
+   "fallbackLog": null
+  },
+  {
+   "cls": "security",
+   "burst": 120,
+   "allowed": 10,
+   "rows": 5,
+   "allowedWithoutRow": 5,
+   "ms": 3450,
+   "prismaTimeouts": 0,
+   "fallbackLogLines": 0,
+   "fallbackLog": null
+  },
+  {
+   "cls": "non-security",
+   "burst": 60,
+   "allowed": 10,
+   "rows": 5,
+   "allowedWithoutRow": 5,
+   "ms": 2812,
+   "prismaTimeouts": 0,
+   "fallbackLogLines": 0,
+   "fallbackLog": null
+  },
+  {
+   "cls": "non-security",
+   "burst": 120,
+   "allowed": 10,
+   "rows": 5,
+   "allowedWithoutRow": 5,
+   "ms": 3449,
+   "prismaTimeouts": 0,
+   "fallbackLogLines": 0,
+   "fallbackLog": null
+  }
+ ],
+ "teardown": {
+  "buckets": 5,
+  "deleted": 25,
+  "left": 0
+ }
+}

@@ -1,0 +1,31 @@
+// R6: adversarial reviewer cells and N/A evidence cells against coverage-reconcile.mjs (pure functions; no files written).
+import fs from "node:fs";
+import { reconcileMatrix, reviewerApproved } from "./scripts/readiness/coverage-reconcile.mjs";
+const src = fs.readFileSync("docs/security/COVERAGE-MATRIX.md", "utf8");
+const lines = src.split(/\r?\n/);
+const idx = (id) => lines.findIndex((l) => l.startsWith(`| ${id} |`));
+const setCells = (id, edit) => {
+  const i = idx(id);
+  const c = lines[i].replace(/^\|/, "").replace(/\|\s*$/, "").split("|").map((x) => x.trim());
+  edit(c);
+  lines[i] = `| ${c.join(" | ")} |`;
+};
+const reviewerCells = [
+  "R3: not yet approved", "approved? no", "NOT APPROVED by R3", "R3: approved — no", "approved: no", "R5: approved?",
+  "R6: not approved; reason: approved by nobody", "R3: approved; R4: NOT APPROVED", "R3: NOT APPROVED; R4: approved",
+  "unapproved", "approval withdrawn", "R6 approves", "R4: APPROVED WITH RESIDUALS", "R2: approved", "awaiting approval",
+  "pending approval", "approved (to be confirmed)", "not approved yet, will be approved",
+];
+const out = { reviewerApproved: reviewerCells.map((s) => ({ cell: s, approved: reviewerApproved(s) })) };
+// Matrix rows: a FIXED row carrying each brief cell; an N/A row with empty / dash / placeholder evidence.
+const ids = ["SEC-020", "SEC-021", "SEC-022", "SEC-023"];
+const briefCells = ["R3: not yet approved", "approved? no", "NOT APPROVED by R3", "R6: approved"];
+ids.forEach((id, k) => setCells(id, (c) => { c[7] = "FAIL → FIXED AWAITING RETEST"; c[9] = briefCells[k]; }));
+const naEvidence = { "SEC-030": "", "SEC-031": "—", "SEC-032": "TBD", "SEC-033": "n/a", "SEC-034": "tests/unit/real-guard.test.ts" };
+for (const [id, ev] of Object.entries(naEvidence)) setCells(id, (c) => { c[6] = "NOT APPLICABLE WITH EVIDENCE"; c[7] = "guard test"; c[8] = ev; });
+const m = reconcileMatrix(lines.join("\n"), { requireReviewed: true });
+const row = (id) => m.perRow.find((r) => r.id === id);
+out.fixedRows = ids.map((id, k) => ({ id, reviewer: briefCells[k], final: row(id)?.verification ?? row(id) }));
+out.naRows = Object.entries(naEvidence).map(([id, ev]) => ({ id, evidence: ev, row: row(id) }));
+out.summary = { verdict: m.summary.verdict, naWithoutEvidence: m.summary.naWithoutEvidence, inconsistent: m.summary.inconsistent };
+console.log(JSON.stringify(out, null, 1));

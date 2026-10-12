@@ -7,8 +7,8 @@
  *     contains a quote, comma, CR or LF, wrap it in quotes and double the inner
  *     quotes. Without this a member named `Smith, John` splits the row.
  *
- *  2. FORMULA injection → a TEXT value whose first character is `= + - @`, tab
- *     or CR is evaluated as a formula by Excel / Google Sheets / LibreOffice
+ *  2. FORMULA injection → a TEXT value whose first character is `= + - @`, tab,
+ *     CR, LF (or a full-width ＝ ＋ － ＠) is evaluated as a formula by Excel / Google Sheets / LibreOffice
  *     when the file is opened: `=cmd|'/c calc'!A1`, `@SUM(...)`, `+...`, `-...`.
  *     A member can set their own name, so this is reachable from user input.
  *     Neutralise by prefixing a single apostrophe, which every spreadsheet
@@ -30,10 +30,21 @@ export function csvCell(v: string | number | null | undefined): string {
   if (typeof v === "number") return String(v);
 
   let s = v;
-  // (2) Formula-injection guard — leading =, +, -, @, tab or CR.
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-  // (1) RFC-4180 quoting.
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  // (2) Formula-injection guard — leading =, +, -, @, tab, CR or LF, and the
+  // full-width ＝ ＋ － ＠ some locales evaluate (OWASP CSV Injection, checked
+  // 9 Oct 2026; security lane D SEC-052 — LF and full-width were missing).
+  // Reviewer R retest (9 Oct 2026): the trigger is looked for AFTER any leading
+  // space-separator (\p{Zs}: space, NBSP, ideographic space) or format character
+  // (\p{Cf}: BOM, zero-width space/joiner), which a spreadsheet may trim before
+  // evaluating; the small equals sign ﹦ (U+FE66) and a pipe (DDE `|cmd`) are
+  // triggers too. The apostrophe goes in front of the whole value, so nothing
+  // of the value is lost.
+  // Third pass: the small ﹢ ﹣ and full-width ｜ forms, vertical tab, form feed and the line/paragraph separators
+  // (\p{Zl}, \p{Zp}: U+2028, U+2029) too.
+  if (/^[\p{Zs}\p{Cf}]*[=+\-@|\t\r\n\v\f\p{Zl}\p{Zp}＝＋－＠﹦﹢﹣｜]/u.test(s)) s = `'${s}`;
+  // (1) RFC-4180 quoting — plus ";", so a semicolon-locale reader cannot
+  // split the cell and evaluate its tail.
+  if (/[",;\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
 

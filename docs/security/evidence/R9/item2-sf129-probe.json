@@ -1,0 +1,127 @@
+{
+ "shortName": "ENV~1",
+ "guard": {
+  "name \".ENV\"": "REFUSED: .env holds the production credentials; use .env.test",
+  "name \".Env\"": "REFUSED: .env holds the production credentials; use .env.test",
+  "name \".eNV\"": "REFUSED: .env holds the production credentials; use .env.test",
+  "name \".env.\"": "REFUSED: .env holds the production credentials; use .env.test",
+  "name \".env \"": "REFUSED: .env holds the production credentials; use .env.test",
+  "name \".env. .\"": "REFUSED: .env holds the production credentials; use .env.test",
+  "name \".env::$DATA\"": "REFUSED: .env holds the production credentials; use .env.test",
+  "8.3 short name ENV~1": "REFUSED: the env file resolves to .env (production credentials)",
+  "dot segment .env\\.": "REFUSED: the env file resolves to .env (production credentials)",
+  "dot segment .env/.": "REFUSED: the env file resolves to .env (production credentials)",
+  "junction/.env": "REFUSED: .env holds the production credentials; use .env.test",
+  "junction/.ENV": "REFUSED: .env holds the production credentials; use .env.test",
+  "junction/ENV~1": "REFUSED: the env file resolves to .env (production credentials)",
+  "hard link hard.txt": "REFUSED: the env file is the same file as .env (a link); use .env.test",
+  "hard link via junction": "REFUSED: the env file is the same file as .env (a link); use .env.test",
+  "file symlink sym.txt": "NOT CREATED: EPERM",
+  "positive control ok.env": "ADMITTED ok.env",
+  "hardShort": null
+ },
+ "spawned": {
+  ".ENV": {
+   "status": 2,
+   "stderr": "REFUSED: .env holds the production credentials; use .env.test",
+   "reachedTarget": false
+  },
+  ".Env": {
+   "status": 2,
+   "stderr": "REFUSED: .env holds the production credentials; use .env.test",
+   "reachedTarget": false
+  },
+  ".env.": {
+   "status": 2,
+   "stderr": "REFUSED: .env holds the production credentials; use .env.test",
+   "reachedTarget": false
+  },
+  ".env(space)": {
+   "status": 2,
+   "stderr": "REFUSED: .env holds the production credentials; use .env.test",
+   "reachedTarget": false
+  },
+  "junction/.env": {
+   "status": 2,
+   "stderr": "REFUSED: .env holds the production credentials; use .env.test",
+   "reachedTarget": false
+  },
+  "junction/.eNv": {
+   "status": 2,
+   "stderr": "REFUSED: .env holds the production credentials; use .env.test",
+   "reachedTarget": false
+  },
+  "hard link outside": {
+   "status": 2,
+   "stderr": "REFUSED: the env file is the same file as .env (a link); use .env.test",
+   "reachedTarget": false
+  },
+  "dot segment": {
+   "status": 2,
+   "stderr": "REFUSED: the env file resolves to .env (production credentials)",
+   "reachedTarget": false
+  },
+  "short ENV~1": {
+   "status": 2,
+   "stderr": "REFUSED: the env file resolves to .env (production credentials)",
+   "reachedTarget": false
+  },
+  "control": {
+   "status": 2,
+   "stderr": "REFUSED: host is not the allowlisted endpoint for expectHost"
+  }
+ },
+ "confirmNoIds": {
+  "a": {
+   "status": 2,
+   "stderr": "REFUSED: --confirm requires --ids <the ids a dry run printed>; nothing changed"
+  },
+  "missingEnvFile": {
+   "status": 9,
+   "stderr": "C:\\Users\\NoeTo\\AppData\\Local\\Temp\\claude\\c--Users-NoeTo-Desktop-matflow\/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\\scratchpad\\security\\node24\\node-v24.21.0-win-x64\\node.exe: C:\\Users\\NoeTo\\AppData\\Local\\Temp\\claude\\c--Users-NoeTo-Desktop-matflow\/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f\\scratchpad\\security\\R9\\envlab\\secr9-lab-mv2yen2n\\missing.env: not found"
+  }
+ },
+ "pgEnv": {
+  "PGOPTIONS": {
+   "status": 2,
+   "stderr": "REFUSED: libpq environment variable(s) set: PGOPTIONS"
+  },
+  "PgOptions": {
+   "status": 2,
+   "stderr": "REFUSED: libpq environment variable(s) set: PgOptions"
+  },
+  "pgoptions": {
+   "status": 2,
+   "stderr": "REFUSED: libpq environment variable(s) set: pgoptions"
+  },
+  "pghost": {
+   "status": 2,
+   "stderr": "REFUSED: libpq environment variable(s) set: pghost"
+  },
+  "pgsslmode": {
+   "status": 2,
+   "stderr": "REFUSED: libpq environment variable(s) set: pgsslmode"
+  }
+ },
+ "endpointPw": {
+  "endpoint=ep-bold-wave-abt39t7x$<pw>": "REFUSED: the password field carries an endpoint= routing option",
+  "endpoint=ep-bold-wave-abt39t7x;<pw>": "REFUSED: the password field carries an endpoint= routing option",
+  "endpoint%3Dep-bold-wave-abt39t7x%24<pw>": "REFUSED: the password field carries an endpoint= routing option",
+  "%65ndpoint%3Dep-bold-wave-abt39t7x%24<pw>": "REFUSED: the password field carries an endpoint= routing option",
+  "Endpoint=ep-bold-wave-abt39t7x$<pw>": "REFUSED: the password field carries an endpoint= routing option",
+  "ENDPOINT%3Dep-bold-wave-abt39t7x%3B<pw>": "REFUSED: the password field carries an endpoint= routing option"
+ },
+ "endpointPwTool": {
+  "status": 2,
+  "stderr": "REFUSED: the password field carries an endpoint= routing option",
+  "reachedTarget": false
+ },
+ "projectPw": {
+  "project=ep-bold-wave-abt39t7x$<pw>": "ADMITTED ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech",
+  "vetTarget project=ep-bold-wave-abt39t7x$<pw>": "ADMITTED ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech",
+  "project%3Dep-bold-wave-abt39t7x%24<pw>": "ADMITTED ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech",
+  "vetTarget project%3Dep-bold-wave-abt39t7x%24<pw>": "ADMITTED ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech",
+  "project=ep-bold-wave-abt39t7x;<pw>": "ADMITTED ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech",
+  "vetTarget project=ep-bold-wave-abt39t7x;<pw>": "ADMITTED ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech"
+ }
+}

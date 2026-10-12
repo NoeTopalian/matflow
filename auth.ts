@@ -9,13 +9,30 @@ import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { shouldRefreshBrand } from "@/lib/brand-refresh";
 import { readPendingTenantSlug, clearPendingTenantSlug } from "@/lib/pending-tenant-cookie";
-import { isTestingMode } from "@/lib/testing-mode";
+import { isTestingMode, isProductionDatabase } from "@/lib/testing-mode";
+import { deviceHash } from "@/lib/login-fingerprint";
+import {
+  ADDR_MAX,
+  KNOWN_DEVICE_DAYS,
+  LOCKOUT_WINDOW_MS,
+  SIGN_IN_THROTTLED_MESSAGE,
+  clearPairOnSuccess,
+  lockoutKeys,
+  lockoutState,
+  recordFailure,
+  requestClientIp,
+} from "@/lib/auth-lockout";
 import { requiresTotpEnrolment } from "@/lib/mfa-policy";
 import { recordLoginEvent } from "@/lib/login-event";
+import { after } from "next/server";
 import { emailField } from "@/lib/email-normalise";
 import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
 import { checkSessionVersion } from "@/lib/session-revocation";
-import { readImpersonationCookie } from "@/lib/impersonation";
+import { resolveActiveImpersonation, hasImpersonationCookie } from "@/lib/impersonation";
+import { isTempPasswordExpired } from "@/lib/temp-password";
+import { isLoginEmailProvisional } from "@/lib/login-email";
+// SF-36: the explicit Google link seam (no store yet: always "no link").
+import { linkedExternalIdentity } from "@/lib/external-identity";
 
 // Resolve the public app URL once for outbound links (e.g. the disown-login
 // link in P1.6 emails). Falls back to a sensible string in dev so the helper
@@ -132,10 +149,45 @@ interface ImpersonatorClaims {
   totpEnabled: boolean;
   /** Optional: a stash written before this claim existed has no such key. */
   mustChangePassword?: boolean;
+  /** True when the token stashed was a support CARRIER (no identity) — see SUPPORT_CARRIER_CLAIM. */
+  supportCarrier?: boolean;
+  /** Optional: a stash written before lane J item 9 has no such keys (restore leaves the token's alone). */
+  name?: string | null;
+  email?: string | null;
 }
 
-const LOGIN_RATE_MAX = 5;
-const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
+/**
+ * A support CARRIER token (E2E flow 6, 6 Oct 2026). Auth.js only runs jwt()
+ * when the request carries a session-token cookie, and operator sign-in never
+ * mints one — so in a clean operator browser the support swap below never ran
+ * and /dashboard bounced to /login. POST /api/admin/impersonate therefore sets
+ * a carrier ({ supportCarrier: true }, NO identity; minted by
+ * mintSupportCarrier() in app/api/admin/impersonate/route.ts) when the browser
+ * has no Auth.js session. A carrier is only ever a vehicle for the swap:
+ * whenever support is not active, a carrier token — or a restored stash that
+ * was one — is signed out (null), never left as an identity-less session. Same
+ * literal as that route's carrier claim (not imported: a route file may export
+ * only HTTP handlers; tests/unit/support-carrier-start.test.ts pins the match).
+ */
+const SUPPORT_CARRIER_CLAIM = "supportCarrier";
+
+/**
+ * Keep the sign-in record (review of lane I, 6 Oct 2026). It used to be
+ * an un-awaited `void` call — fire-and-forget, which a serverless function
+ * frozen after the response can lose, and the row is now the activation
+ * evidence scripts/readiness/activation-verdict.mjs reads. Handed to Next's
+ * after() instead: it runs once the response is sent, within the route's max
+ * duration, and works in Route Handlers and Server Functions — where Auth.js
+ * runs authorize() and the signIn callback. Outside a request scope after()
+ * throws; then the write is awaited (recordLoginEvent never throws).
+ */
+async function keepLoginEvent(args: Parameters<typeof recordLoginEvent>[0]): Promise<void> {
+  try {
+    after(() => recordLoginEvent(args));
+  } catch {
+    await recordLoginEvent(args);
+  }
+}
 
 /**
  * The per-IP / per-email sign-in throttle. **Defaults ON.**
@@ -159,12 +211,40 @@ const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
  */
 const LOGIN_THROTTLE_ENABLED = process.env.LOGIN_THROTTLE_ENABLED !== "false";
 
-// Account lockout: stricter than rate-limit because rate-limit windows reset
-// and let an attacker keep grinding. After this many *consecutive* failed
-// password attempts, the account is locked for ACCOUNT_LOCKOUT_DURATION_MS.
-// A successful login resets the counter.
-const ACCOUNT_LOCKOUT_THRESHOLD = 10;
-const ACCOUNT_LOCKOUT_DURATION_MS = 60 * 60 * 1000; // 1 hour
+/**
+ * Whether the per-IP sign-in throttle runs (SF-59, lane A2, 9 Oct 2026).
+ * LOGIN_THROTTLE_ENABLED has existed on Vercel Production and Preview since
+ * 23 Sep with a value nobody can read back (lane E2, `vercel env ls`, 9 Oct
+ * 2026). If it is "false", the six newest builds have no sign-in throttle. So
+ * "false" is now honoured only where nothing real is at stake: never in any
+ * Vercel deployment (production or preview — previews share production
+ * secrets, lane E SEC-067) and never against the production database. Absent,
+ * empty or malformed was already ON and stays ON.
+ */
+function loginThrottleActive(): boolean {
+  if (LOGIN_THROTTLE_ENABLED) return true;
+  if (process.env.VERCEL || process.env.VERCEL_ENV || isProductionDatabase()) {
+    console.warn("[auth] LOGIN_THROTTLE_ENABLED=false ignored: not permitted on a Vercel deployment or the production database");
+    return true;
+  }
+  return false;
+}
+
+/**
+ * The E2E harness (throttle skip + E2E_BYPASS_TOKEN as a password) — SF-37,
+ * lane A2, 9 Oct 2026. Previously `isTestingMode() && isLocalhost`, where
+ * "localhost" was read from x-forwarded-for / x-real-ip: client-controlled, and
+ * "unknown" (no proxy headers at all) counted as local. Now an explicit flag,
+ * E2E_AUTH_BYPASS=true, which is refused on ANY Vercel deployment (VERCEL is
+ * set at build and run time there) and wherever isTestingMode() refuses
+ * (VERCEL_ENV=production, the production database). No request header can
+ * turn it on or off.
+ */
+function e2eHarnessPermitted(): boolean {
+  if (process.env.E2E_AUTH_BYPASS !== "true") return false;
+  if (process.env.VERCEL || process.env.VERCEL_ENV) return false;
+  return isTestingMode();
+}
 
 /**
  * Sign-in refusals that must reach the person at the door.
@@ -190,17 +270,32 @@ const ACCOUNT_LOCKOUT_DURATION_MS = 60 * 60 * 1000; // 1 hour
  */
 import { CredentialsSignin } from "next-auth";
 
+/**
+ * Every throttle and every failure lockout answers with this one code (SF-35,
+ * lane A2, 9 Oct 2026). There used to be a second, `account_locked`, thrown
+ * only for an account that exists — an existence oracle after ten guesses.
+ * The counters behind this code are keyed on the address string, so it means
+ * the same thing whether or not the account exists.
+ */
 class RateLimitedError extends CredentialsSignin {
   code = "rate_limited";
   constructor() {
-    super("Too many login attempts. Try again later.");
+    super(SIGN_IN_THROTTLED_MESSAGE);
   }
 }
 
-class AccountLockedError extends CredentialsSignin {
-  code = "account_locked";
+/**
+ * The password was right, but it was a TEMPORARY one (operator reset) and its
+ * time is up (6 Oct 2026). Only reachable with the correct temporary password,
+ * so it says nothing to someone guessing. The fix is a new temporary password
+ * from whoever issued it — MatFlow support for an owner, the club's owner for
+ * staff — not a reset link (magic and reset links are refused while
+ * `mustChangePassword` is set). Same words as app/login/page.tsx shows.
+ */
+class TemporaryPasswordExpiredError extends CredentialsSignin {
+  code = "temp_password_expired";
   constructor() {
-    super("This account is temporarily locked due to too many failed sign-in attempts. Try again later.");
+    super("This temporary password has expired. Ask whoever gave it to you for a new one.");
   }
 }
 
@@ -214,7 +309,81 @@ class TenantRefusedError extends CredentialsSignin {
   }
 }
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+/**
+ * An id no User or Member row can have (ids are cuids). The failure path runs
+ * its known-device lookup and row-counter write against it when the address
+ * has no account, so both paths cost the same round trips (SF-35, lane A3).
+ */
+const NO_ACCOUNT_ROW_ID = "no-account";
+
+/**
+ * The revalidation marker (SF-44, security campaign iteration 2, lane A2,
+ * 9 Oct 2026).
+ *
+ * When the revocation check CANNOT RUN (the database timed out, dropped the
+ * connection, refused the query, or answered with something unreadable) the
+ * verdict is "unknown". Since AH-G7 that verdict never admits a request. It
+ * used to be answered by jwt() returning null — and null makes Auth.js clear
+ * the session cookie, which proxy.ts (wrapped by next-auth) copies onto every
+ * page and API reply (review R-1). A database blip therefore signed out every
+ * user who made a request during it.
+ *
+ * Now jwt() keeps the token and stamps it with this claim instead. The token
+ * carries NO authority while the claim is present: session() answers
+ * "unavailable" (no user), the exported auth() below turns that into null for
+ * every route and page, and proxy.ts answers a retryable 503 without touching
+ * the cookie. The claim is removed only by a later pass whose check succeeds,
+ * so the next request revalidates before anything can succeed; a pass that
+ * does not run the check (Edge) leaves it in place and stays refused.
+ *
+ * "revoked" is unchanged: proven revocation returns null and the cookie IS
+ * cleared. A token that proves its own revocation (malformed version) is
+ * cleared even while the database is down.
+ *
+ * Bounded: the claim records when the check first failed. A token that has
+ * gone REVALIDATE_MAX_MS without one successful check is ended (null) instead
+ * of being re-issued indefinitely — re-issuing slides the cookie's expiry, and
+ * a session must not outlive its 30 days on the strength of checks that never
+ * ran. No cached verdict is ever used as a fallback: the marker only refuses.
+ */
+const REVALIDATE_CLAIM = "revalidateSince";
+const REVALIDATE_MAX_MS = 24 * 60 * 60 * 1000;
+
+function revalidateSince(token: Record<string, unknown>): number | null {
+  const v = token[REVALIDATE_CLAIM];
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** "unknown": keep the cookie, refuse the request, revalidate next time — or end it once the bound is passed. */
+function markForRevalidation<T extends Record<string, unknown>>(token: T, reason: string): T | null {
+  const now = Date.now();
+  const prior = revalidateSince(token);
+  const since = prior !== null && prior <= now ? prior : now;
+  if (now - since > REVALIDATE_MAX_MS) {
+    console.error("[auth] session could not be revalidated within the bound — session ended", {
+      reason,
+      pendingForMs: now - since,
+    });
+    return null;
+  }
+  (token as Record<string, unknown>)[REVALIDATE_CLAIM] = since;
+  console.warn("[auth] request refused as unavailable; session kept for revalidation", { reason });
+  return token;
+}
+
+/**
+ * A session object auth() may hand to a caller: one with a user id and not
+ * awaiting revalidation. Anything else is "signed out" for that caller — a
+ * user-less session is truthy, and 57 call sites check only `if (!session)`.
+ */
+export function usableSession<S>(session: S): S | null {
+  const s = session as { user?: { id?: unknown } | null; authUnavailable?: unknown } | null | undefined;
+  if (!s || s.authUnavailable === true) return null;
+  if (!s.user || typeof s.user.id !== "string" || !s.user.id) return null;
+  return session;
+}
+
+const nextAuth = NextAuth({
   session: {
     strategy: "jwt",
     maxAge: 30 * 24 * 60 * 60, // 30 days
@@ -241,43 +410,31 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const { email, password, tenantSlug } = parsed.data;
 
-        // IP-based rate limit (30 attempts / 30 min) — global across all tenants
-        const ip =
-          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-          request.headers.get("x-real-ip") ??
-          "unknown";
+        // The client IP, by the product's trust order (x-vercel-forwarded-for,
+        // x-real-ip, then the LAST x-forwarded-for hop). This read the FIRST
+        // x-forwarded-for entry — the one a client writes — so a rotating
+        // header bought a fresh per-IP bucket on every attempt.
+        const ip = requestClientIp(request.headers);
+        const userAgent = request.headers.get("user-agent");
 
-        // Skip rate-limit enforcement for local E2E test runs, which also gates
-        // the E2E PASSWORD BYPASS at :218-224 below.
-        //
-        // The ip test is NOT the security boundary and must not be mistaken for
-        // one. "unknown" is what this resolves to when x-forwarded-for and
-        // x-real-ip are both absent — true of a direct request to the local dev
-        // server (so Playwright needs it), but equally true of any request that
-        // did not arrive through the expected proxy. Tightening it to real
-        // loopback breaks the e2e login and buys nothing, because an attacker
-        // reaching the app through a proxy that strips those headers lands on
-        // "unknown" too.
-        //
-        // The boundary is isTestingMode(), which now refuses BOTH
-        // VERCEL_ENV=production and — the case that actually mattered — any
-        // process whose DATABASE_URL points at the production branch, whatever
-        // the environment calls itself. Previously this read
-        // `process.env.TESTING_MODE === "true"` raw, bypassing both refusals.
-        const isLocalhost = ip === "127.0.0.1" || ip === "::1" || ip === "unknown";
-        const skipRateLimit = isTestingMode() && isLocalhost;
+        // THE E2E HARNESS IS AN EXPLICIT FLAG, NOT A HEADER (SF-37, lane A2,
+        // 9 Oct 2026). It skipped the throttle and enabled the password bypass
+        // when the request "looked local" — an x-forwarded-for of 127.0.0.1 or
+        // no proxy headers at all, both of which a client can arrange. It now
+        // needs E2E_AUTH_BYPASS=true in a TESTING_MODE process that is not on
+        // Vercel at all and not on the production database (e2eHarnessPermitted).
+        const harness = e2eHarnessPermitted();
 
-        if (LOGIN_THROTTLE_ENABLED && !skipRateLimit) {
-          // Sprint 4-A US-404: parallelise the two independent rate-limit checks.
-          const rlKey = `login:${tenantSlug}:${email.toLowerCase().trim()}`;
-          const [ipRl, rl] = await Promise.all([
-            checkRateLimit(`login:ip:${ip}`, 30, 30 * 60 * 1000),
-            checkRateLimit(rlKey, LOGIN_RATE_MAX, LOGIN_RATE_WINDOW_MS),
-          ]);
+        // Per-IP attempt brake across all addresses (password spraying). Only
+        // this brake follows LOGIN_THROTTLE_ENABLED, and production cannot turn
+        // it off (loginThrottleActive). The per-ADDRESS attempt limit that sat
+        // here (5 per 15 minutes from every source) was itself a lockout anyone
+        // could trigger for anyone; the address is now guarded by the failure
+        // counters below, which a known device of the account is exempt from.
+        if (loginThrottleActive() && !harness) {
+          const ipRl = await checkRateLimit(`login:ip:${ip}`, 30, 30 * 60 * 1000);
           if (!ipRl.allowed) throw new RateLimitedError();
-          if (!rl.allowed) throw new RateLimitedError();
         }
-
         try {
           // Pre-session lookup: caller has no JWT yet. Use bypass to fetch the
           // tenant by slug, then switch to tenant-scoped reads once we have id.
@@ -312,17 +469,41 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           );
           const memberRow = !user ? memberRowRaw : null;
 
-          // Account-lockout check: if the matched account is currently locked,
-          // skip bcrypt entirely and reject. We still run bcrypt against DUMMY_HASH
-          // below to keep the timing constant for locked / unlocked / non-existent
-          // paths, then throw the lockout error.
           const subject: { id: string; lockedUntil: Date | null; failedLoginCount: number } | null =
             user
               ? { id: user.id, lockedUntil: user.lockedUntil, failedLoginCount: user.failedLoginCount }
               : memberRow
               ? { id: memberRow.id, lockedUntil: memberRow.lockedUntil, failedLoginCount: memberRow.failedLoginCount }
               : null;
-          const isLocked = !!(subject?.lockedUntil && subject.lockedUntil > new Date());
+          // A row lock now comes only from "Wasn't me?" (disown-login) or an
+          // operator — never from failed passwords (lockout v2 below).
+          const rowLocked = !!(subject?.lockedUntil && subject.lockedUntil > new Date());
+
+          // LOCKOUT v2 (SF-35 + SF-59, lane A2, 9 Oct 2026; lib/auth-lockout.ts).
+          // Counted against the address STRING, so an address with no account
+          // reaches the same state after the same requests. Read BEFORE the
+          // password is judged; a database error throws and refuses (fail
+          // closed). The known-device lookup runs for every address once the
+          // address-wide cap is reached — against an id that matches nothing
+          // when there is no account — so both paths cost one query.
+          // When not blocked, this attempt now HOLDS a failure slot in both
+          // counters, taken atomically before bcrypt (R6-N1, lane A4): a
+          // concurrent burst gets exactly ADDR_MAX verdicts, not one per
+          // request in flight. A correct password gives the slot back below.
+          const keys = lockoutKeys(tenantSlug, email, ip);
+          const lock = await lockoutState(keys, () =>
+            withTenantContext(tenant.id, async (tx) => {
+              const dh = deviceHash(ip, userAgent);
+              const since = new Date(Date.now() - KNOWN_DEVICE_DAYS * 24 * 60 * 60 * 1000);
+              const row = await tx.loginEvent.findFirst({
+                where: user
+                  ? { userId: user.id, deviceHash: dh, disownedAt: null, lastSeenAt: { gte: since } }
+                  : { memberId: memberRow?.id ?? NO_ACCOUNT_ROW_ID, deviceHash: dh, disownedAt: null, lastSeenAt: { gte: since } },
+                select: { id: true },
+              });
+              return !!row;
+            }),
+          );
 
           // Always run bcrypt to prevent email enumeration via timing differences.
           // Falls back to DUMMY_HASH when neither record exists — bcrypt still runs
@@ -332,116 +513,131 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             memberRow?.passwordHash ??
             DUMMY_HASH;
 
-          // E2E bypass: skip bcrypt when TESTING_MODE+localhost AND the
-          // password matches E2E_BYPASS_TOKEN (lives in gitignored .env.test).
+          // E2E bypass: skip bcrypt when the harness is explicitly permitted
+          // (see e2eHarnessPermitted) AND the password matches E2E_BYPASS_TOKEN
+          // (lives in gitignored .env.test).
           const e2eTokenValid =
-            skipRateLimit &&
+            harness &&
             !!process.env.E2E_BYPASS_TOKEN &&
             password === process.env.E2E_BYPASS_TOKEN;
           const valid = e2eTokenValid || (await bcrypt.compare(password, targetHash));
 
-          if (isLocked) throw new AccountLockedError();
-
-          if (!valid) {
-            // Increment failed-login count on the matched account; lock it if
-            // we've crossed the threshold. Best-effort — failures here must not
-            // block the login response (which is "null" for invalid creds).
-            if (subject) {
-              // THE DATABASE DOES THE ARITHMETIC, AND A FAILURE IS LOUD.
-              //
-              // This used to read `subject.failedLoginCount` — captured near the
-              // top of `authorize`, BEFORE a bcrypt comparison that takes ~100 ms
-              // — add one to it in JavaScript, and write the result back
-              // absolutely. That is a read-modify-write across a long gap, so
-              // overlapping attempts all read the same number and all write the
-              // same number: ten wrong passwords in parallel leave the counter
-              // at 1, and the account never locks. The window is widest under
-              // exactly the traffic the lockout exists to stop, which is the
-              // worst possible property for this particular control.
-              //
-              // Measured by another lane on throwaway rows, for both `User` and
-              // `Member`: one refusal against a counter seeded at 5 wrote 6, and
-              // seeded at 9 locked — the read, the write and the threshold were
-              // all fine — while ELEVEN refusals from 0 ended at 0 or 1. The
-              // corroboration from the data was that every `auth.account.locked`
-              // row in the test database was a Member and not one was a User:
-              // nothing had ever locked a staff account there.
-              //
-              // `{ increment: 1 }` moves the arithmetic into Postgres, where the
-              // row is locked for the duration of the statement, so N attempts
-              // are N increments however they interleave. The threshold is then
-              // read from what the database actually did, not from what this
-              // process guessed before it went away to hash a password.
-              //
-              // And the `catch` no longer eats it. A swallowed failure here is
-              // the one write standing between a stolen password list and an
-              // open account; if it cannot be made, that must be visible.
-              try {
-                let locked = false;
-                await withTenantContext(tenant.id, async (tx) => {
-                  const bumped = user
-                    ? await tx.user.update({
-                        where: { id: user.id },
-                        data: { failedLoginCount: { increment: 1 } },
-                        select: { failedLoginCount: true },
-                      })
-                    : await tx.member.update({
-                        where: { id: memberRow!.id },
-                        data: { failedLoginCount: { increment: 1 } },
-                        select: { failedLoginCount: true },
-                      });
-
-                  if (bumped.failedLoginCount >= ACCOUNT_LOCKOUT_THRESHOLD) {
-                    locked = true;
-                    const lockedUntil = new Date(Date.now() + ACCOUNT_LOCKOUT_DURATION_MS);
-                    // Same transaction: the counter resets as the lock goes on,
-                    // so a concurrent attempt cannot see a crossed threshold
-                    // with no lock behind it.
-                    if (user) {
-                      await tx.user.update({
-                        where: { id: user.id },
-                        data: { failedLoginCount: 0, lockedUntil },
-                      });
-                    } else {
-                      await tx.member.update({
-                        where: { id: memberRow!.id },
-                        data: { failedLoginCount: 0, lockedUntil },
-                      });
-                    }
-                  }
-                });
-                if (locked) {
-                  // Audit so the owner sees the suspicious activity in the log.
-                  const { logAudit } = await import("@/lib/audit-log");
-                  await logAudit({
-                    tenantId: tenant.id,
-                    userId: user?.id ?? null,
-                    action: "auth.account.locked",
-                    entityType: user ? "User" : "Member",
-                    entityId: subject.id,
-                    metadata: { reason: "consecutive_failed_logins", threshold: ACCOUNT_LOCKOUT_THRESHOLD },
+          // ONE answer for every throttle and lock, whether or not the address
+          // has an account; the detail goes to the server log only (SF-35).
+          if (lock.blocked) {
+            console.warn("[auth] sign-in refused: failure lockout", {
+              counter: lock.reason,
+              tenantId: tenant.id,
+              subject: subject ? (user ? "user" : "member") : "none",
+              subjectId: subject?.id ?? null,
+            });
+            throw new RateLimitedError();
+          }
+          // EVERY refused attempt is counted against the address, BEFORE any
+          // row-state branch (lane A3, review R3-2). A row locked by "Wasn't
+          // me?" or an operator used to return null here before the failure
+          // was recorded, so it answered refused for ever while an address
+          // with no account was capped after ADDR_MAX: twelve guesses told a
+          // locked account apart (and it answered ~200 ms sooner). Now a
+          // locked row — right or wrong password — costs and answers exactly
+          // what any other address does at the same count.
+          if (rowLocked || !valid) {
+            // The failure was recorded when the slot was reserved, before the
+            // password was judged (R6-N1); this only reads its count. Fail
+            // closed: a missing reservation throws and the attempt stays refused.
+            const addrFailures = await recordFailure(keys, lock.reservation);
+            // The row counter is kept for the owner's and operator's view of
+            // an account under attack; it no longer locks anything. The
+            // database does the arithmetic ({ increment: 1 }), so overlapping
+            // attempts are all counted (tests/unit/account-lockout-counter).
+            //
+            // It runs UNCONDITIONALLY (lane A3, review R3-3): with no account
+            // the same single-statement transaction targets an id that matches
+            // nothing, so a wrong password costs the same round trips whether
+            // or not the address exists (+205..263 ms on the review link
+            // before; tests/unit/sec-a3-failure-path-cost pins the equality).
+            try {
+              await withTenantContext(tenant.id, async (tx) => {
+                if (user) {
+                  await tx.user.update({
+                    where: { id: user.id },
+                    data: { failedLoginCount: { increment: 1 } },
+                    select: { failedLoginCount: true },
+                  });
+                } else if (memberRow) {
+                  await tx.member.update({
+                    where: { id: memberRow.id },
+                    data: { failedLoginCount: { increment: 1 } },
+                    select: { failedLoginCount: true },
+                  });
+                } else {
+                  await tx.member.updateMany({
+                    where: { id: NO_ACCOUNT_ROW_ID, tenantId: tenant.id },
+                    data: { failedLoginCount: { increment: 1 } },
                   });
                 }
-              } catch (err) {
-                // Still best-effort — a database blip must not turn a wrong
-                // password into a 500 — but never again silent. While this is
-                // failing, the account lockout is not counting, and the only
-                // way anyone finds out is this line.
-                console.error(
-                  "[auth] failed-login counter NOT recorded — the account lockout is not counting",
-                  {
-                    subject: user ? "user" : "member",
-                    subjectId: subject.id,
-                    tenantId: tenant.id,
-                    error: err instanceof Error ? err.message : String(err),
-                  },
-                );
-                Sentry.captureException(err, {
-                  tags: { area: "auth", control: "account-lockout", failMode: "open" },
-                });
+              });
+            } catch (err) {
+              console.error("[auth] failed-login row counter NOT recorded (the address lockout still counted)", {
+                subject: user ? "user" : memberRow ? "member" : "none",
+                subjectId: subject?.id ?? null,
+                tenantId: tenant.id,
+                error: err instanceof Error ? err.message : String(err),
+              });
+              Sentry.captureException(err, {
+                tags: { area: "auth", control: "account-lockout", failMode: "closed" },
+              });
+            }
+            if (rowLocked) {
+              console.warn("[auth] sign-in refused: account row locked (disown or operator)", {
+                tenantId: tenant.id,
+                subjectId: subject?.id ?? null,
+              });
+            }
+            if (subject && addrFailures === ADDR_MAX) {
+              // The owner sees an account under attack in the activity log.
+              // After the response, so the audit write adds no timing signal.
+              const auditArgs = {
+                tenantId: tenant.id,
+                userId: user?.id ?? null,
+                action: "auth.account.locked",
+                entityType: user ? "User" : "Member",
+                entityId: subject.id,
+                metadata: { reason: "failed_login_cap", scope: "unrecognised_devices", threshold: ADDR_MAX, windowMinutes: LOCKOUT_WINDOW_MS / 60000 },
+              };
+              const write = async () => {
+                try {
+                  const { logAudit } = await import("@/lib/audit-log");
+                  await logAudit(auditArgs);
+                } catch { /* best-effort */ }
+              };
+              try {
+                after(write);
+              } catch {
+                await write();
               }
             }
+            // The generic refusal a wrong password gets, for a locked row too:
+            // its own message would say the address has an account.
             return null;
+          }
+
+          // The password was right: give this attempt's address slot back and
+          // start this network's counter again, BEFORE any later refusal (an
+          // expired temporary password is not a guess). Best-effort: a failure
+          // here only keeps one slot spent (R6-N1 refund, lane A4).
+          try {
+            await clearPairOnSuccess(keys, lock.reservation);
+          } catch { /* best-effort */ }
+
+          // A temporary password stops working at its expiry (operator reset,
+          // 6 Oct 2026). Null expiry on a temporary password (rows from before
+          // the column existed) = LEGACY_TEMP_PASSWORD_DEADLINE (review D2);
+          // passwords people chose themselves never expire. Checked only after
+          // the password matched, so it reveals nothing to a guesser. Not
+          // TESTING_MODE-suppressed, like the mustChangePassword gate itself.
+          if (user && isTempPasswordExpired(user)) {
+            throw new TemporaryPasswordExpiredError();
           }
 
           // Successful login — reset failed counter + clear any stale lock.
@@ -465,9 +661,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
           if (user) {
             const role = normalizeRole(user.role);
-            // P1.6: fire-and-forget new-device detection. Internal try/catch
-            // means a DB blip or Resend outage cannot break the login response.
-            void recordLoginEvent({
+            // P1.6: new-device detection, run after the response (keepLoginEvent).
+            // Internal try/catch means a DB blip or Resend outage cannot break
+            // the login response.
+            await keepLoginEvent({
               subject: {
                 kind: "user",
                 id: user.id,
@@ -527,7 +724,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           }
 
           if (memberRow?.passwordHash) {
-            void recordLoginEvent({
+            await keepLoginEvent({
               subject: {
                 kind: "member",
                 id: memberRow.id,
@@ -599,8 +796,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // swallowed the first time.
           if (
             err instanceof RateLimitedError ||
-            err instanceof AccountLockedError ||
-            err instanceof TenantRefusedError
+            err instanceof TenantRefusedError ||
+            err instanceof TemporaryPasswordExpiredError
           ) throw err;
           // DB unavailable — DEMO_MODE fallback is dev-only. Wrapping the early
           // return on NODE_ENV first lets bundlers (Next.js + terser) eliminate
@@ -687,12 +884,65 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         ]),
       );
       // No auto-provisioning. Only existing accounts can use Google login.
-      if (!dbUser && !memberRow) return "/login?error=NoAccountForGym";
+      // ONE code with the no-link refusal below (lane A3, review R3 §5): this
+      // answered NoAccountForGym, so the door told the mailbox owner whether
+      // the address has an account in this club. When the link store lands
+      // the lookup by (club, provider, sub) runs BEFORE this email lookup and
+      // refuses with the same code (SF-36 proposal, "Lookup").
+      if (!dbUser && !memberRow) return "/login?error=google_link_required";
       // A staff account still on its temporary password is in bootstrap: its
       // only credential is that password, handed over privately. Proving
       // control of the mailbox (which is all Google proves) must not reach
       // /set-password — the same rule the magic-link door applies (3 Oct 2026).
       if (dbUser?.mustChangePassword === true) return "/login?error=invalid_link";
+      // A PROVISIONAL login email (7 Oct 2026, lib/login-email.ts) is an
+      // identifier, not a mailbox anyone has shown to be this person's — and a
+      // verified Google account proves exactly the mailbox and nothing more. No
+      // external identity provider signs a provisional identifier in. Audited;
+      // the answer is the one a dead link gets. Password + authenticator only.
+      if (isLoginEmailProvisional(dbUser)) {
+        try {
+          const { logAudit } = await import("@/lib/audit-log");
+          await logAudit({
+            tenantId: tenant.id,
+            userId: null,
+            action: "auth.external_signin.refused_provisional",
+            entityType: "User",
+            entityId: dbUser!.id,
+            metadata: { provider: "google", reason: "login_email_provisional" },
+          });
+        } catch {
+          // Best-effort: the refusal stands whether or not the row is written.
+        }
+        return "/login?error=invalid_link";
+      }
+
+      // EXPLICIT LINKING ONLY (SF-36, security campaign iteration 2, lane A2,
+      // 9 Oct 2026). Everything above proves one thing: Google says this
+      // person controls a mailbox whose address matches an account here.
+      // That used to be enough to sign in as the account — linking by email
+      // alone — so a member with no password (whom the magic-link door
+      // refuses) got in, and anyone who ever controlled the address at Google
+      // (a recycled Workspace mailbox, a former employee's alias) would too.
+      // A Google identity now opens an account only through an explicit link
+      // the account itself created while proven (signed in AND re-entering its
+      // password or authenticator), keyed on Google's stable subject id, never
+      // the address. The link store is a proposed migration (ExternalIdentity,
+      // docs/security/evidence/A2/REPORT.md); until it exists no identity is
+      // linked, so every Google sign-in is refused here — safe interim, never
+      // a silent link. Production: ENABLE_GOOGLE_OAUTH, GOOGLE_CLIENT_ID and
+      // GOOGLE_CLIENT_SECRET are absent from the Vercel variables (lane E
+      // listing, 9 Oct 2026), so the provider is not even registered there.
+      const link = await linkedExternalIdentity("google", account?.providerAccountId, tenant.id);
+      const linkedToThisAccount =
+        !!link && (dbUser ? link.userId === dbUser.id : link.memberId === memberRow?.id);
+      if (!linkedToThisAccount) {
+        console.warn("[auth] Google sign-in refused: no explicit link to this account", {
+          tenantId: tenant.id,
+          subject: dbUser ? "user" : "member",
+        });
+        return "/login?error=google_link_required";
+      }
 
       // Hydrate the `user` object so the jwt() callback below populates the
       // token with the same shape as the Credentials path produces.
@@ -743,8 +993,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       try {
         const { headers } = await import("next/headers");
         const h = await headers();
-        const fwd = h.get("x-forwarded-for");
-        const ip = fwd ? fwd.split(",")[0].trim() : (h.get("x-real-ip") ?? "unknown");
+        // The product's trust order, as on the credentials path (lane A3,
+        // review R3 §5). This read the FIRST x-forwarded-for entry — the one
+        // the client writes — and the login event it feeds decides which
+        // devices are "known" (new-device mail, the address-cap exemption).
+        const ip = requestClientIp(h);
         const ua = h.get("user-agent");
         const subjectArgs = dbUser
           ? {
@@ -762,7 +1015,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               tenantId: tenant.id,
               notifyOnNewLogin: memberRow!.notifyOnNewLogin,
             };
-        void recordLoginEvent({
+        await keepLoginEvent({
           subject: subjectArgs,
           ip,
           ua,
@@ -805,7 +1058,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // it any more — see the revocation block below, which used to skip for
         // ten minutes on the strength of this stamp and no longer does.
         token.sessionVersionCheckedAt = Date.now();
+        // A real sign-in is never a support carrier.
+        delete (token as Record<string, unknown>)[SUPPORT_CARRIER_CLAIM];
         return token;
+      }
+
+      // A carrier exists only for the Node-runtime support swap below. Where
+      // that cannot run, it is nothing — never an identity-less session.
+      if (
+        process.env.NEXT_RUNTIME === "edge" &&
+        (token as Record<string, unknown>)[SUPPORT_CARRIER_CLAIM] === true
+      ) {
+        return null;
       }
 
       // Upgrade stale demo-tenant tokens to real DB ids on next request
@@ -849,8 +1113,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // the target user's identity. Subsequent gates (sessionVersion check,
       // brand refresh, TOTP enforcement in proxy.ts) then operate on the TARGET
       // user — which is correct: if the target gets disowned mid-session, the
-      // impersonation dies. Bypasses TOTP because the admin secret authorised
-      // the access at start-time.
+      // impersonation dies. Bypasses the target's TOTP because a named operator
+      // proved their own MFA and a fresh step-up code to start it.
       //
       // THE SWAP IS A LOAN, NOT A TRANSFER. Two defects lane L-G found by
       // driving it, both of which come from the swap having been written as an
@@ -882,29 +1146,67 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // that is easy to miss: on the second request the token ALREADY holds the
       // target's claims, so stashing again would file the target's identity as
       // the operator's and turn the restore into a no-op.
+      //
+      // SUPPORT SESSIONS ARE BOUND AND READ-ONLY (6 Oct 2026, remediation lane
+      // B). resolveActiveImpersonation() re-checks, on EVERY request, the
+      // cookie's signature and expiry, the operator's own live MFA session
+      // (same operator, same sessionVersion), the nonce recorded on the
+      // Operator row (cleared by the stop), the target's sessionVersion as it
+      // was at start, and the club's admission. A binding that fails is "no
+      // support session": the restore branch below hands the operator their
+      // own claims back. Whatever the swap grants is read-only:
+      // lib/support-session.ts, proxy.ts.
+      //
+      // A resolver THROW (database error) is different (review finding D1,
+      // 6 Oct 2026). It used to be treated as "no support" too, which failed
+      // OPEN: the proxy's jwt() restored the operator, so proxy.ts saw no
+      // support session and let a POST through; the route handler's own auth()
+      // then re-ran jwt() on the same JWT cookie, the resolver could succeed
+      // that time, and the handler ran as the TARGET owner. So when support may
+      // be live — a support cookie on the request, or a stash / impersonatedBy
+      // claim on the token — a throw ends the session for this request (null)
+      // instead of guessing. Cookie presence is read BEFORE the resolver; an
+      // unreadable cookie store counts as no cookie (the resolver reads the
+      // same store, so it cannot succeed where this read failed).
       if (process.env.NEXT_RUNTIME !== "edge") {
+        let supportCookiePresent = false;
         try {
-          const imp = await readImpersonationCookie();
-          if (imp) {
-            // withRlsBypass for the same reason: after the RLS cutover a bare
-            // lookup here returns nothing, impersonation silently stops
-            // working, and the only symptom is an operator's support session
-            // not switching identity.
-            const target = await withRlsBypass((tx) => tx.user.findUnique({
-              where: { id: imp.targetUserId },
-              select: {
-                id: true, role: true, sessionVersion: true, tenantId: true,
-                tenant: {
-                  select: {
-                    name: true, slug: true,
-                    primaryColor: true, secondaryColor: true, textColor: true,
-                  },
-                },
-              },
-            }));
-            if (target && target.tenantId === imp.targetTenantId) {
+          supportCookiePresent = await hasImpersonationCookie();
+        } catch {
+          supportCookiePresent = false;
+        }
+        let active: Awaited<ReturnType<typeof resolveActiveImpersonation>> = null;
+        try {
+          active = await resolveActiveImpersonation();
+        } catch (err) {
+          const bag = token as Record<string, unknown>;
+          if (
+            supportCookiePresent ||
+            bag[IMPERSONATION_STASH] ||
+            bag.impersonatedBy ||
+            bag[SUPPORT_CARRIER_CLAIM] === true
+          ) {
+            console.error("[auth] support session could not be checked — session refused for this request", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            Sentry.captureException(err, {
+              tags: { area: "auth", control: "support-session", failMode: "closed" },
+            });
+            return null;
+          }
+          active = null;
+        }
+        try {
+          if (active) {
+            const { payload: imp, target } = active;
+            {
               const bag = token as Record<string, unknown>;
               const starting = !bag[IMPERSONATION_STASH];
+              // Mirror of D6 (review N3, 6 Oct 2026): a legacy token that already
+              // carries impersonatedBy but no stash must never have its (target)
+              // claims stashed as the operator's — the stop would "restore" the
+              // target. End it instead.
+              if (starting && bag.impersonatedBy) return null;
               if (starting) {
                 // The operator's own claims, kept whole so the stop can hand
                 // them back. Written exactly once per impersonation.
@@ -925,13 +1227,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                   requireTotpSetup: token.requireTotpSetup ?? false,
                   totpEnabled: token.totpEnabled ?? false,
                   mustChangePassword: token.mustChangePassword === true,
+                  name: token.name ?? null,
+                  email: token.email ?? null,
+                  ...(bag[SUPPORT_CARRIER_CLAIM] === true ? { supportCarrier: true } : {}),
                 } satisfies ImpersonatorClaims;
-                // Minted here and nowhere else. Refreshing it on later passes
-                // is what made a `sessionVersion` bump unable to evict an
-                // impersonated session — defect 2 above.
-                token.sessionVersion = target.sessionVersion;
               }
+              // The target's version AS IT WAS WHEN SUPPORT STARTED, carried
+              // in the signed cookie — never re-read from the database. Reading
+              // it fresh on every pass is what made a `sessionVersion` bump
+              // unable to evict an impersonated session (defect 2 above), and
+              // minting it once at the first swap still let a restore-then-
+              // re-swap re-mint it. resolveActiveImpersonation() also refuses a
+              // moved version outright.
+              token.sessionVersion = imp.tsv;
               token.id = target.id;
+              // The person being supported, not whoever this browser was
+              // before (that name leaked into the avatar) and not nothing (a
+              // carrier has no name: every dashboard page 500'd) — lane J item 9.
+              token.name = target.name ?? null;
+              token.email = target.email ?? null;
               token.tenantId = target.tenantId;
               token.tenantSlug = target.tenant.slug;
               token.tenantName = target.tenant.name;
@@ -942,25 +1256,37 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               token.memberId = null;
               token.totpPending = false;
               token.requireTotpSetup = false;
-              // Impersonation suppresses the recommend-2FA banner — operator
+              // Support suppresses the recommend-2FA banner — operator
               // is acting on someone else's account; nudging them to enrol the
               // target's authenticator would be confusing.
               token.totpEnabled = true;
-              // Same reasoning as the TOTP claims: the operator's secret
-              // authorised this access, so the target's temporary-password
-              // gate does not hold the operator at /set-password.
+              // The target's temporary-password gate does not hold the
+              // operator at /set-password: support is read-only, so the
+              // operator can neither choose the owner's password nor enrol the
+              // owner's authenticator (lib/support-session.ts) — lifting the
+              // gates only lets support SEE the dashboard.
               token.mustChangePassword = false;
               token.brandFetchedAt = Date.now();
               bag.impersonatedBy = imp.adminUserId;
               bag.impersonationReason = imp.reason;
             }
           } else {
-            // No cookie: the impersonation is over. Hand the operator their own
+            // No valid support session (no cookie, expired, stopped, operator
+            // signed out or revoked, target or club changed, or a database
+            // error): the impersonation is over. Hand the operator their own
             // identity back and drop every trace of the borrowed one. This runs
             // on the first request after the stop, so the claim cannot outlive
             // the cookie even by one page.
             const bag = token as Record<string, unknown>;
             const stashed = bag[IMPERSONATION_STASH] as ImpersonatorClaims | undefined;
+            // A carrier (clean-browser support start) has no identity of its
+            // own to give back: support over — stop, expiry, any binding
+            // failure, or a carrier presented alone — means signed out.
+            if (bag[SUPPORT_CARRIER_CLAIM] === true || stashed?.supportCarrier === true) return null;
+            // Review finding D6 (6 Oct 2026): a token carrying impersonatedBy
+            // with NO stash (pre-19-Sep in-place swap) has no operator identity
+            // to give back — keeping it keeps the borrowed one. End it.
+            if (!stashed && bag.impersonatedBy) return null;
             if (stashed) {
               token.id = stashed.id;
               token.tenantId = stashed.tenantId;
@@ -976,6 +1302,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               token.requireTotpSetup = stashed.requireTotpSetup;
               token.totpEnabled = stashed.totpEnabled;
               token.mustChangePassword = stashed.mustChangePassword === true;
+              if ("name" in stashed) token.name = stashed.name ?? null;
+              if ("email" in stashed) token.email = stashed.email ?? null;
               delete bag[IMPERSONATION_STASH];
               delete bag.impersonatedBy;
               delete bag.impersonationReason;
@@ -985,7 +1313,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               token.brandFetchedAt = 0;
             }
           }
-        } catch { /* impersonation override best-effort — don't break the JWT path */ }
+        } catch (err) {
+          // FAIL CLOSED (SEC-012, 9 Oct 2026). This block only does work when a
+          // support session is starting, live or ending; a throw part-way
+          // through leaves the token half-swapped between the operator and the
+          // target. It used to be swallowed ("best-effort") and the half-swapped
+          // token carried on. Ending the session is the only safe answer.
+          console.error("[auth] support swap/restore failed — session ended", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          Sentry.captureException(err, {
+            tags: { area: "auth", control: "support-session", failMode: "closed" },
+          });
+          return null;
+        }
       }
 
       // Non-user refresh: verify the token's sessionVersion still matches DB.
@@ -1033,27 +1374,49 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // Extracted to lib/session-revocation so it can be tested at all: this
           // lived inline in a NextAuth config object, which is why the product's
           // revocation control had no test.
-          const verdict = await checkSessionVersion({
-            memberId: token.memberId as string | null,
-            userId: token.id as string,
-            tokenVersion: token.sessionVersion,
-          });
+          const verdict = await checkSessionVersion(
+            {
+              memberId: token.memberId as string | null,
+              userId: token.id as string,
+              tokenVersion: token.sessionVersion,
+              tenantId: token.tenantId as string,
+            },
+            // The display name follows a profile edit on every device (8 Oct
+            // 2026). The row is the one this check reads anyway.
+            (name) => {
+              if (token.name !== name) token.name = name;
+            },
+          );
+          // "revoked" AND "unknown" both refuse (AH-G7 / SEC-012, security
+          // campaign lane A, 9 Oct 2026). Until then "unknown" kept the token
+          // and session() returned the full user, so for as long as this lookup
+          // kept failing every revocation in the product (password reset, log
+          // out everywhere, staff removal, suspension) failed OPEN on any
+          // request whose later queries happened to succeed.
+          //
+          // They refuse DIFFERENTLY (SF-44, lane A2, 9 Oct 2026). "revoked" is
+          // proven: null, and Auth.js clears the cookie. "unknown" is a
+          // dependency failure, not a verdict about this person: the token is
+          // kept, marked for revalidation, and carries no authority until a
+          // later check succeeds (see REVALIDATE_CLAIM above). Returning null
+          // for "unknown" — the AH-G7 version — signed every user out during a
+          // database blip, because proxy.ts copies the cookie-clearing
+          // Set-Cookie onto the reply (review R-1).
           if (verdict === "revoked") return null;
-          // "unknown" keeps the token — a database blip must not sign out every
-          // user in the product — but it is reported rather than swallowed.
+          if (verdict === "unknown") return markForRevalidation(token, "revocation-check-unavailable");
           // `sessionVersionCheckedAt` is now a record of the last successful
           // check and nothing gates on it: no branch above may read it back as
           // permission to skip the check, which is what made the guarantee
           // above untrue for ten minutes at a time.
-          if (verdict === "ok") token.sessionVersionCheckedAt = Date.now();
+          token.sessionVersionCheckedAt = Date.now();
 
           // A staff token minted before `mustChangePassword` was a claim has no
           // such key. Read the row ONCE and stamp it, so a temp-password session
           // that predates the deploy is gated like a fresh one instead of
           // reading `undefined` as "no change needed" for up to 30 days. Only
           // legacy tokens pay this read; every new token carries the claim.
-          // On a DB error the key stays absent and the next pass retries; the
-          // dashboard layout's own DB read still holds the pages meanwhile.
+          // On a DB error this request is refused (fail closed, like the
+          // revocation check above); the next request reads the row again.
           if (
             typeof token.mustChangePassword !== "boolean" &&
             !token.memberId &&
@@ -1064,8 +1427,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                 tx.user.findUnique({ where: { id: token.id as string }, select: { mustChangePassword: true } }),
               );
               if (row) token.mustChangePassword = row.mustChangePassword === true;
-            } catch { /* transient — retried on the next pass */ }
+            } catch {
+              // Cannot tell whether this legacy token is a temporary-password
+              // session: refuse this request rather than read "absent" as "no
+              // change needed" (SEC-012). A dependency failure, so refused as
+              // "unknown" above is: kept, marked, revalidated next time (SF-44).
+              return markForRevalidation(token, "legacy-temp-password-read-unavailable");
+            }
           }
+          // Every check this pass owed has now succeeded: only here may the
+          // revalidation marker go.
+          delete (token as Record<string, unknown>)[REVALIDATE_CLAIM];
         }
 
         // LB-004 (audit H10): refresh tenant branding every 30 minutes so
@@ -1103,6 +1475,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // user-less session, so this needs no cast.
         return { ...session, user: undefined };
       }
+      // Awaiting revalidation (SF-44): no identity, and say why, so proxy.ts
+      // and /api/auth/session can answer a retryable 503 instead of "signed
+      // out". The exported auth() below returns null for this shape.
+      if (revalidateSince(token as Record<string, unknown>) !== null) {
+        return { ...session, user: undefined, authUnavailable: true } as unknown as typeof session;
+      }
       session.user.id = token.id as string;
       session.user.role = (normalizeRole(token.role) as "owner" | "manager" | "coach" | "admin" | "member");
       session.user.tenantId = token.tenantId as string;
@@ -1130,3 +1508,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   },
 });
+
+export const { handlers, signIn, signOut } = nextAuth;
+
+/**
+ * auth(), with one rule added for the no-argument form every page, layout and
+ * route handler uses (SF-44, lane A2, 9 Oct 2026): a session that is not
+ * usable — no user id, or awaiting revalidation — is returned as null, the
+ * answer every caller already reads as "signed out". The server-side
+ * no-argument form sets no cookie, so this refuses the request without
+ * touching the browser's session. Every other form (the proxy.ts wrapper, the
+ * Request form) passes through unchanged; proxy.ts reads the unavailable shape
+ * itself and answers 503.
+ */
+export const auth = ((...args: unknown[]) => {
+  if (args.length === 0) {
+    return (nextAuth.auth as () => Promise<unknown>)().then((s) => usableSession(s));
+  }
+  return (nextAuth.auth as (...a: unknown[]) => unknown)(...args);
+}) as typeof nextAuth.auth;

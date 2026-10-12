@@ -1,0 +1,78 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-c-blob-store-pin.test.ts (14 tests | 5 failed) 29ms
+     × a foreign store URL with the caller's tenant prefix is refused before get() — the token is never sent 7ms
+     × isVercelBlobUrl refuses bare host 1ms
+     × isVercelBlobUrl refuses foreign private store 1ms
+     × isVercelBlobUrl refuses own id as a deeper label 1ms
+     × toBlobProxyUrl leaves a foreign-store URL unproxied (rendered as a plain cross-origin <img>, never via our origin) 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-c-blob-store-pin.test.ts > SF-C1 /api/blob-image with a store token configured (production shape) > a foreign store URL with the caller's tenant prefix is refused before get() — the token is never sent
+AssertionError: expected 200 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 200
+
+ ❯ tests/unit/sec-c-blob-store-pin.test.ts:82:24
+     80|     getMock.mockResolvedValue(hit("image/svg+xml"));
+     81|     const res = await GET(req(FOREIGN_SVG));
+     82|     expect(res.status).toBe(400);
+       |                        ^
+     83|     expect(getMock).not.toHaveBeenCalled();
+     84|     expect(res.headers.get("content-type") ?? "").not.toContain("svg");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  tests/unit/sec-c-blob-store-pin.test.ts > SF-C1 /api/blob-image with a store token configured (production shape) > isVercelBlobUrl refuses bare host
+ FAIL  tests/unit/sec-c-blob-store-pin.test.ts > SF-C1 /api/blob-image with a store token configured (production shape) > isVercelBlobUrl refuses foreign private store
+ FAIL  tests/unit/sec-c-blob-store-pin.test.ts > SF-C1 /api/blob-image with a store token configured (production shape) > isVercelBlobUrl refuses own id as a deeper label
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/unit/sec-c-blob-store-pin.test.ts:95:34
+     93|     ["http scheme", `http://secCstore01.private.blob.vercel-storage.co…
+     94|   ])("isVercelBlobUrl refuses %s", (_label, url) => {
+     95|     expect(isVercelBlobUrl(url)).toBe(false);
+       |                                  ^
+     96|   });
+     97|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  tests/unit/sec-c-blob-store-pin.test.ts > SF-C1 /api/blob-image with a store token configured (production shape) > toBlobProxyUrl leaves a foreign-store URL unproxied (rendered as a plain cross-origin <img>, never via our origin)
+AssertionError: expected '/api/blob-image?url=https%3A%2F%2Fsec…' to be 'https://secCattacker.public.blob.verc…' // Object.is equality
+
+Expected: "https://secCattacker.public.blob.vercel-storage.com/tenants/secC-tenant-A/evil.svg"
+Received: "/api/blob-image?url=https%3A%2F%2FsecCattacker.public.blob.vercel-storage.com%2Ftenants%2FsecC-tenant-A%2Fevil.svg"
+
+ ❯ tests/unit/sec-c-blob-store-pin.test.ts:103:41
+    101|
+    102|   it("toBlobProxyUrl leaves a foreign-store URL unproxied (rendered as…
+    103|     expect(toBlobProxyUrl(FOREIGN_SVG)).toBe(FOREIGN_SVG);
+       |                                         ^
+    104|     expect(toBlobProxyUrl(OWN)).toBe(`/api/blob-image?url=${encodeURIC…
+    105|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 9 passed (14)
+   Start at  12:39:06
+   Duration  1.25s (transform 138ms, setup 37ms, import 890ms, tests 29ms, environment 0ms)
+
+exit=1

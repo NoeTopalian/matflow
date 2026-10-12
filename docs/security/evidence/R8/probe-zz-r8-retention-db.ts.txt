@@ -1,0 +1,153 @@
+/**
+ * Review R8 probe (SF-127) on the Neon TEST branch, both roles: the REAL retention handler over the REAL Prisma client
+ * wrapped in a recorder (every model call and every raw statement is recorded, then forwarded unchanged; transaction
+ * clients are wrapped too). Stripe reconcile is stubbed (network) and blob deletion is a spy.
+ * Fixture: one secr8- tenant soft-deleted 40 days ago (past the 30-day grace) plus one live secr8- control tenant.
+ * D1: gate off + ?dryRun=1 -> 200, dryRun true, retentionEnabled false, zero writes recorded, fixture still present;
+ *     per-rule counts recorded (numbers only) and how much of each count is NOT ours.
+ * D2: gate "true" live sweep -> runs ONLY when D1 proved every rule's count is ours alone (otherwise the live sweep
+ *     would delete other lanes' rows on the shared branch; recorded as NOT RUN with the counts).
+ */
+import fs from "node:fs";
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+
+vi.mock("@sentry/nextjs", () => ({ captureException: () => {}, captureMessage: () => {} }));
+const calls = vi.hoisted(() => ({ log: [] as string[] }));
+vi.mock("@/lib/prisma", async (orig) => {
+  const real = (await orig()) as { prisma: Record<string | symbol, unknown> };
+  const WRITE = /^(create|createMany|update|updateMany|upsert|delete|deleteMany)$/;
+  function wrapDelegate(name: string, d: Record<string | symbol, unknown>) {
+    return new Proxy(d, {
+      get(t, p) {
+        const v = Reflect.get(t, p, t);
+        if (typeof v !== "function" || typeof p === "symbol") return v;
+        return (...a: unknown[]) => { calls.log.push(`${WRITE.test(p) ? "WRITE" : "read"} ${name}.${p}`); return (v as (...x: unknown[]) => unknown).apply(t, a); };
+      },
+    });
+  }
+  function wrap(c: Record<string | symbol, unknown>): Record<string | symbol, unknown> {
+    return new Proxy(c, {
+      get(t, p) {
+        const v = Reflect.get(t, p, t);
+        if (typeof p === "symbol") return v;
+        if (p === "$transaction" && typeof v === "function") {
+          return (arg: unknown, opts?: unknown) => {
+            calls.log.push(`read $transaction(${typeof arg === "function" ? "fn" : "array"})`);
+            if (typeof arg === "function") return (v as (...x: unknown[]) => unknown).call(t, (tx: Record<string | symbol, unknown>) => (arg as (x: unknown) => unknown)(wrap(tx)), opts);
+            return (v as (...x: unknown[]) => unknown).call(t, arg, opts);
+          };
+        }
+        if ((p === "$executeRaw" || p === "$queryRaw" || p === "$executeRawUnsafe" || p === "$queryRawUnsafe") && typeof v === "function") {
+          return (s: unknown, ...a: unknown[]) => {
+            const sql = Array.isArray(s) ? (s as string[]).join("?") : String(s);
+            const kind = /\b(delete|update|insert|truncate)\b/i.test(sql) ? "WRITE" : "read";
+            calls.log.push(`${kind} ${p} ${sql.replace(/\s+/g, " ").slice(0, 60)}`);
+            return (v as (...x: unknown[]) => unknown).call(t, s, ...a);
+          };
+        }
+        if (v && typeof v === "object" && typeof (v as { findMany?: unknown }).findMany === "function") return wrapDelegate(p, v as Record<string | symbol, unknown>);
+        return v;
+      },
+    });
+  }
+  return { ...real, prisma: wrap(real.prisma) };
+});
+vi.mock("@/lib/stripe/reconcile", () => ({ runStripeReconciliation: async () => ({ ok: true, stubbed: "secr8" }) }));
+const blob = vi.hoisted(() => ({ n: 0 }));
+vi.mock("@vercel/blob", () => ({ del: async () => { blob.n++; } }));
+
+import { withRlsBypass } from "@/lib/prisma-tenant";
+import { GET } from "@/app/api/cron/retention/route";
+
+const HAS_DB = !!process.env.DATABASE_URL;
+const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
+const STAMP = `secr8-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+const SECRET = "secr8-cron-bearer-synthetic-1111111111";
+const DAY = 86_400_000;
+const ids = { gone: "", live: "" };
+const out: Array<Record<string, unknown>> = [];
+let foreignTotal = -1;
+
+function emit() {
+  if (process.env.R8_OUT) fs.writeFileSync(process.env.R8_OUT, out.map((o) => JSON.stringify(o)).join("\n") + "\n");
+}
+const req = (q: string) => new Request(`https://matflow.test/api/cron/retention${q}`, { headers: { authorization: `Bearer ${SECRET}` } });
+
+describe.skipIf(!HAS_DB)(`R8 retention gate on TEST (${ROLE})`, () => {
+  beforeAll(async () => {
+    const url = process.env.DATABASE_URL ?? "";
+    if (!url.includes("ep-hidden-salad") || url.includes("ep-bold-wave")) throw new Error("REFUSED: not the TEST branch");
+    process.env.CRON_SECRET = SECRET;
+    await withRlsBypass(async (tx) => {
+      ids.gone = (await tx.tenant.create({ data: { name: `${STAMP} gone`, slug: `${STAMP}-gone`, deletedAt: new Date(Date.now() - 40 * DAY) } })).id;
+      ids.live = (await tx.tenant.create({ data: { name: `${STAMP} live`, slug: `${STAMP}-live` } })).id;
+    });
+    calls.log.length = 0;
+  }, 120_000);
+
+  afterAll(async () => {
+    const t = [ids.gone, ids.live].filter(Boolean);
+    await withRlsBypass((tx) => tx.tenant.deleteMany({ where: { id: { in: t }, slug: { startsWith: "secr8-" } } }));
+    const left = await withRlsBypass((tx) => tx.tenant.count({ where: { slug: { startsWith: STAMP } } }));
+    out.push({ cell: "teardown", role: ROLE, left });
+    emit();
+    expect(left).toBe(0);
+    delete process.env.RETENTION_CRON_ENABLED;
+  }, 120_000);
+
+  it("R8-D1 gate off + ?dryRun=1: 200, dryRun, retentionEnabled:false, zero writes, fixture intact", async () => {
+    delete process.env.RETENTION_CRON_ENABLED;
+    calls.log.length = 0;
+    const res = await GET(req("?dryRun=1"));
+    const body = (await res.json()) as { dryRun: boolean; retentionEnabled: boolean; note?: string; results: Array<{ rule: string; deleted?: number; error?: string; details?: Record<string, unknown> }> };
+    const writes = calls.log.filter((l) => l.startsWith("WRITE"));
+    const perRule: Record<string, unknown> = {};
+    let foreign = 0;
+    for (const r of body.results) {
+      const d = r.details ?? {};
+      if (r.rule === "tenantHardDelete") {
+        const wp = (d.wouldPurge as Array<{ tenantId: string; name: string }>) ?? [];
+        const ours = wp.filter((w) => w.name.startsWith("secr8-")).length;
+        perRule[r.rule] = { candidates: d.candidates, ours, foreign: wp.length - ours };
+        foreign += wp.length - ours;
+      } else {
+        const raw = d.wouldDelete ?? d.wouldScrub;
+        const known = typeof raw === "number" && !r.error;
+        const n = known ? (raw as number) : 1; // unknown shape or an error blocks the live run (conservative)
+        perRule[r.rule] = { would: known ? n : "unknown", deleted: r.deleted, error: r.error ? "yes" : undefined, skipped: (r as { skipped?: boolean }).skipped };
+        foreign += n; // none of these rules has a secr8- fixture
+      }
+    }
+    foreignTotal = foreign;
+    const still = await withRlsBypass((tx) => tx.tenant.count({ where: { id: ids.gone } }));
+    out.push({ cell: "D1", role: ROLE, status: res.status, dryRun: body.dryRun, retentionEnabled: body.retentionEnabled, note: !!body.note, writes: writes.length, writeSample: writes.slice(0, 5), reads: calls.log.length - writes.length, perRule, foreignTotal, fixturePresent: still, blobDeletes: blob.n });
+    emit();
+    expect(res.status).toBe(200);
+    expect(body.dryRun).toBe(true);
+    expect(body.retentionEnabled).toBe(false);
+    expect(writes).toEqual([]);
+    expect(blob.n).toBe(0);
+    expect(body.results.every((r) => (r.deleted ?? 0) === 0)).toBe(true);
+    expect(still).toBe(1);
+  }, 300_000);
+
+  it("R8-D2 gate exactly \"true\": live sweep deletes the secr8 fixture and nothing else (only when D1 proved nothing foreign is due)", async (ctx) => {
+    if (foreignTotal !== 0) {
+      out.push({ cell: "D2", role: ROLE, ran: false, reason: `NOT RUN: D1 counted ${foreignTotal} rows/tenants not ours due for deletion on the shared TEST branch` });
+      emit();
+      ctx.skip();
+      return;
+    }
+    process.env.RETENTION_CRON_ENABLED = "true";
+    calls.log.length = 0;
+    const res = await GET(req(""));
+    const body = await res.json();
+    const gone = await withRlsBypass((tx) => tx.tenant.count({ where: { id: ids.gone } }));
+    const live = await withRlsBypass((tx) => tx.tenant.count({ where: { id: ids.live } }));
+    out.push({ cell: "D2", role: ROLE, ran: true, status: res.status, gone, live, writes: calls.log.filter((l) => l.startsWith("WRITE")).length, results: (body as { results: unknown[] }).results.length });
+    emit();
+    expect(res.status).toBe(200);
+    expect(gone).toBe(0);
+    expect(live).toBe(1);
+  }, 300_000);
+});

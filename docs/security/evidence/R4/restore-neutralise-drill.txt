@@ -1,0 +1,21 @@
+# R4 item 4 — restore + neutralisation drill, 9 Oct 2026, Node v24.21.0, scratch worktree 15bd0c8
+## export (TEST, read-only, to scratchpad; deleted afterwards)
+{"verdict":"EXPORTED","recoveryPoint":"2026-10-09T20:21:19.103Z","role":"neondb_owner","tables":53,"totalRows":116328,"totalBytes":77578895,"exportMs":44069,"node":"v24.21.0"}
+## restore attempt 1 (fresh worktree, core.autocrlf=true -> every migration CRLF): compare FAIL
+"compare":{"verdict":"FAIL","fails":["function changed: matflow_lowercase_email()"]
+## restore attempt 2 (all migrations normalised to LF): refused
+FAIL: checksum of 20260531000001_member_lifecycle_indexes differs from the source's record and no committed version matches
+## restore attempt 3 (migration bytes copied from the main working tree: 32 CRLF / 71 LF): verified
+{"verdict":"RESTORED-AND-VERIFIED"
+"migrationsReplayed":100
+"rowsLoaded":116328
+"compare":{"verdict":"PASS","fails":[]
+"hazards":{"tenantsSoftDeleted":8,"tenantsPastPurgeGrace":7,"importJobsRunningOrLeased":0,"googleDriveConnections":0,"usersWithTotp":17,"membersWithTotp":3,"tenantsWithKioskToken":28,"tenantsWithStripeAccount":5,"pushSubscriptions":0,"magicLinkOutstanding":0,"passwordResetOutstanding":0}
+"restoreToVerifiedMs":9230
+## neutralisation sequence on the copy (counts only; digest = first 8 hex of the TOTP md5)
+{"label":"before","result":null,"error":null,"state":{"ok":false,"tenantsPastPurgeGrace":7,"kiosk":28,"display":5,"stripe":5,"totpKept":47,"softDeleted":8,"purgePredicate":7,"neutraliseAuditRows":0},"totpDigest8":"04efd420"}
+{"label":"mutant-NT-totp-flip","result":null,"error":"REFUSED: TOTP secrets changed during neutralisation","state":{"ok":false,"tenantsPastPurgeGrace":7,"kiosk":28,"display":5,"stripe":5,"totpKept":47,"softDeleted":8,"purgePredicate":7,"neutraliseAuditRows":0},"totpDigest8":"04efd420"}
+{"label":"mutant-NL-skip-leaderboard","result":{"purgeClocksReset":8,"kioskTokensRevoked":28,"displayTokensRevoked":0,"stripeAccountsDetached":5,"totpSecretsKept":47},"error":null,"state":{"ok":false,"tenantsPastPurgeGrace":0,"kiosk":0,"display":5,"stripe":0,"totpKept":47,"softDeleted":8,"purgePredicate":0,"neutraliseAuditRows":1},"totpDigest8":"04efd420"}
+{"label":"real-1","result":{"purgeClocksReset":8,"kioskTokensRevoked":0,"displayTokensRevoked":5,"stripeAccountsDetached":0,"totpSecretsKept":47},"error":null,"state":{"ok":true,"tenantsPastPurgeGrace":0,"kiosk":0,"display":0,"stripe":0,"totpKept":47,"softDeleted":8,"purgePredicate":0,"neutraliseAuditRows":2},"totpDigest8":"04efd420"}
+{"label":"real-2-idempotent","result":{"purgeClocksReset":8,"kioskTokensRevoked":0,"displayTokensRevoked":0,"stripeAccountsDetached":0,"totpSecretsKept":47},"error":null,"state":{"ok":true,"tenantsPastPurgeGrace":0,"kiosk":0,"display":0,"stripe":0,"totpKept":47,"softDeleted":8,"purgePredicate":0,"neutraliseAuditRows":3},"totpDigest8":"04efd420"}
+## mutants restored: git checkout + git diff --quiet clean after NT and after NL

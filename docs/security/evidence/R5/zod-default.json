@@ -1,0 +1,1536 @@
+{
+ "mode": "default",
+ "fnCalls": 11,
+ "results": {
+  "totpVerify": [
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code"
+   },
+   {
+    "ok": true,
+    "data": "{\"code\":\"123456\"}"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_format@code"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_format@code"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": true,
+    "data": "{\"code\":\"123456\"}"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   }
+  ],
+  "totpSetup": [
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code"
+   },
+   {
+    "ok": true,
+    "data": "{\"code\":\"123456\"}"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_format@code"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_format@code"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": true,
+    "data": "{\"code\":\"123456\",\"issueRecoveryCodes\":true}"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@issueRecoveryCodes"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": true,
+    "data": "{\"code\":\"123456\"}"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@code,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   }
+  ],
+  "hold": [
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": true,
+    "data": "{}"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": true,
+    "data": "{\"until\":null}"
+   },
+   {
+    "ok": true,
+    "data": "{\"until\":\"2030-01-01T00:00:00.000Z\"}"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_union@until"
+   },
+   {
+    "ok": false,
+    "issues": "too_big@until"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   }
+  ],
+  "importUploads": [
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": true,
+    "data": "{\"purpose\":\"members\",\"fileName\":\"m.csv\",\"bytes\":10,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@bytes"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@bytes"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@fileName,invalid_type@bytes,invalid_type@sha256"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@fileName,invalid_type@bytes,invalid_type@sha256"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@purpose,invalid_type@fileName,invalid_type@bytes,invalid_type@sha256,unrecognized_keys@"
+   }
+  ],
+  "uploadQuery": [
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": true,
+    "data": "{}"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": true,
+    "data": "{\"purpose\":\"branding\"}"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_format@purpose"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   }
+  ],
+  "uploadForm": [
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": true,
+    "data": "{}"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": true,
+    "data": "{\"file\":\"x\",\"targetMemberId\":\"m_1\"}"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_format@targetMemberId"
+   },
+   {
+    "ok": false,
+    "issues": "too_big@prefix"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   },
+   {
+    "ok": false,
+    "issues": "unrecognized_keys@"
+   }
+  ],
+  "looseObject": [
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": true,
+    "data": "{\"a\":\"x\"}"
+   },
+   {
+    "ok": false,
+    "issues": "too_small@b"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@b,too_big@c"
+   },
+   {
+    "ok": true,
+    "data": "{\"a\":\"x\"}"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@a"
+   }
+  ],
+  "nested": [
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": true,
+    "data": "{\"user\":{\"email\":\"a@b.co\",\"age\":7},\"tags\":[]}"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_format@user.email,invalid_value@tags.0"
+   },
+   {
+    "ok": true,
+    "data": "{\"user\":{\"email\":\"a@b.co\"},\"tags\":[]}"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@user"
+   }
+  ],
+  "defaults": [
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": false,
+    "issues": "invalid_type@"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false,\"z\":\"hi\"}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":true}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   },
+   {
+    "ok": true,
+    "data": "{\"x\":\"d\",\"y\":false}"
+   }
+  ]
+ }
+}

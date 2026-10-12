@@ -17,7 +17,7 @@ const src = readFileSync("auth.ts", "utf8");
 
 describe("Google sign-in refuses a staff account still on its temporary password", () => {
   it("the refusal sits in the signIn callback after the account lookup and before the token is hydrated", () => {
-    const lookup = src.indexOf('return "/login?error=NoAccountForGym"');
+    const lookup = src.indexOf('if (!dbUser && !memberRow) return "/login?error=google_link_required"');
     const refusal = src.indexOf('if (dbUser?.mustChangePassword === true) return "/login?error=invalid_link"');
     const hydrate = src.indexOf("Object.assign(user, dbUser");
     expect(lookup).toBeGreaterThan(0);

@@ -1,0 +1,189 @@
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/F3/wt
+
+ ❯ tests/unit/sec-f3-secret-scan-residuals.test.ts (33 tests | 16 failed) 27ms
+     × lower-case operator_password (R3 plant) 6ms
+     × mixed-case Operator_Password 1ms
+     × lower-case nextauth_secret 0ms
+     × lower-case migration_database_url 3ms
+     × SMTP_PASSWORD (R3 plant) 1ms
+     × smtp_password, lower case 1ms
+     × SENDGRID_API_TOKEN quoted in code 1ms
+     × MAIL_SECRET in JSON 1ms
+     × REDIS_PASSWORD as a YAML line 1ms
+     × HOOK_TOKEN tight inside a command line 1ms
+     × a SHORT human password in an env file (any non-empty value) 1ms
+     × Neon URL password with 'example' inside it (R3 plant) 1ms
+     × assignment value with 'example' inside it 1ms
+     × the R3 'example' plant: the marker sits INSIDE one token, so the halves count as one stretch 1ms
+     × a human-readable hard-coded fixture in SOURCE is reported as `literal` (counted, not failing), never hidden 4ms
+     × the same literal in an env/config file is a candidate 1ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 16 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > lower-case operator_password (R3 plant)
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > mixed-case Operator_Password
+AssertionError: password-env-assignment not a candidate: : expected undefined to be truthy
+
+- Expected:
+true
+
++ Received:
+undefined
+
+ ❯ tests/unit/sec-f3-secret-scan-residuals.test.ts:38:75
+     36|     const findings = scanText(text, loc);
+     37|     const hit = findings.find((f: F) => f.rule === rule && f.classific…
+     38|     expect(hit, `${rule} not a candidate: ${kinds(text, loc).join(",")…
+       |                                                                           ^
+     39|     const v = text.trim();
+     40|     expect(JSON.stringify(findings)).not.toContain(v.slice(-8));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/16]⎯
+
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > lower-case nextauth_secret
+AssertionError: secret-env-assignment not a candidate: : expected undefined to be truthy
+
+- Expected:
+true
+
++ Received:
+undefined
+
+ ❯ tests/unit/sec-f3-secret-scan-residuals.test.ts:38:75
+     36|     const findings = scanText(text, loc);
+     37|     const hit = findings.find((f: F) => f.rule === rule && f.classific…
+     38|     expect(hit, `${rule} not a candidate: ${kinds(text, loc).join(",")…
+       |                                                                           ^
+     39|     const v = text.trim();
+     40|     expect(JSON.stringify(findings)).not.toContain(v.slice(-8));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/16]⎯
+
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > lower-case migration_database_url
+AssertionError: database-url-env-assignment not a candidate: postgres-url-with-password:candidate: expected undefined to be truthy
+
+- Expected:
+true
+
++ Received:
+undefined
+
+ ❯ tests/unit/sec-f3-secret-scan-residuals.test.ts:38:75
+     36|     const findings = scanText(text, loc);
+     37|     const hit = findings.find((f: F) => f.rule === rule && f.classific…
+     38|     expect(hit, `${rule} not a candidate: ${kinds(text, loc).join(",")…
+       |                                                                           ^
+     39|     const v = text.trim();
+     40|     expect(JSON.stringify(findings)).not.toContain(v.slice(-8));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/16]⎯
+
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > SMTP_PASSWORD (R3 plant)
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > smtp_password, lower case
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > SENDGRID_API_TOKEN quoted in code
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > MAIL_SECRET in JSON
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > REDIS_PASSWORD as a YAML line
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > HOOK_TOKEN tight inside a command line
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > a SHORT human password in an env file (any non-empty value)
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > assignment value with 'example' inside it
+AssertionError: generic-secret-assignment not a candidate: : expected undefined to be truthy
+
+- Expected:
+true
+
++ Received:
+undefined
+
+ ❯ tests/unit/sec-f3-secret-scan-residuals.test.ts:38:75
+     36|     const findings = scanText(text, loc);
+     37|     const hit = findings.find((f: F) => f.rule === rule && f.classific…
+     38|     expect(hit, `${rule} not a candidate: ${kinds(text, loc).join(",")…
+       |                                                                           ^
+     39|     const v = text.trim();
+     40|     expect(JSON.stringify(findings)).not.toContain(v.slice(-8));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/16]⎯
+
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > Neon URL password with 'example' inside it (R3 plant)
+AssertionError: postgres-url-with-password not a candidate: postgres-url-with-password:placeholder: expected undefined to be truthy
+
+- Expected:
+true
+
++ Received:
+undefined
+
+ ❯ tests/unit/sec-f3-secret-scan-residuals.test.ts:38:75
+     36|     const findings = scanText(text, loc);
+     37|     const hit = findings.find((f: F) => f.rule === rule && f.classific…
+     38|     expect(hit, `${rule} not a candidate: ${kinds(text, loc).join(",")…
+       |                                                                           ^
+     39|     const v = text.trim();
+     40|     expect(JSON.stringify(findings)).not.toContain(v.slice(-8));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/16]⎯
+
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: now reported as candidates > the R3 'example' plant: the marker sits INSIDE one token, so the halves count as one stretch
+TypeError: embeddedMarkerRandom is not a function
+ ❯ tests/unit/sec-f3-secret-scan-residuals.test.ts:44:12
+     42|
+     43|   it("the R3 'example' plant: the marker sits INSIDE one token, so the…
+     44|     expect(embeddedMarkerRandom(join(rnd(8), "example", rnd(8)))).toBe…
+       |            ^
+     45|     // A marker between separators or at a token's edge splits nothing…
+     46|     expect(embeddedMarkerRandom("vercel_blob_rw_FakeStore_FakeTokenVal…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/16]⎯
+
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > a human-readable hard-coded fixture in SOURCE is reported as `literal` (counted, not failing), never hidden
+AssertionError: expected [] to deeply equal [ 'generic-secret-assignment:literal' ]
+
+- Expected
++ Received
+
+- [
+-   "generic-secret-assignment:literal",
+- ]
++ []
+
+ ❯ tests/unit/sec-f3-secret-scan-residuals.test.ts:75:62
+     73|   it("a human-readable hard-coded fixture in SOURCE is reported as `li…
+     74|     const f = scanText(join('export const THROWAWAY', '_PASSWORD = "Th…
+     75|     expect(f.map((x: F) => `${x.rule}:${x.classification}`)).toEqual([…
+       |                                                              ^
+     76|   });
+     77|   it("the same literal in an env/config file is a candidate", () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/16]⎯
+
+ FAIL  tests/unit/sec-f3-secret-scan-residuals.test.ts > SF-82 residuals: generic rule — references, placeholders and code are not findings > the same literal in an env/config file is a candidate
+AssertionError: .env: expected [] to deeply equal [ 'candidate' ]
+
+- Expected
++ Received
+
+- [
+-   "candidate",
+- ]
++ []
+
+ ❯ tests/unit/sec-f3-secret-scan-residuals.test.ts:80:54
+     78|     for (const loc of [".env", ".env.local", "deploy/app.yaml", "confi…
+     79|       const f = scanText(join("SMTP", "_PASSWORD=Throwaway-pass-1!\n")…
+     80|       expect(f.map((x: F) => x.classification), loc).toEqual(["candida…
+       |                                                      ^
+     81|     }
+     82|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/16]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  16 failed | 17 passed (33)
+   Start at  22:35:27
+   Duration  389ms (transform 54ms, setup 36ms, import 79ms, tests 27ms, environment 0ms)
+

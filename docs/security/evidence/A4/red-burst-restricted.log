@@ -1,0 +1,78 @@
+node v24.21.0 mode=restricted file=tests/integration/sec-a4-lockout-burst-db.test.ts head=7ce179c at=2026-10-10T05:19:11Z
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:116308) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stderr | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > R6's burst: 40 concurrent guesses (39 wrong + the right one last) from 40 networks → at most 10 judged
+[auth] sign-in refused: failure lockout {
+  counter: 'addr',
+  tenantId: 'cmv1y2kdk0000qstgy2ivl2jf',
+  subject: 'member',
+  subjectId: 'cmv1y2kfi0001qstgkputcrg1'
+}
+
+stdout | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > R6's burst: 40 concurrent guesses (39 wrong + the right one last) from 40 networks → at most 10 judged
+A4-BURST {"role":"restricted","tally":{"refused":39,"admitted":1},"judged":40,"verdicts":{"wrong":39,"right":1,"failClosedErrors":[]},"refusedWithoutVerdict":0,"rightPasswordOutcome":"admitted","addressCounterAfter":39,"nextAttempt":"code:rate_limited"}
+
+stderr | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > a burst of 39 wrong guesses leaves the counter at exactly 10; the right password from an unknown network is then refused
+[auth] sign-in refused: failure lockout {
+  counter: 'addr',
+  tenantId: 'cmv1y2kdk0000qstgy2ivl2jf',
+  subject: 'member',
+  subjectId: 'cmv1y2khe0002qstg12m56iwb'
+}
+
+stdout | tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > a burst of 39 wrong guesses leaves the counter at exactly 10; the right password from an unknown network is then refused
+A4-OVERFLOW {"role":"restricted","tally":{"refused":39},"verdicts":{"wrong":39,"right":0,"failClosedErrors":[]},"refusedWithoutVerdict":0,"addressCounterAfter":39,"rightPasswordAfter":"code:rate_limited"}
+
+ ❯ tests/integration/sec-a4-lockout-burst-db.test.ts (4 tests | 2 failed) 40939ms
+     × R6's burst: 40 concurrent guesses (39 wrong + the right one last) from 40 networks → at most 10 judged 15458ms
+     × a burst of 39 wrong guesses leaves the counter at exactly 10; the right password from an unknown network is then refused 15031ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > R6's burst: 40 concurrent guesses (39 wrong + the right one last) from 40 networks → at most 10 judged
+AssertionError: guesses judged (a verdict reached) in one burst at a fresh address: expected 40 to be less than or equal to 10
+ ❯ tests/integration/sec-a4-lockout-burst-db.test.ts:175:90
+    173|     const refusedWithoutVerdict = out.filter((o) => o === "refused").l…
+    174|     report("A4-BURST", { role: ROLE, tally: tally(out), judged, verdic…
+    175|     expect(judged, "guesses judged (a verdict reached) in one burst at…
+       |                                                                                          ^
+    176|     expect(counter, "address counter after the burst").toBeLessThanOrE…
+    177|     expect(counter, "every wrong verdict holds exactly one slot; a rig…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/integration/sec-a4-lockout-burst-db.test.ts > R6-N1: the address-wide failure cap holds under a concurrent burst > a burst of 39 wrong guesses leaves the counter at exactly 10; the right password from an unknown network is then refused
+AssertionError: wrong guesses judged: expected 39 to be 10 // Object.is equality
+
+- Expected
++ Received
+
+- 10
++ 39
+
+ ❯ tests/integration/sec-a4-lockout-burst-db.test.ts:194:45
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed (4)
+   Start at  06:19:13
+   Duration  41.43s (transform 251ms, setup 62ms, import 262ms, tests 40.94s, environment 0ms)
+
+EXIT 1

@@ -40,15 +40,24 @@ vi.mock("@/lib/prisma", () => ({
     // The club's own catalogue: checkout prices only a club's own products now
     // (verifier lane 2, 30 Sep 2026), so item 6 (£45) must exist for real here.
     product: { findMany: vi.fn().mockResolvedValue([{ id: "6", pricePence: 4500 }]) },
+    // Staff creation claims the login address inside its transaction since
+    // 48a9182 (lib/login-email.ts: pg_advisory_xact_lock via $executeRaw, then
+    // a holder lookup in User and Member via $queryRaw). Without these two the
+    // claim threw a TypeError, the route answered 500 and both F5 cells failed
+    // at HEAD unnoticed (SF-26, lane F, 9 Oct 2026). The F5 "address taken"
+    // cell below makes the lookup return a holder, so these are not inert.
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    $queryRaw: vi.fn().mockResolvedValue([]),
   },
 }));
 vi.mock("bcryptjs", () => ({
   default: { hash: vi.fn().mockResolvedValue("$2a$12$hashed") },
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
-// Don't mock @/lib/rate-limit — F10 forgot-password test depends on the real
-// in-memory fallback path (Prisma mock has no rateLimitHit model, so the DB
-// path throws and the memory store kicks in correctly).
+// F10 used to depend on lib/rate-limit's in-memory fallback (this Prisma mock has no rateLimitHit model, so the DB
+// path threw and the memory store answered). Lane C4 (review R6-N3) closed that fallback for security buckets — a
+// store failure is now a refusal — so the route's limit is exercised over an explicit per-bucket counter instead.
+vi.mock("@/lib/rate-limit", async (orig) => (await import("../unit/sec-c4-allow-rate-limit")).countingRateLimit(orig));
 
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
@@ -131,10 +140,34 @@ describe("F5 — staff creation: no password in response", () => {
     });
 
     const res = await postStaff(req);
+    expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.mustChangePassword).toBe(true);
     const createArgs = mockUserCreate.mock.calls[0][0] as { data: { mustChangePassword?: boolean } };
     expect(createArgs.data.mustChangePassword).toBe(true);
+  });
+
+  it("an address already held in the club is refused (409) before any row is written — the claim really runs", async () => {
+    // Harness control for SF-26: proves the mocked $queryRaw is consulted, so
+    // the two cells above pass because the claim found nobody, not because
+    // the claim was skipped. The lock must be taken before the lookup.
+    mockAuth.mockResolvedValue({ user: { tenantId: "t1", role: "owner" } } as never);
+    vi.mocked(prisma.$queryRaw as unknown as (...a: unknown[]) => unknown)
+      .mockResolvedValueOnce([{ id: "u-existing", name: "Held", role: "coach", key: "test@gym.com" }] as never)
+      .mockResolvedValueOnce([] as never);
+
+    const res = await postStaff(
+      new Request("http://localhost/api/staff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Test User", email: "Test@Gym.com", role: "coach", password: "Secure123!" }),
+      }),
+    );
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(JSON.stringify(body)).not.toMatch(/u-existing|Held|coach/);
+    expect(mockUserCreate).not.toHaveBeenCalled();
+    expect(vi.mocked(prisma.$executeRaw as unknown as (...a: unknown[]) => unknown)).toHaveBeenCalledTimes(1);
   });
 });
 

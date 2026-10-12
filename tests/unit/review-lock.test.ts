@@ -53,7 +53,9 @@ const GUARDED: Array<[string, string, RegExp]> = [
   ["app/api/stripe/migrate-memberships/route.ts", "membership_migration", /applyMigration\(/],
   ["app/api/members/bulk-invite/route.ts", "bulk_invite", /sendEmail|\.create\(|createMany/],
   ["app/api/admin/dsar/erase/route.ts", "erase", /\.delete\(|deleteMany|\.update\(/],
-  ["app/api/admin/customers/[id]/soft-delete/route.ts", "club_delete", /\.update\(/],
+  // Lane C, 6 Oct 2026: the stamp became a conditional updateMany, and the first
+  // real side effect is the Stripe cancel loop — both now count.
+  ["app/api/admin/customers/[id]/soft-delete/route.ts", "club_delete", /cancelSubscriptionAtPeriodEnd\(|\.update(Many)?\(/],
 ];
 
 describe("review-locked routes call the guard before any side effect", () => {

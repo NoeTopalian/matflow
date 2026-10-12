@@ -1,0 +1,38 @@
+node v24.21.0 mode=unit file=tests/unit/sec-a4-lockout-reservation.test.ts head=a5cd7d2 auth-lockout.sha256=0241ccb7dede765c at=2026-10-10T08:42:04Z
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts (16 tests | 1 failed) 624ms
+     × right password: admitted, and its address slot is deleted by id together with this network's pair counter 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > refund: a correct password spends nothing, a wrong one keeps its slot > right password: admitted, and its address slot is deleted by id together with this network's pair counter
+AssertionError: expected 6 to be 5 // Object.is equality
+
+- Expected
++ Received
+
+- 5
++ 6
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:187:24
+    185|     h.hits = Array.from({ length: 5 }, () => ({ bucket: KEYS().addr })…
+    186|     expect(await attempt(PASSWORD)).toBe("admitted");
+    187|     expect(addrHits()).toBe(5);
+       |                        ^
+    188|     const where = h.deletes.at(-1) as { OR: { bucket?: string; id?: st…
+    189|     expect(where.OR).toEqual(expect.arrayContaining([{ bucket: KEYS().…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 15 passed (16)
+   Start at  09:42:06
+   Duration  1.14s (transform 287ms, setup 66ms, import 176ms, tests 624ms, environment 0ms)
+
+EXIT 1

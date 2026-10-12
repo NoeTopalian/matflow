@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# R6 both-role sweep of every security database file (lead final-sweep.sh semantics: the exit code is the runner's own,
+# captured from the command substitution, never PIPESTATUS after a pipe). One file at a time, 400 s ceiling per run.
+set -u
+SP="<scratchpad>/security/R6"
+WT="$SP/wt"
+cd "$WT" || exit 1
+OUT="$SP/logs2/sweep.txt"
+mkdir -p "$SP/logs2/sweep"
+: > "$OUT"
+echo "sha=$(git rev-parse HEAD) start=$(date -u +%FT%TZ)" >> "$OUT"
+FILES=$(ls tests/integration/*-db.test.ts | grep -v "/zz-r6"; ls tests/integration/{attendance-import-engine,cross-tenant-authorisation-matrix,cross-tenant-stats,email-lowercase-invariant,operator-member-totp-reset,rls-coverage,rls-foundation,roster-cross-tenant,security,staff-cannot-clear-user-totp,staff-edit-email,tenant-isolation,tenant-restore-purge-race,totp-login-paths}.test.ts 2>/dev/null)
+for f in $FILES; do
+  for role in owner restricted; do
+    runner="$SP/run-$role.sh"
+    b=$(basename "$f" .test.ts)
+    full=$(timeout 400 bash "$runner" "$f" 2>&1); code=$?
+    printf '%s\n' "$full" > "$SP/logs2/sweep/$role-$b.log"
+    res=$(printf '%s\n' "$full" | grep -E "^\s*(Tests|Test Files) " | tr -s ' ' | tr '\n' ' ')
+    echo "$role $f exit=$code $res" >> "$OUT"
+  done
+done
+echo "=== end $(date -u +%FT%TZ)" >> "$OUT"
+echo "runs exit=0: $(grep -c ' exit=0 ' "$OUT")" >> "$OUT"
+echo "non-zero:" >> "$OUT"
+grep -E "^(owner|restricted) " "$OUT" | grep -v " exit=0 " >> "$OUT" || true

@@ -1,0 +1,37 @@
+node v24.21.0 mode=unit file=tests/unit/sec-a4-lockout-reservation.test.ts head=a5cd7d2 auth-lockout.sha256=a8f37e2e4567da87 at=2026-10-10T08:38:00Z
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts (16 tests | 4 failed) 686ms
+     × an existing member, right password: lock → reservation → bcrypt, in that order, no late insert 6ms
+     × an existing member, wrong password: lock → reservation → bcrypt, in that order, no late insert 2ms
+     × an address with no account, right password: lock → reservation → bcrypt, in that order, no late insert 1ms
+     × an address with no account, wrong password: lock → reservation → bcrypt, in that order, no late insert 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > an existing member, right password: lock → reservation → bcrypt, in that order, no late insert
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > an existing member, wrong password: lock → reservation → bcrypt, in that order, no late insert
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > an address with no account, right password: lock → reservation → bcrypt, in that order, no late insert
+ FAIL  tests/unit/sec-a4-lockout-reservation.test.ts > the slot is reserved before the password is judged > an address with no account, wrong password: lock → reservation → bcrypt, in that order, no late insert
+AssertionError: reservation before the password is judged: expected 2 to be less than 0
+ ❯ tests/unit/sec-a4-lockout-reservation.test.ts:176:67
+    174|         expect(iLock).toBeGreaterThanOrEqual(0);
+    175|         expect(iLock).toBeLessThan(iRes);
+    176|         expect(iRes, "reservation before the password is judged").toBe…
+       |                                                                   ^
+    177|         expect(h.trace).not.toContain("late-insert");
+    178|       });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 12 passed (16)
+   Start at  09:38:02
+   Duration  1.38s (transform 333ms, setup 64ms, import 189ms, tests 686ms, environment 0ms)
+
+EXIT 1

@@ -25,13 +25,15 @@ const { gateMock, auditMock, emailMock, files } = vi.hoisted(() => ({
   files: new Map<string, string>(),
 }));
 
+// The fake prisma below does not model the RateLimitHit store; the limiter is assumed to allow (lane C4, R6-N3).
+vi.mock("@/lib/rate-limit", async (orig) => (await import("./sec-c4-allow-rate-limit")).allowRateLimit(orig));
 vi.mock("next/server", () => ({
   NextResponse: {
     json: (body: unknown, init?: { status?: number }) => ({ status: init?.status ?? 200, json: async () => body }),
   },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
-vi.mock("@/lib/api-authz", () => ({ requireApiOwner: () => gateMock() }));
+vi.mock("@/lib/api-authz", () => ({ refuseSupportSession: () => null, requireApiOwner: () => gateMock() }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: (...a: unknown[]) => auditMock(...a) }));
 vi.mock("@/lib/email", () => ({ sendEmail: (...a: unknown[]) => emailMock(...a) }));

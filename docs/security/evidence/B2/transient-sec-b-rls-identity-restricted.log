@@ -1,0 +1,25 @@
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+stdout | tests/integration/sec-b-rls-identity-db.test.ts > RLS on identity tables
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+ ❯ tests/integration/sec-b-rls-identity-db.test.ts (6 tests | 6 skipped) 1940ms
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/integration/sec-b-rls-identity-db.test.ts > RLS on identity tables
+PrismaClientKnownRequestError: 
+Invalid `prisma.$queryRaw()` invocation:
+ ❯ zr.handleRequestError node_modules/@prisma/client/src/runtime/RequestHandler.ts:237:12
+ ❯ zr.handleAndLogRequestError node_modules/@prisma/client/src/runtime/RequestHandler.ts:183:11
+ ❯ zr.request node_modules/@prisma/client/src/runtime/RequestHandler.ts:152:11
+ ❯ a node_modules/@prisma/client/src/runtime/getPrismaClient.ts:808:23
+ ❯ tests/integration/sec-b-rls-identity-db.test.ts:30:15
+     28|
+     29|   beforeAll(async () => {
+     30|     const r = await prisma.$queryRaw<Array<{ u: string; bypass: boolea…
+       |               ^
+     31|       SELECT current_user AS u, rolbypassrls AS bypass, rolsuper AS su…
+     32|     who = r[0].u;
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+ Test Files  1 failed (1)
+      Tests  6 skipped (6)
+   Start at  18:59:39
+   Duration  2.48s (transform 76ms, setup 36ms, import 238ms, tests 1.94s, environment 0ms)

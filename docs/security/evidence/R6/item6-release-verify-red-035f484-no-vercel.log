@@ -1,0 +1,56 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/R6/wt
+
+ ❯ tests/integration/zz-r6-old-release-verify.test.ts (59 tests | 2 failed) 763ms
+     × passes when every assertion holds, and prints neither the session nor any credential 47ms
+     × a large valid JSON activity page (~60 KB) is parsed whole — operator.access PASSES (AH-G3) 17ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/zz-r6-old-release-verify.test.ts > release-verify: production target > passes when every assertion holds, and prints neither the session nor any credential
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/integration/zz-r6-old-release-verify.test.ts:136:46
+    134| describe("release-verify: production target", () => {
+    135|   it("passes when every assertion holds, and prints neither the sessio…
+    136|     expect(await s.main(prodArgs(), deps())).toBe(0);
+       |                                              ^
+    137|     const sum = summary();
+    138|     expect(sum.result).toBe("PASS");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/integration/zz-r6-old-release-verify.test.ts > release-verify: production target > a large valid JSON activity page (~60 KB) is parsed whole — operator.access PASSES (AH-G3)
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/integration/zz-r6-old-release-verify.test.ts:205:46
+    203|       i.headers?.cookie?.startsWith("matflow_op_session") ? jsonRes(20…
+    204|     expect(JSON.stringify({ rows }).length).toBeGreaterThan(8192 * 6);
+    205|     expect(await s.main(prodArgs(), deps())).toBe(0);
+       |                                              ^
+    206|     expect(statusOf("operator.access")).toBe("PASS");
+    207|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 57 passed (59)
+   Start at  04:08:35
+   Duration  1.67s (transform 191ms, setup 98ms, import 328ms, tests 763ms, environment 0ms)
+

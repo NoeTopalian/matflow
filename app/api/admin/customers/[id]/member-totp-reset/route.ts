@@ -22,6 +22,13 @@ import { logAudit } from "@/lib/audit-log";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { hashToken } from "@/lib/token-hash";
+import {
+  StepUpRefusedError,
+  consumeStepUpGrant,
+  refuseStepUp,
+  requireStepUp,
+  stepUpTarget,
+} from "@/lib/operator-step-up";
 
 export const runtime = "nodejs";
 
@@ -78,38 +85,75 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
   if (!member) return NextResponse.json({ error: "Member not found in this tenant" }, { status: 404 });
 
-  await withRlsBypass((tx) =>
-    tx.member.update({
-      where: { id: member.id },
-      data: {
-        totpEnabled: false,
-        totpSecret: null,
-        // Audit iter-1-member-lifecycle A3H-4: `undefined` is a Prisma no-op
-        // — old recovery codes survive a TOTP reset and remain valid against
-        // the re-enrolled TOTP. Use `Prisma.JsonNull` (the sentinel for
-        // nullable JSON columns) to actually clear the array.
-        totpRecoveryCodes: Prisma.JsonNull,
-        sessionVersion: { increment: 1 },
-      },
-    }),
-  );
+  // Fresh operator re-authentication bound to THIS action on THIS member of
+  // THIS club (a grant for one member cannot be spent on another), this
+  // operator session and the member's credential version. Checked after the
+  // harmless preflight above; spent inside the transaction below.
+  const stepUp = await requireStepUp(req, ctx, "member.totp_reset", stepUpTarget(tenantId, member.id), { change: {} });
+  if (stepUp instanceof Response) return stepUp;
 
-  await logAudit({
-    tenantId,
-    userId: null,
-    action: "admin.member.totp_reset",
-    entityType: "Member",
-    entityId: member.id,
-    metadata: {
-      reason: parsed.data.reason,
-      // GDPR obs-1: hashed, not cleartext — AuditLog rows outlive an Article 17
-      // erasure by up to 12 months. Same precedent as the DSAR export route.
-      memberEmailHash: hashToken(member.email),
-      wasEnrolled: member.totpEnabled,
-    },
-    actAsUserId: ctx.operatorId,
-    req,
-  });
+  // ONE transaction: grant spent (member version re-checked), reset, audit row
+  // (operator audit 5 Oct 2026, Q9; lane C 9 Oct 2026).
+  let replay: Record<string, unknown> | null = null;
+  try {
+    replay = await withRlsBypass(async (tx) => {
+      const spend = await consumeStepUpGrant(tx, stepUp, { replayActions: ["admin.member.totp_reset"] });
+      if (spend.kind === "replay") return spend.outcome;
+      const updated = await tx.member.update({
+        where: { id: member.id },
+        data: {
+          totpEnabled: false,
+          totpSecret: null,
+          // Audit iter-1-member-lifecycle A3H-4: `undefined` is a Prisma no-op
+          // — old recovery codes survive a TOTP reset and remain valid against
+          // the re-enrolled TOTP. Use `Prisma.JsonNull` (the sentinel for
+          // nullable JSON columns) to actually clear the array.
+          totpRecoveryCodes: Prisma.JsonNull,
+          sessionVersion: { increment: 1 },
+        },
+        select: { sessionVersion: true },
+      });
+      const sessionVersionAfter = typeof updated?.sessionVersion === "number" ? updated.sessionVersion : null;
+      await logAudit({
+        tx,
+        tenantId,
+        userId: null,
+        action: "admin.member.totp_reset",
+        entityType: "Member",
+        entityId: member.id,
+        metadata: {
+          reason: parsed.data.reason,
+          // GDPR obs-1: hashed, not cleartext — AuditLog rows outlive an
+          // Article 17 erasure (operator rows are kept six years,
+          // lib/audit-log.ts). Same precedent as the DSAR export route.
+          memberEmailHash: hashToken(member.email),
+          wasEnrolled: member.totpEnabled,
+          result: { memberId: member.id, wasEnrolled: member.totpEnabled, sessionVersionAfter },
+        },
+        actAsUserId: ctx.operatorId,
+        operatorId: stepUp.operatorId,
+        requestId: stepUp.requestId,
+        req,
+      });
+      return null;
+    });
+  } catch (err) {
+    if (err instanceof StepUpRefusedError) return refuseStepUp(err, req);
+    console.error("[member-totp-reset] reset or audit write failed; nothing changed", err);
+    return NextResponse.json(
+      { error: "The reset could not be recorded, so nothing was changed. Try again with a new authenticator code." },
+      { status: 500 },
+    );
+  }
+
+  if (replay) {
+    return NextResponse.json({
+      ok: true,
+      alreadyApplied: true,
+      ...replay,
+      message: "This 2FA reset was already applied with this confirmation. Nothing else was changed.",
+    });
+  }
 
   return NextResponse.json({
     ok: true,

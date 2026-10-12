@@ -1,0 +1,274 @@
+// Reviewer R4 (iteration 2, 9 Oct 2026) — deletion atomicity attacked at the DATABASE-CLIENT layer.
+// Lane D2's own cell mocks logAudit itself; here logAudit is REAL and the fault is injected one layer lower: the
+// transaction client handed to the route's callback throws on tx.auditLog.create for that route's action, after the
+// deletion statements already ran in the same transaction. The op sequence is recorded to prove the order.
+// Also: a concurrent address change between the member DELETE / DSAR erase pre-read and its transaction (R4 race).
+// Scratch worktree only; R4 runner copies (TEST branch). Prefix secr4d- ; count-checked teardown.
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+
+vi.mock("next/server", () => ({
+  NextResponse: {
+    json: (body: unknown, init?: { status?: number; headers?: Record<string, string> }) => ({ status: init?.status ?? 200, json: async () => body, headers: new Headers(init?.headers) }),
+  },
+}));
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
+vi.mock("@/lib/email", () => ({ sendEmail: vi.fn(async () => ({ ok: false, logId: "mail-dark" })) }));
+vi.mock("@/lib/rate-limit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  checkRateLimit: vi.fn(async () => ({ allowed: true, retryAfterSeconds: 0 })),
+}));
+const fault = vi.hoisted(() => ({
+  action: null as string | null, hits: 0, ops: [] as string[],
+  race: null as null | { trigger: (op: string, args: unknown[]) => boolean; run: () => Promise<unknown>; fired: boolean },
+}));
+vi.mock("@/lib/prisma-tenant", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/prisma-tenant")>();
+  const MODELS = new Set(["member", "user", "auditLog", "importedBooking", "importSourceMapping"]);
+  const wrap = <T extends object>(tx: T): T => new Proxy(tx, {
+    get(t, p, r) {
+      const v = Reflect.get(t, p, r) as unknown;
+      if (p === "$executeRaw" || p === "$executeRawUnsafe") {
+        return async (...a: unknown[]) => {
+          fault.ops.push(String(p));
+          if (fault.race && !fault.race.fired && fault.race.trigger(String(p), a)) { fault.race.fired = true; await fault.race.run(); }
+          return (v as (...x: unknown[]) => unknown).apply(t, a);
+        };
+      }
+      if (typeof p === "string" && MODELS.has(p) && v && typeof v === "object") {
+        return new Proxy(v as object, {
+          get(d, m) {
+            const f = Reflect.get(d, m) as unknown;
+            if (typeof f !== "function") return f;
+            return async (...a: unknown[]) => {
+              const op = `${p}.${String(m)}`;
+              fault.ops.push(op);
+              if (fault.race && !fault.race.fired && fault.race.trigger(op, a)) { fault.race.fired = true; await fault.race.run(); }
+              const action = (a[0] as { data?: { action?: string } } | undefined)?.data?.action;
+              if (op === "auditLog.create" && fault.action && action === fault.action) { fault.hits += 1; throw new Error(`secr4 DB-layer audit fault at ${action}`); }
+              return (f as (...x: unknown[]) => unknown).apply(d, a);
+            };
+          },
+        });
+      }
+      return v;
+    },
+  });
+  return {
+    ...real,
+    withTenantContext: ((tenantId: string, fn: (tx: never) => Promise<unknown>, opts?: unknown) =>
+      real.withTenantContext(tenantId, (tx) => fn(((fault.action || fault.race) ? wrap(tx as object) : tx) as never), opts as never)) as typeof real.withTenantContext,
+  };
+});
+const gate = vi.hoisted(() => ({ current: null as null | { tenantId: string; userId: string; memberId?: string } }));
+const sessionOf = () => (gate.current ? { user: { id: gate.current.userId, tenantId: gate.current.tenantId, role: "owner", ...(gate.current.memberId ? { memberId: gate.current.memberId } : {}) } } : null);
+vi.mock("@/auth", () => ({ auth: vi.fn(async () => sessionOf()), signIn: vi.fn(), signOut: vi.fn(), handlers: {} }));
+vi.mock("@/lib/api-authz", async (importOriginal) => {
+  const ok = async () => {
+    if (!gate.current) throw new Error("no club in scope");
+    return { ok: true, tenantId: gate.current.tenantId, userId: gate.current.userId, session: sessionOf() };
+  };
+  return { ...(await importOriginal<typeof import("@/lib/api-authz")>()), requireApiOwner: vi.fn(ok), requireApiOwnerOrManager: vi.fn(ok), requireApiRole: vi.fn(ok) };
+});
+vi.mock("@/lib/import-storage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/import-storage")>()),
+  readImportFile: vi.fn(async () => null),
+  deleteImportFile: vi.fn(async () => {}),
+}));
+
+import { withRlsBypass } from "@/lib/prisma-tenant";
+import { DELETE as memberDelete } from "@/app/api/members/[id]/route";
+import { DELETE as childDelete } from "@/app/api/member/children/[id]/route";
+import { DELETE as staffDelete } from "@/app/api/staff/[id]/route";
+import { POST as dsarErase } from "@/app/api/admin/dsar/erase/route";
+import { POST as importRollback } from "@/app/api/admin/import/[id]/rollback/route";
+import { emailDigest } from "@/lib/login-email";
+
+const HAS_DB = !!process.env.DATABASE_URL;
+const STAMP = `secr4d-${Date.now().toString(36)}`;
+const N = (who: string) => `secR4D ${who}`;
+const E = (who: string) => `${STAMP}-${who}@example.test`;
+const ORIGIN = { origin: "https://test.local", host: "test.local" };
+type Club = { tenantId: string; userId: string };
+const clubs: Club[] = [];
+
+async function mkClub(label: string): Promise<Club> {
+  const club = await withRlsBypass(async (tx) => {
+    const t = await tx.tenant.create({ data: { name: `${STAMP} ${label}`, slug: `${STAMP}-${label}`, timezone: "Europe/London", onboardingCompleted: true } });
+    const u = await tx.user.create({ data: { tenantId: t.id, email: E(`${label}-owner`), name: "secR4D Owner", role: "owner", passwordHash: "x" } });
+    return { tenantId: t.id, userId: u.id };
+  });
+  clubs.push(club);
+  return club;
+}
+const mkMember = (club: Club, name: string, email: string, extra: Record<string, unknown> = {}) =>
+  withRlsBypass((tx) => tx.member.create({ data: { tenantId: club.tenantId, name, email, ...extra }, select: { id: true } })).then((r) => r.id);
+const memberCount = (club: Club, where: Record<string, unknown>) => withRlsBypass((tx) => tx.member.count({ where: { tenantId: club.tenantId, ...where } }));
+const digestRecorded = async (club: Club, email: string) => {
+  const d = emailDigest(email);
+  const rows = await withRlsBypass((tx) => tx.$queryRaw<{ n: bigint }[]>`
+    SELECT count(*) AS n FROM "AuditLog" WHERE "tenantId" = ${club.tenantId}
+      AND (metadata->>'releasedEmailSha256' = ${d} OR metadata->'releasedEmailSha256' ? ${d})`);
+  return Number(rows[0]?.n ?? 0) > 0;
+};
+const auditRows = (club: Club, action: string) => withRlsBypass((tx) => tx.auditLog.count({ where: { tenantId: club.tenantId, action } }));
+
+type Out = { club: Club; email: string; status: number; held: () => Promise<boolean>; action: string };
+const paths: Record<string, (label: string) => Promise<Out>> = {
+  "member DELETE": async (label) => {
+    const club = await mkClub(label);
+    const email = E(`${label}-addr`);
+    const id = await mkMember(club, N("Rel Member"), email);
+    gate.current = { tenantId: club.tenantId, userId: club.userId };
+    const res = (await memberDelete(new Request(`https://test.local/api/members/${id}?confirm=1`, { method: "DELETE", headers: ORIGIN }), { params: Promise.resolve({ id }) })) as unknown as { status: number };
+    return { club, email, status: res.status, held: async () => (await memberCount(club, { id, email })) === 1, action: "member.delete" };
+  },
+  "child DELETE": async (label) => {
+    const club = await mkClub(label);
+    const parent = await mkMember(club, N("Rel Parent"), E(`${label}-parent`), { accountType: "parent" });
+    const email = E(`${label}-addr`);
+    const child = await mkMember(club, N("Rel Child"), email, { accountType: "junior", parentMemberId: parent, guardianConfirmedAt: new Date("2025-02-01T00:00:00Z") });
+    gate.current = { tenantId: club.tenantId, userId: club.userId, memberId: parent };
+    const res = (await childDelete(new Request(`https://test.local/api/member/children/${child}`, { method: "DELETE", headers: ORIGIN }), { params: Promise.resolve({ id: child }) })) as unknown as { status: number };
+    return { club, email, status: res.status, held: async () => (await memberCount(club, { id: child, email })) === 1, action: "member.child.delete" };
+  },
+  "staff DELETE": async (label) => {
+    const club = await mkClub(label);
+    const email = E(`${label}-addr`);
+    const staff = await withRlsBypass((tx) => tx.user.create({ data: { tenantId: club.tenantId, email, name: N("Rel Coach"), role: "coach", passwordHash: "x" }, select: { id: true } })).then((r) => r.id);
+    gate.current = { tenantId: club.tenantId, userId: club.userId };
+    const res = (await staffDelete(new Request(`https://test.local/api/staff/${staff}`, { method: "DELETE", headers: ORIGIN }), { params: Promise.resolve({ id: staff }) })) as unknown as { status: number };
+    return { club, email, status: res.status, held: async () => (await withRlsBypass((tx) => tx.user.count({ where: { tenantId: club.tenantId, id: staff, email } }))) === 1, action: "staff.delete" };
+  },
+  "DSAR erase": async (label) => {
+    const club = await mkClub(label);
+    const email = E(`${label}-addr`);
+    const id = await mkMember(club, N("Rel Dsar"), email);
+    gate.current = { tenantId: club.tenantId, userId: club.userId };
+    const res = (await dsarErase(new Request(`https://test.local/api/admin/dsar/erase?memberId=${id}`, { method: "POST", headers: ORIGIN }))) as unknown as { status: number };
+    return { club, email, status: res.status, held: async () => (await memberCount(club, { id, email })) === 1, action: "member.dsar_erase" };
+  },
+  "members-import rollback": async (label) => {
+    const club = await mkClub(label);
+    const email = E(`${label}-addr`);
+    const job = await withRlsBypass((tx) => tx.importJob.create({
+      data: { tenantId: club.tenantId, createdById: club.userId, source: "teamup", mode: "create", fileName: "secr4d-members.csv", fileBlobUrl: `test://${STAMP}/members-${label}`, status: "complete", completedAt: new Date() },
+      select: { id: true },
+    }));
+    const id = await mkMember(club, N("Rel Imported"), email, { importJobId: job.id });
+    gate.current = { tenantId: club.tenantId, userId: club.userId };
+    const res = (await importRollback(new Request(`https://test.local/api/admin/import/${job.id}/rollback`, { method: "POST", headers: ORIGIN, body: "{}" }), { params: Promise.resolve({ id: job.id }) })) as unknown as { status: number };
+    return { club, email, status: res.status, held: async () => (await memberCount(club, { id, email })) === 1, action: "import.rollback" };
+  },
+};
+const DELETE_OP = /^(member\.delete|member\.deleteMany|user\.deleteMany|user\.delete|member\.update|member\.updateMany|\$executeRaw)/;
+
+afterAll(async () => {
+  if (!HAS_DB) return;
+  fault.action = null; fault.race = null;
+  const ids = clubs.map((c) => c.tenantId);
+  for (const tenantId of ids) {
+    await withRlsBypass(async (tx) => {
+      await tx.importedBooking.deleteMany({ where: { tenantId } });
+      await tx.importSourceMapping.deleteMany({ where: { tenantId } });
+      await tx.importedMembership.deleteMany({ where: { tenantId } });
+      await tx.auditLog.deleteMany({ where: { tenantId } });
+      await tx.memberStatusEvent.deleteMany({ where: { tenantId } });
+      await tx.member.deleteMany({ where: { tenantId, parentMemberId: { not: null } } });
+      await tx.member.deleteMany({ where: { tenantId } });
+      await tx.importJob.deleteMany({ where: { tenantId } });
+      await tx.user.deleteMany({ where: { tenantId } });
+      await tx.tenant.delete({ where: { id: tenantId } });
+    }, { timeout: 60_000 });
+  }
+  const left = await withRlsBypass(async (tx) => ({
+    tenants: await tx.tenant.count({ where: { slug: { startsWith: STAMP } } }),
+    members: await tx.member.count({ where: { tenantId: { in: ids } } }),
+    users: await tx.user.count({ where: { tenantId: { in: ids } } }),
+    audit: await tx.auditLog.count({ where: { tenantId: { in: ids } } }),
+  }));
+  expect(left).toEqual({ tenants: 0, members: 0, users: 0, audit: 0 });
+  process.stderr.write(`[secr4d] teardown: ${ids.length} clubs removed, 0 rows left\n`);
+}, 240_000);
+
+describe.skipIf(!HAS_DB)("R4 — deletion atomicity with a DB-client-layer fault (real logAudit)", () => {
+  beforeAll(async () => {
+    const who = await withRlsBypass((tx) => tx.$queryRaw<{ current_user: string }[]>`SELECT current_user`);
+    if (process.env.RLS_ENFORCED === "1") expect(who[0]?.current_user).toBe("matflow_app");
+    else expect(who[0]?.current_user).not.toBe("matflow_app");
+    process.stderr.write(`[secr4d] role ${who[0]?.current_user} RLS_ENFORCED=${process.env.RLS_ENFORCED ?? "0"}\n`);
+  });
+
+  for (const [path, run] of Object.entries(paths)) {
+    const slug = path.replace(/[^a-z]+/gi, "").toLowerCase();
+    it(`${path}: positive control (no fault) — removed, digest recorded, 200`, async () => {
+      fault.action = null; fault.race = null;
+      const r = await run(`${slug}-ok`);
+      expect(r.status).toBe(200);
+      expect(await r.held()).toBe(false);
+      expect(await digestRecorded(r.club, r.email)).toBe(true);
+    });
+    it(`${path}: DB-layer fault at the release audit insert, AFTER the deletion statements -> whole transaction rolls back, 5xx`, async () => {
+      fault.ops = []; fault.hits = 0; fault.race = null;
+      let r: Out;
+      try {
+        fault.action = ({ "member DELETE": "member.delete", "child DELETE": "member.child.delete", "staff DELETE": "staff.delete", "DSAR erase": "member.dsar_erase", "members-import rollback": "import.rollback" } as Record<string, string>)[path];
+        r = await run(`${slug}-fault`);
+      } finally { fault.action = null; }
+      const at = fault.ops.indexOf("auditLog.create", fault.ops.findIndex((o) => DELETE_OP.test(o)));
+      const firstDelete = fault.ops.findIndex((o) => DELETE_OP.test(o));
+      process.stderr.write(`[secr4d] ${path} ops: ${fault.ops.join(" > ")}\n`);
+      expect(fault.hits, "fault injected").toBe(1);
+      expect({ held: await r.held(), digest: await digestRecorded(r.club, r.email), status5xx: r.status >= 500, auditRows: await auditRows(r.club, r.action) })
+        .toEqual({ held: true, digest: false, status5xx: true, auditRows: 0 });
+      // order evidence: DSAR writes its record FIRST by design; the others delete first, then audit.
+      if (path !== "DSAR erase") expect(firstDelete, "a deletion statement ran before the audit insert").toBeGreaterThanOrEqual(0);
+      if (path !== "DSAR erase") expect(at).toBeGreaterThan(firstDelete);
+    });
+  }
+
+  for (const path of ["member DELETE", "DSAR erase", "child DELETE"] as const) {
+    it(`${path}: RACE — the address is changed (committed, separate connection) after the pre-read and before the deletion; the address actually released must carry the digest`, async () => {
+      const club = await mkClub(`race-${path.replace(/[^a-z]+/gi, "").toLowerCase()}`);
+      const before = E(`race-${club.tenantId.slice(-6)}-old`);
+      const after = E(`race-${club.tenantId.slice(-6)}-new`);
+      let id: string;
+      let parent: string | null = null;
+      if (path === "child DELETE") {
+        parent = await mkMember(club, N("Race Parent"), E(`race-${club.tenantId.slice(-6)}-parent`), { accountType: "parent" });
+        id = await mkMember(club, N("Race Child"), before, { accountType: "junior", parentMemberId: parent, guardianConfirmedAt: new Date("2025-02-01T00:00:00Z") });
+      } else id = await mkMember(club, N("Race Member"), before);
+      fault.ops = [];
+      fault.race = {
+        fired: false,
+        // the first statement of the deletion transaction (member/child: the cascade; DSAR: its record insert)
+        trigger: (op) => path === "DSAR erase" ? op === "auditLog.create" : /^(member\.(findFirst|deleteMany|delete|updateMany)|\$executeRaw)/.test(op) && fault.ops.length > 0,
+        run: () => withRlsBypass((tx) => tx.$executeRaw`UPDATE "Member" SET email = ${after} WHERE id = ${id} AND "tenantId" = ${club.tenantId}`),
+      };
+      // skip the race on the pre-read transactions: arm only once the route has made its first read
+      let status: number;
+      try {
+        if (path === "child DELETE") {
+          gate.current = { tenantId: club.tenantId, userId: club.userId, memberId: parent! };
+          // child DELETE reads inside its own transaction: arm on the cascade, not the pre-read
+          fault.race.trigger = (op) => /^(member\.deleteMany|member\.delete|\$executeRaw)/.test(op);
+          status = ((await childDelete(new Request(`https://test.local/api/member/children/${id}`, { method: "DELETE", headers: ORIGIN }), { params: Promise.resolve({ id }) })) as unknown as { status: number }).status;
+        } else if (path === "member DELETE") {
+          gate.current = { tenantId: club.tenantId, userId: club.userId };
+          // arm on the first statement of the SECOND transaction (the deletion), after the preflight read
+          let txSeen = 0;
+          const orig = fault.race.trigger;
+          fault.race.trigger = (op, a) => { if (op === "member.findFirst") txSeen += 1; return txSeen >= 2 && orig(op, a); };
+          status = ((await memberDelete(new Request(`https://test.local/api/members/${id}?confirm=1`, { method: "DELETE", headers: ORIGIN }), { params: Promise.resolve({ id }) })) as unknown as { status: number }).status;
+        } else {
+          gate.current = { tenantId: club.tenantId, userId: club.userId };
+          status = ((await dsarErase(new Request(`https://test.local/api/admin/dsar/erase?memberId=${id}`, { method: "POST", headers: ORIGIN }))) as unknown as { status: number }).status;
+        }
+      } finally { const fired = fault.race?.fired; fault.race = null; process.stderr.write(`[secr4d] race ${path} fired=${fired} ops: ${fault.ops.join(" > ")}\n`); }
+      const stillHeldNew = await memberCount(club, { email: after });
+      process.stderr.write(`[secr4d] race ${path}: status ${status} newHeld=${stillHeldNew} digestOld=${await digestRecorded(club, before)} digestNew=${await digestRecorded(club, after)}\n`);
+      expect(status).toBe(200);
+      expect(stillHeldNew, "the new address was released").toBe(0);
+      expect(await digestRecorded(club, after), `${path}: the address actually released carries no release digest`).toBe(true);
+    });
+  }
+});

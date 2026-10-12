@@ -1,0 +1,34 @@
+// R4 mutant applier: node mutate.mjs <id>  — applies one named mutant to the scratch worktree (exactly one match each).
+// Restore with: git -C <wt> checkout -- <file>
+import fs from "node:fs";
+const WT = "C:/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/R4/wt";
+const AI = `${WT}/lib/attendance-import.ts`;
+const PR = `${WT}/scripts/readiness/backup-post-restore.mjs`;
+const M = {
+  // M1: provenance check skipped in loadClubInputs
+  M1: [AI, [[/const trusted = m\.action === "member" && m\.targetId && proven\(m\);/, `const trusted = m.action === "member" && m.targetId;`]]],
+  // M2: provenance row written OUTSIDE the decision's transaction (its own transaction)
+  M2: [AI, [
+    [/await recordMappingChange\(tx, \{(\r?\n\s+tenantId, userId, mappingId: saved\.id)/, `await withTenantContext(tenantId, (otx) => recordMappingChange(otx, {$1`],
+    [/(via: "decide",\r?\n\s+\})\);/, `$1));`],
+  ]],
+  // M3: a provenance row whose digest was computed under a different key is accepted (digest not compared)
+  M3: [AI, [[/return md\.sourceKeyDigest === digest && /, `return typeof md.sourceKeyDigest === "string" && `]]],
+  // M4: an OLDER matching row vouches even when a newer one disagrees (every row kept, not only the latest)
+  M4: [AI, [[/if \(!cur \|\| t > cur\.t\) latestOf\.set\(p\.entityId, \{ t, rows: \[p\.metadata \?\? \{\}\] \}\);(\r?\n\s+)else if \(t === cur\.t\) cur\.rows\.push\(p\.metadata \?\? \{\}\);/, `if (!cur) latestOf.set(p.entityId, { t, rows: [p.metadata ?? {}] });$1else cur.rows.push(p.metadata ?? {});`]]],
+  // NT: the neutraliser itself changes one TOTP secret (a buggy neutraliser) — must refuse and roll back
+  NT: [PR, [[/(\s+)const totpAfter = \(await client\.query\(TOTP_DIGEST_SQL\)\)\.rows\[0\];/, `$1await client.query(\`update "User" set "totpSecret" = "totpSecret" || 'X' where id = (select id from "User" where "totpSecret" is not null order by id limit 1)\`);$1const totpAfter = (await client.query(TOTP_DIGEST_SQL)).rows[0];`]]],
+  // NL: leaderboard (display) tokens skipped — the check must report not ok
+  NL: [PR, [[/const display = \(await client\.query\(`update "Tenant" set "displayTokenHash" = null, "displayTokenIssuedAt" = null where "displayTokenHash" is not null`\)\)\.rowCount;/, `const display = 0;`]]],
+};
+const id = process.argv[2];
+const [file, edits] = M[id] ?? [];
+if (!file) { console.error(`unknown mutant ${id}`); process.exit(2); }
+let src = fs.readFileSync(file, "utf8");
+for (const [re, rep] of edits) {
+  const n = (src.match(new RegExp(re.source, "g")) ?? []).length;
+  if (n !== 1) { console.error(`${id}: expected 1 match for ${re}, got ${n}`); process.exit(3); }
+  src = src.replace(re, rep);
+}
+fs.writeFileSync(file, src);
+console.log(`${id} applied to ${file.split("/").slice(-2).join("/")}`);

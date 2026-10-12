@@ -1,0 +1,80 @@
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+ × tests/integration/sec-b2-public-boundary-proposal.test.ts > SF-62 proposal applied: the runtime role cannot cross tenants by setting a GUC > catalogue: no policy trusts a plain app.* setting; every RLS table has the role-keyed system policy 78ms
+   → expected 47 to be +0 // Object.is equality
+ × tests/integration/sec-b2-public-boundary-proposal.test.ts > SF-62 proposal applied: the runtime role cannot cross tenants by setting a GUC > catalogue: definer functions owned by matflow_system, pinned search_path, no PUBLIC execute; runtime not a member; no ledger rights 46ms
+   → expected 0 to be greater than or equal to 7
+ ✓ tests/integration/sec-b2-public-boundary-proposal.test.ts > SF-62 proposal applied: the runtime role cannot cross tenants by setting a GUC > positive control: a signed context sees its own club 377ms
+stdout | tests/integration/sec-b2-public-boundary-proposal.test.ts > SF-62 proposal applied: the runtime role cannot cross tenants by setting a GUC > in A's signed context, B's rows are invisible and cannot be planted
+prisma:error new row violates row-level security policy for table "Member"
+ × tests/integration/sec-b2-public-boundary-proposal.test.ts > SF-62 proposal applied: the runtime role cannot cross tenants by setting a GUC > app.bypass_rls = 'on' and a forged app.current_tenant_id grant nothing 338ms
+   → expected { bypass: 2, forged: 1 } to deeply equal { bypass: +0, forged: +0 }
+ ✓ tests/integration/sec-b2-public-boundary-proposal.test.ts > SF-62 proposal applied: the runtime role cannot cross tenants by setting a GUC > in A's signed context, B's rows are invisible and cannot be planted 666ms
+stdout | tests/integration/sec-b2-public-boundary-proposal.test.ts > SF-62 proposal applied: the runtime role cannot cross tenants by setting a GUC > the runtime role cannot assume the system role
+prisma:error 
+Invalid `prisma.$executeRawUnsafe()` invocation:
+Raw query failed. Code: `22023`. Message: `role "matflow_system" does not exist`
+ × tests/integration/sec-b2-public-boundary-proposal.test.ts > SF-62 proposal applied: the runtime role cannot cross tenants by setting a GUC > the runtime role cannot assume the system role 147ms
+   → expected '\nInvalid `prisma.$executeRawUnsafe()…' to match /permission denied/
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/integration/sec-b2-public-boundary-proposal.test.ts > SF-62 proposal applied: the runtime role cannot cross tenants by setting a GUC > catalogue: no policy trusts a plain app.* setting; every RLS table has the role-keyed system policy
+AssertionError: expected 47 to be +0 // Object.is equality
+- Expected
++ Received
+- 0
++ 47
+ ❯ tests/integration/sec-b2-public-boundary-proposal.test.ts:51:22
+     49|       WHERE s.nspname = 'public' AND (coalesce(pg_get_expr(p.polqual, …
+     50|         OR coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') ~ 'ap…
+     51|     expect(bad[0].n).toBe(0);
+       |                      ^
+     52|     const missing = await prisma.$queryRaw<Array<{ n: number }>>`
+     53|       SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace s ON…
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+ FAIL  tests/integration/sec-b2-public-boundary-proposal.test.ts > SF-62 proposal applied: the runtime role cannot cross tenants by setting a GUC > catalogue: definer functions owned by matflow_system, pinned search_path, no PUBLIC execute; runtime not a member; no ledger rights
+AssertionError: expected 0 to be greater than or equal to 7
+ ❯ tests/integration/sec-b2-public-boundary-proposal.test.ts:64:24
+     62|               AND NOT EXISTS (SELECT 1 FROM aclexplode(coalesce(p.proa…
+     63|       FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace WHE…
+     64|     expect(fns.length).toBeGreaterThanOrEqual(7);
+       |                        ^
+     65|     expect(fns.every((f) => f.ok)).toBe(true);
+     66|     const r = await prisma.$queryRaw<Array<{ member: boolean; ledger: …
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+ FAIL  tests/integration/sec-b2-public-boundary-proposal.test.ts > SF-62 proposal applied: the runtime role cannot cross tenants by setting a GUC > app.bypass_rls = 'on' and a forged app.current_tenant_id grant nothing
+AssertionError: expected { bypass: 2, forged: 1 } to deeply equal { bypass: +0, forged: +0 }
+- Expected
++ Received
+  {
+-   "bypass": 0,
+-   "forged": 0,
++   "bypass": 2,
++   "forged": 1,
+  }
+ ❯ tests/integration/sec-b2-public-boundary-proposal.test.ts:85:15
+     83|     });
+     84|     if (!enforced) return; // owner role: BYPASSRLS, RLS not in force
+     85|     expect(r).toEqual({ bypass: 0, forged: 0 });
+       |               ^
+     86|   });
+     87|
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+ FAIL  tests/integration/sec-b2-public-boundary-proposal.test.ts > SF-62 proposal applied: the runtime role cannot cross tenants by setting a GUC > the runtime role cannot assume the system role
+AssertionError: expected '\nInvalid `prisma.$executeRawUnsafe()…' to match /permission denied/
+- Expected:
+/permission denied/
++ Received:
+"
+Invalid `prisma.$executeRawUnsafe()` invocation:
+Raw query failed. Code: `22023`. Message: `role \"matflow_system\" does not exist`"
+ ❯ tests/integration/sec-b2-public-boundary-proposal.test.ts:99:15
+     97|     const r = await prisma.$transaction(async (tx) => tx.$executeRawUn…
+     98|     if (!enforced) return;
+     99|     expect(r).toMatch(/permission denied/);
+       |               ^
+    100|   });
+    101| });
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+ Test Files  1 failed (1)
+      Tests  4 failed | 2 passed (6)
+   Start at  18:57:24
+   Duration  4.84s (transform 64ms, setup 26ms, import 188ms, tests 4.45s, environment 0ms)

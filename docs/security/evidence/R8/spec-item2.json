@@ -1,0 +1,6 @@
+{
+ "R8-M2a": {"file": "app/api/cron/retention/route.ts", "edits": [{"find": "return process.env.RETENTION_CRON_ENABLED === \"true\";", "replace": "return !!process.env.RETENTION_CRON_ENABLED;"}]},
+ "R8-M2b": {"file": "app/api/cron/retention/route.ts", "edits": [{"find": "    return NextResponse.json({ error: \"retention cron disabled\" }, { status: 503 });\n", "replace": ""}]},
+ "R8-M2c": {"file": "app/api/cron/retention/route.ts", "edits": [{"find": "const dryRun = dryRunRequested;", "replace": "const dryRun = dryRunRequested && enabled;"}]},
+ "R8-M2d": {"file": "app/api/cron/retention/route.ts", "edits": [{"find": "console.info(`[cron/retention] call gate=", "replace": "void (`[cron/retention] call gate="}]}
+}

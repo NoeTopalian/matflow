@@ -28,13 +28,17 @@
  *  - Rollback removes only what this job created and nothing has touched
  *    since; rows a later import changed are kept and counted with the reason.
  */
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { emailDigest } from "@/lib/login-email";
+import { hashToken } from "@/lib/token-hash";
 import { usableTimezone } from "@/lib/class-time";
 import {
   attendanceControls,
+  cuidCreatedAt,
   dayMarkerFor,
   parseAttendanceCsv,
   planAttendanceImport,
@@ -66,6 +70,166 @@ const LEASE_MS = 120_000;
 /** Pending-people rows embedded in a preview; the rest are paged. */
 const PREVIEW_PEOPLE_CAP = 200;
 
+// ── Mapping provenance (security lane D2, 9 Oct 2026; SF-74) ─────────────────
+//
+// ImportSourceMapping rows are mutable: an upsert used to overwrite a decision with nothing left of the prior one,
+// and a row re-pointed or inserted with the runtime database password alone (SF-62) was trusted like an owner's
+// decision. Every change the importer or an owner makes to a mapping now writes an append-only AuditLog row IN THE
+// SAME TRANSACTION, carrying the state before and after and a KEYED digest of the source key (no address or name in
+// the audit trail).
+//
+// Lane D3 (review R4): the D2 digest covered the source key only, so a row could be COPIED — onto a re-pointed mapping
+// in the same club, or from a decision minted in the attacker's own club. Each row now carries `proof`, a MAC under a
+// sub-key of the signing secret over the canonical tuple (club, mapping id, kind, source-key digest, before, after, the
+// row's own createdAt, and `prev` — the previous row's proof for that mapping, MAPPING_PROVENANCE_GENESIS for the
+// first). loadClubInputs trusts a person -> member decision only when the LATEST row of that mapping verifies under the
+// current key, matches the mapping as stored, links to the row before it, and is not dated in the future. An empty
+// signing key mints no proof and verifies none. With the signing key (full app compromise) any row can be minted, and
+// deleting the newest rows (AuditLog DELETE) rolls a mapping back to an earlier owner decision — those residuals need
+// provenance outside the runtime's reach (SF-57 v2 append-only for the second).
+
+/** AuditLog.action of a mapping-provenance row. */
+export const MAPPING_PROVENANCE_ACTION = "import.mapping.changed";
+/** `prev` of the first provenance row of a mapping. */
+export const MAPPING_PROVENANCE_GENESIS = "import-mapping-provenance:v2:genesis";
+/** The sub-key context: proof key = HMAC(signing secret, this). Never shared with another use of the secret. */
+export const PROVENANCE_KEY_CONTEXT = "matflow.import-mapping-provenance.v2";
+const PROVENANCE_VERSION = "import-mapping-provenance:v2";
+/** Clock skew tolerated between app instances before a row counts as future-dated. */
+const PROVENANCE_FUTURE_SKEW_MS = 5_000;
+
+type MappingState = { action: string; targetId: string | null } | null;
+
+/** Keyed digest of a mapping's (kind, source key): proves which key a provenance row is about without storing it. */
+export function sourceKeyDigest(kind: string, sourceKey: string): string {
+  return hashToken(`import-source-key:v1:${kind}\u0001${sourceKey}`);
+}
+
+export type ProvenanceFields = {
+  tenantId: string;
+  mappingId: string;
+  kind: string;
+  sourceKeyDigest: string;
+  before: MappingState;
+  after: MappingState;
+  createdAtMs: number;
+  prev: string;
+};
+
+/** The canonical byte string a proof is computed over (a JSON array: fixed order, no key-order ambiguity). */
+export function provenanceCanonical(f: ProvenanceFields): string {
+  const state = (s: MappingState) => (s ? [s.action, s.targetId ?? null] : null);
+  return JSON.stringify([PROVENANCE_VERSION, f.tenantId, f.mappingId, f.kind, f.sourceKeyDigest, state(f.before), state(f.after), f.createdAtMs, f.prev]);
+}
+
+/** The proof of a canonical tuple under the current signing secret; null when the secret is empty (never sign with it). */
+function provenanceProof(canonical: string): string | null {
+  if (!AUTH_SECRET_VALUE) return null;
+  const key = createHmac("sha256", AUTH_SECRET_VALUE).update(PROVENANCE_KEY_CONTEXT).digest();
+  return createHmac("sha256", key).update(canonical).digest("hex");
+}
+
+function proofMatches(expected: string | null, got: unknown): boolean {
+  if (!expected || typeof got !== "string" || got.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(got), Buffer.from(expected));
+}
+
+/** What a later row chains to: the row's proof, or a marker naming a row that has none (legacy D2 rows, raw inserts). */
+function chainLinkOf(row: { id: string; metadata: unknown }): string {
+  const proof = (row.metadata as Record<string, unknown> | null)?.proof;
+  return typeof proof === "string" && proof ? proof : `unproven:${row.id}`;
+}
+
+type ProvenanceRow = { id: string; entityId: string; metadata: Record<string, unknown> | null; atMs: bigint | number | string };
+
+/** Read a stored before/after state; undefined when it is not a well-formed state. */
+function storedState(v: unknown): MappingState | undefined {
+  if (v === null) return null;
+  if (!v || typeof v !== "object") return undefined;
+  const s = v as Record<string, unknown>;
+  if (typeof s.action !== "string" || (s.targetId !== null && typeof s.targetId !== "string")) return undefined;
+  return { action: s.action, targetId: s.targetId as string | null };
+}
+
+/**
+ * Does the latest provenance row of this mapping vouch for the mapping as stored? `rows` are every provenance row of the
+ * mapping (any kind, any shape). Trust needs: one unambiguous latest row, not dated in the future; its proof verifies
+ * under the current key over (this club, this mapping, its kind, source-key digest, before, after, its createdAt, prev);
+ * the tuple matches the mapping row; prev is the previous row's proof (genesis when it is the first).
+ */
+export function provenanceVouches(
+  tenantId: string,
+  mapping: { id: string; kind: string; sourceKey: string; action: string; targetId: string | null },
+  rows: ProvenanceRow[],
+  now = Date.now(),
+): boolean {
+  if (!rows.length || !AUTH_SECRET_VALUE) return false;
+  const sorted = rows.map((r) => ({ ...r, t: Number(r.atMs) })).sort((a, b) => a.t - b.t);
+  const latest = sorted[sorted.length - 1];
+  const previous = sorted.length > 1 ? sorted[sorted.length - 2] : null;
+  if (!Number.isFinite(latest.t) || latest.t > now + PROVENANCE_FUTURE_SKEW_MS) return false;
+  if (previous && previous.t === latest.t) return false; // two rows at the same instant: no single latest row
+  const md = latest.metadata ?? {};
+  const before = storedState(md.before);
+  const after = storedState(md.after);
+  if (before === undefined || !after || typeof md.sourceKeyDigest !== "string" || typeof md.prev !== "string") return false;
+  if (md.kind !== mapping.kind || md.sourceKeyDigest !== sourceKeyDigest(mapping.kind, mapping.sourceKey)) return false;
+  if (after.action !== mapping.action || after.targetId !== mapping.targetId) return false;
+  if (md.prev !== (previous ? chainLinkOf(previous) : MAPPING_PROVENANCE_GENESIS)) return false;
+  const expected = provenanceProof(provenanceCanonical({
+    tenantId, mappingId: mapping.id, kind: mapping.kind, sourceKeyDigest: md.sourceKeyDigest, before, after, createdAtMs: latest.t, prev: md.prev,
+  }));
+  return proofMatches(expected, md.proof);
+}
+
+/**
+ * Append the provenance row for one mapping change, with the caller's transaction (it commits or rolls back with it).
+ * Call it AFTER the mapping write: that write holds the mapping row's lock, so two changes of one mapping chain in order.
+ */
+export async function recordMappingChange(
+  tx: Tx,
+  args: { tenantId: string; userId: string | null; mappingId: string; kind: string; sourceKey: string; before: MappingState; after: MappingState; via: string; jobId?: string },
+) {
+  const [last] = await tx.$queryRaw<{ id: string; metadata: Record<string, unknown> | null; atMs: bigint | number | string }[]>`
+    SELECT id, metadata, round(extract(epoch from "createdAt") * 1000)::bigint AS "atMs"
+    FROM "AuditLog"
+    WHERE "tenantId" = ${args.tenantId} AND action = ${MAPPING_PROVENANCE_ACTION} AND "entityType" = 'ImportSourceMapping'
+      AND "entityId" = ${args.mappingId}
+    ORDER BY "createdAt" DESC, id DESC
+    LIMIT 1`;
+  const now = Date.now();
+  const lastAt = last ? Number(last.atMs) : NaN;
+  // Strictly after the previous row (so the chain has one order), unless that row is future-dated — never inherit a
+  // forged future date.
+  const createdAtMs = Number.isFinite(lastAt) && lastAt >= now && lastAt <= now + PROVENANCE_FUTURE_SKEW_MS ? lastAt + 1 : now;
+  const prev = last ? chainLinkOf(last) : MAPPING_PROVENANCE_GENESIS;
+  const digest = sourceKeyDigest(args.kind, args.sourceKey);
+  const proof = provenanceProof(provenanceCanonical({
+    tenantId: args.tenantId, mappingId: args.mappingId, kind: args.kind, sourceKeyDigest: digest, before: args.before, after: args.after, createdAtMs, prev,
+  }));
+  await tx.auditLog.create({
+    data: {
+      tenantId: args.tenantId,
+      userId: args.userId,
+      action: MAPPING_PROVENANCE_ACTION,
+      entityType: "ImportSourceMapping",
+      entityId: args.mappingId,
+      createdAt: new Date(createdAtMs),
+      metadata: {
+        kind: args.kind,
+        source: LEDGER_SOURCE,
+        sourceKeyDigest: digest,
+        before: args.before,
+        after: args.after,
+        via: args.via,
+        ...(args.jobId ? { jobId: args.jobId } : {}),
+        prev,
+        proof,
+      } as Prisma.InputJsonValue,
+    },
+  });
+}
+
 export type Disposition =
   | "attendance_created"
   | "attendance_existing"
@@ -89,21 +253,53 @@ export type ClubInputs = {
   classes: RosterClass[];
   locations: RosterLocation[];
   decisions: PlanDecisions;
+  /**
+   * Addresses released in this club (keyed by lib/login-email emailDigest): the
+   * digest of every OLD address in an address-change audit row, with the ids of
+   * the members who released them (AH-D1 retest).
+   */
+  released?: Record<string, string[]>;
+  /** Person -> member decisions held pending because no provenance row vouches for them (SF-74): mapping ids. */
+  unprovenDecisions?: string[];
 };
 
 export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInputs> {
   const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
   // Every member, whatever their status: a cancelled member's history is still history.
-  const members = await tx.member.findMany({ where: { tenantId }, select: { id: true, name: true, email: true, externalRef: true } });
+  const memberRows = await tx.member.findMany({ where: { tenantId }, select: { id: true, name: true, email: true, externalRef: true } });
+  const members: RosterMember[] = memberRows.map((m) => ({ ...m, createdAt: cuidCreatedAt(m.id) }));
   const classes = await tx.class.findMany({
     where: { tenantId, deletedAt: null },
     select: { id: true, name: true, isActive: true, sourceImportJobId: true, locationId: true },
   });
   const locations = await tx.location.findMany({ where: { tenantId }, select: { id: true, name: true } });
   const mappings = await tx.importSourceMapping.findMany({ where: { tenantId, source: LEDGER_SOURCE } });
+  // Provenance of person -> member decisions (SF-74, D3): EVERY provenance row of each mapping, whatever its metadata
+  // says (a row claiming another kind still counts as the mapping's latest row), so the latest can be checked and its
+  // chain followed. createdAt as epoch milliseconds: the proof covers it to the millisecond.
+  const provenance = await tx.$queryRaw<ProvenanceRow[]>`
+    SELECT id, "entityId", metadata, round(extract(epoch from "createdAt") * 1000)::bigint AS "atMs"
+    FROM "AuditLog"
+    WHERE "tenantId" = ${tenantId} AND action = ${MAPPING_PROVENANCE_ACTION} AND "entityType" = 'ImportSourceMapping'`;
+  const rowsOf = new Map<string, ProvenanceRow[]>();
+  for (const p of provenance) {
+    const list = rowsOf.get(p.entityId);
+    if (list) list.push(p);
+    else rowsOf.set(p.entityId, [p]);
+  }
+  const now = Date.now();
+  const proven = (m: { id: string; kind: string; sourceKey: string; action: string; targetId: string | null }) =>
+    provenanceVouches(tenantId, m, rowsOf.get(m.id) ?? [], now);
+  const unprovenDecisions: string[] = [];
   const decisions: PlanDecisions = { person: {}, offering: {}, venue: {} };
   for (const m of mappings) {
-    if (m.kind === "person") decisions.person[m.sourceKey] = (m.action === "member" && m.targetId ? { action: "member", targetId: m.targetId } : { action: "pending" }) as PersonDecision;
+    if (m.kind === "person") {
+      // A decision with no matching provenance (re-pointed, inserted or re-keyed outside saveDecisions) binds nobody:
+      // it is held pending and counted, so the owner sees it and decides again.
+      const trusted = m.action === "member" && m.targetId && proven(m);
+      if (m.action === "member" && !trusted) unprovenDecisions.push(m.id);
+      decisions.person[m.sourceKey] = (trusted ? { action: "member", targetId: m.targetId } : { action: "pending" }) as PersonDecision;
+    }
     if (m.kind === "offering") {
       decisions.offering[m.sourceKey] = (m.action === "class" && m.targetId ? { action: "class", targetId: m.targetId }
         : m.action === "new_class" ? { action: "new_class", targetId: m.targetId } : { action: "pending" }) as OfferingDecision;
@@ -113,9 +309,56 @@ export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInpu
         : m.action === "club" ? { action: "club" } : { action: "pending" }) as VenueDecision;
     }
   }
+  // Every address change in this club writes its OLD address's digest: member.update / member.self_update
+  // (oldEmailSha256), admin.member.contact_email.changed (oldEmailDigest), staff.update /
+  // user.login_email.changed / admin.owner.login_email.changed (oldEmailSha256, entityType User).
+  // Plus the release paths (R third pass): member.delete, staff.delete, member.dsar_erase and import.rollback write
+  // releasedEmailSha256 (a digest or a list); a DSAR erase also wrote originalEmailHash (the hashToken form).
+  // Rows written before AH-E2 hold the UNKEYED SHA-256 form; buildPlan compares every form.
+  const releaseRows = await tx.$queryRaw<{ action: string; entityType: string; entityId: string; metadata: Record<string, unknown> | null; createdAt: Date }[]>`
+    SELECT action, "entityType", "entityId", metadata, "createdAt"
+    FROM "AuditLog"
+    WHERE "tenantId" = ${tenantId}
+      AND (metadata->>'oldEmailSha256' IS NOT NULL OR metadata->>'oldEmailDigest' IS NOT NULL
+        OR metadata->'releasedEmailSha256' IS NOT NULL
+        OR (action = 'member.dsar_erase' AND metadata->>'originalEmailHash' IS NOT NULL)
+        OR metadata->'changes'->'email' IS NOT NULL
+        OR (action = 'member.guardian.confirmed' AND metadata->>'emailAdopted' = 'true'))`;
+  const released: Record<string, string[]> = Object.create(null);
+  // Each member's latest recorded change of its OWN address: by subject and time, not by digest, so a key
+  // rotation cannot hide it (R fourth pass).
+  const ownChange = new Map<string, number>();
+  for (const r of releaseRows) {
+    const md = r.metadata ?? {};
+    // The subject whose own address changed: the row's member for a digest row or an old-format row
+    // ({ changes: { email } }, R fifth pass); the PARENT for a guardian confirm that adopted the payer address.
+    const changes = md.changes && typeof md.changes === "object" ? (md.changes as Record<string, unknown>) : null;
+    const subject =
+      r.action === "member.guardian.confirmed" && md.emailAdopted === true
+        ? (typeof md.parentMemberId === "string" ? md.parentMemberId : null)
+        : r.entityType === "Member" && (md.oldEmailSha256 || md.oldEmailDigest || md.releasedEmailSha256 || changes?.email)
+          ? r.entityId
+          : null;
+    if (subject) {
+      const t = new Date(r.createdAt).getTime();
+      if (!isNaN(t) && t > (ownChange.get(subject) ?? -Infinity)) ownChange.set(subject, t);
+    }
+    const many = Array.isArray(md.releasedEmailSha256) ? md.releasedEmailSha256 : [md.releasedEmailSha256];
+    for (const d of [md.oldEmailSha256, md.oldEmailDigest, md.originalEmailHash, ...many]) {
+      if (typeof d !== "string" || !d) continue;
+      const list = (released[d] ??= []);
+      if (r.entityType === "Member" && !list.includes(r.entityId)) list.push(r.entityId);
+    }
+  }
+  for (const m of members) {
+    const t = ownChange.get(m.id);
+    if (t !== undefined) m.addressChangedAt = new Date(t);
+  }
   return {
     timezone: usableTimezone(tenant?.timezone),
     members,
+    released,
+    unprovenDecisions,
     classes: classes.map((c) => ({ id: c.id, name: c.name, isActive: c.isActive, historical: !!c.sourceImportJobId, locationId: c.locationId })),
     locations,
     decisions,
@@ -138,6 +381,14 @@ export function buildPlan(text: string, inputs: ClubInputs, now: Date, createdCl
     decisions: inputs.decisions,
     isSynthesisedEmail,
     createdClasses,
+    releasedBy: (email: string) => {
+      // Keyed (AH-E2), unkeyed (before AH-E2) and the DSAR hashToken form, all compared.
+      const map = inputs.released ?? {};
+      const normalised = email.trim().toLowerCase();
+      const forms = [emailDigest(email), createHash("sha256").update(normalised).digest("hex"), hashToken(normalised)];
+      const known = forms.filter((d) => Object.hasOwn(map, d));
+      return known.length ? [...new Set(known.flatMap((d) => map[d]))] : undefined;
+    },
   });
   return { parsed, plan, controls: attendanceControls(parsed.rows) };
 }
@@ -151,6 +402,7 @@ export function planHashOf(fileHash: string, inputs: ClubInputs): string {
   h.update(JSON.stringify(inputs.classes.map((c) => [c.id, c.isActive, c.locationId]).sort()));
   h.update(JSON.stringify(inputs.locations.map((l) => l.id).sort()));
   h.update(inputs.timezone);
+  h.update(JSON.stringify(Object.keys(inputs.released ?? {}).sort()));
   return h.digest("hex");
 }
 
@@ -254,6 +506,8 @@ export async function previewSummary(
         candidates: p.candidates.map((c) => ({ ...c, name: memberName.get(c.memberId) ?? "" })),
       })),
       pendingListTruncated: pendingPeople.length > PREVIEW_PEOPLE_CAP,
+      // Saved decisions held pending because their provenance does not vouch for them (SF-74).
+      unprovenDecisions: inputs.unprovenDecisions?.length ?? 0,
     },
     offerings: plan.offerings.map((o) => ({
       label: o.label, bookings: o.bookings, attended: o.attended, decision: o.decision,
@@ -313,12 +567,23 @@ export async function saveDecisions(tx: Tx, tenantId: string, userId: string, li
       if (!ok) return "That location is not in this club.";
     }
   }
-  for (const d of list) {
+  // One write per mapping: the last decision for a key in this list is the one that stands (as the upserts always did).
+  const last = new Map<string, DecisionInput>();
+  for (const d of list) last.set(`${d.kind}\u0001${d.sourceKey}`, d);
+  for (const d of last.values()) {
     const targetId = d.action === "member" || d.action === "class" || d.action === "location" ? d.targetId! : null;
-    await tx.importSourceMapping.upsert({
-      where: { tenantId_source_kind_sourceKey: { tenantId, source: LEDGER_SOURCE, kind: d.kind, sourceKey: d.sourceKey } },
+    const where = { tenantId_source_kind_sourceKey: { tenantId, source: LEDGER_SOURCE, kind: d.kind, sourceKey: d.sourceKey } };
+    const prior = await tx.importSourceMapping.findUnique({ where, select: { action: true, targetId: true } });
+    const saved = await tx.importSourceMapping.upsert({
+      where,
       create: { tenantId, source: LEDGER_SOURCE, kind: d.kind, sourceKey: d.sourceKey, action: d.action, targetId, decidedById: userId },
       update: { action: d.action, targetId, decidedById: userId, decidedAt: new Date() },
+      select: { id: true },
+    });
+    // The prior decision stays recoverable, in the same transaction (SF-74).
+    await recordMappingChange(tx, {
+      tenantId, userId, mappingId: saved.id, kind: d.kind, sourceKey: d.sourceKey,
+      before: prior ? { action: prior.action, targetId: prior.targetId } : null, after: { action: d.action, targetId }, via: "decide",
     });
   }
   return null;
@@ -394,9 +659,16 @@ export async function createHistoricalClasses(
   }
   // A single-venue offering remembers its class for the next export of the club.
   for (const [label, ids] of perOffering) {
-    const d = inputs.decisions.offering[label];
+    const d = Object.hasOwn(inputs.decisions.offering, label) ? inputs.decisions.offering[label] : undefined;
     if (ids.length === 1 && d?.action === "new_class" && !d.targetId) {
-      await tx.importSourceMapping.updateMany({ where: { tenantId, source: LEDGER_SOURCE, kind: "offering", sourceKey: label }, data: { targetId: ids[0] } });
+      const rows = await tx.importSourceMapping.findMany({ where: { tenantId, source: LEDGER_SOURCE, kind: "offering", sourceKey: label }, select: { id: true, action: true, targetId: true } });
+      for (const m of rows) {
+        await tx.importSourceMapping.update({ where: { id: m.id }, data: { targetId: ids[0] } });
+        await recordMappingChange(tx, {
+          tenantId, userId: null, mappingId: m.id, kind: "offering", sourceKey: label, jobId,
+          before: { action: m.action, targetId: m.targetId }, after: { action: m.action, targetId: ids[0] }, via: "import.commit",
+        });
+      }
     }
   }
 }
@@ -867,7 +1139,14 @@ export async function rollbackJob(tx: Tx, tenantId: string, jobId: string) {
   for (const c of classes) {
     // Anything staff have since attached (a session, a schedule, a subscriber, a roster) keeps the class.
     if (c._count.instances + c._count.schedules + c._count.subscriptions + c._count.rosterMembers > 0) { report.classesKept += 1; continue; }
-    await tx.importSourceMapping.updateMany({ where: { tenantId, source: LEDGER_SOURCE, kind: "offering", targetId: c.id }, data: { targetId: null } });
+    const pointing = await tx.importSourceMapping.findMany({ where: { tenantId, source: LEDGER_SOURCE, kind: "offering", targetId: c.id }, select: { id: true, action: true, sourceKey: true } });
+    for (const m of pointing) {
+      await tx.importSourceMapping.update({ where: { id: m.id }, data: { targetId: null } });
+      await recordMappingChange(tx, {
+        tenantId, userId: null, mappingId: m.id, kind: "offering", sourceKey: m.sourceKey, jobId,
+        before: { action: m.action, targetId: c.id }, after: { action: m.action, targetId: null }, via: "import.rollback",
+      });
+    }
     await tx.class.delete({ where: { id: c.id } });
     report.classesRemoved += 1;
   }

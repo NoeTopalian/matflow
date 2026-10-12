@@ -1,4 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { addLoginClaimSql } from "./login-claim-fake";
 
 /**
  * Verifier lane 7 (30 Sep 2026), found on the production build:
@@ -31,14 +32,14 @@ const m = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
-    fn({
+    fn(addLoginClaimSql({
       member: { create: m.memberCreate, findFirst: m.memberFindFirst, findMany: vi.fn(), count: vi.fn(), update: m.memberUpdate },
       magicLinkToken: { create: vi.fn(), updateMany: vi.fn() },
       tenant: { findUnique: vi.fn(async () => ({ name: "Total BJJ", waiverTitle: null, waiverContent: null })) },
       memberStatusEvent: { create: vi.fn(async () => ({ id: "evt" })) },
       signedWaiver: { create: m.waiverCreate, findFirst: m.waiverFindFirst },
       membershipTier: { create: m.tierCreate },
-    }),
+    }, {})), // claim lock; nobody else holds these addresses (AH-01)
   withRlsBypass: vi.fn(),
 }));
 vi.mock("@/auth", () => ({ auth: vi.fn() }));

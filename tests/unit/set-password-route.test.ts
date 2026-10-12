@@ -65,7 +65,7 @@ describe("POST /api/auth/set-password", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     authMock.mockReturnValue({ user: { id: "u1", tenantId: "t1", role: "owner" } });
-    userFindFirst.mockResolvedValue({ id: "u1", passwordHash: CURRENT_HASH, mustChangePassword: true });
+    userFindFirst.mockResolvedValue({ id: "u1", passwordHash: CURRENT_HASH, mustChangePassword: true, tempPasswordExpiresAt: new Date(Date.now() + 3_600_000) });
     userUpdate.mockResolvedValue({ sessionVersion: 8 });
     getTokenMock.mockResolvedValue({ id: "u1", tenantId: "t1", role: "owner", sessionVersion: 7, mustChangePassword: true, requireTotpSetup: true });
     encodeMock.mockResolvedValue("re-encoded-jwt");

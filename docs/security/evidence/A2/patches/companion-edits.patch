@@ -1,0 +1,366 @@
+diff --git a/tests/integration/account-editing-db.test.ts b/tests/integration/account-editing-db.test.ts
+--- a/tests/integration/account-editing-db.test.ts
++++ b/tests/integration/account-editing-db.test.ts
+@@ -241,7 +241,8 @@
+     expect(u?.id).toBe(ids.owner);
+     expect(u?.totpPending).toBe(true);
+     const { POST } = await import("@/app/api/auth/totp/verify/route");
+-    state.jwt = { id: ids.owner, tenantId: ids.a, totpPending: true };
++    // SF-37 (lane A2): the verify route checks revocation; a real token carries the live version.
++    state.jwt = { id: ids.owner, tenantId: ids.a, totpPending: true, sessionVersion: (await withRlsBypass((tx) => tx.user.findUniqueOrThrow({ where: { id: ids.owner }, select: { sessionVersion: true } }))).sessionVersion };
+     nextStep(); // the change spent the previous step's code
+     const ok = await POST(req("POST", "http://localhost/api/auth/totp/verify", { code: generateSync({ secret: SECRET }) }) as never);
+     expect(ok.status).toBe(200);
+diff --git a/tests/integration/login-email-change-db.test.ts b/tests/integration/login-email-change-db.test.ts
+--- a/tests/integration/login-email-change-db.test.ts
++++ b/tests/integration/login-email-change-db.test.ts
+@@ -214,7 +214,8 @@
+ 
+   it("after: the same authenticator completes the sign-in for the new address", async () => {
+     const { POST } = await import("@/app/api/auth/totp/verify/route");
+-    state.jwt = { id: ids.owner, tenantId: ids.a, totpPending: true };
++    // SF-37 (lane A2): the verify route checks revocation; a real token carries the live version.
++    state.jwt = { id: ids.owner, tenantId: ids.a, totpPending: true, sessionVersion: (await withRlsBypass((tx) => tx.user.findUniqueOrThrow({ where: { id: ids.owner }, select: { sessionVersion: true } }))).sessionVersion };
+     // The change above spent this time-step's code (single use, shared with
+     // /api/auth/totp/verify via totpLastUsedStep): the person waits for the
+     // authenticator's NEXT code, exactly as the signed-out panel tells them.
+diff --git a/tests/integration/sec-a-revocation-fail-closed-db.test.ts b/tests/integration/sec-a-revocation-fail-closed-db.test.ts
+--- a/tests/integration/sec-a-revocation-fail-closed-db.test.ts
++++ b/tests/integration/sec-a-revocation-fail-closed-db.test.ts
+@@ -86,9 +86,11 @@
+ async function sessionAction(token: Record<string, unknown>) {
+   if (!h.jwt) await import("@/auth");
+   const t = (await h.jwt!({ token })) as Record<string, unknown> | null;
+-  // jwt() → null: the server-side auth() returns null and applies no
+-  // Set-Cookie, so the browser keeps its cookie for the next request.
++  // jwt() → null: revoked (the cookie is cleared). An unknown verdict keeps the
++  // token, marked for revalidation (SF-44, lane A2): session() then carries no
++  // user, and the exported auth() returns null for it.
+   if (t === null) return { session: null as null | { user?: Record<string, unknown> } };
++  if (typeof t.revalidateSince === "number") return { session: null as null | { user?: Record<string, unknown> }, marked: true };
+   const session = (await h.session!({
+     session: { user: { name: t.name, email: t.email }, expires: new Date(Date.now() + 3600_000).toISOString() },
+     token: t,
+diff --git a/tests/unit/account-lockout-counter.test.ts b/tests/unit/account-lockout-counter.test.ts
+--- a/tests/unit/account-lockout-counter.test.ts
++++ b/tests/unit/account-lockout-counter.test.ts
+@@ -45,6 +45,15 @@
+ }));
+ vi.mock("next-auth/providers/credentials", () => ({ default: (c: unknown) => c }));
+ vi.mock("next-auth/providers/google", () => ({ default: (c: unknown) => c }));
++// Lockout v2 (lane A2, SF-35/SF-59) keeps its counters in RateLimitHit; this
++// file is about something else, so the counters are stubbed open here.
++// tests/integration/sec-a2-lockout-oracle-db.test.ts drives them for real.
++vi.mock("@/lib/auth-lockout", async (importOriginal) => ({
++  ...(await importOriginal<typeof import("@/lib/auth-lockout")>()),
++  lockoutState: async () => ({ blocked: false, addrCapped: false }),
++  recordFailure: async () => 1,
++  clearPairOnSuccess: async () => {},
++}));
+ 
+ const { releaseBarrier, compareMock, captureException, logAudit } = vi.hoisted(() => {
+   let waiting: (() => void)[] = [];
+@@ -160,9 +169,13 @@
+     const results = await Promise.all(flight);
+ 
+     expect(results.every((r) => r === null), "every attempt is still refused").toBe(true);
+-    // Ten increments: the tenth crosses the threshold, so the counter resets to
+-    // 0 and the lock goes on. Either way the arithmetic reached ten.
+-    expect(row.lockedUntil, "ACCOUNT_LOCKOUT_THRESHOLD is 10 — ten attempts must lock").not.toBeNull();
++    // Ten increments, all counted. Lockout v2 (lane A2, SF-35/SF-59): the row
++    // counter no longer LOCKS the account — that was a lockout anyone who knew
++    // the address could trigger, and an existence oracle. The address-keyed
++    // counters in lib/auth-lockout.ts refuse instead
++    // (tests/integration/sec-a2-lockout-oracle-db.test.ts).
++    expect(row.failedLoginCount, "one increment per attempt, however they interleave").toBe(10);
++    expect(row.lockedUntil, "failed passwords never lock the row").toBeNull();
+   });
+ 
+   it("three simultaneous refusals leave the counter at three", async () => {
+@@ -211,7 +224,7 @@
+     expect(
+       errorSpy.mock.calls.flat().join(" "),
+       "while this is failing the lockout is not counting, and this line is how anyone finds out",
+-    ).toMatch(/lockout is not counting/);
++    ).toMatch(/row counter NOT recorded/);
+     expect(captureException, "and it reaches Sentry, like every other fail-open control").toHaveBeenCalled();
+     errorSpy.mockRestore();
+   });
+diff --git a/tests/unit/e2e-bypass-no-owner-escalation.test.ts b/tests/unit/e2e-bypass-no-owner-escalation.test.ts
+--- a/tests/unit/e2e-bypass-no-owner-escalation.test.ts
++++ b/tests/unit/e2e-bypass-no-owner-escalation.test.ts
+@@ -51,6 +51,15 @@
+   default: (cfg: { authorize?: Authorize }) => cfg,
+ }));
+ vi.mock("next-auth/providers/google", () => ({ default: (cfg: unknown) => cfg }));
++// Lockout v2 (lane A2, SF-35/SF-59) keeps its counters in RateLimitHit; this
++// file is about something else, so the counters are stubbed open here.
++// tests/integration/sec-a2-lockout-oracle-db.test.ts drives them for real.
++vi.mock("@/lib/auth-lockout", async (importOriginal) => ({
++  ...(await importOriginal<typeof import("@/lib/auth-lockout")>()),
++  lockoutState: async () => ({ blocked: false, addrCapped: false }),
++  recordFailure: async () => 1,
++  clearPairOnSuccess: async () => {},
++}));
+ 
+ const { tenantFindUnique, userFindUnique, memberFindUnique, userFindFirst } = vi.hoisted(() => ({
+   tenantFindUnique: vi.fn(),
+@@ -112,6 +121,8 @@
+   vi.clearAllMocks();
+   vi.stubEnv("E2E_BYPASS_TOKEN", BYPASS);
+   vi.stubEnv("TESTING_MODE", "true");
++  // SF-37 (lane A2): the harness needs its explicit flag; no header turns it on.
++  vi.stubEnv("E2E_AUTH_BYPASS", "true");
+   tenantFindUnique.mockResolvedValue(TENANT);
+   userFindUnique.mockResolvedValue(null);
+   memberFindUnique.mockResolvedValue(null);
+diff --git a/tests/unit/google-door-provisional.test.ts b/tests/unit/google-door-provisional.test.ts
+--- a/tests/unit/google-door-provisional.test.ts
++++ b/tests/unit/google-door-provisional.test.ts
+@@ -88,14 +88,16 @@
+     }));
+   });
+ 
+-  it("control: the same account, not provisional, is admitted (TOTP still owed)", async () => {
++  it("control: the same account, not provisional, reaches the explicit-link rule (SF-36) instead", async () => {
++    // Lane A2 (SF-36): a matching, verified email no longer signs anyone in;
++    // only an explicit link would, and none exists yet. The provisional
++    // refusal above still fires first and is still audited.
+     h.userFindUnique.mockResolvedValue({ ...OWNER });
+     const user: Record<string, unknown> = { email: "Owner@Club.example" };
+     const result = await captured.signIn!({ user, account: { provider: "google" }, profile: { email_verified: true } });
+     expect(result).not.toBe("/login?error=invalid_link");
+-    expect(typeof result === "string" && result.startsWith("/login")).toBe(false);
+-    expect(user.id).toBe("owner-1");
+-    expect(user.totpPending).toBe(true);
++    expect(result).toBe("/login?error=google_link_required");
++    expect(user.id).toBeUndefined();
+     expect(h.logAudit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "auth.external_signin.refused_provisional" }));
+   });
+ });
+diff --git a/tests/unit/login-event-after-response.test.ts b/tests/unit/login-event-after-response.test.ts
+--- a/tests/unit/login-event-after-response.test.ts
++++ b/tests/unit/login-event-after-response.test.ts
+@@ -37,6 +37,15 @@
+ }));
+ vi.mock("next-auth/providers/credentials", () => ({ default: (cfg: { authorize?: Authorize }) => cfg }));
+ vi.mock("next-auth/providers/google", () => ({ default: (cfg: unknown) => cfg }));
++// Lockout v2 (lane A2, SF-35/SF-59) keeps its counters in RateLimitHit; this
++// file is about something else, so the counters are stubbed open here.
++// tests/integration/sec-a2-lockout-oracle-db.test.ts drives them for real.
++vi.mock("@/lib/auth-lockout", async (importOriginal) => ({
++  ...(await importOriginal<typeof import("@/lib/auth-lockout")>()),
++  lockoutState: async () => ({ blocked: false, addrCapped: false }),
++  recordFailure: async () => 1,
++  clearPairOnSuccess: async () => {},
++}));
+ 
+ const { tenantFindUnique, userFindUnique, memberFindUnique, checkSessionVersion } = vi.hoisted(() => ({
+   tenantFindUnique: vi.fn(),
+diff --git a/tests/unit/login-throttle-defaults-on.test.ts b/tests/unit/login-throttle-defaults-on.test.ts
+--- a/tests/unit/login-throttle-defaults-on.test.ts
++++ b/tests/unit/login-throttle-defaults-on.test.ts
+@@ -69,6 +69,9 @@
+   it("still guards the sign-in rate-limit block it is supposed to guard", () => {
+     // Guards against the flag being made correct and then quietly unused.
+     const src = authSource();
+-    expect(src).toMatch(/if\s*\(\s*LOGIN_THROTTLE_ENABLED\s*&&\s*!skipRateLimit\s*\)/);
++    // Lane A2 (SF-59): the flag now feeds loginThrottleActive(), which also
++    // refuses "false" on Vercel and on the production database.
++    expect(src).toMatch(/if\s*\(\s*LOGIN_THROTTLE_ENABLED\s*\)\s*return true;/);
++    expect(src).toMatch(/if\s*\(\s*loginThrottleActive\(\)\s*&&\s*!harness\s*\)/);
+   });
+ });
+diff --git a/tests/unit/owner-activation-order.test.ts b/tests/unit/owner-activation-order.test.ts
+--- a/tests/unit/owner-activation-order.test.ts
++++ b/tests/unit/owner-activation-order.test.ts
+@@ -42,6 +42,15 @@
+ }));
+ vi.mock("next-auth/providers/credentials", () => ({ default: (cfg: { authorize?: Authorize }) => cfg }));
+ vi.mock("next-auth/providers/google", () => ({ default: (cfg: unknown) => cfg }));
++// Lockout v2 (lane A2, SF-35/SF-59) keeps its counters in RateLimitHit; this
++// file is about something else, so the counters are stubbed open here.
++// tests/integration/sec-a2-lockout-oracle-db.test.ts drives them for real.
++vi.mock("@/lib/auth-lockout", async (importOriginal) => ({
++  ...(await importOriginal<typeof import("@/lib/auth-lockout")>()),
++  lockoutState: async () => ({ blocked: false, addrCapped: false }),
++  recordFailure: async () => 1,
++  clearPairOnSuccess: async () => {},
++}));
+ 
+ const { tenantFindUnique, userFindUnique, memberFindUnique, checkSessionVersion } = vi.hoisted(() => ({
+   tenantFindUnique: vi.fn(),
+diff --git a/tests/unit/pending-activation-enrolled-owner.test.ts b/tests/unit/pending-activation-enrolled-owner.test.ts
+--- a/tests/unit/pending-activation-enrolled-owner.test.ts
++++ b/tests/unit/pending-activation-enrolled-owner.test.ts
+@@ -42,6 +42,15 @@
+ }));
+ vi.mock("next-auth/providers/credentials", () => ({ default: (cfg: { authorize?: Authorize }) => cfg }));
+ vi.mock("next-auth/providers/google", () => ({ default: (cfg: unknown) => cfg }));
++// Lockout v2 (lane A2, SF-35/SF-59) keeps its counters in RateLimitHit; this
++// file is about something else, so the counters are stubbed open here.
++// tests/integration/sec-a2-lockout-oracle-db.test.ts drives them for real.
++vi.mock("@/lib/auth-lockout", async (importOriginal) => ({
++  ...(await importOriginal<typeof import("@/lib/auth-lockout")>()),
++  lockoutState: async () => ({ blocked: false, addrCapped: false }),
++  recordFailure: async () => 1,
++  clearPairOnSuccess: async () => {},
++}));
+ 
+ const { tenantFindUnique, userFindUnique, memberFindUnique } = vi.hoisted(() => ({
+   tenantFindUnique: vi.fn(),
+diff --git a/tests/unit/sec-a-revocation-fail-closed.test.ts b/tests/unit/sec-a-revocation-fail-closed.test.ts
+--- a/tests/unit/sec-a-revocation-fail-closed.test.ts
++++ b/tests/unit/sec-a-revocation-fail-closed.test.ts
+@@ -188,11 +188,18 @@
+     h.userFindUnique.mockRejectedValue(makeError());
+   });
+ 
+-  it("answers this request as signed out: auth() is null, never a session", async () => {
++  it("answers this request as signed out: auth() is null, never a session — and the cookie is KEPT (SF-44)", async () => {
+     const r = await sessionAction(coachToken());
+-    // null, not a truthy session without a user: 57 call sites check only
+-    // `if (!session)` before reading session.user.* (auth.ts comment).
+-    expect(r.session).toBeNull();
++    // Lane A2 (SF-44): jwt() keeps the token, marked for revalidation, so the
++    // cookie is re-issued rather than cleared; session() carries no user and
++    // the exported auth() turns that into null for every caller.
++    expect(r.admitted).toBe(false);
++    expect(r.token, "token kept: a dependency failure does not sign anyone out").not.toBeNull();
++    expect(typeof r.token?.revalidateSince).toBe("number");
++    expect((r.session as { authUnavailable?: unknown }).authUnavailable).toBe(true);
++    h.authMock.mockResolvedValue(r.session);
++    const { auth } = await import("@/auth");
++    expect(await (auth as unknown as () => Promise<unknown>)()).toBeNull();
+   });
+ 
+   it("refuses the API gate (401), the page gate (/login) and a protected mutation, with no write", async () => {
+@@ -216,7 +223,7 @@
+   it("recovers on the next request once the lookup works (the cookie was never cleared server-side)", async () => {
+     const cookie = coachToken();
+     const first = await sessionAction({ ...cookie });
+-    expect(first.session).toBeNull();
++    expect(first.admitted).toBe(false);
+     h.userFindUnique.mockResolvedValue(ROW);
+     const second = await sessionAction({ ...cookie });
+     expect(second.session?.user?.id).toBe("u-secA-coach");
+@@ -225,7 +232,7 @@
+   it("a member session fails closed the same way", async () => {
+     h.memberFindUnique.mockRejectedValue(makeError());
+     const r = await sessionAction(coachToken({ id: "m-secA", role: "member", memberId: "m-secA", sessionVersion: 1 }));
+-    expect(r.session).toBeNull();
++    expect(r.admitted).toBe(false);
+   });
+ });
+ 
+@@ -233,7 +240,7 @@
+   it("is not admitted", async () => {
+     h.userFindUnique.mockResolvedValue(row);
+     const r = await sessionAction(coachToken());
+-    expect(r.session).toBeNull();
++    expect(r.admitted).toBe(false);
+     h.authMock.mockResolvedValue(r.session);
+     const { requireApiStaff } = await import("@/lib/api-authz");
+     const gate = await requireApiStaff();
+@@ -269,7 +276,7 @@
+     const legacy = coachToken();
+     delete legacy.mustChangePassword;
+     const r = await sessionAction({ ...legacy });
+-    expect(r.session).toBeNull();
++    expect(r.admitted).toBe(false);
+     // Positive control: the read works → stamped and admitted.
+     h.userFindUnique.mockImplementation(async (args: { select?: Record<string, boolean> }) =>
+       args?.select?.mustChangePassword ? { mustChangePassword: false } : ROW,
+@@ -300,6 +307,6 @@
+     expect(t).not.toBeNull();
+     expect(h.userFindUnique).not.toHaveBeenCalled();
+     vi.unstubAllEnvs();
+-    expect((await sessionAction(coachToken())).session).toBeNull();
+-  });
+-});
++    expect((await sessionAction(coachToken())).admitted).toBe(false);
++  });
++});
+diff --git a/tests/unit/support-session-readonly.test.ts b/tests/unit/support-session-readonly.test.ts
+--- a/tests/unit/support-session-readonly.test.ts
++++ b/tests/unit/support-session-readonly.test.ts
+@@ -108,6 +108,7 @@
+   "app/api/auth/forgot-password/route.ts": "public; emails a link to the address on file, never to the caller",
+   "app/api/auth/reset-password/route.ts": "credential is the emailed one-time token, not the session",
+   "app/api/auth/totp/recover/route.ts": "public; credential is a recovery code",
++  "app/api/auth/disown-login/[token]/route.ts": "public; credential is the signed link from the new-sign-in email; acts on that link's subject, never on the session (POST since lane A2 SF-37)",
+   "app/api/auth/totp/verify/route.ts": "acts only on a token with totpPending, which a support session never carries",
+   "app/api/stripe/webhook/route.ts": "Stripe-signed webhook",
+   "app/api/webhooks/resend/route.ts": "Resend-signed webhook",
+diff --git a/tests/unit/temp-password-expiry.test.ts b/tests/unit/temp-password-expiry.test.ts
+--- a/tests/unit/temp-password-expiry.test.ts
++++ b/tests/unit/temp-password-expiry.test.ts
+@@ -53,6 +53,15 @@
+ }));
+ vi.mock("next-auth/providers/credentials", () => ({ default: (c: unknown) => c }));
+ vi.mock("next-auth/providers/google", () => ({ default: (c: unknown) => c }));
++// Lockout v2 (lane A2, SF-35/SF-59) keeps its counters in RateLimitHit; this
++// file is about something else, so the counters are stubbed open here.
++// tests/integration/sec-a2-lockout-oracle-db.test.ts drives them for real.
++vi.mock("@/lib/auth-lockout", async (importOriginal) => ({
++  ...(await importOriginal<typeof import("@/lib/auth-lockout")>()),
++  lockoutState: async () => ({ blocked: false, addrCapped: false }),
++  recordFailure: async () => 1,
++  clearPairOnSuccess: async () => {},
++}));
+ 
+ const { compareMock } = vi.hoisted(() => ({ compareMock: vi.fn(async (pw: string) => pw === "TEMP-PASSWORD-OK") }));
+ vi.mock("bcryptjs", () => ({
+diff --git a/tests/unit/totp-challenge-follows-enrolment.test.ts b/tests/unit/totp-challenge-follows-enrolment.test.ts
+--- a/tests/unit/totp-challenge-follows-enrolment.test.ts
++++ b/tests/unit/totp-challenge-follows-enrolment.test.ts
+@@ -49,6 +49,15 @@
+   default: (cfg: { authorize?: Authorize }) => cfg,
+ }));
+ vi.mock("next-auth/providers/google", () => ({ default: (cfg: unknown) => cfg }));
++// Lockout v2 (lane A2, SF-35/SF-59) keeps its counters in RateLimitHit; this
++// file is about something else, so the counters are stubbed open here.
++// tests/integration/sec-a2-lockout-oracle-db.test.ts drives them for real.
++vi.mock("@/lib/auth-lockout", async (importOriginal) => ({
++  ...(await importOriginal<typeof import("@/lib/auth-lockout")>()),
++  lockoutState: async () => ({ blocked: false, addrCapped: false }),
++  recordFailure: async () => 1,
++  clearPairOnSuccess: async () => {},
++}));
+ 
+ const { tenantFindUnique, userFindUnique, memberFindUnique } = vi.hoisted(() => ({
+   tenantFindUnique: vi.fn(),
+diff --git a/tests/unit/totp-mandatory-elevated.test.ts b/tests/unit/totp-mandatory-elevated.test.ts
+--- a/tests/unit/totp-mandatory-elevated.test.ts
++++ b/tests/unit/totp-mandatory-elevated.test.ts
+@@ -39,6 +39,15 @@
+   default: (cfg: { authorize?: Authorize }) => cfg,
+ }));
+ vi.mock("next-auth/providers/google", () => ({ default: (cfg: unknown) => cfg }));
++// Lockout v2 (lane A2, SF-35/SF-59) keeps its counters in RateLimitHit; this
++// file is about something else, so the counters are stubbed open here.
++// tests/integration/sec-a2-lockout-oracle-db.test.ts drives them for real.
++vi.mock("@/lib/auth-lockout", async (importOriginal) => ({
++  ...(await importOriginal<typeof import("@/lib/auth-lockout")>()),
++  lockoutState: async () => ({ blocked: false, addrCapped: false }),
++  recordFailure: async () => 1,
++  clearPairOnSuccess: async () => {},
++}));
+ 
+ const { tenantFindUnique, userFindUnique, memberFindUnique } = vi.hoisted(() => ({
+   tenantFindUnique: vi.fn(),
+diff --git a/tests/unit/totp-verify-single-use.test.ts b/tests/unit/totp-verify-single-use.test.ts
+--- a/tests/unit/totp-verify-single-use.test.ts
++++ b/tests/unit/totp-verify-single-use.test.ts
+@@ -54,6 +54,11 @@
+   h.row = { id: "u1", totpSecret: SECRET, totpEnabled: true, totpLastUsedStep: null };
+ });
+ 
++// SF-37 (lane A2): the route now asks the revocation question first; this
++// file is about single use, so the session is live here.
++// tests/integration/sec-a2-verify-disown-db.test.ts drives the gate for real.
++vi.mock("@/lib/auth-pending-gate", () => ({ refuseRevokedPendingToken: async () => null }));
++
+ describe("POST /api/auth/totp/verify — single-use codes", () => {
+   it("accepts a valid code once", async () => {
+     const res = await POST(req(generateSync({ secret: SECRET })));

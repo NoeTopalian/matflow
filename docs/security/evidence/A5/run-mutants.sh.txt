@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Each mutant: save -> apply -> unit + DB owner + DB restricted -> restore (sha256 checked).
+S=<scratchpad>
+A=$S/security/A5
+F="auth.ts lib/auth-lockout.ts"
+SUM=$A/mutants-summary.txt
+: > $SUM
+cd /c/Users/NoeTo/Desktop/matflow
+echo "before, sha256:" >> $SUM; sha256sum $F >> $SUM
+for M in ${MUTANTS:-M4-exempt-skips-network-cap M1-reserve-after-bcrypt M2-no-refund M3-refund-on-failure}; do
+  bash $A/swap.sh save $F || exit 1
+  python "$(cygpath -w $A/mutate.py)" $M >> $SUM || { bash $A/swap.sh restore $F; exit 1; }
+  echo "mutated sha256: $(sha256sum $F | cut -c1-16 | tr '\n' ' ')" >> $SUM
+  bash $A/run.sh unit tests/unit/sec-a4-lockout-reservation.test.ts mut-$M-unit > /dev/null
+  bash $A/run.sh owner tests/integration/sec-a4-lockout-burst-db.test.ts mut-$M-db-owner > /dev/null
+  bash $A/run.sh restricted tests/integration/sec-a4-lockout-burst-db.test.ts mut-$M-db-restricted > /dev/null
+  bash $A/swap.sh restore $F >> $SUM || exit 3
+  for K in unit db-owner db-restricted; do
+    echo "$M $K: $(grep -E '^ +Tests ' $A/mut-$M-$K.log | tr -s ' ') $(grep -E '^EXIT' $A/mut-$M-$K.log)" >> $SUM
+  done
+  grep -E '^ +×' $A/mut-$M-unit.log $A/mut-$M-db-owner.log $A/mut-$M-db-restricted.log | sed "s#$A/##" | cut -c1-220 >> $SUM
+  cat $A/mut-$M-db-owner.jsonl $A/mut-$M-db-restricted.jsonl >> $SUM 2>/dev/null
+done
+echo "after restore, sha256:" >> $SUM && sha256sum $F >> $SUM
+git status --short -- $F >> $SUM
+echo DONE

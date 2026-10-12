@@ -1,0 +1,110 @@
+node=v24.21.0 sha=2a6487e start=2026-10-10T08:42:35Z cmd=npx vitest run tests/unit
+ FAIL  tests/unit/dsar-erase-audit-durability.test.ts > DSAR erase — durable audit > control: with the audit store healthy the erase runs, and the fulfilment row is the first write of the erase transaction
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — audit P0-3 erasure completeness > scrubs every residual PII column on the Member row
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — audit P0-3 erasure completeness > cancels the Stripe subscription before the id is nulled off the member
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — audit P0-3 erasure completeness > deletes MemberPhoto, LoginEvent, PushSubscription and Notification rows
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — audit P0-3 erasure completeness > deletes member_note Tasks addressed to the member, leaving staff_task alone
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — audit P0-3 erasure completeness > scrubs SignedWaiver identity columns but keeps the legal-hold snapshot
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — audit P0-3 erasure completeness > nulls RankHistory.notes reachable through the member's MemberRank rows
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — audit P0-3 erasure completeness > deletes auth tokens by the ORIGINAL email, case-insensitively, not the sentinel
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — audit P0-3 erasure completeness > redacts EmailLog.recipient to the sentinel and leaves subject untouched
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — audit P0-3 erasure completeness > deletes photo + signature blobs, skips data: URLs, and runs after the DB commit
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — audit P0-3 erasure completeness > still erases when the Blob API fails on every file
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — audit P0-3 erasure completeness > returns the original shape plus per-surface erase counts
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — audit P0-3 erasure completeness > records the erase counts in the pre-erase audit row
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — imported history (attendance import) > deletes matched and unmatched ImportedBooking rows by the PRE-erase source identity
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — imported history (attendance import) > deletes person ImportSourceMapping rows targeting the member or keyed by their externalRef
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — imported history (attendance import) > nulls externalRef and unverifiedEmail on the Member row
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — imported history (attendance import) > never matches unmatched bookings on a synthesised address, and skips the key clause with no externalRef
+ FAIL  tests/unit/dsar-erase-completeness.test.ts > POST /api/admin/dsar/erase — imported history (attendance import) > keeps the AttendanceRecord rows (aggregate integrity), imported or not
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: refusals > 400 (bounded preview) for a file with more than 300 distinct offerings, and the upload is NOT consumed
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: refusals > accepts a file with exactly 300 distinct offerings (the bound is inclusive)
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > answers 201 with a jobId and a 64-hex planHash
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > returns a summary whose controls and byIntent reconcile with the file's rows
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > matches people only against its own club's members
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > offers only its own club's classes and locations as targets
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > consumes the upload
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > stores the job against the upload as db-upload://<uploadId>
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > marks this club's earlier attendance previews superseded, and nothing else
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > deletes the superseded preview's stored upload and its chunks
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > keeps the new preview's own upload and chunks when it supersedes an earlier one
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > leaves another club's preview upload and chunks untouched when superseding
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > does not delete another club's upload even when this club's stale preview points at its id
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > does not delete the stored file of a completed import when a new preview arrives
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: a valid attendance file > refuses a second preview of the same upload with 409
+ FAIL  tests/unit/import-attendance-route.test.ts > preview: response size > stays under 256 KB for a 15,000-row file
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 stale for a wrong planHash
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 stale for a missing planHash
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 stale for the planHash of before the decisions
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 naming every undecided offering and venue
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 naming the venue when only the offerings are decided
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 for a preview superseded by a newer file, even with its own planHash
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 409 busy while another tab holds the lease, creating nothing
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > of two simultaneous commits exactly one starts; the other is told busy
+ FAIL  tests/unit/import-attendance-route.test.ts > commit > 202 and running for a decided, current preview
+ FAIL  tests/unit/import-attendance-route.test.ts > step > completes a started import, writing attendance only for the resolved member
+ FAIL  tests/unit/import-attendance-route.test.ts > decide: targets must belong to this club > stores a decision whose target is in this club, under this club
+ FAIL  tests/unit/import-attendance-route.test.ts > POST discard > sets a preview aside as superseded and answers ok
+ FAIL  tests/unit/import-attendance-route.test.ts > POST discard > deletes the discarded preview's db-upload file and its chunks
+ FAIL  tests/unit/import-attendance-route.test.ts > POST discard > a discarded preview can no longer be committed
+ FAIL  tests/unit/import-attendance-route.test.ts > GET list=people paging > caps limit at 200
+ FAIL  tests/unit/import-attendance-route.test.ts > GET list=people paging > honours offset
+ FAIL  tests/unit/import-attendance-route.test.ts > no response carries the stored file's address or the upload token > across a whole preview → decide → commit → step → read → export → rollback journey
+ FAIL  tests/unit/import-attendance.test.ts > planAttendanceImport — who is each person > matches one member with the same name AND email
+ FAIL  tests/unit/import-attendance.test.ts > planAttendanceImport — who is each person > a child with a synthesised email and the TeamUp key as externalRef does match
+ FAIL  tests/unit/import-attendance.test.ts > planAttendanceImport — who is each person > two members sharing an email each match only their own rows
+ FAIL  tests/unit/import-attendance.test.ts > planAttendanceImport — intents > attended + resolved + started is attendance
+ FAIL  tests/unit/import-attendance.test.ts > planAttendanceImport — intents > Registered is booking_only, never attendance
+ FAIL  tests/unit/import-attendance.test.ts > planAttendanceImport — intents > No show is booking_only, never attendance
+ FAIL  tests/unit/import-attendance.test.ts > planAttendanceImport — intents > Late Cancelled is booking_only, never attendance
+ FAIL  tests/unit/import-attendance.test.ts > planAttendanceImport — sessions and visits > the same person attended in two offerings at one instant is one attendance and one same_start_visit
+ FAIL  tests/unit/import-matching-after-contact-change.test.ts > attendance planner — a member whose address was corrected > a row carrying the corrected address matches by name_and_email (no ref hit, exactly one holder)
+ FAIL  tests/unit/import-matching-after-contact-change.test.ts > attendance planner — a member whose address was corrected > FALLBACK: no externalRef, name + the NEW address → name_and_email, only while exactly one member carries both
+ FAIL  tests/unit/import-matching-after-contact-change.test.ts > attendance planner — a member whose address was corrected > FALLBACK residual (documented): another member with the SAME name who now holds the released address is matched
+ FAIL  tests/unit/member-delete-photo-blobs.test.ts > DELETE /api/members/[id] — photo blobs are cleaned up > deletes every blob the member's photos pointed at
+ FAIL  tests/unit/member-delete-photo-blobs.test.ts > DELETE /api/members/[id] — photo blobs are cleaned up > reads the URLs BEFORE the cascade destroys the rows
+ FAIL  tests/unit/member-delete-photo-blobs.test.ts > DELETE /api/members/[id] — photo blobs are cleaned up > skips inline data: URLs, which have no file behind them
+ FAIL  tests/unit/member-delete-photo-blobs.test.ts > DELETE /api/members/[id] — photo blobs are cleaned up > cascade strategy also deletes each kid's photo files
+ FAIL  tests/unit/member-delete-photo-blobs.test.ts > DELETE /api/members/[id] — photo blobs are cleaned up > orphan strategy leaves the surviving kids' photos alone
+ FAIL  tests/unit/member-delete-photo-blobs.test.ts > DELETE /api/members/[id] — photo blobs are cleaned up > reassign strategy leaves the reassigned kids' photos alone
+ FAIL  tests/unit/member-delete-photo-blobs.test.ts > DELETE /api/members/[id] — photo blobs are cleaned up > deletes nothing on the kids-present picker response
+ FAIL  tests/unit/member-delete-photo-blobs.test.ts > DELETE /api/members/[id] — photo blobs are cleaned up > deletes nothing when the cascade reports the member was already gone
+ FAIL  tests/unit/member-delete-photo-blobs.test.ts > DELETE /api/members/[id] — photo blobs are cleaned up > cannot fail the delete when the photo relation is absent from the row
+ FAIL  tests/unit/member-delete-photo-blobs.test.ts > DELETE /api/members/[id] — photo blobs are cleaned up > still reports success when the Blob API refuses — the member IS deleted
+ FAIL  tests/unit/member-delete-stripe-cancel.test.ts > DELETE /api/members/[id] — Stripe cancellation gate (P1-8) > cancels the subscription and then deletes when Stripe succeeds
+ FAIL  tests/unit/member-delete-stripe-cancel.test.ts > DELETE /api/members/[id] — Stripe cancellation gate (P1-8) > skips Stripe entirely for a member with no subscription
+ FAIL  tests/unit/member-delete-stripe-cancel.test.ts > DELETE /api/members/[id] — Stripe cancellation gate (P1-8) > cascade strategy also cancels each kid's subscription
+ FAIL  tests/unit/member-delete-stripe-cancel.test.ts > DELETE /api/members/[id] — Stripe cancellation gate (P1-8) > orphan strategy leaves the surviving kids' subscriptions alone
+ FAIL  tests/unit/member-delete-stripe-cancel.test.ts > DELETE /api/members/[id] — Stripe cancellation gate (P1-8) > does not cancel anything on the kids-present picker response
+ FAIL  tests/unit/readiness-scripts-release-verify.test.ts > release-verify: production target > passes when every assertion holds, and prints neither the session nor any credential
+ FAIL  tests/unit/readiness-scripts-release-verify.test.ts > release-verify: production target > a large valid JSON activity page (~60 KB) is parsed whole — operator.access PASSES (AH-G3)
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: unknown key role → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: unknown key tenantId → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: nested data → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: unknown key role → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: unknown key tenantId → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: nested data → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: null body → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: null body → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: unknown key role → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: unknown key tenantId → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: nested data → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: array body → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/admin/import/uploads: empty object → 400, no effect
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/auth/totp/setup: a code that is not a six-digit STRING never reaches the verifier
+ FAIL  tests/unit/sec-c2-request-validation.test.ts > strict request bodies — refused before any read, spend or write > /api/member/totp/setup: a code that is not a six-digit STRING never reaches the verifier
+ FAIL  tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > branding (owner, fit inside): the uploaded bytes are opened with limitInputPixels 50_000_000
+ FAIL  tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > profile-pic (member self, cover crop): the uploaded bytes are opened with limitInputPixels 50_000_000
+ FAIL  tests/unit/sec-e3-upload-limit-input-pixels.test.ts > /api/upload bounds image decoding at 50 MP (SEC-051) > no sharp call on the uploaded bytes is left unbounded
+ FAIL  tests/unit/sec-f2-coverage-reconcile.test.ts > coverage-reconcile reconcileMatrix() > the real matrix reconciles with no UNPARSED row, deterministically
+ FAIL  tests/unit/sec-r-skip-gate-expected-files.test.ts > test-skip-gate --expect > a run that omits an expected database file fails
+ FAIL  tests/unit/sec-r-skip-gate-expected-files.test.ts > test-skip-gate --expect > a run that includes every expected file passes
+ FAIL  tests/unit/session-revocation.test.ts > a failure to check is not a pass > REPORTS the failure, because revocation is failing open while it lasts
+ FAIL  tests/unit/staff-last-owner-guard.test.ts > staff/[id] — a club can never lose its last owner through this route > an owner row cannot be deleted, and the miss reads as not found
+ FAIL  tests/unit/totp-verify-single-use.test.ts > POST /api/auth/totp/verify — single-use codes > accepts a valid code once
+ FAIL  tests/unit/totp-verify-single-use.test.ts > POST /api/auth/totp/verify — single-use codes > refuses the same code a second time
+ FAIL  tests/unit/totp-verify-single-use.test.ts > POST /api/auth/totp/verify — single-use codes > refuses a wrong code without spending anything
+ Test Files  15 failed | 408 passed (423)
+      Tests  105 failed | 5051 passed (5156)
+   Duration  300.29s (transform 15.73s, setup 4.20s, import 74.36s, tests 99.27s, environment 43.40s)
+exit=1 end=2026-10-10T08:47:38Z

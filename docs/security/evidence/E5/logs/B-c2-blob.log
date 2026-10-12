@@ -1,0 +1,14 @@
+node=v24.21.0 sha=2a6487e start=2026-10-10T08:51:44Z cmd=npx vitest run tests/unit/sec-c2-blob-image-inline.test.ts
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/E5/wt
+
+
+ Test Files  1 passed (1)
+      Tests  15 passed (15)
+   Start at  09:51:46
+   Duration  1.09s (transform 129ms, setup 52ms, import 858ms, tests 9ms, environment 0ms)
+
+exit=0 end=2026-10-10T08:51:47Z

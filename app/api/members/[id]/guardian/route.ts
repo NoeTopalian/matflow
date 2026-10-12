@@ -21,6 +21,8 @@ import { apiError } from "@/lib/api-error";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { claimLoginIdentity, emailDigest } from "@/lib/login-email";
+import { refuseSupportSession } from "@/lib/support-session";
 
 export const runtime = "nodejs";
 
@@ -34,6 +36,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (csrfViolation) return csrfViolation;
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023)
   const { tenantId, userId } = gate;
   const { id: childId } = await params;
 
@@ -68,10 +71,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // confirm
     let emailAdopted: string | null = null;
     if (adoptUnverifiedEmail && parent.unverifiedEmail && isSynthesisedEmail(parent.email)) {
-      const taken = await tx.member.findFirst({ where: { tenantId, email: parent.unverifiedEmail }, select: { id: true } });
-      if (taken) return { kind: "email-taken" as const, email: parent.unverifiedEmail };
+      // Adopting the payer address makes it a LOGIN: claimed across staff AND
+      // members of this club (AH-01, 9 Oct 2026; this used to look at members
+      // only, so a staff login's address could be adopted and shadowed).
+      const claim = await claimLoginIdentity(tx, { tenantId, email: parent.unverifiedEmail, exclude: { memberId: parent.id } });
+      if (claim.kind !== "none") return { kind: "email-taken" as const, email: parent.unverifiedEmail };
       await tx.member.update({ where: { id: parent.id }, data: { email: parent.unverifiedEmail, unverifiedEmail: null } });
       emailAdopted = parent.unverifiedEmail;
+      // The PARENT's login address changed: record it on the parent, in the same format and transaction as every
+      // other address change (oldEmailSha256/newEmailSha256), so the attendance import sees the acquisition
+      // (R fifth pass, SF-67). The child row below is kept.
+      await logAudit({
+        tx, tenantId, userId, action: "member.update", entityType: "Member", entityId: parent.id,
+        metadata: { fields: ["email"], source: "guardian_adopt", oldEmailSha256: emailDigest(parent.email), newEmailSha256: emailDigest(parent.unverifiedEmail), unverified: true },
+        req,
+      });
     }
     const r = await tx.member.updateMany({
       where: { id: child.id, tenantId, parentMemberId: parent.id },
@@ -88,7 +102,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return apiError(`A child under 13 must have a guardian. Open the right guardian's profile and use Link existing to move the child; that replaces this suggestion.`, 409);
   }
   if (outcome.kind === "email-taken") {
-    return apiError(`${outcome.email} already belongs to another member in this club, so it was not adopted. Confirm without adopting, or sort out the other record first.`, 409);
+    return apiError(`${outcome.email} is already a login for another account in this club, so it was not adopted. Confirm without adopting, or sort out the other record first.`, 409);
   }
 
   await logAudit({

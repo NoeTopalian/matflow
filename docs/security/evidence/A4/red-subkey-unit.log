@@ -1,0 +1,192 @@
+node v24.21.0 mode=unit file=tests/unit/sec-a4-subkey-separation.test.ts head=7ce179c at=2026-10-10T05:01:31Z
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts (20 tests | 12 failed) 140ms
+     × the cookie signature is the documented derivation: HMAC(HMAC(root, pending-tenant context), 'pending-tenant:v1:' + slug) 15ms
+     × documented change: a cookie in the OLD format (HMAC(root, slug)) no longer verifies (5-minute cookie; one more click) 2ms
+     × provenance: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, "matflow.import-mapping-provenance.v2") 2ms
+     × provenance: hashToken("matflow.import-mapping-provenance.v2") is not the sub-key either 1ms
+     × kiosk: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, "matflow.kiosk.v1") 2ms
+     × kiosk: hashToken("matflow.kiosk.v1") is not the sub-key either 1ms
+     × card: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, "matflow.card.v1") 1ms
+     × card: hashToken("matflow.card.v1") is not the sub-key either 1ms
+     × pending-tenant: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, "matflow.pending-tenant-cookie.v1") 1ms
+     × pending-tenant: hashToken("matflow.pending-tenant-cookie.v1") is not the sub-key either 1ms
+     × a planted dotted slug's cookie verifies as NO sub-key: kiosk and card tokens and a provenance proof minted with it are refused 5ms
+     × each createHmac(sha256, AUTH_SECRET_VALUE).update(<X_CONTEXT>) names a context in ROOT_KEY_CONTEXTS, with a shape no other signer can produce 84ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 12 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/sec-a4-subkey-separation.test.ts > positive controls: the cookie still works > the cookie signature is the documented derivation: HMAC(HMAC(root, pending-tenant context), 'pending-tenant:v1:' + slug)
+AssertionError: expected 'BDpf1LPL0W4t7Wtyr0ti6WWWKyNDW7DzYTNWy…' to be 'DrigIla3DkqscgsW1T1fz5EnrSSHkcUaC8W6E…' // Object.is equality
+
+Expected: "DrigIla3DkqscgsW1T1fz5EnrSSHkcUaC8W6EcdpEDo"
+Received: "BDpf1LPL0W4t7Wtyr0ti6WWWKyNDW7DzYTNWyN6tQcY"
+
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts:117:32
+    115|     const { cookie } = await mint("seca4-club");
+    116|     const k = subKey(CONTEXTS["pending-tenant"]);
+    117|     expect(b64(sigOf(cookie))).toBe(b64(createHmac("sha256", k).update…
+       |                                ^
+    118|   });
+    119|   it("documented change: a cookie in the OLD format (HMAC(root, slug))…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/12]⎯
+
+ FAIL  tests/unit/sec-a4-subkey-separation.test.ts > positive controls: the cookie still works > documented change: a cookie in the OLD format (HMAC(root, slug)) no longer verifies (5-minute cookie; one more click)
+AssertionError: expected 'seca4-club' to be null
+
+- Expected:
+null
+
++ Received:
+"seca4-club"
+
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts:121:43
+    119|   it("documented change: a cookie in the OLD format (HMAC(root, slug))…
+    120|     JAR.set("pendingTenantSlug", `seca4-club.${b64(createHmac("sha256"…
+    121|     expect(await readPendingTenantSlug()).toBeNull();
+       |                                           ^
+    122|   });
+    123|   it("Google sign-in off → 503 and no cookie (unchanged)", async () =>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/12]⎯
+
+ FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > provenance: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, "matflow.import-mapping-provenance.v2")
+AssertionError: expected '524wf4yxgsKjGiWigo4-GMNiCYKbooWCJy8aG…' not to be '524wf4yxgsKjGiWigo4-GMNiCYKbooWCJy8aG…' // Object.is equality
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts:141:38
+    139|       expect(status, "precondition: the planted row is found and a coo…
+    140|       expect(cookie.length).toBeGreaterThan(0);
+    141|       expect(b64(sigOf(cookie))).not.toBe(b64(subKey(ctx)));
+       |                                      ^
+    142|     });
+    143|     it(`${name}: hashToken("${ctx}") is not the sub-key either`, () =>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/12]⎯
+
+ FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > provenance: hashToken("matflow.import-mapping-provenance.v2") is not the sub-key either
+AssertionError: expected 'e76e307f8cb182c2a31a25a2828e3e18c3620…' not to be 'e76e307f8cb182c2a31a25a2828e3e18c3620…' // Object.is equality
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts:144:34
+    142|     });
+    143|     it(`${name}: hashToken("${ctx}") is not the sub-key either`, () =>…
+    144|       expect(hashToken(ctx)).not.toBe(subKey(ctx).toString("hex"));
+       |                                  ^
+    145|     });
+    146|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/12]⎯
+
+ FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > kiosk: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, "matflow.kiosk.v1")
+AssertionError: expected 'HQ8G3HhpcazwiaWg8jBljdfDgE7bON5Pd6lTU…' not to be 'HQ8G3HhpcazwiaWg8jBljdfDgE7bON5Pd6lTU…' // Object.is equality
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts:141:38
+    139|       expect(status, "precondition: the planted row is found and a coo…
+    140|       expect(cookie.length).toBeGreaterThan(0);
+    141|       expect(b64(sigOf(cookie))).not.toBe(b64(subKey(ctx)));
+       |                                      ^
+    142|     });
+    143|     it(`${name}: hashToken("${ctx}") is not the sub-key either`, () =>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/12]⎯
+
+ FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > kiosk: hashToken("matflow.kiosk.v1") is not the sub-key either
+AssertionError: expected '1d0f06dc786971acf089a5a0f230658dd7c38…' not to be '1d0f06dc786971acf089a5a0f230658dd7c38…' // Object.is equality
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts:144:34
+    142|     });
+    143|     it(`${name}: hashToken("${ctx}") is not the sub-key either`, () =>…
+    144|       expect(hashToken(ctx)).not.toBe(subKey(ctx).toString("hex"));
+       |                                  ^
+    145|     });
+    146|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/12]⎯
+
+ FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > card: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, "matflow.card.v1")
+AssertionError: expected 'UVof9CRq5rwYMAS1ZJ3L79_CkB0SSKhtSum4Y…' not to be 'UVof9CRq5rwYMAS1ZJ3L79_CkB0SSKhtSum4Y…' // Object.is equality
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts:141:38
+    139|       expect(status, "precondition: the planted row is found and a coo…
+    140|       expect(cookie.length).toBeGreaterThan(0);
+    141|       expect(b64(sigOf(cookie))).not.toBe(b64(subKey(ctx)));
+       |                                      ^
+    142|     });
+    143|     it(`${name}: hashToken("${ctx}") is not the sub-key either`, () =>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/12]⎯
+
+ FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > card: hashToken("matflow.card.v1") is not the sub-key either
+AssertionError: expected '515a1ff4246ae6bc183004b5649dcbefdfc29…' not to be '515a1ff4246ae6bc183004b5649dcbefdfc29…' // Object.is equality
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts:144:34
+    142|     });
+    143|     it(`${name}: hashToken("${ctx}") is not the sub-key either`, () =>…
+    144|       expect(hashToken(ctx)).not.toBe(subKey(ctx).toString("hex"));
+       |                                  ^
+    145|     });
+    146|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/12]⎯
+
+ FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > pending-tenant: the route answers 200 for the planted slug, and the cookie signature is NOT HMAC(root, "matflow.pending-tenant-cookie.v1")
+AssertionError: expected 'uF4U2xEofqWkxrmKVebrTqftHKcw-1gMHDmIF…' not to be 'uF4U2xEofqWkxrmKVebrTqftHKcw-1gMHDmIF…' // Object.is equality
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts:141:38
+    139|       expect(status, "precondition: the planted row is found and a coo…
+    140|       expect(cookie.length).toBeGreaterThan(0);
+    141|       expect(b64(sigOf(cookie))).not.toBe(b64(subKey(ctx)));
+       |                                      ^
+    142|     });
+    143|     it(`${name}: hashToken("${ctx}") is not the sub-key either`, () =>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/12]⎯
+
+ FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > pending-tenant: hashToken("matflow.pending-tenant-cookie.v1") is not the sub-key either
+AssertionError: expected 'b85e14db11287ea5a4c6b98a55e6eb4ea7ed1…' not to be 'b85e14db11287ea5a4c6b98a55e6eb4ea7ed1…' // Object.is equality
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts:144:34
+    142|     });
+    143|     it(`${name}: hashToken("${ctx}") is not the sub-key either`, () =>…
+    144|       expect(hashToken(ctx)).not.toBe(subKey(ctx).toString("hex"));
+       |                                  ^
+    145|     });
+    146|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/12]⎯
+
+ FAIL  tests/unit/sec-a4-subkey-separation.test.ts > R6-K1 per context: a slug equal to the context does not hand out the sub-key > a planted dotted slug's cookie verifies as NO sub-key: kiosk and card tokens and a provenance proof minted with it are refused
+AssertionError: matflow.import-mapping-provenance.v2 vs matflow.import-mapping-provenance.v2: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts:154:113
+    152|       for (const ctx of Object.values(CONTEXTS)) {
+    153|         const leaked = sigOf((await mint(ctx)).cookie);
+    154|         for (const other of Object.values(CONTEXTS)) expect(leaked.equ…
+       |                                                                                                                 ^
+    155|         // Kiosk member token forged with the cookie signature as the …
+    156|         const kBody = b64(Buffer.from(JSON.stringify({ tenantId: "t-se…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/12]⎯
+
+ FAIL  tests/unit/sec-a4-subkey-separation.test.ts > registry: every root-key derivation in the code base is a registered context > each createHmac(sha256, AUTH_SECRET_VALUE).update(<X_CONTEXT>) names a context in ROOT_KEY_CONTEXTS, with a shape no other signer can produce
+AssertionError: derivation sites found: expected 3 to be greater than or equal to 4
+ ❯ tests/unit/sec-a4-subkey-separation.test.ts:244:52
+    242|       }
+    243|     }
+    244|     expect(found.length, "derivation sites found").toBeGreaterThanOrEq…
+       |                                                    ^
+    245|     for (const c of found) expect(ROOT_KEY_CONTEXTS, c).toContain(c);
+    246|     // Why the other raw signers cannot reach a context: google-drive …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/12]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  12 failed | 8 passed (20)
+   Start at  06:01:33
+   Duration  1.38s (transform 350ms, setup 79ms, import 809ms, tests 140ms, environment 0ms)
+
+EXIT 1

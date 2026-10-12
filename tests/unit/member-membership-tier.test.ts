@@ -12,6 +12,7 @@
 // from attaching its members to another gym's price list.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { addLoginClaimSql } from "./login-claim-fake";
 
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 
@@ -29,11 +30,11 @@ vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
     const { prisma } = await import("@/lib/prisma");
-    return fn(prisma);
+    return fn(addLoginClaimSql(prisma));
   },
   withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
     const { prisma } = await import("@/lib/prisma");
-    return fn(prisma);
+    return fn(addLoginClaimSql(prisma));
   },
 }));
 

@@ -1,0 +1,170 @@
+{
+ "reviewerApproved": [
+  {
+   "cell": "R3: not yet approved",
+   "approved": false
+  },
+  {
+   "cell": "approved? no",
+   "approved": false
+  },
+  {
+   "cell": "NOT APPROVED by R3",
+   "approved": false
+  },
+  {
+   "cell": "R3: approved — no",
+   "approved": false
+  },
+  {
+   "cell": "approved: no",
+   "approved": false
+  },
+  {
+   "cell": "R5: approved?",
+   "approved": false
+  },
+  {
+   "cell": "R6: not approved; reason: approved by nobody",
+   "approved": true
+  },
+  {
+   "cell": "R3: approved; R4: NOT APPROVED",
+   "approved": false
+  },
+  {
+   "cell": "R3: NOT APPROVED; R4: approved",
+   "approved": true
+  },
+  {
+   "cell": "unapproved",
+   "approved": false
+  },
+  {
+   "cell": "approval withdrawn",
+   "approved": false
+  },
+  {
+   "cell": "R6 approves",
+   "approved": false
+  },
+  {
+   "cell": "R4: APPROVED WITH RESIDUALS",
+   "approved": true
+  },
+  {
+   "cell": "R2: approved",
+   "approved": true
+  },
+  {
+   "cell": "awaiting approval",
+   "approved": false
+  },
+  {
+   "cell": "pending approval",
+   "approved": false
+  },
+  {
+   "cell": "approved (to be confirmed)",
+   "approved": true
+  },
+  {
+   "cell": "not approved yet, will be approved",
+   "approved": false
+  }
+ ],
+ "fixedRows": [
+  {
+   "id": "SEC-020",
+   "reviewer": "R3: not yet approved",
+   "final": "FIXED AWAITING RETEST"
+  },
+  {
+   "id": "SEC-021",
+   "reviewer": "approved? no",
+   "final": "FIXED AWAITING RETEST"
+  },
+  {
+   "id": "SEC-022",
+   "reviewer": "NOT APPROVED by R3",
+   "final": "FIXED AWAITING RETEST"
+  },
+  {
+   "id": "SEC-023",
+   "reviewer": "R6: approved",
+   "final": "PASS"
+  }
+ ],
+ "naRows": [
+  {
+   "id": "SEC-030",
+   "evidence": "",
+   "row": {
+    "id": "SEC-030",
+    "applicability": "NOT APPLICABLE WITH EVIDENCE",
+    "verification": "N/A (guard test)",
+    "viaFixed": false,
+    "reviewerApproved": true,
+    "residual": false
+   }
+  },
+  {
+   "id": "SEC-031",
+   "evidence": "—",
+   "row": {
+    "id": "SEC-031",
+    "applicability": "NOT APPLICABLE WITH EVIDENCE",
+    "verification": "N/A (guard test)",
+    "viaFixed": false,
+    "reviewerApproved": true,
+    "residual": false
+   }
+  },
+  {
+   "id": "SEC-032",
+   "evidence": "TBD",
+   "row": {
+    "id": "SEC-032",
+    "applicability": "NOT APPLICABLE WITH EVIDENCE",
+    "verification": "N/A (guard test)",
+    "viaFixed": false,
+    "reviewerApproved": true,
+    "residual": false
+   }
+  },
+  {
+   "id": "SEC-033",
+   "evidence": "n/a",
+   "row": {
+    "id": "SEC-033",
+    "applicability": "NOT APPLICABLE WITH EVIDENCE",
+    "verification": "N/A (guard test)",
+    "viaFixed": false,
+    "reviewerApproved": true,
+    "residual": false
+   }
+  },
+  {
+   "id": "SEC-034",
+   "evidence": "tests/unit/real-guard.test.ts",
+   "row": {
+    "id": "SEC-034",
+    "applicability": "NOT APPLICABLE WITH EVIDENCE",
+    "verification": "N/A (guard test)",
+    "viaFixed": false,
+    "reviewerApproved": true,
+    "residual": false
+   }
+  }
+ ],
+ "summary": {
+  "verdict": "FAIL",
+  "naWithoutEvidence": [
+   "SEC-030: NOT APPLICABLE WITH EVIDENCE but the evidence cell is empty",
+   "SEC-031: NOT APPLICABLE WITH EVIDENCE but the evidence cell is empty",
+   "SEC-032: NOT APPLICABLE WITH EVIDENCE but the evidence cell is empty",
+   "SEC-033: NOT APPLICABLE WITH EVIDENCE but the evidence cell is empty"
+  ],
+  "inconsistent": []
+ }
+}

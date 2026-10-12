@@ -1,0 +1,38 @@
+# RED: HEAD af803d5 versions of the 6 JSON routes; node v24.21.0
+     × /api/auth/totp/verify: unknown key role → 400, no effect 243ms
+     × /api/auth/totp/verify: unknown key tenantId → 400, no effect 2ms
+     × /api/auth/totp/verify: nested data → 400, no effect 1ms
+     × /api/auth/totp/verify: null body → 400, no effect 1ms
+     × /api/member/totp/verify: unknown key role → 400, no effect 40ms
+     × /api/member/totp/verify: unknown key tenantId → 400, no effect 1ms
+     × /api/member/totp/verify: nested data → 400, no effect 1ms
+     × /api/member/totp/verify: null body → 400, no effect 1ms
+     × /api/auth/totp/setup: unknown key role → 400, no effect 213ms
+     × /api/auth/totp/setup: unknown key tenantId → 400, no effect 2ms
+     × /api/auth/totp/setup: nested data → 400, no effect 2ms
+     × /api/member/totp/setup: unknown key role → 400, no effect 58ms
+     × /api/member/totp/setup: unknown key tenantId → 400, no effect 1ms
+     × /api/member/totp/setup: nested data → 400, no effect 1ms
+     × /api/members/[id]/hold: unknown key role → 400, no effect 888ms
+     × /api/members/[id]/hold: unknown key tenantId → 400, no effect 1ms
+     × /api/members/[id]/hold: nested data → 400, no effect 1ms
+     × /api/members/[id]/hold: null body → 400, no effect 1ms
+     × /api/members/[id]/hold: array body → 400, no effect 1ms
+     × /api/members/[id]/hold: string body → 400, no effect 1ms
+     × /api/members/[id]/hold: not JSON → 400, no effect 1ms
+     × /api/admin/import/uploads: unknown key role → 400, no effect 32ms
+     × /api/admin/import/uploads: unknown key tenantId → 400, no effect 1ms
+     × /api/admin/import/uploads: nested data → 400, no effect 1ms
+     × /api/admin/import/uploads: array body → 400, no effect 1ms
+     × /api/admin/import/uploads: empty object → 400, no effect 1ms
+     × /api/auth/totp/verify: a code that is not a six-digit STRING never reaches the verifier 1ms
+     × /api/member/totp/verify: a code that is not a six-digit STRING never reaches the verifier 1ms
+⎯⎯⎯⎯⎯⎯ Failed Tests 28 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  28 failed | 30 passed (58)
+exit=1
+
+# GREEN: lane C2 route files restored
+ Test Files  2 passed (2)
+      Tests  76 passed (76)
+exit=0

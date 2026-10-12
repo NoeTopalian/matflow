@@ -22,13 +22,34 @@ on:
 jobs:
   dump:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Install Postgres 16 client
+      # The Neon project runs PostgreSQL 17.x; pg_dump refuses a server newer
+      # than itself, so the client must be 17. Installed from the official PGDG
+      # apt repository, trusted through a signed-by keyring (apt-key is
+      # deprecated). The runner image ships its own older client on PATH, so
+      # every later step calls the v17 binaries by absolute path ($PG_BIN).
+      - name: Install PostgreSQL 17 client
         run: |
-          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client-16
+          sudo apt-get install -y postgresql-client-17
+          PG_BIN=/usr/lib/postgresql/17/bin
+          "$PG_BIN/pg_dump" --version
+          if ! "$PG_BIN/pg_dump" --version | grep -Eq ' 17\.[0-9]+'; then
+            echo "::error::pg_dump at $PG_BIN is not version 17"
+            exit 1
+          fi
+          echo "PG_BIN=$PG_BIN" >> "$GITHUB_ENV"
 
       - name: Validate secrets
         env:
@@ -44,7 +65,7 @@ jobs:
           for v in DATABASE_URL_DIRECT AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY BACKUP_S3_BUCKET BACKUP_S3_REGION; do
             if [ -z "${!v}" ]; then
               missing+=("$v")
-              echo "::error::Required secret $v is not set (Settings → Secrets and variables → Actions). See docs/runbooks/db-restore.md."
+              echo "::error::Required secret $v is not set (Settings → Secrets and variables → Actions). See docs/runbooks/BACKUP-SECRETS-SETUP.md."
             fi
           done
           if [ ${#missing[@]} -gt 0 ]; then
@@ -54,7 +75,7 @@ jobs:
               echo "Until these are set, **Neon PITR is the only database backup**:"
               for v in "${missing[@]}"; do echo "- \`$v\`"; done
               echo ""
-              echo "Set them under Settings → Secrets and variables → Actions, then re-run. Details: docs/runbooks/db-restore.md."
+              echo "Set them under Settings → Secrets and variables → Actions, then re-run. Details: docs/runbooks/BACKUP-SECRETS-SETUP.md."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
@@ -64,9 +85,10 @@ jobs:
         env:
           DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
         run: |
+          set -euo pipefail
           STAMP=$(date -u +%Y-%m-%dT%H-%M-%SZ)
           echo "STAMP=$STAMP" >> "$GITHUB_ENV"
-          pg_dump \
+          "$PG_BIN/pg_dump" \
             --format=custom \
             --no-owner \
             --no-privileges \
@@ -74,6 +96,42 @@ jobs:
             --file="matflow-db-$STAMP.dump" \
             "$DATABASE_URL_DIRECT"
           ls -lh "matflow-db-$STAMP.dump"
+
+      # A truncated or corrupt archive must never upload "green". pg_restore
+      # --list reads the whole table of contents and fails on a damaged file;
+      # the checks below catch an archive with no tables or no data sections.
+      # This proves the STRUCTURE is readable, not that rows are present: pg_dump
+      # writes a data section even for an empty table, so row integrity is the
+      # restore test's job (docs/runbooks/BACKUP-SECRETS-SETUP.md §6). Only
+      # object counts reach the log and summary — never data.
+      - name: Check dump integrity (pg_restore --list)
+        run: |
+          set -euo pipefail
+          DUMP="matflow-db-$STAMP.dump"
+          fail() {
+            echo "::error::Backup integrity check failed: $1"
+            {
+              echo "## ❌ Backup NOT uploaded — integrity check failed"
+              echo ""
+              echo "$1"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+          [ -s "$DUMP" ] || fail "the dump file is missing or empty"
+          if ! "$PG_BIN/pg_restore" --list "$DUMP" > toc.txt 2> toc.err; then
+            fail "pg_restore --list could not read the archive ($(head -c 300 toc.err | tr '\n' ' '))"
+          fi
+          entries=$(grep -cv '^;' toc.txt || true)
+          tables=$(grep -c ' TABLE public ' toc.txt || true)
+          table_data=$(grep -c ' TABLE DATA public ' toc.txt || true)
+          echo "TOC entries: $entries, tables: $tables, table data sections: $table_data"
+          [ "$tables" -gt 0 ] || fail "the archive lists no tables in schema public"
+          [ "$table_data" -gt 0 ] || fail "the archive holds no table data"
+          for t in Tenant Member User _prisma_migrations; do
+            grep -q " TABLE DATA public \"\?$t\"\? " toc.txt || fail "the archive has no data section for table $t"
+          done
+          echo "## ✅ Dump readable: $tables tables, $table_data data sections, $entries TOC entries" >> "$GITHUB_STEP_SUMMARY"
+          rm -f toc.txt toc.err
 
       - name: Upload to S3 with 30-day lifecycle
         env:

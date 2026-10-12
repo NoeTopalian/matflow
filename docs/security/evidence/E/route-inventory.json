@@ -1,0 +1,4581 @@
+{
+ "generatedAt": "2026-10-09T11:20:14.731Z",
+ "summary": {
+  "routes": 210,
+  "pages": 57,
+  "byArea": {
+   "staff/tenant": 112,
+   "operator": 38,
+   "public-apply": 1,
+   "auth": 14,
+   "kiosk": 6,
+   "cron": 4,
+   "public-health": 1,
+   "self": 1,
+   "member": 31,
+   "webhook": 2
+  },
+  "noIdentityMarker": [
+   "/api/account/pending-tenant",
+   "/api/admin/auth/logout",
+   "/api/admin/auth/operator-login",
+   "/api/admin/auth/operator-totp",
+   "/api/apply",
+   "/api/auth/[...nextauth]",
+   "/api/auth/disown-login/[token]",
+   "/api/auth/totp/recover",
+   "/api/auth/totp/verify",
+   "/api/health",
+   "/api/member/totp/recover",
+   "/api/member/totp/verify",
+   "/api/tenant/[slug]",
+   "/api/waiver/kiosk-status",
+   "/api/waiver/open"
+  ],
+  "rawSqlRoutes": [
+   "/api/health",
+   "/api/member/class-subscriptions/[classId]"
+  ],
+  "sharpRoutes": [
+   "/api/upload"
+  ]
+ },
+ "routes": [
+  {
+   "url": "/api/account/login-email",
+   "file": "app/api/account/login-email/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "staff",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/account/password",
+   "file": "app/api/account/password/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "staff",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/account/pending-tenant",
+   "file": "app/api/account/pending-tenant/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/account/profile",
+   "file": "app/api/account/profile/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "PATCH"
+   ],
+   "guards": [
+    "staff",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/activity",
+   "file": "app/api/admin/activity/route.ts",
+   "area": "operator",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "operator"
+   ],
+   "dynamic": true,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/applications",
+   "file": "app/api/admin/applications/route.ts",
+   "area": "operator",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "operator"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/applications/[id]/approve",
+   "file": "app/api/admin/applications/[id]/approve/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "magicLinkToken",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/applications/[id]/reject",
+   "file": "app/api/admin/applications/[id]/reject/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/auth/login",
+   "file": "app/api/admin/auth/login/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "sameOrigin",
+    "rateLimit",
+    "adminSecret"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/auth/logout",
+   "file": "app/api/admin/auth/logout/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/auth/operator-login",
+   "file": "app/api/admin/auth/operator-login/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/auth/operator-totp",
+   "file": "app/api/admin/auth/operator-totp/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/auth/operator-totp/setup",
+   "file": "app/api/admin/auth/operator-totp/setup/route.ts",
+   "area": "operator",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "sameOrigin",
+    "rateLimit",
+    "adminSecret"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/auth/step-up",
+   "file": "app/api/admin/auth/step-up/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/create-tenant",
+   "file": "app/api/admin/create-tenant/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "magicLinkToken",
+    "sameOrigin",
+    "rateLimit",
+    "adminSecret"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/customers/[id]/force-password-reset",
+   "file": "app/api/admin/customers/[id]/force-password-reset/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "stepUp",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/customers/[id]/login-email",
+   "file": "app/api/admin/customers/[id]/login-email/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "stepUp",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/customers/[id]/login-email/check",
+   "file": "app/api/admin/customers/[id]/login-email/check/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/customers/[id]/member-totp-reset",
+   "file": "app/api/admin/customers/[id]/member-totp-reset/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "stepUp",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/customers/[id]/members/[memberId]/contact-email",
+   "file": "app/api/admin/customers/[id]/members/[memberId]/contact-email/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "stepUp",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/customers/[id]/owner-profile",
+   "file": "app/api/admin/customers/[id]/owner-profile/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "stepUp",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/customers/[id]/review-lock",
+   "file": "app/api/admin/customers/[id]/review-lock/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST",
+    "DELETE"
+   ],
+   "guards": [
+    "operator",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/customers/[id]/soft-delete",
+   "file": "app/api/admin/customers/[id]/soft-delete/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST",
+    "DELETE"
+   ],
+   "guards": [
+    "operator",
+    "stepUp",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/customers/[id]/suspend",
+   "file": "app/api/admin/customers/[id]/suspend/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST",
+    "DELETE"
+   ],
+   "guards": [
+    "operator",
+    "stepUp",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/customers/[id]/totp-reset",
+   "file": "app/api/admin/customers/[id]/totp-reset/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "stepUp",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/customers/[id]/transfer-ownership",
+   "file": "app/api/admin/customers/[id]/transfer-ownership/route.ts",
+   "area": "operator",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "operator",
+    "stepUp",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/dsar/erase",
+   "file": "app/api/admin/dsar/erase/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "role",
+    "magicLinkToken",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/dsar/export",
+   "file": "app/api/admin/dsar/export/route.ts",
+   "area": "operator",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner",
+    "magicLinkToken",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/email/test",
+   "file": "app/api/admin/email/test/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin",
+    "rateLimit",
+    "adminSecret"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/impersonate",
+   "file": "app/api/admin/impersonate/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST",
+    "DELETE"
+   ],
+   "guards": [
+    "operator",
+    "stepUp",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/import",
+   "file": "app/api/admin/import/route.ts",
+   "area": "operator",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/import/[id]",
+   "file": "app/api/admin/import/[id]/route.ts",
+   "area": "operator",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/import/[id]/commit",
+   "file": "app/api/admin/import/[id]/commit/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/import/[id]/exceptions",
+   "file": "app/api/admin/import/[id]/exceptions/route.ts",
+   "area": "operator",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/import/[id]/preview",
+   "file": "app/api/admin/import/[id]/preview/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/import/[id]/rollback",
+   "file": "app/api/admin/import/[id]/rollback/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/import/attendance",
+   "file": "app/api/admin/import/attendance/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST",
+    "GET",
+    "DELETE"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/import/attendance/export",
+   "file": "app/api/admin/import/attendance/export/route.ts",
+   "area": "operator",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/import/upload",
+   "file": "app/api/admin/import/upload/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/import/uploads",
+   "file": "app/api/admin/import/uploads/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/import/uploads/[id]/chunks/[index]",
+   "file": "app/api/admin/import/uploads/[id]/chunks/[index]/route.ts",
+   "area": "operator",
+   "methods": [
+    "PUT"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/admin/import/uploads/[id]/complete",
+   "file": "app/api/admin/import/uploads/[id]/complete/route.ts",
+   "area": "operator",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/announcements",
+   "file": "app/api/announcements/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/announcements/[id]",
+   "file": "app/api/announcements/[id]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "PATCH",
+    "DELETE"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/apply",
+   "file": "app/api/apply/route.ts",
+   "area": "public-apply",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/attribution",
+   "file": "app/api/attribution/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "ownerOrManager"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/audit-log",
+   "file": "app/api/audit-log/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/audit-log/[id]/undo",
+   "file": "app/api/audit-log/[id]/undo/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/audit-log/undo-to",
+   "file": "app/api/audit-log/undo-to/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/auth/[...nextauth]",
+   "file": "app/api/auth/[...nextauth]/route.ts",
+   "area": "auth",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/auth/disown-login/[token]",
+   "file": "app/api/auth/disown-login/[token]/route.ts",
+   "area": "auth",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/auth/forgot-password",
+   "file": "app/api/auth/forgot-password/route.ts",
+   "area": "auth",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "magicLinkToken",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/auth/logout-all",
+   "file": "app/api/auth/logout-all/route.ts",
+   "area": "auth",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/auth/reset-password",
+   "file": "app/api/auth/reset-password/route.ts",
+   "area": "auth",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/auth/set-password",
+   "file": "app/api/auth/set-password/route.ts",
+   "area": "auth",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/auth/staff-unlock/[id]",
+   "file": "app/api/auth/staff-unlock/[id]/route.ts",
+   "area": "auth",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/auth/totp/disable",
+   "file": "app/api/auth/totp/disable/route.ts",
+   "area": "auth",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/auth/totp/recover",
+   "file": "app/api/auth/totp/recover/route.ts",
+   "area": "auth",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/auth/totp/recovery-codes",
+   "file": "app/api/auth/totp/recovery-codes/route.ts",
+   "area": "auth",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/auth/totp/setup",
+   "file": "app/api/auth/totp/setup/route.ts",
+   "area": "auth",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/auth/totp/verify",
+   "file": "app/api/auth/totp/verify/route.ts",
+   "area": "auth",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/blob-image",
+   "file": "app/api/blob-image/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/checkin",
+   "file": "app/api/checkin/route.ts",
+   "area": "kiosk",
+   "methods": [
+    "POST",
+    "DELETE"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/checkin/card",
+   "file": "app/api/checkin/card/route.ts",
+   "area": "kiosk",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "staff",
+    "cardToken",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/checkin/members",
+   "file": "app/api/checkin/members/route.ts",
+   "area": "kiosk",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/class-packs",
+   "file": "app/api/class-packs/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/class-packs/[id]",
+   "file": "app/api/class-packs/[id]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "PATCH",
+    "DELETE"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/classes",
+   "file": "app/api/classes/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/classes/[id]",
+   "file": "app/api/classes/[id]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "PATCH",
+    "DELETE"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/classes/[id]/instances",
+   "file": "app/api/classes/[id]/instances/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/classes/[id]/instances/[instanceId]",
+   "file": "app/api/classes/[id]/instances/[instanceId]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "PATCH"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/classes/[id]/roster",
+   "file": "app/api/classes/[id]/roster/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/classes/[id]/roster/[memberId]",
+   "file": "app/api/classes/[id]/roster/[memberId]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "DELETE"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/coach/instances/[id]/attendance",
+   "file": "app/api/coach/instances/[id]/attendance/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "staff",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/coach/instances/[id]/register",
+   "file": "app/api/coach/instances/[id]/register/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "staff"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/coach/today",
+   "file": "app/api/coach/today/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "staff"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/cron/class-instances",
+   "file": "app/api/cron/class-instances/route.ts",
+   "area": "cron",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "cronSecret"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/cron/monthly-reports",
+   "file": "app/api/cron/monthly-reports/route.ts",
+   "area": "cron",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "cronSecret"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": true,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/cron/retention",
+   "file": "app/api/cron/retention/route.ts",
+   "area": "cron",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "cronSecret"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/cron/stripe-reconcile",
+   "file": "app/api/cron/stripe-reconcile/route.ts",
+   "area": "cron",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "cronSecret"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/dashboard/stats",
+   "file": "app/api/dashboard/stats/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/drive/callback",
+   "file": "app/api/drive/callback/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": true
+  },
+  {
+   "url": "/api/drive/connect",
+   "file": "app/api/drive/connect/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": true
+  },
+  {
+   "url": "/api/drive/disconnect",
+   "file": "app/api/drive/disconnect/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": true
+  },
+  {
+   "url": "/api/drive/folders",
+   "file": "app/api/drive/folders/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": true
+  },
+  {
+   "url": "/api/drive/index",
+   "file": "app/api/drive/index/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": true
+  },
+  {
+   "url": "/api/drive/select-folder",
+   "file": "app/api/drive/select-folder/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": true
+  },
+  {
+   "url": "/api/drive/status",
+   "file": "app/api/drive/status/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/health",
+   "file": "app/api/health/route.ts",
+   "area": "public-health",
+   "methods": [
+    "GET"
+   ],
+   "guards": [],
+   "dynamic": true,
+   "runtimeEdge": false,
+   "rawSql": true,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/initiatives",
+   "file": "app/api/initiatives/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/initiatives/[id]",
+   "file": "app/api/initiatives/[id]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "PATCH",
+    "DELETE"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/initiatives/[id]/attachments",
+   "file": "app/api/initiatives/[id]/attachments/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST",
+    "DELETE"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/instances/generate",
+   "file": "app/api/instances/generate/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/kiosk/[token]/checkin",
+   "file": "app/api/kiosk/[token]/checkin/route.ts",
+   "area": "kiosk",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "kioskToken",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/kiosk/[token]/classes",
+   "file": "app/api/kiosk/[token]/classes/route.ts",
+   "area": "kiosk",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "kioskToken",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/kiosk/[token]/members",
+   "file": "app/api/kiosk/[token]/members/route.ts",
+   "area": "kiosk",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "kioskToken",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/locations",
+   "file": "app/api/locations/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "staff",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/locations/[id]",
+   "file": "app/api/locations/[id]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "PATCH",
+    "DELETE"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/magic-link/request",
+   "file": "app/api/magic-link/request/route.ts",
+   "area": "auth",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "magicLinkToken",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/magic-link/verify",
+   "file": "app/api/magic-link/verify/route.ts",
+   "area": "auth",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "magicLinkToken"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/me/gym",
+   "file": "app/api/me/gym/route.ts",
+   "area": "self",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/checkout",
+   "file": "app/api/member/checkout/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/children",
+   "file": "app/api/member/children/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/children/[id]",
+   "file": "app/api/member/children/[id]/route.ts",
+   "area": "member",
+   "methods": [
+    "GET",
+    "PATCH",
+    "DELETE"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/children/[id]/photos",
+   "file": "app/api/member/children/[id]/photos/route.ts",
+   "area": "member",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/children/[id]/photos/[photoId]",
+   "file": "app/api/member/children/[id]/photos/[photoId]/route.ts",
+   "area": "member",
+   "methods": [
+    "DELETE"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/class-packs",
+   "file": "app/api/member/class-packs/route.ts",
+   "area": "member",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/class-packs/buy",
+   "file": "app/api/member/class-packs/buy/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/class-subscriptions/[classId]",
+   "file": "app/api/member/class-subscriptions/[classId]/route.ts",
+   "area": "member",
+   "methods": [
+    "POST",
+    "DELETE"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": true,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/classes",
+   "file": "app/api/member/classes/route.ts",
+   "area": "member",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/family/[id]/billing",
+   "file": "app/api/member/family/[id]/billing/route.ts",
+   "area": "member",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/family/[id]/billing/portal",
+   "file": "app/api/member/family/[id]/billing/portal/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/home",
+   "file": "app/api/member/home/route.ts",
+   "area": "member",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/me",
+   "file": "app/api/member/me/route.ts",
+   "area": "member",
+   "methods": [
+    "GET",
+    "PATCH"
+   ],
+   "guards": [
+    "session",
+    "magicLinkToken",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/me/children",
+   "file": "app/api/member/me/children/route.ts",
+   "area": "member",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/me/mark-announcements-seen",
+   "file": "app/api/member/me/mark-announcements-seen/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/me/payments",
+   "file": "app/api/member/me/payments/route.ts",
+   "area": "member",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/me/recent-demotion",
+   "file": "app/api/member/me/recent-demotion/route.ts",
+   "area": "member",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/me/subscriptions",
+   "file": "app/api/member/me/subscriptions/route.ts",
+   "area": "member",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/products",
+   "file": "app/api/member/products/route.ts",
+   "area": "member",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/schedule",
+   "file": "app/api/member/schedule/route.ts",
+   "area": "member",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/shop-config",
+   "file": "app/api/member/shop-config/route.ts",
+   "area": "member",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/subscriptions/cancel",
+   "file": "app/api/member/subscriptions/cancel/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/subscriptions/cancel-for-kid",
+   "file": "app/api/member/subscriptions/cancel-for-kid/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/subscriptions/start",
+   "file": "app/api/member/subscriptions/start/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/subscriptions/start-for-kid",
+   "file": "app/api/member/subscriptions/start-for-kid/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/tasks",
+   "file": "app/api/member/tasks/route.ts",
+   "area": "member",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/tasks/[id]/complete",
+   "file": "app/api/member/tasks/[id]/complete/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/totp/recover",
+   "file": "app/api/member/totp/recover/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/totp/recovery-codes",
+   "file": "app/api/member/totp/recovery-codes/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/totp/setup",
+   "file": "app/api/member/totp/setup/route.ts",
+   "area": "member",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "magicLinkToken",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/member/totp/verify",
+   "file": "app/api/member/totp/verify/route.ts",
+   "area": "member",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members",
+   "file": "app/api/members/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "magicLinkToken",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]",
+   "file": "app/api/members/[id]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "PATCH",
+    "DELETE"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/card/revoke",
+   "file": "app/api/members/[id]/card/revoke/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "staff",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/charge",
+   "file": "app/api/members/[id]/charge/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/guardian",
+   "file": "app/api/members/[id]/guardian/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/hold",
+   "file": "app/api/members/[id]/hold/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/imported-memberships",
+   "file": "app/api/members/[id]/imported-memberships/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/invite-link",
+   "file": "app/api/members/[id]/invite-link/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/link-child",
+   "file": "app/api/members/[id]/link-child/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/payment-method",
+   "file": "app/api/members/[id]/payment-method/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/payments",
+   "file": "app/api/members/[id]/payments/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/photos",
+   "file": "app/api/members/[id]/photos/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST",
+    "DELETE"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/profile-picture",
+   "file": "app/api/members/[id]/profile-picture/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "PUT",
+    "DELETE"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/promote-to-adult",
+   "file": "app/api/members/[id]/promote-to-adult/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/rank",
+   "file": "app/api/members/[id]/rank/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/rank/demote",
+   "file": "app/api/members/[id]/rank/demote/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/resume",
+   "file": "app/api/members/[id]/resume/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/totp-reset",
+   "file": "app/api/members/[id]/totp-reset/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/unlink-child",
+   "file": "app/api/members/[id]/unlink-child/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "DELETE"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/unlock",
+   "file": "app/api/members/[id]/unlock/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "staff",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/waiver-link",
+   "file": "app/api/members/[id]/waiver-link/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "staff",
+    "session",
+    "magicLinkToken",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/[id]/waiver/sign",
+   "file": "app/api/members/[id]/waiver/sign/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/accept-invite",
+   "file": "app/api/members/accept-invite/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "magicLinkToken",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/bulk-invite",
+   "file": "app/api/members/bulk-invite/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "staff",
+    "magicLinkToken",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/members/promotion-alerts",
+   "file": "app/api/members/promotion-alerts/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/memberships",
+   "file": "app/api/memberships/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/memberships/[id]",
+   "file": "app/api/memberships/[id]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "PATCH",
+    "DELETE"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/onboarding/csv-handoff",
+   "file": "app/api/onboarding/csv-handoff/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/orders/[id]/mark-paid",
+   "file": "app/api/orders/[id]/mark-paid/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/owner/reset-onboarding",
+   "file": "app/api/owner/reset-onboarding/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/payments",
+   "file": "app/api/payments/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/payments/[id]/refund",
+   "file": "app/api/payments/[id]/refund/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/payments/chase",
+   "file": "app/api/payments/chase/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "ownerOrManager",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/payments/desk-orders",
+   "file": "app/api/payments/desk-orders/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "ownerOrManager"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/payments/export.csv",
+   "file": "app/api/payments/export.csv/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/payments/intent",
+   "file": "app/api/payments/intent/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/payments/manual",
+   "file": "app/api/payments/manual/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/payments/outstanding",
+   "file": "app/api/payments/outstanding/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner",
+    "ownerOrManager"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/products",
+   "file": "app/api/products/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "staff",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/products/[id]",
+   "file": "app/api/products/[id]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "PATCH",
+    "DELETE"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/promotions/candidates",
+   "file": "app/api/promotions/candidates/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "ownerOrManager"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/push/subscribe",
+   "file": "app/api/push/subscribe/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/ranks",
+   "file": "app/api/ranks/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/ranks/[id]",
+   "file": "app/api/ranks/[id]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "PATCH",
+    "DELETE"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/reports",
+   "file": "app/api/reports/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/reports/generate",
+   "file": "app/api/reports/generate/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST",
+    "GET"
+   ],
+   "guards": [
+    "ownerOrManager",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": true,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/revenue/summary",
+   "file": "app/api/revenue/summary/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/settings",
+   "file": "app/api/settings/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "PATCH"
+   ],
+   "guards": [
+    "owner",
+    "role",
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/settings/display",
+   "file": "app/api/settings/display/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST",
+    "GET"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/settings/import-reconciliation",
+   "file": "app/api/settings/import-reconciliation/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner",
+    "rateLimit"
+   ],
+   "dynamic": true,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/settings/kiosk",
+   "file": "app/api/settings/kiosk/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST",
+    "GET"
+   ],
+   "guards": [
+    "session",
+    "kioskToken",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/staff",
+   "file": "app/api/staff/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/staff/[id]",
+   "file": "app/api/staff/[id]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "PATCH",
+    "DELETE"
+   ],
+   "guards": [
+    "owner",
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/staff/[id]/totp-reset",
+   "file": "app/api/staff/[id]/totp-reset/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/staff/[id]/transfer-ownership",
+   "file": "app/api/staff/[id]/transfer-ownership/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/staff/assignable",
+   "file": "app/api/staff/assignable/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/stripe/connect",
+   "file": "app/api/stripe/connect/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/stripe/connect/callback",
+   "file": "app/api/stripe/connect/callback/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/stripe/connect/health",
+   "file": "app/api/stripe/connect/health/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "owner"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/stripe/create-subscription",
+   "file": "app/api/stripe/create-subscription/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/stripe/disconnect",
+   "file": "app/api/stripe/disconnect/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/stripe/migrate-memberships",
+   "file": "app/api/stripe/migrate-memberships/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/stripe/portal",
+   "file": "app/api/stripe/portal/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/stripe/subscription-plans",
+   "file": "app/api/stripe/subscription-plans/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/stripe/webhook",
+   "file": "app/api/stripe/webhook/route.ts",
+   "area": "webhook",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "stripeSignature"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": true,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/tasks",
+   "file": "app/api/tasks/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/tasks/[id]/complete",
+   "file": "app/api/tasks/[id]/complete/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/tenant/[slug]",
+   "file": "app/api/tenant/[slug]/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/upload",
+   "file": "app/api/upload/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "owner",
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": true,
+   "usesBlob": true,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/upload/delete-orphan",
+   "file": "app/api/upload/delete-orphan/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/waiver",
+   "file": "app/api/waiver/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/waiver/[signedWaiverId]/signature",
+   "file": "app/api/waiver/[signedWaiverId]/signature/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "session"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": true,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/waiver/kiosk-request",
+   "file": "app/api/waiver/kiosk-request/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "kioskToken",
+    "magicLinkToken",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/waiver/kiosk-status",
+   "file": "app/api/waiver/kiosk-status/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET"
+   ],
+   "guards": [
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/waiver/open",
+   "file": "app/api/waiver/open/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "guards": [
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/waiver/sign",
+   "file": "app/api/waiver/sign/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/waiver/sign-for-child",
+   "file": "app/api/waiver/sign-for-child/route.ts",
+   "area": "staff/tenant",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "session",
+    "sameOrigin",
+    "rateLimit"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": false,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  },
+  {
+   "url": "/api/webhooks/resend",
+   "file": "app/api/webhooks/resend/route.ts",
+   "area": "webhook",
+   "methods": [
+    "POST"
+   ],
+   "guards": [
+    "svixSignature"
+   ],
+   "dynamic": false,
+   "runtimeEdge": false,
+   "rawSql": false,
+   "usesSharp": false,
+   "usesBlob": false,
+   "usesStripe": false,
+   "usesEmail": true,
+   "usesAnthropic": false,
+   "usesGoogle": false
+  }
+ ],
+ "pages": [
+  "/admin/activity",
+  "/admin/applications",
+  "/admin/billing",
+  "/admin/login",
+  "/admin",
+  "/admin/security",
+  "/admin/tenants",
+  "/admin/tenants/[id]",
+  "/apply",
+  "/dashboard/account",
+  "/dashboard/activity",
+  "/dashboard/analysis",
+  "/dashboard/attendance",
+  "/dashboard/attribution",
+  "/dashboard/checkin",
+  "/dashboard/coach",
+  "/dashboard/members",
+  "/dashboard/members/[id]/dsar",
+  "/dashboard/members/[id]",
+  "/dashboard/members/[id]/waiver",
+  "/dashboard/memberships",
+  "/dashboard/notifications",
+  "/dashboard",
+  "/dashboard/payments",
+  "/dashboard/promotions",
+  "/dashboard/ranks",
+  "/dashboard/reports",
+  "/dashboard/scan",
+  "/dashboard/settings",
+  "/dashboard/timetable",
+  "/kiosk/[token]",
+  "/leaderboard/[token]",
+  "/legal/aup",
+  "/legal/privacy",
+  "/legal/subprocessors",
+  "/legal/terms",
+  "/login/accept-invite",
+  "/login",
+  "/login/totp",
+  "/login/totp/setup",
+  "/member/actions",
+  "/member/billing",
+  "/member/family/[childId]",
+  "/member/home",
+  "/member",
+  "/member/profile",
+  "/member/progress",
+  "/member/purchase/pack/[id]",
+  "/member/schedule",
+  "/member/shop",
+  "/onboarding",
+  "/route.ts",
+  "/preview",
+  "/print/member-cards",
+  "/set-password",
+  "/waiver/open",
+  "/[slug]"
+ ]
+}

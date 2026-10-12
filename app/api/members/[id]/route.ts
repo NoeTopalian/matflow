@@ -16,6 +16,8 @@ import { isVercelBlobUrl } from "@/lib/blob-url";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
+import { refuseSupportSession } from "@/lib/support-session";
+import { LoginIdentityTaken, claimLoginIdentity, emailDigest, retireEmailBoundTokens } from "@/lib/login-email";
 
 // feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
 // compromised staff session (or a script) can't carpet-bomb every member row
@@ -191,6 +193,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const canEdit = ["owner", "manager", "admin"].includes(session.user.role);
@@ -332,6 +335,26 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         // problem in Stripe directly).
       }
     }
+    // from→to diff over every editable scalar that CHANGED — feeds the
+    // owner-side "Details history" panel and the Activity page's Undo
+    // (lib/undo-registry.ts). Fields the server derives from a sent one
+    // (membershipType / nextDueAt from a tier) are diffed too, so an undo puts
+    // the whole change back, not just the field that was typed. Notes and
+    // medical conditions are deliberately NOT here: audit rows outlive an
+    // Article-17 erasure and must never carry health data or free text. The
+    // login address is not here either (AH-H2, 9 Oct 2026): it is recorded as
+    // keyed digests, as the staff route does, and is not restorable by Undo.
+    const DIFFABLE = [
+      "name", "phone", "membershipType", "status", "paymentStatus",
+      "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth",
+      "accountType", "membershipTierId", "nextDueAt", "preferredPaymentMethod",
+      "leaderboardOptOut", "holdUntil",
+    ] as const;
+    // DateTimes are full ISO; dateOfBirth stays date-only as the history
+    // panel shows it. Nothing is cut short (an undo restores `from` verbatim).
+    const norm = (v: unknown) => (v instanceof Date ? v.toISOString() : v ?? null);
+    const isoDate = (d: unknown) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ?? null);
+
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
       // Version history (2026-08-17): before-values for the from→to diff in
       // the audit row — previously member.update logged field NAMES only,
@@ -353,6 +376,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           preferredPaymentMethod: true, leaderboardOptOut: true, holdUntil: true,
         },
       });
+      // A new login address is claimed across staff AND members of this club
+      // before the write (AH-01, 9 Oct 2026); the lock is held to commit. The
+      // member's own current address is not a collision.
+      const emailChange = rest.email !== undefined && beforeRow !== null && rest.email !== beforeRow.email;
+      if (emailChange) {
+        const claim = await claimLoginIdentity(tx, {
+          tenantId: session.user.tenantId,
+          email: rest.email!,
+          exclude: { memberId: id },
+        });
+        if (claim.kind !== "none") throw new LoginIdentityTaken(claim);
+      }
       const m = await tx.member.updateMany({
         where: { id, tenantId: session.user.tenantId, ...concurrencyGuard },
         data: {
@@ -371,6 +406,24 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           select: { updatedAt: true },
         });
         return { updated: null, existing };
+      }
+      // Only after the row is written: outstanding reset codes and sign-in
+      // links minted for either address in this club are retired, so a link
+      // sent to the old mailbox cannot reach whoever holds that address next.
+      // A member who can sign in with a password is signed out everywhere: the
+      // new address is a login nobody has proved they read (there is no
+      // member verification flow), consistent with the staff route. Decided
+      // by a conditional update on THIS row inside the transaction, not from
+      // a password state read earlier. Nothing else about the credentials
+      // changes (password hash, authenticator, recovery codes).
+      let sessionsRevoked = false;
+      if (emailChange && beforeRow) {
+        await retireEmailBoundTokens(tx, { tenantId: session.user.tenantId, emails: [beforeRow.email, rest.email!] });
+        const bumped = await tx.member.updateMany({
+          where: { id, tenantId: session.user.tenantId, passwordHash: { not: null } },
+          data: { sessionVersion: { increment: 1 } },
+        });
+        sessionsRevoked = bumped.count === 1;
       }
       // Audit iter-2-database A8I2-S-1 [Critical]: explicit select on the
       // post-update re-fetch. Same vulnerability class as the GET fix —
@@ -435,7 +488,44 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           changedById: session.user.id,
         });
       }
-      return { updated: fresh, existing: null, beforeRow };
+      const changes: Record<string, { from: unknown; to: unknown }> = {};
+      if (beforeRow && fresh) {
+        for (const f of DIFFABLE) {
+          const from = f === "dateOfBirth" ? isoDate(beforeRow[f]) : norm(beforeRow[f]);
+          const to = f === "dateOfBirth" ? isoDate((fresh as Record<string, unknown>)[f]) : norm((fresh as Record<string, unknown>)[f]);
+          if (JSON.stringify(from) !== JSON.stringify(to)) changes[f] = { from, to };
+        }
+      }
+      // In the same transaction (AH-H1, 9 Oct 2026; the staff route's S-1
+      // rule): if the audit row cannot be written, the change rolls back too.
+      await logAudit({
+        tx,
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "member.update",
+        entityType: "Member",
+        entityId: id,
+        metadata: {
+          fields: Object.keys(parsed.data),
+          ...(Object.keys(changes).length > 0 ? { source: "staff", changes } : {}),
+          // A3H-6: surface the Stripe outcome in the audit row so the gym
+          // owner can trace any billing-state side-effects of this PATCH.
+          ...(stripeCancelMetadata ? { stripe: stripeCancelMetadata } : {}),
+          // A changed login address: digests only (never the addresses), the
+          // new address is unverified, and whether every session of theirs
+          // was revoked (sessionVersion +1 — only members with a password).
+          ...(emailChange && beforeRow
+            ? {
+                oldEmailSha256: emailDigest(beforeRow.email),
+                newEmailSha256: emailDigest(rest.email!),
+                unverified: true,
+                sessionsRevoked,
+              }
+            : {}),
+        },
+        req,
+      });
+      return { updated: fresh, existing: null };
     });
 
     if (!result.updated) {
@@ -450,47 +540,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
 
     const updated = result.updated;
-    // from→to diff over every editable scalar that CHANGED — feeds the
-    // owner-side "Details history" panel and the Activity page's Undo
-    // (lib/undo-registry.ts). Fields the server derives from a sent one
-    // (membershipType / nextDueAt from a tier) are diffed too, so an undo puts
-    // the whole change back, not just the field that was typed. Notes and
-    // medical conditions are deliberately NOT here: audit rows outlive an
-    // Article-17 erasure and must never carry health data or free text.
-    const DIFFABLE = [
-      "name", "email", "phone", "membershipType", "status", "paymentStatus",
-      "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth",
-      "accountType", "membershipTierId", "nextDueAt", "preferredPaymentMethod",
-      "leaderboardOptOut", "holdUntil",
-    ] as const;
-    // DateTimes are full ISO; dateOfBirth stays date-only as the history
-    // panel shows it. Nothing is cut short (an undo restores `from` verbatim).
-    const norm = (v: unknown) => (v instanceof Date ? v.toISOString() : v ?? null);
-    const isoDate = (d: unknown) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ?? null);
-    const changes: Record<string, { from: unknown; to: unknown }> = {};
-    const beforeRow = "beforeRow" in result ? result.beforeRow : null;
-    if (beforeRow) {
-      for (const f of DIFFABLE) {
-        const from = f === "dateOfBirth" ? isoDate(beforeRow[f]) : norm(beforeRow[f]);
-        const to = f === "dateOfBirth" ? isoDate((updated as Record<string, unknown>)[f]) : norm((updated as Record<string, unknown>)[f]);
-        if (JSON.stringify(from) !== JSON.stringify(to)) changes[f] = { from, to };
-      }
-    }
-    await logAudit({
-      tenantId: session.user.tenantId,
-      userId: session.user.id,
-      action: "member.update",
-      entityType: "Member",
-      entityId: id,
-      metadata: {
-        fields: Object.keys(parsed.data),
-        ...(Object.keys(changes).length > 0 ? { source: "staff", changes } : {}),
-        // A3H-6: surface the Stripe outcome in the audit row so the gym
-        // owner can trace any billing-state side-effects of this PATCH.
-        ...(stripeCancelMetadata ? { stripe: stripeCancelMetadata } : {}),
-      },
-      req,
-    });
     // Attribution (M1): a dedicated audit row when the who-ran-the-trial /
     // who-gets-credit fields were touched, so an attribution change is
     // traceable on its own rather than buried in the generic field list.
@@ -517,7 +566,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
     return NextResponse.json(updated);
   } catch (e: unknown) {
-    if ((e as { code?: string }).code === "P2002") {
+    if (e instanceof LoginIdentityTaken || (e as { code?: string }).code === "P2002") {
       return NextResponse.json({ error: "Email already in use" }, { status: 409 });
     }
     return NextResponse.json({ error: "Failed to update member" }, { status: 500 });
@@ -528,6 +577,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   if (session.user.role !== "owner") {
@@ -646,12 +696,14 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
         select: {
           id: true,
           name: true,
+          email: true,
           stripeSubscriptionId: true,
           photos: { select: { id: true, url: true } },
           children: {
             select: {
               id: true,
               name: true,
+              email: true,
               stripeSubscriptionId: true,
               photos: { select: { id: true, url: true } },
             },
@@ -723,13 +775,50 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   }
 
   try {
-    const outcome = await withTenantContext(session.user.tenantId, (tx) =>
-      deleteParentMemberWithKidsResolution(
+    const outcome = await withTenantContext(session.user.tenantId, async (tx) => {
+      // The release digest is taken from the rows this transaction deletes, read under a row lock (lane D3, review R4
+      // residual 1): the preflight read above runs in an earlier transaction, so an address changed in between used to
+      // be released with the OLD address digested. FOR UPDATE also blocks a concurrent address change (or a new child
+      // pointing here) until the deletion commits.
+      const lockedRows = await tx.$queryRaw<{ id: string; email: string | null; parentMemberId: string | null }[]>`
+        SELECT id, email, "parentMemberId" FROM "Member"
+        WHERE "tenantId" = ${session.user.tenantId} AND (id = ${id} OR "parentMemberId" = ${id})
+        ORDER BY id
+        FOR UPDATE`;
+      const o = await deleteParentMemberWithKidsResolution(
         tx,
         { id, tenantId: session.user.tenantId },
         strategy,
-      ),
-    );
+      );
+      // The release record commits WITH the deletion (security lane D2, SF-54 / SF-74): written after the commit, a
+      // crash in between left the address free with no digest telling the attendance import it had been released.
+      // A failure here rolls the deletion back. Photo files are removed after the commit, so the row records how many
+      // were queued; the response reports how many went.
+      if (o.kind === "ok") {
+        // Same membership as the preflight's willBeDeleted: the member, plus its children under ?strategy=cascade.
+        const releasedEmails = lockedRows
+          .filter((r) => r.id === id || (strategy?.kind === "cascade" && r.parentMemberId === id))
+          .map((r) => r.email)
+          .filter((e): e is string => !!e);
+        await logAudit({
+          tx,
+          tenantId: session.user.tenantId,
+          userId: session.user.id,
+          action: "member.delete",
+          entityType: "Member",
+          entityId: id,
+          metadata: {
+            ...(strategy
+              ? { kidsAffected: o.kidsAffected, strategy: strategy.kind, stripeSubscriptionsCancelled, photosQueued: doomedPhotos.length }
+              : { kidsAffected: 0, stripeSubscriptionsCancelled, photosQueued: doomedPhotos.length }),
+            // The addresses this delete releases (keyed digest; the attendance import refuses a released address — SF-54).
+            releasedEmailSha256: releasedEmails.length === 1 ? emailDigest(releasedEmails[0]) : releasedEmails.map((e) => emailDigest(e)),
+          },
+          req,
+        });
+      }
+      return o;
+    });
     if (outcome.kind === "not-found") {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
@@ -768,17 +857,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     // the warning names the photo id so it can be cleaned up by hand.
     const photosDeleted = await deleteMemberPhotoBlobs(doomedPhotos);
 
-    await logAudit({
-      tenantId: session.user.tenantId,
-      userId: session.user.id,
-      action: "member.delete",
-      entityType: "Member",
-      entityId: id,
-      metadata: strategy
-        ? { kidsAffected: outcome.kidsAffected, strategy: strategy.kind, stripeSubscriptionsCancelled, photosDeleted }
-        : { kidsAffected: 0, stripeSubscriptionsCancelled, photosDeleted },
-      req,
-    });
     return NextResponse.json({
       success: true,
       kidsAffected: outcome.kidsAffected,

@@ -14,6 +14,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import ForcedTotpSetup from "./ForcedTotpSetup";
+import ImpersonationBanner from "@/components/layout/ImpersonationBanner";
 
 export default async function ForcedTotpSetupPage() {
   const session = await auth();
@@ -31,5 +32,10 @@ export default async function ForcedTotpSetupPage() {
     if (user?.mustChangePassword) redirect("/set-password");
   }
 
-  return <ForcedTotpSetup />;
+  return (
+    <>
+      <ImpersonationBanner />
+      <ForcedTotpSetup />
+    </>
+  );
 }

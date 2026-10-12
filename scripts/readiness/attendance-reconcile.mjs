@@ -4,7 +4,7 @@
 // disagree with the importer. Prints AGGREGATES ONLY; row-level differences go
 // to a private file you name with --ledger (keep it out of git).
 //
-//   node scripts/readiness/attendance-reconcile.mjs --csv <file.csv> --tenant <slug> [--ledger <private.json>]
+//   node scripts/readiness/attendance-reconcile.mjs --csv <file.csv> --tenant <slug> [--ledger <private.json>] [--production | --restore-branch]
 //
 // Guards: reads DATABASE_URL from .env.test (or RECONCILE_DATABASE_URL), refuses
 // any host that is not the test branch, and reads inside a READ ONLY
@@ -33,10 +33,24 @@ const opt = (k) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : un
 const csvPath = opt("--csv"), slug = opt("--tenant"), ledgerOut = opt("--ledger");
 if (!csvPath || !slug) { console.error("usage: --csv <file> --tenant <slug> [--ledger <private.json>]"); process.exit(2); }
 
-const envText = readFileSync(".env.test", "utf8");
+// Test branch by default. --production reads the production database from
+// .env - an explicit opt-in, still inside the READ ONLY transaction below, so
+// an operator can reconcile the real import with no write path.
+const production = args.includes("--production");
+// --restore-branch: a Neon branch restored for a rehearsal (its own ep- host),
+// given ONLY through RECONCILE_DATABASE_URL; refuses the production and test hosts.
+const restoreBranch = args.includes("--restore-branch");
+const envText = readFileSync(production ? ".env" : ".env.test", "utf8");
 const envVal = (k) => { const m = envText.match(new RegExp(`^${k}=(.*)$`, "m")); return m ? m[1].trim().replace(/^"|"$/g, "") : undefined; };
 const url = process.env.RECONCILE_DATABASE_URL ?? envVal("DATABASE_URL");
-if (!url || !url.includes("ep-hidden-salad") || url.includes("ep-bold-wave")) { console.error("refusing: DATABASE_URL is not the test branch"); process.exit(2); }
+if (restoreBranch) {
+  const u = process.env.RECONCILE_DATABASE_URL ?? "";
+  if (!u || u.includes("ep-bold-wave") || u.includes("ep-hidden-salad")) { console.error("refusing: --restore-branch needs RECONCILE_DATABASE_URL pointing at a restored branch (not production, not the test branch)"); process.exit(2); }
+  console.log("RESTORE BRANCH (read-only transaction)");
+} else if (production) {
+  if (!url || !url.includes("ep-bold-wave")) { console.error("refusing: --production but .env DATABASE_URL is not the production host"); process.exit(2); }
+  console.log("PRODUCTION (read-only transaction)");
+} else if (!url || !url.includes("ep-hidden-salad") || url.includes("ep-bold-wave")) { console.error("refusing: DATABASE_URL is not the test branch"); process.exit(2); }
 
 // ── CSV (own RFC-4180 reader) ─────────────────────────────────────────────────
 const buf = readFileSync(csvPath);

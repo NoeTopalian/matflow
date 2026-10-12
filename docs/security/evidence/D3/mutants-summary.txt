@@ -1,0 +1,68 @@
+v24.21.0
+applied LM to app/api/members/[id]/route.ts
+MUTANT LM exit 1
+restored app/api/members/[id]/route.ts
+     × member DELETE, in-tx: a change attempted inside the deletion transaction cannot slip in under the digest 2794ms
+     × member DELETE ?strategy=cascade, in-tx: a CHILD's address changed inside the transaction is digested as released 4169ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 6 passed (8)
+applied LC to app/api/member/children/[id]/route.ts
+MUTANT LC exit 1
+restored app/api/member/children/[id]/route.ts
+     × child DELETE, in-tx: a change attempted between the route's read and the delete cannot slip in under the digest 2903ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 7 passed (8)
+applied LS to app/api/staff/[id]/route.ts
+MUTANT LS exit 1
+restored app/api/staff/[id]/route.ts
+     × staff DELETE, in-tx: a change attempted between the route's read and the delete cannot slip in under the digest 1368ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 7 passed (8)
+applied LD to app/api/admin/dsar/erase/route.ts
+MUTANT LD exit 1
+restored app/api/admin/dsar/erase/route.ts
+     × DSAR erase, in-tx: a change attempted inside the erase transaction (before the scrub) cannot slip in under the digest 3774ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 7 passed (8)
+applied M3 to lib/attendance-import.ts
+MUTANT M3 exit 1
+restored lib/attendance-import.ts
+     × P2 (a)+(b) PROOF MINTED IN THE ATTACKER'S OWN CLUB through the real decide route, copied whole into the victim club → pending 8769
+     × X1 (a)+(b) CROSS-CLUB RE-HOME: a decision minted in club B moved whole into club A (mapping, its row and the target; only the club d
+     × P3b WRONG KEY, CORRECT TUPLE: the row is right in every field (digest copied from a real decision, chain, date) but the proof is und
+     × E1 EMPTY KEY: a proof computed with an EMPTY signing key over the correct tuple is refused (process signs with a real key) 6169ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  4 failed | 12 passed | 1 expected fail (17)
+applied M4 to lib/attendance-import.ts
+MUTANT M4 exit 1
+restored lib/attendance-import.ts
+     × P4 OLDER MATCHING ROW: owner decided mal, then right; raw UPDATE back to mal → the latest row disagrees → pending 7890ms
+     × P6 REPLAYED OLDER ROW: the older (mal) row copied as a new latest row → its proof is bound to its own date and chain → pending 7
+     × F2 NEWER UNPROVEN ROW: a raw row dated after the owner's decision makes the decision untrusted (latest row only — never fall back 
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  3 failed | 13 passed | 1 expected fail (17)
+applied ME to lib/attendance-import.ts
+MUTANT ME exit 1
+restored lib/attendance-import.ts
+     × E2 EMPTY KEY IN THE PROCESS: with no signing secret the importer trusts no decision — not one it saved itself, not one proven unde
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 15 passed | 1 expected fail (17)
+applied MF to lib/attendance-import.ts
+MUTANT MF exit 1
+restored lib/attendance-import.ts
+     × F1 FUTURE-DATED ROW: a row right in every field and proven under the REAL key but dated a day ahead is refused 8339ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 15 passed | 1 expected fail (17)
+applied MC to lib/attendance-import.ts
+MUTANT MC exit 1
+restored lib/attendance-import.ts
+     × C1 CHAIN: deleting an earlier provenance row breaks the latest row's link → pending (history cannot be pruned silently) 3726ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 15 passed | 1 expected fail (17)
+applied MT to lib/attendance-import.ts
+MUTANT MT exit 1
+restored lib/attendance-import.ts
+     × X1 (a)+(b) CROSS-CLUB RE-HOME: a decision minted in club B moved whole into club A (mapping, its row and the target; only the club d
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 15 passed | 1 expected fail (17)
+sha256 of the five files identical before/after mutants

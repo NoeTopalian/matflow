@@ -24,7 +24,7 @@ vi.mock("@/auth", () => ({
 
 import middleware from "@/proxy";
 
-type Auth = { user: { totpPending?: boolean; role?: string; totpEnabled?: boolean; requireTotpSetup?: boolean } } | null;
+type Auth = { user: { id?: string; totpPending?: boolean; role?: string; totpEnabled?: boolean; requireTotpSetup?: boolean } } | null;
 
 function makeReq(pathname: string, auth: Auth) {
   return {
@@ -48,7 +48,7 @@ beforeEach(() => {
 describe("proxy.ts — TOTP login-path matrix", () => {
   it("enrolled + second-factor pending → redirect to /login/totp", async () => {
     const { status, location } = await run("/dashboard", {
-      user: { role: "owner", totpEnabled: true, totpPending: true },
+      user: { id: "u-test", role: "owner", totpEnabled: true, totpPending: true },
     });
     expect(status).toBe(307);
     expect(location).toContain("/login/totp");
@@ -56,7 +56,7 @@ describe("proxy.ts — TOTP login-path matrix", () => {
 
   it("enrolled + verified (totpPending false) → no TOTP redirect, reaches /dashboard", async () => {
     const { status, location } = await run("/dashboard", {
-      user: { role: "owner", totpEnabled: true, totpPending: false },
+      user: { id: "u-test", role: "owner", totpEnabled: true, totpPending: false },
     });
     expect(status).toBe(200);
     expect(location).toBeNull();
@@ -64,7 +64,7 @@ describe("proxy.ts — TOTP login-path matrix", () => {
 
   it("NOT enrolled owner (requireTotpSetup true) → redirect to /login/totp/setup (mandatory TOTP, re-introduced 1 Oct 2026)", async () => {
     const { status, location } = await run("/dashboard", {
-      user: { role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },
+      user: { id: "u-test", role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },
     });
     expect(status).toBe(307);
     expect(location).toContain("/login/totp/setup");
@@ -76,7 +76,7 @@ describe("proxy.ts — TOTP login-path matrix", () => {
   for (const role of ["manager", "admin"] as const) {
     it(`NOT enrolled ${role} (requireTotpSetup true) → redirect to /login/totp/setup`, async () => {
       const { status, location } = await run("/dashboard", {
-        user: { role, totpEnabled: false, requireTotpSetup: true, totpPending: false },
+        user: { id: "u-test", role, totpEnabled: false, requireTotpSetup: true, totpPending: false },
       });
       expect(status).toBe(307);
       expect(location).toContain("/login/totp/setup");
@@ -84,7 +84,7 @@ describe("proxy.ts — TOTP login-path matrix", () => {
 
     it(`NOT enrolled ${role} on an /api route → JSON 403`, async () => {
       const { status, location } = await run("/api/members", {
-        user: { role, totpEnabled: false, requireTotpSetup: true, totpPending: false },
+        user: { id: "u-test", role, totpEnabled: false, requireTotpSetup: true, totpPending: false },
       });
       expect(status).toBe(403);
       expect(location).toBeNull();
@@ -93,7 +93,7 @@ describe("proxy.ts — TOTP login-path matrix", () => {
 
   it("a coach without TOTP carries no requireTotpSetup flag and reaches /dashboard", async () => {
     const { status, location } = await run("/dashboard", {
-      user: { role: "coach", totpEnabled: false, requireTotpSetup: false, totpPending: false },
+      user: { id: "u-test", role: "coach", totpEnabled: false, requireTotpSetup: false, totpPending: false },
     });
     expect(status).toBe(200);
     expect(location).toBeNull();
@@ -101,7 +101,7 @@ describe("proxy.ts — TOTP login-path matrix", () => {
 
   it("NOT enrolled owner may reach the enrolment page itself (no redirect loop)", async () => {
     const { status, location } = await run("/login/totp/setup", {
-      user: { role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },
+      user: { id: "u-test", role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },
     });
     expect(status).toBe(200);
     expect(location).toBeNull();
@@ -109,7 +109,7 @@ describe("proxy.ts — TOTP login-path matrix", () => {
 
   it("NOT enrolled owner may still reach /set-password (forced password change comes first)", async () => {
     const { status, location } = await run("/set-password", {
-      user: { role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },
+      user: { id: "u-test", role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },
     });
     expect(status).toBe(200);
     expect(location).toBeNull();
@@ -117,7 +117,7 @@ describe("proxy.ts — TOTP login-path matrix", () => {
 
   it("NOT enrolled owner on an /api route → proxy returns a JSON 403, not a 307 to HTML (W3-MFA-1 + FINDING-2)", async () => {
     const { status, location } = await run("/api/members", {
-      user: { role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },
+      user: { id: "u-test", role: "owner", totpEnabled: false, requireTotpSetup: true, totpPending: false },
     });
     // The middleware gates EVERY api route (not only requireApi* ones), and for
     // an API path answers 403 JSON — never a 307 to a login page a fetch() would
@@ -128,7 +128,7 @@ describe("proxy.ts — TOTP login-path matrix", () => {
 
   it("in the onboarding wizard → public prefix, never gated by TOTP", async () => {
     const { status, location } = await run("/onboarding", {
-      user: { role: "owner", totpEnabled: false, requireTotpSetup: true },
+      user: { id: "u-test", role: "owner", totpEnabled: false, requireTotpSetup: true },
     });
     expect(status).toBe(200);
     expect(location).toBeNull();
@@ -142,7 +142,7 @@ describe("proxy.ts — TOTP login-path matrix", () => {
 
   it("enrolled member with pending factor on a member route → still forced to /login/totp first", async () => {
     const { status, location } = await run("/member/home", {
-      user: { role: "member", totpEnabled: true, totpPending: true },
+      user: { id: "u-test", role: "member", totpEnabled: true, totpPending: true },
     });
     expect(status).toBe(307);
     expect(location).toContain("/login/totp");

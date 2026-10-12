@@ -1,0 +1,100 @@
+// Reviewer R7 probe (iteration 2, closing review) — R6-K1 per context (SF-112, lane A4). For EVERY registered root-key
+// context (provenance, kiosk, card, pending-tenant): a Tenant row whose slug IS the context (raw INSERT — prerequisite
+// a: the API validators refuse dots) + ENABLE_GOOGLE_OAUTH=true → the REAL POST /api/account/pending-tenant. Secure
+// outcome: the cookie signature equals NO sub-key (and hashToken(context) equals none), and the leaked bytes used as a
+// key cannot forge a kiosk or card token (positive controls: the real signers verify; the cookie verifies as its slug).
+// The provenance forge itself is R6's K1 cell (zz-r6-d3-probe-db, run verbatim). TEST branch only, both roles,
+// count-checked teardown. Values are never printed — only booleans and lengths.
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createHmac } from "node:crypto";
+import { appendFileSync } from "node:fs";
+
+vi.hoisted(() => {
+  if (!process.env.NEXTAUTH_SECRET && !process.env.AUTH_SECRET) process.env.NEXTAUTH_SECRET = `secr7k-synthetic-root-${Date.now()}-0123456789abcdef`;
+});
+const JAR = vi.hoisted(() => new Map<string, string>());
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers(),
+  cookies: async () => ({ get: (n: string) => (JAR.has(n) ? { name: n, value: JAR.get(n)! } : undefined), set: (o: { name: string; value: string }) => { JAR.set(o.name, o.value); }, delete: (n: string) => { JAR.delete(n); } }),
+}));
+vi.mock("next/server", () => ({
+  NextResponse: { json: (body: unknown, init?: { status?: number }) => ({ status: init?.status ?? 200, json: async () => body, headers: new Headers() }) },
+}));
+
+import { withRlsBypass } from "@/lib/prisma-tenant";
+import { POST as PENDING_TENANT_POST } from "@/app/api/account/pending-tenant/route";
+import { readPendingTenantSlug } from "@/lib/pending-tenant-cookie";
+import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
+import { ROOT_KEY_CONTEXTS } from "@/lib/key-contexts";
+import { hashToken } from "@/lib/token-hash";
+import { signKioskMemberToken, verifyKioskMemberToken } from "@/lib/kiosk-token";
+import { signCardToken, verifyCardToken } from "@/lib/card-token";
+
+const HAS_DB = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
+const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
+const subKey = (ctx: string) => createHmac("sha256", AUTH_SECRET_VALUE).update(ctx).digest();
+const b64u = (b: Buffer) => b.toString("base64url");
+function report(tag: string, data: Record<string, unknown>) {
+  const line = `${tag} ${JSON.stringify({ role: ROLE, ...data })}`;
+  process.stderr.write(line + "\n");
+  if (process.env.R7_OUT) appendFileSync(process.env.R7_OUT, line + "\n");
+}
+const created: string[] = [];
+
+describe.skipIf(!HAS_DB)(`R7-K1 per context (${ROLE})`, () => {
+  beforeAll(async () => {
+    const who = await withRlsBypass((tx) => tx.$queryRaw<{ current_user: string }[]>`SELECT current_user`);
+    if (ROLE === "restricted") expect(who[0]?.current_user).toBe("matflow_app");
+    else expect(who[0]?.current_user).not.toBe("matflow_app");
+    expect(AUTH_SECRET_VALUE.length).toBeGreaterThan(0);
+    expect(ROOT_KEY_CONTEXTS.length).toBe(4);
+  });
+  afterAll(async () => {
+    for (const id of created) await withRlsBypass((tx) => tx.tenant.delete({ where: { id } }));
+    const left = await withRlsBypass((tx) => tx.tenant.count({ where: { slug: { in: [...ROOT_KEY_CONTEXTS] } } }));
+    report("R7-K1-TEARDOWN", { created: created.length, left });
+    expect(left).toBe(0);
+  });
+
+  for (const ctx of ROOT_KEY_CONTEXTS) {
+    it(`slug = ${ctx}: the cookie is no sub-key, hashToken(ctx) is no sub-key, and the leaked bytes forge neither a kiosk nor a card token`, async () => {
+      const t = await withRlsBypass((tx) => tx.tenant.create({ data: { name: "secR7 key-context", slug: ctx, onboardingCompleted: true }, select: { id: true } }));
+      created.push(t.id);
+      const saved = process.env.ENABLE_GOOGLE_OAUTH;
+      process.env.ENABLE_GOOGLE_OAUTH = "true";
+      let status = 0;
+      try {
+        JAR.clear();
+        const res = (await PENDING_TENANT_POST(new Request("http://localhost/api/account/pending-tenant", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tenantSlug: ctx }) }))) as unknown as { status: number };
+        status = res.status;
+      } finally {
+        if (saved === undefined) delete process.env.ENABLE_GOOGLE_OAUTH; else process.env.ENABLE_GOOGLE_OAUTH = saved;
+      }
+      const cookie = JAR.get("pendingTenantSlug") ?? "";
+      const leaked = Buffer.from(cookie.slice(cookie.lastIndexOf(".") + 1), "base64url");
+      const readBack = await readPendingTenantSlug();
+      const equalsSubKey = Object.fromEntries(ROOT_KEY_CONTEXTS.map((c) => [c, leaked.equals(subKey(c))]));
+      const hashTokenEqualsSubKey = Object.fromEntries(ROOT_KEY_CONTEXTS.map((c) => [c, ROOT_KEY_CONTEXTS.some((x) => hashToken(x) === subKey(c).toString("hex"))]));
+      // Forge attempts with the leaked bytes as the signing key.
+      const kioskBody = b64u(Buffer.from(JSON.stringify({ tenantId: t.id, memberId: "secr7k-forged", exp: Math.floor(Date.now() / 1000) + 600 }), "utf8"));
+      const kioskForged = `${kioskBody}.${b64u(createHmac("sha256", leaked).update(kioskBody).digest())}`;
+      const kioskForgedResult = verifyKioskMemberToken(kioskForged, t.id);
+      const kioskControl = verifyKioskMemberToken(signKioskMemberToken({ tenantId: t.id, memberId: "secr7k-real" }), t.id);
+      const realCard = signCardToken({ tenantId: t.id, memberId: "secr7k-real", cardVersion: 1 });
+      const cardPayload = JSON.parse(Buffer.from(realCard.split(".")[0], "base64url").toString("utf8"));
+      const cardBody = b64u(Buffer.from(JSON.stringify({ ...cardPayload, memberId: "secr7k-forged" }), "utf8"));
+      const cardForged = `${cardBody}.${b64u(createHmac("sha256", leaked).update(cardBody).digest())}`;
+      const cardForgedResult = verifyCardToken(cardForged, t.id);
+      const cardControl = verifyCardToken(realCard, t.id);
+      report("R7-K1", { ctx, status, cookieSet: cookie.length > 0, leakedLen: leaked.length, readBackIsSlug: readBack === ctx, equalsSubKey, hashTokenEqualsSubKey, kioskForged: kioskForgedResult.ok, kioskControl: kioskControl.ok, cardForged: cardForgedResult.ok, cardControl: cardControl.ok });
+      expect(status).toBe(200);
+      expect(readBack, "positive control: the cookie verifies as its own slug").toBe(ctx);
+      expect(Object.values(equalsSubKey).some(Boolean), "cookie signature equals a sub-key").toBe(false);
+      expect(Object.values(hashTokenEqualsSubKey).some(Boolean), "hashToken(context) equals a sub-key").toBe(false);
+      expect(kioskControl.ok).toBe(true);
+      expect(cardControl.ok).toBe(true);
+      expect(kioskForgedResult.ok, "kiosk token forged with the leaked bytes").toBe(false);
+      expect(cardForgedResult.ok, "card token forged with the leaked bytes").toBe(false);
+    }, 120_000);
+  }
+});

@@ -1,0 +1,26 @@
+# Lane D2 runs, 9 Oct 2026, v24.21.0, TEST branch via att/run-engine.sh (owner) and q78/run-restricted.sh (matflow_app, RLS_ENFORCED=1)
+## red (before fix)
+attacker-red-owner:  Tests 5 failed | 7 passed | 6 expected fail (18) | [sec-d2] role neondb_owner RLS_ENFORCED=0 STRICT=0 [sec-d2] teardown: 19 clubs removed, 0 rows left 
+attacker-red-restricted-strict:  Tests 11 failed | 7 passed (18) | [sec-d2] role matflow_app RLS_ENFORCED=1 STRICT=1 [sec-d2] teardown: 19 clubs removed, 0 rows left 
+deletion-red-owner:  Tests 5 failed | 11 passed (16) | [sec-d2p] role neondb_owner RLS_ENFORCED=0 [sec-d2p] teardown: 16 clubs removed, 0 rows left 
+deletion-red-restricted:  Tests 5 failed | 11 passed (16) | [sec-d2p] role matflow_app RLS_ENFORCED=1 [sec-d2p] teardown: 16 clubs removed, 0 rows left 
+## mutant: provenance check removed (restricted, -t DECISION|RE-POINT)
+ Tests 3 failed | 1 passed | 1 expected fail | 13 skipped (18) ; file restored, cmp identical
+## green + regression (after fix)
+attendance-import-engine owner exit=0  Tests 19 passed (19)
+attendance-import-engine restricted exit=0  Tests 19 passed (19)
+sec-d-attendance-misbinding-db owner exit=0  Tests 23 passed (23)
+sec-d-attendance-misbinding-db restricted exit=0  Tests 23 passed (23)
+contact-email-change-imports-db owner exit=0  Tests 7 passed (7)
+contact-email-change-imports-db restricted exit=0  Tests 7 passed (7)
+sec-d2-import-attacker-model-db owner exit=0  Tests 12 passed | 6 expected fail (18)
+sec-d2-import-attacker-model-db restricted exit=0  Tests 12 passed | 6 expected fail (18)
+sec-d2-deletion-provenance-db owner exit=0  Tests 16 passed (16)
+sec-d2-deletion-provenance-db restricted exit=0  Tests 16 passed (16)
+## unit
+lane D unit + import/member-delete suites (16 files):  Tests 428 passed (428)
+full unit:  Tests 3 failed | 6130 passed (6133) — 3 failures outside lane D2 (journeys-manifest: csp-report route from lane C2 working tree; operator-allowlist x2: proxy.ts modified by lane C2)
+## gates
+npx tsc --noEmit -p . exit 0; npm run lint exit 0
+## orphan provenance rows on TEST left by suites whose teardown lacks auditLog (patch 0001):
+{"host":"ep-hidden-salad-abom7cg4-pooler","orphanProvenanceRows":[{"via":"decide","n":54},{"via":"import.commit","n":6},{"via":"import.rollback","n":2}],"provenanceRowsTotal":62}

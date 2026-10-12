@@ -25,6 +25,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { isVercelBlobUrl } from "@/lib/blob-url";
+import { refuseSupportSession } from "@/lib/support-session";
 
 export const runtime = "nodejs";
 
@@ -65,6 +66,9 @@ async function authoriseTarget(
   if (!session?.user) {
     return { ok: false, response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
+  // Read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023). Only PUT/DELETE use this gate.
+  const support = refuseSupportSession(session);
+  if (support) return { ok: false, response: support };
 
   const tenantId = session.user.tenantId;
   const userId = session.user.id;

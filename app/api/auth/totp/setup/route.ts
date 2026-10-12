@@ -2,13 +2,22 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { generateSecret, generateURI, verifySync } from "otplib";
+import { generateSecret, generateURI } from "otplib";
 import QRCode from "qrcode";
 import { getToken, encode } from "next-auth/jwt";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
+import { logAudit } from "@/lib/audit-log";
+import { refuseSupportSession } from "@/lib/support-session";
+import { consumeUserTotp } from "@/lib/login-email";
+import { generateRecoveryCodes } from "@/lib/recovery-codes";
+import { z } from "zod";
+
+// Lane C2 (9 Oct 2026): exactly the two fields the enrolment UIs send
+// (components/dashboard/SettingsPage.tsx, components/onboarding/TotpEnrollmentStep.tsx).
+const postSchema = z.strictObject({ code: z.string().regex(/^\d{6}$/), issueRecoveryCodes: z.boolean().optional() });
 
 // Per-user rate limit on the POST verify endpoint to prevent brute-forcing
 // the 6-digit code during initial enrolment. Mirrors the limit on
@@ -16,22 +25,38 @@ import { assertSameOrigin } from "@/lib/csrf";
 const VERIFY_LIMIT_MAX = 5;
 const VERIFY_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 
+// Review finding D4 (6 Oct 2026): /api/auth/* is outside the proxy matcher, so
+// the proxy's temporary-password gate never reached this route. A session still
+// on a temporary password (mustChangePassword — expired or not) must choose its
+// own password BEFORE it can pin an authenticator to the account: whoever saw
+// the temporary password on its way to the owner must not be able to enrol
+// their own device. Same message as the proxy gate.
+const PASSWORD_FIRST = "Choose your own password to continue.";
+function passwordFirst() {
+  return NextResponse.json({ error: PASSWORD_FIRST }, { status: 403 });
+}
+
 // GET — generate or re-fetch TOTP secret + QR code
 export async function GET() {
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   // 2FA-optional spec (2026-05-07): widened from owner-only to any User role
   // (owner/manager/coach/admin). Members enrol via /api/member/totp/setup.
   if (!session || session.user.role === "member") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (session.user.mustChangePassword === true) return passwordFirst();
 
   const user = await withTenantContext(session.user.tenantId, (tx) =>
     tx.user.findUnique({
       where: { id: session.user.id },
-      select: { totpSecret: true, totpEnabled: true, email: true },
+      select: { totpSecret: true, totpEnabled: true, email: true, mustChangePassword: true },
     }),
   );
   if (!user) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // The ROW is authoritative: an expired temporary password is still
+  // mustChangePassword, so this refuses it too.
+  if (user.mustChangePassword === true) return passwordFirst();
 
   // If already enabled, do NOT re-expose the secret. The seed is write-once-
   // read-never after enrolment verification — leaking it on subsequent GET
@@ -64,11 +89,13 @@ export async function POST(req: NextRequest) {
   if (csrfViolation) return csrfViolation;
 
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   // 2FA-optional spec (2026-05-07): widened from owner-only to any User role
   // (owner/manager/coach/admin). Members enrol via /api/member/totp/setup.
   if (!session || session.user.role === "member") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (session.user.mustChangePassword === true) return passwordFirst();
 
   const rl = await checkRateLimit(
     `totp-setup-verify:${session.user.id}`,
@@ -84,11 +111,15 @@ export async function POST(req: NextRequest) {
 
   let body: unknown;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); // SF-C5
 
-  const { code } = body as { code?: string };
-  if (!code || !/^\d{6}$/.test(code)) {
+  // Strict (lane C2): unknown keys, a non-string or non-six-digit code (review R-4), or a
+  // non-boolean issueRecoveryCodes are all one 400 before anything is read or spent.
+  const parsedBody = postSchema.safeParse(body);
+  if (!parsedBody.success) {
     return NextResponse.json({ error: "Invalid code format" }, { status: 400 });
   }
+  const { code, issueRecoveryCodes } = parsedBody.data;
 
   // Atomic read-verify-enable to close the TOCTOU window between reading
   // totpSecret and writing totpEnabled. Without a single transaction, a
@@ -99,12 +130,24 @@ export async function POST(req: NextRequest) {
   const verifyResult = await withTenantContext(session.user.tenantId, async (tx) => {
     const u = await tx.user.findUnique({
       where: { id: session.user.id },
-      select: { totpSecret: true },
+      select: { totpSecret: true, mustChangePassword: true, totpLastUsedStep: true },
     });
+    if (u?.mustChangePassword === true) return { kind: "password-first" as const };
     if (!u?.totpSecret) return { kind: "not-initialised" as const };
-    if (!verifySync({ token: code, secret: u.totpSecret }).valid) {
+    // Single use (review defect 10, 7 Oct 2026): the code that confirms the
+    // enrolment is SPENT, so it cannot then be replayed within its window to
+    // complete a sign-in, regenerate recovery codes or change the login email.
+    const spent = await consumeUserTotp(
+      tx,
+      { id: session.user.id, totpSecret: u.totpSecret, totpLastUsedStep: u.totpLastUsedStep ?? null },
+      code,
+    );
+    if (!spent) {
       return { kind: "invalid-code" as const };
     }
+    // The wizard asks for its recovery codes here, in the enabling write,
+    // because the code it used to replay into /recovery-codes is now spent.
+    const recovery = issueRecoveryCodes === true ? generateRecoveryCodes() : null;
     await tx.user.update({
       where: { id: session.user.id },
       data: {
@@ -117,12 +160,41 @@ export async function POST(req: NextRequest) {
         // the owner just set up. The forced enrolment flow issues no new
         // codes, so after this the operator TOTP reset is the recovery path
         // until codes are issued from /api/auth/totp/recovery-codes.
-        totpRecoveryCodes: Prisma.JsonNull,
+        // With issueRecoveryCodes, the fresh set (hashes only) replaces them.
+        totpRecoveryCodes: recovery ? recovery.map((c) => c.hash) : Prisma.JsonNull,
       },
     });
-    return { kind: "ok" as const };
+    // Enrolment is a credential change: it writes an audit row in the same
+    // transaction, so a factor is never enrolled without a record of who
+    // enrolled it (operator audit 5 Oct 2026, Q9). An enrolment under a
+    // support session would carry the operator in metadata.actingAs. No
+    // secret, code or recovery material is recorded.
+    await logAudit({
+      tx,
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "auth.totp.enrolled",
+      entityType: "User",
+      entityId: session.user.id,
+      metadata: { role: session.user.role },
+      req,
+    });
+    if (recovery) {
+      await logAudit({
+        tx,
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "auth.totp.recovery_codes.generated",
+        entityType: "User",
+        entityId: session.user.id,
+        metadata: { count: recovery.length, regenerated: false, atEnrolment: true },
+        req,
+      });
+    }
+    return { kind: "ok" as const, recoveryCodes: recovery ? recovery.map((c) => c.display) : undefined };
   });
 
+  if (verifyResult.kind === "password-first") return passwordFirst();
   if (verifyResult.kind === "not-initialised") {
     return NextResponse.json({ error: "TOTP not initialised — call GET first" }, { status: 400 });
   }
@@ -159,7 +231,7 @@ export async function POST(req: NextRequest) {
       maxAge: 30 * 24 * 60 * 60,
       salt: SESSION_COOKIE_NAME,
     });
-    const res = NextResponse.json({ ok: true });
+    const res = NextResponse.json({ ok: true, recoveryCodes: verifyResult.recoveryCodes });
     res.cookies.set(SESSION_COOKIE_NAME, encoded, {
       httpOnly: true,
       sameSite: "lax",
@@ -170,5 +242,5 @@ export async function POST(req: NextRequest) {
     return res;
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, recoveryCodes: verifyResult.recoveryCodes });
 }

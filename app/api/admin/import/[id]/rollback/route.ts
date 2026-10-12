@@ -12,8 +12,10 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
+import { refuseSupportSession } from "@/lib/support-session";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
+import { emailDigest } from "@/lib/login-email";
 import { apiError } from "@/lib/api-error";
 import { recordStatusEventsBulk } from "@/lib/member-status";
 import {
@@ -36,6 +38,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (csrf) return csrf;
   const gate = await requireApiOwner();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session (lib/support-session.ts)
   const { tenantId, userId } = gate;
   const { id } = await params;
 
@@ -72,6 +75,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         select: {
           id: true,
           name: true,
+          email: true,
           parentMemberId: true,
           passwordHash: true,
           stripeCustomerId: true,
@@ -204,18 +208,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           } as unknown as Prisma.InputJsonValue,
         },
       });
+      // The audit row commits with the rollback (operator audit 5 Oct 2026,
+      // Q9): if it cannot be written, the transaction rolls back and nothing
+      // is removed.
+      await logAudit({
+        tx,
+        tenantId,
+        userId,
+        action: "import.rollback",
+        entityType: "ImportJob",
+        entityId: job.id,
+        metadata: {
+          fileName: job.fileName, removed: removeIds.length, kept: kept.length, attendanceRemoved: attendance.count, ledgerRemoved: ledger.count,
+          // The addresses this rollback releases (keyed digests; the attendance import refuses a released address — SF-54).
+          releasedEmailSha256: removable.map((c) => c.email).filter((e): e is string => !!e).map((e) => emailDigest(e)),
+        },
+        req,
+      });
       return { removed: removeIds, kept, attendanceRemoved: attendance.count, ledgerRemoved: ledger.count };
     }, ROLLBACK_TX);
-
-    await logAudit({
-      tenantId,
-      userId,
-      action: "import.rollback",
-      entityType: "ImportJob",
-      entityId: job.id,
-      metadata: { fileName: job.fileName, removed: result.removed.length, kept: result.kept.length, attendanceRemoved: result.attendanceRemoved, ledgerRemoved: result.ledgerRemoved },
-      req,
-    });
 
     return NextResponse.json({ ok: true, removed: result.removed.length, kept: result.kept, attendanceRemoved: result.attendanceRemoved });
   } catch (e) {
@@ -269,17 +280,17 @@ async function rollbackRefresh(
           } as unknown as Prisma.InputJsonValue,
         },
       });
+      await logAudit({
+        tx,
+        tenantId,
+        userId,
+        action: "import.rollback",
+        entityType: "ImportJob",
+        entityId: job.id,
+        metadata: { fileName: job.fileName, mode: "refresh", restored: restore.length, kept: kept.length },
+        req,
+      });
       return { restored: restore.length, kept };
-    });
-
-    await logAudit({
-      tenantId,
-      userId,
-      action: "import.rollback",
-      entityType: "ImportJob",
-      entityId: job.id,
-      metadata: { fileName: job.fileName, mode: "refresh", restored: result.restored, kept: result.kept.length },
-      req,
     });
     return NextResponse.json({ ok: true, mode: "refresh", restored: result.restored, kept: result.kept });
   } catch (e) {

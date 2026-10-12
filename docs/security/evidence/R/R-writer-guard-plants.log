@@ -1,0 +1,8 @@
+PLANT control_plain: CAUGHT email
+PLANT computed_model_var: MISSED
+PLANT aliased_delegate: MISSED
+PLANT optional_chain: MISSED
+PLANT call_indirect: MISSED
+PLANT raw_update_only: MISSED
+PLANT raw_dynamic_ident: MISSED
+PLANT raw_unquoted_schema: CAUGHT raw

@@ -24,6 +24,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { buildDefaultWaiverTitle, buildDefaultWaiverContent } from "@/lib/default-waiver";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseSupportSession } from "@/lib/support-session";
 
 const schema = z.object({
   signatureDataUrl: z.string().min(50).max(300_000),
@@ -55,6 +56,7 @@ export async function POST(req: Request, { params }: Params) {
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const isStaff = ["owner", "manager", "admin", "coach"].includes(session.user.role);

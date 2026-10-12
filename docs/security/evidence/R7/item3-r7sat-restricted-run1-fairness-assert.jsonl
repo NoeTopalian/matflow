@@ -1,0 +1,5 @@
+R7-SAT-A {"role":"restricted","poolMax":5,"res":[{"burst":20,"allowed":5,"rows":5,"fallbackLines":0,"fallbackHasKey":false,"fallbackFamilyDash":true},{"burst":60,"allowed":5,"rows":5,"fallbackLines":1,"fallbackHasKey":false,"fallbackFamilyDash":true},{"burst":120,"allowed":5,"rows":5,"fallbackLines":0,"fallbackHasKey":false,"fallbackFamilyDash":true}]}
+R7-SAT-B {"role":"restricted","poolMax":5,"allowed":5,"rows":5,"fallbackLines":1,"fallbackLine":"[rate-limit] store unavailable reason=pool-timeout class=security family=forgot outcome=refused windowMs=60000 suppressedSinceLast=0","fallbackHasKey":false,"overLimitWarningsWithKey":3,"refusedFromStoreFailure":112}
+R7-SAT-C {"role":"restricted","poolMax":5,"allowedA":5,"allowedB":0,"rowsA":5,"rowsB":0,"totp":1,"apply":1,"keyInFallback":false}
+R7-SAT-D {"role":"restricted","poolMax":5,"tally":{"allowed":5,"refused":11,"threw":44},"rows":5,"fallbackLines":1,"outcomeThrown":true}
+R7-SAT-TEARDOWN {"role":"restricted","poolMax":5,"buckets":7,"deleted":30,"left":0}

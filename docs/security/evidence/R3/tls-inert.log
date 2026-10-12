@@ -1,0 +1,6 @@
+{"builtConfig":{"host":true,"port":55433,"ssl":{"rejectUnauthorized":true,"servername":true},"connectionString":false}}
+{"case":"E3 explicit config from a URL with sslmode=require (self-signed cert)","result":"ERROR DEPTH_ZERO_SELF_SIGNED_CERT self-signed certificate; if the root CA is installed locally, try runn","tlsHandshakeCompletedOnServer":false}
+(node:87904) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+{"case":"same, with NODE_TLS_REJECT_UNAUTHORIZED=0 in the environment","result":"ERROR DEPTH_ZERO_SELF_SIGNED_CERT self-signed certificate; if the root CA is installed locally, try runn","tlsHandshakeCompletedOnServer":false}
+{"case":"control: connectionString with sslmode=no-verify (what R2 showed the old guard let through)","result":"ERROR  Connection terminated unexpectedly","tlsHandshakeCompletedOnServer":true}
+{"case":"control: connectionString with sslmode=require only (pg 8 treats require as verify-full)","result":"ERROR DEPTH_ZERO_SELF_SIGNED_CERT self-signed certificate; if the root CA is installed locally, try runn","tlsHandshakeCompletedOnServer":false}

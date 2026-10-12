@@ -79,6 +79,8 @@ export const REASON = {
   emailAdopted: "Confirming also made the payer's address their login; change that from the guardian's profile.",
   tickFoundRow: "They were already checked in when this was ticked, so the tick added nothing to undo.",
   importedRow: "This check-in is imported history. Undo the import with its own Rollback, or remove it on the register.",
+  loginAddress: "A login address change can't be undone from here — change it again from the member's profile.",
+  selfEdit: "The member made this change themselves — ask them to change it back from their profile.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -89,8 +91,11 @@ const asRecord = (v: unknown): Record<string, unknown> | null =>
 
 /** Fields a `before` snapshot may legitimately restore per entity — never ids, tenancy, secrets, money or health data. */
 const RESTORABLE: Record<string, readonly string[]> = {
+  // "email" removed (9 Oct 2026, AH-H2): the member PATCH records a
+  // login-address change as digests only; an undo would restore an address
+  // without the cross-table claim, the token retirement or the sign-out.
   Member: [
-    "name", "email", "phone", "membershipType", "status", "paymentStatus",
+    "name", "phone", "membershipType", "status", "paymentStatus",
     "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth",
     "accountType", "membershipTierId", "nextDueAt", "holdUntil", "holdPriorStatus",
     "leaderboardOptOut", "preferredPaymentMethod",
@@ -102,7 +107,10 @@ const RESTORABLE: Record<string, readonly string[]> = {
     "billingContactEmail", "billingContactUrl", "privacyContactEmail", "privacyPolicyUrl", "contactEmail",
     "instagramUrl", "facebookUrl", "tiktokUrl", "youtubeUrl", "twitterUrl", "websiteUrl", "groupChatUrl",
   ],
-  User: ["name", "role", "email"],
+  // "email" removed (8 Oct 2026, review of lane S, S-2): a login-address change
+  // must go through PATCH /api/staff/[id] (collision check, provisional mark,
+  // token retirement); an undo would restore an address without any of them.
+  User: ["name", "role"],
   Class: [
     "name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration",
     "maxCapacity", "isKids", "requiredRankId", "maxRankId", "color", "isActive",
@@ -251,6 +259,11 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
       if (fields.length === 0 && sent.length > 0 && sent.every((f) => f === "notes" || f === "medicalConditions")) {
         return { ok: false, reason: REASON.privateText };
       }
+      // A login-address change is never restored from here (RESTORABLE.Member
+      // omits it). Email-only: say so. Alongside other fields: those go back,
+      // the address stays as it is.
+      const addressChanged = sent.includes("email") || "oldEmailSha256" in m || Boolean(asRecord(m.changes)?.email);
+      if (fields.length === 0 && addressChanged) return { ok: false, reason: REASON.loginAddress };
       // A PATCH that cancelled (or reactivated) a member also cancels the
       // Stripe subscription and stamps cancelledAt; restoring `status` alone
       // would show them active while Stripe stays cancelled.
@@ -273,6 +286,18 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
       }
     },
   }),
+  // A member's own profile edit (PATCH /api/member/me) is never undone by
+  // staff: the honest reason, not "recorded before snapshots" (AH-G Low).
+  "member.self_update": {
+    decide(row) {
+      const m = meta(row);
+      const addressChanged = "oldEmailSha256" in m || Boolean(asRecord(m.changes)?.email);
+      return { ok: false, reason: addressChanged ? REASON.loginAddress : REASON.selfEdit };
+    },
+    async apply() {
+      throw new UndoStale(REASON.selfEdit);
+    },
+  },
   "tenant.settings.update": snapshotHandler("Tenant", {
     after(row) {
       try {
@@ -284,9 +309,10 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
     },
   }),
   "staff.update": snapshotHandler("User", {
-    // A role or email change forces re-sign-in on the staff PATCH; the undo
-    // must do the same or the person keeps the undone role on a live session.
-    extra: (restore) => ("role" in restore || "email" in restore ? { sessionVersion: { increment: 1 } } : {}),
+    // A role change forces re-sign-in on the staff PATCH; the undo must do the
+    // same or the person keeps the undone role on a live session. (Login
+    // addresses are not restorable here — see RESTORABLE.User.)
+    extra: (restore) => ("role" in restore ? { sessionVersion: { increment: 1 } } : {}),
   }),
   "class.updated": snapshotHandler("Class"),
   "membership.tier.update": snapshotHandler("MembershipTier", {

@@ -44,7 +44,7 @@ async function capturedRow(): Promise<Record<string, unknown>> {
   const create = vi.fn().mockResolvedValue({});
   // Every actor in this file is a staff User of the tenant, so logAudit's
   // pre-insert staff check (functional review round 3, F10) finds them.
-  await fn({ user: { findFirst: vi.fn(async ({ where }: { where: { id: string } }) => ({ id: where.id })) }, auditLog: { create } });
+  await fn({ user: { findFirst: vi.fn(async ({ where }: { where: { id: string } }) => ({ id: where.id })) }, auditLog: { create }, operator: { findUnique: async ({ where }: { where: { id: string } }) => ({ id: where.id }) } });
   expect(create).toHaveBeenCalledTimes(1);
   return (create.mock.calls[0][0] as { data: Record<string, unknown> }).data;
 }
@@ -63,6 +63,7 @@ describe("logAudit — impersonation attribution", () => {
       targetTenantId: "tenant-A",
       reason: "support call",
       exp: Math.floor(Date.now() / 1000) + 600,
+      v: 2 as const, opSv: 0, tsv: 0, n: "test-nonce-0123456789", // v2 payload shape (lane B, 6 Oct 2026)
     });
 
     // No actAsUserId: exactly how app/api/members, app/api/payments and every
@@ -76,7 +77,10 @@ describe("logAudit — impersonation attribution", () => {
     });
 
     const row = await capturedRow();
-    expect(row.metadata).toEqual({ actingAs: "__matflow_super_admin__" });
+    // Lane D (6 Oct 2026, operator audit Q12): a row whose real actor is the
+    // shared-secret sentinel now says so even without the header
+    // (was: `{ actingAs }` only — the cookie door left no mark).
+    expect(row.metadata).toEqual({ actingAs: "__matflow_super_admin__", via: "shared-secret" });
   });
 
   it("merges the attribution into metadata the caller already supplied", async () => {
@@ -86,6 +90,7 @@ describe("logAudit — impersonation attribution", () => {
       targetTenantId: "tenant-A",
       reason: "support call",
       exp: Math.floor(Date.now() / 1000) + 600,
+      v: 2 as const, opSv: 0, tsv: 0, n: "test-nonce-0123456789", // v2 payload shape (lane B, 6 Oct 2026)
     });
 
     await logAudit({
@@ -140,6 +145,7 @@ describe("logAudit — impersonation attribution", () => {
       targetTenantId: "tenant-A",
       reason: "support call",
       exp: Math.floor(Date.now() / 1000) + 600,
+      v: 2 as const, opSv: 0, tsv: 0, n: "test-nonce-0123456789", // v2 payload shape (lane B, 6 Oct 2026)
     });
 
     await logAudit({
@@ -206,7 +212,8 @@ describe("logAudit — the shared-secret header leaves a mark", () => {
     });
   });
 
-  it("a cookie-door operator row carries no via marker", async () => {
+  // Renamed (lane D): was "a cookie-door operator row carries no via marker".
+  it("a cookie-door operator row is marked as the shared secret too", async () => {
     const req = new Request("http://localhost:3847/api/admin/customers/t1/suspend", {
       method: "POST",
     });
@@ -222,7 +229,10 @@ describe("logAudit — the shared-secret header leaves a mark", () => {
     });
 
     const row = await capturedRow();
-    expect(row.metadata).toEqual({ actingAs: "__matflow_super_admin__" });
-    expect(Object.keys(row.metadata as object)).not.toContain("via");
+    // Lane D (6 Oct 2026, operator audit Q12): a row whose real actor is the
+    // shared-secret sentinel now says so even without the header
+    // (was: `{ actingAs }` only — the cookie door left no mark).
+    expect(row.metadata).toEqual({ actingAs: "__matflow_super_admin__", via: "shared-secret" });
+    expect((row.metadata as { via?: string }).via).not.toBe("shared-secret-header");
   });
 });

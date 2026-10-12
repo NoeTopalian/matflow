@@ -20,6 +20,8 @@ export type Row = Record<string, unknown> & { id: string };
 const MODELS = [
   "tenant", "member", "class", "location", "importSourceMapping", "importUpload", "importUploadChunk",
   "importJob", "importedBooking", "classInstance", "attendanceRecord",
+  // Mapping-provenance rows (lane D2, SF-74): saveDecisions writes one per decision in its transaction.
+  "auditLog",
 ] as const;
 export type Model = (typeof MODELS)[number];
 
@@ -243,6 +245,11 @@ export function makeAttendanceFakeDb() {
   }
 
   const tx = Object.fromEntries(MODELS.map((m) => [m, delegate(m)]));
+  // The planner reads the released-address digests with one raw SELECT (lane D third pass, 9 Oct 2026);
+  // the fake answers it from the auditLog table it holds so release rows seeded here count.
+  // The fake holds no auditLog table (the route under test mocks the audit log), so no release is ever recorded here.
+  (tx as Record<string, unknown>).$queryRaw = async () => [] as Array<{ entityType: string; entityId: string; metadata: Record<string, unknown> | null }>;
+  (tx as Record<string, unknown>).$executeRaw = async () => 0;
   return {
     tables,
     writes,

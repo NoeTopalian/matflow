@@ -34,6 +34,13 @@ export default defineConfig({
     // milliseconds and are unaffected by the larger ceiling.
     testTimeout: 30_000,
     hookTimeout: 60_000,
+    // The REAL next-auth wrapper can only be loaded through vite: its
+    // lib/env.js imports "next/server" without an extension, which Node's ESM
+    // resolver refuses for an externalised package. Lane A2 (SF-44) drives the
+    // real proxy.ts + next-auth in tests/unit/sec-a2-proxy-outage-cookie and
+    // tests/integration/sec-a2-outage-proxy-db; reviewer R used the same
+    // setting for R-1.
+    server: { deps: { inline: ["next-auth", "@auth/core"] } },
   },
   resolve: {
     alias: {

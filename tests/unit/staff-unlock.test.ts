@@ -29,7 +29,7 @@ const mockAssertSameOrigin = vi.fn((req: Request) => (req ? null : null) as unkn
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: (req: Request) => mockAssertSameOrigin(req) }));
 
 const mockGate = vi.fn();
-vi.mock("@/lib/api-authz", () => ({ requireApiOwner: () => mockGate() }));
+vi.mock("@/lib/api-authz", () => ({ refuseSupportSession: () => null, requireApiOwner: () => mockGate() }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: { user: { findFirst: vi.fn(), update: vi.fn() } },

@@ -1,0 +1,45 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 <scratchpad>/security/R6/wt
+
+[setup-test-db] AUTH_SECRET is SYNTHETIC for this test process (neither NEXTAUTH_SECRET nor AUTH_SECRET was set; SF-102)
+(node:119332) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stderr | tests/integration/zz-r6-a3-burst-db.test.ts > R6: address-wide failure cap under a concurrent burst from many networks > 40 concurrent guesses (39 wrong + the right one last) from 40 networks at a fresh address: secure outcome ≤ 10 judged
+[auth] sign-in refused: failure lockout {
+  counter: 'addr',
+  tenantId: 'cmv1tl2dt00002stgxpnh397a',
+  subject: 'member',
+  subjectId: 'cmv1tl2fl00012stggbuiyun4'
+}
+
+stdout | tests/integration/zz-r6-a3-burst-db.test.ts > R6: address-wide failure cap under a concurrent burst from many networks > 40 concurrent guesses (39 wrong + the right one last) from 40 networks at a fresh address: secure outcome ≤ 10 judged
+R6-BURST {"role":"owner","tally":{"refused":39,"admitted":1},"judged":40,"rightPasswordOutcome":"admitted","addressCounterAfter":39,"nextAttempt":"code:rate_limited"}
+
+ ❯ tests/integration/zz-r6-a3-burst-db.test.ts (1 test | 1 failed) 34553ms
+     × 40 concurrent guesses (39 wrong + the right one last) from 40 networks at a fresh address: secure outcome ≤ 10 judged 29039ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/zz-r6-a3-burst-db.test.ts > R6: address-wide failure cap under a concurrent burst from many networks > 40 concurrent guesses (39 wrong + the right one last) from 40 networks at a fresh address: secure outcome ≤ 10 judged
+AssertionError: guesses judged by bcrypt in one burst at a fresh address: expected 40 to be less than or equal to 10
+ ❯ tests/integration/zz-r6-a3-burst-db.test.ts:101:80
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  04:13:37
+   Duration  35.56s (transform 579ms, setup 88ms, import 512ms, tests 34.55s, environment 0ms)
+

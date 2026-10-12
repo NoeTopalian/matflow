@@ -1,0 +1,14 @@
+node v24.21.0 mode=unit file=tests/unit/sec-a4-lockout-reservation.test.ts head=5b2b6ad auth-lockout.sha256=a8f37e2e4567da87 at=2026-10-10T08:56:54Z
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.11 C:/Users/NoeTo/Desktop/matflow
+
+
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+   Start at  09:56:56
+   Duration  901ms (transform 237ms, setup 60ms, import 157ms, tests 468ms, environment 0ms)
+
+EXIT 0

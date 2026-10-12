@@ -1,0 +1,270 @@
+{
+  "role": "owner",
+  "samples": 20,
+  "rttMedianMs": 46.3,
+  "n0": {
+    "ghost": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1290,
+      "diffVsGhostMs": 0
+    },
+    "lockedRightPassword": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1356,
+      "diffVsGhostMs": 67
+    },
+    "lockedAndNetworkCapped": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 880,
+      "diffVsGhostMs": -410
+    },
+    "ghostNetworkCapped": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 904,
+      "diffVsGhostMs": -385
+    },
+    "lockedWrongCase": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1342,
+      "diffVsGhostMs": 52
+    },
+    "lockedTrailingSpace": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1333,
+      "diffVsGhostMs": 43
+    },
+    "ghostTrailingSpace": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1345,
+      "diffVsGhostMs": 56
+    },
+    "otherClubLockedStaff": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1301,
+      "diffVsGhostMs": 11
+    },
+    "otherClubLockedStaffRightPw": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1324,
+      "diffVsGhostMs": 34
+    }
+  },
+  "n9": {
+    "ghost": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1369,
+      "diffVsGhostMs": 0
+    },
+    "lockedRightPassword": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1352,
+      "diffVsGhostMs": -17
+    },
+    "lockedAndNetworkCapped": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 874,
+      "diffVsGhostMs": -494
+    },
+    "ghostNetworkCapped": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 837,
+      "diffVsGhostMs": -531
+    },
+    "lockedWrongCase": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1281,
+      "diffVsGhostMs": -88
+    },
+    "lockedTrailingSpace": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1283,
+      "diffVsGhostMs": -85
+    },
+    "ghostTrailingSpace": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1320,
+      "diffVsGhostMs": -49
+    },
+    "otherClubLockedStaff": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1326,
+      "diffVsGhostMs": -42
+    },
+    "otherClubLockedStaffRightPw": {
+      "outcomes": [
+        "refused"
+      ],
+      "medianMs": 1319,
+      "diffVsGhostMs": -49
+    }
+  },
+  "n10": {
+    "ghost": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1018,
+      "diffVsGhostMs": 0
+    },
+    "lockedRightPassword": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 982,
+      "diffVsGhostMs": -37
+    },
+    "lockedAndNetworkCapped": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 817,
+      "diffVsGhostMs": -201
+    },
+    "ghostNetworkCapped": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 799,
+      "diffVsGhostMs": -219
+    },
+    "lockedWrongCase": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1000,
+      "diffVsGhostMs": -18
+    },
+    "lockedTrailingSpace": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 987,
+      "diffVsGhostMs": -31
+    },
+    "ghostTrailingSpace": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1041,
+      "diffVsGhostMs": 23
+    },
+    "otherClubLockedStaff": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1013,
+      "diffVsGhostMs": -5
+    },
+    "otherClubLockedStaffRightPw": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1103,
+      "diffVsGhostMs": 85
+    }
+  },
+  "n11": {
+    "ghost": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1100,
+      "diffVsGhostMs": 0
+    },
+    "lockedRightPassword": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1203,
+      "diffVsGhostMs": 104
+    },
+    "lockedAndNetworkCapped": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 860,
+      "diffVsGhostMs": -240
+    },
+    "ghostNetworkCapped": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 864,
+      "diffVsGhostMs": -235
+    },
+    "lockedWrongCase": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1120,
+      "diffVsGhostMs": 21
+    },
+    "lockedTrailingSpace": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1127,
+      "diffVsGhostMs": 27
+    },
+    "ghostTrailingSpace": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1102,
+      "diffVsGhostMs": 2
+    },
+    "otherClubLockedStaff": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1124,
+      "diffVsGhostMs": 24
+    },
+    "otherClubLockedStaffRightPw": {
+      "outcomes": [
+        "code:rate_limited"
+      ],
+      "medianMs": 1114,
+      "diffVsGhostMs": 14
+    }
+  },
+  "sequenceFromZero": {
+    "lockedRightPassword": "refused,refused,refused,refused,refused,refused,refused,refused,refused,refused,code:rate_limited,code:rate_limited",
+    "none": "refused,refused,refused,refused,refused,refused,refused,refused,refused,refused,code:rate_limited,code:rate_limited"
+  },
+  "mismatches": []
+}

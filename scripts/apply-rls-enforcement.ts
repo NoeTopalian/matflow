@@ -5,12 +5,11 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import fs from "fs";
 import path from "path";
+import { vetTestUrl } from "./readiness/rls-test-target.mjs";
 
-const url = process.env.DATABASE_URL ?? "";
-if (url.includes("ep-bold-wave")) throw new Error("Refusing prod — prod already enforces RLS");
-if (!url.includes("ep-hidden-salad")) throw new Error("Not the known test-branch host; aborting");
-
-const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+// Positive allowlist on the target pg would actually reach (see scripts/readiness/rls-test-target.mjs); the old
+// substring checks on the raw URL were bypassable (SF-62 / lane B, iteration 2).
+const prisma = new PrismaClient({ adapter: new PrismaPg(vetTestUrl(process.env.DATABASE_URL ?? "")) });
 
 async function main() {
   const sql = fs.readFileSync(

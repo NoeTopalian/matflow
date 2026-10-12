@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
+import { refuseSupportSession } from "@/lib/support-session";
 
 /**
  * POST /api/auth/totp/disable
@@ -17,6 +18,7 @@ import { NextResponse } from "next/server";
  */
 export async function POST() {
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

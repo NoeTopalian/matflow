@@ -1,0 +1,40 @@
+diff -ru a/tests/unit/google-door-bootstrap.test.ts b/tests/unit/google-door-bootstrap.test.ts
+--- a/tests/unit/google-door-bootstrap.test.ts	2026-10-09 21:17:49.215064400 +0100
++++ b/tests/unit/google-door-bootstrap.test.ts	2026-10-09 21:17:49.632326000 +0100
+@@ -17,7 +17,7 @@
+ 
+ describe("Google sign-in refuses a staff account still on its temporary password", () => {
+   it("the refusal sits in the signIn callback after the account lookup and before the token is hydrated", () => {
+-    const lookup = src.indexOf('return "/login?error=NoAccountForGym"');
++    const lookup = src.indexOf('if (!dbUser && !memberRow) return "/login?error=google_link_required"');
+     const refusal = src.indexOf('if (dbUser?.mustChangePassword === true) return "/login?error=invalid_link"');
+     const hydrate = src.indexOf("Object.assign(user, dbUser");
+     expect(lookup).toBeGreaterThan(0);
+diff -ru a/tests/unit/provisional-login-email-doors.test.ts b/tests/unit/provisional-login-email-doors.test.ts
+--- a/tests/unit/provisional-login-email-doors.test.ts	2026-10-09 21:17:49.361689200 +0100
++++ b/tests/unit/provisional-login-email-doors.test.ts	2026-10-09 21:17:49.651025800 +0100
+@@ -311,7 +311,7 @@
+ describe("Google / external sign-in — refused for a provisional login email (source)", () => {
+   const src = readFileSync("auth.ts", "utf8");
+   it("the refusal sits in the signIn callback after the account lookup and before the token is hydrated", () => {
+-    const lookup = src.indexOf('return "/login?error=NoAccountForGym"');
++    const lookup = src.indexOf('if (!dbUser && !memberRow) return "/login?error=google_link_required"');
+     const refusal = src.indexOf("if (isLoginEmailProvisional(dbUser))");
+     const hydrate = src.indexOf("Object.assign(user, dbUser");
+     expect(lookup).toBeGreaterThan(0);
+diff -ru a/tests/unit/sec-a2-google-link.test.ts b/tests/unit/sec-a2-google-link.test.ts
+--- a/tests/unit/sec-a2-google-link.test.ts	2026-10-09 21:17:49.504240400 +0100
++++ b/tests/unit/sec-a2-google-link.test.ts	2026-10-09 21:17:49.800086600 +0100
+@@ -113,9 +113,10 @@
+     expect(h.clearPending).not.toHaveBeenCalled();
+   });
+ 
+-  it("controls unchanged: unverified address and unknown address keep their refusals", async () => {
++  it("controls: unverified address keeps its refusal; unknown address gets the one Google-door code", async () => {
+     expect(await google("coach@example.test", false).result).toBe("/login?error=GoogleEmailUnverified");
+-    expect(await google("nobody@example.test").result).toBe("/login?error=NoAccountForGym");
++    // Lane A3 (R3 §5): one code whether or not the address has an account here.
++    expect(await google("nobody@example.test").result).toBe("/login?error=google_link_required");
+   });
+ 
+   it("the credentials door is untouched by this rule (it does not consult Google links)", async () => {

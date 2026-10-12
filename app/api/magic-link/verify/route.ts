@@ -1,13 +1,18 @@
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { encode } from "next-auth/jwt";
 import { logAudit } from "@/lib/audit-log";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { hashToken } from "@/lib/token-hash";
+import { linkTokenBinding } from "@/lib/auth-token-binding";
 import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
 import { isElevatedRole, requiresTotpEnrolment } from "@/lib/mfa-policy";
 import { isTestingMode } from "@/lib/testing-mode";
+import { recordLoginEvent } from "@/lib/login-event";
+import { getClientIp } from "@/lib/rate-limit";
+import { getBaseUrl } from "@/lib/env-url";
+import { isLoginEmailProvisional } from "@/lib/login-email";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -97,7 +102,7 @@ export async function GET(req: NextRequest) {
   const lookups = await withTenantContext(tokenRow.tenantId, async (tx) => {
     const u = await tx.user.findFirst({
       where: { tenantId: tokenRow.tenantId, email: tokenRow.email },
-      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true, totpEnabled: true, mustChangePassword: true },
+      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true, totpEnabled: true, mustChangePassword: true, notifyOnNewLogin: true, loginEmailProvisionalSince: true },
     });
     const m = !u
       ? await tx.member.findFirst({
@@ -106,7 +111,7 @@ export async function GET(req: NextRequest) {
           where: { tenantId: tokenRow.tenantId, email: tokenRow.email, passwordHash: { not: null } },
           select: {
             id: true, tenantId: true, email: true, name: true, sessionVersion: true,
-            totpEnabled: true,
+            totpEnabled: true, notifyOnNewLogin: true,
           },
         })
       : null;
@@ -129,6 +134,32 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
   }
 
+  // SUBJECT BINDING (AH-D2 / SEC-004, 9 Oct 2026; lib/auth-token-binding.ts).
+  // The row names an address; the person at that address now may not be the
+  // person the link was sent for (a member deleted and another created at the
+  // same address, a staff user removed and the address reused). A tagged link
+  // signs in ONLY the subject its tag was computed for; anyone else gets the
+  // answer an expired link gets. The token is already consumed above, so a
+  // mismatched link is dead either way. An untagged (pre-binding) link keeps
+  // the old address-only rule until it expires.
+  const binding = linkTokenBinding(token, {
+    purpose: tokenRow.purpose as "login" | "first_time_signup",
+    tenantId: tokenRow.tenantId,
+    subject: user ? { kind: "user", id: user.id } : { kind: "member", id: member!.id },
+  });
+  if (binding === "mismatch") {
+    await logAudit({
+      tenantId: tokenRow.tenantId,
+      userId: null,
+      action: "auth.magic_link.refused_subject",
+      entityType: user ? "User" : "Member",
+      entityId: user?.id ?? member!.id,
+      metadata: { reason: "token_subject_mismatch", purpose: tokenRow.purpose },
+      req,
+    });
+    return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
+  }
+
   // A staff account still on a temporary password does not sign in by link
   // (3 Oct 2026 — see magic-link/request, which no longer sends one). This
   // covers a link requested BEFORE the flag was set: an operator reset or an
@@ -144,6 +175,23 @@ export async function GET(req: NextRequest) {
       entityType: "User",
       entityId: user.id,
       metadata: { email: tokenRow.email, reason: "must_change_password" },
+      req,
+    });
+    return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
+  }
+
+  // A provisional login email (7 Oct 2026, lib/login-email.ts) never signs in
+  // by link, whatever the token's purpose (login or activation) or when it was
+  // minted. Answered as an expired link; the token was consumed above so it
+  // cannot be replayed once the mark is cleared.
+  if (isLoginEmailProvisional(user)) {
+    await logAudit({
+      tenantId: tokenRow.tenantId,
+      userId: null,
+      action: "auth.magic_link.refused_provisional",
+      entityType: "User",
+      entityId: user!.id,
+      metadata: { reason: "login_email_provisional", purpose: tokenRow.purpose },
       req,
     });
     return NextResponse.redirect(new URL("/login?error=invalid_link", req.url));
@@ -258,6 +306,25 @@ export async function GET(req: NextRequest) {
     metadata: { email: tokenRow.email },
     req,
   });
+
+  // Sign-in record, as the password and Google doors write one (6 Oct 2026,
+  // review of lane J R2): the owner-activation verdict reads it, and the
+  // magic link is how an approve-path owner first signs in. Run after the
+  // response; recordLoginEvent never throws.
+  const loginIp = getClientIp(req);
+  const loginUa = req.headers.get("user-agent");
+  const loginAppUrl = getBaseUrl(req);
+  after(() =>
+    recordLoginEvent({
+      subject: user
+        ? { kind: "user", id: user.id, email: user.email, tenantId: tokenRow.tenantId, role: user.role, notifyOnNewLogin: user.notifyOnNewLogin }
+        : { kind: "member", id: member!.id, email: member!.email, tenantId: tokenRow.tenantId, notifyOnNewLogin: member!.notifyOnNewLogin },
+      ip: loginIp,
+      ua: loginUa,
+      appUrl: loginAppUrl,
+      gymName: tenant.name,
+    }),
+  );
 
   const destination = user ? "/dashboard" : "/member/home";
   const res = NextResponse.redirect(new URL(destination, req.url));

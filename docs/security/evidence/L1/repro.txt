@@ -1,0 +1,170 @@
+# SF-135 reproduction record (lane L1, 11 Oct 2026). Node v24.21.0 for every run. HEAD 2876108 (lib/ identical to 704ab57).
+# Runners: <scratchpad>/att/run-engine.sh (owner) and <scratchpad>/q78/run-restricted.sh (matflow_app, RLS_ENFORCED=1); TEST branch only.
+# Exit codes captured directly from the runner. Stacks below are the first frames Vitest printed, sanitised (no host, no URL; synthetic tenant ids replaced).
+
+## 1. Baseline: the two burst files as committed, 6 runs per role, quiet branch (no other lane running; L2 not launched, D-8)
+tag=base sha=2876108 node=v24.21.0 started=2026-10-11T05:45:56Z
+run=1 role=owner file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_lines=0 connclosed_lines=0
+run=1 role=restricted file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_lines=0 connclosed_lines=0
+run=1 role=owner file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_lines=0 connclosed_lines=0
+run=1 role=restricted file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_lines=0 connclosed_lines=0
+run=2 role=owner file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_lines=0 connclosed_lines=5
+    |  FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner)
+    | Error: Connection terminated due to connection timeout
+    |  ❯ node_modules/pg-pool/index.js:45:11
+    |  ❯ PrismaPgAdapter.performIO node_modules/@prisma/adapter-pg/dist/index.mjs:616:22
+    |  ❯ PrismaPgAdapter.queryRaw node_modules/@prisma/adapter-pg/dist/index.mjs:566:30
+    |  ❯ e.interpretNode node_modules/@prisma/client-engine-runtime/src/interpreter/query-interpreter.ts:186:25
+    |  ❯ e.run node_modules/@prisma/client-engine-runtime/src/interpreter/query-interpreter.ts:94:22
+    |  ❯ execute node_modules/@prisma/client/src/runtime/core/engines/client/LocalExecutor.ts:81:11
+    |  ❯ jt.request node_modules/@prisma/client/src/runtime/core/engines/client/ClientEngine.ts:492:21
+    |  FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner)
+    | Error: Connection terminated unexpectedly
+    |  ❯ node_modules/pg-pool/index.js:45:11
+    |  ❯ PrismaPgAdapter.performIO node_modules/@prisma/adapter-pg/dist/index.mjs:616:22
+    |  ❯ PrismaPgAdapter.executeRaw node_modules/@prisma/adapter-pg/dist/index.mjs:605:13
+    |  ❯ e.interpretNode node_modules/@prisma/client-engine-runtime/src/interpreter/query-interpreter.ts:168:17
+    |  ❯ e.interpretNode node_modules/@prisma/client-engine-runtime/src/interpreter/query-interpreter.ts:272:40
+    |  ❯ e.run node_modules/@prisma/client-engine-runtime/src/interpreter/query-interpreter.ts:94:22
+    |  ❯ execute node_modules/@prisma/client/src/runtime/core/engines/client/LocalExecutor.ts:81:11
+run=2 role=restricted file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 passed (6)] unhandled_lines=2 connclosed_lines=1
+    | ⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+    | Vitest caught 1 unhandled error during the test run.
+    | This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+    | ⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+    | Error: Connection terminated unexpectedly
+    |  ❯ node_modules/pg/lib/client.js:631:17
+    |  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+    |  ❯ PgTransaction.performIO node_modules/@prisma/adapter-pg/dist/index.mjs:616:22
+    |  ❯ PgTransaction.executeRaw node_modules/@prisma/adapter-pg/dist/index.mjs:605:13
+    |  ❯ n node_modules/@prisma/client/runtime/client.js:11:55328
+    |  ❯ Vt.#o node_modules/@prisma/client/runtime/client.js:11:55709
+    |  ❯ Timeout.<anonymous> node_modules/@prisma/client/runtime/client.js:11:54638
+run=2 role=owner file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_lines=0 connclosed_lines=0
+run=2 role=restricted file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_lines=0 connclosed_lines=0
+run=3 role=owner file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_lines=0 connclosed_lines=0
+run=3 role=restricted file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_lines=0 connclosed_lines=3
+    |  FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted)
+    | Error: Connection terminated due to connection timeout
+    |  ❯ node_modules/pg-pool/index.js:45:11
+    |  ❯ PrismaPgAdapter.performIO node_modules/@prisma/adapter-pg/dist/index.mjs:616:22
+    |  ❯ PrismaPgAdapter.queryRaw node_modules/@prisma/adapter-pg/dist/index.mjs:566:30
+    |  ❯ e.interpretNode node_modules/@prisma/client-engine-runtime/src/interpreter/query-interpreter.ts:186:25
+    |  ❯ e.run node_modules/@prisma/client-engine-runtime/src/interpreter/query-interpreter.ts:94:22
+    |  ❯ execute node_modules/@prisma/client/src/runtime/core/engines/client/LocalExecutor.ts:81:11
+    |  ❯ jt.request node_modules/@prisma/client/src/runtime/core/engines/client/ClientEngine.ts:492:21
+run=3 role=owner file=sec-a4-lockout-burst-db exit=1 tests=[ Tests 5 passed (5)] unhandled_lines=2 connclosed_lines=1
+    | ⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+    | Vitest caught 1 unhandled error during the test run.
+    | This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+    | ⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+    | Error: Connection terminated unexpectedly
+    |  ❯ node_modules/pg/lib/client.js:631:17
+    |  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+    |  ❯ PgTransaction.performIO node_modules/@prisma/adapter-pg/dist/index.mjs:616:22
+    |  ❯ PgTransaction.executeRaw node_modules/@prisma/adapter-pg/dist/index.mjs:605:13
+    |  ❯ n node_modules/@prisma/client/runtime/client.js:11:55328
+    |  ❯ Vt.#o node_modules/@prisma/client/runtime/client.js:11:55709
+    |  ❯ Timeout.<anonymous> node_modules/@prisma/client/runtime/client.js:11:54638
+run=3 role=restricted file=sec-a4-lockout-burst-db exit=1 tests=[ Tests 5 passed (5)] unhandled_lines=3 connclosed_lines=2
+    | ⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+    | Vitest caught 2 unhandled errors during the test run.
+    | This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+    | ⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+    | Error: Connection terminated unexpectedly
+    |  ❯ node_modules/pg/lib/client.js:631:17
+    |  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+    |  ❯ PgTransaction.performIO node_modules/@prisma/adapter-pg/dist/index.mjs:616:22
+    |  ❯ PgTransaction.executeRaw node_modules/@prisma/adapter-pg/dist/index.mjs:605:13
+    |  ❯ n node_modules/@prisma/client/runtime/client.js:11:55328
+    |  ❯ Vt.#o node_modules/@prisma/client/runtime/client.js:11:55709
+    |  ❯ Timeout.<anonymous> node_modules/@prisma/client/runtime/client.js:11:54638
+    | ⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+    | DriverAdapterError: ConnectionClosed
+    |  ❯ PgTransaction.onError node_modules/@prisma/adapter-pg/dist/index.mjs:651:11
+    |  ❯ PgTransaction.performIO node_modules/@prisma/adapter-pg/dist/index.mjs:646:12
+    |  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+    |  ❯ PgTransaction.executeRaw node_modules/@prisma/adapter-pg/dist/index.mjs:605:13
+    |  ❯ n node_modules/@prisma/client/runtime/client.js:11:55328
+    |  ❯ Vt.#o node_modules/@prisma/client/runtime/client.js:11:55709
+    |  ❯ Timeout.<anonymous> node_modules/@prisma/client/runtime/client.js:11:54638
+run=4 role=owner file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_lines=0 connclosed_lines=0
+run=4 role=restricted file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_lines=0 connclosed_lines=0
+run=4 role=owner file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_lines=0 connclosed_lines=0
+run=4 role=restricted file=sec-a4-lockout-burst-db exit=1 tests=[ Tests 5 passed (5)] unhandled_lines=2 connclosed_lines=1
+    | ⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+    | Vitest caught 1 unhandled error during the test run.
+    | This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+    | ⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+    | Error: Connection terminated unexpectedly
+    |  ❯ node_modules/pg/lib/client.js:631:17
+    |  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+    |  ❯ PgTransaction.performIO node_modules/@prisma/adapter-pg/dist/index.mjs:616:22
+    |  ❯ PgTransaction.executeRaw node_modules/@prisma/adapter-pg/dist/index.mjs:605:13
+    |  ❯ n node_modules/@prisma/client/runtime/client.js:11:55328
+    |  ❯ Vt.#o node_modules/@prisma/client/runtime/client.js:11:55709
+    |  ❯ Timeout.<anonymous> node_modules/@prisma/client/runtime/client.js:11:54638
+run=5 role=owner file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_lines=0 connclosed_lines=0
+run=5 role=restricted file=sec-c3-rate-limit-atomic-db exit=1 tests=[ Tests 6 skipped (6)] unhandled_lines=0 connclosed_lines=4
+    |  FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted)
+    | Error: Connection terminated due to connection timeout
+    |  ❯ node_modules/pg-pool/index.js:45:11
+    |  ❯ PrismaPgAdapter.performIO node_modules/@prisma/adapter-pg/dist/index.mjs:616:22
+    |  ❯ PrismaPgAdapter.queryRaw node_modules/@prisma/adapter-pg/dist/index.mjs:566:30
+    |  ❯ e.interpretNode node_modules/@prisma/client-engine-runtime/src/interpreter/query-interpreter.ts:186:25
+    |  ❯ e.run node_modules/@prisma/client-engine-runtime/src/interpreter/query-interpreter.ts:94:22
+    |  ❯ execute node_modules/@prisma/client/src/runtime/core/engines/client/LocalExecutor.ts:81:11
+    |  ❯ jt.request node_modules/@prisma/client/src/runtime/core/engines/client/ClientEngine.ts:492:21
+run=5 role=owner file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_lines=0 connclosed_lines=0
+run=5 role=restricted file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_lines=0 connclosed_lines=0
+run=6 role=owner file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_lines=0 connclosed_lines=0
+run=6 role=restricted file=sec-c3-rate-limit-atomic-db exit=0 tests=[ Tests 6 passed (6)] unhandled_lines=0 connclosed_lines=0
+run=6 role=owner file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_lines=0 connclosed_lines=0
+run=6 role=restricted file=sec-a4-lockout-burst-db exit=0 tests=[ Tests 5 passed (5)] unhandled_lines=0 connclosed_lines=0
+
+Tally: 24 runs, 16 exit 0, 8 exit 1.
+  sec-c3 owner:      exits 0,1*,0,0,0,0   (* beforeAll: 'Connection terminated due to connection timeout' while opening 10 connections; 6 skipped)
+  sec-c3 restricted: exits 0,1,1*,0,1*,0  (run 2: 6/6 passed + 1 Unhandled Rejection, Prisma timer stack; runs 3 and 5: beforeAll connection timeout, 6 skipped)
+  sec-a4 owner:      exits 0,0,1,0,0,0    (run 3: 5/5 passed + 1 Unhandled Rejection, Prisma timer stack, error carries __matflowErrorContext => a withTenantContext transaction)
+  sec-a4 restricted: exits 0,0,1,1,0,0    (run 3: 5/5 + 2 Unhandled Rejections [Connection terminated unexpectedly; DriverAdapterError ConnectionClosed]; run 4: 5/5 + 1)
+Every Unhandled Rejection in this record and in R9's logs has the same stack: Timeout.<anonymous> (Prisma TransactionManager #startTransactionTimeout) -> #closeTransaction -> createClosingPromise -> PgTransaction.executeRaw (the ROLLBACK) -> pg Client.query rejected by _errorAllQueries when the socket ended.
+
+## 2. Server-side timeouts on the TEST branch (SHOW only; tests/integration/sec-l1-server-settings-db.test.ts)
+L1-SETTINGS {"role":"owner","server_version":"17.11 (7d7ea2a)","statement_timeout":"0","lock_timeout":"0","idle_in_transaction_session_timeout":"5min","idle_session_timeout":"0","transaction_timeout":"0","tcp_keepalives_idle":"60"}
+L1-SETTINGS {"role":"restricted","server_version":"17.11 (7d7ea2a)","statement_timeout":"0","lock_timeout":"0","idle_in_transaction_session_timeout":"5min","idle_session_timeout":"0","transaction_timeout":"0","tcp_keepalives_idle":"60"}
+=> no server statement/lock/transaction timeout and idle-in-transaction 5 min: nothing on the server ends a connection within seconds; the drops are on the network/proxy path (consistent with the beforeAll connect timeouts above).
+
+## 3. Deterministic reproduction BEFORE the fix (tests/integration/sec-l1-connection-drop-db.test.ts at HEAD lib/)
+run=1 role=owner file=sec-l1-connection-drop-db node=v24.21.0 sha=2876108 dirty_lib=0 exit=1 tests=[ Tests 5 failed | 1 skipped (6)] unhandled_blocks=5 at=2026-10-11T06:16:39Z
+run=1 role=restricted file=sec-l1-connection-drop-db node=v24.21.0 sha=2876108 dirty_lib=0 exit=1 tests=[ Tests 5 failed | 1 skipped (6)] unhandled_blocks=5 at=2026-10-11T06:17:59Z
+L1-DROP-RL {"role":"owner","how":"close","ms":6702,"verdict":{"allowed":false,"retryAfterSeconds":30},"threw":null,"rows":0,"control":{"allowed":true,"retryAfterSeconds":0},"poolBefore":{"total":4,"idle":4,"waiting":0},"poolAfter":{"total":3,"idle":3,"waiting":0},"logs":["[rate-limit] store unavailable reason=pool-timeout class=security family=secl1rc outcome=refused windowMs=60000 suppressedSinceLast=0"]}
+L1-DROP-RL {"role":"owner","how":"reset","ms":6618,"verdict":{"allowed":false,"retryAfterSeconds":30},"threw":null,"rows":0,"control":{"allowed":true,"retryAfterSeconds":0},"poolBefore":{"total":3,"idle":3,"waiting":0},"poolAfter":{"total":1,"idle":1,"waiting":0},"logs":["[rate-limit] store unavailable reason=pool-timeout class=security family=secl1rr outcome=refused windowMs=60000 suppressedSinceLast=0"]}
+L1-DROP-LK {"role":"owner","how":"reset","ms":11809,"resolved":null,"threw":"Error: Connection terminated unexpectedly","rows":0,"knownCalls":0,"control":{"blocked":false,"reserved":true},"controlRows":2,"poolAfter":{"total":2,"idle":2,"waiting":0},"logs":[]}
+L1-HELDLOCK-RL {"role":"owner","ms":25167,"verdict":{"allowed":false,"retryAfterSeconds":30},"threw":null,"rows":0,"settingsAfter":{"lt":"0","st":"0"},"logs":["[rate-limit] store unavailable reason=pool-timeout class=security family=secl1hl outcome=refused windowMs=60000 suppressedSinceLast=0"]}
+L1-DROP-TEARDOWN {"role":"owner","buckets":13,"rowsBefore":4,"deleted":4,"left":0,"pool":{"total":1,"idle":1,"waiting":0}}
+L1-DROP-RL {"role":"restricted","how":"close","ms":6662,"verdict":{"allowed":false,"retryAfterSeconds":30},"threw":null,"rows":0,"control":{"allowed":true,"retryAfterSeconds":0},"poolBefore":{"total":4,"idle":4,"waiting":0},"poolAfter":{"total":3,"idle":3,"waiting":0},"logs":["[rate-limit] store unavailable reason=pool-timeout class=security family=secl1rc outcome=refused windowMs=60000 suppressedSinceLast=0"]}
+L1-DROP-RL {"role":"restricted","how":"reset","ms":6564,"verdict":{"allowed":false,"retryAfterSeconds":30},"threw":null,"rows":0,"control":{"allowed":true,"retryAfterSeconds":0},"poolBefore":{"total":3,"idle":3,"waiting":0},"poolAfter":{"total":1,"idle":1,"waiting":0},"logs":["[rate-limit] store unavailable reason=pool-timeout class=security family=secl1rr outcome=refused windowMs=60000 suppressedSinceLast=0"]}
+L1-DROP-LK {"role":"restricted","how":"close","ms":15004,"resolved":null,"threw":"Error: no pooled client sent the lock statement within 15 s","rows":0,"knownCalls":0,"control":{"blocked":false,"reserved":true},"controlRows":2,"poolAfter":{"total":2,"idle":2,"waiting":0},"logs":[]}
+L1-DROP-LK {"role":"restricted","how":"reset","ms":11578,"resolved":null,"threw":"Error: Connection terminated unexpectedly","rows":0,"knownCalls":0,"control":{"blocked":false,"reserved":true},"controlRows":2,"poolAfter":{"total":2,"idle":2,"waiting":0},"logs":[]}
+L1-HELDLOCK-RL {"role":"restricted","ms":25083,"verdict":{"allowed":false,"retryAfterSeconds":30},"threw":null,"rows":0,"settingsAfter":{"lt":"0","st":"0"},"logs":["[rate-limit] store unavailable reason=pool-timeout class=security family=secl1hl outcome=refused windowMs=60000 suppressedSinceLast=0"]}
+L1-DROP-TEARDOWN {"role":"restricted","buckets":13,"rowsBefore":6,"deleted":6,"left":0,"pool":{"total":1,"idle":1,"waiting":0}}
+Unhandled Rejection blocks (Vitest), both roles: 4 per run, each 'Error: Connection terminated unexpectedly', each attributed to one of the four stall-then-drop cells, stack:
+Held lock (healthy connection): the check waited ~25 s, i.e. until the holder let go — Prisma's 5 s timer never interrupted the statement.
+
+## 4. Prisma start-timeout discard path (tests/integration/sec-l1-start-timeout-db.test.ts, own pool of one client)
+L1-START-DISCARD {"role":"owner","startErr":"P2028 Transaction API error: Unable to start a transaction in the ","clientReturnedInsideTransaction":true,"plainWriteSeenBeforeClose":1,"plainWritePersistedAfterClose":0}
+L1-START-TEARDOWN {"role":"owner","deleted":0,"left":0}
+L1-START-DISCARD {"role":"restricted","startErr":"P2028 Transaction API error: Unable to start a transaction in the ","clientReturnedInsideTransaction":true,"plainWriteSeenBeforeClose":1,"plainWritePersistedAfterClose":0}
+L1-START-TEARDOWN {"role":"restricted","deleted":0,"left":0}
+=> both roles: after TransactionStartTimeoutError (P2028) the client went back to the pool INSIDE the abandoned BEGIN; a plain write on it was visible to that client and gone once the client closed (a lost write).
+
+## 5. Natural-burst lifecycle probe (tests/integration/sec-l1-drop-probe-db.test.ts, 10 rounds x 20 parallel, both roles)
+run=1 role=owner file=sec-l1-drop-probe-db node=v24.21.0 sha=2876108 dirty_lib=0 exit=0 tests=[ Tests 10 passed (10)] unhandled_blocks=0 at=2026-10-11T06:19:03Z
+run=1 role=restricted file=sec-l1-drop-probe-db node=v24.21.0 sha=2876108 dirty_lib=0 exit=0 tests=[ Tests 10 passed (10)] unhandled_blocks=0 at=2026-10-11T06:19:29Z
+L1-PROBE-END {"role":"owner","teardown":{"rowsWritten":50,"deleted":50,"left":0},"pool":{"total":20,"idle":20,"waiting":0},"ended":[],"clients":20}
+L1-PROBE-END {"role":"restricted","teardown":{"rowsWritten":50,"deleted":50,"left":0},"pool":{"total":20,"idle":20,"waiting":0},"ended":[],"clients":20}
+=> no natural drop in this 20-round window (the drops are intermittent: 5 of 24 baseline runs); the deterministic injection in section 3 reproduces the exact stack.
+
+## 6. Does an unhandled rejection end the process? (scratch probe next-handler-probe.cjs, Node v24.21.0)
+plain Node: exit=1 ('Error: Connection terminated unexpectedly' thrown at top level)
+with Next.js 16.3.8's installProcessErrorHandlers (what NextNodeServer installs): exit=0, logged as '⨯ unhandledRejection: Error: Connection terminated unexpectedly', timers kept running

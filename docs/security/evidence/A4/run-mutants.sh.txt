@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Each mutant: save -> apply -> unit + DB (restricted) -> restore (sha256 checked) -> git diff of the two files vs saved.
+S=<scratchpad>
+A=$S/security/A4
+F="auth.ts lib/auth-lockout.ts"
+SUM=$A/mutants-summary.txt
+: > $SUM
+for M in M1-reserve-after-bcrypt M2-no-refund M3-refund-on-failure; do
+  bash $A/swap.sh save $F || exit 1
+  python "$(cygpath -w $A/mutate.py)" $M >> $SUM || { bash $A/swap.sh restore $F; exit 1; }
+  bash $A/run.sh unit tests/unit/sec-a4-lockout-reservation.test.ts mut-$M-unit > /dev/null
+  bash $A/run.sh restricted tests/integration/sec-a4-lockout-burst-db.test.ts mut-$M-db-restricted > /dev/null
+  bash $A/swap.sh restore $F >> $SUM || exit 3
+  echo "$M unit: $(grep -E '^ +Tests ' $A/mut-$M-unit.log | tr -s ' ')" >> $SUM
+  echo "$M db-restricted: $(grep -E '^ +Tests ' $A/mut-$M-db-restricted.log | tr -s ' ')" >> $SUM
+  grep -E '^ +×' $A/mut-$M-unit.log $A/mut-$M-db-restricted.log | sed "s#$A/##" | cut -c1-200 >> $SUM
+  cat $A/mut-$M-db-restricted.jsonl >> $SUM 2>/dev/null
+done
+cd /c/Users/NoeTo/Desktop/matflow && echo "after restore, sha256:" >> $SUM && sha256sum $F >> $SUM
+echo DONE

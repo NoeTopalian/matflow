@@ -1,0 +1,919 @@
+{
+ "takenAt": "2026-10-09T12:29:43.483Z",
+ "hostPrefix": "ep-hidden-salad-",
+ "pooler": true,
+ "role": "neondb_owner",
+ "pgMajor": 17,
+ "migrations": [
+  "20260424205716_init",
+  "20260424213718_add_logo_size",
+  "20260424215639_add_session_version_and_hot_path_indexes",
+  "20260425124239_totp_questionnaire_stripe",
+  "20260426122130_add_member_account_type",
+  "20260426154929_add_tenant_waiver_content",
+  "20260426162644_phase1_security_hardening",
+  "20260426195401_reports_ai_causal_drive",
+  "20260426231623_payment_ledger",
+  "20260426232203_email_log",
+  "20260426232743_bacs_direct_debit",
+  "20260427112350_class_packs",
+  "20260427112739_import_jobs",
+  "20260427174714_magic_link_and_signed_waiver_extensions",
+  "20260428000001_audit_p1_monthly_report_unique",
+  "20260428000002_audit_p1_indexes",
+  "20260428000003_membership_tiers",
+  "20260428000004_tenant_self_billing",
+  "20260428000005_member_last_announcement_seen",
+  "20260428000006_member_parent_child",
+  "20260428000007_tenant_privacy_fields",
+  "20260428000008_tenant_socials_fields",
+  "20260428000009_class_max_rank",
+  "20260428000010_class_coach_user",
+  "20260430000001_schema_check_constraints",
+  "20260430000002_soft_delete_extensions",
+  "20260430000003_products",
+  "20260430000004_gym_applications",
+  "20260430000005_orders",
+  "20260501000001_member_emergency_contact_relation",
+  "20260502000001_hash_bearer_tokens",
+  "20260502000001_rank_requirement",
+  "20260502000002_tenant_stripe_account_status",
+  "20260503000001_tenant_currency_timezone_recovery_codes",
+  "20260503100000_rls_policies_foundation",
+  "20260503200000_activate_rls_enforcement",
+  "20260503300000_account_lockout",
+  "20260503400000_member_notification_prefs",
+  "20260504000000_login_events",
+  "20260504100000_tenant_kiosk_token",
+  "20260505000000_attendance_checked_in_by",
+  "20260506000000_operator_platform_config_feature_flags",
+  "20260507000000_add_member_totp_fields",
+  "20260509115719_add_class_roster",
+  "20260509130805_add_tenant_group_chat_url",
+  "20260512000001_member_account_type_parent",
+  "20260513000001_member_photos",
+  "20260513000002_login_event_fk_alignment",
+  "20260513000003_tenant_checkin_window",
+  "20260513000004_push_subscriptions",
+  "20260513000005_member_photo_rank_link",
+  "20260515000001_member_kids_check_constraint",
+  "20260515000002_membership_tier_stripe_ids",
+  "20260517000001_add_perf_indexes",
+  "20260530192937_add_tasks",
+  "20260530201740_task_rls_and_createdby_index",
+  "20260531000001_member_lifecycle_indexes",
+  "20260531200000_rank_history_indexes",
+  "20260601000001_area6_indexes_and_fk_setnull",
+  "20260601000002_area8_rls_fk_indexes",
+  "20260601100000_notes_length_check",
+  "20260601110000_task_member_assignee_and_body",
+  "20260606100000_member_photo_profile_kind",
+  "20260606200000_member_name_index",
+  "20260610100000_add_kids_waiver_fields",
+  "20260628004500_unique_tenant_stripe_account",
+  "20260628110000_member_cancelled_at",
+  "20260816090000_signed_waiver_retention_on_member_delete",
+  "20260816100000_hot_path_indexes",
+  "20260818200000_payment_money_constraints",
+  "20260819090000_class_instance_unique_slot",
+  "20260821050000_announcement_expiry",
+  "20260910100000_member_card_version",
+  "20260910140000_member_membership_tier_fk",
+  "20260911184911_tenant_payment_rail",
+  "20260911202009_member_next_due_at",
+  "20260913220000_payment_request_id",
+  "20260913230000_lowercase_emails",
+  "20260915150000_lowercase_email_trigger",
+  "20260921150000_attribution_and_leaderboard",
+  "20260923220000_billing_cycle_weekly",
+  "20260924120000_member_hold_until",
+  "20260925000000_locations",
+  "20260925090000_tier_location",
+  "20260926130000_user_must_change_password",
+  "20260930100000_import_provenance_review_lock",
+  "20260930120000_request_ids",
+  "20260930140000_member_billing_source",
+  "20260930160000_class_is_kids",
+  "20261001100000_member_hold_prior_status",
+  "20261001200000_tenant_contact_email",
+  "20261002120000_imported_membership_and_guardianship",
+  "20261003120000_import_source_time_provenance",
+  "20261003180000_attendance_history_ledger",
+  "20261006010000_operator_auth_hardening",
+  "20261006020000_tenant_lifecycle_safety",
+  "20261006040000_support_session_binding",
+  "20261006050000_operator_enrolment_ticket",
+  "20261007010000_login_email_provisional",
+  "20261009010000_audit_operator_request"
+ ],
+ "tables": {
+  "Announcement": {
+   "rows": 12,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "AttendanceRecord": {
+   "rows": 63477,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "AuditLog": {
+   "rows": 9861,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "Class": {
+   "rows": 161,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "ClassInstance": {
+   "rows": 5071,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "ClassPack": {
+   "rows": 5,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "ClassPackRedemption": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "ClassRoster": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "ClassSchedule": {
+   "rows": 174,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "ClassSubscription": {
+   "rows": 5,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "ClassWaitlist": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "Dispute": {
+   "rows": 6,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "EmailLog": {
+   "rows": 3921,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "GoogleDriveConnection": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "GymApplication": {
+   "rows": 46,
+   "rls": false,
+   "force": false,
+   "policies": "",
+   "triggers": ""
+  },
+  "ImportJob": {
+   "rows": 118,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "ImportSourceMapping": {
+   "rows": 15,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "ImportUpload": {
+   "rows": 2,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "ImportUploadChunk": {
+   "rows": 10,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "ImportedBooking": {
+   "rows": 15273,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "ImportedMembership": {
+   "rows": 1082,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "IndexedDriveFile": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "Initiative": {
+   "rows": 4,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "InitiativeAttachment": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "Location": {
+   "rows": 42,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "LoginEvent": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "MagicLinkToken": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": "MagicLinkToken_email_lowercase"
+  },
+  "Member": {
+   "rows": 3920,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": "Member_email_lowercase"
+  },
+  "MemberClassPack": {
+   "rows": 3,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "MemberPhoto": {
+   "rows": 9,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "MemberRank": {
+   "rows": 14,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "MemberStatusEvent": {
+   "rows": 1563,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "MembershipTier": {
+   "rows": 94,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "MonthlyReport": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "Notification": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "Operator": {
+   "rows": 1,
+   "rls": false,
+   "force": false,
+   "policies": "",
+   "triggers": "Operator_email_lowercase"
+  },
+  "Order": {
+   "rows": 9,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "PasswordHistory": {
+   "rows": 33,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "PasswordResetToken": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": "PasswordResetToken_email_lowercase"
+  },
+  "Payment": {
+   "rows": 9168,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "PlatformConfig": {
+   "rows": 0,
+   "rls": false,
+   "force": false,
+   "policies": "",
+   "triggers": ""
+  },
+  "Product": {
+   "rows": 22,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "PushSubscription": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "RankHistory": {
+   "rows": 2,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "RankRequirement": {
+   "rows": 0,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "RankSystem": {
+   "rows": 35,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "RateLimitHit": {
+   "rows": 116,
+   "rls": false,
+   "force": false,
+   "policies": "",
+   "triggers": ""
+  },
+  "SignedWaiver": {
+   "rows": 80,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "StripeEvent": {
+   "rows": 44,
+   "rls": false,
+   "force": false,
+   "policies": "",
+   "triggers": ""
+  },
+  "Task": {
+   "rows": 5,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "Tenant": {
+   "rows": 141,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": ""
+  },
+  "User": {
+   "rows": 592,
+   "rls": true,
+   "force": true,
+   "policies": "tenant_isolation:ALL",
+   "triggers": "User_email_lowercase"
+  },
+  "_prisma_migrations": {
+   "rows": 100,
+   "rls": false,
+   "force": false,
+   "policies": "",
+   "triggers": ""
+  }
+ },
+ "foreignKeys": {
+  "Announcement_tenantId_fkey": {
+   "child": "Announcement",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "AttendanceRecord_checkedInById_fkey": {
+   "child": "AttendanceRecord",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "AttendanceRecord_classInstanceId_fkey": {
+   "child": "AttendanceRecord",
+   "parent": "ClassInstance",
+   "validated": true,
+   "orphans": 0
+  },
+  "AttendanceRecord_memberId_fkey": {
+   "child": "AttendanceRecord",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "AuditLog_operatorId_fkey": {
+   "child": "AuditLog",
+   "parent": "Operator",
+   "validated": true,
+   "orphans": 0
+  },
+  "AuditLog_userId_fkey": {
+   "child": "AuditLog",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassInstance_classId_fkey": {
+   "child": "ClassInstance",
+   "parent": "Class",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassPackRedemption_memberPackId_fkey": {
+   "child": "ClassPackRedemption",
+   "parent": "MemberClassPack",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassRoster_addedByUserId_fkey": {
+   "child": "ClassRoster",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassRoster_classId_fkey": {
+   "child": "ClassRoster",
+   "parent": "Class",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassRoster_memberId_fkey": {
+   "child": "ClassRoster",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassRoster_tenantId_fkey": {
+   "child": "ClassRoster",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassSchedule_classId_fkey": {
+   "child": "ClassSchedule",
+   "parent": "Class",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassSubscription_classId_fkey": {
+   "child": "ClassSubscription",
+   "parent": "Class",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassSubscription_memberId_fkey": {
+   "child": "ClassSubscription",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassWaitlist_classInstanceId_fkey": {
+   "child": "ClassWaitlist",
+   "parent": "ClassInstance",
+   "validated": true,
+   "orphans": 0
+  },
+  "ClassWaitlist_memberId_fkey": {
+   "child": "ClassWaitlist",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "Class_coachUserId_fkey": {
+   "child": "Class",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "Class_locationId_fkey": {
+   "child": "Class",
+   "parent": "Location",
+   "validated": true,
+   "orphans": 0
+  },
+  "Class_maxRankId_fkey": {
+   "child": "Class",
+   "parent": "RankSystem",
+   "validated": true,
+   "orphans": 0
+  },
+  "Class_requiredRankId_fkey": {
+   "child": "Class",
+   "parent": "RankSystem",
+   "validated": true,
+   "orphans": 0
+  },
+  "Class_tenantId_fkey": {
+   "child": "Class",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportSourceMapping_tenantId_fkey": {
+   "child": "ImportSourceMapping",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportUploadChunk_uploadId_fkey": {
+   "child": "ImportUploadChunk",
+   "parent": "ImportUpload",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportUpload_tenantId_fkey": {
+   "child": "ImportUpload",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportedBooking_memberId_fkey": {
+   "child": "ImportedBooking",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportedBooking_tenantId_fkey": {
+   "child": "ImportedBooking",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportedMembership_importJobId_fkey": {
+   "child": "ImportedMembership",
+   "parent": "ImportJob",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportedMembership_memberId_fkey": {
+   "child": "ImportedMembership",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "ImportedMembership_tenantId_fkey": {
+   "child": "ImportedMembership",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "InitiativeAttachment_initiativeId_fkey": {
+   "child": "InitiativeAttachment",
+   "parent": "Initiative",
+   "validated": true,
+   "orphans": 0
+  },
+  "Location_tenantId_fkey": {
+   "child": "Location",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "LoginEvent_memberId_fkey": {
+   "child": "LoginEvent",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "LoginEvent_userId_fkey": {
+   "child": "LoginEvent",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberClassPack_memberId_fkey": {
+   "child": "MemberClassPack",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberClassPack_packId_fkey": {
+   "child": "MemberClassPack",
+   "parent": "ClassPack",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberPhoto_memberId_fkey": {
+   "child": "MemberPhoto",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberPhoto_memberRankId_fkey": {
+   "child": "MemberPhoto",
+   "parent": "MemberRank",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberPhoto_tenantId_fkey": {
+   "child": "MemberPhoto",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberPhoto_uploadedByMemberId_fkey": {
+   "child": "MemberPhoto",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberRank_memberId_fkey": {
+   "child": "MemberRank",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberRank_rankSystemId_fkey": {
+   "child": "MemberRank",
+   "parent": "RankSystem",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberStatusEvent_changedById_fkey": {
+   "child": "MemberStatusEvent",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberStatusEvent_memberId_fkey": {
+   "child": "MemberStatusEvent",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "MemberStatusEvent_tenantId_fkey": {
+   "child": "MemberStatusEvent",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "Member_creditedToMemberId_fkey": {
+   "child": "Member",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "Member_creditedToUserId_fkey": {
+   "child": "Member",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "Member_membershipTierId_fkey": {
+   "child": "Member",
+   "parent": "MembershipTier",
+   "validated": true,
+   "orphans": 0
+  },
+  "Member_parentMemberId_fkey": {
+   "child": "Member",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "Member_tenantId_fkey": {
+   "child": "Member",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "Member_trialRunById_fkey": {
+   "child": "Member",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "MembershipTier_locationId_fkey": {
+   "child": "MembershipTier",
+   "parent": "Location",
+   "validated": true,
+   "orphans": 0
+  },
+  "MembershipTier_tenantId_fkey": {
+   "child": "MembershipTier",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "Notification_memberId_fkey": {
+   "child": "Notification",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "Notification_tenantId_fkey": {
+   "child": "Notification",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "Order_memberId_fkey": {
+   "child": "Order",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "PasswordHistory_userId_fkey": {
+   "child": "PasswordHistory",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "Payment_memberId_fkey": {
+   "child": "Payment",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "PushSubscription_memberId_fkey": {
+   "child": "PushSubscription",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "PushSubscription_tenantId_fkey": {
+   "child": "PushSubscription",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "PushSubscription_userId_fkey": {
+   "child": "PushSubscription",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "RankHistory_memberRankId_fkey": {
+   "child": "RankHistory",
+   "parent": "MemberRank",
+   "validated": true,
+   "orphans": 0
+  },
+  "RankRequirement_rankSystemId_fkey": {
+   "child": "RankRequirement",
+   "parent": "RankSystem",
+   "validated": true,
+   "orphans": 0
+  },
+  "RankSystem_tenantId_fkey": {
+   "child": "RankSystem",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "SignedWaiver_memberId_fkey": {
+   "child": "SignedWaiver",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "Task_assignedToId_fkey": {
+   "child": "Task",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "Task_assigneeMemberId_fkey": {
+   "child": "Task",
+   "parent": "Member",
+   "validated": true,
+   "orphans": 0
+  },
+  "Task_completedById_fkey": {
+   "child": "Task",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "Task_createdById_fkey": {
+   "child": "Task",
+   "parent": "User",
+   "validated": true,
+   "orphans": 0
+  },
+  "Task_tenantId_fkey": {
+   "child": "Task",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  },
+  "User_tenantId_fkey": {
+   "child": "User",
+   "parent": "Tenant",
+   "validated": true,
+   "orphans": 0
+  }
+ },
+ "securityState": {
+  "magicLinkOutstanding": 0,
+  "passwordResetOutstanding": 0,
+  "userSessionVersionSum": 251,
+  "memberSessionVersionSum": 305,
+  "operatorSessionVersionSum": 3,
+  "operators": 1,
+  "latestAuditAt": "2026-10-09T11:29:43.992Z"
+ }
+}

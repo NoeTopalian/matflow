@@ -1,0 +1,11 @@
+node=v24.21.0 sha=2a6487e start=2026-10-10T08:36:00Z cmd=npx tsc --noEmit -p .
+app/api/auth/totp/verify/route.ts(8,43): error TS2307: Cannot find module '@/lib/auth-pending-gate' or its corresponding type declarations.
+app/api/member/totp/verify/route.ts(15,43): error TS2307: Cannot find module '@/lib/auth-pending-gate' or its corresponding type declarations.
+lib/attendance-import.ts(41,3): error TS2305: Module '"@/lib/importers/attendance"' has no exported member 'cuidCreatedAt'.
+lib/attendance-import.ts(355,28): error TS2339: Property 'addressChangedAt' does not exist on type 'RosterMember'.
+lib/attendance-import.ts(384,5): error TS2353: Object literal may only specify known properties, and 'releasedBy' does not exist in type '{ timezone: string; now: Date; members: RosterMember[]; classes: RosterClass[]; locations: RosterLocation[]; decisions: PlanDecisions; isSynthesisedEmail: (email: string) => boolean; createdClasses?: Record<...> | undefined; }'.
+tests/unit/sec-a4-empty-secret.test.ts(31,18): error TS2306: File '<scratchpad>/security/E5/wt/tests/setup-test-db.ts' is not a module.
+tests/unit/sec-e3-setup-test-db-guard.test.ts(20,17): error TS2306: File '<scratchpad>/security/E5/wt/tests/setup-test-db.ts' is not a module.
+tests/unit/sec-e3-upload-limit-input-pixels.test.ts(10,59): error TS2307: Cannot find module './sec-c4-allow-rate-limit' or its corresponding type declarations.
+tests/unit/sec-f3-setup-test-db-secret.test.ts(20,18): error TS2306: File '<scratchpad>/security/E5/wt/tests/setup-test-db.ts' is not a module.
+exit=2 end=2026-10-10T08:38:20Z

@@ -1,0 +1,22 @@
+baseline TEST                                  | ACCEPT host=ep-hidden-salad-r2fake.eu-west-2.aws.neon.tech             | pg.host=<TEST> pg.options=- pwHasEndpoint=false
+baseline PROD                                  | REFUSE (REFUSED: host does not contain ep-hidden-salad)                | pg.host=<PROD> pg.options=- pwHasEndpoint=false
+uppercase scheme+host PROD                     | REFUSE (REFUSED: host does not contain ep-hidden-salad)                | pg.host=EP-BOLD-WAVE-ABT39T7X.EU-WEST-2.AWS.NEON.TECH pg.options=- pwHasEndpoint=false
+IPv6 literal                                   | REFUSE (REFUSED: host does not contain ep-hidden-salad)                | pg.host=[::1] pg.options=- pwHasEndpoint=false
+IPv6 literal w/ zone-ish                       | REFUSE (REFUSED: host does not contain ep-hidden-salad)                | pg.host=[fe80::1] pg.options=- pwHasEndpoint=false
+pct-encoded PROD host                          | REFUSE (REFUSED: the effective host differs from the URL host)         | pg.host=<PROD> pg.options=- pwHasEndpoint=false
+pct-encoded dash                               | REFUSE (REFUSED: the effective host differs from the URL host)         | pg.host=<PROD> pg.options=- pwHasEndpoint=false
+host in userinfo (TEST in user, PROD host)     | REFUSE (REFUSED: host does not contain ep-hidden-salad)                | pg.host=<PROD> pg.options=- pwHasEndpoint=false
+host in userinfo (PROD in user, TEST host)     | ACCEPT host=ep-hidden-salad-r2fake.eu-west-2.aws.neon.tech             | pg.host=<TEST> pg.options=- pwHasEndpoint=false
+userinfo with @ (pw@PROD)@TEST                 | ACCEPT host=ep-hidden-salad-r2fake.eu-west-2.aws.neon.tech             | pg.host=<TEST> pg.options=- pwHasEndpoint=false
+backslash                                      | REFUSE (REFUSED: host does not contain ep-hidden-salad)                | pg.host=<PROD> pg.options=- pwHasEndpoint=false
+?host= override                                | REFUSE (REFUSED: connection string carries a host= parameter)          | pg.host=<PROD> pg.options=- pwHasEndpoint=false
+?HOST= uppercase key                           | ACCEPT host=ep-hidden-salad-r2fake.eu-west-2.aws.neon.tech             | pg.host=<TEST> pg.options=- pwHasEndpoint=false
+?h%6fst= encoded key                           | REFUSE (REFUSED: connection string carries a host= parameter)          | pg.host=<PROD> pg.options=- pwHasEndpoint=false
+?options=endpoint                              | REFUSE (REFUSED: connection string carries a options= parameter)       | pg.host=<TEST> pg.options=endpoint=ep-bold-wave-abt39t7x pwHasEndpoint=false
+password endpoint= (Neon SNI workaround)       | ACCEPT host=ep-hidden-salad-r2fake.eu-west-2.aws.neon.tech             | pg.host=<TEST> pg.options=- pwHasEndpoint=true
+unix socket path                               | REFUSE (connection string is not a URL)                                | pg.host=/var/run/postgresql pg.options=- pwHasEndpoint=false
+empty host                                     | REFUSE (connection string is not a URL)                                | pg.host=<PROD> pg.options=- pwHasEndpoint=false
+multi-host comma                               | REFUSE (REFUSED: production endpoint; this script is not authorised )  | pg.host=<TEST>,<PROD> pg.options=- pwHasEndpoint=false
+trailing dot TEST                              | ACCEPT host=ep-hidden-salad-r2fake.eu-west-2.aws.neon.tech.            | pg.host=<TEST>. pg.options=- pwHasEndpoint=false
+space-trigger reencode + host                  | REFUSE (REFUSED: connection string carries a host= parameter)          | pg.host=<PROD> pg.options=- pwHasEndpoint=false
+PGOPTIONS env + TEST url                       | ACCEPT <TEST> | pg.options=endpoint=ep-bold-wave-abt39t7x

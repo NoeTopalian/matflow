@@ -58,23 +58,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const lockedAt = tenant.reviewLockedAt ?? new Date();
   const snapshotAt = parsed.data.snapshotAt ? new Date(parsed.data.snapshotAt) : null;
-  await withRlsBypass((tx) =>
-    tx.tenant.update({
-      where: { id: tenantId },
-      data: { reviewLockedAt: lockedAt, reviewSnapshotAt: snapshotAt, reviewNote: parsed.data.note || null },
-    }),
-  );
-
-  await logAudit({
-    tenantId,
-    userId: null,
-    action: "admin.tenant.review_locked",
-    entityType: "Tenant",
-    entityId: tenantId,
-    metadata: { snapshotAt: snapshotAt?.toISOString() ?? null, note: parsed.data.note ?? null, alreadyLocked: !!tenant.reviewLockedAt },
-    actAsUserId: g.operatorId,
-    req,
-  });
+  // The change and its audit row commit together (operator audit 5 Oct 2026, Q9).
+  try {
+    await withRlsBypass(async (tx) => {
+      await tx.tenant.update({
+        where: { id: tenantId },
+        data: { reviewLockedAt: lockedAt, reviewSnapshotAt: snapshotAt, reviewNote: parsed.data.note || null },
+      });
+      await logAudit({
+        tx,
+        tenantId,
+        userId: null,
+        action: "admin.tenant.review_locked",
+        entityType: "Tenant",
+        entityId: tenantId,
+        metadata: { snapshotAt: snapshotAt?.toISOString() ?? null, note: parsed.data.note ?? null, alreadyLocked: !!tenant.reviewLockedAt },
+        actAsUserId: g.operatorId,
+        req,
+      });
+    });
+  } catch (err) {
+    console.error("[review-lock] change or audit write failed; nothing changed", err);
+    return NextResponse.json({ error: "Review mode could not be recorded, so nothing was changed. Try again." }, { status: 500 });
+  }
   return NextResponse.json({ ok: true, reviewLockedAt: lockedAt, reviewSnapshotAt: snapshotAt });
 }
 
@@ -88,18 +94,25 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
   if (!tenant.reviewLockedAt) return NextResponse.json({ error: "This club is not in review" }, { status: 409 });
 
-  await withRlsBypass((tx) =>
-    tx.tenant.update({ where: { id: tenantId }, data: { reviewLockedAt: null, reviewSnapshotAt: null, reviewNote: null } }),
-  );
-  await logAudit({
-    tenantId,
-    userId: null,
-    action: "admin.tenant.review_unlocked",
-    entityType: "Tenant",
-    entityId: tenantId,
-    metadata: { lockedSince: tenant.reviewLockedAt.toISOString() },
-    actAsUserId: g.operatorId,
-    req,
-  });
+  const lockedSince = tenant.reviewLockedAt;
+  try {
+    await withRlsBypass(async (tx) => {
+      await tx.tenant.update({ where: { id: tenantId }, data: { reviewLockedAt: null, reviewSnapshotAt: null, reviewNote: null } });
+      await logAudit({
+        tx,
+        tenantId,
+        userId: null,
+        action: "admin.tenant.review_unlocked",
+        entityType: "Tenant",
+        entityId: tenantId,
+        metadata: { lockedSince: lockedSince.toISOString() },
+        actAsUserId: g.operatorId,
+        req,
+      });
+    });
+  } catch (err) {
+    console.error("[review-lock] change or audit write failed; nothing changed", err);
+    return NextResponse.json({ error: "Ending review mode could not be recorded, so nothing was changed. Try again." }, { status: 500 });
+  }
   return NextResponse.json({ ok: true });
 }

@@ -1,0 +1,562 @@
+"use client";
+
+// Guided "Resolve conflict" for the owner's login address (admin hub lane F,
+// 9 Oct 2026; ledger AH-04, story I3). Rendered by the operator Login email
+// card when POST /api/admin/customers/[id]/login-email/check says a MEMBER of
+// the club holds the address the owner should sign in with.
+//
+//   1. Review: club, owner and the holder (status, whether they can sign in,
+//      a link). A matching name is not proof: the operator must tick that the
+//      relationship was verified independently (call-back to the club) and
+//      say how — that note goes into the audit reason.
+//   2. "Change this member's contact address" (dialog): new address, reason,
+//      authenticator code → grant for member.contact_email bound to this
+//      member and this address → POST …/members/[memberId]/contact-email.
+//   3. Automatic re-check of the owner's address (a read).
+//   4. "Change the owner's login address" (dialog): a SEPARATE fresh code →
+//      the existing owner login-email route with its own grant.
+//   5. Result: each step with its outcome and ids.
+//
+// Two separate transactions, stated honestly: if step 1 succeeded and step 2
+// did not, the panel says so and offers "Resume". The resume point lives in
+// the URL (?resolve=owner&member=<id> — ids only) and the address in this
+// tab's sessionStorage, so a reload resumes at the owner step with a FRESH
+// check. A mutation is never retried automatically; after a lost response the
+// operator may re-send the SAME grant (the routes answer "already applied"
+// instead of changing anything twice). Every button is disabled while a
+// request is in flight.
+
+import { useCallback, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog } from "@/components/ui/dialog";
+import { adminPalette, adminPill } from "@/app/admin/admin-theme";
+
+export const STEP_UP_HEADER = "x-matflow-step-up";
+const REASON_MIN = 10;
+
+export type CheckedHolder =
+  | {
+      kind: "member" | "user";
+      id: string;
+      name: string;
+      status: string;
+      canSignIn: boolean;
+      access: "password" | "activation_pending" | "none";
+      link: string;
+      version?: string;
+    }
+  | { kind: "many"; count: number };
+
+export type CheckResult = {
+  free: boolean;
+  sameAsOwner?: boolean;
+  tenant: { id: string; name: string };
+  owner: { id: string; name: string };
+  holder?: CheckedHolder;
+};
+
+/** POST …/login-email/check. Never throws; an HTTP error is an error, not "free". */
+export async function checkLoginAddress(
+  tenantId: string,
+  email: string,
+): Promise<{ ok: true; data: CheckResult } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`/api/admin/customers/${tenantId}/login-email/check`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim() }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || typeof data.free !== "boolean") {
+      return { ok: false, error: data?.error ?? "The address could not be checked. Try again." };
+    }
+    return { ok: true, data: data as CheckResult };
+  } catch {
+    return { ok: false, error: "Network error. The address was not checked; try again." };
+  }
+}
+
+// ── Resume state: ids in the URL, the address in this tab only ─────────────
+export type MemberStepResult = { memberId: string; canSignIn: boolean; retired?: { resetCodes: number; signInLinks: number }; alreadyApplied?: boolean };
+export type ResumeState = { address: string; memberId: string; memberName?: string; member?: MemberStepResult };
+
+const storageKey = (tenantId: string) => `matflow.hub.resolve.${tenantId}`;
+
+export function loadResume(tenantId: string): { urlMemberId: string | null; state: ResumeState | null } {
+  let urlMemberId: string | null = null;
+  let state: ResumeState | null = null;
+  try {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("resolve") === "owner") urlMemberId = q.get("member");
+  } catch {
+    /* no URL access */
+  }
+  try {
+    const raw = window.sessionStorage.getItem(storageKey(tenantId));
+    state = raw ? (JSON.parse(raw) as ResumeState) : null;
+  } catch {
+    state = null;
+  }
+  if (state && urlMemberId && state.memberId !== urlMemberId) state = null;
+  return { urlMemberId, state: urlMemberId ? state : null };
+}
+
+function saveResume(tenantId: string, s: ResumeState) {
+  try {
+    window.sessionStorage.setItem(storageKey(tenantId), JSON.stringify(s));
+  } catch {
+    /* storage blocked: the URL still says where to resume */
+  }
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("resolve", "owner");
+    url.searchParams.set("member", s.memberId);
+    window.history.replaceState(window.history.state, "", url.toString());
+  } catch {
+    /* no history access */
+  }
+}
+
+export function clearResume(tenantId: string) {
+  try {
+    window.sessionStorage.removeItem(storageKey(tenantId));
+  } catch {
+    /* ignore */
+  }
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("resolve");
+    url.searchParams.delete("member");
+    window.history.replaceState(window.history.state, "", url.toString());
+  } catch {
+    /* ignore */
+  }
+}
+
+async function requestGrant(body: { action: string; targetId: string; change: Record<string, string>; code: string }) {
+  try {
+    const res = await fetch("/api/admin/auth/step-up", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || typeof data?.grant !== "string") {
+      return { ok: false as const, error: String(data?.error ?? "Your authenticator code was not accepted.") };
+    }
+    return { ok: true as const, grant: data.grant as string };
+  } catch {
+    return { ok: false as const, error: "Network error. Your code was not used; try again with the next code." };
+  }
+}
+
+type Pending = { kind: "member" | "owner"; url: string; grant: string; body: Record<string, unknown> };
+type OwnerStepResult = { ownerId: string; provisional: boolean; alreadyApplied?: boolean };
+type Phase = "review" | "rechecking" | "owner_step" | "blocked" | "done";
+
+type Props = {
+  tenantId: string;
+  ownerUserId: string;
+  /** The address the owner should sign in with (as checked). */
+  address: string;
+  check: CheckResult;
+  /** Step 1 already done (reload or "resume"): start with a fresh re-check. */
+  resume?: ResumeState | null;
+  onOwnerChanged: (email: string) => void;
+  onClose: () => void;
+};
+
+const FRESH_CODE_HINT = "Your authenticator code works once. Wait for the next code before the second step.";
+
+export default function ConflictPanel({ tenantId, ownerUserId, address, check, resume, onOwnerChanged, onClose }: Props) {
+  const [current, setCurrent] = useState<CheckResult>(check);
+  const holder = current.holder;
+  const member = holder && holder.kind === "member" ? holder : null;
+  // A resumed panel is opened with a FRESH check made by the card on load: it
+  // starts at the owner step if the address is free now, else it says why not.
+  const [phase, setPhase] = useState<Phase>(resume ? (check.free ? "owner_step" : "blocked") : "review");
+  const [step1, setStep1] = useState<MemberStepResult | null>(resume?.member ?? (resume ? { memberId: resume.memberId, canSignIn: false } : null));
+  const [step3, setStep3] = useState<OwnerStepResult | null>(null);
+  const [verified, setVerified] = useState(false);
+  const [verifyNote, setVerifyNote] = useState("");
+  const [dialog, setDialog] = useState<"member" | "owner" | null>(null);
+  const [memberNewEmail, setMemberNewEmail] = useState("");
+  const [reason, setReason] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lost, setLost] = useState<Pending | null>(null);
+
+  const recheck = useCallback(async () => {
+    setPhase("rechecking");
+    const r = await checkLoginAddress(tenantId, address);
+    if (!r.ok) {
+      setError(r.error);
+      setPhase("blocked");
+      return;
+    }
+    setCurrent(r.data);
+    setPhase(r.data.free ? "owner_step" : "blocked");
+  }, [tenantId, address]);
+
+  function openDialog(which: "member" | "owner") {
+    setError(null);
+    setCode("");
+    setLost(null);
+    setReason(
+      which === "member"
+        ? `Owner login address conflict. Verified with the club: ${verifyNote.trim()}`
+        : `Owner login address after moving the conflicting member's contact address. Verified with the club: ${verifyNote.trim() || "see the member change"}`,
+    );
+    setDialog(which);
+  }
+
+  async function send(p: Pending): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; error: string } | { ok: false; lost: true }> {
+    let res: Response;
+    try {
+      res = await fetch(p.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", [STEP_UP_HEADER]: p.grant },
+        body: JSON.stringify(p.body),
+      });
+    } catch {
+      return { ok: false, lost: true };
+    }
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, error: String(data?.error ?? "The change was not made.") };
+    return { ok: true, data };
+  }
+
+  async function submitMember() {
+    if (busyRef.current || !member) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      let p = lost?.kind === "member" ? lost : null;
+      if (!p) {
+        const newEmail = memberNewEmail.trim();
+        const g = await requestGrant({ action: "member.contact_email", targetId: `${tenantId}/${member.id}/change`, change: { newEmail }, code });
+        if (!g.ok) {
+          setError(g.error);
+          return;
+        }
+        p = {
+          kind: "member",
+          url: `/api/admin/customers/${tenantId}/members/${member.id}/contact-email`,
+          grant: g.grant,
+          body: { newEmail, reason: reason.trim(), version: member.version },
+        };
+      }
+      const r = await send(p);
+      if (!r.ok && "lost" in r) {
+        setLost(p);
+        setError("The response was lost, so it is not known whether the change was made. Re-send the same confirmation: it cannot be applied twice.");
+        return;
+      }
+      setLost(null);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      const result: MemberStepResult = {
+        memberId: String(r.data.memberId ?? member.id),
+        canSignIn: r.data.canSignIn === true,
+        retired: r.data.retired as MemberStepResult["retired"],
+        alreadyApplied: r.data.alreadyApplied === true,
+      };
+      setStep1(result);
+      saveResume(tenantId, { address, memberId: result.memberId, memberName: member.name, member: result });
+      setDialog(null);
+      await recheck();
+    } finally {
+      setCode("");
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function submitOwner() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      let p = lost?.kind === "owner" ? lost : null;
+      if (!p) {
+        const g = await requestGrant({ action: "owner.login_email", targetId: `${tenantId}/${ownerUserId}/change`, change: { newEmail: address }, code });
+        if (!g.ok) {
+          setError(g.error);
+          return;
+        }
+        p = {
+          kind: "owner",
+          url: `/api/admin/customers/${tenantId}/login-email`,
+          grant: g.grant,
+          body: { action: "change", reason: reason.trim(), newEmail: address },
+        };
+      }
+      const r = await send(p);
+      if (!r.ok && "lost" in r) {
+        setLost(p);
+        setError("The response was lost, so it is not known whether the change was made. Re-send the same confirmation: it cannot be applied twice.");
+        return;
+      }
+      setLost(null);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      setStep3({ ownerId: ownerUserId, provisional: r.data.provisional !== false, alreadyApplied: r.data.alreadyApplied === true });
+      clearResume(tenantId);
+      setDialog(null);
+      setPhase("done");
+      onOwnerChanged(address);
+    } finally {
+      setCode("");
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  const codeOk = /^\d{6}$/.test(code);
+  const reasonOk = reason.trim().length >= REASON_MIN && reason.trim().length <= 500;
+  const memberEmailOk = /\S+@\S+\.\S+/.test(memberNewEmail.trim()) && memberNewEmail.trim().toLowerCase() !== address.trim().toLowerCase();
+  const canStart = !!member?.version && verified && verifyNote.trim().length >= REASON_MIN && !busy;
+  const partial = step1 !== null && step3 === null;
+
+  return (
+    <section aria-label="Resolve login address conflict" style={panel}>
+      <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 8px" }}>Resolve conflict</h3>
+
+      <dl style={grid}>
+        <dt style={dt}>Club</dt>
+        <dd style={dd}>{current.tenant.name}</dd>
+        <dt style={dt}>Owner</dt>
+        <dd style={dd}>{current.owner.name}</dd>
+        <dt style={dt}>Address</dt>
+        <dd style={dd}><code>{address}</code></dd>
+        {holder && holder.kind !== "many" && (
+          <>
+            <dt style={dt}>Held by</dt>
+            <dd style={dd}>
+              {holder.kind === "member" ? "Member" : "Staff account"} <strong>{holder.name}</strong>{" "}
+              <span style={adminPill("neutral")}>{holder.status}</span>{" "}
+              <span style={adminPill(holder.canSignIn ? "amber" : "neutral")}>
+                {holder.access === "password" ? "Can sign in" : holder.access === "activation_pending" ? "Can activate (live invite or reset)" : "Cannot sign in"}
+              </span>{" "}
+              <a href={holder.link} style={{ color: adminPalette.blue, fontSize: 12 }}>Open record</a>
+              <span style={{ display: "block", fontSize: 11, color: adminPalette.muted }}>id {holder.id}</span>
+            </dd>
+          </>
+        )}
+      </dl>
+
+      {holder?.kind === "many" && phase !== "done" && (
+        <p role="alert" style={warn}>
+          {holder.count} accounts in this club already hold this address (a legacy duplicate). Nothing can be resolved here: review the
+          records with the club first.
+        </p>
+      )}
+      {holder?.kind === "user" && phase !== "done" && (
+        <p role="alert" style={warn}>
+          A staff account holds this address. Staff addresses are changed by the club in Staff settings; this workflow only moves a
+          member&apos;s contact address.
+        </p>
+      )}
+
+      {phase === "review" && member && (
+        <>
+          <p style={warn}>
+            A matching name is not proof that these are the same person. Verify with the club by phone (call back on the number you
+            already hold) before acting.
+          </p>
+          <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, marginTop: 8 }}>
+            <Checkbox checked={verified} onCheckedChange={setVerified} aria-label="I verified the relationship independently" />
+            <span>I verified independently, with the club, whose address this is and that {member.name}&apos;s contact address may change.</span>
+          </label>
+          <label htmlFor="conflict-verify-note" style={label}>How you verified it (goes into the audit reason, at least {REASON_MIN} characters)</label>
+          <textarea
+            id="conflict-verify-note"
+            rows={2}
+            value={verifyNote}
+            onChange={(e) => setVerifyNote(e.target.value)}
+            placeholder="e.g. call-back to the club's number on file; the owner confirmed Pat uses a personal address; ticket #123"
+            style={{ ...field, resize: "vertical" }}
+          />
+          {!member.version && <p style={warn}>This record cannot be changed from here. Check the address again.</p>}
+          <div style={actions}>
+            <Button variant="secondary" size="compact" onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button variant="destructive" size="compact" onClick={() => openDialog("member")} disabled={!canStart}>
+              Change this member&apos;s contact address
+            </Button>
+          </div>
+        </>
+      )}
+
+      {phase === "rechecking" && <p role="status" style={muted}>Checking the address again…</p>}
+
+      {partial && phase !== "done" && (
+        <p role="status" style={{ ...warn, borderColor: adminPalette.amber }}>
+          Step 1 done, step 2 not done. The member&apos;s contact address was changed
+          {step1?.memberId ? ` (member ${step1.memberId})` : ""}; the owner&apos;s login address has not been changed yet.
+          {phase === "owner_step" ? " Resume below." : ""}
+        </p>
+      )}
+
+      {phase === "owner_step" && (
+        <>
+          <p role="status" style={{ ...muted, color: adminPalette.green }}>The address is now free in this club.</p>
+          <p style={muted}>{FRESH_CODE_HINT}</p>
+          <div style={actions}>
+            <Button variant="secondary" size="compact" onClick={onClose} disabled={busy}>Close (resume later)</Button>
+            <Button variant="destructive" size="compact" onClick={() => openDialog("owner")} disabled={busy}>
+              Change the owner&apos;s login address
+            </Button>
+          </div>
+        </>
+      )}
+
+      {phase === "blocked" && (
+        <>
+          <p role="alert" style={warn}>
+            {current.free === false
+              ? "The address is still held, so the owner's login address cannot be changed yet. Check the record and try again."
+              : error ?? "The address could not be checked."}
+          </p>
+          <div style={actions}>
+            <Button variant="secondary" size="compact" onClick={onClose} disabled={busy}>Close</Button>
+            <Button variant="secondary" size="compact" onClick={() => void recheck()} disabled={busy}>Check again</Button>
+          </div>
+        </>
+      )}
+
+      {phase === "done" && (
+        <div role="status" style={{ marginTop: 12 }}>
+          <p style={{ fontSize: 13, fontWeight: 600, margin: "0 0 6px", color: adminPalette.green }}>Conflict resolved</p>
+          <ol style={{ fontSize: 13, margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+            <li>
+              Member contact address changed{step1?.alreadyApplied ? " (already applied)" : ""} — member {step1?.memberId}.{" "}
+              {step1?.canSignIn
+                ? "They were signed out everywhere and sign in with the new address."
+                : "They had no password: outstanding invite, sign-in and reset links were retired."}
+            </li>
+            <li>Address re-checked — free in this club.</li>
+            <li>
+              Owner login address changed{step3?.alreadyApplied ? " (already applied)" : ""} — owner {step3?.ownerId}. It is provisional
+              (unverified); the owner was signed out everywhere.
+            </li>
+          </ol>
+          <div style={actions}>
+            <Button variant="secondary" size="compact" onClick={onClose}>Close</Button>
+          </div>
+        </div>
+      )}
+
+      {error && dialog === null && phase !== "blocked" && <p role="alert" style={errorText}>{error}</p>}
+
+      <Dialog
+        open={dialog === "member"}
+        onClose={() => { if (!busy) setDialog(null); }}
+        title="Change this member's contact address"
+        description={member ? `${member.name} in ${current.tenant.name}. Only the address changes: their membership, import identity, password and history stay as they are.` : undefined}
+        footer={
+          <div style={actions}>
+            <Button variant="secondary" onClick={() => setDialog(null)} disabled={busy}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={submitMember}
+              loading={busy}
+              disabled={busy || (lost?.kind !== "member" && !(memberEmailOk && reasonOk && codeOk))}
+            >
+              {lost?.kind === "member" ? "Re-send the same confirmation" : "Change contact address"}
+            </Button>
+          </div>
+        }
+      >
+        <label htmlFor="conflict-member-email" style={label}>The member&apos;s new contact address</label>
+        <input id="conflict-member-email" type="email" autoComplete="off" value={memberNewEmail} disabled={busy || !!lost} onChange={(e) => setMemberNewEmail(e.target.value)} style={field} />
+        <p style={hint}>
+          {member?.canSignIn
+            ? "This member can sign in: they will be signed out everywhere and the new address is unverified."
+            : "This member has no password: any outstanding invite, sign-in or reset link is retired."}
+        </p>
+        <label htmlFor="conflict-member-reason" style={label}>Reason (audit-logged, at least {REASON_MIN} characters)</label>
+        <textarea id="conflict-member-reason" rows={3} value={reason} disabled={busy || !!lost} onChange={(e) => setReason(e.target.value)} style={{ ...field, resize: "vertical" }} />
+        {!lost && (
+          <>
+            <label htmlFor="conflict-member-code" style={label}>Your authenticator code (confirms it is you)</label>
+            <input id="conflict-member-code" type="text" inputMode="numeric" pattern="[0-9]*" maxLength={6} autoComplete="one-time-code" value={code} disabled={busy} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} style={codeField} />
+          </>
+        )}
+        {error && <p role="alert" style={errorText}>{error}</p>}
+      </Dialog>
+
+      <Dialog
+        open={dialog === "owner"}
+        onClose={() => { if (!busy) setDialog(null); }}
+        title="Change the owner's login address"
+        description={`${current.owner.name} will sign in with ${address}. Same account, role, password and authenticator; signed out everywhere; the address is provisional.`}
+        footer={
+          <div style={actions}>
+            <Button variant="secondary" onClick={() => setDialog(null)} disabled={busy}>Cancel</Button>
+            <Button variant="destructive" onClick={submitOwner} loading={busy} disabled={busy || (lost?.kind !== "owner" && !(reasonOk && codeOk))}>
+              {lost?.kind === "owner" ? "Re-send the same confirmation" : "Change login address"}
+            </Button>
+          </div>
+        }
+      >
+        <p style={hint}>{FRESH_CODE_HINT}</p>
+        <label htmlFor="conflict-owner-reason" style={label}>Reason (audit-logged, at least {REASON_MIN} characters)</label>
+        <textarea id="conflict-owner-reason" rows={3} value={reason} disabled={busy || !!lost} onChange={(e) => setReason(e.target.value)} style={{ ...field, resize: "vertical" }} />
+        {!lost && (
+          <>
+            <label htmlFor="conflict-owner-code" style={label}>A new authenticator code</label>
+            <input id="conflict-owner-code" type="text" inputMode="numeric" pattern="[0-9]*" maxLength={6} autoComplete="one-time-code" value={code} disabled={busy} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} style={codeField} />
+          </>
+        )}
+        {error && <p role="alert" style={errorText}>{error}</p>}
+      </Dialog>
+    </section>
+  );
+}
+
+const panel: React.CSSProperties = {
+  marginTop: 16,
+  padding: 16,
+  borderRadius: 12,
+  border: `1px solid ${adminPalette.amber}`,
+  background: adminPalette.amberSoft,
+};
+const grid: React.CSSProperties = { display: "grid", gridTemplateColumns: "max-content 1fr", gap: "4px 12px", margin: "0 0 8px", fontSize: 13 };
+const dt: React.CSSProperties = { color: adminPalette.muted };
+const dd: React.CSSProperties = { margin: 0 };
+const muted: React.CSSProperties = { fontSize: 12, color: adminPalette.muted, margin: "8px 0 0" };
+const warn: React.CSSProperties = {
+  fontSize: 12,
+  color: adminPalette.body,
+  background: adminPalette.card,
+  border: `1px solid ${adminPalette.borderStrong}`,
+  borderRadius: 8,
+  padding: 10,
+  margin: "8px 0 0",
+  lineHeight: 1.5,
+};
+const errorText: React.CSSProperties = { color: adminPalette.red, fontSize: 12, margin: "8px 0 0" };
+const actions: React.CSSProperties = { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12, flexWrap: "wrap" };
+const label: React.CSSProperties = { fontSize: 12, opacity: 0.7, display: "block", marginTop: 12, marginBottom: 4 };
+const hint: React.CSSProperties = { fontSize: 12, color: adminPalette.muted, margin: "6px 0 0" };
+const field: React.CSSProperties = {
+  width: "100%",
+  background: adminPalette.card,
+  border: `1px solid ${adminPalette.border}`,
+  borderRadius: 8,
+  padding: 10,
+  color: adminPalette.text,
+  fontSize: 13,
+  fontFamily: "inherit",
+  boxSizing: "border-box",
+};
+const codeField: React.CSSProperties = { ...field, fontFamily: "monospace", letterSpacing: 4, textAlign: "center" };

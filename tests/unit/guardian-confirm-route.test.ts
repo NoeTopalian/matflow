@@ -1,4 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { addLoginClaimSql } from "./login-claim-fake";
 
 /**
  * POST /api/members/[id]/guardian (2 Oct 2026): confirm or reject a guardian
@@ -25,7 +26,7 @@ vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
 vi.mock("@/lib/api-authz", () => ({ requireApiOwnerOrManager: gateMock }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_t: string, fn: (tx: unknown) => unknown) =>
-    Promise.resolve(fn({ member: { findFirst: memberFindFirst, update: memberUpdate, updateMany: memberUpdateMany } })),
+    Promise.resolve(fn(addLoginClaimSql({ member: { findFirst: memberFindFirst, update: memberUpdate, updateMany: memberUpdateMany } }))),
 }));
 
 const req = (body: unknown) =>

@@ -1,6 +1,16 @@
 import { auth } from "@/auth";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
 import { isReservedSlug } from "@/lib/reserved-slugs";
+import { isSupportSession, supportRequestDecision } from "@/lib/support-session";
+import {
+  buildNonceCsp,
+  cspHeaderName,
+  cspMode,
+  isTokenDocumentPath,
+  newNonce,
+  reportingEndpointsHeader,
+  wantsDocumentCsp,
+} from "@/lib/csp";
 
 // Request-ID propagation. Read inbound x-request-id (Vercel sets one;
 // most uptime monitors do too) or mint a fresh UUID. Stamp on the
@@ -26,7 +36,7 @@ const PUBLIC_PREFIXES = [
   // covered by that prefix, but called out here for searchability.
   "/api/tenant",
   "/api/apply",
-  "/api/admin",           // Super-admin surface — each route enforces MATFLOW_ADMIN_SECRET via header or cookie (lib/admin-auth.ts)
+  "/api/admin",           // Operator surface — each route runs its own operator gate (lib/admin-auth.ts / lib/operator-context.ts: MFA session + allowlist; shared secret in development/test only)
   "/admin",               // Super-admin pages — /admin/login is open; other /admin/* pages do client-side cookie check
   "/api/member/totp/recover",  // Public-by-design: no session required (mirrors /api/auth/totp/recover for the Member table)
   "/api/members/accept-invite", // LB-003: invite-token-gated, public by design
@@ -46,25 +56,67 @@ const PUBLIC_PREFIXES = [
 ];
 
 /**
- * Edge-safe verification of the v1.5 admin operator session cookie.
- * Verifies HMAC signature + non-expired exp. Does NOT check sessionVersion
- * (no Prisma at edge); the route handler (lib/admin-auth.ts /
- * resolveOperatorFromCookie) does the full check including revocation.
+ * HMAC domain of a FULL (MFA-verified) operator session — a copy of
+ * OP_SESSION_HMAC_DOMAIN in lib/operator-auth.ts, which this file cannot import
+ * (it pulls Prisma). tests/unit/operator-auth-hardening.test.ts pins the two
+ * together: a token from issueOperatorSession must pass here, and challenge,
+ * enrolment and pre-6-Oct-2026 tokens must not.
+ */
+const OP_SESSION_HMAC_DOMAIN = "operator-session.mfa.v2.";
+
+/**
+ * Mirror of sharedAdminSecretPermitted() in lib/admin-auth.ts (same reason it
+ * is a copy). The shared-secret cookie opens /admin pages only in a
+ * development/test process that is not Vercel production and not on the
+ * production database. No flag re-opens it.
+ */
+function sharedAdminSecretPermittedAtEdge(): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  if (process.env.VERCEL_ENV === "production") return false;
+  if ((process.env.DATABASE_URL ?? "").includes("ep-bold-wave-abt39t7x")) return false;
+  return true;
+}
+
+/**
+ * Mirror of isOperatorAllowed() in lib/operator-auth.ts (same reason it is a
+ * copy; admin hub lane B, 9 Oct 2026). OPERATOR_ALLOWED_IDS is a comma-separated
+ * list of Operator.ids, trimmed, exact match. Unset or blank: nobody in a
+ * production-like process, everybody in development/test. Exported only for
+ * tests/unit/operator-allowlist.test.ts, which pins it to the library version.
+ */
+export function operatorAllowedAtEdge(operatorId: string): boolean {
+  if (!operatorId) return false;
+  const raw = process.env.OPERATOR_ALLOWED_IDS;
+  if (raw === undefined || raw.trim() === "") return sharedAdminSecretPermittedAtEdge();
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .includes(operatorId);
+}
+
+/**
+ * Edge-safe verification of the operator session cookie.
+ * Verifies HMAC signature (MFA session domain) + non-expired exp, and returns
+ * the operator id it names (null on any failure). Does NOT check sessionVersion
+ * or TOTP state (no Prisma at edge); every /admin page and /api/admin route
+ * does the full check itself (lib/admin-auth.ts / resolveOperatorFromCookie),
+ * including revocation and the allowlist.
  */
 async function verifyOpSessionAtEdge(
   cookieValue: string | undefined,
   secret: string | undefined,
-): Promise<boolean> {
-  if (!cookieValue || !secret) return false;
+): Promise<string | null> {
+  if (!cookieValue || !secret) return null;
   const parts = cookieValue.split(".");
-  if (parts.length !== 4) return false;
+  if (parts.length !== 4) return null;
   const [id, ver, exp, sig] = parts;
-  if (!id || !ver || !exp || !sig) return false;
+  if (!id || !ver || !exp || !sig) return null;
   const expMs = Number(exp);
   const sessionVersion = Number(ver);
-  if (!Number.isSafeInteger(expMs) || expMs <= Date.now()) return false;
-  if (!Number.isSafeInteger(sessionVersion) || sessionVersion < 0) return false;
-  if (!/^[a-f0-9]{64}$/i.test(sig)) return false;
+  if (!Number.isSafeInteger(expMs) || expMs <= Date.now()) return null;
+  if (!Number.isSafeInteger(sessionVersion) || sessionVersion < 0) return null;
+  if (!/^[a-f0-9]{64}$/i.test(sig)) return null;
 
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
@@ -74,16 +126,16 @@ async function verifyOpSessionAtEdge(
     false,
     ["sign"],
   );
-  const sigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`${id}.${ver}.${exp}`));
+  const sigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`${OP_SESSION_HMAC_DOMAIN}${id}.${ver}.${exp}`));
   const expectedHex = Array.from(new Uint8Array(sigBuf))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-  if (expectedHex.length !== sig.length) return false;
+  if (expectedHex.length !== sig.length) return null;
   let mismatch = 0;
   for (let i = 0; i < expectedHex.length; i++) {
     mismatch |= expectedHex.charCodeAt(i) ^ sig.charCodeAt(i);
   }
-  return mismatch === 0;
+  return mismatch === 0 ? id : null;
 }
 
 // Audit iter-1-infra A7I1-S-4: hash both inputs to fixed-length SHA-256
@@ -139,7 +191,82 @@ export function unauthenticatedResponse(
   return NextResponse.redirect(new URL("/login", requestUrl));
 }
 
-export default auth(async function proxy(req) {
+/**
+ * What a request is answered with when its session could not be CHECKED
+ * (SF-44, security campaign iteration 2, lane A2, 9 Oct 2026): the revocation
+ * lookup failed, so auth.ts kept the token, marked it for revalidation and
+ * gave it no authority. Not "signed out" — nothing here clears the cookie, and
+ * the next request is checked afresh — and not admitted either.
+ *
+ * An `/api/*` request gets a retryable 503 in the API's refusal shape with
+ * Retry-After. A page gets a small 503 page that retries itself, so the person
+ * lands back where they were once the database answers, still signed in.
+ * Exported for tests/unit/sec-a2-proxy-outage-cookie.test.ts.
+ */
+export const AUTH_UNAVAILABLE_RETRY_AFTER_S = 15;
+export function authUnavailableResponse(pathname: string, requestId: string): NextResponse {
+  const headers = {
+    "retry-after": String(AUTH_UNAVAILABLE_RETRY_AFTER_S),
+    "cache-control": "private, no-store",
+    "x-request-id": requestId,
+  };
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.json(
+      { ok: false, error: "We couldn't confirm your sign-in just now. Please try again in a moment.", retryable: true },
+      { status: 503, headers },
+    );
+  }
+  const html =
+    '<!doctype html><html lang="en-GB"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    `<meta http-equiv="refresh" content="${AUTH_UNAVAILABLE_RETRY_AFTER_S}">` +
+    "<title>Temporarily unavailable</title>" +
+    "<style>body{margin:0;font-family:system-ui,sans-serif;background:#f7f7f8;color:#1a1a1a;display:grid;place-items:center;min-height:100vh;padding:16px}" +
+    "main{max-width:28rem}a{color:inherit}@media (prefers-color-scheme:dark){body{background:#111;color:#eee}}</style>" +
+    "</head><body><main><h1>We couldn't confirm your sign-in</h1>" +
+    "<p>MatFlow can't reach its database for a moment. You're still signed in. This page will try again automatically.</p>" +
+    '<p><a href="">Try again now</a></p></main></body></html>';
+  return new NextResponse(html, { status: 503, headers: { ...headers, "content-type": "text/html; charset=utf-8" } });
+}
+
+/**
+ * A request this proxy lets through. Document requests (anything outside
+ * /api) carry the per-request nonce Content-Security-Policy (security campaign
+ * iteration 2, lane C2 — SF-30): a fresh nonce, forwarded on the REQUEST so
+ * Next stamps it on every framework script while rendering, and set on the
+ * RESPONSE so the browser applies it. Report-only unless MATFLOW_CSP_ENFORCE
+ * is "1"/"true" (lib/csp.ts). Any CSP header the client sent is dropped first,
+ * so the nonce Next renders with is always the one this proxy minted.
+ * Exported for tests/unit/sec-c2-csp.test.ts.
+ */
+export function passThrough(
+  req: { headers: Headers; nextUrl: { pathname: string } },
+  requestId: string,
+  env: Record<string, string | undefined> = process.env,
+): NextResponse {
+  if (!wantsDocumentCsp(req.nextUrl.pathname)) {
+    const res = NextResponse.next();
+    res.headers.set("x-request-id", requestId);
+    return res;
+  }
+  const mode = cspMode(env);
+  const nonce = newNonce();
+  const policy = buildNonceCsp(nonce, { isDev: env.NODE_ENV === "development", mode });
+  const headerName = cspHeaderName(mode);
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.delete("content-security-policy");
+  requestHeaders.delete("content-security-policy-report-only");
+  requestHeaders.delete("x-nonce");
+  requestHeaders.set(headerName, policy);
+  requestHeaders.set("x-nonce", nonce);
+  const res = NextResponse.next({ request: { headers: requestHeaders } });
+  res.headers.set(headerName, policy);
+  res.headers.set("Reporting-Endpoints", reportingEndpointsHeader());
+  res.headers.set("x-request-id", requestId);
+  return res;
+}
+
+const authProxy = auth(async function proxy(req) {
   const { pathname } = req.nextUrl;
   const requestId = ensureRequestId(req);
 
@@ -167,17 +294,46 @@ export default auth(async function proxy(req) {
     );
   }
 
+  // Support (impersonation) sessions are READ-ONLY (remediation lane B, 6 Oct
+  // 2026; policy and allow-list in lib/support-session.ts). Checked BEFORE the
+  // public-prefix early return so /api/admin/* and every other prefix is
+  // covered, and before anything else can let the request through. Proxy runs
+  // on the Node runtime (Next 16), so auth.ts jwt() — which binds and validates
+  // the support session on every request — has already run and
+  // `req.auth.user.impersonatedBy` is present exactly when support is live.
+  // A Server Action is a POST to a page, so it is refused here too. The
+  // routes outside the matcher (/api/auth/*) guard themselves
+  // (lib/api-authz.ts refuseSupportSession).
+  if (isSupportSession(req.auth)) {
+    const method = (req as { method?: string }).method;
+    const decision = supportRequestDecision(method, pathname);
+    if (!decision.allowed) {
+      const isRead = !method || ["GET", "HEAD"].includes(method.toUpperCase());
+      if (!pathname.startsWith("/api/") && isRead) {
+        // A page on the operator plane: back to the club view, where the
+        // support banner offers the way out.
+        return NextResponse.redirect(new URL("/dashboard", req.url));
+      }
+      return NextResponse.json(
+        { ok: false, error: decision.message, supportReadOnly: true },
+        { status: 403, headers: { "x-request-id": requestId } },
+      );
+    }
+  }
+
   // Super-admin pages: edge-time gate. /admin is in PUBLIC_PREFIXES so
   // session-less access can reach /admin/login, but the rest of /admin/* needs
   // either:
-  //   - matflow_admin cookie holding MATFLOW_ADMIN_SECRET (v1 path), OR
-  //   - matflow_op_session cookie with valid HMAC + non-expired exp (v1.5 path)
+  //   - matflow_op_session cookie with a valid MFA-session HMAC + unexpired
+  //     exp, naming an allow-listed operator (OPERATOR_ALLOWED_IDS; every
+  //     environment), OR
+  //   - in development/test only, the matflow_admin cookie holding
+  //     MATFLOW_ADMIN_SECRET. Never in production (6 Oct 2026).
   //
-  // The v1.5 edge check verifies signature + expiry only — it does NOT check
-  // sessionVersion (no Prisma at edge). The full check (including revocation
-  // via sessionVersion mismatch) happens in lib/admin-auth.ts at the route
-  // handler level. So a revoked session can render the page shell until its
-  // 8h expiry, but every API route that reads it will reject.
+  // The edge check verifies signature + expiry only — it does NOT check
+  // sessionVersion or TOTP state (no Prisma at edge). Every /admin page calls
+  // isAdminPageAuthed() and every /api/admin route its own gate, which do the
+  // full check including revocation; this is the first fence, not the only one.
   if (
     pathname.startsWith("/admin") &&
     pathname !== "/admin/login" &&
@@ -185,11 +341,16 @@ export default auth(async function proxy(req) {
   ) {
     const legacyCookie = req.cookies.get("matflow_admin")?.value;
     const expected = process.env.MATFLOW_ADMIN_SECRET;
-    const legacyOk = !!expected && !!legacyCookie && (await constantTimeEq(legacyCookie, expected));
+    const legacyOk =
+      sharedAdminSecretPermittedAtEdge() &&
+      !!expected &&
+      !!legacyCookie &&
+      (await constantTimeEq(legacyCookie, expected));
 
     const opCookie = req.cookies.get("matflow_op_session")?.value;
     const authSecret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;
-    const opOk = await verifyOpSessionAtEdge(opCookie, authSecret);
+    const opId = await verifyOpSessionAtEdge(opCookie, authSecret);
+    const opOk = opId !== null && operatorAllowedAtEdge(opId);
 
     if (!legacyOk && !opOk) {
       return NextResponse.redirect(new URL("/admin/login", req.url));
@@ -199,15 +360,11 @@ export default auth(async function proxy(req) {
   // Root is the public marketing landing page. Exact-match check because
   // pathname.startsWith("/") would be true for every request.
   if (pathname === "/") {
-    const res = NextResponse.next();
-    res.headers.set("x-request-id", requestId);
-    return res;
+    return passThrough(req, requestId);
   }
 
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
-    const res = NextResponse.next();
-    res.headers.set("x-request-id", requestId);
-    return res;
+    return passThrough(req, requestId);
   }
 
   // A BARE single non-reserved path segment (e.g. /totalbjj) is a club's short
@@ -220,12 +377,21 @@ export default auth(async function proxy(req) {
   // auth. Public prefixes (/login, /apply, …) already returned above.
   const slugMatch = /^\/([a-z0-9-]+)\/?$/.exec(pathname.toLowerCase());
   if (slugMatch && !isReservedSlug(slugMatch[1])) {
-    const res = NextResponse.next();
-    res.headers.set("x-request-id", requestId);
-    return res;
+    return passThrough(req, requestId);
   }
 
-  if (!req.auth) {
+  // A session with no user id ({ user: undefined } — an invalidated token, or
+  // an identity-less support carrier) is signed out, not a session (review of
+  // lane I, 6 Oct 2026; lib/api-authz.ts already checks the user).
+  // Checked BEFORE the signed-out branch: a session awaiting revalidation has
+  // no user, and must not be answered as signed out (SF-44).
+  // (Read inline rather than through a helper imported from @/auth: the
+  // many tests that replace @/auth wholesale would otherwise lose this branch.)
+  if ((req.auth as { authUnavailable?: unknown } | null)?.authUnavailable === true) {
+    return authUnavailableResponse(pathname, requestId);
+  }
+
+  if (!req.auth || !(req.auth.user as { id?: unknown } | undefined)?.id) {
     return unauthenticatedResponse(pathname, req.url, requestId);
   }
 
@@ -316,10 +482,22 @@ export default auth(async function proxy(req) {
     return NextResponse.redirect(new URL("/dashboard", req.url));
   }
 
-  const res = NextResponse.next();
-  res.headers.set("x-request-id", requestId);
-  return res;
+  return passThrough(req, requestId);
 });
+
+// The proxy entry point. The kiosk tablet and the leaderboard TV authenticate
+// with a token in their URL and never had the session stack in front of them
+// (they were excluded by the matcher); they now enter the proxy only to receive
+// the document CSP, and still skip the next-auth wrapper — no session lookup,
+// no revocation query, no cookie written (lane C2, 9 Oct 2026). Line comments,
+// not a block comment: tests/unit/operator-allowlist.test.ts strips block
+// comments with a regex, and a path ending in slash-star in a line comment above opens one.
+export default async function proxy(req: NextRequest, ev: NextFetchEvent): Promise<Response> {
+  if (isTokenDocumentPath(req.nextUrl.pathname)) {
+    return passThrough(req, ensureRequestId(req));
+  }
+  return (authProxy as unknown as (r: NextRequest, e: NextFetchEvent) => Promise<Response>)(req, ev);
+}
 
 export const config = {
   // Skip middleware entirely for: Next internals, static assets, PWA manifest +
@@ -361,7 +539,13 @@ export const config = {
   // entirely by virtue of its name. `icons/` and `.well-known/` carry it for
   // the same reason. `tests/unit/proxy-matcher.test.ts` asserts both halves —
   // it is what caught this when the entry first went in bare.
+  // `kiosk` and `leaderboard` LEFT this exclusion on 9 Oct 2026 (lane C2): their
+  // pages need the per-request CSP nonce, which only this proxy can mint. The
+  // default export still skips the next-auth wrapper for them (isTokenDocumentPath),
+  // so no session work is added. `api/kiosk` stays excluded. `api/csp-report`
+  // joined it: browsers post violation reports without a session, and the route
+  // is anonymous by design (counts only, no storage).
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|apple-touch-icon.png|icon.png|manifest.webmanifest|icons/|robots.txt|sitemap.xml|\\.well-known/|api/webhooks|api/stripe/webhook|api/cron|api/health|api/kiosk|kiosk|leaderboard|api/magic-link|api/auth/).*)",
+    "/((?!_next/static|_next/image|favicon.ico|apple-touch-icon.png|icon.png|manifest.webmanifest|icons/|robots.txt|sitemap.xml|\\.well-known/|api/webhooks|api/stripe/webhook|api/cron|api/health|api/kiosk|api/csp-report$|api/magic-link|api/auth/).*)",
   ],
 };

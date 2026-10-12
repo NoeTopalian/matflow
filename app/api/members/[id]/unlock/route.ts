@@ -23,6 +23,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { hashToken } from "@/lib/token-hash";
+import { refuseSupportSession } from "@/lib/support-session";
 
 export const runtime = "nodejs";
 
@@ -46,6 +47,7 @@ export async function POST(
   // despite its name).
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023)
   const session = gate.session;
 
   const tenantId = session.user.tenantId;

@@ -1,0 +1,123 @@
+/**
+ * Review R8 probe (SF-109 tool guard). Pure-function cells may name the production endpoint (no connection is made);
+ * every SPAWNED cell uses a host under .invalid (never a resolvable production or TEST host), a synthetic env file in a
+ * fresh temp directory, cwd = that directory, and a PG*-free environment unless the cell adds one variable.
+ * Exit 2 + a REFUSED message = refused before any connection (a connection attempt to .invalid would exit 1 ENOTFOUND).
+ */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { describe, it, expect, afterAll } from "vitest";
+// @ts-expect-error -- plain .mjs module without types
+import * as tool from "../../scripts/readiness/demo-accounts-rotate.mjs";
+
+const SCRIPT = path.join(process.cwd(), "scripts/readiness/demo-accounts-rotate.mjs");
+const PROD = "ep-bold-wave-abt39t7x";
+const TEST = "ep-hidden-salad-abom7cg4";
+const SFX = ".eu-west-2.aws.neon.tech";
+const U = "secr8u";
+const W = "secr8-synthetic-pw";
+const url = (host: string, extra = "", pw = W) => `postgresql://${U}:${pw}@${host}/neondb?sslmode=require${extra}`;
+const rows: Array<Record<string, unknown>> = [];
+const dirs: string[] = [];
+afterAll(() => {
+  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+  if (process.env.R8_OUT) fs.writeFileSync(process.env.R8_OUT, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+});
+
+function pure(label: string, f: () => unknown) {
+  try { const v = f(); rows.push({ cell: label, outcome: "ACCEPTED", value: typeof v === "string" ? v.replace(PROD, "<PROD>") : "obj" }); return { ok: true, v }; }
+  catch (e) { const m = (e as Error).message; rows.push({ cell: label, outcome: "REFUSED", msg: m.replace(PROD, "<PROD>").slice(0, 120) }); return { ok: false, m }; }
+}
+
+function spawn(label: string, args: string[], envUrl: string | null, extraEnv: Record<string, string> = {}, envName = "r8.env") {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "secr8-"));
+  dirs.push(dir);
+  if (envUrl !== null) fs.writeFileSync(path.join(dir, envName), `TEST_DATABASE_URL="${envUrl}"\nDATABASE_URL="${envUrl}"\n`);
+  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG/i.test(k)));
+  const finalArgs = args.map((a) => a.replace("<DIR>", dir));
+  const r = spawnSync(process.execPath, [SCRIPT, "--slug", "secr8-none", ...finalArgs], { cwd: dir, env: { ...clean, ...extraEnv }, encoding: "utf8", timeout: 60_000 });
+  const outText = `${r.stdout}${r.stderr}`.replace(new RegExp(PROD, "g"), "<PROD>").trim();
+  rows.push({ cell: label, exit: r.status, out: outText.slice(0, 160) });
+  return { status: r.status, out: outText };
+}
+
+describe("R8 rotation-tool guard attacks", () => {
+  it("R8-P1 production endpoint (pooled and direct) refused by vetTarget", () => {
+    for (const h of [`${PROD}${SFX}`, `${PROD}-pooler${SFX}`, `${PROD.toUpperCase()}-POOLER${SFX.toUpperCase()}`]) expect(pure(`P1 ${h.replace(PROD, "<PROD>").replace(PROD.toUpperCase(), "<PROD-UC>")}`, () => tool.vetTarget(url(h))).ok).toBe(false);
+  });
+
+  it("R8-P2 upper-cased TEST host: the SAME endpoint (DNS is case-insensitive) — vetTarget admits it and normalises", () => {
+    const r = pure("P2 upper-case TEST host", () => tool.vetTarget(url(`${TEST.toUpperCase()}-POOLER${SFX.toUpperCase()}`)));
+    expect(r.ok).toBe(true);
+    expect(r.v).toBe(`${TEST}-pooler${SFX}`);
+  });
+
+  it("R8-P3 look-alikes refused", () => {
+    for (const h of [`ep-hidden-salad-xxxxxxxx${SFX}`, `ep-hidden-salad-abom7cg5${SFX}`, `${TEST}x${SFX}`, `${TEST}.evil.example`, `${TEST}${SFX}.invalid`, `${TEST}-pooler.us-east-2.aws.neon.tech`, `xx${TEST}${SFX}`]) {
+      expect(pure(`P3 ${h}`, () => tool.vetTarget(url(h))).ok, h).toBe(false);
+    }
+  });
+
+  it("R8-P4 override parameters refused: options=endpoint=, host=, hostaddr=, endpoint=", () => {
+    for (const x of [`&options=endpoint%3D${PROD}`, `&options=endpoint=${PROD}`, `&host=${PROD}${SFX}`, `&hostaddr=10.0.0.1`, `&endpoint=${PROD}`, `&OPTIONS=endpoint%3D${PROD}`]) {
+      const r = pure(`P4 ${x.replace(PROD, "<PROD>")}`, () => tool.vetTarget(url(`${TEST}-pooler${SFX}`, x)));
+      if (x.startsWith("&OPTIONS")) rows.push({ cell: "P4 note", text: "upper-case OPTIONS key: pg-connection-string keys are case-sensitive, so pg ignores it too" });
+      else expect(r.ok, x).toBe(false);
+    }
+  });
+
+  it("R8-P5 userinfo tricks: '@' smuggling and an endpoint= password (Neon's no-SNI routing form) — recorded", () => {
+    pure("P5 double-@ userinfo", () => tool.vetTarget(`postgresql://${U}:${W}@${TEST}${SFX}@${PROD}${SFX}/neondb`));
+    const pw = pure("P5 endpoint= in the password", () => tool.vetTarget(url(`${TEST}-pooler${SFX}`, "", `endpoint=${PROD}$${W}`)));
+    const cfg = tool.clientConfig(url(`${TEST}-pooler${SFX}`, "", `endpoint=${PROD}$${W}`));
+    rows.push({ cell: "P5 clientConfig", host: cfg.host, ssl: cfg.ssl, passwordCarriesEndpoint: String(cfg.password).startsWith("endpoint="), hasOptions: "options" in cfg });
+    expect(pw.ok).toBe(true); // recorded as a residual: the guard does not inspect the password field
+  });
+
+  it("R8-P6 parseArgs: --allow-production, .env (every spelling), DATABASE_URL refused", () => {
+    const base = ["--slug", "secr8-x"];
+    for (const a of [["--allow-production"], ["--confirm", "--allow-production"], ["--env-file", ".env"], ["--env-file", "sub/.env"], ["--env-file", "C:\\x\\.env"], ["--var", "DATABASE_URL"], ["--var", "test_database_url"], ["--production"], ["--slug", "Prod"]]) {
+      expect(pure(`P6 ${a.join(" ")}`, () => tool.parseArgs([...base, ...a])).ok, a.join(" ")).toBe(false);
+    }
+    for (const a of [["--env-file", ".ENV"], ["--env-file", ".env."], ["--env-file", ".env "], ["--env-file", "./.Env"]]) {
+      pure(`P6-alias ${JSON.stringify(a[1])}`, () => tool.parseArgs([...base, ...a]));
+    }
+  });
+
+  it("R8-P7 refusePgEnvironment: PGOPTIONS/PGHOST refused; lower-case names recorded", () => {
+    expect(pure("P7 PGOPTIONS", () => tool.refusePgEnvironment({ PGOPTIONS: "endpoint=x" })).ok).toBe(false);
+    expect(pure("P7 PGHOST", () => tool.refusePgEnvironment({ PGHOST: "x.invalid" })).ok).toBe(false);
+    pure("P7 pgoptions (lower-case)", () => tool.refusePgEnvironment({ pgoptions: "endpoint=x" }));
+    pure("P7 PgHost (mixed)", () => tool.refusePgEnvironment({ PgHost: "x.invalid" }));
+  });
+
+  // ── spawned, .invalid hosts only ──
+  const INV_PROD = `${PROD}-pooler${SFX}.invalid`;
+  const INV_TEST = `${TEST}-pooler${SFX}.invalid`;
+  const cases: Array<{ label: string; args: string[]; envUrl: string | null; env?: Record<string, string>; envName?: string; expectMsg: RegExp }> = [
+    { label: "S1 production id (.invalid)", args: ["--env-file", "<DIR>/r8.env"], envUrl: url(INV_PROD), expectMsg: /REFUSED/ },
+    { label: "S1b production id, --confirm", args: ["--confirm", "--env-file", "<DIR>/r8.env"], envUrl: url(INV_PROD), expectMsg: /REFUSED/ },
+    { label: "S2 upper-cased TEST host (.invalid)", args: ["--env-file", "<DIR>/r8.env"], envUrl: url(INV_TEST.toUpperCase()), expectMsg: /REFUSED/ },
+    { label: "S3 look-alike ep-hidden-salad-xxxx (.invalid)", args: ["--env-file", "<DIR>/r8.env"], envUrl: url(`ep-hidden-salad-xxxxxxxx${SFX}.invalid`), expectMsg: /REFUSED/ },
+    { label: "S4 ?options=endpoint= (.invalid)", args: ["--env-file", "<DIR>/r8.env"], envUrl: url(INV_TEST, `&options=endpoint%3D${PROD}`), expectMsg: /REFUSED: connection string carries a options= parameter/ },
+    { label: "S5 PGOPTIONS set", args: ["--env-file", "<DIR>/r8.env"], envUrl: url(INV_TEST), env: { PGOPTIONS: `endpoint=${PROD}` }, expectMsg: /libpq environment variable/ },
+    { label: "S5b PGHOST set", args: ["--env-file", "<DIR>/r8.env"], envUrl: url(INV_TEST), env: { PGHOST: "secr8.invalid" }, expectMsg: /libpq environment variable/ },
+    { label: "S5c pgoptions (lower-case) set", args: ["--env-file", "<DIR>/r8.env"], envUrl: url(INV_TEST), env: { pgoptions: `endpoint=${PROD}` }, expectMsg: /REFUSED/ },
+    { label: "S6 --allow-production", args: ["--allow-production", "--env-file", "<DIR>/r8.env"], envUrl: url(INV_TEST), expectMsg: /unknown option --allow-production/ },
+    { label: "S7 --env-file <dir>/.env", args: ["--env-file", "<DIR>/.env"], envUrl: url(INV_PROD), envName: ".env", expectMsg: /\.env holds the production credentials/ },
+    { label: "S7b --env-file <dir>/.ENV (file on disk is .env)", args: ["--env-file", "<DIR>/.ENV"], envUrl: url(INV_PROD), envName: ".env", expectMsg: /REFUSED/ },
+    { label: "S7c --env-file <dir>/.env. (file on disk is .env)", args: ["--env-file", "<DIR>/.env."], envUrl: url(INV_PROD), envName: ".env", expectMsg: /REFUSED|ENOENT|ABORTED/ },
+    { label: "S8 --var DATABASE_URL", args: ["--var", "DATABASE_URL", "--env-file", "<DIR>/r8.env"], envUrl: url(INV_TEST), expectMsg: /--var must be one of/ },
+    { label: "S9 default env file (cwd has none)", args: [], envUrl: null, expectMsg: /ENOENT|ABORTED|REFUSED/ },
+  ];
+  for (const c of cases) {
+    it(`R8-${c.label}: refused before any connection`, () => {
+      const r = spawn(c.label, c.args, c.envUrl, c.env ?? {}, c.envName ?? "r8.env");
+      expect(r.out).not.toMatch(/ENOTFOUND|getaddrinfo|ECONNREFUSED|target: TEST/);
+      if (!c.label.startsWith("S7c") && !c.label.startsWith("S9")) expect(r.status).toBe(2);
+      expect(r.out).toMatch(c.expectMsg);
+    });
+  }
+});

@@ -16,11 +16,14 @@ import bcrypt from "bcryptjs";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
+import { isEmailDeliveryOn } from "@/lib/email-delivery";
 import { hashToken } from "@/lib/token-hash";
+import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
 import { getBaseUrl } from "@/lib/env-url";
 import { getOperatorContext } from "@/lib/operator-context";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
+import { emailDigest } from "@/lib/login-email";
 
 // Audit iter-1-operator-admin A6I1-S-5: rate-limit destructive admin ops.
 const RL_MAX = 20;
@@ -131,20 +134,30 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: "Failed to create tenant" }, { status: 500 });
   }
 
-  // Mint an owner-activation magic-link token (30-min expiry, same shape as login).
-  const token = randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
-  await withTenantContext(tenantId, (tx) =>
-    tx.magicLinkToken.create({
-      data: {
-        tenantId,
-        email: application.email.toLowerCase().trim(),
-        tokenHash: hashToken(token),
-        purpose: "first_time_signup",
-        expiresAt,
-      },
-    }),
-  );
+  // Mint an owner-activation magic-link token (30-min expiry, same shape as login)
+  // — but only when email is on (review defect 5, 7 Oct 2026). With
+  // EMAIL_DELIVERY=off nobody can receive it, so minting it would only leave a
+  // live sign-in credential lying in the database. The response says plainly
+  // that no link exists; the operator gives the owner access another way.
+  const deliveryOn = isEmailDeliveryOn();
+  let token: string | null = null;
+  if (deliveryOn) {
+    // Bound to THIS owner (AH-D2, lib/auth-token-binding.ts).
+    token = mintSubjectBoundToken({ purpose: "first_time_signup", tenantId, subject: { kind: "user", id: ownerUserId } });
+    const tokenHash = hashToken(token);
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await withTenantContext(tenantId, (tx) =>
+      tx.magicLinkToken.create({
+        data: {
+          tenantId,
+          email: application.email.toLowerCase().trim(),
+          tokenHash,
+          purpose: "first_time_signup",
+          expiresAt,
+        },
+      }),
+    );
+  }
 
   // Flip application to approved (cross-tenant scope — bypass).
   await withRlsBypass((tx) =>
@@ -163,9 +176,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     entityId: id,
     metadata: {
       tenantSlug: slug,
-      ownerEmail: application.email,
+      ownerEmailSha256: emailDigest(application.email),
       ownerUserId,
       operatorEmail: operator.operatorEmail,
+      activationLinkCreated: token !== null,
     },
     actAsUserId: operator.operatorId,
     req,
@@ -173,10 +187,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   // Send the activation email. Best-effort — DB state stays correct even if email fails.
   const baseUrl = getBaseUrl(req);
-  const link = `${baseUrl}/api/magic-link/verify?token=${encodeURIComponent(token)}&tenantSlug=${encodeURIComponent(slug)}`;
-  if (process.env.RESEND_API_KEY) {
+  const link = token
+    ? `${baseUrl}/api/magic-link/verify?token=${encodeURIComponent(token)}&tenantSlug=${encodeURIComponent(slug)}`
+    : undefined;
+  // `activationEmailSent` / `activationLinkCreated` are what the operator screen
+  // reports (7 Oct 2026, mail-dark): it is never told the contact was emailed
+  // unless sendEmail says so, and with email off it is told no link exists.
+  let activationEmailSent = false;
+  if (!link) {
+    console.warn(`[admin/applications/${id}/approve] email is turned off (EMAIL_DELIVERY=off) — no activation link was created or sent`);
+  } else if (process.env.RESEND_API_KEY) {
     try {
-      await sendEmail({
+      const sent = await sendEmail({
         tenantId,
         templateId: "owner_activation",
         to: application.email.toLowerCase().trim(),
@@ -187,9 +209,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           link,
         },
       });
+      activationEmailSent = sent.ok;
+      if (sent.suppressed) {
+        // The link itself is never logged here, in any environment.
+        console.warn(`[admin/applications/${id}/approve] activation email suppressed (${sent.suppressed}) — nothing was sent`);
+      }
     } catch (e) {
       console.error(`[admin/applications/${id}/approve] activation email failed`, e);
     }
+  } else if (process.env.NODE_ENV === "production") {
+    // Never write a live sign-in link to production logs (6 Oct 2026, lane I
+    // review): anyone with log access could sign in as the new owner.
+    console.error(`[admin/applications/${id}/approve] RESEND_API_KEY unset — activation email NOT sent; resend once mail is configured`);
   } else {
     console.warn(`[admin/applications/${id}/approve] RESEND_API_KEY unset — activation link: ${link}`);
   }
@@ -199,6 +230,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     tenantId,
     slug,
     ownerEmail: application.email,
+    activationEmailSent,
+    activationLinkCreated: token !== null,
+    emailDelivery: deliveryOn ? "on" : "off",
     activationLink: process.env.NODE_ENV === "production" ? undefined : link,
   }, { status: 201 });
 }

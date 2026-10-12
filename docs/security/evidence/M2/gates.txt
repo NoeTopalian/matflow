@@ -1,0 +1,11 @@
+node v24.21.0  HEAD 55b6a1a  2026-10-10T21:53:49Z
+tsc exit=0 errors=0
+lint exit=0 ✖ 77 problems (0 errors, 77 warnings)
+unit-set exit=0
+ Test Files  21 passed (21)
+      Tests  311 passed | 1 skipped (312)
+unit-full exit=0
+ Test Files  475 passed (475)
+      Tests  6533 passed | 1 skipped (6534)
+lint warnings: 77, none in an M2 file (grep of lint log for the changed paths: 0 lines)
+full unit before M2 (lead, 86b65e9): 6503/6503; after M2: 6533 passed + 1 skipped = 6534 (31 new M2 tests; the skip is the real-symlink cell: EPERM without Windows Developer Mode)

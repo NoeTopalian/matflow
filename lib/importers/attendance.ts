@@ -23,9 +23,11 @@
  *    members import stored as `Member.externalRef` (lib/importers/teamup.ts
  *    `teamupPersonKey`). Matching order: the owner's saved decision; the
  *    member whose externalRef is that key (or the export's customer id); one
- *    member whose name AND email both equal the row's. Name alone, email
- *    alone, a shared address, a date of birth or an emergency contact never
- *    identify anyone — they are offered as candidates only.
+ *    member whose name AND email both equal the row's, when no other member
+ *    of the club has that name. Name alone, email alone, a shared address, a
+ *    date of birth or an emergency contact never identify anyone — they are
+ *    offered as candidates only. Once a commit starts, the resolutions it
+ *    started with are frozen (`PlanDecisions.frozenPeople`).
  *  - A session is (absolute start, offering mapping, venue mapping). Offerings
  *    sharing a start are different sessions unless the owner maps them to the
  *    same class. Nothing is deduplicated by start time alone.
@@ -174,6 +176,18 @@ const NO_SHOW = new Set(["no show", "no-show", "noshow", "no_show", "absent", "m
 const WAITLIST = new Set(["waitlist", "waitlisted", "wait list", "waiting list"]);
 const YES = new Set(["yes", "y", "true", "1", "attended", "checked in"]);
 const NO = new Set(["no", "n", "false", "0"]);
+
+/**
+ * A name folded for the "is this name unique in the club?" test (AH-D1 retest,
+ * reviewer R, 9 Oct 2026): compatibility decomposition, combining marks
+ * (category Mn, which includes U+0300 to U+036F) and format characters (category Cf: zero-width space/joiner,
+ * BOM, bidi marks) removed, whitespace collapsed, case folded. "B<e-acute>a Lane",
+ * "Bea<U+200B>Lane" and "BEA  lane" all fold to "bea lane". Used only to find
+ * AMBIGUITY (a collision means "not unique"); never to bind anyone.
+ */
+export function foldName(s: string): string {
+  return s.normalize("NFKD").replace(/\p{Mn}/gu, "").replace(/\p{Cf}/gu, "").trim().toLowerCase().replace(/\s+/g, " ");
+}
 
 export function norm(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
@@ -431,7 +445,29 @@ export function dayMarkerFor(localDate: string): Date {
 
 // ── Plan ───────────────────────────────────────────────────────────────────
 
-export type RosterMember = { id: string; name: string; email: string; externalRef: string | null; noLogin?: boolean };
+export type RosterMember = {
+  id: string; name: string; email: string; externalRef: string | null; noLogin?: boolean;
+  /** When the record was created (immutable; from the row id — see cuidCreatedAt). Unknown = never "held since". */
+  createdAt?: Date | string | null;
+  /**
+   * The latest RECORDED change of this member's own login address (the audit row's time, not its digest, so it
+   * survives a key rotation). Null/absent = none recorded. An address change after the person's earliest booking
+   * means the member has not demonstrably held the address since then (R fourth pass, residuals 2 and 3).
+   */
+  addressChangedAt?: Date | string | null;
+};
+
+/**
+ * The creation time embedded in a Prisma cuid (v1: "c" + 8 base36 chars of epoch ms + 16 more). Member has no
+ * createdAt column; the id is immutable and set once at insert, so it is the record's creation time. Anything that is
+ * not a plausible cuid (cuid2, a hand-set id, a time outside 2015..now+1 day) returns null, which never qualifies.
+ */
+export function cuidCreatedAt(id: string, now: Date = new Date()): Date | null {
+  if (!/^c[0-9a-z]{24}$/.test(id)) return null;
+  const ms = parseInt(id.slice(1, 9), 36);
+  if (!Number.isFinite(ms) || ms < Date.UTC(2015, 0, 1) || ms > now.getTime() + 86_400_000) return null;
+  return new Date(ms);
+}
 export type RosterClass = { id: string; name: string; isActive: boolean; historical: boolean; locationId: string | null };
 export type RosterLocation = { id: string; name: string };
 
@@ -439,13 +475,24 @@ export type PersonDecision = { action: "member"; targetId: string } | { action: 
 export type OfferingDecision = { action: "class"; targetId: string } | { action: "new_class"; targetId?: string | null } | { action: "pending" };
 export type VenueDecision = { action: "location"; targetId: string } | { action: "club" } | { action: "pending" };
 
+export type MatchMethod = "decision" | "external_ref" | "name_and_email";
+
+/**
+ * Who each person resolved to when the owner started the commit. A commit runs
+ * in steps that re-plan against the live roster; without this, a member added,
+ * renamed or re-addressed between steps could receive history the owner never
+ * previewed (security lane D, AH-D1 / SEC-053, 9 Oct 2026). When present, it is
+ * the ONLY source of person resolution: a person absent from it, or whose
+ * member no longer exists, is pending.
+ */
+export type FrozenPerson = { memberId: string | null; method: MatchMethod | null; decidedPending: boolean };
+
 export type PlanDecisions = {
   person: Record<string, PersonDecision>;
   offering: Record<string, OfferingDecision>;
   venue: Record<string, VenueDecision>;
+  frozenPeople?: Record<string, FrozenPerson>;
 };
-
-export type MatchMethod = "decision" | "external_ref" | "name_and_email";
 
 /** What a booking will become if committed now. */
 export type BookingIntent =
@@ -569,6 +616,14 @@ export function planAttendanceImport(
     decisions: PlanDecisions;
     /** True when a member's email is a synthesised no-login address (lib/synthesise-kid-email): never matched on. */
     isSynthesisedEmail: (email: string) => boolean;
+    /**
+     * Members (ids) that once held this address in this club and moved off it,
+     * from the address-change audit trail; an empty array = released by a staff
+     * login. Undefined = never released. A released address never identifies
+     * anyone by the name+email fallback (AH-D1 retest: a rename or an accent can
+     * hide the original from the same-name test, the release cannot).
+     */
+    releasedBy?: (email: string) => string[] | undefined;
     /** Classes a commit already created for `new:` class keys (classKey -> class id), so every step resolves them alike. */
     createdClasses?: Record<string, string>;
   },
@@ -586,7 +641,7 @@ export function planAttendanceImport(
   for (const m of opts.members) {
     if (m.externalRef) push(byRef, m.externalRef.trim().toLowerCase(), m);
     const email = synthetic(m.email) ? "" : m.email.trim().toLowerCase();
-    push(byName, norm(m.name), m);
+    push(byName, foldName(m.name), m);
     if (email) { push(byEmail, email, m); push(byNameEmail, `${norm(m.name)}|${email}`, m); }
   }
   const classById = new Map(opts.classes.map((c) => [c.id, c]));
@@ -595,12 +650,39 @@ export function planAttendanceImport(
   // Who is each person? Resolved once per person key.
   type Resolved = { memberId: string | null; method: MatchMethod | null; decidedPending: boolean };
   const resolved = new Map<string, Resolved>();
+  // The earliest booking of each person in this file: the name+address fallback needs the member to have
+  // existed (and held the address) since before it.
+  const earliestOf = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.personKey) continue;
+    const t = r.startInstant ? new Date(r.startInstant) : r.startLocal ? localToUtc(r.startLocal, timezone) : null;
+    if (!t || isNaN(t.getTime())) continue;
+    const cur = earliestOf.get(r.personKey);
+    if (cur === undefined || t.getTime() < cur) earliestOf.set(r.personKey, t.getTime());
+  }
+  const heldSinceBefore = (m: RosterMember, personKey: string) => {
+    const earliest = earliestOf.get(personKey);
+    const created = m.createdAt ? new Date(m.createdAt) : null;
+    if (earliest === undefined || !created || isNaN(created.getTime()) || created.getTime() >= earliest) return false;
+    // Its own recorded address change after the earliest booking: it acquired (or re-acquired) the address since.
+    const changed = m.addressChangedAt ? new Date(m.addressChangedAt) : null;
+    if (changed && (isNaN(changed.getTime()) || changed.getTime() >= earliest)) return false;
+    return true;
+  };
+
   const resolvePerson = (r: AttendanceRow): Resolved => {
     const hit = resolved.get(r.personKey);
     if (hit) return hit;
     let out: Resolved = { memberId: null, method: null, decidedPending: false };
-    const d = decisions.person[r.personKey];
-    if (d?.action === "member" && memberById.has(d.targetId)) out = { memberId: d.targetId, method: "decision", decidedPending: false };
+    // Own keys only: a source label "constructor" / "__proto__" must not find an inherited value (SF-C2).
+    const d = Object.hasOwn(decisions.person, r.personKey) ? decisions.person[r.personKey] : undefined;
+    const frozen = decisions.frozenPeople;
+    if (frozen) {
+      // A commit in progress: only what the owner previewed and committed binds.
+      const f = Object.hasOwn(frozen, r.personKey) ? frozen[r.personKey] : undefined;
+      if (f?.memberId && memberById.has(f.memberId)) out = { memberId: f.memberId, method: f.method, decidedPending: false };
+      else out = { memberId: null, method: null, decidedPending: !!f?.decidedPending };
+    } else if (d?.action === "member" && memberById.has(d.targetId)) out = { memberId: d.targetId, method: "decision", decidedPending: false };
     // A decision whose member no longer exists, or "keep pending": pending — never re-matched behind the owner's back.
     else if (d) out = { memberId: null, method: null, decidedPending: true };
     else {
@@ -611,8 +693,19 @@ export function planAttendanceImport(
       const uniq = [...new Map(refHits.map((m) => [m.id, m])).values()];
       if (uniq.length === 1) out = { memberId: uniq[0].id, method: "external_ref", decidedPending: false };
       else if (uniq.length === 0 && r.email && r.personName) {
+        // Name AND address, and only when nobody else in the club carries the
+        // name: two members with one name (a same-name member on a released or
+        // shared address, a parent and child with one name) is ambiguity, so the
+        // row stays pending and both are offered as candidates (AH-D1 / SEC-053).
         const ne = byNameEmail.get(`${norm(r.personName)}|${r.email}`) ?? [];
-        if (ne.length === 1) out = { memberId: ne[0].id, method: "name_and_email", decidedPending: false };
+        const sameName = byName.get(foldName(r.personName)) ?? [];
+        const released = opts.releasedBy?.(r.email);
+        // INVERTED (R third pass): allowed ONLY when the one fold-match holding the address demonstrably held it
+        // since before this person's first booking: created before it, and no release of the address recorded
+        // for anyone (keyed or unkeyed digest). Anything else is pending with the candidates offered.
+        if (ne.length === 1 && sameName.length === 1 && !released && heldSinceBefore(ne[0], r.personKey)) {
+          out = { memberId: ne[0].id, method: "name_and_email", decidedPending: false };
+        }
       }
     }
     resolved.set(r.personKey, out);
@@ -663,8 +756,8 @@ export function planAttendanceImport(
     const status = r.status as BookingStatus;
 
     // Offering and venue as the owner mapped them.
-    const od = decisions.offering[r.className] ?? null;
-    const vd = decisions.venue[r.venue] ?? null;
+    const od = Object.hasOwn(decisions.offering, r.className) ? decisions.offering[r.className] : null;
+    const vd = Object.hasOwn(decisions.venue, r.venue) ? decisions.venue[r.venue] : null;
     const venueKey = vd?.action === "location" && locationIds.has(vd.targetId) ? `loc:${vd.targetId}` : vd?.action === "club" ? "club" : null;
     let classKey: string | null = null;
     let venueConflict = false;
@@ -763,8 +856,10 @@ export function planAttendanceImport(
     p.sharedEmail = !!p.email && (emailHolders.get(p.email) ?? 0) > 1;
     if (p.memberId) continue;
     const cands = new Map<string, "same_name" | "same_email">();
-    for (const m of byName.get(norm(p.name)) ?? []) cands.set(m.id, "same_name");
+    for (const m of byName.get(foldName(p.name)) ?? []) cands.set(m.id, "same_name");
     if (p.email) for (const m of byEmail.get(p.email) ?? []) if (!cands.has(m.id)) cands.set(m.id, "same_email");
+    // Whoever released the address is offered too: they held it before.
+    if (p.email) for (const id of opts.releasedBy?.(p.email) ?? []) if (memberById.has(id) && !cands.has(id)) cands.set(id, "same_email");
     p.candidates = [...cands.entries()].slice(0, 5).map(([memberId, reason]) => ({ memberId, reason }));
   }
   for (const o of offerings.values()) {

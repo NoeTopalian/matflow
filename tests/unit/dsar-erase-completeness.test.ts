@@ -99,7 +99,7 @@ vi.mock("@prisma/client", () => ({
 }));
 
 vi.mock("@vercel/blob", () => ({ del: delMock }));
-vi.mock("@/lib/api-authz", () => ({
+vi.mock("@/lib/api-authz", () => ({ refuseSupportSession: () => null,
   requireApiRole: async (...args: unknown[]) => ({ ok: true, ...(await requireRoleMock(...args)) }),
 }));
 
@@ -112,6 +112,11 @@ vi.mock("@/lib/stripe/subscriptions", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // The erase re-reads the member under a row lock (lane D3): answer with the row the first member read returned.
+    $queryRaw: async () => {
+      const m = (await memberFindFirstMock.mock.results[0]?.value) as { email: string; name?: string; externalRef?: string | null } | null | undefined;
+      return m ? [{ email: m.email, name: m.name, externalRef: m.externalRef }] : [];
+    },
     member: {
       findFirst: memberFindFirstMock,
       update: memberUpdateMock,

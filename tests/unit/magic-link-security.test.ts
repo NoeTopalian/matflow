@@ -3,6 +3,8 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
 vi.mock("next/server", () => ({
+  // Run after() work inline so the sign-in record is observable.
+  after: (fn: () => unknown) => { void fn(); },
   NextResponse: {
     json: (body: unknown, init?: { status?: number }) => ({
       status: init?.status ?? 200,
@@ -48,7 +50,9 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/rate-limit", () => ({
   checkRateLimit: vi.fn().mockResolvedValue({ allowed: true, retryAfterSeconds: 0 }),
+  getClientIp: vi.fn(() => "203.0.113.7"),
 }));
+vi.mock("@/lib/login-event", () => ({ recordLoginEvent: vi.fn().mockResolvedValue(undefined) }));
 
 vi.mock("@/lib/email", () => ({
   sendEmail: vi.fn().mockResolvedValue({ ok: true, logId: "log-1" }),
@@ -395,6 +399,16 @@ describe("verify — the minted session is usable", () => {
     // Staff sessions have no member record; `memberId` must stay unset rather
     // than be faked, or member-scoped routes would serve a staff user.
     expect(token.memberId).toBeUndefined();
+  });
+
+  it("writes a sign-in record, as the password door does (activation evidence, 6 Oct 2026)", async () => {
+    const { recordLoginEvent } = await import("@/lib/login-event");
+    vi.mocked(recordLoginEvent).mockClear();
+    await verifyAs("user");
+    expect(recordLoginEvent).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(recordLoginEvent).mock.calls[0][0];
+    expect(args.subject.kind).toBe("user");
+    expect(args.ip).toBe("203.0.113.7");
   });
 
   it("reads totpEnabled, so the member's own security screen tells the truth", async () => {

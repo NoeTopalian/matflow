@@ -1,0 +1,23 @@
+200 / proxy=true ro=true enf=1 nonceDiff=true scripts={"scripts":14,"withHeaderNonce":14,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0 h1="The gym softwarebuilt for the mat."
+200 /login proxy=true ro=true enf=1 nonceDiff=true scripts={"scripts":17,"withHeaderNonce":17,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0 h1=""
+200 /login?club=<slug> proxy=true ro=true enf=1 nonceDiff=true scripts={"scripts":17,"withHeaderNonce":17,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0 h1=""
+200 /apply proxy=true ro=true enf=1 nonceDiff=true scripts={"scripts":17,"withHeaderNonce":17,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0 h1="Get your gym on MatFlow"
+200 /legal/privacy proxy=true ro=true enf=1 nonceDiff=true scripts={"scripts":16,"withHeaderNonce":16,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0 h1="Privacy Policy"
+200 /admin/login proxy=true ro=true enf=1 nonceDiff=true scripts={"scripts":16,"withHeaderNonce":16,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0 h1="Admin sign in"
+200 /kiosk/<kiosk-token> proxy=true ro=true enf=1 nonceDiff=true scripts={"scripts":16,"withHeaderNonce":16,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0 h1="secR5 Club"
+200 /leaderboard/<display-token> proxy=true ro=true enf=1 nonceDiff=true scripts={"scripts":14,"withHeaderNonce":14,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0 h1="secR5 Club"
+200 /waiver/open?token=<waiver-token> proxy=true ro=true enf=1 nonceDiff=true scripts={"scripts":16,"withHeaderNonce":16,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0 h1="Liability Waiver & Assumption of Risk"
+404 /kiosk/r5-not-a-valid-token-xx proxy=true ro=true enf=1 nonceDiff=true scripts=null viol=0 h1="404"
+404 /leaderboard/r5-not-a-valid-token-xx proxy=true ro=true enf=1 nonceDiff=true scripts=null viol=0 h1="404"
+controls {"reportSinkGet":{"status":405,"proxyRan":false},"injectLogin":{"scriptRan":true,"handlerRan":true,"violations":["script-src-elem|inline|report","script-src-attr|inline|report"]},"injectKiosk":{"scriptRan":true,"handlerRan":true,"violations":["script-src-elem|inline|report","script-src-attr|inline|report"]}}
+200 /dashboard ro=true enf=1 nonceDiff=true scripts={"scripts":20,"withHeaderNonce":20,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0
+200 /dashboard/members ro=true enf=1 nonceDiff=true scripts={"scripts":21,"withHeaderNonce":21,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0
+200 /dashboard/settings ro=true enf=1 nonceDiff=true scripts={"scripts":20,"withHeaderNonce":20,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0
+200 /dashboard/payments ro=true enf=1 nonceDiff=true scripts={"scripts":18,"withHeaderNonce":18,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0
+200 /dashboard/checkin ro=true enf=1 nonceDiff=true scripts={"scripts":20,"withHeaderNonce":20,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0
+200 /member/home ro=true enf=1 nonceDiff=true scripts={"scripts":18,"withHeaderNonce":18,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0
+200 /member/schedule ro=true enf=1 nonceDiff=true scripts={"scripts":19,"withHeaderNonce":19,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0
+200 /member/shop ro=true enf=1 nonceDiff=true scripts={"scripts":17,"withHeaderNonce":17,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0
+200 /member/billing ro=true enf=1 nonceDiff=true scripts={"scripts":17,"withHeaderNonce":17,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0
+200 /member/profile ro=true enf=1 nonceDiff=true scripts={"scripts":20,"withHeaderNonce":20,"withOtherNonce":0,"without":0,"inlineEventHandlerAttrs":0} viol=0
+SUMMARY {"pages":21,"pages200":19,"withNoncePolicy":19,"nonceDiffersEverywhere":true,"scriptsWithoutHeaderNonce":0,"totalScripts":333,"inlineHandlerAttrs":0,"unsafeInlineInNoncePolicyScriptSrc":0,"violations":0,"consoleCsp":0,"distinctPolicies":2}

@@ -12,6 +12,8 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
  *      owners, 401 non-owners). Self-disable is impossible for everyone.
  */
 
+// The fake prisma below does not model the RateLimitHit store; the limiter is assumed to allow (lane C4, R6-N3).
+vi.mock("@/lib/rate-limit", async (orig) => (await import("./sec-c4-allow-rate-limit")).allowRateLimit(orig));
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 
@@ -27,6 +29,7 @@ vi.mock("@/lib/prisma", () => ({
     user: {
       findUnique: findUniqueMock,
       update: updateMock,
+      updateMany: async () => ({ count: 1 }),
     },
   },
 }));
@@ -36,7 +39,13 @@ vi.mock("@/lib/prisma", () => ({
 // the same mocks we mock on `prisma`.
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_tenantId: string, fn: (tx: unknown) => unknown) =>
-    Promise.resolve(fn({ user: { findUnique: findUniqueMock, update: updateMock } })),
+    Promise.resolve(
+      fn({
+        user: { findUnique: findUniqueMock, update: updateMock, updateMany: async () => ({ count: 1 }), findFirst: async () => ({ id: "staff" }) },
+        // Lane D (6 Oct 2026): enrolment writes its audit row in this transaction.
+        auditLog: { create: async () => ({}) },
+      }),
+    ),
 }));
 
 vi.mock("next-auth/jwt", () => ({
@@ -47,7 +56,8 @@ vi.mock("next-auth/jwt", () => ({
 vi.mock("otplib", () => ({
   generateSecret: vi.fn().mockReturnValue("MOCK-SECRET"),
   generateURI: vi.fn().mockReturnValue("otpauth://totp/test"),
-  verifySync: vi.fn(({ token }: { token: string }) => ({ valid: token === "123456" })),
+  // timeStep: the routes now SPEND the code via consumeUserTotp (single use, 7 Oct 2026).
+  verifySync: vi.fn(({ token }: { token: string }) => ({ valid: token === "123456", timeStep: 1 })),
 }));
 
 vi.mock("qrcode", () => ({

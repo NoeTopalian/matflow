@@ -17,18 +17,20 @@
  * include a fresh 6-digit `totpCode`. This is a step-up auth gate so a
  * session-hijacked attacker cannot silently rotate the legitimate user's
  * recovery codes — they'd need a live TOTP from the authenticator app too.
- * The first-enrolment caller (wizard step 2) passes the code they just
- * verified in setup; the Settings → Regenerate caller must prompt for one.
+ * The code is single use (consumeUserTotp), so the first-enrolment wizard no
+ * longer replays its setup code here: it asks /api/auth/totp/setup for the
+ * codes (issueRecoveryCodes). The Settings → Regenerate caller prompts for one.
  */
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { z } from "zod";
-import { verifySync } from "otplib";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { generateRecoveryCodes } from "@/lib/recovery-codes";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseSupportSession } from "@/lib/support-session";
+import { consumeUserTotp } from "@/lib/login-email";
 
 export const runtime = "nodejs";
 
@@ -40,6 +42,7 @@ export async function POST(req: Request) {
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   const session = await auth();
+  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // Lane 1 iter-2 L1-I2-S-01 fix: parse + reject if no fresh TOTP supplied.
@@ -57,20 +60,21 @@ export async function POST(req: Request) {
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
       const user = await tx.user.findFirst({
         where: { id: session.user.id, tenantId: session.user.tenantId },
-        select: { id: true, totpEnabled: true, totpSecret: true },
+        select: { id: true, totpEnabled: true, totpSecret: true, totpLastUsedStep: true },
       });
       if (!user) return { kind: "no-user" as const };
       if (!user.totpEnabled || !user.totpSecret) return { kind: "no-totp" as const };
 
       // Lane 1 iter-2 L1-I2-S-01 fix: verify the supplied code against the
-      // user's live TOTP secret BEFORE generating. window=1 matches the
-      // login challenge (~30s grace either side of the current step).
-      // Matches the verifier used by /api/auth/totp/setup + /api/auth/totp/verify.
-      const verified = verifySync({
-        token: totpCode,
-        secret: user.totpSecret,
-      });
-      if (!verified.valid) return { kind: "bad-code" as const };
+      // user's live TOTP secret BEFORE generating — and SPEND it (review defect
+      // 10, 7 Oct 2026): single use across this route, enrolment, sign-in
+      // verify and the login-email change (lib/login-email.ts consumeUserTotp).
+      const spent = await consumeUserTotp(
+        tx,
+        { id: user.id, totpSecret: user.totpSecret, totpLastUsedStep: user.totpLastUsedStep ?? null },
+        totpCode,
+      );
+      if (!spent) return { kind: "bad-code" as const };
 
       const codes = generateRecoveryCodes();
       const hashes = codes.map((c) => c.hash);

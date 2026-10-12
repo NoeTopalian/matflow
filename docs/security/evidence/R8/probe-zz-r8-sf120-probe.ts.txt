@@ -1,0 +1,148 @@
+/**
+ * Review R8 probe (SF-120): over-limit and store-failure log lines carry the family and counts only.
+ * Same fake store as M1's unit test (so only lib/rate-limit.ts logic is exercised). Buckets: a +tag e-mail, a Unicode
+ * local part, an IPv6 address, and a bucket whose family literal ("forgot") is itself a piece of the key ("forgotten").
+ * Forbidden: every 6-char window of the key (after the family), its lower/upper-case forms, its URL-encoded form, and
+ * the SHA-256 / HMAC-SHA256 hex of the key and of the whole bucket (and 6-char windows of those digests).
+ * The family token `family=<family>` is removed from each line before the grep (it is the logged literal by design);
+ * the raw count with the token left in is reported too.
+ */
+import fs from "node:fs";
+import { createHash, createHmac } from "node:crypto";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+type Op = { kind: "lock" | "insert"; values: unknown[] };
+const h = vi.hoisted(() => ({ mode: "ok" as "ok" | "down", rows: new Map<string, number>() }));
+
+vi.mock("@/lib/prisma", () => {
+  const tag = (kind: "lock" | "insert") => (_s: TemplateStringsArray, ...values: unknown[]): Op => ({ kind, values });
+  const down = () => Object.assign(new Error("connect ECONNREFUSED (secr8 fake)"), { code: "ECONNREFUSED" });
+  return {
+    prisma: {
+      rateLimitHit: {
+        groupBy: async ({ where }: { where: { bucket: string } }) => {
+          if (h.mode === "down") throw down();
+          const n = h.rows.get(where.bucket) ?? 0;
+          return n ? [{ bucket: where.bucket, _count: { _all: n }, _min: { hitAt: new Date(Date.now() - 1_000) } }] : [];
+        },
+        deleteMany: async () => ({ count: 0 }),
+      },
+      $executeRaw: tag("lock"),
+      $queryRaw: tag("insert"),
+      $transaction: async (ops: Op[]) => {
+        if (h.mode !== "ok") throw down();
+        const insert = ops.find((o) => o.kind === "insert")!;
+        const bucket = insert.values[0] as string;
+        const max = insert.values[4] as number;
+        const n = h.rows.get(bucket) ?? 0;
+        const inserted = n < max ? 1 : 0;
+        if (inserted) h.rows.set(bucket, n + 1);
+        return ops.map((o) => (o.kind === "insert" ? [{ count: n, inserted, oldestAgeMs: 1_000 }] : 1));
+      },
+    },
+  };
+});
+
+const CASES = [
+  { name: "plus-tag e-mail", family: "forgot", key: "club-r8:secr8.victim+promo-tag@example.test" },
+  { name: "unicode local part", family: "magic-link", key: "club-r8:jöhn.ßmith-secr8@exämple.test" },
+  { name: "IPv6 address", family: "login", key: "ip:2001:db8:85a3::8a2e:370:7334" },
+  { name: "family literal inside the key", family: "forgot", key: "club-r8:forgotten.secr8@example.test" },
+];
+
+const HMAC_KEYS = ["", "secr8-hmac-key", process.env.AUTH_SECRET ?? "secr8-fallback"];
+const hex = (s: string) => createHash("sha256").update(s).digest("hex");
+const hmac = (k: string, s: string) => createHmac("sha256", k).update(s).digest("hex");
+
+function windows(s: string, n = 6): string[] {
+  if (s.length <= n) return [s];
+  const out: string[] = [];
+  for (let i = 0; i + n <= s.length; i++) out.push(s.slice(i, i + n));
+  return out;
+}
+
+function forbidden(family: string, key: string): string[] {
+  const bucket = `${family}:${key}`;
+  const set = new Set<string>();
+  const forms = [key, key.toLowerCase(), key.toUpperCase(), encodeURIComponent(key), encodeURIComponent(bucket)];
+  for (const f of forms) for (const w of windows(f)) set.add(w);
+  for (const s of [key, bucket, key.toLowerCase()]) {
+    const ds = [hex(s), ...HMAC_KEYS.map((k) => hmac(k, s))];
+    for (const d of ds) {
+      set.add(d);
+      for (const w of windows(d)) set.add(w);
+    }
+  }
+  return [...set];
+}
+
+let lines: string[] = [];
+const results: Array<Record<string, unknown>> = [];
+
+async function load() {
+  vi.resetModules();
+  return (await import("@/lib/rate-limit")).checkRateLimit;
+}
+
+beforeEach(() => {
+  h.mode = "ok";
+  h.rows = new Map();
+  lines = [];
+  vi.useFakeTimers({ now: new Date("2026-10-10T21:00:00Z"), toFake: ["Date"] });
+  for (const m of ["log", "info", "warn", "error", "debug"] as const) {
+    vi.spyOn(console, m).mockImplementation((...a: unknown[]) => {
+      lines.push(a.map((x) => (typeof x === "string" ? x : x instanceof Error ? `${x.message}` : JSON.stringify(x))).join(" "));
+    });
+  }
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  const out = process.env.R8_OUT;
+  if (out) fs.writeFileSync(out, results.map((r) => JSON.stringify(r)).join("\n") + "\n");
+});
+
+function scan(family: string, key: string) {
+  const strip = (l: string) => l.split(`family=${family}`).join("family=<F>");
+  const pieces = forbidden(family, key);
+  const stripped = lines.map(strip).join("\n");
+  const raw = lines.join("\n");
+  return {
+    pieces: pieces.length,
+    hitsStripped: pieces.filter((p) => stripped.includes(p)),
+    hitsRaw: pieces.filter((p) => raw.includes(p)).length,
+  };
+}
+
+describe("R8 SF-120 probe", () => {
+  for (const c of CASES) {
+    it(`R8-L1 over-limit burst, ${c.name}: 5 allowed, 115 lines with family+counts, no piece of the key`, async () => {
+      const checkRateLimit = await load();
+      let allowed = 0;
+      for (let i = 0; i < 120; i++) if ((await checkRateLimit(`${c.family}:${c.key}`, 5, 60_000)).allowed) allowed++;
+      const s = scan(c.family, c.key);
+      const over = lines.filter((l) => l.includes("[rate-limit]"));
+      results.push({ cell: "L1", case: c.name, allowed, lines: lines.length, overLimit: over.length, pieces: s.pieces, hitsStripped: s.hitsStripped.length, hitsRaw: s.hitsRaw, sample: over[0]?.replace(c.family, "<F>") });
+      expect(allowed).toBe(5);
+      expect(s.hitsStripped, "no forbidden piece").toEqual([]);
+      expect(over.length).toBe(115);
+      for (const l of over) {
+        expect(l).toContain(`family=${c.family} `);
+        expect(l).toMatch(/max=5 windowMs=60000 retryAfter=\d+s$/);
+      }
+    });
+
+    it(`R8-L2 store-failure burst, ${c.name}: family-only line, no piece of the key`, async () => {
+      const checkRateLimit = await load();
+      h.mode = "down";
+      let allowed = 0;
+      for (let i = 0; i < 120; i++) if ((await checkRateLimit(`${c.family}:${c.key}`, 5, 60_000)).allowed) allowed++;
+      const s = scan(c.family, c.key);
+      results.push({ cell: "L2", case: c.name, allowed, lines: lines.length, pieces: s.pieces, hitsStripped: s.hitsStripped.length, hitsRaw: s.hitsRaw, sample: lines[0]?.replace(c.family, "<F>") });
+      expect(allowed).toBe(0);
+      expect(lines.some((l) => l.includes(`family=${c.family} `))).toBe(true);
+      expect(s.hitsStripped).toEqual([]);
+    });
+  }
+});

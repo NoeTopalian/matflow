@@ -1,0 +1,193 @@
+/**
+ * Review R9 probe (SF-129): attacks on the rotation tool's env-file guard, --confirm/--ids, PG* env, and db-target's
+ * password-field refusal. Synthetic decoys only (never the repo's .env); unresolvable `.invalid` hosts; no connection.
+ */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync, execSync } from "node:child_process";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { parseArgs, refuseProductionEnvFile, vetTarget, Refused } from "../../scripts/readiness/demo-accounts-rotate.mjs";
+import { resolveDbTarget } from "../../scripts/readiness/db-target.mjs";
+
+const SCRIPT = path.join(process.cwd(), "scripts/readiness/demo-accounts-rotate.mjs");
+const PROD = "ep-bold-wave-abt39t7x";
+const TEST = "ep-hidden-salad-abom7cg4";
+const SUFFIX = ".eu-west-2.aws.neon.tech";
+const FIX_PASS = "fixture-" + "r".repeat(16);
+const FIX_USER = "secr9";
+const url = (host: string, pass = FIX_PASS) => `postgresql://${FIX_USER}:${pass}@${host}/neondb?sslmode=require`;
+const DECOY = `TEST_DATABASE_URL="${url(`${TEST}-pooler${SUFFIX}.invalid`)}"\n`;
+const LABROOT = "C:/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/security/R9/envlab";
+const LAB = path.join(LABROOT, `secr9-lab-${Date.now().toString(36)}`);
+const WT_DOTENV = path.join(process.cwd(), ".env");
+const out: Record<string, unknown> = {};
+const ENV_REFUSAL = /REFUSED: (\.env holds|the env file resolves to \.env|the env file is the same file as \.env)/;
+
+function shortName(dir: string, long: string): string | null {
+  try {
+    const t = execSync(`cmd /c dir /x /a "${dir}"`, { encoding: "utf8" });
+    for (const l of t.split(/\r?\n/)) {
+      const m = /\s(\S+~\d\S*)\s+(\S.*)$/.exec(l);
+      if (m && m[2].trim() === long) return m[1];
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+function guard(p: string, prod: string[]) {
+  try {
+    const r = refuseProductionEnvFile(p, { productionEnvPaths: prod });
+    return `ADMITTED ${path.basename(r)}`;
+  } catch (e) {
+    return e instanceof Refused ? e.message : `ERROR ${(e as Error).message}`;
+  }
+}
+function spawnTool(args: string[], env: Record<string, string> = {}) {
+  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG[A-Z]/i.test(k)));
+  const r = spawnSync(process.execPath, [SCRIPT, ...args], { env: { ...clean, ...env } as unknown as NodeJS.ProcessEnv, encoding: "utf8", timeout: 30_000 });
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr.trim() };
+}
+
+beforeAll(() => {
+  fs.mkdirSync(LAB, { recursive: true });
+  fs.writeFileSync(path.join(LAB, ".env"), DECOY);
+  fs.writeFileSync(path.join(LAB, "ok.env"), DECOY);
+  if (fs.existsSync(WT_DOTENV)) throw new Error("worktree already has a .env; refusing to overwrite");
+  fs.writeFileSync(WT_DOTENV, DECOY);
+});
+afterAll(() => {
+  for (const j of ["junc", "junc-wt"]) try { fs.rmdirSync(path.join(LABROOT, `${path.basename(LAB)}-${j}`)); } catch { /* */ }
+  fs.rmSync(LAB, { recursive: true, force: true });
+  if (fs.existsSync(WT_DOTENV) && fs.readFileSync(WT_DOTENV, "utf8") === DECOY) fs.rmSync(WT_DOTENV);
+  if (process.env.R9_OUT) fs.writeFileSync(process.env.R9_OUT, JSON.stringify(out, null, 1));
+});
+
+describe("R9 SF-129 (a) env-file guard, real filesystem", () => {
+  it("name, case, trailing dot/space, 8.3 short name, dot segment, junction, hard link, symlink", () => {
+    const prod = [path.join(LAB, ".env")];
+    const r: Record<string, string> = {};
+    for (const n of [".ENV", ".Env", ".eNV", ".env.", ".env ", ".env. .", ".env::$DATA"]) r[`name ${JSON.stringify(n)}`] = guard(path.join(LAB, n), prod);
+    const sn = shortName(LAB, ".env");
+    out.shortName = sn;
+    if (sn) r[`8.3 short name ${sn}`] = guard(path.join(LAB, sn), prod);
+    r["dot segment .env\\."] = guard(`${path.join(LAB, ".env")}\\.`, prod);
+    r["dot segment .env/."] = guard(`${path.join(LAB, ".env")}/.`, prod);
+    const J = path.join(LABROOT, `${path.basename(LAB)}-junc`);
+    fs.symlinkSync(LAB, J, "junction");
+    r["junction/.env"] = guard(path.join(J, ".env"), prod);
+    r["junction/.ENV"] = guard(path.join(J, ".ENV"), prod);
+    if (sn) r[`junction/${sn}`] = guard(path.join(J, sn), prod);
+    fs.linkSync(path.join(LAB, ".env"), path.join(LAB, "hard.txt"));
+    r["hard link hard.txt"] = guard(path.join(LAB, "hard.txt"), prod);
+    r["hard link via junction"] = guard(path.join(J, "hard.txt"), prod);
+    const hsn = shortName(LAB, "hard.txt");
+    try {
+      fs.symlinkSync(path.join(LAB, ".env"), path.join(LAB, "sym.txt"), "file");
+      r["file symlink sym.txt"] = guard(path.join(LAB, "sym.txt"), prod);
+    } catch (e) {
+      r["file symlink sym.txt"] = `NOT CREATED: ${(e as NodeJS.ErrnoException).code}`;
+    }
+    r["positive control ok.env"] = guard(path.join(LAB, "ok.env"), prod);
+    out.guard = { ...r, hardShort: hsn };
+    for (const [k, v] of Object.entries(r)) {
+      if (k.startsWith("positive")) expect(v, k).toBe("ADMITTED ok.env");
+      else if (v.startsWith("NOT CREATED")) continue;
+      else expect(v.startsWith("ADMITTED"), `${k}: ${v}`).toBe(false);
+    }
+  });
+
+  it("spawned tool (cwd = worktree, decoy .env at the worktree root): every alias refused BEFORE the file is read", () => {
+    const J = path.join(LABROOT, `${path.basename(LAB)}-junc-wt`);
+    fs.symlinkSync(process.cwd(), J, "junction");
+    const hl = path.join(LAB, "wt-hard.txt");
+    fs.linkSync(WT_DOTENV, hl);
+    const sn = shortName(process.cwd(), ".env");
+    const cases: Record<string, string> = {
+      ".ENV": path.join(process.cwd(), ".ENV"),
+      ".Env": path.join(process.cwd(), ".Env"),
+      ".env.": path.join(process.cwd(), ".env."),
+      ".env(space)": path.join(process.cwd(), ".env "),
+      "junction/.env": path.join(J, ".env"),
+      "junction/.eNv": path.join(J, ".eNv"),
+      "hard link outside": hl,
+      "dot segment": `${WT_DOTENV}\\.`,
+    };
+    if (sn) cases[`short ${sn}`] = path.join(process.cwd(), sn);
+    const res: Record<string, unknown> = {};
+    for (const [k, p] of Object.entries(cases)) {
+      const t = spawnTool(["--slug", "secr9-x", "--env-file", p]);
+      res[k] = { status: t.status, stderr: t.stderr, reachedTarget: /target:/.test(t.stdout) };
+      expect(t.status, k).toBe(2);
+      expect(t.stderr, k).toMatch(ENV_REFUSAL);
+      expect(t.stdout, k).not.toMatch(/target:/);
+    }
+    const ctrl = spawnTool(["--slug", "secr9-x", "--env-file", path.join(LAB, "ok.env")]);
+    res.control = { status: ctrl.status, stderr: ctrl.stderr };
+    expect(ctrl.status).toBe(2);
+    expect(ctrl.stderr).not.toMatch(ENV_REFUSAL); // control reaches the host guard (the .invalid decoy host)
+    out.spawned = res;
+  });
+});
+
+describe("R9 SF-129 (b) --confirm without --ids", () => {
+  it("exit 2, before reading the env file or connecting", () => {
+    const t = spawnTool(["--slug", "secr9-x", "--env-file", path.join(LAB, "ok.env"), "--confirm"]);
+    const t2 = spawnTool(["--slug", "secr9-x", "--confirm", "--env-file", path.join(LAB, "missing.env")]);
+    out.confirmNoIds = { a: { status: t.status, stderr: t.stderr }, missingEnvFile: { status: t2.status, stderr: t2.stderr } };
+    // t2 (missing env file): Node 24 itself scans argv for --env-file even after the script name and exits 9 (recorded, finding)
+    for (const x of [t]) {
+      expect(x.status).toBe(2);
+      expect(x.stderr).toMatch(/--confirm requires --ids/);
+      expect(x.stdout).not.toMatch(/target:/);
+    }
+    expect(() => parseArgs(["--slug", "secr9-x", "--confirm", "--ids", ""])).toThrow(Refused);
+    expect(() => parseArgs(["--slug", "secr9-x", "--confirm", "--ids", ","])).toThrow(Refused);
+  });
+});
+
+describe("R9 SF-129 (d) PG* environment", () => {
+  it("PGOPTIONS / PgOptions / pgoptions / pghost refused (exit 2) before reading or connecting", () => {
+    const res: Record<string, unknown> = {};
+    for (const k of ["PGOPTIONS", "PgOptions", "pgoptions", "pghost", "pgsslmode"]) {
+      const t = spawnTool(["--slug", "secr9-x", "--env-file", path.join(LAB, "ok.env")], { [k]: "-c search_path=secr9" });
+      res[k] = { status: t.status, stderr: t.stderr };
+      expect(t.status, k).toBe(2);
+      expect(t.stderr, k).toMatch(/libpq environment variable/);
+    }
+    out.pgEnv = res;
+  });
+});
+
+describe("R9 SF-129 (c) db-target password-field routing", () => {
+  const host = `${TEST}-pooler${SUFFIX}`;
+  const tryIt = (pw: string) => {
+    try {
+      return `ADMITTED ${resolveDbTarget(url(host, pw), { expectHost: "ep-hidden-salad" })}`;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
+  it("endpoint= raw/encoded/case: refused", () => {
+    const r: Record<string, string> = {};
+    for (const pw of [
+      `endpoint=${PROD}$${FIX_PASS}`, `endpoint=${PROD};${FIX_PASS}`, `endpoint%3D${PROD}%24${FIX_PASS}`, `%65ndpoint%3D${PROD}%24${FIX_PASS}`,
+      `Endpoint=${PROD}$${FIX_PASS}`, `ENDPOINT%3D${PROD}%3B${FIX_PASS}`,
+    ]) r[pw.replace(FIX_PASS, "<pw>")] = tryIt(pw);
+    out.endpointPw = r;
+    for (const [k, v] of Object.entries(r)) expect(v, k).toMatch(/endpoint= routing option/);
+    // through the tool: refused (exit 2), never connected
+    fs.writeFileSync(path.join(LAB, "ep.env"), `TEST_DATABASE_URL="${url(host, `endpoint%3D${PROD}%24${FIX_PASS}`)}"\n`);
+    const t = spawnTool(["--slug", "secr9-x", "--env-file", path.join(LAB, "ep.env")]);
+    out.endpointPwTool = { status: t.status, stderr: t.stderr, reachedTarget: /target:/.test(t.stdout) };
+    expect(t.status).toBe(2);
+    expect(t.stderr).toMatch(/endpoint= routing option/);
+  });
+  it("Neon's other password-hack prefix project= (proxy/src/auth/password_hack.rs parse_endpoint_param): recorded", () => {
+    const r: Record<string, string> = {};
+    for (const pw of [`project=${PROD}$${FIX_PASS}`, `project%3D${PROD}%24${FIX_PASS}`, `project=${PROD};${FIX_PASS}`]) {
+      r[pw.replace(FIX_PASS, "<pw>")] = tryIt(pw);
+      try { r[`vetTarget ${pw.replace(FIX_PASS, "<pw>")}`] = `ADMITTED ${vetTarget(url(host, pw))}`; } catch (e) { r[`vetTarget ${pw.replace(FIX_PASS, "<pw>")}`] = (e as Error).message; }
+    }
+    out.projectPw = r; // finding if ADMITTED; no assertion so the probe records rather than fails
+  });
+});

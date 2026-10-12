@@ -1,0 +1,14 @@
+# SF-57 v2 SQL in the isolated restore (PGlite 17.5), sec-f2-auditlog-append-only-db via SEC_F2_SET_ROLE, Node v24.21.0
+absent matflow_app: passed 0 failed 0 skipped 10 total 10
+absent neondb_owner: passed 0 failed 0 skipped 10 total 10
+applied5 matflow_app: passed 9 failed 0 skipped 1 total 10
+applied5 neondb_owner: passed 10 failed 0 skipped 0 total 10
+mut-stamp-noop matflow_app: passed 8 failed 1 skipped 1 total 10 | failed: INSERT works; createdAt is the database clock for every role except th
+mut-stamp-noop neondb_owner: passed 10 failed 0 skipped 0 total 10
+mut-like-wildcard matflow_app: passed 9 failed 0 skipped 1 total 10
+mut-like-wildcard neondb_owner: passed 9 failed 1 skipped 0 total 10 | failed: purge minimums: 365 days ordinary; 2190 days for admin.*, member.dsar_
+mut-delete-open matflow_app: passed 7 failed 2 skipped 1 total 10 | failed: catalogue: triggers enabled, purge is SECURITY DEFINER owned by the ta ; DELETE is refused unless the connecting role is the table owner
+mut-delete-open neondb_owner: passed 9 failed 1 skipped 0 total 10 | failed: catalogue: triggers enabled, purge is SECURITY DEFINER owned by the ta
+apply (v2 final): {"applied":true,"mutant":null,"asRole":"neondb_owner","ms":20,"triggers":"AuditLog_append_only:O,AuditLog_no_truncate:O,AuditLog_stamp_created_at:O","auditLogAcl":"{neondb_owner=arwdDxtm/neondb_owner,matflow_app=ar/neondb_owner}","node":"v24.21.0"}
+first draft (function-level SET app.bypass_rls = 'on'): apply FAILED — error: permission denied to set parameter "app.bypass_rls" (42501, guc.c validate_option_array_item) as the non-superuser table owner
+TEST branch (migration absent), both guarded runners: 10/10 skipped with the reason printed; see harness file

@@ -1,0 +1,30 @@
+# restore1 (fresh worktree checkout, core.autocrlf=true)
+{"verdict":"FAIL","target":"PGlite PostgreSQL 17.5 in-process (memory), 127.0.0.1:55491","node":"v24.21.0","recoveryPoint":"2026-10-09T19:24:09.424Z","recoverableAgeAtVerifyMs":133617,"migrationsReplayed":100,"migrationsEditedAfterApply":[{"migration":"20260923220000_billing_cycle_weekly","sourceRanCommit":"901bd83","headCommit":"d403f30"},{"migration":"20260924120000_member_hold_until","sourceRanCommit":"9993565","headCommit":"d403f30"},{"migration":"20260925000000_locations","sourceRanCommit":"fe299eb","headCommit":"d403f30"},{"migration":"20260925090000_tier_location","sourceRanCommit":"30dce22","headCommit":"d403f30"},{"migration":"20260926130000_user_must_change_password","sourceRanCommit":"c6517c5","headCommit":"d403f30"},{"migration":"20260930100000_import_provenance_review_lock","sourceRanCommit":"0f8c2b1","headCommit":"d403f30"}],"rowsLoaded":116136,"compare":{"verdict":"FAIL","fails":["function changed: matflow_lowercase_email()"],"notes":0},"hazards":{"tenantsSoftDeleted":8,"tenantsPastPurgeGrace":7,"importJobsRunningOrLeased":0,"googleDriveConnections":0,"usersWithTotp":17,"membersWithTotp":3,"tenantsWithKioskToken":28,"tenantsWithStripeAccount":5,"pushSubscriptions":0,"magicLinkOutstanding":0,"passwordResetOutstanding":0},"revoked":{"users":591,"members":3988,"operators":1,"resetCodes":0,"signInLinks":0},"compareAfterRevoke":{"verdict":"FAIL","fails":["function changed: matflow_lowercase_email()"],"notes":["row count AuditLog: 9888 -> 9889 (allowed drift)","content of AuditLog differs (allowed)","content of Member differs (allowed)","content of Operator differs (allowed)","content of User differs (allowed)"]},"timings":{"verifyExport":725,"roles":6,"migrations":1296,"data":4128,"grants":44,"verify":1330,"restoreToVerifiedMs":8920,"revoke":256}}
+exit=1
+# restore attempt with LF migrations
+FAIL: checksum of 20260531000001_member_lifecycle_indexes differs from the source's record and no committed version matches (exit 1)
+# restore2 (migration bytes copied from the main working tree, as lane F2 ran)
+{"verdict":"RESTORED-AND-VERIFIED","target":"PGlite PostgreSQL 17.5 in-process (memory), 127.0.0.1:55492","node":"v24.21.0","recoveryPoint":"2026-10-09T19:24:09.424Z","recoverableAgeAtVerifyMs":221988,"migrationsReplayed":100,"migrationsEditedAfterApply":[{"migration":"20260923220000_billing_cycle_weekly","sourceRanCommit":"901bd83","headCommit":"d403f30"},{"migration":"20260924120000_member_hold_until","sourceRanCommit":"9993565","headCommit":"d403f30"},{"migration":"20260925000000_locations","sourceRanCommit":"fe299eb","headCommit":"d403f30"},{"migration":"20260925090000_tier_location","sourceRanCommit":"30dce22","headCommit":"d403f30"},{"migration":"20260926130000_user_must_change_password","sourceRanCommit":"c6517c5","headCommit":"d403f30"},{"migration":"20260930100000_import_provenance_review_lock","sourceRanCommit":"0f8c2b1","headCommit":"d403f30"}],"rowsLoaded":116136,"compare":{"verdict":"PASS","fails":[],"notes":0},"hazards":{"tenantsSoftDeleted":8,"tenantsPastPurgeGrace":7,"importJobsRunningOrLeased":0,"googleDriveConnections":0,"usersWithTotp":17,"membersWithTotp":3,"tenantsWithKioskToken":28,"tenantsWithStripeAccount":5,"pushSubscriptions":0,"magicLinkOutstanding":0,"passwordResetOutstanding":0},"revoked":{"users":591,"members":3988,"operators":1,"resetCodes":0,"signInLinks":0},"compareAfterRevoke":{"verdict":"PASS","fails":[],"notes":["row count AuditLog: 9888 -> 9889 (allowed drift)","content of AuditLog differs (allowed)","content of Member differs (allowed)","content of Operator differs (allowed)","content of User differs (allowed)"]},"timings":{"verifyExport":70,"roles":6,"migrations":1206,"data":4459,"grants":68,"verify":1402,"restoreToVerifiedMs":8615,"revoke":364}}
+exit=0
+# export
+{"verdict":"EXPORTED","recoveryPoint":"2026-10-09T19:24:09.424Z","role":"neondb_owner","tables":53,"totalRows":116136,"totalBytes":77632619,"exportMs":33220,"node":"v24.21.0"}
+exit=0
+# export refusals
+## prod URL, expect ep-bold-wave
+REFUSED: production endpoint; this script is not authorised for a production target
+exit=2
+## prod URL, expect ep-hidden-salad
+REFUSED: host does not contain ep-hidden-salad
+exit=2
+## out-dir inside repo (worktree)
+REFUSED: <out-dir> is inside the repository
+exit=2
+## out-dir inside repo, upper-case path
+REFUSED: <out-dir> is inside the repository
+exit=2
+## PGOPTIONS set
+REFUSED: PGOPTIONS is set in the environment (pg would apply it to this connection)
+exit=2
+## ?options= in URL
+REFUSED: connection string carries a options= parameter
+exit=2

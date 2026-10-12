@@ -42,6 +42,9 @@ const { memberFindFirstMock, tenantFindUniqueMock, cancelSubMock, deleteHelperMo
   }));
 
 const fakeTx = {
+  // DELETE re-reads the doomed rows under a row lock (lane D3); those rows only feed the release digest, which this
+  // file does not inspect.
+  $queryRaw: async () => [],
   member: { findFirst: memberFindFirstMock },
   tenant: { findUnique: tenantFindUniqueMock },
 };

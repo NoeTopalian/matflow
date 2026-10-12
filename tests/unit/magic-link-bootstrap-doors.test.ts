@@ -10,6 +10,8 @@ import { vi, describe, it, expect, beforeEach, afterAll } from "vitest";
 // is now challenged for TOTP; coaches and members keep the 7 May bypass.
 
 vi.mock("next/server", () => ({
+  // Run after() work inline so the sign-in record is observable.
+  after: (fn: () => unknown) => { void fn(); },
   NextResponse: {
     json: (body: unknown, init?: { status?: number }) => ({
       status: init?.status ?? 200,
@@ -44,7 +46,9 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/rate-limit", () => ({
   checkRateLimit: vi.fn().mockResolvedValue({ allowed: true, retryAfterSeconds: 0 }),
+  getClientIp: vi.fn(() => "203.0.113.7"),
 }));
+vi.mock("@/lib/login-event", () => ({ recordLoginEvent: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/lib/email", () => ({
   sendEmail: vi.fn().mockResolvedValue({ ok: true, logId: "log-1" }),
 }));

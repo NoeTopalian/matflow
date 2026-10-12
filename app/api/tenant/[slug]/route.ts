@@ -1,6 +1,7 @@
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { emailDeliveryMode } from "@/lib/email-delivery";
 
 // Rate-limit slug lookups so an attacker can't enumerate the customer
 // directory by hammering this endpoint. 30/min/IP is generous for a real
@@ -94,7 +95,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ slug: st
     // the login-page typeahead snappy without forcing a DB hit per keystroke.
     // Only the success response is cached — 404s stay live so a new tenant
     // can claim a previously-unused slug without a stale cache window.
-    return NextResponse.json(publicBranding, {
+    // emailDelivery (7 Oct 2026, mail-dark): deployment-wide, identical for
+    // every club, so it discloses nothing about this one. The login screen uses
+    // it to stop offering sign-in links and reset codes that cannot be sent.
+    return NextResponse.json({ ...publicBranding, emailDelivery: emailDeliveryMode() }, {
       headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=600" },
     });
   } catch (e) {

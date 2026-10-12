@@ -1,0 +1,62 @@
+[
+ {
+  "id": "C3-M-no-lock-owner",
+  "file": "lib/rate-limit.ts",
+  "test": "tests/integration/sec-c3-rate-limit-atomic-db.test.ts",
+  "runner": "/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/att/run-engine.sh",
+  "exit": 1,
+  "tests": "4 failed | 2 passed (6)",
+  "failed": [
+   "burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1) 513ms",
+   "burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 2) 345ms",
+   "burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 3) 387ms",
+   "two buckets bursting at once do not borrow from each other (10 + 10 parallel, max 5 each) 438ms",
+   "tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against m",
+   "tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against m",
+   "tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against m",
+   "tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > two buckets bursting at once do n"
+  ],
+  "restoredDiffAgainstStart": "(file had lane edits; content restored byte-for-byte)",
+  "restoredBytesEqual": true
+ },
+ {
+  "id": "C3-M-no-lock-restricted",
+  "file": "lib/rate-limit.ts",
+  "test": "tests/integration/sec-c3-rate-limit-atomic-db.test.ts",
+  "runner": "/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/q78/run-restricted.sh",
+  "exit": 1,
+  "tests": "4 failed | 2 passed (6)",
+  "failed": [
+   "burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1) 579ms",
+   "burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 2) 382ms",
+   "burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 3) 385ms",
+   "two buckets bursting at once do not borrow from each other (10 + 10 parallel, max 5 each) 417ms",
+   "tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > burst of 20 in parallel agai",
+   "tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > burst of 20 in parallel agai",
+   "tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > burst of 20 in parallel agai",
+   "tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > two buckets bursting at once"
+  ],
+  "restoredDiffAgainstStart": "(file had lane edits; content restored byte-for-byte)",
+  "restoredBytesEqual": true
+ },
+ {
+  "id": "C3-M-off-by-one-owner",
+  "file": "lib/rate-limit.ts",
+  "test": "tests/integration/sec-c3-rate-limit-atomic-db.test.ts",
+  "runner": "/c/Users/NoeTo/AppData/Local/Temp/claude/c--Users-NoeTo-Desktop-matflow/1cc670be-8e50-4bc6-9b9d-aa84aee7df8f/scratchpad/att/run-engine.sh",
+  "exit": 1,
+  "tests": "4 failed | 2 passed (6)",
+  "failed": [
+   "burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1) 2322ms",
+   "burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 2) 2684ms",
+   "burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 3) 2429ms",
+   "two buckets bursting at once do not borrow from each other (10 + 10 parallel, max 5 each) 1410ms",
+   "tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against m",
+   "tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against m",
+   "tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > burst of 20 in parallel against m",
+   "tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (owner) > two buckets bursting at once do n"
+  ],
+  "restoredDiffAgainstStart": "(file had lane edits; content restored byte-for-byte)",
+  "restoredBytesEqual": true
+ }
+]

@@ -1,0 +1,31 @@
+// R3: adversarial matrix rows against coverage-reconcile.mjs (pure functions, no files written).
+import fs from "node:fs";
+import { reconcileMatrix, classifyVerification, reviewerApproved } from "./scripts/readiness/coverage-reconcile.mjs";
+const src = fs.readFileSync("docs/security/COVERAGE-MATRIX.md", "utf8");
+const lines = src.split(/\r?\n/);
+const idx = (id) => lines.findIndex((l) => l.startsWith(`| ${id} |`));
+const setCells = (id, edit) => {
+  const i = idx(id);
+  const c = lines[i].replace(/^\|/, "").replace(/\|\s*$/, "").split("|").map((x) => x.trim());
+  edit(c);
+  lines[i] = `| ${c.join(" | ")} |`;
+};
+const base = reconcileMatrix(src, { requireReviewed: true }).summary;
+// (a) raw pipe inside a cell
+setCells("SEC-010", (c) => { c[4] = c[4] + " a|b"; });
+// (b) "A / B" verification
+setCells("SEC-011", (c) => { c[7] = "PASS (config) / BLOCKED (live)"; });
+// (c) N/A row with no evidence
+setCells("SEC-012", (c) => { c[6] = "NOT APPLICABLE WITH EVIDENCE"; c[7] = "guard test"; c[8] = ""; });
+// (d) FIXED row whose reviewer says only "reviewed"
+setCells("SEC-013", (c) => { c[7] = "FAIL → FIXED AWAITING RETEST"; c[9] = "R3: reviewed 9 Oct"; });
+// extra: FIXED row with "not yet approved"; PASS-through-FIXED with "approval pending"; N/A + PASS inconsistency
+setCells("SEC-014", (c) => { c[7] = "FIXED AWAITING RETEST"; c[9] = "R3: not yet approved"; });
+setCells("SEC-015", (c) => { c[7] = "FAIL → FIXED → PASS"; c[9] = "R3: approval pending"; });
+setCells("SEC-016", (c) => { c[6] = "NOT APPLICABLE WITH EVIDENCE"; c[7] = "PASS"; });
+const m = reconcileMatrix(lines.join("\n"), { requireReviewed: true });
+const row = (id) => m.perRow.find((r) => r.id === id);
+console.log(JSON.stringify({ baselineVerdict: base.verdict, baselineMalformed: base.malformed, verdict: m.summary.verdict, malformed: m.summary.malformed, inconsistent: m.summary.inconsistent, unparsed: m.summary.unparsed }));
+for (const id of ["SEC-011", "SEC-012", "SEC-013", "SEC-014", "SEC-015", "SEC-016"]) console.log(JSON.stringify(row(id)));
+for (const s of ["R3: not yet approved", "R: approved in part; NOT APPROVED for X", "R: unapproved", "approved? no", "R2: approval withdrawn", "R: disapproved"]) console.log(JSON.stringify({ reviewer: s, approved: reviewerApproved(s) }));
+for (const v of ["PASS (U) → FAIL", "BLOCKED / PASS", "PASSED", "NOT APPLICABLE", "pass", "PASS; FAIL (browser)"]) console.log(JSON.stringify({ cell: v, ...classifyVerification(v) }));

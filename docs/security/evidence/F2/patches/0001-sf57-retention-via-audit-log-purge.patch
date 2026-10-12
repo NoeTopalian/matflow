@@ -1,0 +1,173 @@
+diff --git a/app/api/cron/retention/route.ts b/app/api/cron/retention/route.ts
+index 7bb04e9..8c947b7 100644
+--- a/app/api/cron/retention/route.ts
++++ b/app/api/cron/retention/route.ts
+@@ -39,7 +39,8 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
+ import { isVercelBlobUrl } from "@/lib/blob-url";
+ import { DB_UPLOAD_PREFIX } from "@/lib/import-storage";
+ import { purgeSoftDeletedTenants } from "@/lib/tenant-purge";
+-import { auditLogRetentionWhere } from "@/lib/audit-log";
++import { auditLogRetentionWhere, purgeAuditLogBatch, AUDIT_PURGE_BATCH } from "@/lib/audit-log";
++import { prisma } from "@/lib/prisma";
+ import { runStripeReconciliation, type ReconcileResult } from "@/lib/stripe/reconcile";
+ 
+ export const runtime = "nodejs";
+@@ -187,12 +188,13 @@ export async function GET(req: Request) {
+ 
+   const rules: Array<{ name: string; run: () => Promise<Omit<RuleResult, "rule">> }> = [
+     {
++      // SF-57: through audit_log_purge() once the append-only migration exists; the dry run still counts with
++      // the same predicate (SELECT stays granted to the runtime role).
+       name: "auditLog",
+       run: () =>
+-        sweep(
+-          (tx) => tx.auditLog as unknown as BatchDeletable,
+-          auditLogRetentionWhere(now),
+-        ),
++        dryRun
++          ? countOnly((tx) => tx.auditLog as unknown as BatchDeletable, auditLogRetentionWhere(now))
++          : purgeAuditLog(now, elapsed),
+     },
+     {
+       name: "emailLog",
+@@ -305,6 +307,30 @@ async function countOnly(pick: PickModel, where: object): Promise<{ deleted: num
+   return { deleted: 0, details: { wouldDelete } };
+ }
+ 
++// ─── AuditLog retention (SF-57) ──────────────────────────────────────────────
++
++/**
++ * Calls audit_log_purge(AUDIT_PURGE_BATCH) until a short batch or the deadline. When the function is absent
++ * (append-only migration not applied yet) it falls back to the direct chunked delete, which the runtime role can
++ * still perform until that migration revokes DELETE. The result names the path taken.
++ */
++async function purgeAuditLog(
++  now: Date,
++  elapsed: () => number,
++): Promise<{ deleted: number; partial?: true; processed?: number; details: Record<string, unknown> }> {
++  let deleted = 0;
++  for (;;) {
++    if (elapsed() > DEADLINE_MS) return { deleted, partial: true, processed: deleted, details: { via: "audit_log_purge" } };
++    const n = await purgeAuditLogBatch(prisma, AUDIT_PURGE_BATCH);
++    if (n === null) {
++      const legacy = await deleteInBatches((tx) => tx.auditLog as unknown as BatchDeletable, auditLogRetentionWhere(now), elapsed);
++      return { ...legacy, details: { via: "direct-delete (audit_log_purge absent)" } };
++    }
++    deleted += n;
++    if (n < AUDIT_PURGE_BATCH) return { deleted, details: { via: "audit_log_purge" } };
++  }
++}
++
+ // ─── Generic chunked delete ──────────────────────────────────────────────────
+ 
+ /**
+diff --git a/lib/audit-log.ts b/lib/audit-log.ts
+index 4b3a7b4..60d56df 100644
+--- a/lib/audit-log.ts
++++ b/lib/audit-log.ts
+@@ -335,3 +335,25 @@ export function auditLogRetentionWhere(now: Date): Prisma.AuditLogWhereInput {
+     ],
+   };
+ }
++
++/** Rows per audit_log_purge() call; the database function refuses a batch outside 1..5000. */
++export const AUDIT_PURGE_BATCH = 1000;
++
++/**
++ * SF-57 retention switch. Once the append-only migration (docs/security/evidence/F2/
++ * proposed-auditlog-append-only-v2.sql) is applied, the runtime role has no DELETE on AuditLog and
++ * audit_log_purge(batch) — SECURITY DEFINER, owned by the table owner, minimums hard-coded to match
++ * AUDIT_LOG_RETENTION_MS / AUDIT_EVIDENCE_RETENTION_MS above — is the only delete path. Returns the rows
++ * deleted, or null when the function does not exist yet (migration not applied), so the caller keeps the
++ * direct delete for the rollout window instead of failing. Runs as the plain client: the function needs no
++ * tenant context and no RLS bypass flag.
++ */
++export async function purgeAuditLogBatch(
++  db: { $queryRaw: Prisma.TransactionClient["$queryRaw"] },
++  batch: number = AUDIT_PURGE_BATCH,
++): Promise<number | null> {
++  const present = await db.$queryRaw<Array<{ ok: boolean }>>`SELECT to_regprocedure('public.audit_log_purge(integer)') IS NOT NULL AS ok`;
++  if (!present[0]?.ok) return null;
++  const rows = await db.$queryRaw<Array<{ n: number }>>`SELECT audit_log_purge(${batch}::int) AS n`;
++  return Number(rows[0]?.n ?? 0);
++}
+diff --git a/tests/unit/retention-cron.test.ts b/tests/unit/retention-cron.test.ts
+index 80c40f7..017f22d 100644
+--- a/tests/unit/retention-cron.test.ts
++++ b/tests/unit/retention-cron.test.ts
+@@ -52,6 +52,8 @@ vi.mock("@/lib/prisma", () => {
+   });
+   return {
+   prisma: {
++    // SF-57: purgeAuditLogBatch probes for audit_log_purge(); default = absent (legacy direct delete).
++    $queryRaw: vi.fn().mockResolvedValue([{ ok: false }]),
+     auditLog: { ...emptyModel(), create: vi.fn().mockResolvedValue({}) },
+     emailLog: emptyModel(),
+     magicLinkToken: emptyModel(),
+@@ -166,6 +168,7 @@ beforeEach(() => {
+   vi.mocked(prisma.tenant.deleteMany).mockResolvedValue({ count: 1 } as never);
+   vi.mocked(prisma.tenant.findUnique).mockResolvedValue(dueClub() as never);
+   vi.mocked(del).mockResolvedValue(undefined);
++  (prisma as unknown as { $queryRaw: ReturnType<typeof vi.fn> }).$queryRaw.mockResolvedValue([{ ok: false }]);
+   cascadeMock.mockResolvedValue({ kind: "ok", name: "Member" });
+   cancelSubMock.mockResolvedValue({ ok: true, cancelAt: null });
+ });
+@@ -809,3 +812,46 @@ describe("rule loginEvent — devices not seen for twelve months", () => {
+     expect(prisma.loginEvent.deleteMany).not.toHaveBeenCalled();
+   });
+ });
++
++// ─── SF-57: AuditLog through audit_log_purge() ───────────────────────────────
++
++describe("GET /api/cron/retention — AuditLog retention switch (SF-57)", () => {
++  type Body = { results: Array<{ rule: string; deleted?: number; details?: Record<string, unknown> }> };
++  const raw = () => (prisma as unknown as { $queryRaw: ReturnType<typeof vi.fn> }).$queryRaw;
++
++  it("without audit_log_purge (migration not applied) it falls back to the direct delete and says so", async () => {
++    const body = (await (await GET(req(`Bearer ${SECRET}`))).json()) as Body;
++    expect(body.results.find((r) => r.rule === "auditLog")?.details).toEqual({ via: "direct-delete (audit_log_purge absent)" });
++    expect(prisma.auditLog.findMany).toHaveBeenCalled();
++  });
++
++  it("with audit_log_purge it calls the function until a short batch and never deletes AuditLog rows itself", async () => {
++    const batches: unknown[] = [];
++    let call = 0;
++    raw().mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => {
++      const sql = strings.join("?");
++      if (sql.includes("to_regprocedure")) return [{ ok: true }];
++      if (sql.includes("audit_log_purge(")) { batches.push(values[0]); call += 1; return [{ n: call === 1 ? 1000 : 7 }]; }
++      throw new Error(`unexpected raw SQL: ${sql}`);
++    });
++    const body = (await (await GET(req(`Bearer ${SECRET}`))).json()) as Body;
++    expect(body.results.find((r) => r.rule === "auditLog")).toMatchObject({ deleted: 1007, details: { via: "audit_log_purge" } });
++    expect(batches).toEqual([1000, 1000]);
++    expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
++    expect(prisma.auditLog.deleteMany).not.toHaveBeenCalled();
++  });
++
++  it("the dry run counts with the published predicate and never calls the purge", async () => {
++    const auditCount = vi.fn().mockResolvedValue(3);
++    (prisma.auditLog as unknown as { count: ReturnType<typeof vi.fn> }).count = auditCount;
++    for (const model of [prisma.emailLog, prisma.loginEvent, prisma.magicLinkToken, prisma.passwordResetToken, prisma.rateLimitHit, prisma.stripeEvent, prisma.importUpload, prisma.importJob]) {
++      (model as unknown as { count: ReturnType<typeof vi.fn> }).count = vi.fn().mockResolvedValue(0);
++    }
++    vi.mocked(prisma.tenant.findMany).mockResolvedValue([] as never);
++    const res = await GET(new Request("https://matflow.studio/api/cron/retention?dryRun=1", { headers: { authorization: `Bearer ${SECRET}` } }));
++    const body = (await res.json()) as Body;
++    expect(body.results.find((r) => r.rule === "auditLog")).toMatchObject({ deleted: 0, details: { wouldDelete: 3 } });
++    expect(auditCount).toHaveBeenCalledWith({ where: auditLogRetentionWhere(NOW) });
++    expect(raw()).not.toHaveBeenCalledWith(expect.arrayContaining([expect.stringContaining("audit_log_purge(")]), expect.anything());
++  });
++});
+diff --git a/tests/unit/sec-c-static-guards.test.ts b/tests/unit/sec-c-static-guards.test.ts
+index bacb00c..cb0ceeb 100644
+--- a/tests/unit/sec-c-static-guards.test.ts
++++ b/tests/unit/sec-c-static-guards.test.ts
+@@ -47,6 +47,7 @@ describe("SEC-033 raw SQL is parameterised", () => {
+       "app/api/health/route.ts",
+       "app/api/member/class-subscriptions/[classId]/route.ts",
+       "lib/attendance-import.ts", // release-digest read (lane D third pass): only tenantId is interpolated, as a bind parameter
++      "lib/audit-log.ts", // SF-57 retention switch: to_regprocedure probe + audit_log_purge(batch); only the batch number is interpolated, as a bind parameter
+       "lib/checkin.ts",
+       "lib/login-email.ts",
+       "lib/prisma-tenant.ts",

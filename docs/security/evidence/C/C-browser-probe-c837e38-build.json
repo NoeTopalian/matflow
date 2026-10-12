@@ -1,0 +1,54 @@
+{
+ "base": "http://127.0.0.1:3963",
+ "at": "2026-10-09T11:54:29.242Z",
+ "totalDialogs": 0,
+ "results": {
+  "xss /login?error=%3Cimg%20src%3Dx%20onerror%3Dalert(%22secC1%22)": {
+   "status": 200,
+   "finalPath": "/login",
+   "dialogs": []
+  },
+  "xss /login?error=%22%3E%3Cscript%3Ealert(%22secC2%22)%3C%2Fscrip": {
+   "status": 200,
+   "finalPath": "/login",
+   "dialogs": []
+  },
+  "xss /login?callbackUrl=javascript%3Aalert(%22secC3%22)": {
+   "status": 200,
+   "finalPath": "/login",
+   "dialogs": []
+  },
+  "xss /login#%3Cimg%20src%3Dx%20onerror%3Dalert(%22secC4%22)%3E": {
+   "status": 200,
+   "finalPath": "/login",
+   "dialogs": []
+  },
+  "xss /secc%3Csvg%20onload%3Dalert(%22secC5%22)%3E": {
+   "status": 200,
+   "finalPath": "/login",
+   "dialogs": []
+  },
+  "xss /waiver/open?token=%22%3E%3Cimg%20src%3Dx%20onerror%3Dalert(": {
+   "status": 200,
+   "finalPath": "/waiver/open",
+   "dialogs": []
+  },
+  "xss /kiosk/%3Cimg%20src%3Dx%20onerror%3Dalert(%22secC7%22)%3E": {
+   "status": 404,
+   "finalPath": "/kiosk/%3Cimg%20src%3Dx%20onerror%3Dalert(%22secC7%22)%3E",
+   "dialogs": []
+  },
+  "clickjacking iframe from other origin": {
+   "frameUrl": "chrome-error://chromewebdata/",
+   "framedContent": ""
+  },
+  "cors credentialed fetch /api/health": {
+   "readable": false,
+   "error": "TypeError: Failed to fetch"
+  },
+  "cors credentialed fetch /api/me/gym": {
+   "readable": false,
+   "error": "TypeError: Failed to fetch"
+  }
+ }
+}

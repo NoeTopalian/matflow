@@ -1,0 +1,1 @@
+## patches/companion-edits.patch: git apply --check clean on the lane A3 tree; applied, the 3 files ran 26/26 (node v24.21.0), then restored with git checkout (byte-identical to HEAD).

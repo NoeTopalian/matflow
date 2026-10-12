@@ -1,0 +1,78 @@
+[
+  {
+    "id": "A3-M1 row counter skipped for locked rows",
+    "exit": 1,
+    "seconds": 696,
+    "tests": "Tests  4 failed | 19 passed (23) | Tests  2 passed (2) | Tests  2 passed (2)",
+    "failed": [
+      "× locked-member at 0 prior failures: same answer and same transactions as an address with no account",
+      "× locked-member at 9 prior failures: same answer and same transactions as an address with no account",
+      "× locked-user at 0 prior failures: same answer and same transactions as an address with no account",
+      "× locked-user at 9 prior failures: same answer and same transactions as an address with no account",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-3: a wrong password costs the same database work whether or not the account exists > locked-member at 0 prior failures: same answer and same transactions as an address with no account",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-3: a wrong password costs the same database work whether or not the account exists > locked-member at 9 prior failures: same answer and same transactions as an address with no account",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-3: a wrong password costs the same database work whether or not the account exists > locked-user at 0 prior failures: same answer and same transactions as an address with no account",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-3: a wrong password costs the same database work whether or not the account exists > locked-user at 9 prior failures: same answer and same transactions as an address with no account"
+    ],
+    "restored": true
+  },
+  {
+    "id": "A3-M2 locked-row failure counted only after the row-state branch (locked row returns first)",
+    "exit": 1,
+    "seconds": 708,
+    "tests": "Tests  8 failed | 15 passed (23) | Tests  1 failed | 1 passed (2) | Tests  1 failed | 1 passed (2)",
+    "failed": [
+      "× locked-member at 0 prior failures: same answer and same transactions as an address with no account",
+      "× locked-member at 9 prior failures: same answer and same transactions as an address with no account",
+      "× locked-user at 0 prior failures: same answer and same transactions as an address with no account",
+      "× locked-user at 9 prior failures: same answer and same transactions as an address with no account",
+      "× locked-member: twelve wrong passwords give the same answers as an address with no account",
+      "× locked-user: twelve wrong passwords give the same answers as an address with no account",
+      "× each refused attempt on a locked row writes both counters (address and address+network)",
+      "× the RIGHT password on a locked row is still refused, and that refusal is counted too",
+      "× same code at 0, 9, 10, 11 prior failures for: account, row-locked member, row-locked staff, no account (20 samples each)",
+      "× every shape answers like no account at 0/9/10/11 prior failures (code every sample; timing median of 20 recorded)",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-3: a wrong password costs the same database work whether or not the account exists > locked-member at 0 prior failures: same answer and same transactions as an address with no account",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-3: a wrong password costs the same database work whether or not the account exists > locked-member at 9 prior failures: same answer and same transactions as an address with no account",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-3: a wrong password costs the same database work whether or not the account exists > locked-user at 0 prior failures: same answer and same transactions as an address with no account",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-3: a wrong password costs the same database work whether or not the account exists > locked-user at 9 prior failures: same answer and same transactions as an address with no account",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-2: a row-locked account counts its refusals exactly like any other address > locked-member: twelve wrong passwords give the same answers as an address with no account",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-2: a row-locked account counts its refusals exactly like any other address > locked-user: twelve wrong passwords give the same answers as an address with no account",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-2: a row-locked account counts its refusals exactly like any other address > each refused attempt on a locked row writes both counters (address and address+network)",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-2: a row-locked account counts its refusals exactly like any other address > the RIGHT password on a locked row is still refused, and that refusal is counted too",
+      "FAIL  tests/integration/sec-a3-lockout-oracle-db.test.ts > SF-35 / R3-2 on Postgres: a row-locked account answers like any other address > same code at 0, 9, 10, 11 prior failures for: account, row-locked member, row-locked staff, no account (20 samples each)",
+      "FAIL  tests/integration/zz-r6-a3-oracle-db.test.ts > R6: SF-35 oracle shapes A3 did not test > every shape answers like no account at 0/9/10/11 prior failures (code every sample; timing median of 20 recorded)"
+    ],
+    "restored": true
+  },
+  {
+    "id": "A3-M3 early return on operator (staff) lock only",
+    "exit": 1,
+    "seconds": 756,
+    "tests": "Tests  3 failed | 20 passed (23) | Tests  1 failed | 1 passed (2) | Tests  2 passed (2)",
+    "failed": [
+      "× locked-user at 0 prior failures: same answer and same transactions as an address with no account",
+      "× locked-user at 9 prior failures: same answer and same transactions as an address with no account",
+      "× locked-user: twelve wrong passwords give the same answers as an address with no account",
+      "× same code at 0, 9, 10, 11 prior failures for: account, row-locked member, row-locked staff, no account (20 samples each)",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-3: a wrong password costs the same database work whether or not the account exists > locked-user at 0 prior failures: same answer and same transactions as an address with no account",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-3: a wrong password costs the same database work whether or not the account exists > locked-user at 9 prior failures: same answer and same transactions as an address with no account",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-2: a row-locked account counts its refusals exactly like any other address > locked-user: twelve wrong passwords give the same answers as an address with no account",
+      "FAIL  tests/integration/sec-a3-lockout-oracle-db.test.ts > SF-35 / R3-2 on Postgres: a row-locked account answers like any other address > same code at 0, 9, 10, 11 prior failures for: account, row-locked member, row-locked staff, no account (20 samples each)"
+    ],
+    "restored": true
+  },
+  {
+    "id": "A3-M4 (R6) early return when a locked row gets the RIGHT password",
+    "exit": 1,
+    "seconds": 746,
+    "tests": "Tests  1 failed | 22 passed (23) | Tests  2 passed (2) | Tests  1 failed | 1 passed (2)",
+    "failed": [
+      "× the RIGHT password on a locked row is still refused, and that refusal is counted too",
+      "× every shape answers like no account at 0/9/10/11 prior failures (code every sample; timing median of 20 recorded)",
+      "FAIL  tests/unit/sec-a3-failure-path-cost.test.ts > R3-2: a row-locked account counts its refusals exactly like any other address > the RIGHT password on a locked row is still refused, and that refusal is counted too",
+      "FAIL  tests/integration/zz-r6-a3-oracle-db.test.ts > R6: SF-35 oracle shapes A3 did not test > every shape answers like no account at 0/9/10/11 prior failures (code every sample; timing median of 20 recorded)"
+    ],
+    "restored": true
+  }
+]

@@ -1,0 +1,2 @@
+{"withTrigger":"secf-mutant-on-mixed@example.com","withoutTrigger":"secF-mutant-off-MiXeD@Example.COM","assertionWouldFailWithoutTrigger":true}
+{"leftoverRows":0,"triggerStateAfterRollback":"O"}

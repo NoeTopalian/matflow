@@ -111,7 +111,8 @@ const BASELINE = {
   // moved from a hard-coded navy to the shell's own text token.
   // 30 Sep 2026: 736 → 725 — the Import panel on colour tokens.
   // 30 Sep 2026: 725 → 724 — capacity colours in WeeklyCalendar from one helper.
-  hexLiteral: 724,
+  // 9 Oct 2026: 724 → 718 — admin conflict panel built from primitives + adminPalette (lane F).
+  hexLiteral: 718,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.

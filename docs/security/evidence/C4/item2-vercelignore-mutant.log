@@ -1,0 +1,3 @@
+     × lists docs/, tests/, scripts/ and .omc/ and still ships the one script the build command runs 3ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 4 passed (5)

@@ -78,7 +78,7 @@ export async function notifyMemberAction(args: NotifyMemberActionArgs): Promise<
 
   if (!args.skipPush) {
     tasks.push(
-      sendPushToMember(args.memberId, {
+      sendPushToMember(args.tenantId, args.memberId, {
         title: args.fromName ? `Action from ${args.fromName}` : `Action from ${gymName}`,
         body: args.title,
         url: "/member/actions",

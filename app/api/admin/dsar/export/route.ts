@@ -52,6 +52,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
+import { refuseSupportSession } from "@/lib/support-session";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -82,6 +83,7 @@ function capped<T>(items: T[], total: number): CappedSection<T> {
 export async function GET(req: Request) {
   const gate = await requireApiOwner();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session (lib/support-session.ts)
   const { tenantId, userId } = gate;
 
   // Audit iter-1-dashboard M-A4-2: rate-limit before expensive multi-table
@@ -696,7 +698,13 @@ export async function GET(req: Request) {
     // erasure was incomplete. Store an HMAC instead: it still correlates two
     // exports of the same subject, but it is not the address and (unlike the
     // 32-bit hashSnippet used elsewhere) is not brute-forceable back to one.
+    //
+    // Durable (operator audit 5 Oct 2026, Q9): written and committed BEFORE
+    // the file is returned. If it cannot be written, logAudit throws, the
+    // catch below answers 500 and no personal data leaves the server.
     await logAudit({
+      durable: true,
+      outcome: "released",
       tenantId,
       userId,
       action: "member.dsar_export",

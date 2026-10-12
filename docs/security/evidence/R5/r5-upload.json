@@ -1,0 +1,79 @@
+[
+ {
+  "cell": "positive real png",
+  "status": 200,
+  "put": [
+   "tenants/tenant-c2/324679522a76dc25afb936cd.webp"
+  ]
+ },
+ {
+  "cell": "CL > body, under cap",
+  "declared": 1000260,
+  "actual": 260,
+  "status": 200
+ },
+ {
+  "cell": "CL > cap, tiny body",
+  "status": 413,
+  "hits": 0
+ },
+ {
+  "cell": "CL < body (5 MB body, CL 100)",
+  "status": 400,
+  "error": "That image is too large. The limit is 4MB — try a smaller photo.",
+  "put": 0
+ },
+ {
+  "cell": "chunked 6 MB, no CL",
+  "status": 400,
+  "put": 0,
+  "hitsSpent": 2
+ },
+ {
+  "cell": "svg variants",
+  "statuses": {
+   "image/png": 400,
+   "image/jpeg": 400,
+   "image/webp": 400,
+   "image/svg+xml": 400,
+   "image/svg+xml; charset=utf-8": 400,
+   "IMAGE/PNG": 400,
+   "text/xml": 400
+  },
+  "polyglot": 400,
+  "sharpWarns": 1,
+  "put": 0
+ },
+ {
+  "cell": "filenames",
+  "put": [
+   "tenants/tenant-c2/be32035940d3722af2d9f7c3.webp",
+   "tenants/tenant-c2/9cc7d6faa2f9989c3ebce05a.webp",
+   "tenants/tenant-c2/f3b87138d84d003662497d97.webp",
+   "tenants/tenant-c2/f80cc0f53c07b83a0072b955.webp",
+   "tenants/tenant-c2/0214e5f72d25e4b8aa4d1957.webp",
+   "tenants/tenant-c2/0666cd13855265f1ff009db3.webp"
+  ]
+ },
+ {
+  "cell": "pixels",
+  "over": 400,
+  "overWarn": "[upload] sharp resize failed Input image exceeds pixel limit",
+  "at": 400,
+  "atWarn": "[upload] sharp resize failed vipspng: libpng read error",
+  "put": 0
+ },
+ {
+  "cell": "duplicates/mistyped",
+  "statuses": [
+   400,
+   400,
+   400,
+   400,
+   400,
+   400,
+   400
+  ],
+  "put": 0
+ }
+]

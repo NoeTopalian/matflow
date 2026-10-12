@@ -1,0 +1,38 @@
+// R2: attack matrix for scripts/readiness/db-target.mjs. Synthetic credentials; no connection is opened.
+import path from "node:path"; import { pathToFileURL } from "node:url"; import { createRequire } from "node:module";
+const wt = process.argv[2];
+const { resolveDbTarget } = await import(pathToFileURL(path.join(wt, "scripts/readiness/db-target.mjs")).href);
+const require = createRequire(path.join(wt, "package.json"));
+const CP = require("pg/lib/connection-parameters.js");
+const T = "ep-hidden-salad-r2fake.eu-west-2.aws.neon.tech", P = "ep-bold-wave-abt39t7x.eu-west-2.aws.neon.tech";
+const cases = {
+  "baseline TEST": `postgresql://u:pw@${T}/db?sslmode=require`,
+  "baseline PROD": `postgresql://u:pw@${P}/db`,
+  "uppercase scheme+host PROD": `POSTGRESQL://u:pw@${P.toUpperCase()}/db`,
+  "IPv6 literal": `postgresql://u:pw@[::1]:5432/db`,
+  "IPv6 literal w/ zone-ish": `postgresql://u:pw@[fe80::1]/db`,
+  "pct-encoded PROD host": `postgresql://u:pw@${P.replace("bold", "b%6fld")}/db`,
+  "pct-encoded dash": `postgresql://u:pw@${P.replace("ep-bold", "ep%2Dbold")}/db`,
+  "host in userinfo (TEST in user, PROD host)": `postgresql://${T}:pw@${P}/db`,
+  "host in userinfo (PROD in user, TEST host)": `postgresql://${P}:pw@${T}/db`,
+  "userinfo with @ (pw@PROD)@TEST": `postgresql://u:pw@${P}@${T}/db`,
+  "backslash": `postgresql://u:pw@${T}\@${P}/db`,
+  "?host= override": `postgresql://u:pw@${T}/db?host=${P}`,
+  "?HOST= uppercase key": `postgresql://u:pw@${T}/db?HOST=${P}`,
+  "?h%6fst= encoded key": `postgresql://u:pw@${T}/db?h%6fst=${P}`,
+  "?options=endpoint": `postgresql://u:pw@${T}/db?options=endpoint%3Dep-bold-wave-abt39t7x`,
+  "password endpoint= (Neon SNI workaround)": `postgresql://u:endpoint%3Dep-bold-wave-abt39t7x%3Bpw@${T}/db`,
+  "unix socket path": `/var/run/postgresql db`,
+  "empty host": `postgresql://u:pw@/db?host=${P}`,
+  "multi-host comma": `postgresql://u:pw@${T},${P}/db`,
+  "trailing dot TEST": `postgresql://u:pw@${T}./db`,
+  "space-trigger reencode + host": `postgresql://u:p w@${T}/db?host=${P}`,
+};
+for (const [name, url] of Object.entries(cases)) {
+  let g; try { g = "ACCEPT host=" + resolveDbTarget(url, { expectHost: "ep-hidden-salad" }); } catch (e) { g = "REFUSE (" + String(e.message).slice(0, 60) + ")"; }
+  let pgv; try { const c = new CP(url); pgv = `pg.host=${c.host} pg.options=${c.options ?? "-"} pwHasEndpoint=${/endpoint=/.test(c.password ?? "")}`; } catch (e) { pgv = "pg-parse-error"; }
+  console.log(`${name.padEnd(46)} | ${g.padEnd(70)} | ${pgv.replace(T, "<TEST>").replace(P, "<PROD>")}`);
+}
+process.env.PGOPTIONS = "endpoint=ep-bold-wave-abt39t7x";
+const url = cases["baseline TEST"]; let g; try { g = "ACCEPT " + resolveDbTarget(url, { expectHost: "ep-hidden-salad" }); } catch (e) { g = "REFUSE"; }
+const c = new CP(url); console.log(`PGOPTIONS env + TEST url`.padEnd(46), "|", g.replace(T, "<TEST>"), "| pg.options=" + c.options);

@@ -12,7 +12,12 @@ import { verifySync } from "otplib";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
+import { refuseRevokedPendingToken } from "@/lib/auth-pending-gate";
 import { assertSameOrigin } from "@/lib/csrf";
+import { z } from "zod";
+
+// Lane C2 (9 Oct 2026): exactly { code }.
+const bodySchema = z.strictObject({ code: z.string().regex(/^\d{6}$/) });
 
 export async function POST(req: NextRequest) {
   // Audit iter-1-member-surface M-A5-1 (upgraded with adjacent fix): CSRF
@@ -32,6 +37,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No pending TOTP session" }, { status: 401 });
   }
 
+  // Revoked since the password step? Ask before anything is spent (SF-37,
+  // lib/auth-pending-gate.ts). getToken() only decodes the cookie.
+  const revoked = await refuseRevokedPendingToken(token);
+  if (revoked) return revoked;
+
   const rl = await checkRateLimit(`totp-member:${token.id}`, 5, 10 * 60 * 1000);
   if (!rl.allowed) {
     return NextResponse.json(
@@ -42,10 +52,13 @@ export async function POST(req: NextRequest) {
 
   let body: unknown;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
-  const { code } = body as { code?: string };
-  if (!code || !/^\d{6}$/.test(code)) {
+  // Strict (lane C2): a null/array/string body used to throw on destructuring (500), and an
+  // array code like ["123456"] coerced past the regex into verifySync. Now one 400.
+  const parsedBody = bodySchema.safeParse(body);
+  if (!parsedBody.success) {
     return NextResponse.json({ error: "Invalid code format" }, { status: 400 });
   }
+  const { code } = parsedBody.data;
 
   const member = await withTenantContext(token.tenantId as string, (tx) =>
     tx.member.findUnique({
@@ -63,7 +76,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid code" }, { status: 400 });
   }
 
-  const newToken = { ...token, totpPending: false };
+  const newToken: Record<string, unknown> = { ...token, totpPending: false };
+  // Checked just now: nothing awaits revalidation (SF-44 marker, auth.ts).
+  delete newToken.revalidateSince;
   const encoded = await encode({
     token: newToken,
     secret: AUTH_SECRET_VALUE!,

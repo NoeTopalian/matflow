@@ -1,0 +1,152 @@
+{
+ "observedUTC": "2026-10-09T17:35:43.138Z",
+ "resolver": "https://dns.google/resolve",
+ "answers": [
+  {
+   "name": "matflow.studio",
+   "type": "TXT",
+   "status": 0,
+   "answers": []
+  },
+  {
+   "name": "matflow.studio",
+   "type": "MX",
+   "status": 0,
+   "answers": []
+  },
+  {
+   "name": "matflow.studio",
+   "type": "CAA",
+   "status": 0,
+   "answers": [
+    {
+     "type": 257,
+     "ttl": 60,
+     "data": "0 issue \"letsencrypt.org\""
+    },
+    {
+     "type": 257,
+     "ttl": 60,
+     "data": "0 issue \"pki.goog\""
+    },
+    {
+     "type": 257,
+     "ttl": 60,
+     "data": "0 issue \"sectigo.com\""
+    }
+   ]
+  },
+  {
+   "name": "_dmarc.matflow.studio",
+   "type": "TXT",
+   "status": 0,
+   "answers": []
+  },
+  {
+   "name": "send.matflow.studio",
+   "type": "TXT",
+   "status": 0,
+   "answers": [
+    {
+     "type": 16,
+     "ttl": 3600,
+     "data": "v=spf1 include:amazonses.com ~all"
+    }
+   ]
+  },
+  {
+   "name": "send.matflow.studio",
+   "type": "MX",
+   "status": 0,
+   "answers": [
+    {
+     "type": 15,
+     "ttl": 3600,
+     "data": "10 feedback-smtp.eu-west-1.amazonses.com."
+    }
+   ]
+  },
+  {
+   "name": "resend._domainkey.matflow.studio",
+   "type": "TXT",
+   "status": 0,
+   "answers": [
+    {
+     "type": 16,
+     "ttl": 3600,
+     "data": "p=MIGfMA0GCSqGSIb3DQEB…(public key, truncated)"
+    }
+   ]
+  },
+  {
+   "name": "resend._domainkey.matflow.studio",
+   "type": "CNAME",
+   "status": 0,
+   "answers": []
+  },
+  {
+   "name": "mail.matflow.studio",
+   "type": "TXT",
+   "status": 0,
+   "answers": []
+  },
+  {
+   "name": "_dmarc.send.matflow.studio",
+   "type": "TXT",
+   "status": 3,
+   "answers": []
+  },
+  {
+   "name": "zz-nonexistent-e2probe.matflow.studio",
+   "type": "A",
+   "status": 0,
+   "answers": [
+    {
+     "type": 1,
+     "ttl": 1800,
+     "data": "216.198.79.65"
+    },
+    {
+     "type": 1,
+     "ttl": 1800,
+     "data": "64.29.17.65"
+    }
+   ]
+  },
+  {
+   "name": "zz-nonexistent-e2probe.matflow.studio",
+   "type": "TXT",
+   "status": 0,
+   "answers": []
+  },
+  {
+   "name": "matflow.studio",
+   "type": "NS",
+   "status": 0,
+   "answers": [
+    {
+     "type": 2,
+     "ttl": 21600,
+     "data": "ns2.vercel-dns.com."
+    },
+    {
+     "type": 2,
+     "ttl": 21600,
+     "data": "ns1.vercel-dns.com."
+    }
+   ]
+  },
+  {
+   "name": "_mta-sts.matflow.studio",
+   "type": "TXT",
+   "status": 0,
+   "answers": []
+  },
+  {
+   "name": "default._bimi.matflow.studio",
+   "type": "TXT",
+   "status": 0,
+   "answers": []
+  }
+ ]
+}

@@ -1,0 +1,33 @@
+// R3: purge minimums with planted ages (owner plants back-dated rows; matflow_app purges); GRANT-to-self effect. Rolled back.
+import { createRequire } from "node:module";
+const pg = createRequire(import.meta.url)("pg");
+const c = new pg.Client({ host: "127.0.0.1", port: Number(process.argv[2]), user: "postgres", database: "postgres", ssl: false });
+await c.connect();
+const owner = (await c.query(`select pg_get_userbyid(relowner) o from pg_class where oid = '"AuditLog"'::regclass`)).rows[0].o;
+c.on("notice", (n) => console.log(JSON.stringify({ notice: n.message })));
+await c.query("BEGIN");
+await c.query(`SET LOCAL ROLE matflow_app`);
+await c.query(`GRANT UPDATE ON "AuditLog" TO matflow_app`);
+await c.query(`RESET ROLE`);
+console.log(JSON.stringify({ afterSelfGrant: (await c.query(`select relacl::text a from pg_class where oid='"AuditLog"'::regclass`)).rows[0].a }));
+await c.query("ROLLBACK");
+const plant = [
+  ["ord-364", "member.update", 364, null], ["ord-366", "member.update", 366, null],
+  ["adm-366", "admin.tenant.suspend", 366, null], ["adm-2191", "admin.tenant.suspend", 2191, null],
+  ["dsar-366", "member.dsar_erase", 366, null], ["dsarx-366", "member.dsar_eraseXYZ", 366, null], ["dsarlike-366", "memberXdsar_erase", 366, null],
+  ["act-366", "member.update", 366, '{"actingAs":"op"}'], ["actnull-366", "member.update", 366, '{"actingAs":null}'], ["act-2191", "member.update", 2191, '{"actingAs":"op"}'],
+];
+await c.query("BEGIN");
+await c.query(`SET LOCAL ROLE "${owner}"`);
+const tid = (await c.query(`select "tenantId" t from "AuditLog" limit 1`)).rows[0].t;
+for (const [id, action, days, meta] of plant) {
+  await c.query(`INSERT INTO "AuditLog"(id,"tenantId",action,"entityType","entityId","createdAt",metadata) VALUES ($1,$2,$3,'X','x',(now() AT TIME ZONE 'UTC') - make_interval(days => $4), $5::jsonb)`, ["zzr3-" + id, tid, action, days, meta]);
+}
+await c.query(`SET LOCAL ROLE matflow_app`);
+await c.query(`SELECT set_config('app.bypass_rls','on',true)`);
+const n = (await c.query(`SELECT audit_log_purge(5000) n`)).rows[0].n;
+await c.query(`SET LOCAL ROLE "${owner}"`);
+const left = (await c.query(`SELECT id FROM "AuditLog" WHERE id LIKE 'zzr3-%' ORDER BY id`)).rows.map((r) => r.id.slice(5));
+await c.query("ROLLBACK");
+console.log(JSON.stringify({ purgedByApp: n, survivors: left, deleted: plant.map((p) => p[0]).filter((x) => !left.includes(x)), node: process.version }));
+await c.end();

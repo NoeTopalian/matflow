@@ -1,0 +1,53 @@
+// R6 mutant runner. Usage: node mut.mjs <spec.json> <out.json>
+// spec: [{ id, file, find, replace, cmd: [bash, runner, testfile, ...args], expectRed: "named cell text" }]
+// Each mutant: exact single-occurrence replacement (LF in find/replace is matched against CRLF files too),
+// run the command, record exit code + Tests line + failing cell names, restore the original bytes and check sha256.
+import { readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
+const WT = process.env.MUT_WT ?? "<scratchpad>/security/R7/wtm";
+const [specPath, outPath] = process.argv.slice(2);
+const spec = JSON.parse(readFileSync(specPath, "utf8"));
+const sha = (b) => createHash("sha256").update(b).digest("hex");
+const results = [];
+for (const m of spec) {
+  const files = m.edits ?? [{ file: m.file, find: m.find, replace: m.replace }];
+  const originals = new Map();
+  let applyError = null;
+  for (const e of files) {
+    const abs = path.join(WT, e.file);
+    if (!originals.has(abs)) originals.set(abs, readFileSync(abs));
+    let text = readFileSync(abs, "utf8");
+    const crlf = text.includes("\r\n");
+    const find = crlf ? e.find.replace(/\r?\n/g, "\r\n") : e.find;
+    const repl = crlf ? e.replace.replace(/\r?\n/g, "\r\n") : e.replace;
+    const n = text.split(find).length - 1;
+    if (n !== 1) { applyError = `${e.file}: find occurs ${n} times`; break; }
+    text = text.replace(find, () => repl);
+    writeFileSync(abs, text);
+  }
+  let r = { id: m.id };
+  if (applyError) {
+    r.error = applyError;
+  } else {
+    const t0 = Date.now();
+    const p = spawnSync(m.cmd[0], m.cmd.slice(1), { cwd: WT, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, env: { ...process.env, ...(m.env ?? {}) } });
+    const out = (p.stdout ?? "") + (p.stderr ?? "");
+    const lines = out.split(/\r?\n/);
+    r.exit = p.status;
+    r.seconds = Math.round((Date.now() - t0) / 1000);
+    r.tests = lines.filter((l) => /^\s*Tests\s/.test(l)).map((l) => l.trim()).join(" | ");
+    r.failed = [...new Set(lines.filter((l) => /^\s*(×|FAIL)\s/.test(l)).map((l) => l.trim().replace(/\s+\d+m?s$/, "").slice(0, 260)))].slice(0, 30);
+    if (m.expectRed) r.expectedCellRed = r.failed.some((l) => l.includes(m.expectRed));
+    if (m.saveLog) writeFileSync(m.saveLog, out);
+  }
+  for (const [abs, bytes] of originals) writeFileSync(abs, bytes);
+  r.restored = [...originals].every(([abs, bytes]) => sha(readFileSync(abs)) === sha(bytes));
+  results.push(r);
+  writeFileSync(outPath, JSON.stringify(results, null, 2));
+  console.log(JSON.stringify(r));
+}
+const st = spawnSync("git", ["status", "--short", "--untracked-files=no"], { cwd: WT, encoding: "utf8" });
+console.log("git status (tracked):", JSON.stringify(st.stdout.trim()));

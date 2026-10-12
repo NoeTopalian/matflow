@@ -49,6 +49,15 @@ vi.mock("next-auth/providers/credentials", () => ({
   default: (cfg: { authorize?: Authorize }) => cfg,
 }));
 vi.mock("next-auth/providers/google", () => ({ default: (cfg: unknown) => cfg }));
+// Lockout v2 (lane A2, SF-35/SF-59) keeps its counters in RateLimitHit; this
+// file is about something else, so the counters are stubbed open here.
+// tests/integration/sec-a2-lockout-oracle-db.test.ts drives them for real.
+vi.mock("@/lib/auth-lockout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth-lockout")>()),
+  lockoutState: async () => ({ blocked: false, addrCapped: false }),
+  recordFailure: async () => 1,
+  clearPairOnSuccess: async () => {},
+}));
 
 const { tenantFindUnique, userFindUnique, memberFindUnique } = vi.hoisted(() => ({
   tenantFindUnique: vi.fn(),

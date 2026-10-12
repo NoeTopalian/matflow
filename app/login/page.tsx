@@ -59,16 +59,26 @@ type ResetForm = z.infer<typeof resetSchema>;
  */
 function signInMessage(code: string | undefined): string {
   switch (code) {
-    case "account_locked":
-      return "This account is temporarily locked after too many failed attempts. Try again in an hour, or reset your password.";
+    // "account_locked" is no longer produced (lane A2): a crafted
+    // ?error=account_locked must not render a message that implies the
+    // account exists, so it falls through to the generic default below.
     case "rate_limited":
-      return "Too many sign-in attempts. Please wait a few minutes and try again.";
+      // One message for every throttle and lock (lane A2): the window is an
+      // hour, and a known device of the real account is exempt from the
+      // per-address cap, so say so without hinting whether the account exists.
+      return "Too many sign-in attempts for this email. Wait up to an hour and try again, sign in from a device you've used before, or use a sign-in link or password reset instead.";
+    case "google_link_required":
+      return "This Google account isn't linked to a MatFlow login yet. Sign in with your email and password first; Google sign-in can be linked from your account afterwards.";
     case "tenant_paused":
       // Not the member's fault and not fixable by them — point at the gym
       // rather than at a password reset that cannot help.
       return "Your club's account is paused, so sign-in is unavailable. Please speak to your gym.";
     case "tenant_closed":
       return "This club's account has been closed. Please contact your gym.";
+    case "temp_password_expired":
+      // Only reached after the temporary password matched (auth.ts), so this
+      // tells a guesser nothing.
+      return "This temporary password has expired. Ask whoever gave it to you for a new one.";
     default:
       return "Incorrect email or password.";
   }
@@ -93,13 +103,15 @@ function urlErrorMessage(code: string | null): string | null {
   switch (code) {
     case "tenant_paused":
     case "tenant_closed":
-    case "account_locked":
     case "rate_limited":
+    case "google_link_required":
       return signInMessage(code);
     case "invalid_link":
       return "That sign-in link is no longer valid. Request a new one below.";
-    case "NoAccountForGym":
-      return "That account is not registered with this club.";
+    // "NoAccountForGym" is no longer produced (lane A3): the Google door
+    // answers google_link_required whether or not the address has an account
+    // here, and a crafted ?error=NoAccountForGym must not render a sentence
+    // about whether an account exists. It falls through to silence below.
     default:
       return null;
   }
@@ -435,6 +447,7 @@ function LoginStep({
   initialError?: string | null;
 }) {
   const router = useRouter();
+  const emailOff = gym.emailDelivery === "off";
   const [error, setError] = useState<string | null>(initialError ?? null);
   // `initialError` is derived in the parent's mount effect, so on the deep-link
   // path it can arrive one render after this component's initial state was
@@ -824,14 +837,19 @@ function LoginStep({
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign in"}
             </button>
 
-            <button
-              type="button"
-              onClick={() => setMagicMode(true)}
-              className="w-full py-3 rounded-xl text-sm font-semibold transition-all hover:opacity-90"
-              style={{ color: theme.textMain, background: theme.surface, border: `1px solid ${theme.border}` }}
-            >
-              Email me a sign-in link
-            </button>
+            {/* Mail-dark (7 Oct 2026): no door that promises an email when
+                none can be sent. The switch is deployment-wide, so withholding
+                the door says nothing about any account. */}
+            {!emailOff && (
+              <button
+                type="button"
+                onClick={() => setMagicMode(true)}
+                className="w-full py-3 rounded-xl text-sm font-semibold transition-all hover:opacity-90"
+                style={{ color: theme.textMain, background: theme.surface, border: `1px solid ${theme.border}` }}
+              >
+                Email me a sign-in link
+              </button>
+            )}
 
             {process.env.NEXT_PUBLIC_ENABLE_GOOGLE_OAUTH === "true" && (
               <button
@@ -874,14 +892,21 @@ function LoginStep({
             )}
 
             <div className="flex flex-col items-center pt-1 gap-2">
-              <button
-                type="button"
-                onClick={() => onForgot(currentEmail)}
-                className="text-xs font-medium transition-colors hover:opacity-70"
-                style={{ color: theme.primary }}
-              >
-                Forgot password?
-              </button>
+              {emailOff ? (
+                <p className="text-xs text-center leading-relaxed" style={{ color: theme.textMuted }}>
+                  Forgot your password? Email is turned off for this club, so we can&apos;t send a reset code or
+                  sign-in link. Ask your club to reset your access — club owners, contact MatFlow.
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onForgot(currentEmail)}
+                  className="text-xs font-medium transition-colors hover:opacity-70"
+                  style={{ color: theme.primary }}
+                >
+                  Forgot password?
+                </button>
+              )}
             </div>
           </form>
         </div>

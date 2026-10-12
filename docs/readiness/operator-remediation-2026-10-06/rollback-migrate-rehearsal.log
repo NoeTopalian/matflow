@@ -1,0 +1,16 @@
+# Rollback rehearsal 2026-10-06T02:48Z, Neon TEST branch only (script refuses any other host): e8afb6a's prisma folder, migrate deploy + status
+e8afb6a migrations from 2026-10-0x: 20261001100000_member_hold_prior_status, 20261001200000_tenant_contact_email, 20261002120000_imported_membership_and_guardianship, 20261003120000_import_source_time_provenance, 20261003180000_attendance_history_ledger
+--- migrate deploy: exit 0
+
+94 migrations found in prisma/migrations
+
+
+No pending migrations to apply.
+
+--- migrate status: exit 0
+
+94 migrations found in prisma/migrations
+
+Database schema is up to date!
+
+exit 0

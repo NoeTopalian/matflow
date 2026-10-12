@@ -28,6 +28,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireApiOwner } from "@/lib/api-authz";
 import { sendEmail } from "@/lib/email";
+import { suppressedMessage } from "@/lib/email-delivery";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
@@ -81,5 +82,10 @@ export async function POST(req: Request) {
     });
   }
 
+  // Mail-dark (7 Oct 2026): a deliberate non-send is not a server fault.
+  const suppressed = suppressedMessage(result);
+  if (suppressed) {
+    return NextResponse.json({ ...result, error: suppressed }, { status: 409 });
+  }
   return NextResponse.json(result, { status: result.ok ? 200 : 500 });
 }

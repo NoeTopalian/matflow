@@ -358,6 +358,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvNotes, setCsvNotes] = useState("");
   const [csvUploaded, setCsvUploaded] = useState(false);
+  const [csvHandoffMessage, setCsvHandoffMessage] = useState<string | null>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
 
   // Completion
@@ -645,6 +646,8 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       if (csvNotes.trim()) fd.append("notes", csvNotes.trim());
       const res = await fetch("/api/onboarding/csv-handoff", { method: "POST", body: fd });
       if (res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { message?: unknown };
+        setCsvHandoffMessage(typeof data.message === "string" ? data.message : null);
         setCsvUploaded(true);
       }
     } catch { /* show inline error if needed; csvUploaded stays false */ }
@@ -1617,7 +1620,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: "rgba(255,255,255,0.06)" }}>📨</div>
               <div className="flex-1">
                 <p className="text-sm font-semibold text-white">Send my CSV to MatFlow — we&apos;ll import it for you</p>
-                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Recommended for &gt;20 members. Drop your file below; we&apos;ll import within 1 business day and email you when ready.</p>
+                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Recommended for &gt;20 members. Drop your file below; we&apos;ll import it within 1 business day.</p>
                 {importChoice === "white_glove" && (
                   <div onClick={(e) => e.stopPropagation()} className="mt-4 space-y-3">
                     <input
@@ -1666,8 +1669,14 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                       className="px-4 py-2 rounded-xl text-xs font-bold text-white disabled:opacity-30 flex items-center gap-2"
                       style={{ background: csvUploaded ? "#16a34a" : primaryColor }}
                     >
-                      {csvUploaded ? <><Check className="w-3.5 h-3.5" /> Uploaded — we&apos;ll import within 1 business day</> : (loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Upload CSV →")}
+                      {csvUploaded ? <><Check className="w-3.5 h-3.5" /> Uploaded</> : (loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Upload CSV →")}
                     </button>
+                    {/* What happens next comes from the server, which knows
+                        whether the MatFlow team was actually notified and
+                        whether email is on (7 Oct 2026, mail-dark). */}
+                    {csvUploaded && csvHandoffMessage && (
+                      <p role="status" className="text-xs" style={{ color: "rgba(255,255,255,0.7)" }}>{csvHandoffMessage}</p>
+                    )}
                   </div>
                 )}
               </div>

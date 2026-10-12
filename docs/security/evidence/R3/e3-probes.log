@@ -1,0 +1,105 @@
+== 1. ops-blob-host-count: URL forms through buildClientConfig (env empty)
+(none)                                         ACCEPT ssl.rejectUnauthorized=true servernameIsHost=true keys=application_name,database,host,password,port,ssl,user
+?sslmode=require                               ACCEPT ssl.rejectUnauthorized=true servernameIsHost=true keys=application_name,database,host,password,port,ssl,user
+?sslmode=verify-full                           ACCEPT ssl.rejectUnauthorized=true servernameIsHost=true keys=application_name,database,host,password,port,ssl,user
+?sslmode=require&channel_binding=require       ACCEPT ssl.rejectUnauthorized=true servernameIsHost=true keys=application_name,database,host,password,port,ssl,user
+?sslmode=require&sslmode=no-verify             REFUSE (REFUSED: connection string carries sslmode= (TLS parameters are not ta)
+?sslmode=require&sslmode=disable               REFUSE (REFUSED: connection string carries sslmode= (TLS parameters are not ta)
+?sslmode=require&sslmode=require               REFUSE (REFUSED: connection string carries sslmode= (TLS parameters are not ta)
+?sslmode=verify-full&ssl%6dode=no-verify       REFUSE (REFUSED: connection string carries sslmode= (TLS parameters are not ta)
+?ssl%6Dode=disable                             REFUSE (REFUSED: connection string carries sslmode= (TLS parameters are not ta)
+?SSLMODE=disable                               REFUSE (REFUSED: connection string carries sslmode= (TLS parameters are not ta)
+?sslmode=prefer                                REFUSE (REFUSED: connection string carries sslmode= (TLS parameters are not ta)
+?sslmode=no-verify                             REFUSE (REFUSED: connection string carries sslmode= (TLS parameters are not ta)
+?ssl=false                                     REFUSE (REFUSED: connection string carries ssl= (TLS parameters are not taken )
+?ssl=true                                      REFUSE (REFUSED: connection string carries ssl= (TLS parameters are not taken )
+?sslmode%3Ddisable                             REFUSE (REFUSED: connection string carries sslmode=disable= (TLS parameters ar)
+?sslmode=require&%2573slmode=disable           REFUSE (REFUSED: connection string carries sslmode= (TLS parameters are not ta)
+?sslmode=REQUIRE                               REFUSE (REFUSED: connection string carries sslmode= (TLS parameters are not ta)
+?sslmode=require+                              REFUSE (REFUSED: connection string carries sslmode= (TLS parameters are not ta)
+?host=evil.example                             REFUSE (REFUSED: connection string carries a host= parameter)
+?h%6fst=evil.example                           REFUSE (REFUSED: connection string carries a host= parameter)
+?hostaddr=127.0.0.1                            REFUSE (REFUSED: connection string carries a hostaddr= parameter)
+?options=-c%20search_path%3Dx                  REFUSE (REFUSED: connection string carries a options= parameter)
+?endpoint=ep-bold-wave-abt39t7x                REFUSE (REFUSED: connection string carries a endpoint= parameter)
+?sslrootcert=system                            REFUSE (REFUSED: connection string carries sslrootcert= (TLS parameters are no)
+?sslnegotiation=direct                         REFUSE (REFUSED: connection string carries sslnegotiation= (TLS parameters are)
+?gssencmode=disable                            REFUSE (REFUSED: connection string carries gssencmode= (TLS parameters are not)
+?channel_binding=disable                       ACCEPT ssl.rejectUnauthorized=true servernameIsHost=true keys=application_name,database,host,password,port,ssl,user
+== 1b. PG* / TLS environment
+["PGSSLMODE"]                                  REFUSE (REFUSED: PG* environment variables are set (PGSSLMODE); node)
+["pgsslmode"]                                  REFUSE (REFUSED: PG* environment variables are set (pgsslmode); node)
+["PGOPTIONS"]                                  REFUSE (REFUSED: PG* environment variables are set (PGOPTIONS); node)
+["PGHOST"]                                     REFUSE (REFUSED: PG* environment variables are set (PGHOST); node-po)
+["PGHOSTADDR"]                                 REFUSE (REFUSED: PG* environment variables are set (PGHOSTADDR); nod)
+["PGPASSWORD"]                                 REFUSE (REFUSED: PG* environment variables are set (PGPASSWORD); nod)
+["PGSSLROOTCERT"]                              REFUSE (REFUSED: PG* environment variables are set (PGSSLROOTCERT); )
+["NODE_TLS_REJECT_UNAUTHORIZED"]               ACCEPT rejectUnauthorized=true
+== 2. ops-credential-fingerprint
+value as first argument        exit=2 leak={"whole":false,"any8":0,"fp":false}
+value after --var              exit=2 leak={"whole":false,"any8":0,"fp":false}
+value after --from-env-file    exit=2 leak={"whole":false,"any8":0,"fp":false}
+value as 3rd argument          exit=2 leak={"whole":false,"any8":0,"fp":false}
+--var=value form               exit=2 leak={"whole":false,"any8":0,"fp":false}
+--stdin then value arg         exit=2 leak={"whole":false,"any8":0,"fp":false}
+env line QC  parseEnvText present=true match=["synthetic"]
+env line SC  parseEnvText present=true match=["synthetic"]
+env line UC  parseEnvText present=true match=["synthetic"]
+env line EX  parseEnvText present=true match=["synthetic"]
+env line HC  parseEnvText present=true match=["synthetic"]
+env line SP  parseEnvText present=true match=["synthetic"]
+CLI --from-env-file exit=0 leakV=false
+   QC: no match with any 7 May leaked value
+   SC: no match with any 7 May leaked value
+   UC: no match with any 7 May leaked value
+   EX: no match with any 7 May leaked value
+   HC: no match with any 7 May leaked value
+   SP: no match with any 7 May leaked value
+--env-file (missing file): exit=9 printsPath=true
+--env-file (existing file): exit=2 leakV=false stderrHead="unexpected argument at position 1 (not shown)\nusage: --from-env-file <path> --var NAME [--var NAME…]"
+unreadable --from-env-file: exit=2 printsPath=false
+== 3. secret-scan plant (R2 misses + extras)
+MUST stripe live key                         -> stripe-live-secret:candidate
+MUST neon url                                -> postgres-url-with-password:candidate,neon-password:candidate
+MUST AUTH_SECRET json                        -> secret-env-assignment:candidate
+MUST blob token yaml                         -> vercel-blob-token:candidate,secret-env-assignment:candidate
+R2-MISS RLS_CONTEXT_SIGNING_KEY              -> rls-context-signing-key:candidate
+R2-MISS OPERATOR_PASSWORD                    -> password-env-assignment:candidate
+R2-MISS MATFLOW_PROD_PASSWORD                -> password-env-assignment:candidate
+R2-MISS TEST_PASSWORD                        -> password-env-assignment:candidate
+R2-MISS MIGRATION_DATABASE_URL non-npg       -> postgres-url-with-password:candidate,database-url-env-assignment:candidate
+R2-MISS owner URL then ellipsis              -> postgres-url-with-password:candidate,database-url-env-assignment:candidate
+R2-MISS key containing Fake                  -> stripe-live-secret:candidate
+R2-MISS key containing abcdef                -> stripe-live-secret:candidate
+R2-MISS key containing probe                 -> stripe-live-secret:candidate
+EXTRA yaml OPERATOR_PASSWORD                 -> password-env-assignment:candidate
+EXTRA json OPERATOR_PASSWORD                 -> password-env-assignment:candidate
+EXTRA export TEST_PASSWORD                   -> password-env-assignment:candidate
+EXTRA DATABASE_URL_DIRECT                    -> postgres-url-with-password:candidate,database-url-env-assignment:candidate
+EXTRA signing key 128 hex in json            -> rls-context-signing-key:candidate
+EXTRA neon password containing example       -> postgres-url-with-password:placeholder
+EXTRA lower-case operator_password           -> NO FINDING
+EXTRA other *_PASSWORD (SMTP_PASSWORD)       -> NO FINDING
+NEG stripe zero placeholder                  -> stripe-test-secret:placeholder
+NEG low-entropy CRON                         -> NO FINDING
+NEG localhost url                            -> postgres-url-with-password:placeholder
+NEG env interpolation                        -> NO FINDING
+NEG process.env reference                    -> password-env-assignment:placeholder
+NEG bare word                                -> password-env-assignment:placeholder
+NEG RLS key placeholder                      -> NO FINDING
+== 4. db-target allowlist (no connection opened)
+ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech                 expect=ep-hidden-salad            ACCEPT ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech
+ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech          expect=ep-hidden-salad            ACCEPT ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech
+ep-hidden-salad-r2fake.eu-west-2.aws.neon.tech                   expect=ep-hidden-salad            REFUSE (REFUSED: host is not the allowlisted endpoint for expectHost)
+ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech.evil.example    expect=ep-hidden-salad            REFUSE (REFUSED: host is not the allowlisted endpoint for expectHost)
+ep-hidden-salad-abom7cg4.us-east-1.aws.neon.tech                 expect=ep-hidden-salad            REFUSE (REFUSED: host is not the allowlisted endpoint for expectHost)
+ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech          expect=ep-hidden-salad-abom7cg4   ACCEPT ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech
+ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech                 expect=hidden-salad               REFUSE (REFUSED: expectHost must be ep-hidden-salad, ep-bold-wave or)
+ep-bold-wave-abt39t7x.eu-west-2.aws.neon.tech                    expect=ep-bold-wave               REFUSE (REFUSED: production endpoint; this script is not authorised )
+EP-HIDDEN-SALAD-ABOM7CG4.EU-WEST-2.AWS.NEON.TECH                 expect=ep-hidden-salad            ACCEPT ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech
+ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech.                expect=ep-hidden-salad            REFUSE (REFUSED: host is not the allowlisted endpoint for expectHost)
+ep-other-thing-abcd1234.eu-west-2.aws.neon.tech                  expect=ep-other-thing-abcd1234    ACCEPT ep-other-thing-abcd1234.eu-west-2.aws.neon.tech
+ep-hidden-salad-abom7cg4.eu-west-2.aws.neon.tech                 expect=ep-other-thing-abcd1234    REFUSE (REFUSED: host does not contain ep-other-thing-abcd1234)
+.env.test TEST_DATABASE_URL: ACCEPT
+.env.test DATABASE_URL: ACCEPT
+.env.test RESTRICTED_DATABASE_URL: ACCEPT

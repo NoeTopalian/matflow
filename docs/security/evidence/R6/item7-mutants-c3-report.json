@@ -1,0 +1,103 @@
+[
+  {
+    "id": "C3-M1 advisory lock removed",
+    "exit": 1,
+    "seconds": 17,
+    "tests": "Tests  1 failed | 3 passed (4) | Tests  4 failed | 2 passed (6)",
+    "failed": [
+      "× an allowed hit is one transaction: [advisory lock on this bucket, conditional insert] — and no bare create",
+      "× burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)",
+      "× burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 2)",
+      "× burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 3)",
+      "× two buckets bursting at once do not borrow from each other (10 + 10 parallel, max 5 each)",
+      "FAIL  tests/unit/sec-c3-rate-limit-atomic.test.ts > checkRateLimit: lock, then conditional insert, in one transaction > an allowed hit is one transaction: [advisory lock on this bucket, conditional insert] — and no bare create",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 2)",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 3)",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > two buckets bursting at once do not borrow from each other (10 + 10 parallel, max 5 each)"
+    ],
+    "restored": true
+  },
+  {
+    "id": "C3-M2 session-level lock instead of transaction lock",
+    "exit": 1,
+    "seconds": 164,
+    "tests": "Tests  1 failed | 3 passed (4) | Tests  6 failed (6)",
+    "failed": [
+      "× an allowed hit is one transaction: [advisory lock on this bucket, conditional insert] — and no bare create",
+      "× positive control, sequential: five allowed, the sixth refused with a bounded Retry-After; five rows",
+      "× burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)",
+      "× burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 2)",
+      "× burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 3)",
+      "× two buckets bursting at once do not borrow from each other (10 + 10 parallel, max 5 each)",
+      "× the window slides: refused at the limit, allowed again once the window has passed",
+      "FAIL  tests/unit/sec-c3-rate-limit-atomic.test.ts > checkRateLimit: lock, then conditional insert, in one transaction > an allowed hit is one transaction: [advisory lock on this bucket, conditional insert] — and no bare create",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted)",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > positive control, sequential: five allowed, the sixth refused with a bounded Retry-After; five rows",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 3)",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 2)",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > two buckets bursting at once do not borrow from each other (10 + 10 parallel, max 5 each)",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > the window slides: refused at the limit, allowed again once the window has passed"
+    ],
+    "restored": true
+  },
+  {
+    "id": "C3-M3 off by one (<=)",
+    "exit": 1,
+    "seconds": 22,
+    "tests": "Tests  1 failed | 3 passed (4) | Tests  4 failed | 2 passed (6)",
+    "failed": [
+      "× an allowed hit is one transaction: [advisory lock on this bucket, conditional insert] — and no bare create",
+      "× burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)",
+      "× burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 2)",
+      "× burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 3)",
+      "× two buckets bursting at once do not borrow from each other (10 + 10 parallel, max 5 each)",
+      "FAIL  tests/unit/sec-c3-rate-limit-atomic.test.ts > checkRateLimit: lock, then conditional insert, in one transaction > an allowed hit is one transaction: [advisory lock on this bucket, conditional insert] — and no bare create",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 1)",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 2)",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > burst of 20 in parallel against max 5 → exactly 5 allowed and exactly 5 rows (round 3)",
+      "FAIL  tests/integration/sec-c3-rate-limit-atomic-db.test.ts > checkRateLimit on a real database is exact under concurrency (restricted) > two buckets bursting at once do not borrow from each other (10 + 10 parallel, max 5 each)"
+    ],
+    "restored": true
+  },
+  {
+    "id": "C3-M4 unlocked pre-count removed",
+    "exit": 1,
+    "seconds": 23,
+    "tests": "Tests  1 failed | 3 passed (4) | Tests  6 passed (6)",
+    "failed": [
+      "× a bucket already full is refused by the unlocked aggregate without opening a transaction",
+      "FAIL  tests/unit/sec-c3-rate-limit-atomic.test.ts > checkRateLimit: lock, then conditional insert, in one transaction > a bucket already full is refused by the unlocked aggregate without opening a transaction"
+    ],
+    "restored": true
+  },
+  {
+    "id": "C2/C3 report cap raised to 32 KB",
+    "exit": 1,
+    "seconds": 5,
+    "tests": "Tests  3 failed | 8 passed (11)",
+    "failed": [
+      "× an ABSOLUTE 20 KB report is refused 413 with an honest Content-Length and when chunked",
+      "× a declared Content-Length over the bound is refused WITHOUT pulling a byte of the body",
+      "× …and without touching any body accessor of the request",
+      "FAIL  tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > absolute bound and refusal before the body is read (lane C3) > an ABSOLUTE 20 KB report is refused 413 with an honest Content-Length and when chunked",
+      "FAIL  tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > absolute bound and refusal before the body is read (lane C3) > a declared Content-Length over the bound is refused WITHOUT pulling a byte of the body",
+      "FAIL  tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > absolute bound and refusal before the body is read (lane C3) > …and without touching any body accessor of the request"
+    ],
+    "restored": true
+  },
+  {
+    "id": "C2/C3 report Content-Length pre-check removed",
+    "exit": 1,
+    "seconds": 4,
+    "tests": "Tests  2 failed | 9 passed (11)",
+    "failed": [
+      "× a declared Content-Length over the bound is refused WITHOUT pulling a byte of the body",
+      "× …and without touching any body accessor of the request",
+      "FAIL  tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > absolute bound and refusal before the body is read (lane C3) > a declared Content-Length over the bound is refused WITHOUT pulling a byte of the body",
+      "FAIL  tests/unit/sec-c2-csp-report.test.ts > /api/csp-report > absolute bound and refusal before the body is read (lane C3) > …and without touching any body accessor of the request"
+    ],
+    "restored": true
+  }
+]

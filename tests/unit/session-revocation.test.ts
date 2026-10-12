@@ -85,7 +85,7 @@ describe("a failure to check is not a pass", () => {
     expect(await checkSessionVersion({ userId: "user-1", tokenVersion: 3 })).toBe("unknown");
   });
 
-  it("REPORTS the failure, because revocation is failing open while it lasts", async () => {
+  it("REPORTS the failure (and auth.ts now refuses the request: SEC-012, 9 Oct 2026)", async () => {
     userFindUniqueMock.mockRejectedValue(new Error("connection reset"));
     await checkSessionVersion({ userId: "user-1", tokenVersion: 3 });
 
@@ -95,7 +95,7 @@ describe("a failure to check is not a pass", () => {
     // same catch — the one failure that must never look like a blip.
     expect(captureExceptionMock).toHaveBeenCalledTimes(1);
     expect(captureExceptionMock.mock.calls[0][1]).toMatchObject({
-      tags: { area: "auth", control: "session-revocation", failMode: "open" },
+      tags: { area: "auth", control: "session-revocation", failMode: "closed" },
     });
   });
 
@@ -179,5 +179,23 @@ describe("auth.ts does not cache the revocation check", () => {
 
   it("still calls the revocation check on the Node-runtime path", () => {
     expect(source, "the guard itself must not be deleted").toMatch(/checkSessionVersion\(/);
+  });
+});
+
+describe("display name follows the row (8 Oct 2026, account editing)", () => {
+  it("passes the current name to the callback when the version matches", async () => {
+    userFindUniqueMock.mockResolvedValue({ sessionVersion: 3, name: "Renamed Owner" });
+    const seen: string[] = [];
+    const verdict = await checkSessionVersion({ userId: "u1", tokenVersion: 3 }, (n) => seen.push(n));
+    expect(verdict).toBe("ok");
+    expect(seen).toEqual(["Renamed Owner"]);
+  });
+
+  it("never passes a name for a revoked session", async () => {
+    userFindUniqueMock.mockResolvedValue({ sessionVersion: 4, name: "Renamed Owner" });
+    const seen: string[] = [];
+    const verdict = await checkSessionVersion({ userId: "u1", tokenVersion: 3 }, (n) => seen.push(n));
+    expect(verdict).toBe("revoked");
+    expect(seen).toEqual([]);
   });
 });

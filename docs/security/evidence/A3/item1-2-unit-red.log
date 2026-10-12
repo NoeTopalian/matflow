@@ -1,0 +1,18 @@
+## RED on HEAD ebd761d (auth.ts unmodified), node v24.21.0
+     × the trace is not empty and shows the expected shape for an address with no account 5ms
+     × member at 0 prior failures: same answer and same transactions as an address with no account 2ms
+     × member at 9 prior failures: same answer and same transactions as an address with no account 1ms
+     × user at 0 prior failures: same answer and same transactions as an address with no account 3ms
+     × user at 9 prior failures: same answer and same transactions as an address with no account 2ms
+     × locked-member at 0 prior failures: same answer and same transactions as an address with no account 2ms
+     × locked-member at 9 prior failures: same answer and same transactions as an address with no account 1ms
+     × locked-user at 0 prior failures: same answer and same transactions as an address with no account 1ms
+     × locked-user at 9 prior failures: same answer and same transactions as an address with no account 1ms
+     × locked-member: twelve wrong passwords give the same answers as an address with no account 2ms
+     × locked-user: twelve wrong passwords give the same answers as an address with no account 1ms
+     × each refused attempt on a locked row writes both counters (address and address+network) 1ms
+     × the RIGHT password on a locked row is still refused, and that refusal is counted too 0ms
+⎯⎯⎯⎯⎯⎯ Failed Tests 13 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  13 failed | 10 passed (23)
+exit=1

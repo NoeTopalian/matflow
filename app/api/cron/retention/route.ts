@@ -35,11 +35,11 @@ import { bearerMatches } from "@/lib/constant-time";
 import { checkCronAuthAttempt } from "@/lib/rate-limit";
 import { del } from "@vercel/blob";
 import { Prisma } from "@prisma/client";
-import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
+import { withRlsBypass } from "@/lib/prisma-tenant";
 import { isVercelBlobUrl } from "@/lib/blob-url";
 import { DB_UPLOAD_PREFIX } from "@/lib/import-storage";
-import { deleteMemberCascade } from "@/lib/member-delete";
-import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
+import { purgeSoftDeletedTenants } from "@/lib/tenant-purge";
+import { auditLogRetentionWhere } from "@/lib/audit-log";
 import { runStripeReconciliation, type ReconcileResult } from "@/lib/stripe/reconcile";
 
 export const runtime = "nodejs";
@@ -49,27 +49,23 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Rows deleted per statement. Keeps each transaction inside the 15s budget. */
 const BATCH = 1000;
-/**
- * Members per transaction. Each `deleteMemberCascade` walk is ~10 statements
- * (memberRank findMany + rankHistory + memberRank + memberClassPack findMany +
- * classPackRedemption + memberClassPack + attendanceRecord + classSubscription
- * + classWaitlist + loginEvent + the final member deleteMany), so 10 members is
- * ~110 round trips. Against the 15s default interactive-transaction budget in
- * lib/prisma-tenant.ts that was marginal at 25 (~250 round trips → P2028 →
- * the tenant fails and retries with the same batch size forever), so the batch
- * is halved AND the transaction gets an explicit larger budget below.
- */
-const MEMBER_BATCH = 10;
-/** Explicit budget for the member-cascade transaction; overrides TX_DEFAULTS' 15s. */
-const MEMBER_TX_TIMEOUT_MS = 60_000;
 /** Stop starting new work after this, leaving 60s of the 300s budget spare. */
 const DEADLINE_MS = 240_000;
-/** Tenant hard-delete is the most expensive rule; cap the blast radius. */
-const MAX_TENANT_PURGES_PER_RUN = 2;
 
-// Published retention windows (app/legal/privacy/page.tsx §6).
-const AUDIT_LOG_RETENTION_MS = 365 * DAY_MS;
+// Published retention windows (app/legal/privacy/page.tsx §6). AuditLog's
+// windows live in lib/audit-log.ts (auditLogRetentionWhere): twelve months for
+// ordinary rows, six years for platform evidence — operator actions, support
+// sessions and erasure records (operator audit 5 Oct 2026, Q9).
 const EMAIL_LOG_RETENTION_MS = 365 * DAY_MS;
+/**
+ * Sign-in records (LoginEvent: one row per person per device, approximate IP +
+ * browser summary) are written on every sign-in since the E2E flow 9 fix (6 Oct
+ * 2026). A device not signed in from for twelve months is dropped (review of
+ * lane I). Keyed on lastSeenAt, which only moves at sign-in — an Auth.js
+ * session that keeps rolling does not touch it — so someone who stays signed
+ * in for a year loses the row and their next sign-in counts as a new device.
+ */
+const LOGIN_EVENT_RETENTION_MS = 365 * DAY_MS;
 /**
  * 24h grace AFTER expiry rather than deleting on expiry: a sign-in link being
  * verified at the instant it lapses must still resolve to "this link has
@@ -91,8 +87,8 @@ const IMPORT_JOB_RETENTION_MS = 30 * DAY_MS;
  * days-long useful life, not history: the row's counters carry the history.
  */
 const IMPORT_JOB_DIAGNOSTICS_RETENTION_MS = 30 * DAY_MS;
-/** The window promised by DangerZone.tsx and stamped as `hardDeleteAfter`. */
-const TENANT_SOFT_DELETE_GRACE_MS = 30 * DAY_MS;
+// The 30-day tenant soft-delete window is TENANT_SOFT_DELETE_GRACE_MS in
+// lib/tenant-lifecycle.ts, shared with the restore route so the two agree.
 
 /**
  * ImportJob status vocabulary (app/api/admin/import/*): pending | preview |
@@ -131,11 +127,54 @@ type BatchDeletable = {
 };
 type PickModel = (tx: Prisma.TransactionClient) => BatchDeletable;
 
+/**
+ * RETENTION_CRON_ENABLED — default OFF (security campaign iteration 2, lane M1,
+ * 10 Oct 2026; authorised by Noe the same day).
+ *
+ * The first live run of this sweep is a one-way door, and the scheduler entry
+ * in vercel.json would take it the moment a CRON_SECRET is set. So the live
+ * sweep runs only when this variable is EXACTLY the string "true"; anything
+ * else (unset, "1", "TRUE", " true") answers 503 `retention cron disabled`
+ * after the bearer check and BEFORE any work — no reconcile, no count, no
+ * delete. `?dryRun=1` is still allowed with the gate off: counts only, zero
+ * deletes, and the response says the gate is off.
+ */
+function retentionEnabled(): boolean {
+  return process.env.RETENTION_CRON_ENABLED === "true";
+}
+
+/**
+ * Why a call answered as it did — a closed set, so the log line can say it
+ * without carrying anything from the request. Lane M2 (10 Oct 2026, R8
+ * residual): the gate-off refusal and the missing-CRON_SECRET refusal both
+ * read `status=503`, so "switched off" and "misconfigured" looked the same.
+ */
+type CallReason = "not_configured" | "throttled" | "unauthorized" | "disabled" | "dry_run" | "swept" | "threw";
+
+/**
+ * One line per call: the gate, the mode, the status and the reason. Never the
+ * payload (counts name what a club holds; reconcile carries Stripe ids).
+ */
 export async function GET(req: Request) {
+  const gate = retentionEnabled() ? "on" : "off";
+  const dryRun = new URL(req.url).searchParams.get("dryRun") === "1" ? 1 : 0;
+  let status: number | "threw" = "threw";
+  const call: { reason: CallReason } = { reason: "threw" };
+  try {
+    const res = await handle(req, call);
+    status = res.status;
+    return res;
+  } finally {
+    console.info(`[cron/retention] call gate=${gate} dryRun=${dryRun} status=${status} reason=${call.reason}`);
+  }
+}
+
+async function handle(req: Request, call: { reason: CallReason }) {
   // Vercel cron sends Authorization: Bearer ${CRON_SECRET}
   const authHeader = req.headers.get("authorization");
   const expected = process.env.CRON_SECRET;
   if (!expected) {
+    call.reason = "not_configured";
     return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 503 });
   }
   // Round 1, defect 3: constant time. `!==` short-circuits at the first
@@ -146,12 +185,23 @@ export async function GET(req: Request) {
   if (!bearerMatches(authHeader, expected)) {
     const throttle = await checkCronAuthAttempt(req);
     if (!throttle.allowed) {
+      call.reason = "throttled";
       return NextResponse.json(
         { error: "Too many attempts. Try again shortly." },
         { status: 429, headers: { "Retry-After": String(throttle.retryAfterSeconds) } },
       );
     }
+    call.reason = "unauthorized";
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // The gate (see retentionEnabled): before any work, after the bearer — an
+  // unauthenticated caller learns nothing about the configuration.
+  const enabled = retentionEnabled();
+  const dryRunRequested = new URL(req.url).searchParams.get("dryRun") === "1";
+  if (!enabled && !dryRunRequested) {
+    call.reason = "disabled";
+    return NextResponse.json({ error: "retention cron disabled" }, { status: 503 });
   }
 
   const startedAt = Date.now();
@@ -165,7 +215,7 @@ export async function GET(req: Request) {
   // soft-delete grace in one pass — so the counts get read by a human before
   // the scheduler is allowed to run it for real. Reconcile still runs (it is
   // read-only). The bearer is still required: counts name tenants.
-  const dryRun = new URL(req.url).searchParams.get("dryRun") === "1";
+  const dryRun = dryRunRequested;
   const sweep = (pick: PickModel, where: object) =>
     dryRun ? countOnly(pick, where) : deleteInBatches(pick, where, elapsed);
 
@@ -195,7 +245,7 @@ export async function GET(req: Request) {
       run: () =>
         sweep(
           (tx) => tx.auditLog as unknown as BatchDeletable,
-          { createdAt: { lt: ago(AUDIT_LOG_RETENTION_MS) } },
+          auditLogRetentionWhere(now),
         ),
     },
     {
@@ -204,6 +254,14 @@ export async function GET(req: Request) {
         sweep(
           (tx) => tx.emailLog as unknown as BatchDeletable,
           { createdAt: { lt: ago(EMAIL_LOG_RETENTION_MS) } },
+        ),
+    },
+    {
+      name: "loginEvent",
+      run: () =>
+        sweep(
+          (tx) => tx.loginEvent as unknown as BatchDeletable,
+          { lastSeenAt: { lt: ago(LOGIN_EVENT_RETENTION_MS) } },
         ),
     },
     {
@@ -256,7 +314,7 @@ export async function GET(req: Request) {
       name: "importJobDiagnostics",
       run: () => scrubImportJobDiagnostics(ago(IMPORT_JOB_DIAGNOSTICS_RETENTION_MS), dryRun),
     },
-    { name: "tenantHardDelete", run: () => purgeSoftDeletedTenants(ago(TENANT_SOFT_DELETE_GRACE_MS), elapsed, dryRun) },
+    { name: "tenantHardDelete", run: () => purgeSoftDeletedTenants(now, () => elapsed() > DEADLINE_MS, dryRun) },
   ];
 
   const results: RuleResult[] = [];
@@ -281,10 +339,15 @@ export async function GET(req: Request) {
   // next nightly run re-evaluates time-relative predicates, so there is no
   // retry-storm risk in surfacing the failure.
   const ok = results.every((r) => !r.error);
+  call.reason = dryRun ? "dry_run" : "swept";
   return NextResponse.json(
     {
       ok,
       dryRun,
+      retentionEnabled: enabled,
+      ...(enabled
+        ? {}
+        : { note: "retention cron disabled (RETENTION_CRON_ENABLED is not \"true\"): dry run only, nothing deleted" }),
       ranAt: now.toISOString(),
       elapsedMs: elapsed(),
       reconcile,
@@ -471,415 +534,5 @@ async function deleteBlobsBestEffort(urls: string[]): Promise<number> {
   }
 }
 
-// ─── Rule g — hard-delete tenants past their soft-delete grace window ────────
-
-async function purgeSoftDeletedTenants(
-  cutoff: Date,
-  elapsed: () => number,
-  dryRun = false,
-): Promise<{ deleted: number; partial?: true; processed?: number; details: Record<string, unknown> }> {
-  // Cross-tenant by definition — same rationale as cron/monthly-reports.
-  // Oldest soft-delete first so a backlog drains in the order it was promised.
-  const tenants = await withRlsBypass((tx) =>
-    tx.tenant.findMany({
-      where: { deletedAt: { not: null, lt: cutoff } },
-      select: { id: true, name: true, deletedAt: true, logoUrl: true },
-      orderBy: { deletedAt: "asc" },
-      take: MAX_TENANT_PURGES_PER_RUN,
-    }),
-  );
-
-  if (dryRun) {
-    // Name them: this is the one rule whose blast radius a human must read
-    // before the first real run. The Stripe preflight is not exercised here.
-    return {
-      deleted: 0,
-      details: {
-        candidates: tenants.length,
-        wouldPurge: tenants.map((t) => ({ tenantId: t.id, name: t.name, deletedAt: t.deletedAt?.toISOString() ?? null })),
-      },
-    };
-  }
-
-  let deleted = 0;
-  const failures: Array<
-    { tenantId: string; error: string } | { tenantId: string; reason: string }
-  > = [];
-  const purged: Array<{ tenantId: string; membersDeleted: number }> = [];
-  const partialTenants: Array<{ tenantId: string; membersDeleted: number }> = [];
-  let partial = false;
-
-  for (const tenant of tenants) {
-    if (elapsed() > DEADLINE_MS) {
-      partial = true;
-      break;
-    }
-    try {
-      // Fail-closed on live billing before anything is destroyed. The
-      // soft-delete route that started this clock is fail-OPEN (it records
-      // stripeFailed/stripeFailedIds in its audit metadata and returns 200),
-      // so a subscription that refused to cancel 30 days ago is still
-      // charging a card today — and the member row naming it is about to
-      // become the last record of that fact. Skip the tenant instead: the
-      // failure is reported, the rows stay, and tonight's rerun retries.
-      const billing = await cancelTenantSubscriptions(tenant.id);
-      if (!billing.ok) {
-        console.error(`[cron/retention] tenant ${tenant.id} skipped: ${billing.reason}`);
-        failures.push({ tenantId: tenant.id, reason: billing.reason });
-        continue;
-      }
-
-      const outcome = await purgeTenant(tenant, billing.cancelled, elapsed);
-      if (outcome.completed) {
-        deleted += 1;
-        purged.push({ tenantId: tenant.id, membersDeleted: outcome.membersDeleted });
-      } else {
-        // Deadline hit mid-purge. Everything deleted so far is committed and
-        // the tenant is still soft-deleted, so tomorrow's run resumes from
-        // where this one stopped. Not an error — report it as partial.
-        partial = true;
-        partialTenants.push({ tenantId: tenant.id, membersDeleted: outcome.membersDeleted });
-        break;
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "unknown";
-      console.error(`[cron/retention] tenant hard-delete failed for ${tenant.id}`, e);
-      failures.push({ tenantId: tenant.id, error: message });
-    }
-  }
-
-  return {
-    deleted,
-    ...(partial ? { partial: true as const, processed: purged.length + partialTenants.length } : {}),
-    details: { candidates: tenants.length, purged, partial: partialTenants, failures },
-  };
-}
-
-/**
- * Cancel every live Stripe subscription in the tenant before its rows are
- * destroyed. Mirrors the preflight in app/api/members/[id]/route.ts: one
- * transaction to read the members and the tenant's connected account, then a
- * cancel per subscription, and any refusal is fatal to the operation.
- *
- * Fatal here means "skip this tenant for tonight", not "throw": the purge is a
- * nightly sweep, so returning a reason lets the caller record it and move on to
- * the next tenant, and tomorrow's run retries. What must never happen is the
- * purge deleting the member row that carries the subscription id while Stripe
- * is still charging that card — after which nothing in MatFlow can tell the
- * operator who to refund.
- */
-async function cancelTenantSubscriptions(
-  tenantId: string,
-): Promise<{ ok: true; cancelled: number } | { ok: false; reason: string }> {
-  const preflight = await withTenantContext(tenantId, async (tx) => {
-    const members = await tx.member.findMany({
-      where: { tenantId, stripeSubscriptionId: { not: null } },
-      select: { id: true, name: true, stripeSubscriptionId: true },
-    });
-    const tenant = await tx.tenant.findUnique({
-      where: { id: tenantId },
-      select: { stripeAccountId: true },
-    });
-    return { members, stripeAccountId: tenant?.stripeAccountId ?? null };
-  });
-
-  if (preflight.members.length === 0) return { ok: true, cancelled: 0 };
-
-  if (!preflight.stripeAccountId) {
-    return {
-      ok: false,
-      reason:
-        `${preflight.members.length} member(s) still carry a Stripe subscription but this gym ` +
-        "has no connected Stripe account — cancel them directly in Stripe, then the next run purges",
-    };
-  }
-
-  let cancelled = 0;
-  for (const member of preflight.members) {
-    if (!member.stripeSubscriptionId) continue;
-    const outcome = await cancelSubscriptionAtPeriodEnd({
-      tenant: { stripeAccountId: preflight.stripeAccountId },
-      stripeSubscriptionId: member.stripeSubscriptionId,
-    });
-    if (!outcome.ok) {
-      return {
-        ok: false,
-        reason:
-          `Stripe cancellation failed for ${member.name} (${member.stripeSubscriptionId}): ` +
-          outcome.error,
-      };
-    }
-    cancelled += 1;
-  }
-  return { ok: true, cancelled };
-}
-
-/**
- * Irreversibly remove one tenant and everything hanging off it.
- *
- * Ordering is dictated by the FK graph in prisma/migrations — every FK into
- * Tenant is ON DELETE RESTRICT except Task (CASCADE), so the Tenant row only
- * drops once User, Member, Class, ClassRoster, RankSystem, Notification,
- * Announcement, MembershipTier, MemberPhoto, PushSubscription and LoginEvent
- * are empty for it. Within those, Member is itself RESTRICTed by ~8 history
- * tables — which is exactly what lib/member-delete.ts already walks, so we
- * reuse it rather than re-deriving the order here.
- *
- * DELIBERATELY KEPT: AuditLog. Its `tenantId` is a plain String with no FK
- * (schema:596-628), so audit rows survive the tenant they describe. That is
- * correct — the erasure-evidence trail (including `member.dsar_erase` rows a
- * restore has to replay, see docs/runbooks/db-restore.md) must outlive the
- * data it attests to. Those rows age out on their own 12-month rule above.
- *
- * Transaction policy: reads use withTenantContext (defence in depth, mirrors
- * cron/monthly-reports); destructive passes use withRlsBypass because the
- * cascade reaches tables with no tenantId column at all (RankHistory,
- * ClassPackRedemption, ClassInstance, ClassSchedule, PasswordHistory), which
- * a tenant-scoped policy cannot authorise. Every deleteMany still carries an
- * application-layer tenant filter, directly or via an id set derived from one.
- */
-async function purgeTenant(
-  tenant: { id: string; name: string; logoUrl: string | null },
-  stripeSubscriptionsCancelled: number,
-  elapsed: () => number,
-): Promise<{ membersDeleted: number; completed: boolean }> {
-  const tenantId = tenant.id;
-  const outOfTime = () => elapsed() > DEADLINE_MS;
-
-  // 1. Tasks. Task_tenantId is the one CASCADE, but Task.assigneeMemberId /
-  //    createdById reference Member and User, so clearing tasks first keeps
-  //    the rest of the walk free of surprises.
-  const tasksOutcome = await deleteInBatches(
-    (tx) => tx.task as unknown as BatchDeletable,
-    { tenantId },
-    elapsed,
-  );
-  if (tasksOutcome.partial) return { membersDeleted: 0, completed: false };
-
-  // 2. Members, KIDS FIRST, through the shared cascade helper.
-  //
-  //    Ordering is not cosmetic. Migration 20260515000001 adds a validated,
-  //    non-deferrable CHECK on Member:
-  //
-  //      CHECK ("accountType" <> 'kids' OR "parentMemberId" IS NOT NULL)
-  //
-  //    and Member.parentMemberId is ON DELETE SET NULL. Delete a parent while
-  //    an accountType='kids' child still points at it and Postgres runs the RI
-  //    SET NULL on that child, the CHECK fires, and the entire transaction
-  //    aborts — after which the stall guard below throws and the tenant lands
-  //    in details.failures every single night, forever. This is exactly what
-  //    deleteParentMemberWithKidsResolution's `orphan` branch exists to avoid;
-  //    a hard delete of the whole gym has no kids to keep, so instead of
-  //    flipping accountType we simply drain the children first.
-  //
-  //    Two passes, both batched: every row with a parent link goes first
-  //    (kids cannot themselves be parents — no nesting), then everything that
-  //    is left, which by construction has no child pointing at it.
-  const memberPasses: Prisma.MemberWhereInput[] = [
-    { tenantId, parentMemberId: { not: null } },
-    { tenantId },
-  ];
-  let membersDeleted = 0;
-  for (const where of memberPasses) {
-    const pass = await drainMembers(tenantId, where, elapsed);
-    membersDeleted += pass.membersDeleted;
-    if (!pass.completed) return { membersDeleted, completed: false };
-  }
-
-  // 3. Classes and their instance tree. ClassInstance/ClassSchedule have no
-  //    tenantId, so they're reached through the tenant's class ids.
-  if (outOfTime()) return { membersDeleted, completed: false };
-  const classIds = (
-    await withTenantContext(tenantId, (tx) =>
-      tx.class.findMany({ where: { tenantId }, select: { id: true } }),
-    )
-  ).map((c) => c.id);
-  if (classIds.length > 0) {
-    for (;;) {
-      if (outOfTime()) return { membersDeleted, completed: false };
-      const instances = await withRlsBypass((tx) =>
-        tx.classInstance.findMany({
-          where: { classId: { in: classIds } },
-          select: { id: true },
-          take: BATCH,
-        }),
-      );
-      if (instances.length === 0) break;
-      const instanceIds = instances.map((i) => i.id);
-      await withRlsBypass(async (tx) => {
-        // Both RESTRICT ClassInstance and both require a memberId, so they are
-        // already empty after step 2 — kept as belt and braces.
-        await tx.attendanceRecord.deleteMany({ where: { classInstanceId: { in: instanceIds } } });
-        await tx.classWaitlist.deleteMany({ where: { classInstanceId: { in: instanceIds } } });
-        await tx.classInstance.deleteMany({ where: { id: { in: instanceIds } } });
-      });
-    }
-    await withRlsBypass(async (tx) => {
-      await tx.classSchedule.deleteMany({ where: { classId: { in: classIds } } });
-      await tx.classSubscription.deleteMany({ where: { classId: { in: classIds } } });
-      await tx.classRoster.deleteMany({ where: { classId: { in: classIds } } });
-      await tx.class.deleteMany({ where: { id: { in: classIds }, tenantId } });
-    });
-  }
-
-  // 4. Rank systems. RankRequirement RESTRICTs RankSystem; MemberRank went
-  //    with the members in step 2 and Class.requiredRankId/maxRankId are
-  //    SET NULL on classes that no longer exist.
-  await withRlsBypass(async (tx) => {
-    await tx.rankRequirement.deleteMany({ where: { tenantId } });
-    await tx.rankSystem.deleteMany({ where: { tenantId } });
-  });
-
-  // 5. Everything else keyed by tenantId. Order within the list matters only
-  //    where one RESTRICTs another (MemberClassPack before ClassPack).
-  const tenantScoped: Array<[string, PickModel]> = [
-    // ImportedMembership (teamup-2) cascades from ImportJob and Member but also
-    // references Tenant, so it is emptied explicitly, before the import jobs.
-    ["importedMembership", (tx) => tx.importedMembership as unknown as BatchDeletable],
-    // The attendance-history ledger and the owner's source mappings reference
-    // Tenant (RESTRICT), not ImportJob, so they are emptied explicitly too.
-    ["importedBooking", (tx) => tx.importedBooking as unknown as BatchDeletable],
-    ["importSourceMapping", (tx) => tx.importSourceMapping as unknown as BatchDeletable],
-    // Every chunked upload of the tenant (db-upload:// files), whatever its
-    // status; ImportUploadChunk cascades.
-    ["importUpload", (tx) => tx.importUpload as unknown as BatchDeletable],
-    ["memberPhoto", (tx) => tx.memberPhoto as unknown as BatchDeletable],
-    ["pushSubscription", (tx) => tx.pushSubscription as unknown as BatchDeletable],
-    ["loginEvent", (tx) => tx.loginEvent as unknown as BatchDeletable],
-    ["notification", (tx) => tx.notification as unknown as BatchDeletable],
-    ["announcement", (tx) => tx.announcement as unknown as BatchDeletable],
-    ["membershipTier", (tx) => tx.membershipTier as unknown as BatchDeletable],
-    // Location RESTRICTs Tenant. Classes (step 3) and tiers (above) point at it
-    // with SET NULL, so it goes after both and before the tenant row.
-    ["location", (tx) => tx.location as unknown as BatchDeletable],
-    ["signedWaiver", (tx) => tx.signedWaiver as unknown as BatchDeletable],
-    ["memberClassPack", (tx) => tx.memberClassPack as unknown as BatchDeletable],
-    ["classPack", (tx) => tx.classPack as unknown as BatchDeletable],
-    ["magicLinkToken", (tx) => tx.magicLinkToken as unknown as BatchDeletable],
-    ["passwordResetToken", (tx) => tx.passwordResetToken as unknown as BatchDeletable],
-    ["emailLog", (tx) => tx.emailLog as unknown as BatchDeletable],
-    ["payment", (tx) => tx.payment as unknown as BatchDeletable],
-    ["dispute", (tx) => tx.dispute as unknown as BatchDeletable],
-    ["order", (tx) => tx.order as unknown as BatchDeletable],
-    ["product", (tx) => tx.product as unknown as BatchDeletable],
-    ["monthlyReport", (tx) => tx.monthlyReport as unknown as BatchDeletable],
-    // InitiativeAttachment is ON DELETE CASCADE from Initiative.
-    ["initiative", (tx) => tx.initiative as unknown as BatchDeletable],
-    ["googleDriveConnection", (tx) => tx.googleDriveConnection as unknown as BatchDeletable],
-    ["indexedDriveFile", (tx) => tx.indexedDriveFile as unknown as BatchDeletable],
-  ];
-  for (const [, pick] of tenantScoped) {
-    const outcome = await deleteInBatches(pick, { tenantId }, elapsed);
-    if (outcome.partial) return { membersDeleted, completed: false };
-  }
-
-  // 6. Abandoned import CSVs for this tenant — blobs first, same as rule f.
-  //    Chunked uploads (db-upload://) already went with "importUpload" in step 5.
-  for (;;) {
-    if (outOfTime()) return { membersDeleted, completed: false };
-    const jobs = await withRlsBypass((tx) =>
-      tx.importJob.findMany({ where: { tenantId }, select: { id: true, fileBlobUrl: true }, take: BATCH }),
-    );
-    if (jobs.length === 0) break;
-    await deleteBlobsBestEffort(jobs.map((j) => j.fileBlobUrl).filter(isVercelBlobUrl));
-    await withRlsBypass((tx) =>
-      tx.importJob.deleteMany({ where: { id: { in: jobs.map((j) => j.id) } } }),
-    );
-  }
-
-  // 7. Staff users. PasswordHistory CASCADEs; AuditLog.userId is SET NULL so
-  //    the audit rows survive with their attribution dropped — the same
-  //    trade-off the staff-delete route already makes.
-  const usersOutcome = await deleteInBatches(
-    (tx) => tx.user as unknown as BatchDeletable,
-    { tenantId },
-    elapsed,
-  );
-  if (usersOutcome.partial) return { membersDeleted, completed: false };
-
-  // 8. Tenant branding blob, then the row itself. The audit row is written in
-  //    the SAME transaction as the delete so the evidence and the erasure
-  //    commit together — the pattern DSAR erase established (write the
-  //    fulfilment record before destroying the data it attests to).
-  if (tenant.logoUrl && isVercelBlobUrl(tenant.logoUrl)) {
-    await deleteBlobsBestEffort([tenant.logoUrl]);
-  }
-  await withRlsBypass(async (tx) => {
-    await tx.auditLog.create({
-      data: {
-        tenantId,
-        userId: null,
-        action: "admin.tenant.hard_deleted",
-        entityType: "Tenant",
-        entityId: tenantId,
-        metadata: {
-          tenantName: tenant.name,
-          membersDeleted,
-          stripeSubscriptionsCancelled,
-          reason: "Soft-delete grace window elapsed (30 days)",
-        },
-      },
-    });
-    await tx.tenant.delete({ where: { id: tenantId } });
-  });
-
-  return { membersDeleted, completed: true };
-}
-
-/**
- * Delete every member matching `where`, MEMBER_BATCH at a time, dropping the
- * blobs each batch owns (photos, waiver signatures) before the rows go so an
- * erased gym leaves no images behind. Returns `completed: false` when the
- * deadline cuts the drain short — committed batches stand and tomorrow's run
- * resumes from the same predicate.
- */
-async function drainMembers(
-  tenantId: string,
-  where: Prisma.MemberWhereInput,
-  elapsed: () => number,
-): Promise<{ membersDeleted: number; completed: boolean }> {
-  let membersDeleted = 0;
-  for (;;) {
-    if (elapsed() > DEADLINE_MS) return { membersDeleted, completed: false };
-
-    const members = await withTenantContext(tenantId, (tx) =>
-      tx.member.findMany({ where, select: { id: true }, take: MEMBER_BATCH }),
-    );
-    if (members.length === 0) return { membersDeleted, completed: true };
-    const memberIds = members.map((m) => m.id);
-
-    const [photos, waivers] = await Promise.all([
-      withTenantContext(tenantId, (tx) =>
-        tx.memberPhoto.findMany({ where: { tenantId, memberId: { in: memberIds } }, select: { url: true } }),
-      ),
-      withTenantContext(tenantId, (tx) =>
-        tx.signedWaiver.findMany({
-          where: { tenantId, memberId: { in: memberIds } },
-          select: { signatureImageUrl: true },
-        }),
-      ),
-    ]);
-    const blobUrls = [
-      ...photos.map((p) => p.url),
-      ...waivers.map((w) => w.signatureImageUrl ?? ""),
-    ].filter(isVercelBlobUrl);
-    await deleteBlobsBestEffort(blobUrls);
-
-    let removed = 0;
-    await withRlsBypass(
-      async (tx) => {
-        for (const id of memberIds) {
-          const outcome = await deleteMemberCascade(tx, { id, tenantId });
-          if (outcome.kind === "ok") removed += 1;
-        }
-      },
-      { timeout: MEMBER_TX_TIMEOUT_MS },
-    );
-    // Guard against an unbounded loop if a row refuses to go (e.g. a new FK
-    // the cascade helper doesn't know about yet) — fail loudly instead.
-    if (removed === 0) {
-      throw new Error(`tenant ${tenantId}: member purge stalled with ${members.length} rows remaining`);
-    }
-    membersDeleted += removed;
-  }
-}
+// Rule g (tenant hard-delete) lives in lib/tenant-purge.ts so the
+// restore-versus-purge coordination can be tested against a real database.

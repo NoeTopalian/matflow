@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# usage: swap.sh save|head|restore <files...>
+# save: copy the working files to the backup dir and record sha256; head: replace them with HEAD's bytes;
+# restore: copy back and verify sha256 equals the saved one.
+S=<scratchpad>
+B=$S/security/A4/backup
+cd /c/Users/NoeTo/Desktop/matflow || exit 1
+ACT=$1; shift
+mkdir -p "$B"
+for f in "$@"; do
+  k=$(echo "$f" | tr '/' '_')
+  case $ACT in
+    save) cp "$f" "$B/$k"; sha256sum "$f" | cut -d' ' -f1 > "$B/$k.sha" ;;
+    head) git show "HEAD:$f" > "$f" ;;
+    restore) cp "$B/$k" "$f"; now=$(sha256sum "$f" | cut -d' ' -f1); want=$(cat "$B/$k.sha"); [ "$now" = "$want" ] && echo "restored $f sha256 ok" || { echo "RESTORE MISMATCH $f"; exit 3; } ;;
+  esac
+done

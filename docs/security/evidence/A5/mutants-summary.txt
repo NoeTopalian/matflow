@@ -1,0 +1,98 @@
+before, sha256:
+b8542cc1a3f409af3e1730ba281efb809901a708403e9e0802c95b1096ced812 *auth.ts
+a8f37e2e4567da87209e2b6b3983ff7143853bf6e492c8ff2eb1c4011e0f8fd6 *lib/auth-lockout.ts
+applied M4-exempt-skips-network-cap
+mutated sha256: b8542cc1a3f409af 10307c48cc11cfb3 
+restored auth.ts sha256 ok
+restored lib/auth-lockout.ts sha256 ok
+M4-exempt-skips-network-cap unit:  Tests 2 failed | 14 passed (16) EXIT 1
+M4-exempt-skips-network-cap db-owner:  Tests 1 failed | 4 passed (5) EXIT 1
+M4-exempt-skips-network-cap db-restricted:  Tests 1 failed | 4 passed (5) EXIT 1
+mut-M4-exempt-skips-network-cap-unit.log:     × in the single reservation statement the exemption is evaluated after the network-cap check, inside the address clause (truth table over the parsed SQL) 6ms
+mut-M4-exempt-skips-network-cap-unit.log:     × through authorize(), fake granting by the SQL's own rule: address at its cap, known device, a burst fills THIS network's cap after the read → refused with the generic co
+mut-M4-exempt-skips-network-cap-db-owner.log:     × SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most 10 verdicts; the exemption never
+mut-M4-exempt-skips-network-cap-db-restricted.log:     × SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most 10 verdicts; the exemption 
+A4-BURST {"role":"owner","nodeEnv":"test","poolMax":20,"tally":{"refused":17,"code:rate_limited":23},"judged":10,"verdicts":{"wrong":10,"right":0,"failClosedErrors":["1x Transaction API error: A commit cannot be executed on an expired transaction. The timeout for this transaction was 10000","6x  Invalid `prisma.$queryRaw()` invocation: Transaction API error: A query cannot be executed on an expired transaction. T"]},"refusedWithoutVerdict":7,"rightPasswordOutcome":"refused","addressCounterAfter":10,"nextAttempt":"code:rate_limited"}
+A4-OVERFLOW {"role":"owner","tally":{"code:rate_limited":20,"refused":19},"verdicts":{"wrong":10,"right":0,"failClosedErrors":["1x Transaction API error: A commit cannot be executed on an expired transaction. The timeout for this transaction was 10000","8x  Invalid `prisma.$queryRaw()` invocation: Transaction API error: A query cannot be executed on an expired transaction. T"]},"refusedWithoutVerdict":9,"addressCounterAfter":10,"rightPasswordAfter":"code:rate_limited"}
+A4-REFUND {"role":"owner","outcome":"admitted","seeded":5,"counterAfter":5}
+A4-KNOWN {"role":"owner","stranger":"code:rate_limited","own":"admitted","afterOwn":10,"ownWrong":"refused","afterOwnWrong":11}
+A5-KNOWN-NET-BURST {"role":"owner","poolMax":20,"tally":{"refused":40},"verdicts":{"wrong":33,"right":0,"failClosed":7,"failClosedErrors":["2x Transaction API error: Unable to start a transaction in the given time.","1x Transaction API error: A commit cannot be executed on an expired transaction. The timeout for this transaction was 10000","4x  Invalid `prisma.$queryRaw()` invocation: Transaction API error: A query cannot be executed on an expired transaction. T"]},"pairCounter":33,"addressCounterAfter":43,"own":"code:rate_limited","ownAfterNetCleared":"admitted"}
+A4-BURST {"role":"restricted","nodeEnv":"test","poolMax":20,"tally":{"refused":18,"code:rate_limited":22},"judged":10,"verdicts":{"wrong":10,"right":0,"failClosedErrors":["8x  Invalid `prisma.$queryRaw()` invocation: Transaction API error: A query cannot be executed on an expired transaction. T"]},"refusedWithoutVerdict":8,"rightPasswordOutcome":"refused","addressCounterAfter":10,"nextAttempt":"code:rate_limited"}
+A4-OVERFLOW {"role":"restricted","tally":{"refused":18,"code:rate_limited":21},"verdicts":{"wrong":10,"right":0,"failClosedErrors":["1x Transaction API error: A commit cannot be executed on an expired transaction. The timeout for this transaction was 10000","7x  Invalid `prisma.$queryRaw()` invocation: Transaction API error: A query cannot be executed on an expired transaction. T"]},"refusedWithoutVerdict":8,"addressCounterAfter":10,"rightPasswordAfter":"code:rate_limited"}
+A4-REFUND {"role":"restricted","outcome":"admitted","seeded":5,"counterAfter":5}
+A4-KNOWN {"role":"restricted","stranger":"code:rate_limited","own":"admitted","afterOwn":10,"ownWrong":"refused","afterOwnWrong":11}
+A5-KNOWN-NET-BURST {"role":"restricted","poolMax":20,"tally":{"refused":40},"verdicts":{"wrong":36,"right":0,"failClosed":4,"failClosedErrors":["1x Transaction API error: Unable to start a transaction in the given time.","1x Transaction API error: A commit cannot be executed on an expired transaction. The timeout for this transaction was 10000","2x  Invalid `prisma.$queryRaw()` invocation: Transaction API error: A query cannot be executed on an expired transaction. T"]},"pairCounter":36,"addressCounterAfter":46,"own":"code:rate_limited","ownAfterNetCleared":"admitted"}
+applied M1-reserve-after-bcrypt
+mutated sha256: d3c85a54afbac7b7 a8f37e2e4567da87 
+restored auth.ts sha256 ok
+restored lib/auth-lockout.ts sha256 ok
+M1-reserve-after-bcrypt unit:  Tests 4 failed | 12 passed (16) EXIT 1
+M1-reserve-after-bcrypt db-owner:  Tests 5 passed (5) EXIT 0
+M1-reserve-after-bcrypt db-restricted:  Tests 5 passed (5) EXIT 0
+mut-M1-reserve-after-bcrypt-unit.log:     × an existing member, right password: lock → reservation → bcrypt, in that order, no late insert 6ms
+mut-M1-reserve-after-bcrypt-unit.log:     × an existing member, wrong password: lock → reservation → bcrypt, in that order, no late insert 2ms
+mut-M1-reserve-after-bcrypt-unit.log:     × an address with no account, right password: lock → reservation → bcrypt, in that order, no late insert 1ms
+mut-M1-reserve-after-bcrypt-unit.log:     × an address with no account, wrong password: lock → reservation → bcrypt, in that order, no late insert 1ms
+A4-BURST {"role":"owner","nodeEnv":"test","poolMax":20,"tally":{"refused":11,"code:rate_limited":29},"judged":10,"verdicts":{"wrong":10,"right":0,"failClosedErrors":["1x  Invalid `prisma.$queryRaw()` invocation: Transaction API error: A query cannot be executed on an expired transaction. T"]},"refusedWithoutVerdict":1,"rightPasswordOutcome":"code:rate_limited","addressCounterAfter":10,"nextAttempt":"code:rate_limited"}
+A4-OVERFLOW {"role":"owner","tally":{"refused":10,"code:rate_limited":29},"verdicts":{"wrong":10,"right":0,"failClosedErrors":[]},"refusedWithoutVerdict":0,"addressCounterAfter":10,"rightPasswordAfter":"code:rate_limited"}
+A4-REFUND {"role":"owner","outcome":"admitted","seeded":5,"counterAfter":5}
+A4-KNOWN {"role":"owner","stranger":"code:rate_limited","own":"admitted","afterOwn":10,"ownWrong":"refused","afterOwnWrong":11}
+A5-KNOWN-NET-BURST {"role":"owner","poolMax":20,"tally":{"refused":10,"code:rate_limited":30},"verdicts":{"wrong":10,"right":0,"failClosed":0,"failClosedErrors":[]},"pairCounter":10,"addressCounterAfter":20,"own":"code:rate_limited","ownAfterNetCleared":"admitted"}
+A4-BURST {"role":"restricted","nodeEnv":"test","poolMax":20,"tally":{"refused":13,"code:rate_limited":27},"judged":10,"verdicts":{"wrong":10,"right":0,"failClosedErrors":["1x timeout exceeded when trying to connect","1x  Invalid `prisma.rateLimitHit.count()` invocation: "]},"refusedWithoutVerdict":3,"rightPasswordOutcome":"code:rate_limited","addressCounterAfter":10,"nextAttempt":"code:rate_limited"}
+A4-OVERFLOW {"role":"restricted","tally":{"refused":11,"code:rate_limited":28},"verdicts":{"wrong":10,"right":0,"failClosedErrors":["1x  Invalid `prisma.rateLimitHit.count()` invocation: "]},"refusedWithoutVerdict":1,"addressCounterAfter":10,"rightPasswordAfter":"code:rate_limited"}
+A4-REFUND {"role":"restricted","outcome":"admitted","seeded":5,"counterAfter":5}
+A4-KNOWN {"role":"restricted","stranger":"code:rate_limited","own":"admitted","afterOwn":10,"ownWrong":"refused","afterOwnWrong":11}
+A5-KNOWN-NET-BURST {"role":"restricted","poolMax":20,"tally":{"refused":10,"code:rate_limited":30},"verdicts":{"wrong":10,"right":0,"failClosed":0,"failClosedErrors":[]},"pairCounter":10,"addressCounterAfter":20,"own":"code:rate_limited","ownAfterNetCleared":"admitted"}
+applied M2-no-refund
+mutated sha256: b8542cc1a3f409af 0241ccb7dede765c 
+restored auth.ts sha256 ok
+restored lib/auth-lockout.ts sha256 ok
+M2-no-refund unit:  Tests 1 failed | 15 passed (16) EXIT 1
+M2-no-refund db-owner:  Tests 2 failed | 3 passed (5) EXIT 1
+M2-no-refund db-restricted:  Tests 2 failed | 3 passed (5) EXIT 1
+mut-M2-no-refund-unit.log:     × right password: admitted, and its address slot is deleted by id together with this network's pair counter 9ms
+mut-M2-no-refund-db-owner.log:     × a successful sign-in gives its reserved slot back: the counter is what it was before 3596ms
+mut-M2-no-refund-db-owner.log:     × known-device exemption: at the cap the person's own device is still judged; an unknown network is not 12069ms
+mut-M2-no-refund-db-restricted.log:     × a successful sign-in gives its reserved slot back: the counter is what it was before 1661ms
+mut-M2-no-refund-db-restricted.log:     × known-device exemption: at the cap the person's own device is still judged; an unknown network is not 4129ms
+A4-BURST {"role":"owner","nodeEnv":"test","poolMax":20,"tally":{"refused":18,"code:rate_limited":22},"judged":10,"verdicts":{"wrong":10,"right":0,"failClosedErrors":["8x  Invalid `prisma.$queryRaw()` invocation: Transaction API error: A query cannot be executed on an expired transaction. T"]},"refusedWithoutVerdict":8,"rightPasswordOutcome":"code:rate_limited","addressCounterAfter":10,"nextAttempt":"code:rate_limited"}
+A4-OVERFLOW {"role":"owner","tally":{"code:rate_limited":21,"refused":18},"verdicts":{"wrong":10,"right":0,"failClosedErrors":["1x Transaction API error: A commit cannot be executed on an expired transaction. The timeout for this transaction was 10000","7x  Invalid `prisma.$queryRaw()` invocation: Transaction API error: A query cannot be executed on an expired transaction. T"]},"refusedWithoutVerdict":8,"addressCounterAfter":10,"rightPasswordAfter":"code:rate_limited"}
+A4-REFUND {"role":"owner","outcome":"admitted","seeded":5,"counterAfter":6}
+A4-KNOWN {"role":"owner","stranger":"code:rate_limited","own":"admitted","afterOwn":11,"ownWrong":"refused","afterOwnWrong":12}
+A5-KNOWN-NET-BURST {"role":"owner","poolMax":20,"tally":{"refused":11,"code:rate_limited":29},"verdicts":{"wrong":10,"right":0,"failClosed":1,"failClosedErrors":["1x Transaction API error: A commit cannot be executed on an expired transaction. The timeout for this transaction was 10000"]},"pairCounter":10,"addressCounterAfter":20,"own":"code:rate_limited","ownAfterNetCleared":"admitted"}
+A4-BURST {"role":"restricted","nodeEnv":"test","poolMax":20,"tally":{"refused":10,"code:rate_limited":30},"judged":10,"verdicts":{"wrong":10,"right":0,"failClosedErrors":[]},"refusedWithoutVerdict":0,"rightPasswordOutcome":"code:rate_limited","addressCounterAfter":10,"nextAttempt":"code:rate_limited"}
+A4-OVERFLOW {"role":"restricted","tally":{"refused":10,"code:rate_limited":29},"verdicts":{"wrong":10,"right":0,"failClosedErrors":[]},"refusedWithoutVerdict":0,"addressCounterAfter":10,"rightPasswordAfter":"code:rate_limited"}
+A4-REFUND {"role":"restricted","outcome":"admitted","seeded":5,"counterAfter":6}
+A4-KNOWN {"role":"restricted","stranger":"code:rate_limited","own":"admitted","afterOwn":11,"ownWrong":"refused","afterOwnWrong":12}
+A5-KNOWN-NET-BURST {"role":"restricted","poolMax":20,"tally":{"refused":10,"code:rate_limited":30},"verdicts":{"wrong":10,"right":0,"failClosed":0,"failClosedErrors":[]},"pairCounter":10,"addressCounterAfter":20,"own":"code:rate_limited","ownAfterNetCleared":"admitted"}
+applied M3-refund-on-failure
+mutated sha256: b8542cc1a3f409af e26e3082c8383ff3 
+restored auth.ts sha256 ok
+restored lib/auth-lockout.ts sha256 ok
+M3-refund-on-failure unit:  Tests 1 failed | 15 passed (16) EXIT 1
+M3-refund-on-failure db-owner:  Tests 5 failed (5) EXIT 1
+M3-refund-on-failure db-restricted:  Tests 5 failed (5) EXIT 1
+mut-M3-refund-on-failure-unit.log:     × wrong password: refused, and the reserved slot stays (it IS the recorded failure) 5ms
+mut-M3-refund-on-failure-db-owner.log:     × R6's burst: 40 concurrent guesses (39 wrong + the right one last) from 40 networks → at most 10 judged 16201ms
+mut-M3-refund-on-failure-db-owner.log:     × a burst of 39 wrong guesses leaves the counter at exactly 10; the right password from an unknown network is then refused 15661ms
+mut-M3-refund-on-failure-db-owner.log:     × a successful sign-in gives its reserved slot back: the counter is what it was before 3106ms
+mut-M3-refund-on-failure-db-owner.log:     × known-device exemption: at the cap the person's own device is still judged; an unknown network is not 5279ms
+mut-M3-refund-on-failure-db-owner.log:     × SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most 10 verdicts; the exemption never lifts 
+mut-M3-refund-on-failure-db-restricted.log:     × R6's burst: 40 concurrent guesses (39 wrong + the right one last) from 40 networks → at most 10 judged 17922ms
+mut-M3-refund-on-failure-db-restricted.log:     × a burst of 39 wrong guesses leaves the counter at exactly 10; the right password from an unknown network is then refused 16080ms
+mut-M3-refund-on-failure-db-restricted.log:     × a successful sign-in gives its reserved slot back: the counter is what it was before 3057ms
+mut-M3-refund-on-failure-db-restricted.log:     × known-device exemption: at the cap the person's own device is still judged; an unknown network is not 4257ms
+mut-M3-refund-on-failure-db-restricted.log:     × SF-121 (R7-4b): address already at its cap, 40 concurrent wrong guesses from the known device's network and browser family → at most 10 verdicts; the exemption never l
+A4-BURST {"role":"owner","nodeEnv":"test","poolMax":20,"tally":{"refused":31,"code:rate_limited":8,"admitted":1},"judged":32,"verdicts":{"wrong":31,"right":1,"failClosedErrors":[]},"refusedWithoutVerdict":0,"rightPasswordOutcome":"admitted","addressCounterAfter":0,"nextAttempt":"refused"}
+A4-OVERFLOW {"role":"owner","tally":{"code:rate_limited":11,"refused":28},"verdicts":{"wrong":28,"right":0,"failClosedErrors":[]},"refusedWithoutVerdict":0,"addressCounterAfter":0,"rightPasswordAfter":"admitted"}
+A4-REFUND {"role":"owner","outcome":"admitted","seeded":5,"counterAfter":5}
+A4-KNOWN {"role":"owner","stranger":"code:rate_limited","own":"admitted","afterOwn":10,"ownWrong":"refused","afterOwnWrong":10}
+A5-KNOWN-NET-BURST {"role":"owner","poolMax":20,"tally":{"refused":29,"code:rate_limited":11},"verdicts":{"wrong":29,"right":0,"failClosed":0,"failClosedErrors":[]},"pairCounter":0,"addressCounterAfter":10,"own":"admitted","ownAfterNetCleared":"admitted"}
+A4-BURST {"role":"restricted","nodeEnv":"test","poolMax":20,"tally":{"refused":30,"code:rate_limited":9,"admitted":1},"judged":31,"verdicts":{"wrong":30,"right":1,"failClosedErrors":[]},"refusedWithoutVerdict":0,"rightPasswordOutcome":"admitted","addressCounterAfter":0,"nextAttempt":"refused"}
+A4-OVERFLOW {"role":"restricted","tally":{"code:rate_limited":11,"refused":28},"verdicts":{"wrong":28,"right":0,"failClosedErrors":[]},"refusedWithoutVerdict":0,"addressCounterAfter":0,"rightPasswordAfter":"admitted"}
+A4-REFUND {"role":"restricted","outcome":"admitted","seeded":5,"counterAfter":5}
+A4-KNOWN {"role":"restricted","stranger":"code:rate_limited","own":"admitted","afterOwn":10,"ownWrong":"refused","afterOwnWrong":10}
+A5-KNOWN-NET-BURST {"role":"restricted","poolMax":20,"tally":{"refused":28,"code:rate_limited":12},"verdicts":{"wrong":28,"right":0,"failClosed":0,"failClosedErrors":[]},"pairCounter":0,"addressCounterAfter":10,"own":"admitted","ownAfterNetCleared":"admitted"}
+after restore, sha256:
+b8542cc1a3f409af3e1730ba281efb809901a708403e9e0802c95b1096ced812 *auth.ts
+a8f37e2e4567da87209e2b6b3983ff7143853bf6e492c8ff2eb1c4011e0f8fd6 *lib/auth-lockout.ts

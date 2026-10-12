@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 /**
  * Moving memberships off a previous platform (lib/stripe/migrate-memberships.ts).
@@ -129,6 +129,17 @@ function liveSub(over: Partial<{ id: string; status: string; priceId: string; un
   };
 }
 
+// The apply paths check anchors against the real clock (Stripe does too) and the
+// fixtures are dated around NOW (period end 8 Oct, first charge 6 Oct): pin Date
+// for the whole file so the suite cannot expire on a calendar date again (it
+// went red on 6 Oct and again on 8 Oct 2026).
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 beforeEach(() => {
   vi.clearAllMocks();
   tenantFindUniqueMock.mockResolvedValue(TENANT);
@@ -416,6 +427,7 @@ describe("apply — adopt (allowAdopt only)", () => {
 });
 
 describe("apply — create", () => {
+
   beforeEach(() => {
     memberFindManyMock.mockResolvedValue([member({ membershipTierId: "tier_4w", nextDueAt: new Date("2026-10-06T00:00:00Z") })]);
     customersListMock.mockResolvedValue({ data: [customer({ defaultPaymentMethod: CARD })], has_more: false });

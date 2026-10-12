@@ -1,0 +1,22 @@
+CLONE {"tables":53,"rlsTables":47,"policies":47}
+PASS B0-clone-reproduces-bypass "runtime bypass GUC sees both clone tenants"
+PASS P1-applies "ok"
+PASS P2-refuses-without-key "SF-62 phase 2: provision secb2v_mv19ka7h5f4fa0_sec.context_key first — without a key every tenant query would see nothing"
+FAIL P2-applies "SF-62 phase 2: a policy still trusts a plain app.* setting"
+FAIL K1-no-policy-trusts-a-plain-setting {"policies":94}
+FAIL K2-every-tenant-policy-uses-signed-context {"rewritten":47,"deployed":47}
+PASS K3-system-policy-on-every-rls-table-role-keyed {"rlsTables":47,"systemPolicies":47}
+PASS K4-definer-functions-hardened ["ctx_tenant:sys:named","tenant_id_by_slug:sys:named","tenant_id_by_kiosk_token_hash:sys:named","tenant_id_by_display_token_hash:sys:named","tenant_id_by_stripe_account:sys:named","tenant_id_by_magic_link_hash:sys:named","tenant_id_by_reset
+PASS K5-system-role-nologin-nobypass-not-granted-to-runtime {"rolbypassrls":false,"rolcanlogin":false,"app_member":false}
+FAIL K6-runtime-has-no-migration-ledger-privileges {"i":true,"u":true,"d":true}
+FAIL A1-bypass-guc-sees-nothing "bypass GUC"
+FAIL A2-forged-tenant-sees-nothing "forged tenant GUC"
+PASS A3-signed-context-own-club-only-incl-child-table {"ownMember":1,"otherMember":0,"otherChildRow":0,"plantMemberInB":"42501"}
+PASS A4-signed-context-B-sees-B-child-row (positive control) "child policy rewritten correctly"
+PASS A5-resolvers-narrow-key-unreadable-no-role-assumption {"bySlug":true,"emptySlug":null,"nullKiosk":null,"readKey":"42501","setRoleSys":"42501"}
+PASS A6-system-role-crosses-clubs (control, owner session SET ROLE) {"tenants":2}
+PASS R1-rollback-phase2-applies "ok"
+PASS R2-deployed-semantics-restored {"bypassTenants":2,"plainTenantB":1}
+PASS R3-rollback-phase1-applies "ok"
+PASS R4-phase1-objects-gone {"sec":0,"sys":0,"pols":0}
+TEARDOWN {"schemas":0,"roles":0}

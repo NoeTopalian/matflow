@@ -32,7 +32,7 @@ const { logAuditMock, requireApiOwnerMock, userFindFirst, userUpdate } = vi.hois
 }));
 
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
-vi.mock("@/lib/api-authz", () => ({ requireApiOwner: requireApiOwnerMock }));
+vi.mock("@/lib/api-authz", () => ({ refuseSupportSession: () => null, requireApiOwner: requireApiOwnerMock }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_tenantId: string, fn: (tx: unknown) => unknown) =>
     Promise.resolve(fn({ user: { findFirst: userFindFirst, update: userUpdate } })),

@@ -1,0 +1,13 @@
+diff --git a/tests/unit/sec-c-prototype-keys.test.ts b/tests/unit/sec-c-prototype-keys.test.ts
+index 4ac3c23..3731d55 100644
+--- a/tests/unit/sec-c-prototype-keys.test.ts
++++ b/tests/unit/sec-c-prototype-keys.test.ts
+@@ -80,7 +80,7 @@ function plan(csv: string, decisions: PlanDecisions = DECISIONS) {
+     plan: planAttendanceImport(parsed.rows, {
+       timezone: "Europe/London",
+       now: new Date("2025-11-01T00:00:00Z"),
+-      members: MEMBERS,
++      members: MEMBERS.map((m) => ({ createdAt: "2020-01-01T00:00:00Z", ...m })),
+       classes: CLASSES,
+       locations: LOCATIONS,
+       decisions,

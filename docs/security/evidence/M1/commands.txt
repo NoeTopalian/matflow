@@ -1,0 +1,33 @@
+Lane M1 v2 — exact commands, runtime and exit codes (10 Oct 2026). Runtime: Node v24.21.0 (scratchpad node24) for every run.
+Code base: 03ef584 (HEAD moved 9e9a4f9 -> d1de652 during the lane by lead docs-only commits; no lib/app/scripts/tests paths changed).
+
+Item 1 (SF-120)
+  npx vitest run tests/unit/sec-m1-rate-limit-log-family.test.ts                      on HEAD code: exit 1, 3 failed / 2 passed (item1-red-HEAD.log)
+  same + sec-c3-rate-limit-atomic, sec-c4-rate-limit-store-failure, sec-c4-tailwind-sources after fix: exit 0, 27/27 (item1-green.log)
+  mutant M1a (log the key after the family): exit 1, 2 failed  (item1-mutant-M1a.log)
+  mutant M1b (log a sha256 slice of the bucket): exit 1, 2 failed (item1-mutant-M1b.log)
+
+Item 2 (RETENTION_CRON_ENABLED)
+  npx vitest run tests/unit/sec-m1-retention-cron-gate.test.ts                         on HEAD code: exit 1, 11 failed / 3 passed (item2-red-HEAD.log)
+  gate file + retention-cron, tenant-lifecycle-constraints, operator-audit-durability, sec-e-asset-inventory, cron-auth-throttle,
+    cron-bearer-constant-time, proxy-matcher, retention-purge-covers-every-tenant-table after fix: exit 0, 186/186 (item2-green.log)
+  mutants: M2a gate = any non-empty value (7 failed); M2b 503 early return removed (10 failed); M2c gate-off dry run deletes (1 failed);
+           M2d call line only on non-200 (1 failed) — all exit 1 (item2-mutant-*.log)
+
+Item 3 (demo-accounts-rotate.mjs, TEST only)
+  npx vitest run tests/unit/sec-m1-demo-rotate-guard.test.ts                           exit 0, 9/9 (item3-guard-unit.log)
+  bash <scratchpad>/att/run-engine.sh tests/integration/sec-m1-demo-rotate-db.test.ts       (owner role)        exit 0, 6/6 (item3-db-owner.log)
+  bash <scratchpad>/q78/run-restricted.sh tests/integration/sec-m1-demo-rotate-db.test.ts   (matflow_app, RLS)  exit 0, 6/6 (item3-db-restricted.log)
+  tool output captured with SECM1_EVIDENCE_DIR (item3-tool-output-{owner,restricted}-{dry-run,confirm}.txt)
+  mutants (owner role): M3a tenant scope widened (4 failed); M3b no session bump + bump assertion removed (2 failed);
+    M3c extra write to the non-demo row (tool's own byte-identical guard aborted, 3 failed); M3d same write with that guard removed
+    (test's control md5 caught it, 2 failed); M3e address printed (4 failed) — all exit 1, teardown count-checked each run (item3-mutant-*.log;
+    M3e's log carries the synthetic secm1- addresses that mutant printed)
+
+Gates (gates.log)
+  npx tsc --noEmit -p .   exit 0
+  npm run lint            exit 0
+  unit set (15 files)     exit 0, 252/252 (gate-unit.log)
+  DB both roles           exit 0, 6/6 and 6/6
+NOT RUN: tests/integration/cron-smoke.test.ts (drives the live retention sweep on the shared TEST branch; only its setup changed) and the
+  e2e campaign spec lg-3-machines-and-sweep (needs a server with RETENTION_CRON_ENABLED=true).
