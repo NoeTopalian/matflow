@@ -89,13 +89,14 @@ const nextConfig: NextConfig = {
             ].join(", "),
           },
           { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-          // COEP `credentialless` enables cross-origin isolation without
-          // forcing every cross-origin resource to send CORP headers
-          // (`require-corp` would break Stripe.js, Vercel Analytics, etc.).
-          // CORP `same-origin` blocks OUR resources from being embedded by
-          // other origins. Together with COOP these form the cross-origin
-          // isolation triple. (Security audit iter-2 / L5, 2026-05-07.)
-          { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
+          // No Cross-Origin-Embedder-Policy. The audit of 2026-05-07 (iter-2 / L5) sent
+          // `credentialless` and claimed it did not break Stripe.js; it does: with COEP set,
+          // every Stripe.js frame (Payment Element, 3-D Secure) is refused by the browser with
+          // ERR_BLOCKED_BY_RESPONSE, so no card form can load anywhere (lane PB, 11 Oct 2026,
+          // reproduced on a minimal page with and without the header). Nothing in the app uses
+          // SharedArrayBuffer or needs cross-origin isolation, so COEP bought nothing here.
+          // COOP `same-origin` (above) and CORP `same-origin` (below) stay: the browser
+          // journeys pass with both. CORP blocks OUR resources from being embedded elsewhere.
           { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
           { key: "Content-Security-Policy", value: csp },
         ],

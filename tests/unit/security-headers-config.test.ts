@@ -78,13 +78,16 @@ describe("next.config.ts — site-wide security headers", () => {
     expect(CONFIG_SRC).toMatch(/object-src\s+'none'/);
   });
 
-  it("Cross-origin isolation triple: COOP + COEP + CORP", () => {
-    // L5 from security audit iteration 2 (2026-05-07)
+  it("COOP + CORP same-origin stay; COEP is NOT sent (it blocks every Stripe.js frame)", () => {
+    // L5 from security audit iteration 2 (2026-05-07) sent the full triple. Lane PB
+    // (11 Oct 2026) showed COEP `credentialless` refuses the Payment Element and 3-D Secure
+    // frames (ERR_BLOCKED_BY_RESPONSE), so card payment cannot work with it. Nothing in the
+    // app needs cross-origin isolation. The header must stay absent.
     expect(CONFIG_SRC).toContain('"Cross-Origin-Opener-Policy"');
-    expect(CONFIG_SRC).toContain('"Cross-Origin-Embedder-Policy"');
     expect(CONFIG_SRC).toContain('"Cross-Origin-Resource-Policy"');
     expect(CONFIG_SRC).toContain('"same-origin"');
-    expect(CONFIG_SRC).toContain('"credentialless"');
+    expect(CONFIG_SRC).not.toContain('"Cross-Origin-Embedder-Policy"');
+    expect(CONFIG_SRC).not.toContain('"credentialless"');
   });
 });
 
