@@ -1,0 +1,21 @@
+sha=512d5e8 node=v24.21.0 2026-10-12T05:37:58Z
+== lint
+(node:210968) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+lint-exit=0
+== audit
+found 0 vulnerabilities
+audit-exit=0
+== unit
+ Test Files  481 passed (481)
+      Tests  6599 passed | 1 skipped (6600)
+unit-exit=0
+== build (isolated, .env.test values; regenerates .next)
+✓ Compiled successfully in 22.8s
+✓ Generating static pages using 15 workers (176/176) in 556ms
+build-exit=0
+XEFPlYyNsQ5F-CB6DKMKc
+== tsc (after the fresh build regenerated .next/types)
+tsc-exit=0
+== secret scan
+ "candidates": 8,
