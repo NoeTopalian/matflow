@@ -27,6 +27,8 @@ const inj = vi.hoisted(() => ({
   // When armed, the next client that sends a statement matching `armPattern` has its socket paused right then.
   armed: null as null | ((t: Tracked) => void),
   armPattern: /pg_advisory_xact_lock/ as RegExp,
+  // R10 cells (lane L2): ROLLBACK statements sent by any pooled client of this file, counted per cell.
+  rollbacks: 0,
 }));
 
 vi.mock("@/lib/prisma", async (orig) => {
@@ -43,6 +45,7 @@ vi.mock("@/lib/prisma", async (orig) => {
     (c as unknown as { query: (...a: unknown[]) => unknown }).query = (...a: unknown[]) => {
       const cfg = a[0] as string | { text?: string };
       t.lastSql = (typeof cfg === "string" ? cfg : cfg?.text ?? "").replace(/\s+/g, " ");
+      if (/^ROLLBACK$/.test(t.lastSql.trim())) inj.rollbacks++;
       const result = q(...a);
       if (inj.armed && inj.armPattern.test(t.lastSql)) {
         const fire = inj.armed;
@@ -59,9 +62,9 @@ vi.mock("@/lib/prisma", async (orig) => {
 
 import pg from "pg";
 import { prisma } from "@/lib/prisma";
-import { checkRateLimit, RATE_LIMIT_LOCK_NS } from "@/lib/rate-limit";
-import { lockoutKeys, lockoutState } from "@/lib/auth-lockout";
-import { withTenantContext, withRlsBypass } from "@/lib/prisma-tenant";
+import { checkRateLimit, RATE_LIMIT_LOCK_NS, STORE_TX_BOUND_MS } from "@/lib/rate-limit";
+import { lockoutKeys, lockoutState, LOCKOUT_LOCK_NS, RESERVE_TX_BOUND_MS } from "@/lib/auth-lockout";
+import { withTenantContext, withRlsBypass, TENANT_STATEMENT_BOUND_MS, TENANT_STATEMENT_BOUND_EXTENDED_MS } from "@/lib/prisma-tenant";
 
 const ON_TEST = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
 const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
@@ -272,7 +275,9 @@ describe.skipIf(!ON_TEST)(`SF-135: a dropped connection under a pending transact
     report("L1-HELDLOCK-RL", { role: ROLE, ms, verdict: r.value, threw: r.error ? String((r.error as Error).message).slice(0, 80) : null, rows, settingsAfter: after[0], logs: r.logs.filter((l) => /rate-limit/.test(l)) });
     expect(r.value?.allowed, "refused while another transaction holds the bucket").toBe(false);
     expect(rows).toBe(0);
-    expect(ms, "the wait is bounded by the transaction, not by the holder letting go").toBeLessThan(20_000);
+    // R10-4 (lane L2): the bound itself plus a margin, not merely "less than the holder's 25 s".
+    expect(ms, "the wait lasts the bound").toBeGreaterThanOrEqual(STORE_TX_BOUND_MS - 100);
+    expect(ms, "the wait is bounded by the transaction (5 s bound + margin), not by the holder letting go").toBeLessThan(STORE_TX_BOUND_MS + 3_000);
     expect(r.logs.some((l) => new RegExp(`\\[rate-limit\\] store unavailable reason=lock-timeout class=security family=${family} outcome=refused`).test(l))).toBe(true);
     expect(after[0], "nothing left on the pooled connection").toEqual({ lt: "0", st: "0" });
   }, 60_000);
@@ -308,6 +313,105 @@ describe.skipIf(!ON_TEST)(`SF-135: a dropped connection under a pending transact
       expect(after.waiting).toBe(0);
     }, 60_000);
   }
+
+  // ── Review R10 phase 2 cells folded in by lane L2 (12 Oct 2026): healthy-connection bounds (B4a/B4b/B4d; B4e is the
+  // held-lock cell above) and a callback throw with a sibling statement in flight (B9). After each: exactly the expected
+  // ROLLBACKs, and the next pooled statement runs with the server defaults, outside any transaction.
+  async function nextClientState() {
+    const r = await prisma.$queryRaw<{ lt: string; st: string; in_tx: boolean }[]>`SELECT current_setting('lock_timeout') AS lt, current_setting('statement_timeout') AS st, (now() <> statement_timestamp()) AS in_tx`;
+    return r[0];
+  }
+  async function timed<T>(run: () => Promise<T>) {
+    const rb0 = inj.rollbacks;
+    const t0 = Date.now();
+    const out = await run().then((v) => ({ ok: true as const, v }), (e: unknown) => ({ ok: false as const, e }));
+    const ms = Date.now() - t0;
+    await sleep(300);
+    return { out, ms, rollbacks: inj.rollbacks - rb0 };
+  }
+  const errInfo = (e: unknown) => {
+    const x = e as { name?: string; code?: string; meta?: { code?: string }; reason?: string; message?: string };
+    return { name: x?.name, code: x?.code, metaCode: x?.meta?.code, sqlstate: x?.meta?.code ?? /Code: `(\w{5})`/.exec(String(x?.message ?? ""))?.[1], reason: x?.reason, message: String(x?.message ?? "").slice(0, 100) };
+  };
+  async function holdAdvisory(ns: number, key: string) {
+    const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    c.on("error", () => {});
+    await c.connect();
+    await c.query("BEGIN");
+    await c.query("SELECT pg_advisory_xact_lock($1::int4, hashtext($2::text))", [ns, key]);
+    return async () => {
+      await c.query("ROLLBACK").catch(() => {});
+      await c.end().catch(() => {});
+    };
+  }
+
+  it(`B4a: default budget, a statement runs 20 s → ended at the ${TENANT_STATEMENT_BOUND_MS} ms bound (57014, or the budget at the same instant), one ROLLBACK, settings reset`, async () => {
+    const r = await timed(() => withTenantContext(`secl1-${STAMP}-tenant`, (tx) => tx.$queryRaw`SELECT pg_sleep(20)::text`));
+    const after = await nextClientState();
+    report("L2-B4a", { role: ROLE, ms: r.ms, ok: r.out.ok, err: r.out.ok ? null : errInfo(r.out.e), rollbacks: r.rollbacks, after });
+    expect(r.out.ok).toBe(false);
+    const e = errInfo(!r.out.ok ? r.out.e : null);
+    expect(e.sqlstate === "57014" || e.code === "P2028", JSON.stringify(e)).toBe(true);
+    expect(r.ms).toBeGreaterThanOrEqual(TENANT_STATEMENT_BOUND_MS - 100);
+    expect(r.ms).toBeLessThan(TENANT_STATEMENT_BOUND_MS + 3_000);
+    expect(r.rollbacks).toBe(1);
+    expect(after).toEqual({ lt: "0", st: "0", in_tx: false });
+  }, 60_000);
+
+  it(`B4b: extended budget (90 s), a statement runs 65 s → 57014 at the ${TENANT_STATEMENT_BOUND_EXTENDED_MS} ms bound, one ROLLBACK, settings reset`, async () => {
+    const r = await timed(() => withTenantContext(`secl1-${STAMP}-tenant`, (tx) => tx.$queryRaw`SELECT pg_sleep(65)::text`, { timeout: 90_000 }));
+    const after = await nextClientState();
+    report("L2-B4b", { role: ROLE, ms: r.ms, ok: r.out.ok, err: r.out.ok ? null : errInfo(r.out.e), rollbacks: r.rollbacks, after });
+    expect(r.out.ok).toBe(false);
+    expect(errInfo(!r.out.ok ? r.out.e : null).sqlstate, "the SQLSTATE (Prisma puts it in the message)").toBe("57014");
+    expect(r.ms).toBeGreaterThanOrEqual(TENANT_STATEMENT_BOUND_EXTENDED_MS - 100);
+    expect(r.ms).toBeLessThan(TENANT_STATEMENT_BOUND_EXTENDED_MS + 3_000);
+    expect(r.rollbacks).toBe(1);
+    expect(after).toEqual({ lt: "0", st: "0", in_tx: false });
+  }, 120_000);
+
+  it(`B4d: the lockout reservation waits on the address lock (healthy connection) → refused at the ${RESERVE_TX_BOUND_MS} ms bound, no rows, settings reset`, async () => {
+    const keys = lockoutKeys(SLUG, EMAIL("b4d"), IP(77));
+    buckets.add(keys.addr);
+    buckets.add(keys.pair);
+    const release = await holdAdvisory(LOCKOUT_LOCK_NS, keys.addr);
+    let r: Awaited<ReturnType<typeof timed>>;
+    try {
+      r = await timed(() => lockoutState(keys, async () => false));
+    } finally {
+      await release();
+    }
+    const rows = await prisma.rateLimitHit.count({ where: { bucket: { in: [keys.addr, keys.pair] } } });
+    const after = await nextClientState();
+    const e = r.out.ok ? null : errInfo(r.out.e);
+    report("L2-B4d", { role: ROLE, ms: r.ms, ok: r.out.ok, err: e, rows, rollbacks: r.rollbacks, after });
+    expect(r.out.ok, "a reservation that cannot get its lock is refused (thrown), never granted").toBe(false);
+    expect(e!.name).toBe("LockoutReservationError");
+    expect(e!.reason).toMatch(/^(lock-timeout|statement-timeout)$/);
+    expect(r.ms).toBeGreaterThanOrEqual(RESERVE_TX_BOUND_MS - 100);
+    expect(r.ms).toBeLessThan(RESERVE_TX_BOUND_MS + 3_000);
+    expect(rows).toBe(0);
+    expect(after).toEqual({ lt: "0", st: "0", in_tx: false });
+  }, 60_000);
+
+  it("B9: the callback throws while a sibling statement is in flight → the thrown error, one ROLLBACK, clean next client", async () => {
+    const planted = new Error("secl2-planted-in-callback");
+    const r = await timed(() =>
+      withTenantContext(`secl1-${STAMP}-tenant`, async (tx) => {
+        await Promise.all([tx.$queryRaw`SELECT pg_sleep(3)::text`, (async () => { await sleep(100); throw planted; })()]);
+        return "unreachable";
+      }),
+    );
+    await sleep(3_500); // the sibling finishes on the server; nothing else may follow it
+    const rbAfterSibling = inj.rollbacks;
+    const after = await nextClientState();
+    report("L2-B9", { role: ROLE, ms: r.ms, ok: r.out.ok, err: r.out.ok ? null : errInfo(r.out.e), rollbacksAtAnswer: r.rollbacks, after });
+    expect(r.out.ok).toBe(false);
+    expect(!r.out.ok && r.out.e).toBe(planted);
+    expect(r.rollbacks).toBe(1);
+    expect(inj.rollbacks, "no second ROLLBACK after the sibling settles").toBe(rbAfterSibling);
+    expect(after).toEqual({ lt: "0", st: "0", in_tx: false });
+  }, 60_000);
 
   it.runIf(process.env.L1_PLANT === "1")("planted: an unrelated rejection nobody handles still fails the run", async () => {
     void Promise.reject(new Error("L1 planted unexpected failure (unrelated to the database)"));

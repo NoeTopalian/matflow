@@ -33,8 +33,9 @@ vi.mock("@/lib/prisma", async (orig) => {
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
-import { prisma, prismaPoolConfig } from "@/lib/prisma";
+import { prisma, prismaPoolConfig, guardPoolRelease, POOL_CONNECTION_TIMEOUT_MS } from "@/lib/prisma";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 const ON_TEST = (process.env.DATABASE_URL ?? "").includes("ep-hidden-salad");
 const ROLE = process.env.RLS_ENFORCED === "1" ? "restricted" : "owner";
@@ -62,10 +63,17 @@ describe.skipIf(!ON_TEST)(`SF-136: a start that times out never leaves a client 
     expect(left.rows[0].n).toBe(0);
   }, 60_000);
 
-  it("library observation: Prisma + adapter-pg with maxWait 1 ms return the client inside its BEGIN; a later plain write is lost on close", async () => {
-    const b = BUCKET("lib");
+  // R10-4 / R10-2 (lane L2, 12 Oct 2026): the library cell asserts the ACTUAL outcome (before: typeof inTx only), and
+  // its twin runs the same abandoned start over a pool carrying lib/prisma.ts's release guard.
+  async function abandonedStart(cell: string, guarded: boolean) {
+    const b = BUCKET(cell);
     written.push(b);
-    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ...prismaPoolConfig(), max: 1 });
+    const raw = new pg.Pool({ connectionString: process.env.DATABASE_URL, ...prismaPoolConfig(), max: 1 });
+    const pool = guarded ? guardPoolRelease(raw) : raw;
+    const ended: number[] = [];
+    pool.on("connect", (c: pg.PoolClient) => c.on("end", () => ended.push(Date.now())));
+    const errors: string[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(" ")); });
     const own = new PrismaClient({ adapter: new PrismaPg(pool), log: [] });
     let startErr = "";
     try {
@@ -73,17 +81,37 @@ describe.skipIf(!ON_TEST)(`SF-136: a start that times out never leaves a client 
     } catch (e) {
       startErr = `${(e as { code?: string }).code ?? ""} ${String((e as Error).message).slice(0, 60)}`;
     }
-    for (let i = 0; i < 100 && pool.idleCount === 0; i++) await sleep(100);
+    // wait until the late start has finished and been "rolled back" (released): idle client, or a closed one
+    for (let i = 0; i < 100 && pool.idleCount === 0 && ended.length === 0; i++) await sleep(100);
+    await sleep(300);
     const inTx = (await pool.query(`SELECT (now() <> statement_timestamp()) AS in_tx`)).rows[0].in_tx as boolean;
     await own.rateLimitHit.create({ data: { bucket: b } });
     const seenByOwnClient = await own.rateLimitHit.count({ where: { bucket: b } });
     await own.$disconnect();
-    await pool.end(); // this test's own pool; closing it ends the abandoned transaction
+    await pool.end(); // this test's own pool; closing it ends any abandoned transaction
+    errSpy.mockRestore();
     await sleep(500);
     const persisted = await visibleToOthers(b);
-    report("L1-START-LIBRARY", { role: ROLE, startErr, clientReturnedInsideTransaction: inTx, plainWriteSeenByOwnClient: seenByOwnClient, plainWritePersistedAfterClose: persisted });
-    expect(startErr).toMatch(/P2028|Unable to start a transaction/i);
-    expect(typeof inTx).toBe("boolean"); // recorded: the library defect itself is not L1's to change
+    const out = { guarded, startErr, clientReturnedInsideTransaction: inTx, plainWriteSeenByOwnClient: seenByOwnClient, plainWritePersistedAfterClose: persisted, clientsEnded: ended.length, guardLines: errors.filter((l) => l.includes("released inside a transaction")).length };
+    report(guarded ? "L2-START-GUARDED" : "L1-START-LIBRARY", { role: ROLE, ...out });
+    return out;
+  }
+
+  it("library observation (asserted): Prisma + adapter-pg with maxWait 1 ms return the client inside its BEGIN; a later plain write is lost on close", async () => {
+    const o = await abandonedStart("lib", false);
+    expect(o.startErr).toMatch(/P2028|Unable to start a transaction/i);
+    expect(o.clientReturnedInsideTransaction, "the library defect (SF-136): the client is idled inside its BEGIN").toBe(true);
+    expect(o.plainWriteSeenByOwnClient).toBe(1);
+    expect(o.plainWritePersistedAfterClose, "the next autocommit write was held in that transaction and lost").toBe(0);
+  }, 60_000);
+
+  it("R10-2: the same abandoned start over a pool with lib/prisma.ts's release guard → the client is closed, never idled inside a BEGIN; the next plain write persists", async () => {
+    const o = await abandonedStart("guard", true);
+    expect(o.startErr).toMatch(/P2028|Unable to start a transaction/i);
+    expect(o.clientsEnded, "the guard ended the client released inside its transaction").toBeGreaterThanOrEqual(1);
+    expect(o.guardLines).toBe(1);
+    expect(o.clientReturnedInsideTransaction).toBe(false);
+    expect(o.plainWritePersistedAfterClose).toBe(1);
   }, 60_000);
 
   it("withTenantContext asked for maxWait 2 s while the pool's only connection is busy for 4 s: it waits for the pool, succeeds, and leaves no client inside a BEGIN; the next plain write persists", async () => {
@@ -117,5 +145,43 @@ describe.skipIf(!ON_TEST)(`SF-136: a start that times out never leaves a client 
     expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
     expect(inTx, "no client back in the pool inside a BEGIN").toBe(false);
     expect(persisted, "the next autocommit write persists").toBe(1);
+  }, 60_000);
+
+  // Review R10 B6 (folded in by lane L2): the pool's only connection held 12 s, past the pool's own 10 s deadline. A
+  // tenant call fails at the deadline (not later, not with a client left inside a BEGIN); a rate-limit check on a
+  // security bucket is a refusal with no row; afterwards the next plain write persists.
+  it(`B6: the only connection held 12 s → tenant call fails at the ${POOL_CONNECTION_TIMEOUT_MS} ms pool deadline, rate limit refused (0 rows), nothing left inside a BEGIN`, async () => {
+    const bucket = BUCKET("b6rl");
+    const w = BUCKET("b6w");
+    written.push(bucket, w);
+    const pool = inj.pool as pg.Pool;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const holder = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1`;
+      await gate;
+    }, { maxWait: 60_000, timeout: 120_000 });
+    for (let i = 0; i < 100 && !(pool.totalCount === 1 && pool.idleCount === 0); i++) await sleep(50);
+    const t0 = Date.now();
+    const settle = <T,>(p: Promise<T>) => p.then((v) => ({ ok: true as const, v, ms: Date.now() - t0 }), (e: unknown) => ({ ok: false as const, err: String((e as Error)?.message).slice(0, 80), ms: Date.now() - t0 }));
+    const tenant = settle(withTenantContext(`secl1-start-${STAMP}`, (tx) => tx.$queryRaw`SELECT 1`, { maxWait: 2_000 }));
+    const rl = settle(checkRateLimit(bucket, 5, 60_000));
+    await sleep(12_000);
+    release();
+    await holder;
+    const [a, b] = await Promise.all([tenant, rl]);
+    await sleep(1_000);
+    const inTx = (await prisma.$queryRaw<{ in_tx: boolean }[]>`SELECT (now() <> statement_timestamp()) AS in_tx`)[0].in_tx;
+    await prisma.rateLimitHit.create({ data: { bucket: w } });
+    const persisted = await visibleToOthers(w);
+    const rows = await visibleToOthers(bucket);
+    report("L2-B6", { role: ROLE, tenant: a, rateLimit: b, clientInsideTransaction: inTx, plainWritePersisted: persisted, rateLimitRows: rows, pool: { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount } });
+    expect(a.ok, "no connection within the pool deadline → the tenant call fails").toBe(false);
+    expect(a.ms).toBeGreaterThanOrEqual(POOL_CONNECTION_TIMEOUT_MS - 100);
+    expect(a.ms).toBeLessThan(POOL_CONNECTION_TIMEOUT_MS + 1_500);
+    expect(b.ok && (b.v as { allowed: boolean }).allowed, "a security bucket refuses when the store is unreachable").toBe(false);
+    expect(inTx).toBe(false);
+    expect(persisted).toBe(1);
+    expect(rows).toBe(0);
   }, 60_000);
 });
