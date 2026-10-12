@@ -88,6 +88,18 @@ address. They sign in with their password (and their authenticator, if they use 
 their password, the club owner sets them a temporary one in Settings → Staff (it lasts 72 hours and they choose their own
 at next sign-in). No screen in MatFlow marks a staff account's address as verified today, so plan on this lasting.
 
+**If the panel says they have no working password.** Some staff accounts have only a temporary password that has
+expired. The panel then shows "Cannot sign in" and, before the move, says "{name} has no working password. After the
+move they cannot get back in until the club owner sets a temporary password in Settings → Staff." Their move button
+stays disabled until you also tick the box that says you understand this. Tell the club on the call. Moving the address
+does not take away a password that works: this person could not sign in before the move either, and the move does not
+change that.
+
+**How they get back in (recovery).** The club owner opens Settings → Staff and sets a temporary password for them. That
+password expires after 72 hours, they must choose their own password when they next sign in, and setting it signs them
+out everywhere. Their address stays unverified: setting a temporary password does not verify it, and password reset,
+emailed sign-in links and Google sign-in stay refused for them. Nobody marks the address as verified to get them in.
+
 **If the holder is another owner account.** If the panel shows "Owner account" for the holder, it says "Another owner
 account in this club uses this address. Owner accounts are not changed from here; contact MatFlow support." and offers
 no move button for it. Stop there: a second owner row is not something this panel changes.
@@ -128,7 +140,7 @@ password and their authenticator.
 | Record | Signed out? | Also |
 |---|---|---|
 | The owner | Yes, on every device. | Signs in with the new address, same password and authenticator. Reset codes and sign-in links for the old and new address in this club are cancelled. |
-| A staff account you moved | Yes, on every device. | Signs in with their new address, same password and authenticator. Their outstanding reset codes and sign-in links in this club are cancelled. While the address is unverified, forgot-password, emailed sign-in links and Google sign-in do not work for them; a forgotten password needs the club owner to set a temporary one (see Case 2). |
+| A staff account you moved | Yes, on every device. | Signs in with their new address, same password and authenticator. Their outstanding reset codes and sign-in links in this club are cancelled. While the address is unverified, forgot-password, emailed sign-in links and Google sign-in do not work for them; a forgotten password needs the club owner to set a temporary one (see Case 2). A staff account whose only password was an expired temporary one cannot sign in until the club owner sets a new temporary password. |
 | A member who can sign in (has a password) | Yes, on every device. | Signs in with the new contact address. |
 | A member with no password | Nothing to sign out of. | Any outstanding invite, sign-in or reset link for the old or new address in this club is cancelled. The club can send a fresh invite later. |
 | Everyone else in the club | No. | Nothing about them changes. |

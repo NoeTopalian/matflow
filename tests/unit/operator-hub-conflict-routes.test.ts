@@ -963,6 +963,24 @@ describe("login-email/check: answers", () => {
     expect(b.holder).toEqual({ kind: "user", id: "u-coach", name: "Cole Coach", status: "coach", canSignIn: true, access: "password", link: "/dashboard/staff", version });
   });
 
+  it("a staff account whose only password is an EXPIRED temporary one: access none, cannot sign in (R14)", async () => {
+    const coach = h.users.find((u) => u.id === "u-coach")!;
+    coach.mustChangePassword = true;
+    coach.tempPasswordExpiresAt = new Date(Date.now() - 60_000);
+    const b = await body(await check({ email: "coach@club.example" }));
+    expect(b.holder).toMatchObject({ kind: "user", id: "u-coach", canSignIn: false, access: "none" });
+    // Still movable: the version is offered; the panel asks for an extra tick.
+    expect((b.holder as Record<string, unknown>).version).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("a staff account on a temporary password that has NOT expired yet: still password access", async () => {
+    const coach = h.users.find((u) => u.id === "u-coach")!;
+    coach.mustChangePassword = true;
+    coach.tempPasswordExpiresAt = new Date(Date.now() + 60 * 60 * 1000);
+    const b = await body(await check({ email: "coach@club.example" }));
+    expect(b.holder).toMatchObject({ kind: "user", id: "u-coach", canSignIn: true, access: "password" });
+  });
+
   it("a legacy duplicate (two rows on one canonical address): kind many with a count and every holder listed, nobody picked", async () => {
     h.members.set("m-dup", { id: "m-dup", tenantId: "t-a", name: "Pat Duplicate", email: " PAT@club.example", passwordHash: null, status: "active", sessionVersion: 0 });
     const b = await body(await check({ email: OLD }));

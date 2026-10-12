@@ -14,6 +14,10 @@
 // `canSignIn` is computed in the read transaction from the holder's password
 // AND live email-bound credentials for the address in this club (a
 // passwordless member with an outstanding invite can still activate). A
+// staff holder whose only password is an EXPIRED temporary one (the same test
+// auth.ts applies at sign-in, lib/temp-password.ts) has access "none": after a
+// move nothing but the club owner setting a new temporary password lets them
+// back in, and the panel says so before the move (R14, 13 Oct 2026). A
 // member holder also carries `version`: an opaque keyed digest of the record
 // as checked, which the contact-email route compares again inside its
 // transaction (409 if the member changed in between). A non-owner staff
@@ -42,6 +46,7 @@ import { hasImpersonationCookie } from "@/lib/impersonation";
 import { SUPPORT_OPERATOR_PLANE_MESSAGE } from "@/lib/support-session";
 import { claimLoginIdentity, emailDigest, type LoginIdentityHolder } from "@/lib/login-email";
 import { stepUpTarget, stepUpVersionDigestIn } from "@/lib/operator-step-up";
+import { isTempPasswordExpired } from "@/lib/temp-password";
 
 export const runtime = "nodejs";
 
@@ -106,13 +111,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Null for an owner account (staff.login_email never applies to one),
         // so no version is offered for it.
         const version = await stepUpVersionDigestIn(tx, "staff.login_email", stepUpTarget(tenantId, h.id, "change"));
+        // Password sign-in is the only door a staff account keeps once its
+        // address is provisional; an expired temporary password has shut it.
+        const pw = await tx.user.findFirst({
+          where: { id: h.id, tenantId },
+          select: { mustChangePassword: true, tempPasswordExpiresAt: true },
+        });
+        const expired = !!pw && isTempPasswordExpired(pw, now.getTime());
         return {
           kind: "user",
           id: h.id,
           name: h.name,
           status: h.role,
-          canSignIn: true,
-          access: "password",
+          canSignIn: !expired,
+          access: expired ? "none" : "password",
           link: `/dashboard/staff`,
           ...(version ? { version } : {}),
         };

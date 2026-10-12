@@ -294,6 +294,53 @@ describe("ConflictPanel: staff accounts, duplicates and record labels", () => {
     );
   });
 
+  // R14 (13 Oct 2026): an expired temporary password is the only password.
+  const STRANDED =
+    "Pat has no working password. After the move they cannot get back in until the club owner sets a temporary password in Settings → Staff.";
+  const strandedTick = /I understand Pat will need the club owner to set a temporary password/;
+
+  it("a staff holder with no working password: warned before the move, and the move needs the extra tick", async () => {
+    renderPanel({ holder: { kind: "user", id: "u1", name: "Pat", status: "coach", canSignIn: false, access: "none", link: "/dashboard/staff", version: V } });
+    expect(screen.getByRole("alert")).toHaveTextContent(STRANDED);
+    expect(screen.getByText("Cannot sign in")).toBeInTheDocument();
+    // The password-bearing sentence ("they then sign in with the new address") would be untrue here.
+    expect(screen.queryByText(/they then sign in with the new address/)).toBeNull();
+    const move = screen.getByRole("button", { name: "Change this staff account's login address" });
+    await verifyAndStart();
+    expect(move).toBeDisabled(); // call-back tick + note are not enough
+    await user.click(screen.getByRole("checkbox", { name: strandedTick }));
+    expect(move).toBeEnabled();
+    await user.click(screen.getByRole("checkbox", { name: strandedTick })); // untick: disabled again
+    expect(move).toBeDisabled();
+    await user.click(screen.getByRole("checkbox", { name: strandedTick }));
+    await user.click(move);
+    expect(screen.getByRole("dialog")).toHaveTextContent(STRANDED);
+  });
+
+  it("a password-bearing staff holder: no stranded warning, no extra tick, the signed-out sentence", async () => {
+    renderPanel({ holder: { kind: "user", id: "u1", name: "Pat", status: "coach", canSignIn: true, access: "password", link: "/dashboard/staff", version: V } });
+    expect(screen.queryByText(/has no working password/)).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: strandedTick })).toBeNull();
+    expect(screen.getByText(/Moving it signs Pat out\s+everywhere; they then sign in with the new address/)).toBeInTheDocument();
+    await verifyAndStart();
+    expect(screen.getByRole("button", { name: "Change this staff account's login address" })).toBeEnabled();
+  });
+
+  it("a duplicate: the stranded warning and tick sit on that staff row only; the other record's move is not held back", async () => {
+    renderPanel({ holder: { kind: "many", count: 2, holders: [
+      { kind: "member", id: "m1", name: "A", status: "active", canSignIn: true, access: "password", link: "/m1", version: V },
+      { kind: "user", id: "u1", name: "Pat", status: "coach", canSignIn: false, access: "none", link: "/dashboard/staff", version: V },
+    ] } });
+    await verifyAndStart();
+    const rows = within(screen.getByRole("list", { name: "Records holding this address" })).getAllByRole("listitem");
+    expect(rows[0]).not.toHaveTextContent(/has no working password/);
+    expect(within(rows[0]).getByRole("button")).toBeEnabled();
+    expect(rows[1]).toHaveTextContent(STRANDED);
+    expect(within(rows[1]).getByRole("button", { name: "Change this staff account's login address" })).toBeDisabled();
+    await user.click(within(rows[1]).getByRole("checkbox", { name: strandedTick }));
+    expect(within(rows[1]).getByRole("button", { name: "Change this staff account's login address" })).toBeEnabled();
+  });
+
   it("posts the staff move to the staff route with the step-up header, then re-checks", async () => {
     const fetchMock = mockFetchSequence([
       { url: "/api/admin/auth/step-up", body: { ok: true, grant: "GRANT", expiresAt: "2026-10-12T12:05:00.000Z" } },

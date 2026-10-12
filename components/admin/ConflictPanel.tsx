@@ -40,6 +40,10 @@
 // (record-kind.ts): a club sign-in account (owner/staff) or a member record,
 // with a note when a member record merely shares the owner's name. The resume
 // point gains &staff=<id> for the staff path (ids only, as before).
+//
+// A staff account whose only password is an expired temporary one (check
+// access "none", R14, 13 Oct 2026) would be stranded by a move: the panel says
+// so before the move and that record's move button needs an extra tick.
 
 import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -97,7 +101,13 @@ export async function checkLoginAddress(
 
 // ── Resume state: ids in the URL, the address in this tab only ─────────────
 export type MemberStepResult = { memberId: string; canSignIn: boolean; retired?: { resetCodes: number; signInLinks: number }; alreadyApplied?: boolean };
-export type StaffStepResult = { userId: string; retired?: { resetCodes: number; signInLinks: number }; alreadyApplied?: boolean };
+export type StaffStepResult = {
+  userId: string;
+  retired?: { resetCodes: number; signInLinks: number };
+  alreadyApplied?: boolean;
+  /** The check said this account had no working password (an expired temporary one) when it was moved. */
+  noWorkingPassword?: boolean;
+};
 export type ResumeState = {
   address: string;
   memberId?: string;
@@ -230,6 +240,30 @@ const isOwnerHolder = (h: SingleHolder) => h.kind === "user" && h.status.toLower
 const OWNER_HOLDER_NOTICE =
   "Another owner account in this club uses this address. Owner accounts are not changed from here; contact MatFlow support.";
 
+/**
+ * A staff account whose only password is an expired temporary one (the check
+ * reports access "none", R14). Once its address is provisional, password reset,
+ * emailed sign-in links and Google are all refused for it, so after the move
+ * nothing but the club owner setting a new temporary password lets them in.
+ * The panel says so and asks for a separate tick before that record's move.
+ */
+const isStrandedStaff = (h: SingleHolder) => h.kind === "user" && !isOwnerHolder(h) && h.access === "none";
+const strandedWarning = (name: string) =>
+  `${name} has no working password. After the move they cannot get back in until the club owner sets a temporary password in Settings → Staff.`;
+
+/** The warning and its extra confirmation tick for one stranded staff account. */
+function StrandedStaffAck({ h, checked, onChange }: { h: SingleHolder; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <>
+      <p role="alert" style={warn}>{strandedWarning(h.name)}</p>
+      <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, marginTop: 8 }}>
+        <Checkbox checked={checked} onCheckedChange={onChange} aria-label={`I understand ${h.name} will need the club owner to set a temporary password`} />
+        <span>I understand {h.name} will need the club owner to set a temporary password before they can sign in again.</span>
+      </label>
+    </>
+  );
+}
+
 /** The "Held by" content for one holder: plain record kind, name, state, link, and a same-name note. */
 function HolderDetails({ h, ownerName }: { h: SingleHolder; ownerName: string }) {
   const k = describeRecordKind(h.kind, h.status);
@@ -284,6 +318,10 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
   const [step3, setStep3] = useState<OwnerStepResult | null>(null);
   const [verified, setVerified] = useState(false);
   const [verifyNote, setVerifyNote] = useState("");
+  // Per staff account with no working password: the operator's extra tick (R14).
+  const [strandedAck, setStrandedAck] = useState<Record<string, boolean>>({});
+  const ackFor = (h: SingleHolder) => strandedAck[h.id] === true;
+  const setAckFor = (h: SingleHolder) => (v: boolean) => setStrandedAck((a) => ({ ...a, [h.id]: v }));
   const [dialog, setDialog] = useState<"member" | "staff" | "owner" | null>(null);
   // The record the open member/staff dialog acts on.
   const [target, setTarget] = useState<SingleHolder | null>(single);
@@ -461,6 +499,7 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
         userId: String(r.data.userId ?? staff.id),
         retired: r.data.retired as StaffStepResult["retired"],
         alreadyApplied: r.data.alreadyApplied === true,
+        ...(isStrandedStaff(staff) ? { noWorkingPassword: true } : {}),
       };
       recordMove({ kind: "user", result }, staff.name);
       setDialog(null);
@@ -519,7 +558,8 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
   const reasonOk = reason.trim().length >= REASON_MIN && reason.trim().length <= 500;
   const memberEmailOk = /\S+@\S+\.\S+/.test(memberNewEmail.trim()) && memberNewEmail.trim().toLowerCase() !== address.trim().toLowerCase();
   const staffEmailOk = /\S+@\S+\.\S+/.test(staffNewEmail.trim()) && staffNewEmail.trim().toLowerCase() !== address.trim().toLowerCase();
-  const canStartFor = (h: SingleHolder) => !!h.version && verified && verifyNote.trim().length >= REASON_MIN && !busy;
+  const canStartFor = (h: SingleHolder) =>
+    !!h.version && verified && verifyNote.trim().length >= REASON_MIN && (!isStrandedStaff(h) || ackFor(h)) && !busy;
   const openMove = (h: SingleHolder) => openDialog(h.kind === "member" ? "member" : "staff", h);
   const partial = moved.length > 0 && step3 === null;
   // Duplicate progress while records still hold the address (ruling R10):
@@ -574,7 +614,8 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
           {notice && <p role="status" style={{ ...warn, borderColor: adminPalette.amber }}>{notice}</p>}
           {progress && <p role="status" style={{ ...warn, borderColor: adminPalette.amber }}>{progress}</p>}
           {single && isOwnerHolder(single) && <p role="alert" style={warn}>{OWNER_HOLDER_NOTICE}</p>}
-          {single?.kind === "user" && !isOwnerHolder(single) && (
+          {single && isStrandedStaff(single) && <StrandedStaffAck h={single} checked={ackFor(single)} onChange={setAckFor(single)} />}
+          {single?.kind === "user" && !isOwnerHolder(single) && !isStrandedStaff(single) && (
             <p style={warn}>
               This staff account holds this address and signs in to the club&apos;s dashboard with it. Moving it signs {single.name} out
               everywhere; they then sign in with the new address.
@@ -629,6 +670,7 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
                   ) : (
                     <>
                       {!h.version && <p style={warn}>This record cannot be changed from here. Check the address again.</p>}
+                      {isStrandedStaff(h) && <StrandedStaffAck h={h} checked={ackFor(h)} onChange={setAckFor(h)} />}
                       <div style={actions}>
                         <Button variant="destructive" size="compact" onClick={() => openMove(h)} disabled={!canStartFor(h)}>
                           {moveButtonLabel(h)}
@@ -703,7 +745,9 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
               ) : (
                 <li key={i}>
                   Staff account login address changed{m.result.alreadyApplied ? " (already applied)" : ""} — staff account {m.result.userId}.
-                  They were signed out everywhere and sign in with the new address, which is provisional (unverified).
+                  {m.result.noWorkingPassword
+                    ? "They were signed out everywhere. The new address is provisional (unverified) and they have no working password: the club owner must set a temporary password in Settings → Staff before they can sign in."
+                    : "They were signed out everywhere and sign in with the new address, which is provisional (unverified)."}
                 </li>
               ),
             )}
@@ -762,7 +806,13 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
         open={dialog === "staff"}
         onClose={() => { if (!busy) setDialog(null); }}
         title="Change this staff account's login address"
-        description={staff ? `${staff.name} will be signed out everywhere and must sign in with the new address.` : undefined}
+        description={
+          staff
+            ? isStrandedStaff(staff)
+              ? `${staff.name} will be signed out everywhere. ${strandedWarning(staff.name)}`
+              : `${staff.name} will be signed out everywhere and must sign in with the new address.`
+            : undefined
+        }
         footer={
           <div style={actions}>
             <Button variant="secondary" onClick={() => setDialog(null)} disabled={busy}>Cancel</Button>

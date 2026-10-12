@@ -8,8 +8,22 @@
 // TEST_DATABASE_URL = the test branch's owner URL, once with its restricted
 // (RLS-subject) URL. One describe; makeTenant(label) only names the club.
 // Synthetic, run-stamped clubs; everything deleted by cleanup().
+//
+// R14 (13 Oct 2026, the nested describe at the end): what a moved staff
+// account can still do, through the REAL doors — the Credentials authorize()
+// from auth.ts (captured by mocking the next-auth wrapper, as
+// tests/integration/account-editing-db.test.ts does), POST forgot-password,
+// POST magic-link/request — and the recovery, PATCH /api/staff/[id] as the
+// club owner. Mail stays dark (sendEmail mocked; EMAIL_DELIVERY untouched), so
+// "no token" alone would prove nothing: each refusal is pinned by its own
+// audit row as well. Sign-in notifications are stubbed (no LoginEvent rows).
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import bcrypt from "bcryptjs";
+
+const authState = vi.hoisted(() => ({
+  authorize: undefined as undefined | ((c: Record<string, unknown>, r: Request) => Promise<Record<string, unknown> | null>),
+}));
 
 vi.mock("next/headers", async () => {
   const { hubState: s } = await import("./helpers/operator-hub-state");
@@ -30,21 +44,39 @@ vi.mock("@/lib/rate-limit", async (importOriginal) => ({
   getClientIp: () => "203.0.113.9",
 }));
 vi.mock("@/lib/email", () => ({ sendEmail: vi.fn(async () => ({ ok: false, logId: "mail-dark" })) }));
-vi.mock("@/auth", async () => {
+// The REAL auth.ts behind a stubbed next-auth wrapper: its Credentials
+// authorize() is captured for the sign-in checks, and auth() hands the routes
+// the session in hubState (null unless a test sets one).
+vi.mock("next-auth", async () => {
   const { hubState: s } = await import("./helpers/operator-hub-state");
-  return { auth: vi.fn(async () => s.session), signIn: vi.fn(), signOut: vi.fn(), handlers: {} };
+  return {
+    default: (config: { providers: { authorize?: (c: Record<string, unknown>, r: Request) => Promise<Record<string, unknown> | null> }[] }) => {
+      for (const p of config.providers) if (p?.authorize) authState.authorize = p.authorize;
+      return { handlers: {}, auth: async () => s.session, signIn: async () => {}, signOut: async () => {} };
+    },
+    CredentialsSignin: class extends Error { code = "credentials"; },
+  };
 });
+vi.mock("next-auth/providers/credentials", () => ({ default: (c: unknown) => c }));
+vi.mock("next-auth/providers/google", () => ({ default: (c: unknown) => c }));
+vi.mock("@/lib/login-event", () => ({ recordLoginEvent: async () => {} }));
 
+import { prisma } from "@/lib/prisma";
 import { withRlsBypass } from "@/lib/prisma-tenant";
+import { hubState } from "./helpers/operator-hub-state";
+import { lockoutKeys, requestClientIp } from "@/lib/auth-lockout";
+import { TEMP_PASSWORD_TTL_MS } from "@/lib/temp-password";
 import { emailDigest } from "@/lib/login-email";
 import { NO_LOGIN_EMAIL_DOMAIN } from "@/lib/synthesise-kid-email";
 import {
   OP_ID,
+  ORIGIN,
   bumpSessionVersion,
   checkAddress,
   cleanup,
   isUsed,
   issueGrant,
+  jsonRequest,
   makeMember,
   makeOwner,
   makeStaff,
@@ -52,8 +84,13 @@ import {
   mint,
   operatorRequest,
   seedDuplicate,
+  stampedEmail,
+  tenantSlug,
 } from "./helpers/operator-hub";
 import { POST as moveStaff } from "@/app/api/admin/customers/[id]/staff/[userId]/login-email/route";
+import { POST as forgotPassword } from "@/app/api/auth/forgot-password/route";
+import { POST as requestMagicLink } from "@/app/api/magic-link/request/route";
+import { PATCH as ownerEditStaff } from "@/app/api/staff/[id]/route";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const OUTCOME = "admin.staff.login_email.changed";
@@ -223,5 +260,173 @@ describe.skipIf(!HAS_DB)("staff login email (operator hub, TEST branch)", () => 
     expect(r.holder.kind).toBe("many");
     expect(r.holder.holders).toHaveLength(2);
     expect(r.holder.holders!.every((h: { version?: string }) => /^[a-f0-9]{64}$/.test(h.version ?? ""))).toBe(true);
+  });
+
+  // ── R14: what a moved staff account can still do, and the recovery ──────────
+  describe("R14: staff access after the move, and the club owner's recovery", () => {
+    const PW_OWN = `Synthetic-${Date.now()}-Own1`; // synthetic, test-only
+    const PW_TEMP_OLD = `Expired-${Date.now()}-Tmp1`;
+    const PW_TEMP_NEW = `Recovery-${Date.now()}-Tmp2`;
+    const PW_OLD = stampedEmail("r14-pw-old");
+    const PW_NEW = stampedEmail("r14-pw-new");
+    const EX_OLD = stampedEmail("r14-ex-old");
+    const EX_NEW = stampedEmail("r14-ex-new");
+    const r = { tenantId: "", slug: "", ownerId: "", pwStaff: "", exStaff: "" };
+
+    const row = (id: string) =>
+      withRlsBypass((tx) =>
+        tx.user.findUniqueOrThrow({
+          where: { id },
+          select: {
+            email: true, passwordHash: true, sessionVersion: true, mustChangePassword: true,
+            tempPasswordExpiresAt: true, loginEmailProvisionalSince: true,
+          },
+        }),
+      );
+    // The real Credentials authorize() from auth.ts (resolves the user, or null; throws a coded refusal).
+    const signIn = (email: string, password: string) =>
+      authState.authorize!({ email, password, tenantSlug: r.slug }, new Request(`${ORIGIN}/api/auth/callback/credentials`));
+    const tokensFor = (email: string) =>
+      withRlsBypass(async (tx) => ({
+        resets: await tx.passwordResetToken.count({ where: { tenantId: r.tenantId, email } }),
+        links: await tx.magicLinkToken.count({ where: { tenantId: r.tenantId, email } }),
+      }));
+    // Refusal rows on these doors are best-effort writes: wait for them.
+    const auditCount = (action: string, entityId: string) =>
+      withRlsBypass((tx) => tx.auditLog.count({ where: { tenantId: r.tenantId, action, entityId } }));
+    const expectAuditRow = (action: string, entityId: string) =>
+      vi.waitFor(async () => expect(await auditCount(action, entityId)).toBe(1), { timeout: 15_000, interval: 300 });
+    const moveTo = async (userId: string, from: string, to: string) => {
+      const { holder } = await checkAddress(r.tenantId, from);
+      const grant = await issueGrant("staff.login_email", `${r.tenantId}/${userId}/change`, { newEmail: to });
+      return moveStaff(
+        operatorRequest({ newEmail: to, reason: "Club confirmed by call-back", version: holder.version }, grant),
+        { params: Promise.resolve({ id: r.tenantId, userId }) },
+      );
+    };
+    const askReset = (email: string) => forgotPassword(jsonRequest("/api/auth/forgot-password", { email, tenantSlug: r.slug }));
+    const askLink = (email: string) => requestMagicLink(jsonRequest("/api/magic-link/request", { email, tenantSlug: r.slug }));
+
+    beforeAll(async () => {
+      r.tenantId = await makeTenant("staff-access");
+      r.slug = tenantSlug(r.tenantId);
+      r.ownerId = await makeOwner(r.tenantId, stampedEmail("r14-owner"), { totpEnabled: true });
+      const [own, temp] = await Promise.all([bcrypt.hash(PW_OWN, 4), bcrypt.hash(PW_TEMP_OLD, 4)]);
+      const created = await withRlsBypass(async (tx) => ({
+        pw: await tx.user.create({
+          data: { tenantId: r.tenantId, email: PW_OLD, name: "R14 Password Coach", role: "coach", passwordHash: own },
+          select: { id: true },
+        }),
+        ex: await tx.user.create({
+          data: {
+            tenantId: r.tenantId, email: EX_OLD, name: "R14 Expired Coach", role: "coach", passwordHash: temp,
+            mustChangePassword: true, tempPasswordExpiresAt: new Date(Date.now() - 60 * 60 * 1000),
+          },
+          select: { id: true },
+        }),
+      }));
+      r.pwStaff = created.pw.id;
+      r.exStaff = created.ex.id;
+    }, 120_000);
+
+    afterAll(async () => {
+      hubState.session = null;
+      // Sign-in lockout buckets the successful and refused sign-ins touched
+      // (keyed HMACs of club + address [+ client IP]); removed with the run.
+      const ip = requestClientIp(new Headers());
+      const buckets = [PW_OLD, PW_NEW, EX_OLD, EX_NEW].flatMap((e) => Object.values(lockoutKeys(r.slug, e, ip)));
+      await prisma.rateLimitHit.deleteMany({ where: { bucket: { in: buckets } } });
+      expect(await prisma.rateLimitHit.count({ where: { bucket: { in: buckets } } })).toBe(0);
+    }, 60_000);
+
+    it("a: password-bearing staff — sign-in with the same password at the new address; no reset code, no sign-in link; marked provisional", async () => {
+      expect((await checkAddress(r.tenantId, PW_OLD)).holder).toMatchObject({ kind: "user", id: r.pwStaff, access: "password", canSignIn: true });
+      const before = await row(r.pwStaff);
+      expect(await signIn(PW_OLD, PW_OWN)).toMatchObject({ id: r.pwStaff }); // control: works before the move
+
+      expect((await moveTo(r.pwStaff, PW_OLD, PW_NEW)).status).toBe(200);
+      const after = await row(r.pwStaff);
+      expect(after.email).toBe(PW_NEW);
+      expect(after.loginEmailProvisionalSince).not.toBeNull();
+      expect(after).toMatchObject({ passwordHash: before.passwordHash, mustChangePassword: false, tempPasswordExpiresAt: null });
+
+      // The same Credentials authorize() auth.ts runs for a password sign-in.
+      expect(await signIn(PW_NEW, PW_OWN)).toMatchObject({ id: r.pwStaff, email: PW_NEW, mustChangePassword: false });
+
+      expect((await askReset(PW_NEW)).status).toBe(200);
+      expect((await askLink(PW_NEW)).status).toBe(200);
+      expect(await tokensFor(PW_NEW)).toEqual({ resets: 0, links: 0 });
+      // Refused by the provisional-address guard (not merely by mail being off).
+      await expectAuditRow("auth.password_reset.refused_provisional", r.pwStaff);
+      await expectAuditRow("auth.magic_link.refused_provisional", r.pwStaff);
+    });
+
+    it("b: expired temporary password — check says no access before the move; after it reset and link are refused and sign-in answers temp_password_expired", async () => {
+      expect((await checkAddress(r.tenantId, EX_OLD)).holder).toMatchObject({ kind: "user", id: r.exStaff, access: "none", canSignIn: false });
+      await expect(signIn(EX_OLD, PW_TEMP_OLD)).rejects.toMatchObject({ code: "temp_password_expired" }); // already, before the move
+      const before = await row(r.exStaff);
+
+      expect((await moveTo(r.exStaff, EX_OLD, EX_NEW)).status).toBe(200);
+      const after = await row(r.exStaff);
+      expect(after.email).toBe(EX_NEW);
+      expect(after.loginEmailProvisionalSince).not.toBeNull();
+      expect(after).toMatchObject({
+        passwordHash: before.passwordHash,
+        mustChangePassword: true,
+        tempPasswordExpiresAt: before.tempPasswordExpiresAt,
+      });
+      expect(after.tempPasswordExpiresAt!.getTime()).toBeLessThanOrEqual(Date.now());
+      await expect(signIn(EX_NEW, PW_TEMP_OLD)).rejects.toMatchObject({ code: "temp_password_expired" });
+
+      expect((await askReset(EX_NEW)).status).toBe(200);
+      expect((await askLink(EX_NEW)).status).toBe(200);
+      expect(await tokensFor(EX_NEW)).toEqual({ resets: 0, links: 0 });
+      // The temporary-password guard answers first on both doors (forgot-password
+      // writes no row for it; magic-link records the bootstrap refusal).
+      await expectAuditRow("auth.magic_link.refused_bootstrap", r.exStaff);
+    });
+
+    it("c: recovery — the club owner (MFA passed) sets a temporary password; the address stays provisional; sign-in works again", async () => {
+      const before = await row(r.exStaff);
+      expect(before.loginEmailProvisionalSince).not.toBeNull();
+      const owner = await withRlsBypass((tx) => tx.user.findUniqueOrThrow({ where: { id: r.ownerId }, select: { sessionVersion: true } }));
+      hubState.session = {
+        user: {
+          id: r.ownerId, tenantId: r.tenantId, role: "owner", sessionVersion: owner.sessionVersion,
+          totpEnabled: true, totpPending: false, requireTotpSetup: false, mustChangePassword: false,
+        },
+      };
+      const t0 = Date.now();
+      const res = await ownerEditStaff(
+        new Request(`${ORIGIN}/api/staff/${r.exStaff}`, {
+          method: "PATCH",
+          headers: { origin: ORIGIN, host: "localhost:3847", "content-type": "application/json" },
+          body: JSON.stringify({ newPassword: PW_TEMP_NEW }),
+        }),
+        { params: Promise.resolve({ id: r.exStaff }) },
+      );
+      const t1 = Date.now();
+      hubState.session = null;
+      expect(res.status).toBe(200);
+
+      const after = await row(r.exStaff);
+      expect(after.mustChangePassword).toBe(true);
+      expect(after.tempPasswordExpiresAt!.getTime()).toBeGreaterThanOrEqual(t0 + TEMP_PASSWORD_TTL_MS);
+      expect(after.tempPasswordExpiresAt!.getTime()).toBeLessThanOrEqual(t1 + TEMP_PASSWORD_TTL_MS);
+      expect(after.sessionVersion).toBe(before.sessionVersion + 1);
+      expect(after.passwordHash).not.toBe(before.passwordHash);
+      expect(after.email).toBe(EX_NEW);
+      // Never cleared to make sign-in work.
+      expect(after.loginEmailProvisionalSince).toEqual(before.loginEmailProvisionalSince);
+
+      const audit = await withRlsBypass((tx) =>
+        tx.auditLog.findMany({ where: { tenantId: r.tenantId, action: "staff.update", entityId: r.exStaff }, select: { userId: true, operatorId: true } }),
+      );
+      expect(audit).toEqual([{ userId: r.ownerId, operatorId: null }]);
+
+      // The new temporary password signs in (forced change next), the address still provisional.
+      expect(await signIn(EX_NEW, PW_TEMP_NEW)).toMatchObject({ id: r.exStaff, mustChangePassword: true });
+      expect((await row(r.exStaff)).loginEmailProvisionalSince).toEqual(before.loginEmailProvisionalSince);
+    });
   });
 });
