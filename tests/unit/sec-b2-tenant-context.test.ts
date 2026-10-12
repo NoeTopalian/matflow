@@ -28,7 +28,9 @@ describe("withTenantContext statement shape (SF-62)", () => {
 
   it("sets the tenant AND switches app.bypass_rls off for the transaction, in one statement, tenant as a bind parameter", async () => {
     await withTenantContext("tenant-A", async () => "ok");
-    expect(txExecuteRaw).toHaveBeenCalledTimes(1);
+    // R10-3 (lane L2): the context statement, then the liveness statement before COMMIT — nothing else.
+    expect(txExecuteRaw).toHaveBeenCalledTimes(2);
+    expect(sqlOf(txExecuteRaw.mock.calls[1])).toBe("SELECT 1");
     const call = txExecuteRaw.mock.calls[0];
     const sql = sqlOf(call);
     expect(sql).toMatch(/set_config\('app\.current_tenant_id', \$, true\)/);
@@ -43,7 +45,8 @@ describe("withTenantContext statement shape (SF-62)", () => {
     await withTenantContext("tenant-A", async () => "ok");
     expect(txQueryRaw).toHaveBeenCalledTimes(1);
     expect(sqlOf(txQueryRaw.mock.calls[0])).toMatch(/pg_backend_pid\(\)[\s\S]*transaction_timestamp\(\)/);
-    expect(txExecuteRaw).toHaveBeenCalledTimes(2);
+    expect(txExecuteRaw).toHaveBeenCalledTimes(3); // context, MAC, then the R10-3 liveness statement
+    expect(sqlOf(txExecuteRaw.mock.calls[2])).toBe("SELECT 1");
     const macCall = txExecuteRaw.mock.calls[1];
     expect(sqlOf(macCall)).toMatch(/set_config\('app\.ctx_mac', \$, true\)/);
     expect(macCall[1]).toBe(createHmac("sha256", key).update("tenant-A|4242|1760000000123456").digest("hex"));
