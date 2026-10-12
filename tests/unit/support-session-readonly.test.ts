@@ -157,6 +157,8 @@ describe("1. the policy", () => {
     // Admin hub lane F (9 Oct 2026): the address check names who holds an
     // address, and the contact change moves a member — neither from support.
     "/api/admin/customers/t1/login-email/check", "/api/admin/customers/t1/members/m1/contact-email",
+    // Hub conflicts (12 Oct 2026): the staff login-address move, likewise.
+    "/api/admin/customers/t1/staff/u1/login-email",
   ])(
     "refuses the operator plane %s to a support session (no nesting), whatever the method",
     (p) => {

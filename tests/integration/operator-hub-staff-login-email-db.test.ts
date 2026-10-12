@@ -78,7 +78,7 @@ describe.skipIf(!HAS_DB)("staff login email (operator hub, TEST branch)", () => 
   beforeAll(async () => {
     const tenantId = await makeTenant("staff-login-email");
     const ownerId = await makeOwner(tenantId, "owner@club.test");
-    const staffId = await makeStaff(tenantId, { email: "shared@club.test", role: "manager", withPassword: true });
+    const staffId = await makeStaff(tenantId, { email: "shared@club.test", role: "manager" });
     t = { tenantId, ownerId, staffId };
   }, 120_000);
   afterAll(cleanup, 120_000);
@@ -144,7 +144,7 @@ describe.skipIf(!HAS_DB)("staff login email (operator hub, TEST branch)", () => 
   });
 
   it("re-sending the same grant answers alreadyApplied and changes nothing twice", async () => {
-    const staff4 = await makeStaff(t.tenantId, { email: "four@club.test", role: "coach", withPassword: true });
+    const staff4 = await makeStaff(t.tenantId, { email: "four@club.test", role: "coach" });
     const { holder } = await checkAddress(t.tenantId, "four@club.test");
     const body = { newEmail: "coach4@club.test", reason: "Club confirmed by call-back", version: holder.version };
     const grant = await issueGrant("staff.login_email", `${t.tenantId}/${staff4}/change`, { newEmail: body.newEmail });
@@ -174,7 +174,7 @@ describe.skipIf(!HAS_DB)("staff login email (operator hub, TEST branch)", () => 
   });
 
   it("refuses a stale version (record changed since the check) with 409 stale", async () => {
-    const staff2 = await makeStaff(t.tenantId, { email: "two@club.test", role: "coach", withPassword: true });
+    const staff2 = await makeStaff(t.tenantId, { email: "two@club.test", role: "coach" });
     const { holder } = await checkAddress(t.tenantId, "two@club.test");
     await bumpSessionVersion(staff2); // helper: users.sessionVersion += 1
     const grant = await issueGrant("staff.login_email", `${t.tenantId}/${staff2}/change`, { newEmail: "coach2@club.test" });
@@ -189,7 +189,7 @@ describe.skipIf(!HAS_DB)("staff login email (operator hub, TEST branch)", () => 
 
   it("refuses a target address already held (by a member) with 409 taken", async () => {
     await makeMember(t.tenantId, { email: "held@club.test" });
-    const staff3 = await makeStaff(t.tenantId, { email: "three@club.test", role: "coach", withPassword: true });
+    const staff3 = await makeStaff(t.tenantId, { email: "three@club.test", role: "coach" });
     const { holder } = await checkAddress(t.tenantId, "three@club.test");
     const grant = await issueGrant("staff.login_email", `${t.tenantId}/${staff3}/change`, { newEmail: "held@club.test" });
     const res = await moveStaff(
@@ -202,7 +202,7 @@ describe.skipIf(!HAS_DB)("staff login email (operator hub, TEST branch)", () => 
   });
 
   it("refuses a system-managed (no-login placeholder) target with 400 managed; nothing written", async () => {
-    const staff5 = await makeStaff(t.tenantId, { email: "five@club.test", role: "coach", withPassword: true });
+    const staff5 = await makeStaff(t.tenantId, { email: "five@club.test", role: "coach" });
     const before = await user(staff5);
     const placeholder = `kid-placeholder@${NO_LOGIN_EMAIL_DOMAIN}`;
     const { holder } = await checkAddress(t.tenantId, "five@club.test");

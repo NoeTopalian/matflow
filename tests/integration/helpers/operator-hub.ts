@@ -91,12 +91,13 @@ export async function makeOwner(tenantId: string, email: string, extra: OwnerExt
 }
 
 /**
- * A non-owner staff account. `User.passwordHash` is NOT NULL, so `withPassword:
- * false` stores an empty (unusable) hash rather than null.
+ * A non-owner staff account. Staff rows always carry a password hash in this
+ * schema (`User.passwordHash` is NOT NULL), so there is no "without password"
+ * shape to build.
  */
 export async function makeStaff(
   tenantId: string,
-  opts: { email: string; role: "manager" | "coach" | "admin"; withPassword: boolean; name?: string },
+  opts: { email: string; role: "manager" | "coach" | "admin"; name?: string },
 ): Promise<string> {
   const u = await withRlsBypass((tx) =>
     tx.user.create({
@@ -105,7 +106,7 @@ export async function makeStaff(
         email: opts.email,
         name: opts.name ?? `Synthetic ${opts.role}`,
         role: opts.role,
-        passwordHash: opts.withPassword ? "staff-hash-unchanged" : "",
+        passwordHash: "staff-hash-unchanged",
       },
       select: { id: true },
     }),
