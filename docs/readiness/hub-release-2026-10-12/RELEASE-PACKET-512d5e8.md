@@ -52,6 +52,21 @@ Required, in order, with results pasted into this packet:
 5. Record RTO (time from decision to a serving isolated build on the branch), RPO (snapshot time), and the reconciliation rule for writes made after the snapshot (attendance, account changes during the release window: define a 30-minute change window with no imports and no account changes).
 6. Copied personal data and branch credentials stay in private files outside the repository; delete the branch connection string after the rehearsal; never paste it.
 
+**RESULT 12 Oct 2026 (rehearsal run on `rehearsal-hub-512`, endpoint `ep-sparkling-night-ab6m2j4d`; record `evidence/rehearsal-hub-512-result-2026-10-12.md`).**
+
+| Step | Result |
+|---|---|
+| 1 Branch | Created by Noe from production, no later than 14:40 UK (exact time not noted); direct (non-pooler) role `neondb_owner` string saved privately outside the repo; guard printed only the endpoint id |
+| 2 Status (read-only) | **PASS**: 94 applied + the historic `.skip` row, exactly the six pending, 0 problem rows. Counts: 7 tenants, 13 users, 993 members, 28 classes, 15,828 attendance, 103 payments, 120 audit rows; Total BJJ 922 members, 14 classes, 13,592 attendance, 0 payments. Newest write on the copy 11 Oct 23:08 UTC |
+| 3 Migration | **PASS**: `migrate deploy` exit 0 in 7.2 s; the six took 670 / 419 / 306 / 288 / 306 / 488 ms (none blocked; the AuditLog index well under a second); status after: up to date; every count identical before and after |
+| 4a Old code `e8afb6a` on the new schema | **PASS** server-side: health db ok, maintenance hold 503, `/login`, `/admin/login`, `/api/tenant/totalbjj` 200; 0 error/Stripe/Resend log lines. Browser: the demo owner's password was accepted and the second-factor enrolment and challenge pages served from the migrated schema |
+| 4b Candidate `512d5e8` | **PASS** server-side: same checks plus `emailDelivery=off` and the EMAIL_DELIVERY=off boot banner; 0 error/Stripe/Resend lines. Browser: password accepted, challenge served; operator sign-in page shows only "Sign in" (the Bootstrap tab is gone) |
+| 4c Signed-in pages (member list, console) | **NOT COMPLETED, harness limit, identical on both builds**: a production build served over plain http cannot finish the second factor. auth.js names the session cookie `authjs.session-token` in a non-secure context, while the app's verify route reads and re-seals it as `__Secure-authjs.session-token` (`lib/auth-cookie.ts`), so verify answers 401 "No pending TOTP session". On https (production) the names agree. Signed-in journeys of `512d5e8` were proven in rehearsal run 3 (TEST, both roles); the old code's signed-in pages on the new schema rest on the six migrations being additive and nullable plus the server-side checks above |
+| 5 RTO / RPO | RPO: the branch creation point (newest data 11 Oct 23:08 UTC; production is near-idle). RTO: about 31 minutes from branch creation to a serving isolated candidate, with builds prepared in advance (upper-bound creation time used, so a real figure is no shorter). Post-snapshot rule: 30-minute change window; no imports, account changes or timetable edits during the release |
+| 6 Hygiene | Providers dark at the boundary on both boots (allow-listed environment, invalid Stripe/Resend placeholders, no Blob/Sentry/CRON/TESTING_MODE, fresh auth secrets, 127.0.0.1 only). Branch-only writes: the Iron Path DEMO owner's sign-in throttle rows and a throwaway authenticator (enrolled, then cleared twice by a host-guarded branch-only script, finally left enrolled on the branch). Servers stopped, worktrees and state removed. **Owed by Noe: delete the Neon branch `rehearsal-hub-512` by 14:40 UK on 13 Oct, and delete `%LOCALAPPDATA%\matflow-readinessehearsal.env`** |
+
+Also observed: the old build logged one `connect ETIMEDOUT` on a branding lookup during its first browser request (the branch's compute waking); no recurrence.
+
 Failure state defined: if the production build fails after `prisma migrate deploy` succeeded, the schema carries the six additive, nullable changes while `e8afb6a` keeps serving; step 4 proves old code tolerates that; the response is fix-forward (a new build of the same SHA), never Instant Rollback or Promote (both restore retired secrets and old configuration).
 
 ## 6. Remaining risks and owner decisions (each needs a tick; none is pre-accepted)
