@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 
 // Lazy Prisma client.
 //
@@ -61,6 +62,47 @@ export function prismaPoolConfig(nodeEnv: string | undefined = process.env.NODE_
   return { max, keepAlive: true, connectionTimeoutMillis: POOL_CONNECTION_TIMEOUT_MS };
 }
 
+/**
+ * SF-136 / R10-2 release guard (lane L1 patch 0001, applied by lane L2 on 12 Oct 2026). Never keep a pooled client
+ * that comes back INSIDE a transaction. @prisma/adapter-pg 7.4.2 "rolls back" a transaction whose start Prisma
+ * abandoned (maxWait expired before BEGIN was answered) by RELEASING the client without a ROLLBACK, so the client went
+ * back to the pool inside its BEGIN and the next autocommit write on it was held in a transaction nobody owned and
+ * lost on close (review R10 phase 2, MR2, both roles). The application's own openers no longer let Prisma abandon a
+ * start (lib/prisma-tenant.ts, lib/rate-limit.ts, lib/auth-lockout.ts); this closes the library mechanism for any
+ * future caller as well.
+ *
+ * How: the server's ReadyForQuery message carries the transaction status ('I' idle, 'T' in a transaction, 'E' in a
+ * failed transaction). Each pooled client records the last one; when a client is released with 'T' or 'E' it is ended,
+ * so the server rolls the transaction back, and pg-pool drops it instead of idling it (pg-pool 3.13.0 _release emits
+ * 'release' first and then removes a client whose _ending is set). A client released WITH an error is already being
+ * removed by the pool and is left to it.
+ *
+ * It relies on two pg internals — client.connection's 'readyForQuery' event and client._ending — so pg and pg-pool are
+ * pinned exactly (package.json: "pg": "8.20.0", overrides "pg-pool": "3.13.0") and tests/unit/sec-l2-pool-release-guard
+ * exercises both against the installed versions (a real pg client and pool over a local protocol stub).
+ */
+export function guardPoolRelease(pool: pg.Pool): pg.Pool {
+  type Tracked = { __txStatus?: string; _ending?: boolean; connection: { on(e: "readyForQuery", f: (m: { status: string }) => void): void } };
+  pool.on("connect", (client) => {
+    const c = client as unknown as Tracked;
+    c.connection.on("readyForQuery", (m) => {
+      c.__txStatus = m.status;
+    });
+  });
+  pool.on("release", (err, client) => {
+    const c = client as unknown as Tracked;
+    if (err || c._ending) return;
+    const status = c.__txStatus;
+    if (status === "T" || status === "E") {
+      console.error(`[prisma] pooled client released inside a transaction (status=${status}); closing it`);
+      // end() sets _ending synchronously, so pg-pool removes the client instead of idling it. Its own failure is
+      // observed and logged here, where the promise is created (no unhandled rejection, nothing hidden).
+      (client as unknown as pg.Client).end().catch((e: Error) => console.error(`[prisma] closing that client failed: ${e.message}`));
+    }
+  });
+  return pool;
+}
+
 function createPrismaClient(): PrismaClient {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is required");
@@ -98,8 +140,10 @@ function createPrismaClient(): PrismaClient {
       "and set that as DATABASE_URL in Vercel.",
     );
   }
-  // Pool options (max, keepAlive, connection deadline): prismaPoolConfig() above.
-  const adapter = new PrismaPg({ connectionString: url, ...prismaPoolConfig() });
+  // Pool options (max, keepAlive, connection deadline): prismaPoolConfig() above. The pool is built here (not by
+  // PrismaPg) so the release guard above can watch it.
+  const pool = guardPoolRelease(new pg.Pool({ connectionString: url, ...prismaPoolConfig() }));
+  const adapter = new PrismaPg(pool);
   return new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
