@@ -639,6 +639,40 @@ describe("staff login-email: another club's account and grant bindings", () => {
     expect(h.users.find((u) => u.id === "u-owner")!.email).toBe("owner.old@club.example");
     unspent();
   });
+
+  it("owner target with an otherwise-valid grant (real signer, owner target and change): 409 owner, grant unspent, nothing changed", async () => {
+    // The issuer resolves no version for an owner (null), so a fabricated digest is supplied; the signer itself is untouched.
+    const grant = (await issueStepUpGrant({ operatorId: "op-noe", action: "staff.login_email", targetId: staffTarget("t-a", "u-owner"), change: { newEmail: STAFF_NEW }, versionDigest: "a".repeat(64) })).grant;
+    const before = users();
+    const res = await callStaff({ newEmail: STAFF_NEW, reason: REASON, version: "a".repeat(64) }, { grant, userId: "u-owner" });
+    expect(res.status).toBe(409);
+    expect((await body(res)).result).toBe("owner");
+    const owner = h.users.find((u) => u.id === "u-owner")!;
+    expect(owner.email).toBe("owner.old@club.example");
+    expect(owner.sessionVersion).toBeUndefined();
+    expect(owner.loginEmailProvisionalSince).toBeUndefined();
+    expect(users()).toBe(before);
+    expect(staffOutcomes()).toHaveLength(0);
+    unspent();
+  });
+
+  it("a legitimately issued manager grant with the owner substituted in the URL: 409 owner, nothing changed; the same grant then succeeds on the manager", async () => {
+    const version = (await staffVersion("t-a", "u-mgr"))!;
+    const grant = await staffGrant("u-mgr");
+    const before = users();
+    const refused = await callStaff({ newEmail: STAFF_NEW, reason: REASON, version }, { grant, userId: "u-owner" });
+    expect(refused.status).toBe(409);
+    expect((await body(refused)).result).toBe("owner");
+    expect(users()).toBe(before);
+    expect(staffOutcomes()).toHaveLength(0);
+    unspent();
+
+    const ok = await callStaff({ newEmail: STAFF_NEW, reason: REASON, version }, { grant, userId: "u-mgr" });
+    expect(ok.status).toBe(200);
+    expect(h.users.find((u) => u.id === "u-mgr")!.email).toBe(STAFF_NEW);
+    expect(h.users.find((u) => u.id === "u-owner")!.email).toBe("owner.old@club.example");
+    expect(staffOutcomes()).toHaveLength(1);
+  });
 });
 
 describe("the change, in one transaction", () => {
