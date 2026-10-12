@@ -2,6 +2,8 @@
 
 Purpose: the decision document's §3 "required review" — re-run the admin-hub production-mode browser rehearsal on the executable `704ab579ed42cef497bc38136982502aca153b75`, on the TEST branch only, both database roles, mail off. Nothing here touches production, Stripe, Vercel or Neon settings. This file is a procedure; nothing in it has been run.
 
+**Corrected 12 Oct 2026 (lane RH, Noe's points 1, 2 and 6), after the first attempt aborted** (classification: lane RD — the five FAILs and the abort were driver/hand-off errors plus one environmental P2028): §3 now carries the baseline-isolation rule and the masking rule; §5 runs flow 6 in its own pass on fresh fixtures and the main sequence `1,2,3,4,5,6b,7,8,9,9m,5x` on fresh fixtures; the wrong `--overwrite` sentence is removed; §6 says which pass covers which replay path; §9 removes the per-scenario baseline directories.
+
 `SP` below = `<scratchpad>`. `MAIN` = `C:/Users/NoeTo/Desktop/matflow`. Run every long-lived process detached with output to a file (never piped through `head`/`grep`).
 
 ## 0. What the 9 Oct rehearsal actually used (read this first)
@@ -50,6 +52,10 @@ Copy `SP/adminhub/e2e/{glib.mjs,g-setup.mjs,g-control.mjs,g-flows.mjs,g-release.
 - `g-release.mjs`: `--sha 704ab579ed42cef497bc38136982502aca153b75` literally (it otherwise records MAIN's HEAD, `g-release.mjs:13`).
 `tls-proxy.mjs` keeps reading the key/cert from `SP/att`.
 
+**Baseline-isolation rule (corrected 12 Oct, after the first attempt).** The checker's baseline file is keyed by tenant and owner only (`owner-login-change-check.mjs:556`, `owner-login-change-<tenant>-<owner-id>.json`), so two scenarios on the same club and owner collide. Every scenario gets its own baseline location through the checker's supported `--baseline-dir <dir>` option (`:554-555`, refused inside the repository): `g-flows.mjs` `checker()` passes `--baseline-dir <PRIV>/baselines/<pass>-<tag>`, and each scenario has its own private expectation file (`expect-<pass>-f4.json`, `-f6.json`, `-f6b.json`). `--overwrite` is never passed; if a baseline ever has to be recreated deliberately, the run record states the exact reason first. If a baseline capture fails (non-zero exit), that scenario STOPS: record the exit code and the checker's reason, do not run its verify, and never verify against another scenario's baseline (the driver throws on a failed baseline).
+
+**Masking rule (corrected 12 Oct).** Fix `glib.mjs` `shot()` before any capture: the 9 Oct mask (`color: transparent` on inputs) left an address readable in `eng-f4-old-address-refused.png`. Before each capture replace every input/textarea value with asterisks and every address-bearing text node or attribute with `[address]`, re-check the page and refuse the capture if anything address-shaped remains, then restore the page. Verify on one screenshot before the passes. Screenshots stay in the scratchpad; none is copied into `docs/` or any commit.
+
 ## 4. Server environment per pass
 
 | Variable | Control pass | Owner-role pass (`eng`) | Restricted pass (`res`) |
@@ -79,19 +85,23 @@ node g-setup.mjs fixtures control;   echo "exit $?"
 node launch.mjs on nobypass,isolated rh-control-on      # wait for health: GET https://localhost:3972/api/health → 200 {status:"ok",db:"ok"}
 node g-control.mjs;                  echo "exit $?"     # positive control: interceptor count +1, EmailLog sent
 powershell -File stop.ps1 -Ports 3971
-node g-setup.mjs fixtures eng;       echo "exit $?"
+node g-setup.mjs fixtures eng;       echo "exit $?"     # fresh fixtures for the main sequence
 node launch.mjs off nobypass,isolated rh-eng-off        # wait for health
-node g-flows.mjs eng 1,2,3,4,5,6,6b,7,8,9,9m,5x;  echo "exit $?"
+node g-flows.mjs eng 1,2,3,4,5,6b,7,8,9,9m,5x;  echo "exit $?"   # main sequence: 6b, NOT 6
 node g-release.mjs eng;              echo "exit $?"
+node g-setup.mjs fixtures eng6;      echo "exit $?"     # fresh, independent fixtures for flow 6
+node g-flows.mjs eng6 6;             echo "exit $?"     # flow 6 in its own pass
 powershell -File stop.ps1 -Ports 3971
 node g-setup.mjs fixtures res;       echo "exit $?"
 node launch.mjs off nobypass,isolated,restricted rh-res-off   # wait for health; confirm the session user is matflow_app
-node g-flows.mjs res 1,2,3,4,5,6,6b,7,8,9,9m,5x;  echo "exit $?"
+node g-flows.mjs res 1,2,3,4,5,6b,7,8,9,9m,5x;  echo "exit $?"
 node g-release.mjs res;              echo "exit $?"
+node g-setup.mjs fixtures res6;      echo "exit $?"
+node g-flows.mjs res6 6;             echo "exit $?"
 powershell -File stop.ps1 -Ports 3971,3972,4599
 node g-setup.mjs teardown;           echo "exit $?"
 ```
-`5x` is the natural expiry of the flow-5 grant (5-minute TTL; the driver waits, `g-flows.mjs:520-528`). The second checker baseline in a pass needs `--overwrite` (the driver passes it in 6b, per the 9 Oct notes).
+`5x` is the natural expiry of the flow-5 grant (5-minute TTL; the driver waits, `g-flows.mjs:520-528`). **Flows 6 and 6b need independent fixture state** (corrected 12 Oct): both use member `pat2` and the same club and owner, so after flow 6 has moved pat2 and the owner, 6b finds the address already the owner's and no conflict panel renders (the first attempt aborted there). Flow 6 (member-side lost-response replay, double-click, replays) therefore runs in its own pass on fresh fixtures; the main sequence `1,2,3,4,5,6b,7,8,9,9m,5x` runs on fresh fixtures and carries 6b (owner-side lost-response replay). Neither replay path is dropped. With the baseline-isolation rule (§3) no scenario needs `--overwrite`.
 
 ## 6. Which flow covers which case
 
@@ -101,7 +111,7 @@ node g-setup.mjs teardown;           echo "exit $?"
 | Allow-list refusal (enrolled, MFA-valid operator not in `OPERATOR_ALLOWED_IDS` → 403 + refusal row at session mint) | flow 1 ("op-other 403 + one refused row at session_mint") | **GAP** — no repo spec |
 | Support-session refusal on the operator plane (403 on `/api/admin/*`, `/admin` → `/dashboard`, club writes 403) | flow 1 | **GAP** — no repo spec (`lg-2-impersonation.spec.ts` covers attribution and eviction, not plane refusal) |
 | Hub conflict journey (check → member contact change with step-up → re-check → owner change with fresh step-up → checker verify) | flows 3, 4 (+ checker baseline/verify inside flow 4) | **GAP** — journey J83 exists only as a manifest row (`tests/e2e/campaign/assess/journeys.ts:144`) |
-| Lost-response replay (member and owner re-send → 200 `alreadyApplied`, one row; concurrent replays) | flows 6, 6b | **GAP** — no repo spec |
+| Lost-response replay (member and owner re-send → 200 `alreadyApplied`, one row; concurrent replays) | flow 6 = member-side lost response, double-click, replays — **own pass on fresh fixtures**; flow 6b = owner-side lost response + member double-click and replays — in the main sequence on fresh fixtures. Never both in one pass (same member `pat2`, same club and owner). | **GAP** — no repo spec |
 | Partial two-step / stale (409 with grant unspent, resume, fresh code) | flow 7 | **GAP** — no repo spec |
 | Owner login after the change (old address refused; new address + same password + authenticator reaches `/dashboard`) | flow 4 | **GAP** — no repo spec in production mode |
 | Owner revocation (every session out, `sessionVersion` +1 exactly) | flow 4 (sv +1), flow 9 (member self-change → next request 401) | Repo `la-2-identity.spec.ts` J09 (`:1152-1247`) — dev-mode assumptions (bypass-token passwords) |
@@ -132,4 +142,4 @@ Mail: interceptor count unchanged over each mail-off pass; no EmailLog row queue
 
 ## 9. Cleanup (count-checked)
 
-`node g-setup.mjs teardown` must print zeros for: tenants, members, users, audit rows for the synthetic clubs and operators, refusal rows for the synthetic operators (tenantId null), EmailLog, sign-in tokens, operators (`g-setup.mjs:100-140`). Then: delete the checker baselines (`%LOCALAPPDATA%\matflow-readiness\owner-login-change-<slug>-<ownerId>.json`) and every file in `SP/hub/rh-private`; stop ports 3971, 3972, 4599 and confirm none is listening; `git -C MAIN worktree remove --force "$SP/hub/rh-wt"` (removes `.next` and `node_modules` with it); scan `SP/hub/rh-e2e` evidence for addresses, codes and secrets (ledger rows are scrubbed by `glib.mjs:75`; screenshots are masked by `shot`).
+`node g-setup.mjs teardown` must print zeros for: tenants, members, users, audit rows for the synthetic clubs and operators, refusal rows for the synthetic operators (tenantId null), EmailLog, sign-in tokens, operators (`g-setup.mjs:100-140`). Then: delete the checker baselines (the per-scenario `--baseline-dir` folders under `SP/hub/rh-private/baselines/`; nothing should be under `%LOCALAPPDATA%\matflow-readiness\` from this rehearsal — check) and every file in `SP/hub/rh-private`; stop ports 3971, 3972, 4599 and confirm none is listening; `git -C MAIN worktree remove --force "$SP/hub/rh-wt"` (removes `.next` and `node_modules` with it); scan `SP/hub/rh-e2e` evidence for addresses, codes and secrets (ledger rows are scrubbed by `glib.mjs:75`; screenshots are masked by `shot`).
