@@ -112,6 +112,19 @@ Failure state defined: if the production build fails after `prisma migrate deplo
 6. Post-deployment checks (all must pass before approval B): Vercel deployment `meta.githubCommitSha` = `M` and READY; `release-verify.mjs --target production --sha M --base-url https://matflow.studio --tenant totalbjj --env-file-for-migrations .env --expect-host ep-bold-wave-abt39t7x --expect-migrations local --expect-operator-login --operator-session-file <private>` run **from the `512d5e8` checkout** → exit 0 (health ok; every migration finished, none failed or in progress; `emailDelivery: off`; legacy transports refused with the app's 401/403 JSON; authenticated operator request succeeds); `release-stage0-readonly.mjs .env ep-bold-wave-abt39t7x` shows 0 missing, 0 problem rows; Noe signs in to `/admin/login` with his authenticator and opens Total BJJ in the hub; Sentry shows no new unhandled rejection class in the first 30 minutes. Stop before (B) on any failure.
 7. Retire obsolete deployments only through the separately authorised procedure; credential revocation remains independent of deployment deletion.
 
+**DEPLOYED 12 Oct 2026 (record).**
+
+| Step | Result |
+|---|---|
+| Push | `release/hub-512d5e8` pushed 16:2x UK at `512d5e8`. GitHub push protection flagged one value: a Stripe test-key placeholder of 24 zeros in two evidence files. It was allowed as used in tests (bypass via API). No preview deployment was created |
+| PR #27 | Checks: Lane E policy PASS. Typecheck and lint PASS. **Vitest FAILED** (19 of 7,250): 17 identical to the failures on `main` at `e8afb6a`, which has been red since 2 Oct; 2 new, both in demo-rotation tooling tests (one refuses a non-Neon CI database, one assumes a case-insensitive filesystem). GitGuardian and the repository secret scan flag fixtures only; none of the 27 GitGuardian items matches a real credential. **Noe accepted red CI** with "deploy 512d5e8, accept red CI" (17:31 UK) |
+| Ruleset 24901063 | Now: deletion + non-fast-forward + **pull request required** (0 approvals), no bypass. The CI status check is NOT required yet, because main CI is red; add it once CI is green |
+| Restore point | `pre-hub-release` (br-plain-paper-abf8v3b7), created by Noe 17:30:35 UK from production, never expires, untouched |
+| Merge | `9272a21a786ad8a9aaef9ad697b0a8ae801b82c9` (parents `e8afb6a`, `512d5e8`); `git diff 9272a21 512d5e8` empty |
+| First build | CANCELLED by the Ignored Build Step: `$VERCEL_ENV` was not visible to the ignore command, so production was skipped too. Nothing ran. The command was cleared (project API: `commandForIgnoringBuildStep` null). **Preview builds are therefore ON again for future branch pushes** |
+| Build | `dpl_Xr6bqda3ikS4VbQnxTptXzWKKMEo`, a fresh build of the same commit (redeploy from git), READY 17:39 UK. The log shows the six migrations applied, then `next build` |
+| Post-deploy | Vercel `targets.production` = `dpl_Xr6bq…` READY at `9272a21`. release-verify (from a `512d5e8` worktree): health PASS, migrations.applied PASS (100), tenant.email_delivery_off PASS, legacy.header / legacy.cookie / legacy.login_post PASS (403). vercel.production_sha FAIL only because the script's Vercel call timed out; read directly instead (above). operator.access is pending the operator recovery. stage0: missing 0, failed/in-progress 0, AuditLog 120 rows |
+
 ## 8. Approval (B) — pointer
 
 `HUB-RELEASE-DECISION-2026-10-12.md` §6: fresh facts through the hub, identity confirmation, the replacement contact address under the code contract (unique per club across User and Member; not the synthesised domain; aliases are permitted by code, the owner decides; deliverability unchecked; "unverified" is audit metadata), private baseline from the `512d5e8` checkout with `--baseline-dir`, preview of the two changes, then the two-step workflow with its own step-ups, `verify --path operator`, the two read-only SQL checks the script omits, and Sean's own sign-in.
