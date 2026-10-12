@@ -21,88 +21,77 @@
 //
 // Runs only via the guarded runners (scratchpad att/run-engine.sh and
 // q78/run-restricted.sh refuse any host but the test branch). Synthetic ids
-// with a unique stamp; everything deleted in afterAll.
+// with a unique stamp; everything deleted in afterAll. The fixtures (operator
+// session, grants, clubs, people, tokens, cleanup) are shared with the other
+// hub suites: tests/integration/helpers/operator-hub.ts.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 
-const h = vi.hoisted(() => {
+vi.hoisted(() => {
   process.env.AUTH_SECRET ??= "operator-hub-conflict-db-test-secret-0123456789abcdef";
-  return { jar: new Map<string, string>(), session: null as null | Record<string, unknown> };
 });
 
-vi.mock("next/headers", () => ({
-  cookies: async () => ({
-    get: (n: string) => (h.jar.has(n) ? { name: n, value: h.jar.get(n)! } : undefined),
-    getAll: () => [...h.jar.entries()].map(([name, value]) => ({ name, value })),
-    has: (n: string) => h.jar.has(n),
-    set: () => {},
-    delete: () => {},
-  }),
-  headers: async () => new Headers(),
-}));
+vi.mock("next/headers", async () => {
+  const { hubState: s } = await import("./helpers/operator-hub-state");
+  return {
+    cookies: async () => ({
+      get: (n: string) => (s.jar.has(n) ? { name: n, value: s.jar.get(n)! } : undefined),
+      getAll: () => [...s.jar.entries()].map(([name, value]) => ({ name, value })),
+      has: (n: string) => s.jar.has(n),
+      set: () => {},
+      delete: () => {},
+    }),
+    headers: async () => new Headers(),
+  };
+});
 vi.mock("@/lib/rate-limit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
   checkRateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }),
   getClientIp: () => "203.0.113.9",
 }));
 vi.mock("@/lib/email", () => ({ sendEmail: vi.fn(async () => ({ ok: false, logId: "mail-dark" })) }));
-vi.mock("@/auth", () => ({ auth: vi.fn(async () => h.session), signIn: vi.fn(), signOut: vi.fn(), handlers: {} }));
+vi.mock("@/auth", async () => {
+  const { hubState: s } = await import("./helpers/operator-hub-state");
+  return { auth: vi.fn(async () => s.session), signIn: vi.fn(), signOut: vi.fn(), handlers: {} };
+});
 
 import { prisma } from "@/lib/prisma";
 import { withRlsBypass } from "@/lib/prisma-tenant";
-import { hashToken } from "@/lib/token-hash";
-import { issueOperatorSession } from "@/lib/operator-auth";
-import { STEP_UP_HEADER, issueStepUpGrant } from "@/lib/operator-step-up";
+import { STEP_UP_HEADER } from "@/lib/operator-step-up";
 import { emailDigest } from "@/lib/login-email";
-import { POST as checkRoute } from "@/app/api/admin/customers/[id]/login-email/check/route";
 import { POST as contactRoute } from "@/app/api/admin/customers/[id]/members/[memberId]/contact-email/route";
 import { POST as ownerRoute } from "@/app/api/admin/customers/[id]/login-email/route";
 import { POST as staffCreate } from "@/app/api/staff/route";
 import { POST as acceptInvite } from "@/app/api/members/accept-invite/route";
 import { POST as resetPassword } from "@/app/api/auth/reset-password/route";
+import { hubState } from "./helpers/operator-hub-state";
+import {
+  OP_ID,
+  STAMP,
+  checkResponse,
+  cleanup,
+  isUsed,
+  issueGrant,
+  jsonRequest as req,
+  makeMember,
+  makeOwner,
+  makeTenant,
+  mint,
+  read,
+  stampedEmail as E,
+  tenantSlug,
+  type Minted,
+} from "./helpers/operator-hub";
 
 const HAS_DB = !!process.env.DATABASE_URL;
-const STAMP = `hub${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-const OP_ID = `lane-f-op-${STAMP}`;
-const E = (who: string) => `${STAMP}-${who}@example.test`;
 const TARGET = E("owner-real"); // the owner's intended login address, held by Pat today
 const PAT_NEW = E("pat-personal");
-const ORIGIN = "http://localhost:3847";
 const SYNTHETIC_PASSWORD = `Synthetic-${STAMP}-Aa1`;
 const REASON = "verified with the club by call-back to the number on file; synthetic ticket";
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const nonceOf = (grant: string) =>
   (JSON.parse(Buffer.from(grant.split(".")[0], "base64url").toString("utf8")) as { n: string }).n;
-
-const req = (url: string, body: unknown, headers: Record<string, string> = {}) =>
-  new Request(`${ORIGIN}${url}`, {
-    method: "POST",
-    headers: { origin: ORIGIN, host: "localhost:3847", "content-type": "application/json", ...headers },
-    body: JSON.stringify(body),
-  });
-async function read(res: Response) {
-  return { status: res.status, body: (await res.json()) as Record<string, unknown>, cache: res.headers.get("cache-control") };
-}
-
-type Purpose = "reset" | "login" | "first_time_signup" | "waiver_open";
-async function mint(tenantId: string, email: string, purpose: Purpose) {
-  const raw = purpose === "reset" ? randomBytes(8).toString("hex") : randomBytes(24).toString("hex");
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-  const row = await withRlsBypass((tx) =>
-    purpose === "reset"
-      ? tx.passwordResetToken.create({ data: { tenantId, email, tokenHash: hashToken(raw), expiresAt }, select: { id: true } })
-      : tx.magicLinkToken.create({ data: { tenantId, email, tokenHash: hashToken(raw), purpose, expiresAt }, select: { id: true } }),
-  );
-  return { id: row.id, raw, purpose };
-}
-type Minted = Awaited<ReturnType<typeof mint>>;
-const isUsed = (t: Minted) =>
-  withRlsBypass(async (tx) =>
-    t.purpose === "reset"
-      ? (await tx.passwordResetToken.findUniqueOrThrow({ where: { id: t.id } })).used
-      : (await tx.magicLinkToken.findUniqueOrThrow({ where: { id: t.id } })).used,
-  );
 
 describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => {
   const ids = { a: "", aSlug: "", b: "", owner: "", pat: "", patB: "", quin: "" };
@@ -127,8 +116,7 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
     withRlsBypass((tx) => tx.auditLog.findMany({ where: { tenantId: ids.a, action }, select: { requestId: true, operatorId: true, entityId: true, metadata: true } }));
   const nonceHash = async () => (await prisma.operator.findUnique({ where: { id: OP_ID }, select: { stepUpNonceHash: true } }))?.stepUpNonceHash ?? null;
 
-  const check = async (email: string) =>
-    read(await checkRoute(req(`/api/admin/customers/${ids.a}/login-email/check`, { email }), { params: Promise.resolve({ id: ids.a }) }));
+  const check = async (email: string) => read(await checkResponse(ids.a, email));
   const contact = async (memberId: string, body: unknown, grant: string) =>
     read(
       await contactRoute(req(`/api/admin/customers/${ids.a}/members/${memberId}/contact-email`, body, { [STEP_UP_HEADER]: grant }), {
@@ -137,32 +125,20 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
     );
 
   beforeAll(async () => {
-    await prisma.operator.create({
-      data: {
-        id: OP_ID,
-        email: `lane-f-${STAMP}@operator.test`,
-        name: "Lane F synthetic operator",
-        passwordHash: "$2a$04$abcdefghijklmnopqrstuuJ1Q8m0Wq6r5pJ8dYpT0J3yq0QeQe9a",
-        totpEnabled: true,
-        totpSecret: "SYNTHETICSECRETNOTUSED",
-      },
+    ids.a = await makeTenant("A");
+    ids.aSlug = tenantSlug(ids.a);
+    ids.b = await makeTenant("B");
+    ids.owner = await makeOwner(ids.a, E("owner-placeholder"), {
+      totpEnabled: true,
+      totpSecret: "synthetic",
+      totpRecoveryCodes: ["synthetic-code-hash-1", "synthetic-code-hash-2"],
     });
-    await withRlsBypass(async (tx) => {
-      const a = await tx.tenant.create({ data: { name: `${STAMP} Club A`, slug: `${STAMP}-a`, onboardingCompleted: true } });
-      const b = await tx.tenant.create({ data: { name: `${STAMP} Club B`, slug: `${STAMP}-b`, onboardingCompleted: true } });
-      ids.a = a.id; ids.aSlug = a.slug; ids.b = b.id;
-      ids.owner = (
-        await tx.user.create({
-          data: { tenantId: a.id, email: E("owner-placeholder"), name: "Synthetic Owner", role: "owner", passwordHash: "owner-hash-unchanged", totpEnabled: true, totpSecret: "synthetic", totpRecoveryCodes: ["synthetic-code-hash-1", "synthetic-code-hash-2"] },
-        })
-      ).id;
-      // Imported, passwordless, holds the owner's intended address.
-      ids.pat = (await tx.member.create({ data: { tenantId: a.id, name: "Pat Imported", email: TARGET, externalRef: `teamup:${STAMP}:pat` } })).id;
-      // Same address in another club: another person.
-      ids.patB = (await tx.member.create({ data: { tenantId: b.id, name: "Pat Imported", email: TARGET, externalRef: `teamup:${STAMP}:pat` } })).id;
-      // A member who can sign in (for the concurrency case).
-      ids.quin = (await tx.member.create({ data: { tenantId: a.id, name: "Quin Active", email: E("quin"), passwordHash: "quin-hash-unchanged" } })).id;
-    });
+    // Imported, passwordless, holds the owner's intended address.
+    ids.pat = await makeMember(ids.a, { name: "Pat Imported", email: TARGET, externalRef: `teamup:${STAMP}:pat` });
+    // Same address in another club: another person.
+    ids.patB = await makeMember(ids.b, { name: "Pat Imported", email: TARGET, externalRef: `teamup:${STAMP}:pat` });
+    // A member who can sign in (for the concurrency case).
+    ids.quin = await makeMember(ids.a, { name: "Quin Active", email: E("quin"), passwordHash: "quin-hash-unchanged" });
     for (const p of ["reset", "login", "first_time_signup", "waiver_open"] as const) {
       tA[p] = await mint(ids.a, TARGET, p);
       tB[p] = await mint(ids.b, TARGET, p);
@@ -170,30 +146,9 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
     tA.mixed = await mint(ids.a, TARGET.toUpperCase(), "login");
     tA.staleNew = await mint(ids.a, PAT_NEW, "first_time_signup");
     patBefore = await member(ids.pat);
-    h.jar.set("matflow_op_session", issueOperatorSession(OP_ID, 0));
   }, 120_000);
 
-  afterAll(async () => {
-    await new Promise((r) => setTimeout(r, 750)); // best-effort refusal rows land first
-    for (const tenantId of [ids.a, ids.b].filter(Boolean)) {
-      await withRlsBypass(async (tx) => {
-        await tx.auditLog.deleteMany({ where: { tenantId } });
-        await tx.magicLinkToken.deleteMany({ where: { tenantId } });
-        await tx.passwordResetToken.deleteMany({ where: { tenantId } });
-        await tx.memberStatusEvent.deleteMany({ where: { tenantId } });
-        await tx.member.deleteMany({ where: { tenantId } });
-        await tx.user.deleteMany({ where: { tenantId } });
-        await tx.tenant.delete({ where: { id: tenantId } });
-      }, { timeout: 60_000 });
-    }
-    await withRlsBypass((tx) => tx.auditLog.deleteMany({ where: { tenantId: null, entityType: "Operator", entityId: OP_ID } }));
-    await prisma.operator.deleteMany({ where: { id: OP_ID } });
-    const left = await withRlsBypass(async (tx) => ({
-      tenants: await tx.tenant.count({ where: { id: { in: [ids.a, ids.b] } } }),
-      audit: await tx.auditLog.count({ where: { tenantId: { in: [ids.a, ids.b] } } }),
-    }));
-    expect(left).toEqual({ tenants: 0, audit: 0 });
-  }, 120_000);
+  afterAll(cleanup, 120_000);
 
   it("1. check: the member holds the address and can ACTIVATE (live invite); the check row has columns and a keyed digest only", async () => {
     const r = await check(` ${TARGET.toUpperCase()} `);
@@ -216,9 +171,9 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
   });
 
   it("2. the club-facing refusal stays opaque: a staff create on that address is 409 with no holder detail", async () => {
-    h.session = { user: { id: ids.owner, tenantId: ids.a, role: "owner", totpEnabled: true, sessionVersion: 0 } };
+    hubState.session = { user: { id: ids.owner, tenantId: ids.a, role: "owner", totpEnabled: true, sessionVersion: 0 } };
     const r = await read(await staffCreate(req("/api/staff", { name: "New Coach", email: TARGET, role: "coach", password: SYNTHETIC_PASSWORD })));
-    h.session = null;
+    hubState.session = null;
     expect(r.status).toBe(409);
     const text = JSON.stringify(r.body);
     expect(text).not.toContain(ids.pat);
@@ -227,7 +182,7 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
   });
 
   it("3. a stale version is refused BEFORE the spend (409), nothing written, the grant still outstanding", async () => {
-    memberGrant = (await issueStepUpGrant({ operatorId: OP_ID, action: "member.contact_email", targetId: `${ids.a}/${ids.pat}/change`, change: { newEmail: PAT_NEW } })).grant;
+    memberGrant = await issueGrant("member.contact_email", `${ids.a}/${ids.pat}/change`, { newEmail: PAT_NEW });
     const r = await contact(ids.pat, { newEmail: PAT_NEW, reason: REASON, version: "0".repeat(64) }, memberGrant);
     expect(r.status).toBe(409);
     expect(r.body.result).toBe("stale");
@@ -272,7 +227,7 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
   let ownerGrant = "";
   it("7. owner login change with a SEPARATE grant: owner takes the address, provisional, signed out; members untouched", async () => {
     const before = await owner();
-    ownerGrant = (await issueStepUpGrant({ operatorId: OP_ID, action: "owner.login_email", targetId: `${ids.a}/${ids.owner}/change`, change: { newEmail: TARGET } })).grant;
+    ownerGrant = await issueGrant("owner.login_email", `${ids.a}/${ids.owner}/change`, { newEmail: TARGET });
     const grant = ownerGrant;
     const r = await read(
       await ownerRoute(req(`/api/admin/customers/${ids.a}/login-email`, { action: "change", reason: REASON, newEmail: TARGET }, { [STEP_UP_HEADER]: grant }), {
@@ -330,7 +285,7 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
     const before = await member(ids.quin);
     const newEmail = E("quin-new");
     const v = (await check(E("quin"))).body.holder as { version: string };
-    const { grant } = await issueStepUpGrant({ operatorId: OP_ID, action: "member.contact_email", targetId: `${ids.a}/${ids.quin}/change`, change: { newEmail } });
+    const grant = await issueGrant("member.contact_email", `${ids.a}/${ids.quin}/change`, { newEmail });
     const body = { newEmail, reason: REASON, version: v.version };
     const results = await Promise.all([contact(ids.quin, body, grant), contact(ids.quin, body, grant)]);
     const applied = results.filter((r) => r.status === 200 && r.body.alreadyApplied !== true);
