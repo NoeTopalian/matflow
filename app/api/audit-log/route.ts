@@ -83,6 +83,14 @@ export async function GET(req: Request) {
     const withUndo = entries.map((e) => ({
       ...e,
       undo: decideUndo(e as AuditRowLike, undone.has(e.id)),
+      // Hub club edit access (13 Oct 2026): true when the REAL actor behind
+      // this row was MatFlow (an operator route, or a club-plane write made
+      // during a support/edit session — lib/audit-log.ts bakes the operator
+      // into metadata.actingAs). The owner sees who really acted; the
+      // operator id itself is never exposed beyond what the row already holds.
+      actedByOperator:
+        e.operatorId != null ||
+        typeof (e.metadata as { actingAs?: unknown } | null)?.actingAs === "string",
     }));
     return NextResponse.json({ entries: withUndo, nextCursor: nextCursorFor(entries, take), staff });
   } catch (e) {

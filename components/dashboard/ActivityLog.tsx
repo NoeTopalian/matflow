@@ -32,6 +32,8 @@ export type ActivityEntry = {
   createdAt: string;
   user: { id: string; name: string | null; email: string | null; role?: string | null } | null;
   undo: { ok: true } | { ok: false; reason: string };
+  /** True when the real actor was MatFlow support (hub edit access, 13 Oct 2026). */
+  actedByOperator?: boolean;
 };
 
 export type StaffOption = { id: string; name: string; role: string };
@@ -234,11 +236,26 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
         header: "Who",
         headerLabel: "Who",
         width: "12rem",
-        cell: (e) => (
-          <span className="truncate" style={{ color: "var(--tx-1)" }}>
-            {e.user?.name ?? (e.user?.email ?? (e.action.startsWith("admin.") ? "MatFlow" : "System"))}
-          </span>
-        ),
+        cell: (e) => {
+          const name = e.user?.name ?? (e.user?.email ?? (e.action.startsWith("admin.") ? "MatFlow" : "System"));
+          // Hub club edit access (13 Oct 2026): a row whose real actor was
+          // MatFlow support says so next to the apparent name, so the owner
+          // can see exactly what MatFlow did in their club.
+          const byOperator = e.actedByOperator === true && name !== "MatFlow";
+          return (
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate" style={{ color: "var(--tx-1)" }}>{name}</span>
+              {byOperator && (
+                <span
+                  className="shrink-0 rounded-full border border-bd-default bg-sf-2 px-1.5 py-0.5 text-[10px] font-semibold text-tx-2"
+                  title="This change was made by MatFlow support during a support session, not by your staff."
+                >
+                  by MatFlow support
+                </span>
+              )}
+            </span>
+          );
+        },
       },
       {
         key: "what",

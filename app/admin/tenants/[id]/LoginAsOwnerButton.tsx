@@ -1,10 +1,13 @@
 "use client";
 
-// Starts a READ-ONLY support session as the club owner (6 Oct 2026).
-// The server needs a reason of at least 10 characters and a fresh
-// authenticator code: the code buys a single-use step-up grant for
-// "support.impersonate" bound to this club and this person
-// (lib/operator-step-up.ts), sent in the x-matflow-step-up header.
+// Starts a support session as the club owner (6 Oct 2026): READ-ONLY view,
+// or — hub club edit access, 13 Oct 2026 — an EDIT session permitting the
+// routine operations in lib/support-session.ts SUPPORT_EDIT_MUTATION_ALLOWLIST.
+// Either way the server needs a reason of at least 10 characters and a fresh
+// authenticator code: the code buys a single-use step-up grant bound to this
+// club and this person (edit uses its own action, "support.edit", with the
+// "edit" sub-action in the target, so a view grant can never start an edit
+// session), sent in the x-matflow-step-up header.
 
 import { LogIn } from "lucide-react";
 import { useParams } from "next/navigation";
@@ -26,6 +29,7 @@ export default function LoginAsOwnerButton({
   const params = useParams<{ id: string }>();
   const tenantId = typeof params?.id === "string" ? params.id : "";
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<"view" | "edit">("view");
   const [reason, setReason] = useState("");
   const [code, setCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -41,8 +45,8 @@ export default function LoginAsOwnerButton({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "support.impersonate",
-          targetId: `${tenantId}/${ownerUserId}`,
+          action: mode === "edit" ? "support.edit" : "support.impersonate",
+          targetId: mode === "edit" ? `${tenantId}/${ownerUserId}/edit` : `${tenantId}/${ownerUserId}`,
           // A support session changes nothing on the person: the grant is
           // bound to their state as it stands (lib/operator-step-up.ts).
           change: {},
@@ -59,7 +63,7 @@ export default function LoginAsOwnerButton({
       const res = await fetch("/api/admin/impersonate", {
         method: "POST",
         headers: { "Content-Type": "application/json", [STEP_UP_HEADER]: suData.grant },
-        body: JSON.stringify({ targetUserId: ownerUserId, reason: reason.trim() }),
+        body: JSON.stringify({ targetUserId: ownerUserId, reason: reason.trim(), mode }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -79,22 +83,34 @@ export default function LoginAsOwnerButton({
     <>
       <button
         type="button"
-        onClick={() => { setReason(""); setCode(""); setError(null); setOpen(true); }}
+        onClick={() => { setMode("view"); setReason(""); setCode(""); setError(null); setOpen(true); }}
         style={dangerButton}
       >
         <LogIn size={16} aria-hidden />
         View as {ownerName} (read-only)
+      </button>
+      <button
+        type="button"
+        onClick={() => { setMode("edit"); setReason(""); setCode(""); setError(null); setOpen(true); }}
+        style={dangerButton}
+      >
+        <LogIn size={16} aria-hidden />
+        Edit club as {ownerName}
       </button>
 
       {open && (
         <>
           <div onClick={() => !submitting && setOpen(false)} style={backdrop} />
           <div style={modal} role="dialog" aria-modal="true" aria-labelledby="support-title">
-            <h2 id="support-title" style={modalTitle}>Start a read-only support session as {ownerName}</h2>
+            <h2 id="support-title" style={modalTitle}>
+              {mode === "edit"
+                ? `Start an EDIT session as ${ownerName}`
+                : `Start a read-only support session as ${ownerName}`}
+            </h2>
             <p style={modalDesc}>
-              You will see the club as the owner does for 30 minutes. You cannot change anything, export
-              personal data or use the operator console until you end it. The reason is recorded in the
-              audit log.
+              {mode === "edit"
+                ? "For 30 minutes you can make routine changes in this club's dashboard: timetable and classes, member details, ranks, attendance and ordinary settings. Credentials, staff, ownership, payments, exports and deletions stay refused. Every change is recorded as made by MatFlow, and the owner sees it in their Activity log."
+                : "You will see the club as the owner does for 30 minutes. You cannot change anything, export personal data or use the operator console until you end it. The reason is recorded in the audit log."}
             </p>
             <textarea aria-label="Reason for the support session"
               value={reason}

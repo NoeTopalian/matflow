@@ -8,6 +8,7 @@
 // session that has already reverted. Support is read-only (lib/support-session.ts).
 
 import { resolveActiveImpersonation } from "@/lib/impersonation";
+import { prisma } from "@/lib/prisma";
 import EndImpersonationButton from "./EndImpersonationButton";
 
 export default async function ImpersonationBanner() {
@@ -19,6 +20,18 @@ export default async function ImpersonationBanner() {
   }
   if (!active) return null;
   const imp = active.payload;
+
+  // Name the club (hub edit access, 13 Oct 2026): the operator may hold
+  // several clubs open; the banner must say which one this tab is inside.
+  // A lookup failure degrades to no name, never to no banner.
+  let clubName: string | null = null;
+  try {
+    const t = await prisma.tenant.findUnique({ where: { id: imp.targetTenantId }, select: { name: true } });
+    clubName = t?.name ?? null;
+  } catch {
+    clubName = null;
+  }
+  const isEdit = imp.scope === "edit";
 
   const expiresAt = new Date(imp.exp * 1000);
   // Audit iter-1-dashboard A4H-5: Date.now() in a Server Component renders
@@ -50,7 +63,12 @@ export default async function ImpersonationBanner() {
       }}
     >
       <span style={{ flex: 1, minWidth: 0 }}>
-        <strong>MatFlow support session, read-only</strong> — {minsLeft}m left ·{" "}
+        <strong>
+          {isEdit
+            ? `MatFlow EDIT session${clubName ? ` — ${clubName}` : ""} — changes are recorded as MatFlow`
+            : `MatFlow support session, read-only${clubName ? ` — ${clubName}` : ""}`}
+        </strong>{" "}
+        — {minsLeft}m left ·{" "}
         <span style={{ opacity: 0.85 }}>ends {expiresAt.toLocaleTimeString("en-GB")}</span>
         {imp.reason && (
           <>
