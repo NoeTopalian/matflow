@@ -306,7 +306,12 @@ const authProxy = auth(async function proxy(req) {
   // (lib/api-authz.ts refuseSupportSession).
   if (isSupportSession(req.auth)) {
     const method = (req as { method?: string }).method;
-    const decision = supportRequestDecision(method, pathname);
+    // Scope (13 Oct 2026): only the literal "edit" grants the edit allowlist;
+    // anything else — absent, stale, or junk — is read as view. A client can
+    // never widen its own scope: the value comes from the signed cookie via
+    // auth.ts jwt(), not from the request.
+    const rawScope = (req.auth?.user as { supportScope?: unknown } | undefined)?.supportScope;
+    const decision = supportRequestDecision(method, pathname, rawScope === "edit" ? "edit" : "view");
     if (!decision.allowed) {
       const isRead = !method || ["GET", "HEAD"].includes(method.toUpperCase());
       if (!pathname.startsWith("/api/") && isRead) {

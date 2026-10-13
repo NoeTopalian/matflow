@@ -162,7 +162,7 @@ describe("POST /api/admin/impersonate", () => {
 
   it("refused while a support session is already live in this browser (no second, no nesting)", async () => {
     st.jar.set(IMPERSONATION_COOKIE, signImpersonationToken({
-      adminUserId: OP, opSv: 3, targetUserId: "u-other", targetTenantId: "t-club", tsv: 2, reason: "earlier support", n: "nonce-0123456789abcdef",
+      adminUserId: OP, opSv: 3, targetUserId: "u-other", targetTenantId: "t-club", tsv: 2, reason: "earlier support", scope: "view", n: "nonce-0123456789abcdef",
     }));
     const res = await POST(startReq(GOOD, await grant("t-club/u-owner")));
     expect(res.status).toBe(409);

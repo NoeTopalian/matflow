@@ -1269,6 +1269,9 @@ const nextAuth = NextAuth({
               token.brandFetchedAt = Date.now();
               bag.impersonatedBy = imp.adminUserId;
               bag.impersonationReason = imp.reason;
+              // Scope (v3, 13 Oct 2026): "view" (read-only) or "edit" (routine
+              // operations). Carried for proxy.ts; absence can never mean edit.
+              bag.supportScope = imp.scope;
             }
           } else {
             // No valid support session (no cookie, expired, stopped, operator
@@ -1307,6 +1310,7 @@ const nextAuth = NextAuth({
               delete bag[IMPERSONATION_STASH];
               delete bag.impersonatedBy;
               delete bag.impersonationReason;
+              delete bag.supportScope;
               // The restored subject is a different row from the one the last
               // request checked, so nothing about it has been verified yet. The
               // revocation check below runs on every pass and will do it.
@@ -1503,6 +1507,10 @@ const nextAuth = NextAuth({
         (session.user as unknown as Record<string, unknown>).impersonatedBy = impersonatedBy;
         (session.user as unknown as Record<string, unknown>).impersonationReason =
           typeof impersonationReason === "string" ? impersonationReason : null;
+        // Scope for proxy.ts; anything but the literal "edit" is read as view.
+        const supportScope = (token as Record<string, unknown>).supportScope;
+        (session.user as unknown as Record<string, unknown>).supportScope =
+          supportScope === "edit" ? "edit" : "view";
       }
       return session;
     },

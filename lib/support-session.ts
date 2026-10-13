@@ -32,6 +32,7 @@
  * it (and a test that mocks lib/api-authz does not silently drop the guard).
  */
 import { NextResponse } from "next/server";
+import type { SupportScope } from "@/lib/impersonation";
 
 export const SUPPORT_READ_ONLY_MESSAGE =
   "Support access is read-only. End the support session to make changes.";
@@ -39,6 +40,8 @@ export const SUPPORT_EXPORT_MESSAGE =
   "Support access cannot export or connect accounts. Ask the club to do this.";
 export const SUPPORT_OPERATOR_PLANE_MESSAGE =
   "End the support session before using the operator console.";
+export const SUPPORT_EDIT_NOT_COVERED_MESSAGE =
+  "Edit access doesn't cover this — it stays with the club owner.";
 
 /** True when this session is an operator acting as someone (a support session). */
 export function isSupportSession(session: unknown): boolean {
@@ -49,10 +52,46 @@ export function isSupportSession(session: unknown): boolean {
 type RouteRule = { method: string; path: RegExp; why: string };
 
 /**
- * Non-GET requests a support session MAY make. EMPTY on purpose.
+ * Non-GET requests a VIEW support session may make. EMPTY on purpose.
  * Add an entry only for a request that genuinely only reads, with the proof.
  */
 export const SUPPORT_MUTATION_ALLOWLIST: readonly RouteRule[] = [];
+
+/**
+ * Non-GET requests an EDIT support session may make (13 Oct 2026, hub club
+ * edit access). Routine club operations only — the three families the owner
+ * commissioned: timetable/classes, member details, ordinary settings. Default
+ * deny: anything not matched here is refused, including every DELETE and every
+ * page POST (a Server Action is a POST to a page, and no rule below matches a
+ * page). Each entry names what it is; a reviewer diffs intent, not regexes.
+ */
+export const SUPPORT_EDIT_MUTATION_ALLOWLIST: readonly RouteRule[] = [
+  { method: "POST", path: /^\/api\/classes\/?$/, why: "Create a class (mints its rolling instance window)." },
+  { method: "PATCH", path: /^\/api\/classes\/[^/]+\/?$/, why: "Edit a class's details and schedule." },
+  { method: "POST", path: /^\/api\/classes\/[^/]+\/instances\/?$/, why: "Generate schedule instances for a class." },
+  { method: "PATCH", path: /^\/api\/classes\/[^/]+\/instances\/[^/]+\/?$/, why: "Edit one timetable instance (time, cancel flag)." },
+  { method: "POST", path: /^\/api\/classes\/[^/]+\/roster\/?$/, why: "Add a member to a class roster." },
+  { method: "POST", path: /^\/api\/members\/?$/, why: "Create a member record." },
+  { method: "PATCH", path: /^\/api\/members\/[^/]+\/?$/, why: "Edit a member's details (name, contact, notes fields)." },
+  { method: "POST", path: /^\/api\/members\/[^/]+\/rank\/?$/, why: "Award a rank (routine promotion)." },
+  { method: "POST", path: /^\/api\/members\/[^/]+\/rank\/demote\/?$/, why: "Correct a rank (routine demotion)." },
+  { method: "POST", path: /^\/api\/checkin\/?$/, why: "Staff-side attendance marking." },
+  { method: "POST", path: /^\/api\/ranks\/?$/, why: "Create a rank in the club's rank system (ordinary settings)." },
+  { method: "PATCH", path: /^\/api\/ranks\/[^/]+\/?$/, why: "Edit a rank's name/order/colour (ordinary settings)." },
+  { method: "PATCH", path: /^\/api\/settings\/?$/, why: "Ordinary club settings (general/branding/timetable)." },
+];
+
+/**
+ * Families that must NEVER be allowlisted for edit sessions — they stay in
+ * their separately protected workflows. Spelled out so a future allowlist
+ * entry that collides is caught by the unit matrix, not by a reviewer's eye:
+ * /api/account*, /api/auth*, every TOTP/recovery route, login-email changes,
+ * /api/staff* (staff management), transfer-ownership, /api/stripe* and every
+ * billing/subscription/charge route, /api/admin/import* and rollbacks,
+ * exports, DSAR/erasure, invite/waiver/display/kiosk token minting,
+ * guardian/link-child/unlink-child (family authority), promote-to-adult,
+ * unlock, waiver signing, photo/picture uploads, and EVERY DELETE method.
+ */
 
 /** Requests that only remove authority. Never refused, or support could not end. */
 export const SUPPORT_EXIT_ROUTES: readonly RouteRule[] = [
@@ -104,7 +143,11 @@ function normalisePath(pathname: string): string {
  * What a support session may do with this request. Pure; `method` defaults to
  * GET when absent (a navigation).
  */
-export function supportRequestDecision(method: string | undefined | null, pathname: string): SupportDecision {
+export function supportRequestDecision(
+  method: string | undefined | null,
+  pathname: string,
+  scope: SupportScope = "view",
+): SupportDecision {
   const m = (method ?? "GET").toUpperCase();
   const path = normalisePath(pathname);
 
@@ -118,6 +161,10 @@ export function supportRequestDecision(method: string | undefined | null, pathna
 
   if (!READ_METHODS.has(m)) {
     if (SUPPORT_MUTATION_ALLOWLIST.some((r) => r.method === m && r.path.test(path))) return { allowed: true };
+    if (scope === "edit") {
+      if (SUPPORT_EDIT_MUTATION_ALLOWLIST.some((r) => r.method === m && r.path.test(path))) return { allowed: true };
+      return { allowed: false, reason: "read_only", message: SUPPORT_EDIT_NOT_COVERED_MESSAGE };
+    }
     return { allowed: false, reason: "read_only", message: SUPPORT_READ_ONLY_MESSAGE };
   }
 

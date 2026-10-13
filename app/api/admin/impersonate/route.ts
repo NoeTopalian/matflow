@@ -99,6 +99,10 @@ async function mintSupportCarrier(): Promise<string> {
 const startSchema = z.object({
   targetUserId: z.string().min(1).max(200),
   reason: z.string().trim().min(SUPPORT_REASON_MIN).max(500),
+  // "view" = the read-only session that has always existed. "edit" (13 Oct
+  // 2026) also permits the routine operations in SUPPORT_EDIT_MUTATION_ALLOWLIST
+  // and requires its own step-up action, so a view grant can never start it.
+  mode: z.enum(["view", "edit"]).default("view"),
 });
 
 export async function POST(req: Request) {
@@ -130,7 +134,7 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  const { targetUserId, reason } = parsed.data;
+  const { targetUserId, reason, mode } = parsed.data;
 
   // A named operator with a live MFA session, and its sessionVersion — the
   // support session is bound to it. The shared-secret sentinel is refused.
@@ -177,8 +181,8 @@ export async function POST(req: Request) {
   const stepUp = await requireStepUp(
     req,
     { operatorId: named.id, named: true, sessionVersion: named.sessionVersion },
-    "support.impersonate",
-    stepUpTarget(target.tenantId, target.id),
+    mode === "edit" ? "support.edit" : "support.impersonate",
+    mode === "edit" ? stepUpTarget(target.tenantId, target.id, "edit") : stepUpTarget(target.tenantId, target.id),
     { change: {} },
   );
   if (stepUp instanceof Response) return stepUp;
@@ -213,11 +217,12 @@ export async function POST(req: Request) {
       outcome: "authorised",
       tenantId: target.tenantId,
       userId: target.id,
-      action: "admin.impersonate.start",
+      action: mode === "edit" ? "admin.impersonate.edit_start" : "admin.impersonate.start",
       entityType: "User",
       entityId: target.id,
       metadata: {
         reason,
+        scope: mode,
         targetEmailSha256: emailDigest(target.email),
         targetRole: target.role,
         operatorEmail: operator.operatorEmail,
@@ -243,6 +248,7 @@ export async function POST(req: Request) {
       operatorSessionVersion: named.sessionVersion,
       target: { id: target.id, tenantId: target.tenantId, sessionVersion: target.sessionVersion },
       reason,
+      scope: mode,
     }));
   } catch (err) {
     console.error("[impersonate] support session could not be bound after its start row was written", err);
@@ -293,7 +299,7 @@ export async function DELETE(req: Request) {
         outcome: "ended",
         tenantId: current.targetTenantId,
         userId: current.targetUserId,
-        action: "admin.impersonate.end",
+        action: current.scope === "edit" ? "admin.impersonate.edit_end" : "admin.impersonate.end",
         entityType: "User",
         entityId: current.targetUserId,
         metadata: { reason: current.reason },

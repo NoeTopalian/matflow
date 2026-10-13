@@ -86,6 +86,10 @@ export const STEP_UP_ACTIONS = [
   "tenant.suspend",
   // Support session start; target = stepUpTarget(tenantId, userId).
   "support.impersonate",
+  // EDIT support session start (hub club edit access, 13 Oct 2026); target =
+  // stepUpTarget(tenantId, userId, "edit"), so a grant bought for viewing can
+  // never start an edit session.
+  "support.edit",
   // Owner login email (7 Oct 2026): mark provisional, clear provisional,
   // change. Target = stepUpTarget(tenantId, ownerUserId, subAction), so a grant
   // for one club's owner cannot be spent on another account, nor a grant for
@@ -144,6 +148,7 @@ const CHANGE_SCHEMAS: Record<StepUpAction, z.ZodType<StepUpChange>> = {
   "tenant.soft_delete": EMPTY_CHANGE,
   "tenant.suspend": EMPTY_CHANGE,
   "support.impersonate": EMPTY_CHANGE,
+  "support.edit": EMPTY_CHANGE,
   "owner.login_email": z.union([z.object({ newEmail: emailField(120) }).strict(), EMPTY_CHANGE]),
   "owner.profile": z.object({ name: displayNameSchema }).strict(),
   "member.contact_email": z.object({ newEmail: emailField(120) }).strict(),
@@ -280,7 +285,11 @@ export async function stepUpVersion(
       }
       return null;
     }
-    case "support.impersonate": {
+    case "support.impersonate":
+    case "support.edit": {
+      // Same digest inputs for both scopes: the operator looked at the same
+      // person either way; the action name (bound into the grant) is what
+      // separates them.
       if (!subjectId) return null;
       const u = await tx.user.findUnique({
         where: { id: subjectId },

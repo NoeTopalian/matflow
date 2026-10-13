@@ -5,7 +5,7 @@
 // (lib/support-session.ts; enforced in proxy.ts and lib/api-authz.ts).
 //
 // The `matflow_impersonation` cookie carries a signed token:
-//   { v: 2, adminUserId, opSv, targetUserId, targetTenantId, tsv, reason, n, exp }
+//   { v: 3, adminUserId, opSv, targetUserId, targetTenantId, tsv, reason, scope, n, exp }
 //   opSv = the operator's sessionVersion when support started
 //   tsv  = the target user's sessionVersion when support started
 //   n    = a random nonce; SHA-256(n) is stored on the Operator row
@@ -44,10 +44,17 @@ import { tenantAdmission } from "@/lib/tenant-admission";
 export const IMPERSONATION_COOKIE = "matflow_impersonation";
 /** 30 minutes. Was 60; a support look-around does not need an hour of borrowed identity. */
 export const SUPPORT_SESSION_TTL_SECONDS = 30 * 60;
-const HMAC_DOMAIN = "impersonation.v2.";
+const HMAC_DOMAIN = "impersonation.v3."; // v3 (13 Oct 2026): scope added; the domain bump refuses every v2 cookie outright.
+
+/**
+ * What a support session may do. "view" is the read-only session that has
+ * existed since 6 Oct 2026; "edit" (13 Oct 2026) additionally permits the
+ * routine club operations in lib/support-session.ts SUPPORT_EDIT_MUTATION_ALLOWLIST.
+ */
+export type SupportScope = "view" | "edit";
 
 export type ImpersonationPayload = {
-  v: 2;
+  v: 3;
   adminUserId: string;
   /** Operator.sessionVersion at start. */
   opSv: number;
@@ -56,6 +63,8 @@ export type ImpersonationPayload = {
   /** Target User.sessionVersion at start. */
   tsv: number;
   reason: string;
+  /** Session scope: read-only view, or routine-operations edit. */
+  scope: SupportScope;
   /** Nonce; its SHA-256 is Operator.supportNonceHash while this session is live. */
   n: string;
   exp: number; // unix-seconds
@@ -75,13 +84,14 @@ function b64urlDecode(s: string): Buffer | null {
 
 export function signImpersonationToken(args: Omit<ImpersonationPayload, "v" | "exp"> & { exp?: number }): string {
   const payload: ImpersonationPayload = {
-    v: 2,
+    v: 3,
     adminUserId: args.adminUserId,
     opSv: args.opSv,
     targetUserId: args.targetUserId,
     targetTenantId: args.targetTenantId,
     tsv: args.tsv,
     reason: args.reason,
+    scope: args.scope,
     n: args.n,
     exp: args.exp ?? Math.floor(Date.now() / 1000) + SUPPORT_SESSION_TTL_SECONDS,
   };
@@ -116,13 +126,14 @@ export function verifyImpersonationToken(
   }
   if (
     !payload ||
-    payload.v !== 2 ||
+    payload.v !== 3 ||
     typeof payload.adminUserId !== "string" ||
     !Number.isSafeInteger(payload.opSv) ||
     typeof payload.targetUserId !== "string" ||
     typeof payload.targetTenantId !== "string" ||
     !Number.isSafeInteger(payload.tsv) ||
     typeof payload.reason !== "string" ||
+    (payload.scope !== "view" && payload.scope !== "edit") ||
     typeof payload.n !== "string" ||
     payload.n.length < 16 ||
     typeof payload.exp !== "number"
@@ -143,6 +154,8 @@ export async function startSupportSession(args: {
   operatorSessionVersion: number;
   target: { id: string; tenantId: string; sessionVersion: number };
   reason: string;
+  /** Read-only view, or routine-operations edit (13 Oct 2026). */
+  scope: SupportScope;
 }): Promise<{ expiresAt: Date }> {
   const n = randomBytes(24).toString("base64url");
   const exp = Math.floor(Date.now() / 1000) + SUPPORT_SESSION_TTL_SECONDS;
@@ -158,6 +171,7 @@ export async function startSupportSession(args: {
     targetTenantId: args.target.tenantId,
     tsv: args.target.sessionVersion,
     reason: args.reason,
+    scope: args.scope,
     n,
     exp,
   });
