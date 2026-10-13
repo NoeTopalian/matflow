@@ -572,6 +572,20 @@ export async function requireStepUp(
 }
 
 /**
+ * Whether a grant (signature already verified) was issued for exactly this
+ * change: the keyed change digest, compared in constant time. A route's
+ * "already applied" answer uses it so a consumed grant re-sent with a
+ * DIFFERENT change is refused rather than reported as applied.
+ */
+export function grantCoversChange(payload: { chg: string }, action: StepUpAction, raw: unknown): boolean {
+  const change = canonicalStepUpChange(action, raw);
+  if (!change) return false;
+  const expected = Buffer.from(stepUpChangeDigest(action, change), "hex");
+  const actual = Buffer.from(/^[a-f0-9]{64}$/.test(payload.chg) ? payload.chg : "", "hex");
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+/**
  * The outcome a route recorded for this grant, if its mutation committed:
  * the audit row with this tenant, one of the route's outcome actions and the
  * grant's request id. Its `metadata.result` is the minimal result to echo.

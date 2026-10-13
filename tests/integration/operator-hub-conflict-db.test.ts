@@ -219,6 +219,16 @@ describe.skipIf(!HAS_DB)("hub conflict workflow on the database (AH-04)", () => 
     expect(await rows("admin.member.contact_email.changed")).toHaveLength(1);
   });
 
+  it("5b. the consumed grant re-sent for a DIFFERENT address is refused, not answered as applied; nothing changes", async () => {
+    const before = await member(ids.pat);
+    const r = await contact(ids.pat, { newEmail: E("pat-replay-other"), reason: REASON, version: checkVersion }, memberGrant);
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
+    expect(r.body).toMatchObject({ result: "stale" });
+    expect(r.body).not.toHaveProperty("alreadyApplied");
+    expect(await member(ids.pat)).toEqual(before);
+    expect(await rows("admin.member.contact_email.changed")).toHaveLength(1);
+  });
+
   it("6. re-check: the address is now free in this club", async () => {
     const r = await check(TARGET);
     expect(r.body).toMatchObject({ free: true, sameAsOwner: false });

@@ -193,6 +193,15 @@ describe.skipIf(!HAS_DB)("staff login email (operator hub, TEST branch)", () => 
     expect(await again.json()).toMatchObject({ ok: true, alreadyApplied: true });
     expect(await user(staff4)).toEqual(once);
     expect(await outcomes(staff4)).toHaveLength(1);
+    // The same consumed grant for a DIFFERENT address is refused, not answered
+    // as applied (brief C browser probe 4a1, 13 Oct 2026); nothing changes.
+    const other = await moveStaff(operatorRequest({ ...body, newEmail: "coach4-other@club.test" }, grant), { params: Promise.resolve({ id: t.tenantId, userId: staff4 }) });
+    expect(other.status).toBe(409);
+    const otherBody = await other.json();
+    expect(otherBody).toMatchObject({ result: "stale" });
+    expect(otherBody).not.toHaveProperty("alreadyApplied");
+    expect(await user(staff4)).toEqual(once);
+    expect(await outcomes(staff4)).toHaveLength(1);
   });
 
   it("refuses the owner with result owner (409) and writes nothing", async () => {
