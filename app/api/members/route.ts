@@ -22,7 +22,7 @@ import { shownPaymentStatus } from "@/lib/overdue";
 import { initialDeskPaymentStatus } from "@/lib/payment-status";
 import { CONFIRMED_BY, guardianSuggestionSource } from "@/lib/guardianship";
 import { LoginIdentityTaken, claimLoginIdentity } from "@/lib/login-email";
-import { refuseSupportSession } from "@/lib/support-session";
+import { refuseSupportSessionUnlessEdit } from "@/lib/support-session";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -251,7 +251,7 @@ export async function POST(req: Request) {
   if (csrfViolation) return csrfViolation;
 
   const session = await auth();
-  const support = refuseSupportSession(session); if (support) return support; // read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023)
+  const support = refuseSupportSessionUnlessEdit(session); if (support) return support; // view refused; an EDIT session may create a member (SUPPORT_EDIT_MUTATION_ALLOWLIST)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const canAdd = ["owner", "manager", "admin"].includes(session.user.role);

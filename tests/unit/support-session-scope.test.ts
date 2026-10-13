@@ -11,6 +11,8 @@ import {
   SUPPORT_READ_ONLY_MESSAGE,
   SUPPORT_OPERATOR_PLANE_MESSAGE,
   supportRequestDecision,
+  refuseSupportSession,
+  refuseSupportSessionUnlessEdit,
 } from "@/lib/support-session";
 import { verifyImpersonationToken, signImpersonationToken } from "@/lib/impersonation";
 
@@ -144,5 +146,35 @@ describe("token scope (payload v3)", () => {
     delete p.scope;
     const forgedBody = Buffer.from(JSON.stringify(p), "utf8").toString("base64url");
     expect(verifyImpersonationToken(`${forgedBody}.${sig}`).ok).toBe(false);
+  });
+});
+
+
+describe("in-route backstops: scope-aware variant for the allowlisted routes only", () => {
+  const viewSession = { user: { impersonatedBy: "op_1", supportScope: "view" } };
+  const editSession = { user: { impersonatedBy: "op_1", supportScope: "edit" } };
+  const junkSession = { user: { impersonatedBy: "op_1", supportScope: "EDIT" } };
+  const noScopeSession = { user: { impersonatedBy: "op_1" } };
+  const ordinarySession = { user: { id: "u1" } };
+
+  it("refuseSupportSession refuses BOTH scopes (sensitive routes keep it)", async () => {
+    for (const sess of [viewSession, editSession, junkSession, noScopeSession]) {
+      const r = refuseSupportSession(sess);
+      expect(r).not.toBeNull();
+      expect(r!.status).toBe(403);
+    }
+    expect(refuseSupportSession(ordinarySession)).toBeNull();
+  });
+
+  it("refuseSupportSessionUnlessEdit lets exactly the literal edit scope through", async () => {
+    expect(refuseSupportSessionUnlessEdit(editSession)).toBeNull();
+    for (const sess of [viewSession, junkSession, noScopeSession]) {
+      const r = refuseSupportSessionUnlessEdit(sess);
+      expect(r).not.toBeNull();
+      expect(r!.status).toBe(403);
+      const body = await r!.json();
+      expect(body.supportReadOnly).toBe(true);
+    }
+    expect(refuseSupportSessionUnlessEdit(ordinarySession)).toBeNull();
   });
 });

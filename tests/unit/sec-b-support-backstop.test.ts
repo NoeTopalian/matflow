@@ -19,6 +19,21 @@ import path from "node:path";
 const ROOT = path.resolve(__dirname, "..", "..");
 const DIRS = ["app/api/members", "app/api/staff", "app/api/account"];
 
+/**
+ * Handlers allowed the scope-aware backstop (refuseSupportSessionUnlessEdit):
+ * EXACTLY the routine operations on SUPPORT_EDIT_MUTATION_ALLOWLIST that live
+ * under the scanned directories (hub club edit access, 13 Oct 2026). A view
+ * session is still refused there; everywhere else the absolute
+ * refuseSupportSession is required, and this test fails on any new use of the
+ * relaxed form.
+ */
+const RELAXED_ALLOWED = new Set([
+  "app/api/members/route.ts#POST",
+  "app/api/members/[id]/route.ts#PATCH",
+  "app/api/members/[id]/rank/route.ts#POST",
+  "app/api/members/[id]/rank/demote/route.ts#POST",
+]);
+
 /** Handlers that legitimately have no session, or refuse through a helper. */
 const EXEMPT: Record<string, string> = {
   "app/api/members/accept-invite/route.ts#POST": "public invite redemption: no session; the token names the member",
@@ -62,11 +77,28 @@ describe("SEC-023 support sessions are refused inside every lane-B club mutator"
         checked++;
         const key = `${rel}#${h.method}`;
         if (EXEMPT[key]) continue;
-        if (!/refuseSupportSession\s*\(/.test(h.body)) missing.push(key);
+        const relaxed = /refuseSupportSessionUnlessEdit\s*\(/.test(h.body);
+        if (relaxed && !RELAXED_ALLOWED.has(key)) missing.push(`${key} (relaxed backstop outside the pinned edit allowlist)`);
+        if (!relaxed && !/refuseSupportSession\s*\(/.test(h.body)) missing.push(key);
       }
     }
     expect(checked).toBeGreaterThan(30);
     expect(missing).toEqual([]);
+  });
+
+  it("every pinned relaxed site really uses the scope-aware helper (none is stale)", () => {
+    for (const key of RELAXED_ALLOWED) {
+      const [file, method] = key.split("#");
+      const src = fs.readFileSync(path.join(ROOT, file), "utf8");
+      const h = handlers(src).find((x) => x.method === method);
+      expect(h, key).toBeTruthy();
+      expect(/refuseSupportSessionUnlessEdit\s*\(/.test(h!.body), key).toBe(true);
+    }
+    // Outside the scanned dirs, PATCH /api/settings is the one other relaxed
+    // site (ordinary settings are on the edit allowlist); its DELETE-free file
+    // has no other mutating handler.
+    const settings = fs.readFileSync(path.join(ROOT, "app/api/settings/route.ts"), "utf8");
+    expect(/refuseSupportSessionUnlessEdit\s*\(/.test(settings)).toBe(true);
   });
 
   it("the exempt helper really refuses, and no exemption is stale", () => {

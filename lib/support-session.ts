@@ -186,3 +186,20 @@ export function refuseSupportSession(session: unknown, message: string = SUPPORT
   if (!isSupportSession(session)) return null;
   return NextResponse.json({ ok: false, error: message, supportReadOnly: true }, { status: 403 });
 }
+
+/**
+ * In-route backstop for EXACTLY the routine operations on
+ * SUPPORT_EDIT_MUTATION_ALLOWLIST: a view session is still refused, an EDIT
+ * session is let through to the handler (whose own validation applies
+ * unchanged). Every other handler keeps refuseSupportSession, which refuses
+ * both scopes - a route is never relaxed by default. Anything but the literal
+ * scope "edit" on the server-verified session refuses, so a client flag can
+ * never grant authority (the scope comes from auth.ts, which copies it from
+ * the HMAC-verified session token).
+ */
+export function refuseSupportSessionUnlessEdit(session: unknown, message: string = SUPPORT_READ_ONLY_MESSAGE): NextResponse | null {
+  if (!isSupportSession(session)) return null;
+  const scope = (session as { user?: { supportScope?: unknown } }).user?.supportScope;
+  if (scope === "edit") return null;
+  return NextResponse.json({ ok: false, error: message, supportReadOnly: true }, { status: 403 });
+}

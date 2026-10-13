@@ -16,7 +16,7 @@ import { isVercelBlobUrl } from "@/lib/blob-url";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
-import { refuseSupportSession } from "@/lib/support-session";
+import { refuseSupportSession, refuseSupportSessionUnlessEdit } from "@/lib/support-session";
 import { LoginIdentityTaken, claimLoginIdentity, emailDigest, retireEmailBoundTokens } from "@/lib/login-email";
 
 // feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
@@ -193,7 +193,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   const session = await auth();
-  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
+  const support = refuseSupportSessionUnlessEdit(session); if (support) return support; // view refused; an EDIT session may edit member details (SUPPORT_EDIT_MUTATION_ALLOWLIST); DELETE below stays refused in both scopes
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const canEdit = ["owner", "manager", "admin"].includes(session.user.role);
