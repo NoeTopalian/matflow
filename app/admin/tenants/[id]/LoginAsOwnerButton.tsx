@@ -9,7 +9,8 @@
 // "edit" sub-action in the target, so a view grant can never start an edit
 // session), sent in the x-matflow-step-up header.
 
-import { LogIn } from "lucide-react";
+import { LogIn, Pencil } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { adminButtonSecondary, adminPalette } from "../../admin-theme";
@@ -89,14 +90,16 @@ export default function LoginAsOwnerButton({
         <LogIn size={16} aria-hidden />
         View as {ownerName} (read-only)
       </button>
-      <button
-        type="button"
+      {/* Button primitive (UI-RULES §11 ratchet): the hub's raw-button count
+          must not grow; ConflictPanel already uses the primitive here. */}
+      <Button
+        variant="destructive"
+        size="compact"
         onClick={() => { setMode("edit"); setReason(""); setCode(""); setError(null); setOpen(true); }}
-        style={dangerButton}
       >
-        <LogIn size={16} aria-hidden />
+        <Pencil size={14} aria-hidden />
         Edit club as {ownerName}
-      </button>
+      </Button>
 
       {open && (
         <>
