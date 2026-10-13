@@ -744,7 +744,7 @@ export default function ConflictPanel({ tenantId, ownerUserId, address, check, r
                 </li>
               ) : (
                 <li key={i}>
-                  Staff account login address changed{m.result.alreadyApplied ? " (already applied)" : ""} — staff account {m.result.userId}.
+                  Staff account login address changed{m.result.alreadyApplied ? " (already applied)" : ""} — staff account {m.result.userId}.{" "}
                   {m.result.noWorkingPassword
                     ? "They were signed out everywhere. The new address is provisional (unverified) and they have no working password: the club owner must set a temporary password in Settings → Staff before they can sign in."
                     : "They were signed out everywhere and sign in with the new address, which is provisional (unverified)."}

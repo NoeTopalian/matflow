@@ -372,6 +372,32 @@ describe("ConflictPanel: staff accounts, duplicates and record labels", () => {
     expect(window.location.search).not.toContain("member=");
   });
 
+  it("the resolved summary's staff line keeps a space between its two sentences", async () => {
+    const T = { id: "T", name: "Club" };
+    const O = { id: "o1", name: "Owner" };
+    mockFetchSequence([
+      { url: "/api/admin/auth/step-up", body: { ok: true, grant: "GRANT", expiresAt: "2026-10-12T12:05:00.000Z" } },
+      { url: "/api/admin/customers/T/staff/u1/login-email", body: { ok: true, userId: "u1", sessionsRevoked: true, retired: { resetCodes: 0, signInLinks: 0 } } },
+      { url: "/api/admin/customers/T/login-email/check", body: { ok: true, free: true, tenant: T, owner: O } },
+      { url: "/api/admin/customers/T/login-email", body: { ok: true, email: "owner@club.test", provisional: true } },
+    ]);
+    renderPanel({ holder: { kind: "user", id: "u1", name: "Pat", status: "manager", canSignIn: true, access: "password", link: "/dashboard/staff", version: V } });
+    await verifyAndStart();
+    await user.click(screen.getByRole("button", { name: "Change this staff account's login address" }));
+    await user.type(screen.getByLabelText(/new login address/i), "pat.manager@club.test");
+    await user.type(screen.getByLabelText(/reason/i), "Club confirmed by call-back");
+    await user.type(screen.getByLabelText(/authenticator code/i), "123456");
+    await user.click(screen.getByRole("button", { name: /^Change login address$/ }));
+    await user.click(await screen.findByRole("button", { name: "Change the owner's login address" }));
+    await user.type(screen.getByLabelText(/a new authenticator code/i), "654321");
+    await user.click(screen.getByRole("button", { name: /^Change login address$/ }));
+    await screen.findByText("Conflict resolved");
+    const line = screen.getByText(/Staff account login address changed/);
+    expect(line.textContent).toBe(
+      "Staff account login address changed — staff account u1. They were signed out everywhere and sign in with the new address, which is provisional (unverified).",
+    );
+  });
+
   it("lists every holder of a duplicate, each with its own move button, and keeps the owner step closed until free", async () => {
     renderPanel({ holder: { kind: "many", count: 2, holders: [
       { kind: "member", id: "m1", name: "A", status: "active", canSignIn: true, access: "password", link: "/m1", version: V },
