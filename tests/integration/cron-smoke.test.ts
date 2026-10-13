@@ -233,13 +233,18 @@ describe.skipIf(!HAS_DB)("Vercel cron entrypoints", () => {
       expect(body.results.filter((r) => r.error)).toEqual([]);
       // Every rule declared in the route must have reported. Silence from a
       // rule is the failure mode this test exists to catch.
+      // Inventory updated 13 Oct 2026: loginEvent was added by 2203087 (operator
+      // audit remediation) and importUpload by 499d40f (chunked private uploads);
+      // each is swept by the same sweep() helper this assertion guards.
       expect(body.results.map((r) => r.rule)).toEqual([
         "auditLog",
         "emailLog",
+        "loginEvent",
         "magicLinkToken",
         "passwordResetToken",
         "rateLimitHit",
         "stripeEvent",
+        "importUpload",
         "importJob",
         "importJobDiagnostics",
         "tenantHardDelete",
