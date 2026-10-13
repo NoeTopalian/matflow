@@ -28,7 +28,7 @@ describe("classifyDbTarget (URL strings only, no connection)", () => {
   it("a test-looking name cannot launder the wrong host, and production anywhere refuses", () => {
     expect(classifyDbTarget("postgresql://u:p@ep-hidden-salad.example.com/x")).toBe("refuse");
     expect(classifyDbTarget("postgresql://u:p@localhost.evil.com/x")).toBe("refuse");
-    expect(classifyDbTarget(`postgresql://u:endpoint=ep-bold-wave$pw@${"ep-hidden-salad-x"}.eu-west-2.aws.neon.tech/x`)).toBe("refuse");
+    expect(classifyDbTarget(`postgresql://u:endpoint=ep-bold-wave$not-a-real-pw@${"ep-hidden-salad-x"}.eu-west-2.aws.neon.tech/x`)).toBe("refuse");
     expect(classifyDbTarget("postgresql://u:p@localhost/ep-bold-wave")).toBe("refuse");
   });
   it("no URL is none; assertTestBranch throws unless run", () => {
