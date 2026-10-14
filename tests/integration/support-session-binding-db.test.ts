@@ -77,6 +77,7 @@ describe.skipIf(!HAS_DB)("support session binding on the database", () => {
       operatorSessionVersion: 2,
       target: { id: userId, tenantId, sessionVersion: 5 },
       reason: "lane B integration probe",
+      scope: "view",
     });
   }
 

@@ -63,7 +63,7 @@ describe("logAudit — impersonation attribution", () => {
       targetTenantId: "tenant-A",
       reason: "support call",
       exp: Math.floor(Date.now() / 1000) + 600,
-      v: 2 as const, opSv: 0, tsv: 0, n: "test-nonce-0123456789", // v2 payload shape (lane B, 6 Oct 2026)
+      v: 3 as const, scope: "view" as const, opSv: 0, tsv: 0, n: "test-nonce-0123456789", // v3 payload shape (scope added 13 Oct 2026)
     });
 
     // No actAsUserId: exactly how app/api/members, app/api/payments and every
@@ -90,7 +90,7 @@ describe("logAudit — impersonation attribution", () => {
       targetTenantId: "tenant-A",
       reason: "support call",
       exp: Math.floor(Date.now() / 1000) + 600,
-      v: 2 as const, opSv: 0, tsv: 0, n: "test-nonce-0123456789", // v2 payload shape (lane B, 6 Oct 2026)
+      v: 3 as const, scope: "view" as const, opSv: 0, tsv: 0, n: "test-nonce-0123456789", // v3 payload shape (scope added 13 Oct 2026)
     });
 
     await logAudit({
@@ -145,7 +145,7 @@ describe("logAudit — impersonation attribution", () => {
       targetTenantId: "tenant-A",
       reason: "support call",
       exp: Math.floor(Date.now() / 1000) + 600,
-      v: 2 as const, opSv: 0, tsv: 0, n: "test-nonce-0123456789", // v2 payload shape (lane B, 6 Oct 2026)
+      v: 3 as const, scope: "view" as const, opSv: 0, tsv: 0, n: "test-nonce-0123456789", // v3 payload shape (scope added 13 Oct 2026)
     });
 
     await logAudit({

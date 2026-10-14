@@ -188,6 +188,16 @@ interface Props {
   primaryColor: string;
   role: string;
   tenantSlug: string;
+  /**
+   * Set when this page renders inside a MatFlow support session ("view" never
+   * reaches the save - writes are refused upstream). In an "edit" session the
+   * server's field policy (lib/support-session.ts SUPPORT_EDIT_FIELD_POLICY)
+   * refuses email, status, membership and attribution changes, so the form
+   * disables those controls and the save sends only the permitted keys -
+   * otherwise every whole-form save would 403 on fields the operator never
+   * touched (UI-RULES: a control you can see but can never use is a defect).
+   */
+  supportScope?: "view" | "edit" | null;
 }
 
 type ActiveTab = "overview" | "attendance" | "ranks" | "notes" | "payments" | "photos";
@@ -543,7 +553,9 @@ export default function MemberProfile({
   billing = { stripeConnected: false, chargesEnabled: null },
   primaryColor,
   role,
+  supportScope = null,
 }: Props) {
+  const supportEdit = supportScope === "edit";
   const router = useRouter();
   const { toast } = useToast();
   const [member, setMember] = useState(initial);
@@ -810,18 +822,25 @@ export default function MemberProfile({
             // whole-form save silently undoing another tab's edit.
             ...(member.updatedAt ? { updatedAt: member.updatedAt } : {}),
             name: form.name,
-            email: form.email,
             phone: form.phone || null,
             emergencyContactName: form.emergencyContactName || null,
             emergencyContactPhone: form.emergencyContactPhone || null,
             emergencyContactRelation: form.emergencyContactRelation || null,
-            ...tierFields,
-            status: form.status,
             dateOfBirth: form.dateOfBirth || null,
-            trialRunById: attribution.trialRunById || null,
-            creditedToUserId: credit.creditedToUserId,
-            creditedToMemberId: credit.creditedToMemberId,
-            creditedToLabel: credit.creditedToLabel,
+            // Support edit sessions: email, membership, status and attribution
+            // stay with the club owner (SUPPORT_EDIT_FIELD_POLICY) - the keys
+            // are omitted entirely so a contact-detail fix saves cleanly.
+            ...(supportEdit
+              ? {}
+              : {
+                  email: form.email,
+                  ...tierFields,
+                  status: form.status,
+                  trialRunById: attribution.trialRunById || null,
+                  creditedToUserId: credit.creditedToUserId,
+                  creditedToMemberId: credit.creditedToMemberId,
+                  creditedToLabel: credit.creditedToLabel,
+                }),
           }),
         });
       } catch {
@@ -896,7 +915,15 @@ export default function MemberProfile({
       const res = await fetch(`/api/members/${member.id}/rank`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(rankForm),
+        // N-2: photoUrl was always sent, "" included - under the support
+        // field policy that refused EVERY award. Send it only when a photo
+        // was actually chosen (an empty photo key carries no meaning).
+        body: JSON.stringify({
+          rankSystemId: rankForm.rankSystemId,
+          stripes: rankForm.stripes,
+          notes: rankForm.notes,
+          ...(rankForm.photoUrl ? { photoUrl: rankForm.photoUrl } : {}),
+        }),
       });
       if (!res.ok) { toast((await res.json()).error ?? "Failed to assign rank", "error"); return; }
       const newRank = await res.json();
@@ -1188,7 +1215,7 @@ export default function MemberProfile({
                 className="absolute right-0 top-full mt-1 w-44 rounded-xl border py-1 z-40"
                 style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
               >
-                <button
+                {!supportEdit && <button
                   onClick={async () => {
                     setShowActionsMenu(false);
                     const res = await fetch(`/api/members/${member.id}`, {
@@ -1212,7 +1239,7 @@ export default function MemberProfile({
                   style={{ color: "var(--tx-2)" }}
                 >
                   Mark as inactive
-                </button>
+                </button>}
                 {canRecordPayment && member.status !== "cancelled" && (
                   member.paymentStatus === "paused" ? (
                     <Button
@@ -1489,6 +1516,11 @@ export default function MemberProfile({
           <Card>
             <div className="space-y-4">
               <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Edit Profile</h2>
+              {supportEdit && (
+                <p role="note" className="text-xs" style={{ color: "var(--tx-3)" }}>
+                  Support session: email, membership, status and attribution stay with the club owner and are not saved from here.
+                </p>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Full Name</label>
@@ -1496,7 +1528,7 @@ export default function MemberProfile({
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Email</label>
-                  <input aria-label="Email" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
+                  <input aria-label="Email" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} style={inputStyle} disabled={supportEdit} title={supportEdit ? "Stays with the club owner during a support session" : undefined} {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Phone</label>
@@ -1536,6 +1568,8 @@ export default function MemberProfile({
                         onChange={(e) => setForm((f) => ({ ...f, membershipTierId: e.target.value }))}
                         className={inputCls + " appearance-none"}
                         style={inputStyle}
+                        disabled={supportEdit}
+                        title={supportEdit ? "Stays with the club owner during a support session" : undefined}
                         {...inputFocusHandlers}
                       >
                         <option value="">— None —</option>
@@ -1559,6 +1593,8 @@ export default function MemberProfile({
                       onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))}
                       className={inputCls}
                       style={inputStyle}
+                      disabled={supportEdit}
+                      title={supportEdit ? "Stays with the club owner during a support session" : undefined}
                       placeholder="e.g. Monthly, Annual"
                       {...inputFocusHandlers}
                     />
@@ -1567,7 +1603,7 @@ export default function MemberProfile({
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Status</label>
                   <div className="relative">
-                    <select aria-label="Status" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} className={inputCls + " appearance-none"} style={inputStyle} {...inputFocusHandlers}>
+                    <select aria-label="Status" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} className={inputCls + " appearance-none"} style={inputStyle} disabled={supportEdit} title={supportEdit ? "Stays with the club owner during a support session" : undefined} {...inputFocusHandlers}>
                       <option value="active">Active</option>
                       <option value="inactive">Inactive</option>
                       <option value="cancelled">Cancelled</option>
@@ -1588,15 +1624,24 @@ export default function MemberProfile({
                   Attribution
                 </p>
                 <div className="max-w-md">
-                  <AttributionFields
-                    value={attribution}
-                    onChange={setAttribution}
-                    inputClassName={inputCls}
-                    inputStyle={inputStyle}
-                    focusHandlers={inputFocusHandlers}
-                    selfMemberId={member.id}
-                    initialCreditedMemberName={member.creditedToMemberName ?? null}
-                  />
+                  {/* F-1b: never render editable attribution in a support
+                      edit - its keys are omitted from the save, so an editable
+                      control would show values that were never persisted. */}
+                  {supportEdit ? (
+                    <p role="note" className="text-xs" style={{ color: "var(--tx-3)" }}>
+                      Attribution stays with the club owner during a support session.
+                    </p>
+                  ) : (
+                    <AttributionFields
+                      value={attribution}
+                      onChange={setAttribution}
+                      inputClassName={inputCls}
+                      inputStyle={inputStyle}
+                      focusHandlers={inputFocusHandlers}
+                      selfMemberId={member.id}
+                      initialCreditedMemberName={member.creditedToMemberName ?? null}
+                    />
+                  )}
                 </div>
               </div>
               {profileError && (
@@ -2140,6 +2185,11 @@ export default function MemberProfile({
             )}
 
             <div className="mt-3">
+              {supportEdit ? (
+                <p role="note" className="text-xs" style={{ color: "var(--tx-3)" }}>
+                  Promotion photos stay with the club owner during a support session.
+                </p>
+              ) : (<>
               <label className="text-xs uppercase tracking-wider block mb-1" style={{ color: "var(--tx-3)" }}>
                 Promotion photo (optional)
               </label>
@@ -2176,6 +2226,7 @@ export default function MemberProfile({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={toBlobProxyUrl(rankForm.photoUrl) ?? rankForm.photoUrl} alt="Preview" className="mt-2 w-20 h-20 rounded-lg object-cover" />
               )}
+              </>)}
             </div>
 
             <div>

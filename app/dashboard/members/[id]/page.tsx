@@ -403,6 +403,7 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
         primaryColor={session!.user.primaryColor}
         role={session!.user.role}
         tenantSlug={session!.user.tenantSlug}
+        supportScope={(session!.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
       />
       {/* Trailing panels wrap in the Card primitive so they read as the same
           system as the profile above, rather than three bare bordered boxes

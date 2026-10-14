@@ -213,6 +213,8 @@ export const AUDIT_LABELS: Record<string, string> = {
   "admin.access.revoked": "MatFlow signed out every session and cancelled every sign-in link or code in scope (incident revoke-all)",
   "admin.impersonate.start": "MatFlow support signed in as the owner",
   "admin.impersonate.end": "MatFlow support ended the support session",
+  "admin.impersonate.edit_start": "MatFlow started an edit session — changes marked 'by MatFlow support' below were made by MatFlow",
+  "admin.impersonate.edit_end": "MatFlow ended the edit session",
   "admin.operator.totp_enrolled": "A MatFlow operator set up their authenticator",
   "admin.operator.step_up": "A MatFlow operator confirmed an action with their authenticator",
   // Security log of a refused step-up confirmation (lib/operator-step-up.ts,
@@ -225,6 +227,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   // grant request by LoginAsOwnerButton, so the scan below finds it. Not an
   // AuditLog action today; labelled so it reads well if it ever becomes one.
   "support.impersonate": "MatFlow support confirmed a support session",
+  "support.edit": "Start an edit session in a club's dashboard",
   // Step-up action name sent by the operator Login email card (7 Oct 2026);
   // the audit rows it leads to are admin.owner.login_email.*.
   "owner.login_email": "MatFlow confirmed a change to the owner's login email",

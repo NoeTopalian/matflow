@@ -52,7 +52,13 @@ export default async function DashboardLayout({
       ).catch(() => null)
     : null;
 
-  if (session.user.role === "owner" && tenant && !tenant.onboardingCompleted) {
+  // F-4 (edit-access remediation): a support session on a not-yet-onboarded
+  // club must not be bounced into the onboarding wizard - its saves (
+  // onboardingCompleted / onboardingAnswers) are refused under the support
+  // field policy, so the wizard would loop forever. Support sees the dashboard
+  // as it stands; onboarding stays the owner's.
+  const isSupport = typeof (session.user as { impersonatedBy?: unknown }).impersonatedBy === "string";
+  if (session.user.role === "owner" && tenant && !tenant.onboardingCompleted && !isSupport) {
     redirect("/onboarding");
   }
 

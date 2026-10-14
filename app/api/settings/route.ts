@@ -8,7 +8,7 @@ import { logAudit } from "@/lib/audit-log";
 import { updateMetadata } from "@/lib/audit-snapshot";
 import { assertSameOrigin } from "@/lib/csrf";
 import { requireApiOwner } from "@/lib/api-authz";
-import { refuseSupportSession } from "@/lib/support-session";
+import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 
 // https-only URL validator — blocks javascript:/data:/file: URI XSS in stored
 // links (P2 finding from Sprint 3 security gate).
@@ -186,7 +186,7 @@ export async function PATCH(req: Request) {
   const csrfViolation = assertSameOrigin(req);
   if (csrfViolation) return csrfViolation;
   const session = await auth();
-  const support = refuseSupportSession(session); if (support) return support; // read-only support session (lib/support-session.ts)
+  const support = refuseSupportSessionUnlessEdit(session); if (support) return support; // view refused; an EDIT session may change ordinary settings (SUPPORT_EDIT_MUTATION_ALLOWLIST)
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const isOwner = session.user.role === "owner";
@@ -198,6 +198,13 @@ export async function PATCH(req: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+
+  // Edit-session field policy (external review, 13 Oct 2026): RAW keys, before
+  // zod. Branding, links, check-in windows and timezone are routine; billing
+  // and payment fields, contactEmail, privacy fields, waiver content and
+  // onboarding lifecycle stay with the club owner.
+  const fieldRefusal = refuseSupportEditFields(session, body, SUPPORT_EDIT_FIELD_POLICY["settings.update"]);
+  if (fieldRefusal) return fieldRefusal;
 
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {

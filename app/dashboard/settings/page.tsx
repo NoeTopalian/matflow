@@ -167,6 +167,7 @@ export default async function Settings() {
       totpEnabled={totpEnabled}
       stripeConnected={settings.stripeConnected}
       stripeAccountId={settings.stripeAccountId}
+      supportScope={(session.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
     />
   );
 }

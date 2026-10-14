@@ -109,6 +109,8 @@ interface Props {
    * roles): they are the roles that may confirm.
    */
   guardianReviewCount?: number | null;
+  /** "edit" inside a MatFlow support edit session (see MemberProfile). */
+  supportScope?: "view" | "edit" | null;
   /** Set when the page loaded only the first N members (SSR cap). */
   truncatedAt?: number | null;
 }
@@ -425,7 +427,9 @@ function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null }
  */
 const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month"];
 
-export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null }: Props) {
+export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null }: Props) {
+  const supportEdit = supportScope === "edit";
+  const { toast } = useToast();
   const searchParams = useSearchParams();
   const requestedFilter = searchParams.get("filter");
   const urlFilter = FILTERS.includes(requestedFilter as StatusFilter) ? requestedFilter as StatusFilter : "all";
@@ -532,6 +536,10 @@ export default function MembersList({ members: initial, primaryColor, role, guar
     setMembers((prev) => [...prev, member].sort((a, b) => a.name.localeCompare(b.name)));
     setShowAdd(false);
     if (inviteUrl) setInviteShare({ name: member.name, url: inviteUrl, emailNote: emailNote ?? null });
+    // F-5 (edit-access remediation): no invite link but a reason why - e.g. a
+    // support session never mints one - must still be said, or the member is
+    // silently created with nobody told how they will sign in.
+    else if (emailNote) toast(emailNote, "info");
   }
 
   // D4 (verifier lane 3): every count below except `cancelled` is computed
@@ -935,6 +943,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
         <AddMemberModal
           onClose={() => setShowAdd(false)}
           onAdded={handleAdded}
+          supportEdit={supportEdit}
         />
       )}
 
@@ -990,8 +999,10 @@ type TierOption = {
 function AddMemberModal({
   onClose,
   onAdded,
+  supportEdit = false,
 }: {
   onClose: () => void;
+  supportEdit?: boolean;
   onAdded: (member: MemberRow, inviteUrl?: string | null, emailNote?: string | null) => void;
 }) {
   const { toast } = useToast();
@@ -1085,11 +1096,14 @@ function AddMemberModal({
           // The tier id is what the server acts on: it resolves it inside the
           // tenant and derives the legacy `membershipType` label from the tier
           // row, so both columns are written and cannot drift apart.
-          membershipTierId: form.membershipTierId || undefined,
+          // N-1: membership and status stay with the club owner during a
+          // support edit session (SUPPORT_EDIT_FIELD_POLICY member.create) -
+          // the keys are omitted so a routine add saves cleanly.
+          ...(supportEdit ? {} : { membershipTierId: form.membershipTierId || undefined }),
           ...(form.dateOfBirth ? { dateOfBirth: form.dateOfBirth } : {}),
           // Attribution (M1): a taster with a trialRunById coach is the
           // funnel's entry. Only send the fields that were actually set.
-          status: form.status,
+          ...(supportEdit ? {} : { status: form.status }),
           ...(attribution.trialRunById ? { trialRunById: attribution.trialRunById } : {}),
           ...(credit.creditedToUserId ? { creditedToUserId: credit.creditedToUserId } : {}),
           ...(credit.creditedToMemberId ? { creditedToMemberId: credit.creditedToMemberId } : {}),
@@ -1260,7 +1274,7 @@ function AddMemberModal({
                   , then you can put members on it. You can still add this member now.
                 </p>
               ) : (
-                <select aria-label="Membership"
+                <select aria-label="Membership" disabled={supportEdit} title={supportEdit ? "Stays with the club owner during a support session" : undefined}
                   value={form.membershipTierId}
                   onChange={set("membershipTierId")}
                   className={inputCls}
@@ -1292,7 +1306,7 @@ function AddMemberModal({
                   funnel as a taster, so a trial coach's conversion can be
                   tracked from the first touch. */}
               <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--tx-3)" }}>Status</label>
-              <select aria-label="Status"
+              <select aria-label="Status" disabled={supportEdit} title={supportEdit ? "Stays with the club owner during a support session" : undefined}
                 value={form.status}
                 onChange={set("status")}
                 className={inputCls}
@@ -1305,8 +1319,10 @@ function AddMemberModal({
             </div>
           </div>
 
-          {/* Attribution (M1): who ran the trial and who gets sign-up credit. */}
-          <div className="pt-1">
+          {/* Attribution (M1): who ran the trial and who gets sign-up credit.
+              Hidden entirely in a support edit session - the keys are never
+              sent, so an empty heading would be the only thing left. */}
+          {!supportEdit && <div className="pt-1">
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--tx-4)" }}>
               Attribution
             </p>
@@ -1317,7 +1333,7 @@ function AddMemberModal({
               inputStyle={inputStyle}
               focusHandlers={focusHandlers}
             />
-          </div>
+          </div>}
         </form>
     </Dialog>
   );

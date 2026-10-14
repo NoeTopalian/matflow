@@ -78,6 +78,7 @@ async function start() {
     operatorSessionVersion: 4,
     target: { id: "u-owner", tenantId: "t-club", sessionVersion: 7 },
     reason: "support ticket 41",
+    scope: "view",
   });
 }
 

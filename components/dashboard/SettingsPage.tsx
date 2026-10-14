@@ -46,6 +46,8 @@ interface Props {
   totpEnabled?: boolean;
   stripeConnected?: boolean;
   stripeAccountId?: string | null;
+  /** "edit" when rendered inside a MatFlow support edit session (see MemberProfile). */
+  supportScope?: "view" | "edit" | null;
 }
 
 type Tab = "overview" | "branding" | "revenue" | "store" | "staff" | "account" | "waiver" | "import" | "integrations";
@@ -651,13 +653,22 @@ function MemberSelfBillingSection({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function SettingsPage({ settings, staff: initialStaff, statusCounts, primaryColor, role, currentUserId, totpEnabled: initTotpEnabled = false, stripeConnected: initStripeConnected = false, stripeAccountId: initStripeAccountId = null }: Props) {
+export default function SettingsPage({ settings, staff: initialStaff, statusCounts, primaryColor, role, currentUserId, totpEnabled: initTotpEnabled = false, stripeConnected: initStripeConnected = false, stripeAccountId: initStripeAccountId = null, supportScope = null }: Props) {
+  // F-3 (edit-access remediation): in a support EDIT session only branding,
+  // links, check-in windows and timezone are writable (lib/support-session.ts
+  // SUPPORT_EDIT_FIELD_POLICY). Revenue, store, staff, account, waiver, import
+  // and integrations would all refuse every save, so the tabs are not offered
+  // rather than rendered as dead ends.
+  const supportEdit = supportScope === "edit";
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
+  // N-4: in a support edit session a ?tab= deep link must not open a tab the
+  // rail does not offer (their saves are refused).
+  const tabOffered = useCallback((t: Tab) => !supportEdit || t === "overview" || t === "branding", [supportEdit]);
   const [tab, setTabState] = useState<Tab>(() => {
     const requested = searchParams.get("tab");
-    return isTab(requested) ? requested : "overview";
+    return isTab(requested) && tabOffered(requested) ? requested : "overview";
   });
 
   // Wrapper that updates both the local tab state and the URL search-param,
@@ -866,8 +877,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // router.replace and re-trigger this effect.
   useEffect(() => {
     const requested = searchParams.get("tab");
-    setTabState(isTab(requested) ? requested : "overview");
-  }, [searchParams]);
+    setTabState(isTab(requested) && tabOffered(requested) ? requested : "overview");
+  }, [searchParams, tabOffered]);
 
   useEffect(() => {
     try {
@@ -921,7 +932,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, stripeIsConnected]);
 
-  const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
+  const ALL_TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
     { id: "overview",  label: "Overview",  icon: LayoutDashboard },
     { id: "branding",  label: "Branding",  icon: Palette },
     { id: "revenue",   label: "Revenue",   icon: DollarSign },
@@ -935,6 +946,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     { id: "import",    label: "Import",    icon: UploadCloud },
     { id: "integrations", label: "Integrations", icon: Cable },
   ];
+  const TABS = supportEdit ? ALL_TABS.filter((t) => t.id === "overview" || t.id === "branding") : ALL_TABS;
 
   const inputCls = "w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none placeholder:text-[var(--tx-3)]";
   const inputStyle = { background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" } as const;
@@ -1586,9 +1598,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         <div className="space-y-4">
           {/* The club's public contact email (1 Oct 2026): what members see
               and reply to; never a login. Owner only, like every tenant write. */}
-          {isOwner && <ContactEmailSection initialEmail={settings?.contactEmail ?? null} />}
+          {isOwner && !supportEdit && <ContactEmailSection initialEmail={settings?.contactEmail ?? null} />}
           {/* ADR-001 D2: venues inside the club. Owner and manager edit. */}
-          <LocationsCard canEdit={isOwner || role === "manager"} />
+          <LocationsCard canEdit={(isOwner || role === "manager") && !supportEdit} />
           <div className="grid grid-cols-3 gap-3">
             {[
               { label: "Members", value: totalMembers || settings?.memberCount || 0 },
@@ -1657,7 +1669,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               { label: "Revenue",       icon: DollarSign,   action: () => setTab("revenue") },
               { label: "Club Store",    icon: ShoppingBag,  action: () => setTab("store") },
               { label: "Manage Staff",  icon: Users,        action: () => setTab("staff") },
-            ].map(({ label, icon: Icon, action }) => (
+            ].filter(({ label }) => !supportEdit || label === "Branding").map(({ label, icon: Icon, action }) => (
               <button key={label} onClick={action}
                 className="flex items-center justify-between p-4 rounded-2xl border hover:bg-sf-2 hover:border-bd-hover transition-all"
                 style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
