@@ -215,6 +215,10 @@ export const AUDIT_LABELS: Record<string, string> = {
   "admin.impersonate.end": "MatFlow support ended the support session",
   "admin.impersonate.edit_start": "MatFlow started an edit session — changes marked 'by MatFlow support' below were made by MatFlow",
   "admin.impersonate.edit_end": "MatFlow ended the edit session",
+  // Operator-plane row only (lib/support-refusal-audit.ts): a support edit
+  // session asked for something outside the routine contract and was refused
+  // before any change. Field names only; never a value.
+  "support.edit.refused": "MatFlow support attempted a change outside edit access and was refused",
   "admin.operator.totp_enrolled": "A MatFlow operator set up their authenticator",
   "admin.operator.step_up": "A MatFlow operator confirmed an action with their authenticator",
   // Security log of a refused step-up confirmation (lib/operator-step-up.ts,
