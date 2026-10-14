@@ -1319,19 +1319,21 @@ function AddMemberModal({
             </div>
           </div>
 
-          {/* Attribution (M1): who ran the trial and who gets sign-up credit. */}
-          <div className="pt-1">
+          {/* Attribution (M1): who ran the trial and who gets sign-up credit.
+              Hidden entirely in a support edit session - the keys are never
+              sent, so an empty heading would be the only thing left. */}
+          {!supportEdit && <div className="pt-1">
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--tx-4)" }}>
               Attribution
             </p>
-            {!supportEdit && <AttributionFields
+            <AttributionFields
               value={attribution}
               onChange={setAttribution}
               inputClassName={inputCls}
               inputStyle={inputStyle}
               focusHandlers={focusHandlers}
-            />}
-          </div>
+            />
+          </div>}
         </form>
     </Dialog>
   );

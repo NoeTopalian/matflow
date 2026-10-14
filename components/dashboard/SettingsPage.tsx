@@ -1600,7 +1600,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               and reply to; never a login. Owner only, like every tenant write. */}
           {isOwner && !supportEdit && <ContactEmailSection initialEmail={settings?.contactEmail ?? null} />}
           {/* ADR-001 D2: venues inside the club. Owner and manager edit. */}
-          <LocationsCard canEdit={isOwner || role === "manager"} />
+          <LocationsCard canEdit={(isOwner || role === "manager") && !supportEdit} />
           <div className="grid grid-cols-3 gap-3">
             {[
               { label: "Members", value: totalMembers || settings?.memberCount || 0 },
