@@ -38,9 +38,9 @@ DSAR export, payments CSV, attendance export, import exceptions CSV, Stripe conn
 Account credentials/password/login-email; TOTP/MFA setup, reset, recovery codes; staff management; ownership transfer; Stripe/billing/charges/refunds/holds; imports/rollbacks; exports; DSAR/erasure; invite and waiver links; guardian link/unlink/promote-to-adult; unlock; kiosk/display tokens; **every DELETE**; Server Actions (page POSTs never match the allowlist); the operator plane itself.
 
 ## Blob files (any session, PR #33)
-A blob URL is accepted (rank photo, member photo, profile picture) only under `/tenants/<thisClub>/`; stored URLs outside that namespace are never passed to `del()`.
+A client-supplied blob URL is accepted only under `/tenants/<thisClub>/` on the four photo routes (rank photo, member photo, profile picture, parent-portal child photo; any scheme/host case). Announcement images and the club logo are NOT restricted at accept time (external images are allowed by design; the logo arrives via `/api/upload`) — they are restricted at delete time. Every delete path (rank replace, photo delete, profile delete, child delete, announcement delete, member cascade, DSAR erase, tenant purge, retention cron) passes only this club's namespace to `del()`; anything else is left in place and logged.
 
 ## Known limits (stated, not hidden)
 - Application-layer tenant filters are the primary boundary; RLS is a backstop and the runtime role can rewrite audit rows (see security campaign ledger).
-- Edge-level route refusals are not audited (no database at the edge).
+- Edge-level route refusals are platform-logged (one structured line: scope, method, path, reason, request id — no identity) but not database-audited (no database at the edge); field-level refusals inside routes are audited on the operator plane.
 - Socials/timezone/check-in windows are server-permitted but not exposed in the support UI (follow-up).
