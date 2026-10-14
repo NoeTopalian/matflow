@@ -70,7 +70,7 @@ describe.skipIf(!HAS_DB)("US-5 — kid photo evidence", () => {
       });
       parentAId = pA.id;
       const kA = await tx.member.create({
-        data: { tenantId, name: "Kid A", email: `kid-a-${STAMP}@kids.local`, parentMemberId: pA.id },
+        data: { tenantId, name: "Kid A", email: `kid-a-${STAMP}@kids.local`, parentMemberId: pA.id , guardianConfirmedAt: new Date(), guardianSuggestedBy: "staff"}, // confirmed link required since 8d2e696 (guardian links are suggested until confirmed)
       });
       kidAId = kA.id;
       const pB = await tx.member.create({
@@ -78,7 +78,7 @@ describe.skipIf(!HAS_DB)("US-5 — kid photo evidence", () => {
       });
       parentBId = pB.id;
       const kB = await tx.member.create({
-        data: { tenantId, name: "Kid B", email: `kid-b-${STAMP}@kids.local`, parentMemberId: pB.id },
+        data: { tenantId, name: "Kid B", email: `kid-b-${STAMP}@kids.local`, parentMemberId: pB.id , guardianConfirmedAt: new Date(), guardianSuggestedBy: "staff"},
       });
       kidBId = kB.id;
     });
@@ -170,7 +170,7 @@ describe.skipIf(!HAS_DB)("US-5 — kid photo evidence", () => {
     let throwawayPhotoId = "";
     await withRlsBypass(async (tx) => {
       const k = await tx.member.create({
-        data: { tenantId, name: "Throwaway", email: `throw-${STAMP}@kids.local`, parentMemberId: parentAId },
+        data: { tenantId, name: "Throwaway", email: `throw-${STAMP}@kids.local`, parentMemberId: parentAId , guardianConfirmedAt: new Date(), guardianSuggestedBy: "staff"},
       });
       throwawayKidId = k.id;
       const p = await tx.memberPhoto.create({

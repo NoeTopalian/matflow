@@ -71,7 +71,8 @@ describe.skipIf(!HAS_DB)("Parent-of-kid check-in", () => {
           tenantId: tA.id,
           name: "Kid A",
           email: `kid-a-${STAMP}@kids.local`,
-          parentMemberId: pA.id,
+          parentMemberId: pA.id, // confirmed link required since 8d2e696 (guardian links are suggested until confirmed)
+          guardianConfirmedAt: new Date(), guardianSuggestedBy: "staff",
         },
       });
       kidAId = kA.id;
@@ -87,6 +88,7 @@ describe.skipIf(!HAS_DB)("Parent-of-kid check-in", () => {
           name: "Kid A2",
           email: `kid-a2-${STAMP}@kids.local`,
           parentMemberId: pA2.id,
+          guardianConfirmedAt: new Date(), guardianSuggestedBy: "staff",
         },
       });
       kidA2Id = kA2.id;

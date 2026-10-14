@@ -9,9 +9,11 @@
 // club Noe runs the equivalent steps by hand (docs/security/CONTAINMENT-CHECKLIST.md §4, step 9a).
 //
 // Usage:
-//   node scripts/readiness/demo-accounts-rotate.mjs --slug <tenant-slug>                 (dry run: list, change nothing)
-//   node scripts/readiness/demo-accounts-rotate.mjs --slug <tenant-slug> --confirm --ids <id,id,...>
+//   node -- scripts/readiness/demo-accounts-rotate.mjs --slug <tenant-slug>                 (dry run: list, change nothing)
+//   node -- scripts/readiness/demo-accounts-rotate.mjs --slug <tenant-slug> --confirm --ids <id,id,...>
 //   options: --env-file <path> (default .env.test)  --var TEST_DATABASE_URL|RESTRICTED_DATABASE_URL (default TEST_…)
+//   Use the `node -- ` form: Node (>=20) consumes `--env-file` anywhere in argv as its OWN flag and exits 9 on a missing file
+//   before this script runs; `--` hands everything after it to the script.
 //
 // What it does, in ONE transaction (REPEATABLE READ, RLS bypass set transaction-locally, never on the session):
 //  - lists the EXACT candidate rows: every User in that tenant whose e-mail ends with @demo.matflow — id, role, the

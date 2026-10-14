@@ -176,7 +176,11 @@ describe.skipIf(!HAS_DB)("Parent/kid lifecycle", () => {
     expect(eleventh.status).toBe(409);
   });
 
-  it("DELETE purges FK-RESTRICTed dependents and survives parent", async () => {
+  // Contract change 8d2e696 + the 2 Oct family-authority design: removing a
+  // child is a relationship change and belongs to an owner or a manager; the
+  // member portal refuses it before any read. The FK-RESTRICT cascade purge
+  // itself is covered by tests/integration/member-cascade-delete.test.ts.
+  it("DELETE by a parent is refused; the kid and every dependent survive", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "user-a", memberId: parentAId, tenantId: tenantAId, role: "member", email: "parent-a" },
     } as never);
@@ -225,21 +229,25 @@ describe.skipIf(!HAS_DB)("Parent/kid lifecycle", () => {
     });
 
     const delRes = await deleteChild(deleteReq(), { params: Promise.resolve({ id: kidWithHistoryId }) });
-    expect(delRes.status).toBe(200);
+    expect(delRes.status).toBe(403);
+    expect(((await delRes.json()) as { error?: string }).error).toBe("Family relationships are managed by club staff.");
 
-    const stillThere = await withRlsBypass((tx) =>
-      tx.member.findUnique({ where: { id: kidWithHistoryId } }),
-    );
-    expect(stillThere).toBeNull();
-
-    // Parent must survive untouched
-    const parentStill = await withRlsBypass((tx) =>
-      tx.member.findUnique({ where: { id: parentAId } }),
-    );
-    expect(parentStill).not.toBeNull();
+    // Nothing was touched: the kid, every dependent row and the parent survive.
+    const after = await withRlsBypass(async (tx) => ({
+      kid: await tx.member.findUnique({ where: { id: kidWithHistoryId } }),
+      attendance: await tx.attendanceRecord.count({ where: { memberId: kidWithHistoryId } }),
+      waivers: await tx.signedWaiver.count({ where: { memberId: kidWithHistoryId } }),
+      ranks: await tx.memberRank.count({ where: { memberId: kidWithHistoryId } }),
+      parent: await tx.member.findUnique({ where: { id: parentAId } }),
+    }));
+    expect(after.kid).not.toBeNull();
+    expect(after.attendance).toBe(1);
+    expect(after.waivers).toBe(1);
+    expect(after.ranks).toBe(1);
+    expect(after.parent).not.toBeNull();
   });
 
-  it("DELETE rejects a kid belonging to another parent (404)", async () => {
+  it("DELETE of another parent's kid is refused the same way (nothing leaks)", async () => {
     // Create a second parent in same tenant, give them a kid
     let otherKidId = "";
     await withRlsBypass(async (tx) => {
@@ -261,7 +269,9 @@ describe.skipIf(!HAS_DB)("Parent/kid lifecycle", () => {
       user: { id: "user-a", memberId: parentAId, tenantId: tenantAId, role: "member", email: "parent-a" },
     } as never);
     const res = await deleteChild(deleteReq(), { params: Promise.resolve({ id: otherKidId }) });
-    expect(res.status).toBe(404);
+    // 8d2e696: refused by role before any read — the same 403 whether or not
+    // the kid exists or is yours, so possession of an id learns nothing.
+    expect(res.status).toBe(403);
 
     const stillExists = await withRlsBypass((tx) =>
       tx.member.findUnique({ where: { id: otherKidId } }),
@@ -332,15 +342,17 @@ describe.skipIf(!HAS_DB)("Parent/kid lifecycle", () => {
     expect(db?.name).toBe(originalName);
   });
 
-  it("PATCH silently drops staff-only fields (status, accountType, waiverAccepted, parentMemberId)", async () => {
+  // Contract change 8d2e696: a PATCH carrying a guardian-authority or
+  // account-type field is refused outright rather than silently stripped —
+  // silence would hide the attempt (lib/family-authority.ts). Staff-only
+  // fields that do not decide authority are still silently dropped.
+  it("PATCH carrying guardian-authority fields is refused and nothing changes", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "user-a", memberId: parentAId, tenantId: tenantAId, role: "member", email: "parent-a" },
     } as never);
     const createRes = await createChild(jsonReq({ name: "Drop Test" }));
     const created = await createRes.json() as { id: string };
 
-    // PATCH with a name change AND every forbidden field — the name must
-    // land in DB; everything else must not.
     const res = await patchChild(
       patchReq({
         name: "Drop Test Renamed",
@@ -351,7 +363,8 @@ describe.skipIf(!HAS_DB)("Parent/kid lifecycle", () => {
       }),
       { params: Promise.resolve({ id: created.id }) },
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error?: string }).error).toBe("Family relationships are managed by club staff.");
 
     const db = await withRlsBypass((tx) =>
       tx.member.findUnique({
@@ -359,11 +372,36 @@ describe.skipIf(!HAS_DB)("Parent/kid lifecycle", () => {
         select: { name: true, status: true, accountType: true, waiverAccepted: true, parentMemberId: true },
       }),
     );
-    expect(db?.name).toBe("Drop Test Renamed");
-    expect(db?.status).toBe("active"); // unchanged
-    expect(db?.accountType).toBe("kids"); // unchanged
-    expect(db?.waiverAccepted).toBe(false); // unchanged
-    expect(db?.parentMemberId).toBe(parentAId); // unchanged — never reassigned
+    expect(db?.name).toBe("Drop Test"); // the whole request was refused
+    expect(db?.status).toBe("active");
+    expect(db?.accountType).toBe("kids");
+    expect(db?.waiverAccepted).toBe(false);
+    expect(db?.parentMemberId).toBe(parentAId); // never reassigned
+  });
+
+  it("PATCH silently drops non-authority staff fields (status, waiverAccepted) while applying editable ones", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "user-a", memberId: parentAId, tenantId: tenantAId, role: "member", email: "parent-a" },
+    } as never);
+    const createRes = await createChild(jsonReq({ name: "Drop Test 2" }));
+    const created = await createRes.json() as { id: string };
+
+    const res = await patchChild(
+      patchReq({ name: "Drop Test 2 Renamed", status: "cancelled", waiverAccepted: true }),
+      { params: Promise.resolve({ id: created.id }) },
+    );
+    expect(res.status).toBe(200);
+
+    const db = await withRlsBypass((tx) =>
+      tx.member.findUnique({
+        where: { id: created.id },
+        select: { name: true, status: true, waiverAccepted: true, parentMemberId: true },
+      }),
+    );
+    expect(db?.name).toBe("Drop Test 2 Renamed");
+    expect(db?.status).toBe("active"); // dropped, unchanged
+    expect(db?.waiverAccepted).toBe(false); // dropped, unchanged
+    expect(db?.parentMemberId).toBe(parentAId);
   });
 
   it("PATCH with no editable fields returns 400", async () => {
