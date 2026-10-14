@@ -104,7 +104,14 @@ export default function LoginAsOwnerButton({
       {open && (
         <>
           <div onClick={() => !submitting && setOpen(false)} style={backdrop} />
-          <div style={modal} role="dialog" aria-modal="true" aria-labelledby="support-title">
+          <div
+            style={modal}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="support-title"
+            // Keyboard: Escape closes without starting anything (a11y pass, 14 Oct 2026).
+            onKeyDown={(e) => { if (e.key === "Escape" && !submitting) { e.stopPropagation(); setOpen(false); } }}
+          >
             <h2 id="support-title" style={modalTitle}>
               {mode === "edit"
                 ? `Start an EDIT session as ${ownerName}`
