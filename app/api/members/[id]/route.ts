@@ -16,7 +16,7 @@ import { isVercelBlobUrl } from "@/lib/blob-url";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
-import { refuseSupportSession, refuseSupportSessionUnlessEdit } from "@/lib/support-session";
+import { refuseSupportSession, refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { LoginIdentityTaken, claimLoginIdentity, emailDigest, retireEmailBoundTokens } from "@/lib/login-email";
 
 // feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
@@ -219,11 +219,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   let body: unknown;
   try {
+    const raw = await req.json() as Record<string, unknown>;
+    // Edit-session field policy (external review, 13 Oct 2026): checked on the
+    // RAW keys before stripping or zod parsing, before the Stripe-cancel
+    // lookup below, and before any write. A prohibited field (status,
+    // paymentStatus, email, membership*, attribution) refuses the WHOLE
+    // request, so a mixed body never partially applies.
+    const fieldRefusal = refuseSupportEditFields(session, raw, SUPPORT_EDIT_FIELD_POLICY["member.update"]);
+    if (fieldRefusal) return fieldRefusal;
     // Defence in depth: strip TOTP fields so an attacker cannot disable
     // a member's TOTP through this PATCH route. Only the dedicated reset
     // endpoints (/api/admin/customers/[id]/member-totp-reset for operator
     // and /api/members/[id]/totp-reset for staff) may clear it.
-    body = stripTotpFields(await req.json() as Record<string, unknown>);
+    body = stripTotpFields(raw);
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }

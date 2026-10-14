@@ -112,7 +112,7 @@ export default function LoginAsOwnerButton({
             </h2>
             <p style={modalDesc}>
               {mode === "edit"
-                ? "For 30 minutes you can make routine changes in this club's dashboard: timetable and classes, member details, ranks, attendance and ordinary settings. Credentials, staff, ownership, payments, exports and deletions stay refused. Every change is recorded as made by MatFlow, and the owner sees it in their Activity log."
+                ? "For 30 minutes you can make routine changes in this club's dashboard: timetable and classes, member contact details and notes, ranks, attendance, and branding, links and timetable settings. Credentials, staff, ownership, anything billing or payments (including member status and membership changes), waiver text, invites, exports and deletions stay refused. Every change is recorded as made by MatFlow, and the owner sees it in their Activity log."
                 : "You will see the club as the owner does for 30 minutes. You cannot change anything, export personal data or use the operator console until you end it. The reason is recorded in the audit log."}
             </p>
             <textarea aria-label="Reason for the support session"

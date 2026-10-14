@@ -203,3 +203,83 @@ export function refuseSupportSessionUnlessEdit(session: unknown, message: string
   if (scope === "edit") return null;
   return NextResponse.json({ ok: false, error: message, supportReadOnly: true }, { status: 403 });
 }
+
+/**
+ * Field-level policy for the three allowlisted operations whose handlers can
+ * reach beyond "routine" (external review, 13 Oct 2026). Keys are RAW request
+ * body keys, checked before any schema parsing or stripping, so a prohibited
+ * field cannot hide behind zod stripping. Allow-only: a key absent from the
+ * list is refused, so new schema fields are refused until classified here
+ * (tests/unit/support-edit-field-policy.test.ts pins the classification
+ * against each zod schema and fails on an unclassified field).
+ *
+ * Deliberately refused:
+ * - member.update: email (sign-in/recovery address), status (cancellation
+ *   cancels a live Stripe subscription), paymentStatus, membershipType,
+ *   membershipTierId, trialRunById, creditedTo* (money/attribution).
+ * - member.create: parentMemberId and accountType (a staff-created link is
+ *   CONFIRMED guardian authority; there is no "suggested by operator" state,
+ *   so kid/guardian creation is denied outright), credit attribution.
+ * - settings.update: every billing/payment field, contactEmail (the club's
+ *   mail identity), privacy fields, waiver content (legal text) and
+ *   onboarding lifecycle fields.
+ */
+export const SUPPORT_EDIT_FIELD_POLICY = {
+  "member.update": [
+    "name", "phone",
+    "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation",
+    "notes", "dateOfBirth", "updatedAt",
+  ],
+  "member.create": [
+    "name", "email", "phone",
+    "membershipType", "membershipTierId", "dateOfBirth", "status", "requestId",
+  ],
+  "settings.update": [
+    "name", "primaryColor", "secondaryColor", "textColor", "bgColor",
+    "fontFamily", "logoSize", "logoUrl",
+    "instagramUrl", "facebookUrl", "tiktokUrl", "youtubeUrl", "twitterUrl",
+    "websiteUrl", "groupChatUrl",
+    "checkinWindowBeforeMin", "checkinWindowAfterMin", "timezone",
+  ],
+} as const satisfies Record<string, readonly string[]>;
+
+/**
+ * Operation- and field-level backstop for edit sessions, called right after
+ * refuseSupportSessionUnlessEdit in the routes named by
+ * SUPPORT_EDIT_FIELD_POLICY, BEFORE any mutation, provider call or token
+ * minting. The whole request is refused when ANY raw body key falls outside
+ * the allowlist, so a prohibited field mixed with a legitimate edit never
+ * partially applies. Non-support sessions pass through untouched; support
+ * authority never derives from anything client-controlled (the scope is read
+ * from the server-verified session).
+ */
+export function refuseSupportEditFields(
+  session: unknown,
+  rawBody: unknown,
+  allowedKeys: readonly string[],
+): NextResponse | null {
+  if (!isSupportSession(session)) return null;
+  const scope = (session as { user?: { supportScope?: unknown } }).user?.supportScope;
+  if (scope !== "edit") {
+    // Unreachable behind refuseSupportSessionUnlessEdit, but the helper stays
+    // safe when called alone: a view session is refused, never field-checked.
+    return NextResponse.json({ ok: false, error: SUPPORT_READ_ONLY_MESSAGE, supportReadOnly: true }, { status: 403 });
+  }
+  const keys = rawBody !== null && typeof rawBody === "object" && !Array.isArray(rawBody)
+    ? Object.keys(rawBody as Record<string, unknown>)
+    : null;
+  if (keys === null) {
+    return NextResponse.json({ ok: false, error: SUPPORT_EDIT_NOT_COVERED_MESSAGE, supportReadOnly: true }, { status: 403 });
+  }
+  const refused = keys.filter((k) => !allowedKeys.includes(k));
+  if (refused.length === 0) return null;
+  return NextResponse.json(
+    {
+      ok: false,
+      error: `Edit access doesn't cover changing "${refused[0]}" — it stays with the club owner.`,
+      supportReadOnly: true,
+      refusedFields: refused,
+    },
+    { status: 403 },
+  );
+}

@@ -22,7 +22,7 @@ import { shownPaymentStatus } from "@/lib/overdue";
 import { initialDeskPaymentStatus } from "@/lib/payment-status";
 import { CONFIRMED_BY, guardianSuggestionSource } from "@/lib/guardianship";
 import { LoginIdentityTaken, claimLoginIdentity } from "@/lib/login-email";
-import { refuseSupportSessionUnlessEdit } from "@/lib/support-session";
+import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, isSupportSession, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -278,6 +278,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  // Edit-session field policy (external review, 13 Oct 2026): RAW keys, before
+  // zod. parentMemberId / accountType are refused outright - a staff-created
+  // link is CONFIRMED guardian authority and there is no "suggested by
+  // operator" state - and the attribution fields stay with the club.
+  const fieldRefusal = refuseSupportEditFields(session, body, SUPPORT_EDIT_FIELD_POLICY["member.create"]);
+  if (fieldRefusal) return fieldRefusal;
+
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
@@ -529,7 +536,14 @@ export async function POST(req: Request) {
     // email off, or a failed send, that sentence was false.
     let inviteEmailSent = false;
     let inviteEmailNote: string | null = null;
-    if (!isKid && hasRealEmail) {
+    // Edit sessions never mint a sign-in token or send an invite (external
+    // review, 13 Oct 2026): the record is created, and the owner invites the
+    // member from the member page themselves. The dedicated invite-link route
+    // is already refused under any support session.
+    if (!isKid && hasRealEmail && isSupportSession(session)) {
+      inviteEmailNote = "Support sessions don't send invites - the owner can invite this member from their member page.";
+    }
+    if (!isKid && hasRealEmail && !isSupportSession(session)) {
       try {
         // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.
         // The raw token goes in the invite email + URL; the DB stores only the hash.
