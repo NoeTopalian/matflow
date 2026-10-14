@@ -24,3 +24,12 @@ Deployment authority (merge) and customer-account authority are separate; nothin
 4. **Edit session (an expressly authorised synthetic club only — create one for this purpose; never a customer):** start Edit → banner reads "EDIT session — <club>" → create a class → edit a member's phone → save branding → attempt a refused operation (e.g. member status) → 403 → End session → sign in as that club's owner → Activity shows the rows with "by MatFlow support" and the session start/end labels; the operator Activity shows the `support.edit.refused` row for the attempt.
 5. **Observation window:** watch application errors and the operator Activity for unexpected denials for the agreed window; if a critical check fails, stop support/customer mutations and redeploy `9272a21` (no schema change ⇒ direct rollback is safe).
 6. Record outcomes against the release packet; tear down the synthetic club.
+
+## C. Operating instructions for an Edit session (operator)
+
+1. Start Edit from the club's hub page with a written reason and a fresh authenticator code. The banner must read "MatFlow EDIT session — <club name>"; if it does not name the club you expect, End session immediately.
+2. Permitted: member contact details and notes; creating a member (no invite is sent — tell the owner to invite them); classes, instances, roster, check-in; ranks without photos; branding, links, check-in windows, timezone. Everything else is refused with a message naming the field; a refusal changes nothing.
+3. **Uncertain outcomes.** If a save does not answer (network loss, tab closed): member edits can be retried safely (a stale retry is refused with 409 — reload first); *Create class* is **not** idempotent — open the timetable and check whether the class exists before retrying; a duplicate is the owner's to remove.
+4. One club per session. To work on another club, End session first; starting a new session supersedes the old one.
+5. End session before using any operator-console action (the console is refused while a session is live). Privileged account actions (owner login email, resets) are never done inside a session.
+6. After the session: the owner sees your changes in Activity marked "by MatFlow support"; your refused attempts appear on the operator Activity (field names only).

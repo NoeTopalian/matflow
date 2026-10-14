@@ -8,7 +8,7 @@ Prepared for Noe. Engineering status only; merge, deployment, production verific
 | #30 | `fix/main-ci-green` | `eea6e18` | main | 19 inherited Vitest failures classified and repaired (tests only) |
 | #32 | `fix/secrets-fixtures` | `e5e14da` | #30 | secret-shaped fixtures → placeholders; fail-closed scan allowlist with ONE documented entry |
 | #31 | `feat/hub-club-edit-access` | `a1dfee9` | main | View/Edit support sessions; field-level policy; owner-visible attribution |
-| #33 | `fix/blob-tenant-ownership` | `680b673` | #31 | cross-tenant blob ownership (all accept/delete paths); operator-plane refusal rows; parser probes; this packet |
+| #33 | `fix/blob-tenant-ownership` | executable `680b673`; branch head = this packet's docs commit (docs only after `680b673`) | #31 | cross-tenant blob ownership (all accept/delete paths); operator-plane refusal rows; parser probes; this packet |
 | #28 | `fix/members-toolbar-table-banner` | (unchanged) | main | Members UI + banner LocalTime |
 | #29 | `feat/hub-conflict-resolution` | `44ad24e` | main | staff / multi-holder login-address conflicts (draft) |
 
@@ -65,6 +65,9 @@ billing/entitlements · authentication/invitation · guardian authority · finan
 | Class PATCH `isActive`/roster semantics; demote deletes ClassSubscription rows (pre-existing timetable behaviour) | — | documented | minor |
 | Refusal copy shows raw field names; logo-upload fallback toast; allowlist-era dead-end buttons (shared with view sessions) | UX polish | follow-up | minor |
 | Application filters are the primary tenant boundary; RLS is a backstop; the runtime role can rewrite audit rows | stated limit of the platform, not of this release | security campaign ledger | existing |
+
+## 6b. Known behaviour to state in operating instructions
+- **Class creation is not idempotent.** A lost response to *Create class* followed by a retry creates a second class with the same name (browser robustness proof, 14 Oct). Before retrying, open the timetable and check whether the class already exists; a duplicate is visible to the owner and removable by them (archive/delete is an owner action, refused in support sessions). Member creation is idempotent per desk request (`requestId`); member edits carry an `updatedAt` precondition (409 on a stale save); step-up grants are single-use.
 
 ## 7. Integration order and qualification of each deploying state
 Each merge to main deploys. Order: **#30 → make "Typecheck + Lint + Vitest" required → #32 → #31 → #33 → #28 → #29**. Verify base/head on GitHub after each merge (do not assume automatic retargeting). Per-state qualification (tsc + the suites of the PRs involved + tree scan) is recorded in `INTEGRATION-STEPS.md` (same folder): every state compiles and passes its suites; the tree scan is red for the two pre-#32 states (as PR #30 states) and green from S2 on; one load-contention flake at S3 re-ran green alone. The only cross-PR conflict is `ImpersonationBanner.tsx` (#28 × #31): keep #31's scope/club-name structure and #28's `<LocalTime>` expiry (resolution rehearsed).
