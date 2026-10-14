@@ -81,7 +81,7 @@ vi.mock("@/lib/impersonation", () => ({ readImpersonationCookie: vi.fn() }));
 vi.mock("@/lib/brand-refresh", () => ({ shouldRefreshBrand: () => false }));
 vi.mock("@/lib/pending-tenant-cookie", () => ({ readPendingTenantSlug: vi.fn(), clearPendingTenantSlug: vi.fn() }));
 
-const TEMP_PASSWORD = "TempPass2345";
+const TEMP_PASSWORD = "Test-secret-0000a1A";
 const HASH = bcrypt.hashSync(TEMP_PASSWORD, 4);
 const TENANT = {
   id: "t1", slug: "club", name: "Club", subscriptionStatus: "active", deletedAt: null,

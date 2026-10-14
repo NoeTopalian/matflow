@@ -108,7 +108,7 @@ describe("GET /api/stripe/connect/health — readiness", () => {
     // The other half of the same bug: `rk_live_` matched neither old branch and
     // reported mode "unknown". A correct configuration must read as correct, or
     // the operator learns to ignore the endpoint.
-    configure({ VERCEL_ENV: "production", STRIPE_SECRET_KEY: "rk_live_51T87S7J74LmUlLwB" });
+    configure({ VERCEL_ENV: "production", STRIPE_SECRET_KEY: "rk_live_a00000000000000000000" });
     const body = await health();
 
     expect(body.ready).toBe(true);
@@ -124,7 +124,7 @@ describe("GET /api/stripe/connect/health — readiness", () => {
   });
 
   it("is NOT ready when the publishable key was pasted into the secret slot", async () => {
-    configure({ VERCEL_ENV: "production", STRIPE_SECRET_KEY: "pk_live_51T87S7J74LmUlLwB" });
+    configure({ VERCEL_ENV: "production", STRIPE_SECRET_KEY: "pk_live_a0000000000000000" });
     const body = await health();
     expect(body.ready).toBe(false);
     expect(body.env.STRIPE_SECRET_KEY.kind).toBe("publishable");

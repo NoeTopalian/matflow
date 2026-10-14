@@ -37,7 +37,7 @@ const ADDR = {
 };
 const SECRET = "s".repeat(16) + randomBytes(16).toString("hex");
 const PASSWORD_HASH = "$2a$12$fixturefixturefixturefixtureHASH";
-const TOTP_SECRET = "FIXTURETOTPSECRETBASE32";
+const TOTP_SECRET = "ABCDEFABCDEFABCDEFABCDEF";
 // The audit digests the routes write are KEYED (lib/login-email.ts emailDigest,
 // AH-E2): the fake env file carries the key, and the fixtures use the script's
 // own construction (parity with the library is pinned in a separate case).
