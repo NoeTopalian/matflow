@@ -1207,7 +1207,7 @@ export default function MemberProfile({
                 className="absolute right-0 top-full mt-1 w-44 rounded-xl border py-1 z-40"
                 style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
               >
-                <button
+                {!supportEdit && <button
                   onClick={async () => {
                     setShowActionsMenu(false);
                     const res = await fetch(`/api/members/${member.id}`, {
@@ -1231,7 +1231,7 @@ export default function MemberProfile({
                   style={{ color: "var(--tx-2)" }}
                 >
                   Mark as inactive
-                </button>
+                </button>}
                 {canRecordPayment && member.status !== "cancelled" && (
                   member.paymentStatus === "paused" ? (
                     <Button
@@ -1616,15 +1616,24 @@ export default function MemberProfile({
                   Attribution
                 </p>
                 <div className="max-w-md">
-                  <AttributionFields
-                    value={attribution}
-                    onChange={setAttribution}
-                    inputClassName={inputCls}
-                    inputStyle={inputStyle}
-                    focusHandlers={inputFocusHandlers}
-                    selfMemberId={member.id}
-                    initialCreditedMemberName={member.creditedToMemberName ?? null}
-                  />
+                  {/* F-1b: never render editable attribution in a support
+                      edit - its keys are omitted from the save, so an editable
+                      control would show values that were never persisted. */}
+                  {supportEdit ? (
+                    <p role="note" className="text-xs" style={{ color: "var(--tx-3)" }}>
+                      Attribution stays with the club owner during a support session.
+                    </p>
+                  ) : (
+                    <AttributionFields
+                      value={attribution}
+                      onChange={setAttribution}
+                      inputClassName={inputCls}
+                      inputStyle={inputStyle}
+                      focusHandlers={inputFocusHandlers}
+                      selfMemberId={member.id}
+                      initialCreditedMemberName={member.creditedToMemberName ?? null}
+                    />
+                  )}
                 </div>
               </div>
               {profileError && (

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { STAFF_ROLES } from "@/lib/authz";
-import { refuseSupportSessionUnlessEdit } from "@/lib/support-session";
+import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 
 const demoteSchema = z.object({
   toRankId: z.string().min(1),
@@ -34,6 +34,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+
+  // Edit-session field policy (security review I-2): notify/reason refused -
+  // notify emails operator-written free text to the member in the club's name.
+  const fieldRefusal = refuseSupportEditFields(session, body, SUPPORT_EDIT_FIELD_POLICY["member.rank.demote"]);
+  if (fieldRefusal) return fieldRefusal;
   const parsed = demoteSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });

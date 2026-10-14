@@ -426,6 +426,7 @@ function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null }
 const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month"];
 
 export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null }: Props) {
+  const { toast } = useToast();
   const searchParams = useSearchParams();
   const requestedFilter = searchParams.get("filter");
   const urlFilter = FILTERS.includes(requestedFilter as StatusFilter) ? requestedFilter as StatusFilter : "all";
@@ -532,6 +533,10 @@ export default function MembersList({ members: initial, primaryColor, role, guar
     setMembers((prev) => [...prev, member].sort((a, b) => a.name.localeCompare(b.name)));
     setShowAdd(false);
     if (inviteUrl) setInviteShare({ name: member.name, url: inviteUrl, emailNote: emailNote ?? null });
+    // F-5 (edit-access remediation): no invite link but a reason why - e.g. a
+    // support session never mints one - must still be said, or the member is
+    // silently created with nobody told how they will sign in.
+    else if (emailNote) toast(emailNote, "info");
   }
 
   // D4 (verifier lane 3): every count below except `cancelled` is computed

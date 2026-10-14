@@ -230,10 +230,19 @@ export const SUPPORT_EDIT_FIELD_POLICY = {
     "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation",
     "notes", "dateOfBirth", "updatedAt",
   ],
+  // I-3 (security review): no membership tier/type/status at create either -
+  // creating a member straight onto a free tier is comped access, the exact
+  // thing update already refuses.
   "member.create": [
-    "name", "email", "phone",
-    "membershipType", "membershipTierId", "dateOfBirth", "status", "requestId",
+    "name", "email", "phone", "dateOfBirth", "requestId",
   ],
+  // I-1: no photoUrl/photoCaption - re-awarding the current rank with a photo
+  // permanently deletes the previous promotion photos (blob files included),
+  // and the photo write path accepts blob URLs this club does not own.
+  "member.rank.award": ["rankSystemId", "stripes", "notes"],
+  // I-2: no notify (and no free-text reason, which only exists to be sent) -
+  // notify emails operator-written text to the member in the club's name.
+  "member.rank.demote": ["toRankId"],
   "settings.update": [
     "name", "primaryColor", "secondaryColor", "textColor", "bgColor",
     "fontFamily", "logoSize", "logoUrl",

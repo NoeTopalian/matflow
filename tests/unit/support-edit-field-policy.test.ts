@@ -78,7 +78,12 @@ vi.mock("@/lib/login-email", () => ({
   retireEmailBoundTokens: vi.fn(async () => {}),
 }));
 
+vi.mock("@/lib/push", () => ({ sendPushToMember: vi.fn(async () => {}) }));
+vi.mock("@vercel/blob", () => ({ del: vi.fn(async () => {}) }));
+
 import { PATCH as memberPatch } from "@/app/api/members/[id]/route";
+import { POST as rankAward } from "@/app/api/members/[id]/rank/route";
+import { POST as rankDemote } from "@/app/api/members/[id]/rank/demote/route";
 import { POST as memberPost } from "@/app/api/members/route";
 import { PATCH as settingsPatch } from "@/app/api/settings/route";
 import { auth } from "@/auth";
@@ -168,7 +173,8 @@ describe("field classification covers the whole schema (ratchet)", () => {
       "trialRunById", "creditedToUserId", "creditedToMemberId", "creditedToLabel",
     ],
     "member.create": [
-      "parentMemberId", "accountType",
+      "parentMemberId", "accountType", "status",
+      "membershipType", "membershipTierId",
       "trialRunById", "creditedToUserId", "creditedToMemberId", "creditedToLabel",
     ],
   };
@@ -290,6 +296,54 @@ describe("F2 — POST /api/members under an edit session", () => {
     expect([200, 201]).toContain(res.status);
     expect(m.mintToken).toHaveBeenCalledTimes(1);
     expect(m.magicLinkCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("I-1/I-2 — rank routes under an edit session", () => {
+  it("award with photoUrl → 403, nothing written (support photos can destroy prior promotion photos)", async () => {
+    mockAuth.mockResolvedValue(editSession as never);
+    const res = await rankAward(req("https://x/api/members/m-1/rank", { rankSystemId: "r1", photoUrl: "data:image/png;base64,AAAA" }), params);
+    expect(res.status).toBe(403);
+    noWrites();
+  });
+
+  it("award with the routine fields passes the guard", async () => {
+    mockAuth.mockResolvedValue(editSession as never);
+    const res = await rankAward(req("https://x/api/members/m-1/rank", { rankSystemId: "r1", stripes: 0, notes: "corrected after import" }), params);
+    expect(res.status).not.toBe(403); // guard passed; outcome owned by route logic (404 on empty mocks)
+  });
+
+  it("demote with notify or reason → 403 (operator-written mail in the club's name)", async () => {
+    mockAuth.mockResolvedValue(editSession as never);
+    for (const body of [{ toRankId: "r0", notify: true }, { toRankId: "r0", reason: "operator says so" }]) {
+      const res = await rankDemote(req("https://x/api/members/m-1/rank/demote", body), params);
+      expect(res.status, JSON.stringify(body)).toBe(403);
+    }
+    noWrites();
+  });
+
+  it("demote with toRankId alone passes the guard; an owner can still notify", async () => {
+    mockAuth.mockResolvedValue(editSession as never);
+    const r1 = await rankDemote(req("https://x/api/members/m-1/rank/demote", { toRankId: "r0" }), params);
+    expect(r1.status).not.toBe(403);
+    mockAuth.mockResolvedValue(ownerSession as never);
+    const r2 = await rankDemote(req("https://x/api/members/m-1/rank/demote", { toRankId: "r0", notify: true, reason: "grading correction" }), params);
+    expect(r2.status).not.toBe(403);
+  });
+});
+
+describe("I-3 — member create cannot grant membership", () => {
+  it("membershipTierId / membershipType / status at create → 403 under an edit session", async () => {
+    mockAuth.mockResolvedValue(editSession as never);
+    for (const body of [
+      { name: "Comp Ed", membershipTierId: "tier-free" },
+      { name: "Comp Ed", membershipType: "Unlimited" },
+      { name: "Comp Ed", status: "active" },
+    ]) {
+      const res = await memberPost(req("https://x/api/members", body));
+      expect(res.status, JSON.stringify(body)).toBe(403);
+    }
+    noWrites();
   });
 });
 

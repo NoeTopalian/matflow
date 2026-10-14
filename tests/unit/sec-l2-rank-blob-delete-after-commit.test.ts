@@ -25,7 +25,7 @@ vi.mock("@/auth", () => ({
   auth: vi.fn(async () => ({ user: { id: "staff-1", tenantId: "tenant-L2", role: "owner", email: "o@example.test" } })),
 }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
-vi.mock("@/lib/support-session", () => ({ refuseSupportSession: vi.fn(() => null), refuseSupportSessionUnlessEdit: vi.fn(() => null) }));
+vi.mock("@/lib/support-session", () => ({ refuseSupportSession: vi.fn(() => null), refuseSupportSessionUnlessEdit: vi.fn(() => null), refuseSupportEditFields: vi.fn(() => null), SUPPORT_EDIT_FIELD_POLICY: { "member.rank.award": [], "member.rank.demote": [] } }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => { h.events.push("audit"); }) }));
 vi.mock("@/lib/push", () => ({ sendPushToMember: vi.fn(async () => {}) }));
 vi.mock("@vercel/blob", () => ({
