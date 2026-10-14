@@ -53,7 +53,7 @@ import { refuseSupportSession } from "@/lib/support-session";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { emailDigest } from "@/lib/login-email";
-import { isTenantBlobUrl, isVercelBlobUrl } from "@/lib/blob-url";
+import { isTenantBlobUrl } from "@/lib/blob-url";
 import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
@@ -687,7 +687,7 @@ async function deleteBlobBestEffort(url: string | null, label: string, tenantId:
     // A blob URL outside this club's namespace (a pre-prefix legacy upload,
     // or a planted foreign URL) is left in place and SAID so, never silently
     // orphaned (functional review R2-1).
-    if (isVercelBlobUrl(url)) console.warn(`[dsar/erase] blob for ${label} is outside this club's namespace; left in place`);
+    if (/^https:\/\//i.test(url)) console.warn(`[dsar/erase] blob for ${label} is outside this club's namespace; left in place`);
     return;
   }
   try {

@@ -68,7 +68,10 @@ export async function POST(req: Request) {
   // One definition of the namespace rule (lib/blob-url.ts isTenantBlobUrl,
   // 14 Oct 2026): hardened against encoded separators and dot-segments.
   if (!isTenantBlobUrl(url, session.user.tenantId)) {
-    return NextResponse.json({ error: "URL is not in this club blob namespace" }, { status: 403 });
+    return NextResponse.json(
+      { error: "URL is not in your tenant's blob namespace" },
+      { status: 403 },
+    );
   }
   const expectedPathPrefix = `/tenants/${session.user.tenantId}/`;
   try {
