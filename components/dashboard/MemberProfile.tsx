@@ -188,6 +188,16 @@ interface Props {
   primaryColor: string;
   role: string;
   tenantSlug: string;
+  /**
+   * Set when this page renders inside a MatFlow support session ("view" never
+   * reaches the save - writes are refused upstream). In an "edit" session the
+   * server's field policy (lib/support-session.ts SUPPORT_EDIT_FIELD_POLICY)
+   * refuses email, status, membership and attribution changes, so the form
+   * disables those controls and the save sends only the permitted keys -
+   * otherwise every whole-form save would 403 on fields the operator never
+   * touched (UI-RULES: a control you can see but can never use is a defect).
+   */
+  supportScope?: "view" | "edit" | null;
 }
 
 type ActiveTab = "overview" | "attendance" | "ranks" | "notes" | "payments" | "photos";
@@ -543,7 +553,9 @@ export default function MemberProfile({
   billing = { stripeConnected: false, chargesEnabled: null },
   primaryColor,
   role,
+  supportScope = null,
 }: Props) {
+  const supportEdit = supportScope === "edit";
   const router = useRouter();
   const { toast } = useToast();
   const [member, setMember] = useState(initial);
@@ -810,18 +822,25 @@ export default function MemberProfile({
             // whole-form save silently undoing another tab's edit.
             ...(member.updatedAt ? { updatedAt: member.updatedAt } : {}),
             name: form.name,
-            email: form.email,
             phone: form.phone || null,
             emergencyContactName: form.emergencyContactName || null,
             emergencyContactPhone: form.emergencyContactPhone || null,
             emergencyContactRelation: form.emergencyContactRelation || null,
-            ...tierFields,
-            status: form.status,
             dateOfBirth: form.dateOfBirth || null,
-            trialRunById: attribution.trialRunById || null,
-            creditedToUserId: credit.creditedToUserId,
-            creditedToMemberId: credit.creditedToMemberId,
-            creditedToLabel: credit.creditedToLabel,
+            // Support edit sessions: email, membership, status and attribution
+            // stay with the club owner (SUPPORT_EDIT_FIELD_POLICY) - the keys
+            // are omitted entirely so a contact-detail fix saves cleanly.
+            ...(supportEdit
+              ? {}
+              : {
+                  email: form.email,
+                  ...tierFields,
+                  status: form.status,
+                  trialRunById: attribution.trialRunById || null,
+                  creditedToUserId: credit.creditedToUserId,
+                  creditedToMemberId: credit.creditedToMemberId,
+                  creditedToLabel: credit.creditedToLabel,
+                }),
           }),
         });
       } catch {
@@ -1489,6 +1508,11 @@ export default function MemberProfile({
           <Card>
             <div className="space-y-4">
               <h2 className="font-semibold" style={{ color: "var(--tx-1)" }}>Edit Profile</h2>
+              {supportEdit && (
+                <p role="note" className="text-xs" style={{ color: "var(--tx-3)" }}>
+                  Support session: email, membership, status and attribution stay with the club owner and are not saved from here.
+                </p>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Full Name</label>
@@ -1496,7 +1520,7 @@ export default function MemberProfile({
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Email</label>
-                  <input aria-label="Email" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} style={inputStyle} {...inputFocusHandlers} />
+                  <input aria-label="Email" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className={inputCls} style={inputStyle} disabled={supportEdit} title={supportEdit ? "Stays with the club owner during a support session" : undefined} {...inputFocusHandlers} />
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Phone</label>
@@ -1536,6 +1560,8 @@ export default function MemberProfile({
                         onChange={(e) => setForm((f) => ({ ...f, membershipTierId: e.target.value }))}
                         className={inputCls + " appearance-none"}
                         style={inputStyle}
+                        disabled={supportEdit}
+                        title={supportEdit ? "Stays with the club owner during a support session" : undefined}
                         {...inputFocusHandlers}
                       >
                         <option value="">— None —</option>
@@ -1559,6 +1585,8 @@ export default function MemberProfile({
                       onChange={(e) => setForm((f) => ({ ...f, membershipType: e.target.value }))}
                       className={inputCls}
                       style={inputStyle}
+                      disabled={supportEdit}
+                      title={supportEdit ? "Stays with the club owner during a support session" : undefined}
                       placeholder="e.g. Monthly, Annual"
                       {...inputFocusHandlers}
                     />
@@ -1567,7 +1595,7 @@ export default function MemberProfile({
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Status</label>
                   <div className="relative">
-                    <select aria-label="Status" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} className={inputCls + " appearance-none"} style={inputStyle} {...inputFocusHandlers}>
+                    <select aria-label="Status" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} className={inputCls + " appearance-none"} style={inputStyle} disabled={supportEdit} title={supportEdit ? "Stays with the club owner during a support session" : undefined} {...inputFocusHandlers}>
                       <option value="active">Active</option>
                       <option value="inactive">Inactive</option>
                       <option value="cancelled">Cancelled</option>
