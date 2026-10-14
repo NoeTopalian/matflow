@@ -343,6 +343,53 @@ function walk(dir, base = dir, out = []) {
   return out;
 }
 
+/**
+ * Fail-closed allowlist (external review of PR #30, 14 Oct 2026). One entry =
+ * one accepted finding, matched on the exact (fingerprint, rule, path) triple,
+ * so a different value, a different rule or a moved file stops matching and
+ * the scan goes red again. A malformed file is a hard error (exit 2), never a
+ * silent skip; in --tree / --dir modes an entry that matched nothing is a hard
+ * error too (a stale exception must be removed, not accumulate). History mode
+ * skips the staleness check only because old blobs legitimately differ.
+ */
+const ALLOWLIST_FILE = "scripts/readiness/secret-scan-allowlist.json";
+const ALLOWLIST_KEYS = ["fingerprint", "rule", "path", "reason", "addedOn"];
+
+export function loadAllowlist(repoDir) {
+  const file = path.join(repoDir, ALLOWLIST_FILE);
+  if (!fs.existsSync(file)) return [];
+  let parsed;
+  try { parsed = JSON.parse(fs.readFileSync(file, "utf8")); }
+  catch (e) { throw new Error(`${ALLOWLIST_FILE} is not valid JSON (fail closed): ${e.message}`); }
+  if (!Array.isArray(parsed)) throw new Error(`${ALLOWLIST_FILE} must be an ARRAY of entries (fail closed)`);
+  const ruleIds = new Set(RULES.map((r) => r.id));
+  for (const [i, e] of parsed.entries()) {
+    if (typeof e !== "object" || e === null || Array.isArray(e)) throw new Error(`${ALLOWLIST_FILE}[${i}] is not an object (fail closed)`);
+    const keys = Object.keys(e).sort();
+    if (keys.join(",") !== [...ALLOWLIST_KEYS].sort().join(",")) throw new Error(`${ALLOWLIST_FILE}[${i}] must have exactly the keys ${ALLOWLIST_KEYS.join(", ")} (fail closed)`);
+    if (!/^[0-9a-f]{12}$/.test(e.fingerprint)) throw new Error(`${ALLOWLIST_FILE}[${i}].fingerprint must be 12 hex chars (fail closed)`);
+    if (!ruleIds.has(e.rule)) throw new Error(`${ALLOWLIST_FILE}[${i}].rule "${e.rule}" is not a scanner rule (fail closed)`);
+    if (typeof e.path !== "string" || !e.path) throw new Error(`${ALLOWLIST_FILE}[${i}].path must be a non-empty string (fail closed)`);
+    if (typeof e.reason !== "string" || e.reason.length < 20) throw new Error(`${ALLOWLIST_FILE}[${i}].reason must say why (>= 20 chars, fail closed)`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(e.addedOn)) throw new Error(`${ALLOWLIST_FILE}[${i}].addedOn must be YYYY-MM-DD (fail closed)`);
+  }
+  return parsed;
+}
+
+/** Location with any history "@blob:<id>" suffix removed, for path matching. */
+const basePath = (location) => String(location).replace(/@blob:[0-9a-f]+$/, "");
+
+/** Downgrade candidate findings that an allowlist entry covers exactly. Returns the indexes used. */
+export function applyAllowlist(findings, allowlist) {
+  const used = new Set();
+  for (const f of findings) {
+    if (f.classification !== "candidate") continue;
+    const i = allowlist.findIndex((e) => e.fingerprint === f.fingerprint && e.rule === f.rule && e.path === basePath(f.location));
+    if (i >= 0) { f.classification = "allowlisted"; used.add(i); }
+  }
+  return used;
+}
+
 export function summarise(result) {
   const candidates = result.findings.filter((f) => f.classification === "candidate");
   const byRule = {};
@@ -373,9 +420,18 @@ async function main() {
     console.error("usage: secret-scan.mjs --history | --tree | --dir <path> [--json <out>]");
     process.exit(2);
   }
+  const allowlist = loadAllowlist(repo);
+  const used = applyAllowlist(result.findings, allowlist);
+  if (mode !== "history") {
+    const stale = allowlist.map((e, i) => (used.has(i) ? null : e)).filter(Boolean);
+    if (stale.length) {
+      for (const e of stale) console.error(`STALE allowlist entry (matched nothing - remove it): ${e.rule} ${e.path} fp=${e.fingerprint}`);
+      process.exit(2);
+    }
+  }
   const summary = { mode, at: new Date().toISOString(), ...summarise(result) };
   console.log(JSON.stringify(summary, null, 1));
-  for (const f of result.findings.filter((x) => x.classification === "candidate" || x.classification === "literal")) {
+  for (const f of result.findings.filter((x) => x.classification === "candidate" || x.classification === "literal" || x.classification === "allowlisted")) {
     console.log(`${f.classification.toUpperCase()} ${f.severity} ${f.rule} ${f.location}:${f.line} len=${f.length} prefix=${f.prefix} fp=${f.fingerprint}${f.hostClass ? ` host=${f.hostClass}` : ""}`);
   }
   if (jsonOut) fs.writeFileSync(jsonOut, JSON.stringify({ summary, findings: result.findings }, null, 1));

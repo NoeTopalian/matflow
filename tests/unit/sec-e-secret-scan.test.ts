@@ -8,7 +8,8 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { RULES, fingerprint, scanText } from "../../scripts/readiness/secret-scan.mjs";
+import os from "node:os";
+import { RULES, fingerprint, scanText, loadAllowlist, applyAllowlist } from "../../scripts/readiness/secret-scan.mjs";
 
 const ROOT = path.resolve(__dirname, "../..");
 const alnum = (n: number) => {
@@ -118,17 +119,64 @@ describe("placeholders are classified, not hidden", () => {
   });
 });
 
+describe("the fail-closed allowlist (external review of PR #30, 14 Oct 2026)", () => {
+  it("the committed allowlist file is well-formed and every entry names a real rule", () => {
+    const list = loadAllowlist(ROOT);
+    expect(Array.isArray(list)).toBe(true);
+    expect(list.length).toBe(1); // exactly the documented demo-seed entry
+    expect(list[0].fingerprint).toBe("b94e8093ff12");
+    expect(list[0].path).toBe("scripts/seed-demo-rich.mjs");
+  });
+
+  it("a malformed allowlist is a hard error, never a silent skip", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sec-e-allow-"));
+    fs.mkdirSync(path.join(dir, "scripts", "readiness"), { recursive: true });
+    const file = path.join(dir, "scripts", "readiness", "secret-scan-allowlist.json");
+    for (const bad of [
+      "{ not json",
+      JSON.stringify({ fingerprint: "b94e8093ff12" }), // not an array
+      JSON.stringify([{ fingerprint: "nope", rule: "generic-secret-assignment", path: "x", reason: "a reason long enough to pass", addedOn: "2026-10-14" }]),
+      JSON.stringify([{ fingerprint: "b94e8093ff12", rule: "no-such-rule", path: "x", reason: "a reason long enough to pass", addedOn: "2026-10-14" }]),
+      JSON.stringify([{ fingerprint: "b94e8093ff12", rule: "generic-secret-assignment", path: "x", reason: "too short", addedOn: "2026-10-14" }]),
+      JSON.stringify([{ fingerprint: "b94e8093ff12", rule: "generic-secret-assignment", path: "x", reason: "a reason long enough to pass", addedOn: "14/10/2026" }]),
+      JSON.stringify([{ fingerprint: "b94e8093ff12", rule: "generic-secret-assignment", path: "x", reason: "a reason long enough to pass", addedOn: "2026-10-14", extra: 1 }]),
+    ]) {
+      fs.writeFileSync(file, bad);
+      expect(() => loadAllowlist(dir), bad.slice(0, 40)).toThrow(/fail closed/);
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("an entry downgrades ONLY its exact (fingerprint, rule, path) triple; a genuine secret beside it still fails", () => {
+    // Synthetic candidate values, assembled so this source file never contains them.
+    const demoish = ["DEMO", "_PASSWORD = \"", "Zq", "7", "wXk", "3", "pR", "9", "tY", "\""].join("");
+    const neighbour = ["SMTP", "_PASSWORD = \"", "Vb", "8", "nQj", "2", "sL", "6", "uE", "\""].join("");
+    const text = `${demoish}
+${neighbour}
+`;
+    const findings = scanText(text, "scripts/seed-demo-rich.mjs");
+    const cands = findings.filter((f) => f.classification === "candidate");
+    expect(cands.length).toBe(2);
+    const entry = { fingerprint: cands[0].fingerprint, rule: cands[0].rule, path: "scripts/seed-demo-rich.mjs", reason: "canary entry for this test, long enough", addedOn: "2026-10-14" };
+    const used = applyAllowlist(findings, [entry]);
+    expect(used.has(0)).toBe(true);
+    const after = findings.filter((f) => f.classification === "candidate");
+    expect(after.length).toBe(1); // the neighbour STILL fails
+    expect(after[0].fingerprint).not.toBe(entry.fingerprint);
+    // wrong path or wrong rule never matches
+    const f2 = scanText(text, "scripts/other.mjs");
+    expect(applyAllowlist(f2, [entry]).size).toBe(0);
+  });
+});
+
 describe("repository tree (tracked files at HEAD)", () => {
-  // The only accepted non-placeholder values: the truncated Stripe key prefix and its sibling fixture, documented in
-  // E-06 §Triage 2 as test fixtures (prefix only, cannot authenticate). Anything else is a new secret in the tree.
-  // Lane F3 (generic *_PASSWORD / *_SECRET / *_TOKEN rule, SF-82 residual) triaged three more random-looking values:
-  //   a81bd20f7936 — TEMP_PASSWORD in tests/unit/pending-activation-enrolled-owner.test.ts (bcrypt cost 4, mocked
-  //                  routes): a fixture;
-  //   4e7cc8670768 — TOTP_SECRET in tests/unit/readiness-scripts-owner-login-change.test.ts: a fixture;
-  //   b94e8093ff12 — DEMO_PASSWORD in scripts/seed-demo-rich.mjs: NOT a fixture — the fixed login password the seed
-  //                  gives its demo accounts on whichever database it ran against (ledgered by F3; drop this entry
-  //                  once the seed takes the password from the environment and every seeded account's is changed).
-  const KNOWN_FIXTURE_FINGERPRINTS = new Set(["7d3bddd6e499", "0895203bc15e", "a81bd20f7936", "4e7cc8670768", "b94e8093ff12"]);
+  // 14 Oct 2026 (fix/secrets-fixtures): the four secret-shaped test fixtures
+  // were replaced with placeholder-marked values of the same shape, so the
+  // scan classifies them placeholder. The one remaining accepted candidate is
+  // the deliberately public demo-seed password, carried by the fail-closed
+  // allowlist file (scripts/readiness/secret-scan-allowlist.json) - this test
+  // accepts exactly what that file accepts, so the two can never drift.
+  const KNOWN_FIXTURE_FINGERPRINTS = new Set(loadAllowlist(ROOT).map((e) => `${e.fingerprint}@${e.path}`));
 
   // ~1 s alone; R2 saw it exceed the 30 s default with 7 files in parallel (lane E3: explicit 180 s budget).
   it("contains no candidate secret beyond the documented fixtures", { timeout: 180_000 }, () => {
@@ -150,7 +198,7 @@ describe("repository tree (tracked files at HEAD)", () => {
       }
       if (body.subarray(0, 8000).includes(0)) continue;
       for (const f of scanText(body.toString("utf8"), rel)) {
-        if (f.classification === "candidate" && !KNOWN_FIXTURE_FINGERPRINTS.has(f.fingerprint)) {
+        if (f.classification === "candidate" && !KNOWN_FIXTURE_FINGERPRINTS.has(`${f.fingerprint}@${rel}`)) {
           unknown.push(`${f.rule} ${f.location}:${f.line} fp=${f.fingerprint}`);
         }
       }

@@ -15,7 +15,7 @@ describe("classifyStripeKey", () => {
     // The whole reason this file exists. The previous inline check knew only
     // sk_live_/sk_test_, so the key in production reported mode "unknown" —
     // a live key, in production, described as unknown.
-    const k = classifyStripeKey("rk_live_51T87S7J74LmUlLwB");
+    const k = classifyStripeKey("rk_live_a00000000000000000000");
     expect(k.mode).toBe("live");
     expect(k.kind).toBe("restricted");
     expect(k.usableAsSecret).toBe(true);
@@ -104,7 +104,7 @@ describe("assessKeyForEnvironment", () => {
 
   it("passes the restricted live key production holds, in production", () => {
     // End to end through both functions, because the two are only useful together.
-    const k = classifyStripeKey("rk_live_51T87S7J74LmUlLwB");
+    const k = classifyStripeKey("rk_live_a00000000000000000000");
     expect(assessKeyForEnvironment(k.mode, "production").ok).toBe(true);
   });
 });
