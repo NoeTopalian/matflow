@@ -8,7 +8,7 @@ Prepared for Noe. Engineering status only; merge, deployment, production verific
 | #30 | `fix/main-ci-green` | `eea6e18` | main | 19 inherited Vitest failures classified and repaired (tests only) |
 | #32 | `fix/secrets-fixtures` | `e5e14da` | #30 | secret-shaped fixtures → placeholders; fail-closed scan allowlist with ONE documented entry |
 | #31 | `feat/hub-club-edit-access` | `a1dfee9` | main | View/Edit support sessions; field-level policy; owner-visible attribution |
-| #33 | `fix/blob-tenant-ownership` | `f2f5138` | #31 | cross-tenant blob ownership (all accept/delete paths); operator-plane refusal rows; parser probes; this packet |
+| #33 | `fix/blob-tenant-ownership` | `680b673` | #31 | cross-tenant blob ownership (all accept/delete paths); operator-plane refusal rows; parser probes; this packet |
 | #28 | `fix/members-toolbar-table-banner` | (unchanged) | main | Members UI + banner LocalTime |
 | #29 | `feat/hub-conflict-resolution` | `44ad24e` | main | staff / multi-holder login-address conflicts (draft) |
 
@@ -23,11 +23,12 @@ Node `24.21.0` (pinned scratchpad runtime); Next.js 16; production builds via `n
 | `npm run lint` | 0 | 0 |
 | `tsc --noEmit` | 0 | 0 |
 | UI-RULES ratchet | baseline | baseline |
-| Full `npm test` | 6,769 passed / 0 failed (491 files; 83 DB files skipped locally by design) | 6,785 passed / 0 failed on `7e24f4e` (493 files); re-run on `f2f5138`: **6,786 passed / 0 failed** (493 files) |
+| Full `npm test` | 6,769 passed / 0 failed (491 files; 83 DB files skipped locally by design) | 6,785 / 0 on `7e24f4e`; 6,786 / 0 on `f2f5138`; **6,786 passed / 0 failed on the final `680b673`** (493 files); production build 0 on `680b673` |
 | `next build` | 0 | 0 (`7e24f4e`; the `f2f5138` delta is one client key handler) |
 | Integration, owner role (TEST) | binding-db + field-policy-db: 0 | 0 (`7e24f4e`) |
 | Integration, restricted role (TEST) | 0 | 0 (`7e24f4e`) |
 | Browser proof (prod build, TEST, isolated) | 18/18 across enrol/edit/owner/view; teardown clean | On `7e24f4e`: edit 12/12 (incl. rank award in-session: plain 201, photo keys 403 by policy, nothing stored; 8+ operator-plane refusal rows), owner 2/2 (Activity pills; **owner-path foreign blob 400, inline 201, nothing stored**), view 5/5; keyboard pass 8/10 — Escape-to-close FAILED then fixed in `f2f5138` (re-run on its build: 9/10, Escape PASS; only the 390 px hub overflow remains); hub page overflows at 390 px (residual). A second edit pass on the same fixtures hit two 409 duplicates (fixture re-use, not product); the drive is now re-run-safe. |
+| Browser robustness (prod build, TEST, two isolated clubs) | — | cross-club isolation (member PATCH, class PATCH, roster, rank, check-in against the other club: all 404, other club byte-identical); stale save `updatedAt` → 409 with the row at the newer value; repeat PATCH → one outcome; lost-response class create → a duplicate class (documented: not idempotent, owner-visible and deletable); step-up grant replay → refused; operator revocation mid-session → next read and write 401, nothing written. Expiry is proven by the DB suite (31-minute clock), not waited for in the browser. |
 | `secret-scan --tree` | n/a | on #32: candidates 0, allowlisted 1 |
 
 NOT RUN / expected-failure cells, with reasons:
@@ -40,7 +41,7 @@ NOT RUN / expected-failure cells, with reasons:
 |---|---|---|
 | #31 security (bypass hunt) | 2 | APPROVED WITH RESIDUALS |
 | #31 functional (real UI, owner behaviour) | 3 | APPROVED WITH RESIDUALS |
-| #33 security (blob ownership, refusal logging) | 2 | APPROVED WITH RESIDUALS (round 1 CHANGES REQUIRED: I-1..I-4, M-1..M-3 — all fixed or ruled, see §6) |
+| #33 security (blob ownership, refusal logging) | 3 | APPROVED WITH RESIDUALS — round 1 CHANGES REQUIRED (I-1..I-4, M-1..M-3, fixed/ruled); round 2 approved `aeef7fc`; round 3 approved the post-review commits at `621edae` (no false refusals; profile-picture canary change a real improvement); its three wording/logging nits applied in `680b673` |
 | #33 functional | 2 | APPROVED WITH RESIDUALS (F1/F4 fixed; F2 residual; R2-1 fixed) |
 Reports are in the session evidence pack (`review-security*.md`, `review-functional*.md`).
 
@@ -69,7 +70,7 @@ billing/entitlements · authentication/invitation · guardian authority · finan
 Each merge to main deploys. Order: **#30 → make "Typecheck + Lint + Vitest" required → #32 → #31 → #33 → #28 → #29**. Verify base/head on GitHub after each merge (do not assume automatic retargeting). Per-state qualification (tsc + the suites of the PRs involved + tree scan) is recorded in `INTEGRATION-STEPS.md` (same folder): every state compiles and passes its suites; the tree scan is red for the two pre-#32 states (as PR #30 states) and green from S2 on; one load-contention flake at S3 re-ran green alone. The only cross-PR conflict is `ImpersonationBanner.tsx` (#28 × #31): keep #31's scope/club-name structure and #28's `<LocalTime>` expiry (resolution rehearsed).
 
 ## 8. Statuses, kept separate
-- **Engineering:** complete for #31/#33 pending the final gates in §3 and the re-review verdicts in §4.
+- **Engineering:** complete for #31/#33 — every executable commit on both branches has an independent review verdict; the only unreviewed delta is the three wording/logging nits the reviewer itself prescribed (`680b673`), covered by the route suites.
 - **Merge:** none performed. Noe's decision per §7.
 - **Deployment:** none. Production serves `9272a21`.
 - **Production verification:** NOT RUN — runbook B in `RUNBOOKS.md`, to be executed after an approved deployment, on demo/synthetic clubs only.
