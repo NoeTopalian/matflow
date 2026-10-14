@@ -663,9 +663,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
+  // N-4: in a support edit session a ?tab= deep link must not open a tab the
+  // rail does not offer (their saves are refused).
+  const tabOffered = useCallback((t: Tab) => !supportEdit || t === "overview" || t === "branding", [supportEdit]);
   const [tab, setTabState] = useState<Tab>(() => {
     const requested = searchParams.get("tab");
-    return isTab(requested) ? requested : "overview";
+    return isTab(requested) && tabOffered(requested) ? requested : "overview";
   });
 
   // Wrapper that updates both the local tab state and the URL search-param,
@@ -874,8 +877,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // router.replace and re-trigger this effect.
   useEffect(() => {
     const requested = searchParams.get("tab");
-    setTabState(isTab(requested) ? requested : "overview");
-  }, [searchParams]);
+    setTabState(isTab(requested) && tabOffered(requested) ? requested : "overview");
+  }, [searchParams, tabOffered]);
 
   useEffect(() => {
     try {

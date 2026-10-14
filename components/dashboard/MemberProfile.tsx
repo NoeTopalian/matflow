@@ -915,7 +915,15 @@ export default function MemberProfile({
       const res = await fetch(`/api/members/${member.id}/rank`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(rankForm),
+        // N-2: photoUrl was always sent, "" included - under the support
+        // field policy that refused EVERY award. Send it only when a photo
+        // was actually chosen (an empty photo key carries no meaning).
+        body: JSON.stringify({
+          rankSystemId: rankForm.rankSystemId,
+          stripes: rankForm.stripes,
+          notes: rankForm.notes,
+          ...(rankForm.photoUrl ? { photoUrl: rankForm.photoUrl } : {}),
+        }),
       });
       if (!res.ok) { toast((await res.json()).error ?? "Failed to assign rank", "error"); return; }
       const newRank = await res.json();
@@ -2177,6 +2185,11 @@ export default function MemberProfile({
             )}
 
             <div className="mt-3">
+              {supportEdit ? (
+                <p role="note" className="text-xs" style={{ color: "var(--tx-3)" }}>
+                  Promotion photos stay with the club owner during a support session.
+                </p>
+              ) : (<>
               <label className="text-xs uppercase tracking-wider block mb-1" style={{ color: "var(--tx-3)" }}>
                 Promotion photo (optional)
               </label>
@@ -2213,6 +2226,7 @@ export default function MemberProfile({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={toBlobProxyUrl(rankForm.photoUrl) ?? rankForm.photoUrl} alt="Preview" className="mt-2 w-20 h-20 rounded-lg object-cover" />
               )}
+              </>)}
             </div>
 
             <div>

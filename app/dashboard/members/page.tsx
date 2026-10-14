@@ -156,6 +156,7 @@ export default async function MembersPage() {
         role={session!.user.role}
         guardianReviewCount={guardianReviewCount}
         truncatedAt={truncated ? MEMBERS_SSR_TAKE : null}
+        supportScope={(session!.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
       />
     </>
   );
