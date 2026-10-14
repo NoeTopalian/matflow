@@ -7,7 +7,7 @@ import { logAudit } from "@/lib/audit-log";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { emailDigest } from "@/lib/login-email";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
-import { isVercelBlobUrl } from "@/lib/blob-url";
+import { isTenantBlobUrl } from "@/lib/blob-url";
 import { computeMemberStats } from "@/lib/member-stats";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
@@ -366,7 +366,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       try {
         const { del } = await import("@vercel/blob");
         for (const p of doomedPhotos) {
-          if (!p.url || !isVercelBlobUrl(p.url)) continue;
+          if (!p.url || !isTenantBlobUrl(p.url, tenantId)) continue;
           try {
             await del(p.url);
           } catch (e) {

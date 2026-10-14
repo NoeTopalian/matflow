@@ -12,11 +12,12 @@ import {
 } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { isVercelBlobUrl } from "@/lib/blob-url";
+import { isTenantBlobUrl } from "@/lib/blob-url";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
 import { refuseSupportSession, refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
+import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
 import { LoginIdentityTaken, claimLoginIdentity, emailDigest, retireEmailBoundTokens } from "@/lib/login-email";
 
 // feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
@@ -226,7 +227,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // paymentStatus, email, membership*, attribution) refuses the WHOLE
     // request, so a mixed body never partially applies.
     const fieldRefusal = refuseSupportEditFields(session, raw, SUPPORT_EDIT_FIELD_POLICY["member.update"]);
-    if (fieldRefusal) return fieldRefusal;
+    if (fieldRefusal) {
+      await recordSupportRefusal(session, { route: "PATCH /api/members/[id]", refusedFields: await refusedFieldsOf(fieldRefusal) }, req);
+      return fieldRefusal;
+    }
     // Defence in depth: strip TOTP fields so an attacker cannot disable
     // a member's TOTP through this PATCH route. Only the dedicated reset
     // endpoints (/api/admin/customers/[id]/member-totp-reset for operator
@@ -863,7 +867,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     // an orphaned file rather than fail an operation the operator has been
     // told is done. Best-effort per file, exactly like the DSAR erase path;
     // the warning names the photo id so it can be cleaned up by hand.
-    const photosDeleted = await deleteMemberPhotoBlobs(doomedPhotos);
+    const photosDeleted = await deleteMemberPhotoBlobs(doomedPhotos, session.user.tenantId);
 
     return NextResponse.json({
       success: true,
@@ -886,7 +890,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
  * delete paths do it (profile-picture, photos) — the SDK is not needed on the
  * far commoner non-deleting requests through this module.
  */
-async function deleteMemberPhotoBlobs(photos: Array<{ id: string; url: string }>): Promise<number> {
+async function deleteMemberPhotoBlobs(photos: Array<{ id: string; url: string }>, tenantId: string): Promise<number> {
   // NOTHING in here may throw. The member IS deleted by the time we run, so an
   // exception escaping would be caught by the handler's outer try and answered
   // "Failed to delete member" for a delete that succeeded — the same class of
@@ -894,7 +898,8 @@ async function deleteMemberPhotoBlobs(photos: Array<{ id: string; url: string }>
   // try around the whole body rather than only around each del().
   let deleted = 0;
   try {
-    const blobPhotos = photos.filter((p) => p?.url && isVercelBlobUrl(p.url));
+    // Only this club's own store files (cross-tenant blob deletion, 14 Oct 2026).
+    const blobPhotos = photos.filter((p) => p?.url && isTenantBlobUrl(p.url, tenantId));
     if (blobPhotos.length === 0) return 0;
 
     const { del } = await import("@vercel/blob");

@@ -52,6 +52,27 @@ export function isVercelBlobUrl(url: string): boolean {
 }
 
 /**
+ * True if `url` is one of OUR blob URLs AND lives under this club's namespace
+ * (`/tenants/<tenantId>/`, the prefix every upload path writes: upload,
+ * imports, signatures, initiatives). Owner-path cross-tenant blob deletion
+ * (security review of PR #31, 14 Oct 2026): a club could submit another
+ * club's blob URL as a photo, then replace or delete it, and the store file
+ * of the OTHER club was deleted. Accept-time check for every client-supplied
+ * blob URL, and the filter before every del() of a stored one. `data:` and
+ * same-origin `/api/blob/` paths are not blob URLs and are judged elsewhere.
+ */
+export function isTenantBlobUrl(url: string, tenantId: string): boolean {
+  if (!tenantId || !isVercelBlobUrl(url)) return false;
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return false;
+  }
+  return pathname.startsWith(`/tenants/${tenantId}/`);
+}
+
+/**
  * Route a Vercel Blob URL through the authenticated image proxy so private
  * blobs resolve. Non-blob URLs (including `data:` URLs) pass through unchanged
  * so they render directly in <img>/<Image>.

@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
+import { isTenantBlobUrl } from "@/lib/blob-url";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { logAudit } from "@/lib/audit-log";
@@ -113,7 +114,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    if (existing?.imageUrl && /blob\.vercel-storage\.com/.test(existing.imageUrl)) {
+    if (existing?.imageUrl && isTenantBlobUrl(existing.imageUrl, session.user.tenantId)) {
       try {
         await del(existing.imageUrl);
       } catch (e) {
