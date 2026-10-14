@@ -9,6 +9,7 @@
 
 import { resolveActiveImpersonation } from "@/lib/impersonation";
 import EndImpersonationButton from "./EndImpersonationButton";
+import LocalTime from "./LocalTime";
 
 export default async function ImpersonationBanner() {
   let active: Awaited<ReturnType<typeof resolveActiveImpersonation>> = null;
@@ -20,7 +21,6 @@ export default async function ImpersonationBanner() {
   if (!active) return null;
   const imp = active.payload;
 
-  const expiresAt = new Date(imp.exp * 1000);
   // Audit iter-1-dashboard A4H-5: Date.now() in a Server Component renders
   // once per request — it's a render-time snapshot of "now" for the
   // minutes-remaining display, not a render-impurity bug.
@@ -51,7 +51,7 @@ export default async function ImpersonationBanner() {
     >
       <span style={{ flex: 1, minWidth: 0 }}>
         <strong>MatFlow support session, read-only</strong> — {minsLeft}m left ·{" "}
-        <span style={{ opacity: 0.85 }}>ends {expiresAt.toLocaleTimeString("en-GB")}</span>
+        <span style={{ opacity: 0.85 }}>ends <LocalTime epochMs={imp.exp * 1000} /></span>
         {imp.reason && (
           <>
             {" · "}
