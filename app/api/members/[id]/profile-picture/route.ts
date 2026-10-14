@@ -24,7 +24,7 @@ import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
-import { isVercelBlobUrl, isTenantBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
 import { refuseSupportSession } from "@/lib/support-session";
 
 export const runtime = "nodejs";
@@ -120,7 +120,7 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
   const parsed = putSchema.safeParse(body);
-  if (parsed.success && parsed.data.url.startsWith("https://") && !isTenantBlobUrl(parsed.data.url, tenantId)) {
+  if (parsed.success && isForeignBlobUrl(parsed.data.url, tenantId)) {
     return NextResponse.json({ error: "Picture must be uploaded through MatFlow for this club" }, { status: 400 });
   }
   if (!parsed.success) {

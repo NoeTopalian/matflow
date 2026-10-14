@@ -53,7 +53,7 @@ import { refuseSupportSession } from "@/lib/support-session";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { emailDigest } from "@/lib/login-email";
-import { isVercelBlobUrl } from "@/lib/blob-url";
+import { isTenantBlobUrl } from "@/lib/blob-url";
 import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
@@ -649,10 +649,10 @@ export async function POST(req: Request) {
   // surviving PII linked to the member. Never abort the erase for it — the
   // warning names the row so an operator can clean up by hand.
   for (const photo of scope.photos) {
-    await deleteBlobBestEffort(photo.url, `MemberPhoto ${photo.id}`);
+    await deleteBlobBestEffort(photo.url, `MemberPhoto ${photo.id}`, tenantId);
   }
   for (const waiver of scope.waivers) {
-    await deleteBlobBestEffort(waiver.signatureImageUrl, `SignedWaiver ${waiver.id}`);
+    await deleteBlobBestEffort(waiver.signatureImageUrl, `SignedWaiver ${waiver.id}`, tenantId);
   }
 
   return NextResponse.json({
@@ -680,8 +680,9 @@ class ErasureSubjectChanged extends Error {
  * and SignedWaiver.signatureImageUrl both accept an inline `data:` fallback,
  * which has no file behind it and must not be handed to the Blob API.
  */
-async function deleteBlobBestEffort(url: string | null, label: string): Promise<void> {
-  if (!url || !isVercelBlobUrl(url)) return;
+async function deleteBlobBestEffort(url: string | null, label: string, tenantId: string): Promise<void> {
+  // Only this club's own store files (cross-tenant blob deletion, 14 Oct 2026).
+  if (!url || !isTenantBlobUrl(url, tenantId)) return;
   try {
     await del(url);
   } catch (err) {

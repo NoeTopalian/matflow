@@ -36,7 +36,7 @@ import { checkCronAuthAttempt } from "@/lib/rate-limit";
 import { del } from "@vercel/blob";
 import { Prisma } from "@prisma/client";
 import { withRlsBypass } from "@/lib/prisma-tenant";
-import { isVercelBlobUrl } from "@/lib/blob-url";
+import { isTenantBlobUrl } from "@/lib/blob-url";
 import { DB_UPLOAD_PREFIX } from "@/lib/import-storage";
 import { purgeSoftDeletedTenants } from "@/lib/tenant-purge";
 import { auditLogRetentionWhere } from "@/lib/audit-log";
@@ -430,8 +430,9 @@ async function purgeAbandonedImportJobs(
 
     // Best-effort blob cleanup BEFORE the rows go: once the row is gone the
     // URL is unrecoverable and the CSV (member PII) is orphaned forever.
-    // Guarded by isVercelBlobUrl so legacy/data: values never reach del().
-    const blobUrls = jobs.map((j) => j.fileBlobUrl).filter(isVercelBlobUrl);
+    // Guarded by isTenantBlobUrl so legacy/data: values and anything outside
+    // the owning club's namespace never reach del() (14 Oct 2026).
+    const blobUrls = jobs.filter((j) => j.fileBlobUrl && isTenantBlobUrl(j.fileBlobUrl, j.tenantId)).map((j) => j.fileBlobUrl as string);
     if (blobUrls.length > 0) {
       blobsDeleted += await deleteBlobsBestEffort(blobUrls);
     }

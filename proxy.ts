@@ -313,6 +313,12 @@ const authProxy = auth(async function proxy(req) {
     const rawScope = (req.auth?.user as { supportScope?: unknown } | undefined)?.supportScope;
     const decision = supportRequestDecision(method, pathname, rawScope === "edit" ? "edit" : "view");
     if (!decision.allowed) {
+      // No database at the edge, so these refusals cannot become audit rows
+      // (field-level refusals inside routes are: lib/support-refusal-audit.ts).
+      // One structured line, no body, no identity beyond the request id, so
+      // the high-risk attempts (DELETEs, payments, exports) are still visible
+      // in the platform logs (security review of PR #33, 14 Oct 2026).
+      console.warn(JSON.stringify({ event: "support.refused", scope: rawScope === "edit" ? "edit" : "view", method, path: pathname.slice(0, 200), reason: decision.reason, requestId }));
       const isRead = !method || ["GET", "HEAD"].includes(method.toUpperCase());
       if (!pathname.startsWith("/api/") && isRead) {
         // A page on the operator plane: back to the club view, where the

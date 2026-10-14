@@ -7,7 +7,7 @@ import { sendPushToMember } from "@/lib/push";
 import { notesField } from "@/lib/schemas/notes-sanitiser";
 import { assertSameOrigin } from "@/lib/csrf";
 import { del } from "@vercel/blob";
-import { isVercelBlobUrl, isTenantBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
 import { STAFF_ROLES } from "@/lib/authz";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
@@ -91,7 +91,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { rankSystemId, stripes, notes } = parsed.data;
   // A blob photo must be one of THIS club's uploads (cross-tenant blob
   // deletion, 14 Oct 2026): a foreign store URL is refused before any write.
-  if (parsed.data.photoUrl?.startsWith("https://") && !isTenantBlobUrl(parsed.data.photoUrl, session.user.tenantId)) {
+  if (parsed.data.photoUrl && isForeignBlobUrl(parsed.data.photoUrl, session.user.tenantId)) {
     return NextResponse.json({ error: "Photo must be uploaded through MatFlow for this club" }, { status: 400 });
   }
 

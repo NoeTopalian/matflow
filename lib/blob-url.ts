@@ -69,7 +69,23 @@ export function isTenantBlobUrl(url: string, tenantId: string): boolean {
   } catch {
     return false;
   }
+  // No encoded separators or dot-segments anywhere in the path: a store may
+  // decode "%2F" or resolve ".." differently from the URL parser, so a path
+  // that only LOOKS like it stays under the prefix is refused outright.
+  // (A literal backslash never survives the parser: WHATWG normalises it to
+  // "/" for https URLs, so only its encoded form needs refusing.)
+  if (/%2f|%5c|%2e|\.\./i.test(pathname)) return false;
   return pathname.startsWith(`/tenants/${tenantId}/`);
+}
+
+/**
+ * A blob-store URL (any scheme/host case, so "HTTPS://" cannot slip past a
+ * case-sensitive prefix test) that is NOT under this club's namespace. The
+ * accept-time refusal for every client-supplied photo/picture URL; data: and
+ * same-origin paths are not blob URLs and are judged by each route's schema.
+ */
+export function isForeignBlobUrl(url: string, tenantId: string): boolean {
+  return isVercelBlobUrl(url) && !isTenantBlobUrl(url, tenantId);
 }
 
 /**

@@ -44,7 +44,9 @@ export async function recordSupportRefusal(session: unknown, refusal: SupportRef
         targetTenantId: user?.tenantId ?? null,
         scope: user?.supportScope === "edit" ? "edit" : "view",
         route: refusal.route,
-        refusedFields: refusal.refusedFields.slice(0, 20),
+        // Bounded and identifier-shaped: a hostile body cannot turn the row
+        // into a multi-megabyte log line (security review M-3).
+        refusedFields: refusal.refusedFields.slice(0, 20).map((f) => (/^[A-Za-z0-9_.$-]{1,64}$/.test(f) ? f : "<invalid>")),
       },
       actAsUserId: operatorId,
       req,

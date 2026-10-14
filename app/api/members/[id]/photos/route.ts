@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
-import { isVercelBlobUrl, isTenantBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
 import { logAudit } from "@/lib/audit-log";
 import { refuseSupportSession } from "@/lib/support-session";
 
@@ -91,7 +91,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return apiError("Invalid JSON", 400);
   }
   const parsed = postSchema.safeParse(body);
-  if (parsed.success && parsed.data.url.startsWith("https://") && !isTenantBlobUrl(parsed.data.url, tenantId)) {
+  if (parsed.success && isForeignBlobUrl(parsed.data.url, tenantId)) {
     return apiError("Photo must be uploaded through MatFlow for this club", 400);
   }
   if (!parsed.success) {

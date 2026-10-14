@@ -10,7 +10,7 @@
 import { del } from "@vercel/blob";
 import type { Prisma } from "@prisma/client";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
-import { isVercelBlobUrl } from "@/lib/blob-url";
+import { isTenantBlobUrl } from "@/lib/blob-url";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import {
@@ -379,7 +379,7 @@ async function walkTenant(
       tx.importJob.findMany({ where: { tenantId }, select: { id: true, fileBlobUrl: true }, take: BATCH }),
     );
     if (jobs.length === 0) break;
-    await deleteBlobsBestEffort(jobs.map((j) => j.fileBlobUrl).filter(isVercelBlobUrl));
+    await deleteBlobsBestEffort(jobs.map((j) => j.fileBlobUrl).filter((u) => isTenantBlobUrl(u, tenantId)));
     await guarded((tx) => tx.importJob.deleteMany({ where: { tenantId, id: { in: jobs.map((j) => j.id) } } }));
   }
 
@@ -423,7 +423,7 @@ async function drainMembers(
       ),
     ]);
     await deleteBlobsBestEffort(
-      [...photos.map((p) => p.url), ...waivers.map((w) => w.signatureImageUrl ?? "")].filter(isVercelBlobUrl),
+      [...photos.map((p) => p.url), ...waivers.map((w) => w.signatureImageUrl ?? "")].filter((u) => isTenantBlobUrl(u, tenantId)),
     );
 
     const pass = await guarded(
@@ -493,7 +493,7 @@ export async function purgeTenantById(
     membersDeleted = walk.membersDeleted;
     if (!walk.completed) return { kind: "partial", membersDeleted };
 
-    if (tenant.logoUrl && isVercelBlobUrl(tenant.logoUrl)) {
+    if (tenant.logoUrl && isTenantBlobUrl(tenant.logoUrl, tenantId)) {
       await deleteBlobsBestEffort([tenant.logoUrl]);
     }
     await withRlsBypass(async (tx) => {

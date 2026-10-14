@@ -24,6 +24,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { z } from "zod";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
+import { isForeignBlobUrl } from "@/lib/blob-url";
 
 const ALLOWED_KINDS = ["evidence", "milestone", "promotion"] as const;
 const MAX_URL_LENGTH = 3_500_000; // ~3MB — matches the /api/upload data: URL fallback cap
@@ -107,6 +108,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data" }, { status: 400 });
+  }
+  // A blob photo must be one of THIS club's uploads (cross-tenant blob
+  // deletion, 14 Oct 2026): a foreign store URL is refused before any write.
+  if (isForeignBlobUrl(parsed.data.url, tenantId)) {
+    return NextResponse.json({ error: "Photo must be uploaded through MatFlow for this club" }, { status: 400 });
   }
   const { url, caption, kind } = parsed.data;
 

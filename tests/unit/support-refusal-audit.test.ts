@@ -94,6 +94,16 @@ describe("support.edit.refused rows", () => {
     expect(refusalRows()).toHaveLength(0);
   });
 
+  it("refused field names are bounded and identifier-shaped (M-3): a hostile key cannot bloat the row", async () => {
+    mockAuth.mockResolvedValue(editSession as never);
+    const hostile = "x".repeat(5000);
+    const res = await memberPatch(req({ [hostile]: 1, "weird key with spaces": 2, status: "cancelled" }), params);
+    expect(res.status).toBe(403);
+    const meta = refusalRows()[0].metadata as { refusedFields: string[] };
+    expect(meta.refusedFields).toEqual(["<invalid>", "<invalid>", "status"]);
+    expect(JSON.stringify(refusalRows()[0]).length).toBeLessThan(2000);
+  });
+
   it("an audit-write failure never turns the refusal into a 500", async () => {
     mockAuth.mockResolvedValue(editSession as never);
     m.logAudit.mockRejectedValueOnce(new Error("db down"));

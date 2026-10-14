@@ -160,9 +160,9 @@ const ORIGINAL_EMAIL = "alice@example.com";
 const SENTINEL = `deleted-${MEMBER_ID}@deleted.invalid`;
 const EXTERNAL_REF = "teamup:alice@example.com|Alice Smith";
 
-const BLOB_PHOTO_URL = "https://store1.blob.vercel-storage.com/photos/alice.jpg";
+const BLOB_PHOTO_URL = "https://store1.blob.vercel-storage.com/tenants/tenant-A/photos/alice.jpg"; // under THIS club: only own-namespace files are deleted (14 Oct 2026)
 const DATA_PHOTO_URL = "data:image/png;base64,AAAA";
-const BLOB_SIG_URL = "https://store1.blob.vercel-storage.com/sigs/alice.png";
+const BLOB_SIG_URL = "https://store1.blob.vercel-storage.com/tenants/tenant-A/sigs/alice.png";
 const DATA_SIG_URL = "data:image/png;base64,BBBB";
 
 beforeEach(() => {

@@ -45,7 +45,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
   withRlsBypass: vi.fn(),
 }));
 
-import { isTenantBlobUrl, isVercelBlobUrl } from "@/lib/blob-url";
+import { isTenantBlobUrl, isVercelBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
 import { POST as rankAward } from "@/app/api/members/[id]/rank/route";
 
 const OWN = "https://abc123.private.blob.vercel-storage.com/tenants/t-A/photo-1.jpg";
@@ -70,6 +70,18 @@ describe("isTenantBlobUrl", () => {
     expect(isTenantBlobUrl(OWN, "")).toBe(false);
     // prefix must be a whole path segment
     expect(isTenantBlobUrl("https://abc123.private.blob.vercel-storage.com/tenants/t-AB/x.jpg", "t-A")).toBe(false);
+    // M-1: encoded separators and dot-segments never pass, wherever they sit
+    expect(isTenantBlobUrl("https://abc123.private.blob.vercel-storage.com/tenants/t-A/..%2Ftenants%2Ft-B%2Fx.jpg", "t-A")).toBe(false);
+    expect(isTenantBlobUrl("https://abc123.private.blob.vercel-storage.com/tenants/t-A/%2e%2e/t-B/x.jpg", "t-A")).toBe(false);
+    expect(isTenantBlobUrl("https://abc123.private.blob.vercel-storage.com/tenants/t-A/x%5Cy.jpg", "t-A")).toBe(false);
+  });
+
+  it("isForeignBlobUrl is case-insensitive on the scheme and host (I-2) and ignores non-blob URLs", () => {
+    expect(isForeignBlobUrl("HTTPS://ABC123.PRIVATE.BLOB.VERCEL-STORAGE.COM/tenants/t-B/x.jpg", "t-A")).toBe(true);
+    expect(isForeignBlobUrl(FOREIGN, "t-A")).toBe(true);
+    expect(isForeignBlobUrl(OWN, "t-A")).toBe(false);
+    expect(isForeignBlobUrl("data:image/png;base64,AAAA", "t-A")).toBe(false);
+    expect(isForeignBlobUrl("/api/blob/abc", "t-A")).toBe(false);
   });
 });
 
@@ -79,6 +91,12 @@ describe("rank award — foreign blob URLs", () => {
     expect(res.status).toBe(400);
     expect(m.photoCreate).not.toHaveBeenCalled();
     expect(m.del).not.toHaveBeenCalled();
+  });
+
+  it("an upper-case scheme does not slip a foreign URL past the accept check (I-2)", async () => {
+    const res = await rankAward(req({ rankSystemId: "r1", photoUrl: "HTTPS://abc123.private.blob.vercel-storage.com/tenants/t-B/photo-9.jpg" }), params);
+    expect(res.status).toBe(400);
+    expect(m.photoCreate).not.toHaveBeenCalled();
   });
 
   it("our own blob URL is accepted (unchanged behaviour)", async () => {
