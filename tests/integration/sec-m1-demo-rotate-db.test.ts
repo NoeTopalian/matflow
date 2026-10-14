@@ -24,8 +24,12 @@ vi.mock("@sentry/nextjs", () => ({ captureException: () => {} }));
 
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { checkSessionVersion } from "@/lib/session-revocation";
+import { classifyDbTarget, assertTestBranch, skipReason } from "./helpers/db-target";
 
-const HAS_DB = !!process.env.DATABASE_URL;
+const TARGET = classifyDbTarget(process.env.DATABASE_URL);
+// Skipped (visibly) on none/local/CI targets; run on the TEST branch; a refuse-class target still enters and throws.
+const HAS_DB = TARGET === "run" || TARGET === "refuse";
+const SKIP_NOTE = skipReason(TARGET) ? ` [skipped: ${skipReason(TARGET)}]` : "";
 const ROLE_VAR = process.env.RLS_ENFORCED === "1" ? "RESTRICTED_DATABASE_URL" : "TEST_DATABASE_URL";
 const STAMP = `secm1-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const SCRIPT = path.join(process.cwd(), "scripts/readiness/demo-accounts-rotate.mjs");
@@ -92,10 +96,9 @@ function expectClean(out: string, known: Map<string, Row>[]) {
   expect(/[A-Za-z0-9_-]{32,}/.test(out), "a password-length token was printed").toBe(false);
 }
 
-describe.skipIf(!HAS_DB)(`SF-109 demo-account rotation tool on TEST (${process.env.RLS_ENFORCED === "1" ? "matflow_app, RLS" : "owner"})`, () => {
+describe.skipIf(!HAS_DB)(`SF-109 demo-account rotation tool on TEST (${process.env.RLS_ENFORCED === "1" ? "matflow_app, RLS" : "owner"})${SKIP_NOTE}`, () => {
   beforeAll(async () => {
-    const url = process.env.DATABASE_URL ?? "";
-    if (!url.includes("ep-hidden-salad") || url.includes("ep-bold-wave")) throw new Error("REFUSED: not the TEST branch");
+    assertTestBranch(process.env.DATABASE_URL);
     await withRlsBypass(async (tx) => {
       ids.A = (await tx.tenant.create({ data: { name: `${STAMP} A`, slug: ids.slugA, onboardingCompleted: true } })).id;
       ids.B = (await tx.tenant.create({ data: { name: `${STAMP} B`, slug: ids.slugB, onboardingCompleted: true } })).id;

@@ -144,7 +144,8 @@ describe.skipIf(!HAS_DB)("F3 parent pays for kid", () => {
           name: "Kid A",
           email: `kid-a-${STAMP}@no-login.matflow.local`,
           accountType: "kids",
-          parentMemberId: pA.id,
+          parentMemberId: pA.id, // confirmed link required since 8d2e696 (guardian links are suggested until confirmed)
+          guardianConfirmedAt: new Date(), guardianSuggestedBy: "staff",
           passwordHash: null,
         },
       });
@@ -161,6 +162,7 @@ describe.skipIf(!HAS_DB)("F3 parent pays for kid", () => {
           email: `kid-b-${STAMP}@no-login.matflow.local`,
           accountType: "kids",
           parentMemberId: pB.id,
+          guardianConfirmedAt: new Date(), guardianSuggestedBy: "staff",
           passwordHash: null,
         },
       });

@@ -58,7 +58,9 @@ function fakeDotEnvDir() {
 
 function spawnTool(args: string[], env: Record<string, string> = {}) {
   const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^PG[A-Z]/i.test(k)));
-  return spawnSync(process.execPath, [SCRIPT, ...args], {
+  // "--" before the script: Node >=20 consumes `--env-file` anywhere in argv as its own flag and exits 9 on a missing
+  // file before the script runs; "--" hands everything after it to the script (so the tool's own refusal is reached).
+  return spawnSync(process.execPath, ["--", SCRIPT, ...args], {
     env: { ...clean, ...env } as unknown as NodeJS.ProcessEnv,
     encoding: "utf8",
     timeout: 30_000,
@@ -121,6 +123,13 @@ describe("SF-129 (a): the env file can never be .env", () => {
     expect(r.stderr).toMatch(/REFUSED: .*\.env/);
     expect(r.stderr).not.toMatch(/allowlisted|host/);
     expect(r.stdout).not.toMatch(/target:/);
+  });
+
+  it("spawned, Linux order: a NON-EXISTENT <dir>/.ENV is refused by name (exit 2) before any existence check or read", () => {
+    const r = spawnTool(["--slug", "secm2-x", "--env-file", path.join(tmp(), "no-such-dir", ".ENV")]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/REFUSED: \.env holds the production credentials/);
+    expect(r.stderr).not.toMatch(/does not exist/);
   });
 });
 

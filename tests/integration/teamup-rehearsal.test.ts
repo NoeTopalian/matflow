@@ -152,7 +152,9 @@ export function generateShapedExport(seed = 7) {
   expected.cancelledOnly = 120;
   for (let i = 0; i < 3; i++) rows.push(row({ name: `${FIRST[rnd(FIRST.length)]} Course${i}`, email: email(), plan: "8 Week Beginners Course", type: "prepaid", status: "completed", proc: "", start: "2025-01-16", expiry: "2025-07-24", completed: "2025-07-25T01:01:35+01:00", dob: "2003-02-11" }));
   expected.completed = 3;
-  for (let i = 0; i < 6; i++) rows.push(row({ name: "(Deleted Customer)", email: "", plan: "Kids Unlimited Membership (OLD)", status: "cancelled", start: "2024-12-01", expiry: "2025-08-31", cancelled: "2025-08-22" }));
+  // Distinct start dates: identical source rows are counted as duplicateRows
+  // since teamup-2 (79981a5), so six byte-identical deleted rows collapse to one.
+  for (let i = 0; i < 6; i++) rows.push(row({ name: "(Deleted Customer)", email: "", plan: "Kids Unlimited Membership (OLD)", status: "cancelled", start: `2024-12-0${i + 1}`, expiry: "2025-08-31", cancelled: "2025-08-22" }));
   expected.deleted = 6;
   expected.people = expected.adultsWithRows + expected.kids + expected.parentsSynthesised + expected.cancelledOnly + expected.completed;
   return { csv: [HEADER, ...rows].join("\n"), expected, sourceRows: rows.length };
@@ -271,7 +273,12 @@ describe.skipIf(!HAS_DB)("TeamUp migration rehearsal on the catalogue-shaped exp
     crash.remaining = 1; // the first adult batch that inserts rows throws after its createMany, inside the transaction → rolled back
     const first = await runCommit(club, csv);
     crash.remaining = 0;
-    expect(first.status).toBe(200);
+    // 2572e50: a run with a system-failed slice says so — 500 { ok:false,
+    // incomplete:true } and the job row is marked failed — instead of a 200
+    // that an operator could read as success. The failure stays reported, not
+    // hidden, and the instruction is to run the import again.
+    expect(first.status).toBe(500);
+    expect((first.body as { incomplete?: boolean }).incomplete).toBe(true);
     expect(first.body.errors, "the failed batch is reported, not hidden").toBeGreaterThan(0);
     expect((first.body.imported ?? 0) + (first.body.errors ?? 0)).toBeGreaterThanOrEqual(expected.people - 25);
     const mid = await dbShape(club.tenantId);

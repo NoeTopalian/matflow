@@ -58,8 +58,12 @@ import {
   type JobMappings,
   type Outcome,
 } from "@/lib/attendance-import";
+import { classifyDbTarget, assertTestBranch, skipReason } from "./helpers/db-target";
 
-const HAS_DB = !!process.env.DATABASE_URL;
+const TARGET = classifyDbTarget(process.env.DATABASE_URL);
+// Skipped (visibly) on none/local/CI targets; run on the TEST branch; a refuse-class target still enters and throws.
+const HAS_DB = TARGET === "run" || TARGET === "refuse";
+const SKIP_NOTE = skipReason(TARGET) ? ` [skipped: ${skipReason(TARGET)}]` : "";
 const STAMP = `aie${Date.now().toString(36)}`;
 const VENUE = "Total BJJ Main";
 const HEADER = "Customer Name,Customer Email,Event Starts At,Offering Type Name,Venue Name,Instructors,Booking Method,Customer Membership ID,Membership ID,Membership Name,Booking Source,Status,Checkin Timestamp";
@@ -285,7 +289,7 @@ function bigFile(): string {
 
 // ── Suite ────────────────────────────────────────────────────────────────────
 
-describe.skipIf(!HAS_DB)("attendance-import engine on the test database", () => {
+describe.skipIf(!HAS_DB)(`attendance-import engine on the test database${SKIP_NOTE}`, () => {
   let main: Club;
   let job1 = "";
   let liveSlot: { instanceId: string; attendanceId: string };
@@ -295,8 +299,7 @@ describe.skipIf(!HAS_DB)("attendance-import engine on the test database", () => 
     JSON.stringify([m.status, m.membershipType, m.paymentStatus, m.updatedAt.getTime()]);
 
   beforeAll(async () => {
-    const url = process.env.DATABASE_URL ?? "";
-    if (!url.includes("ep-hidden-salad")) throw new Error("Refusing: DATABASE_URL is not the ep-hidden-salad test branch.");
+    assertTestBranch(process.env.DATABASE_URL);
     main = await mkClub("main");
     for (const label of ["big-clean", "big-resume", "rb-one", "rb-two"]) await mkClub(label);
     // A live session already on the timetable at file 1's first slot (no check-ins on it).
