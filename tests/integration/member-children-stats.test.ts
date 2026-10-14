@@ -69,7 +69,8 @@ describe.skipIf(!HAS_DB)("US-4 rich kid stats parity", () => {
           tenantId,
           name: "Kid",
           email: `kid-${STAMP}@kids.local`,
-          parentMemberId: parent.id,
+          parentMemberId: parent.id, // confirmed link required since 8d2e696 (guardian links are suggested until confirmed)
+          guardianConfirmedAt: new Date(), guardianSuggestedBy: "staff",
           accountType: "kids",
         },
       });
