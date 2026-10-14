@@ -375,3 +375,39 @@ describe("F3 — PATCH /api/settings under an edit session", () => {
     expect(res.status).not.toBe(403);
   });
 });
+
+
+// ─── Parser-equivalence probes (assurance plan G5, 14 Oct 2026) ─────────────
+// One req.json() object feeds BOTH the raw-key check and zod, so no second
+// parser can see the request differently. These pin the shapes a reviewer
+// might expect to slip through.
+
+describe("parser probes — one parsed object, one verdict", () => {
+  it("a duplicate JSON key cannot hide a prohibited field (last-wins for both parsers, key still present)", async () => {
+    mockAuth.mockResolvedValue(editSession as never);
+    const raw = JSON.parse('{"name":"A","status":"cancelled","name":"B"}');
+    const res = await memberPatch(req("https://x/api/members/m-1", raw), params);
+    expect(res.status).toBe(403);
+    noWrites();
+  });
+
+  it("a non-JSON content-type with a JSON body is judged on the parsed keys all the same", async () => {
+    mockAuth.mockResolvedValue(editSession as never);
+    const r = { url: "https://x/api/members/m-1", headers: new Headers({ "content-type": "text/plain" }), json: async () => ({ paymentStatus: "free" }) } as unknown as Request;
+    const res = await memberPatch(r, params);
+    expect(res.status).toBe(403);
+    noWrites();
+  });
+
+  it("a prohibited field in the query string is simply ignored (the route reads the body only)", async () => {
+    mockAuth.mockResolvedValue(editSession as never);
+    const r = { url: "https://x/api/members/m-1?status=cancelled&paymentStatus=free", headers: new Headers({ "content-type": "application/json" }), json: async () => ({ phone: "07700900123" }) } as unknown as Request;
+    const res = await memberPatch(r, params);
+    expect(res.status).not.toBe(403);
+    expect(m.stripeCancel).not.toHaveBeenCalled();
+    const calls = m.memberUpdateMany.mock.calls as unknown as Array<[{ data?: Record<string, unknown> }]>;
+    const data = calls[0]?.[0]?.data ?? {};
+    expect(data).not.toHaveProperty("status");
+    expect(data).not.toHaveProperty("paymentStatus");
+  });
+});

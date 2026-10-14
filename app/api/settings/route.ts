@@ -9,6 +9,7 @@ import { updateMetadata } from "@/lib/audit-snapshot";
 import { assertSameOrigin } from "@/lib/csrf";
 import { requireApiOwner } from "@/lib/api-authz";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
+import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
 
 // https-only URL validator — blocks javascript:/data:/file: URI XSS in stored
 // links (P2 finding from Sprint 3 security gate).
@@ -204,7 +205,10 @@ export async function PATCH(req: Request) {
   // and payment fields, contactEmail, privacy fields, waiver content and
   // onboarding lifecycle stay with the club owner.
   const fieldRefusal = refuseSupportEditFields(session, body, SUPPORT_EDIT_FIELD_POLICY["settings.update"]);
-  if (fieldRefusal) return fieldRefusal;
+  if (fieldRefusal) {
+    await recordSupportRefusal(session, { route: "PATCH /api/settings", refusedFields: await refusedFieldsOf(fieldRefusal) }, req);
+    return fieldRefusal;
+  }
 
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {

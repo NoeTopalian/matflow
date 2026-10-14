@@ -23,6 +23,7 @@ import { initialDeskPaymentStatus } from "@/lib/payment-status";
 import { CONFIRMED_BY, guardianSuggestionSource } from "@/lib/guardianship";
 import { LoginIdentityTaken, claimLoginIdentity } from "@/lib/login-email";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, isSupportSession, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
+import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -283,7 +284,10 @@ export async function POST(req: Request) {
   // link is CONFIRMED guardian authority and there is no "suggested by
   // operator" state - and the attribution fields stay with the club.
   const fieldRefusal = refuseSupportEditFields(session, body, SUPPORT_EDIT_FIELD_POLICY["member.create"]);
-  if (fieldRefusal) return fieldRefusal;
+  if (fieldRefusal) {
+    await recordSupportRefusal(session, { route: "POST /api/members", refusedFields: await refusedFieldsOf(fieldRefusal) }, req);
+    return fieldRefusal;
+  }
 
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
