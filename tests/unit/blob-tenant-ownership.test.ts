@@ -74,6 +74,9 @@ describe("isTenantBlobUrl", () => {
     expect(isTenantBlobUrl("https://abc123.private.blob.vercel-storage.com/tenants/t-A/..%2Ftenants%2Ft-B%2Fx.jpg", "t-A")).toBe(false);
     expect(isTenantBlobUrl("https://abc123.private.blob.vercel-storage.com/tenants/t-A/%2e%2e/t-B/x.jpg", "t-A")).toBe(false);
     expect(isTenantBlobUrl("https://abc123.private.blob.vercel-storage.com/tenants/t-A/x%5Cy.jpg", "t-A")).toBe(false);
+    // double encoding: any percent sign at all is refused
+    expect(isTenantBlobUrl("https://abc123.private.blob.vercel-storage.com/tenants/t-A/%252e%252e/t-B/x.jpg", "t-A")).toBe(false);
+    expect(isTenantBlobUrl("https://abc123.private.blob.vercel-storage.com/tenants/t-A/a%20b.jpg", "t-A")).toBe(false);
   });
 
   it("isForeignBlobUrl is case-insensitive on the scheme and host (I-2) and ignores non-blob URLs", () => {

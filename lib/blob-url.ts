@@ -74,7 +74,9 @@ export function isTenantBlobUrl(url: string, tenantId: string): boolean {
   // that only LOOKS like it stays under the prefix is refused outright.
   // (A literal backslash never survives the parser: WHATWG normalises it to
   // "/" for https URLs, so only its encoded form needs refusing.)
-  if (/%2f|%5c|%2e|\.\./i.test(pathname)) return false;
+  // Any percent-encoding at all is refused (double encoding such as "%252e"
+  // would survive a narrower list): no path MatFlow writes contains one.
+  if (/%|\.\./.test(pathname)) return false;
   return pathname.startsWith(`/tenants/${tenantId}/`);
 }
 
