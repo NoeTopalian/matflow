@@ -186,3 +186,62 @@ describe("PATCH /api/memberships/[id] — cross-tenant isolation", () => {
     );
   });
 });
+
+// ─── B1-a characterisation: the server already clears a limit on null ────────
+// The defect was entirely client-side (the editor never sent null). These pin
+// the server contract the fixed editor relies on, unchanged by B1.
+
+describe("membership limit clearing — server contract", () => {
+  const row = (maxClassesPerWeek: number | null) => ({
+    id: "tier-1", tenantId: "tenant-A", name: "Plan A", description: null, pricePence: 4500,
+    currency: "GBP", billingCycle: "monthly", maxClassesPerWeek, isKids: false, isActive: true,
+    locationId: null, stripePriceId: null, stripeProductId: null, createdAt: new Date(), updatedAt: new Date(),
+  });
+
+  it("PATCH maxClassesPerWeek: null writes null and audits 3 → null", async () => {
+    mockAuth.mockResolvedValue({ user: { role: "owner", tenantId: "tenant-A", id: "user-1" } } as never);
+    mockUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockFindFirst.mockResolvedValueOnce(row(3) as never).mockResolvedValueOnce(row(null) as never);
+
+    const req = new Request("http://localhost/api/memberships/tier-1", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxClassesPerWeek: null }),
+    });
+    const res = await PATCH(req, { params: Promise.resolve({ id: "tier-1" }) });
+    expect(res.status).toBe(200);
+    expect(mockUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "tier-1", tenantId: "tenant-A" }, data: { maxClassesPerWeek: null } }),
+    );
+    const meta = mockLogAudit.mock.calls[0][0].metadata as Record<string, unknown>;
+    expect(meta.before).toEqual({ maxClassesPerWeek: 3 });
+    expect(meta.after).toEqual({ maxClassesPerWeek: null });
+  });
+
+  it("PATCH without the key leaves the limit out of the write", async () => {
+    mockAuth.mockResolvedValue({ user: { role: "owner", tenantId: "tenant-A", id: "user-1" } } as never);
+    mockUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockFindFirst.mockResolvedValue(row(3) as never);
+
+    const req = new Request("http://localhost/api/memberships/tier-1", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Plan A2" }),
+    });
+    await PATCH(req, { params: Promise.resolve({ id: "tier-1" }) });
+    const data = mockUpdateMany.mock.calls[0][0].data as Record<string, unknown>;
+    expect("maxClassesPerWeek" in data).toBe(false);
+  });
+
+  it("POST refuses an explicit null, which is why the editor omits a blank limit on create", async () => {
+    mockAuth.mockResolvedValue({ user: { role: "owner", tenantId: "tenant-A", id: "user-1" } } as never);
+    const req = new Request("http://localhost/api/memberships", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Plan B", pricePence: 4000, currency: "GBP", billingCycle: "monthly", isKids: false, maxClassesPerWeek: null }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+});

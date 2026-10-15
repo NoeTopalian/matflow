@@ -72,6 +72,30 @@ function entityHref(e: ActivityEntry): string | null {
   }
 }
 
+/**
+ * Who a row names, and whether to say MatFlow support made it (hub club edit
+ * access, 13 Oct 2026). One rule for the desktop table and the phone card
+ * (B1-b, 15 Oct 2026): the card used to print `name ?? "System"` with no
+ * label, so on a phone a support edit read as the owner's own. `byOperator`
+ * comes only from the server's `actedByOperator`; an operator-plane row
+ * already reads "MatFlow", so it gets no second label.
+ */
+export function activityActor(e: Pick<ActivityEntry, "action" | "user" | "actedByOperator">): { name: string; byOperator: boolean } {
+  const name = e.user?.name ?? (e.user?.email ?? (e.action.startsWith("admin.") ? "MatFlow" : "System"));
+  return { name, byOperator: e.actedByOperator === true && name !== "MatFlow" };
+}
+
+function SupportPill() {
+  return (
+    <span
+      className="shrink-0 rounded-full border border-bd-default bg-sf-2 px-1.5 py-0.5 text-[10px] font-semibold text-tx-2"
+      title="This change was made by MatFlow support during a support session, not by your staff."
+    >
+      by MatFlow support
+    </span>
+  );
+}
+
 function describeChanges(meta: Record<string, unknown> | null): string | null {
   if (!meta) return null;
   const changes = meta.changes as Record<string, { from: unknown; to: unknown }> | undefined;
@@ -237,22 +261,13 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
         headerLabel: "Who",
         width: "12rem",
         cell: (e) => {
-          const name = e.user?.name ?? (e.user?.email ?? (e.action.startsWith("admin.") ? "MatFlow" : "System"));
-          // Hub club edit access (13 Oct 2026): a row whose real actor was
-          // MatFlow support says so next to the apparent name, so the owner
-          // can see exactly what MatFlow did in their club.
-          const byOperator = e.actedByOperator === true && name !== "MatFlow";
+          // A row whose real actor was MatFlow support says so next to the
+          // apparent name, so the owner can see exactly what MatFlow did.
+          const { name, byOperator } = activityActor(e);
           return (
             <span className="flex min-w-0 items-center gap-1.5">
               <span className="truncate" style={{ color: "var(--tx-1)" }}>{name}</span>
-              {byOperator && (
-                <span
-                  className="shrink-0 rounded-full border border-bd-default bg-sf-2 px-1.5 py-0.5 text-[10px] font-semibold text-tx-2"
-                  title="This change was made by MatFlow support during a support session, not by your staff."
-                >
-                  by MatFlow support
-                </span>
-              )}
+              {byOperator && <SupportPill />}
             </span>
           );
         },
@@ -346,9 +361,10 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
             loading={loading}
             empty={<EmptyState title="Nothing recorded yet" hint="Actions by your staff will appear here as they happen." icon={<History className="h-5 w-5" aria-hidden="true" />} />}
             renderCard={(e) => (
-              <div className="rounded-[var(--r-md)] border p-3" style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)" }}>
-                <p className="text-xs tabular-nums" style={{ color: "var(--tx-3)" }}>
-                  {formatDateTime(e.createdAt)} · {e.user?.name ?? "System"}
+              <div data-testid="activity-card" className="rounded-[var(--r-md)] border p-3" style={{ borderColor: "var(--bd-default)", background: "var(--sf-1)" }}>
+                <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs tabular-nums" style={{ color: "var(--tx-3)" }}>
+                  <span className="min-w-0 break-words">{formatDateTime(e.createdAt)} · {activityActor(e).name}</span>
+                  {activityActor(e).byOperator && <SupportPill />}
                 </p>
                 <p className="mt-1 text-sm font-medium" style={{ color: "var(--tx-1)" }}>{auditLabelWithUndo(e.action)}</p>
                 {describeChanges(e.metadata) && <p className="text-xs" style={{ color: "var(--tx-3)" }}>{describeChanges(e.metadata)}</p>}

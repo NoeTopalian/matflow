@@ -46,6 +46,22 @@ export function tierCycleText(t: { pricePence: number; billingCycle: string; des
   return priceNotSet(t) ? "Billed by TeamUp" : cycleLabel(t.billingCycle);
 }
 
+/**
+ * "Max classes/week" as typed (B1-a, 15 Oct 2026). Blank — including
+ * whitespace only — means Unlimited; otherwise a whole number 1–30, the range
+ * both membership routes accept. Anything else is refused here, before a
+ * request, so a bad value can never be sent or quietly read as blank.
+ */
+export type ClassLimitInput = { kind: "blank" } | { kind: "value"; value: number } | { kind: "invalid" };
+export const CLASS_LIMIT_ERROR = "Max classes per week must be a whole number from 1 to 30, or left blank for Unlimited.";
+export function parseClassLimit(raw: string): ClassLimitInput {
+  const s = raw.trim();
+  if (s === "") return { kind: "blank" };
+  if (!/^[0-9]{1,2}$/.test(s)) return { kind: "invalid" };
+  const n = Number(s);
+  return n >= 1 && n <= 30 ? { kind: "value", value: n } : { kind: "invalid" };
+}
+
 /** Chip surfaces derived from tokens, so they stay legible on the light shell. */
 const CHIP = {
   kids: {
@@ -85,6 +101,10 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
+  // The class limit this edit form was opened with (null = Unlimited). A save
+  // sends the limit only when the owner changed it from this value, so an
+  // unrelated edit cannot overwrite a limit another session has since set.
+  const [loadedLimit, setLoadedLimit] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   // ADR-001 D2 slice 2: the venue picker appears only once the club has more
   // than one venue; a failed read is said, not shown as "one venue".
@@ -120,6 +140,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
 
   function openEdit(tier: MembershipTierRow) {
     setEditingId(tier.id);
+    setLoadedLimit(tier.maxClassesPerWeek ?? null);
     setForm({
       name: tier.name,
       description: tier.description ?? "",
@@ -145,6 +166,23 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       toast("Invalid price", "error");
       return;
     }
+    const limit = parseClassLimit(form.maxClassesPerWeek);
+    if (limit.kind === "invalid") {
+      toast(CLASS_LIMIT_ERROR, "error");
+      return;
+    }
+    const nextLimit = limit.kind === "value" ? limit.value : null;
+    // Edit: send the limit only when its normalised value differs from the
+    // one this form loaded — a number, or an explicit null to clear it (an
+    // `undefined` key is dropped by JSON, which is how a clear used to be
+    // lost). Unchanged, or changed and put back, the key is left out so the
+    // server keeps whatever it holds now. This is not general conflict
+    // protection: two people deliberately editing the limit still overwrite
+    // each other. Create: blank omits the key; the create route stores null
+    // when it is absent and does not accept null itself.
+    const maxClassesPerWeek = editingId
+      ? (nextLimit === loadedLimit ? undefined : nextLimit)
+      : (nextLimit ?? undefined);
 
     setSaving(true);
     try {
@@ -154,7 +192,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
         pricePence,
         currency: form.currency,
         billingCycle: form.billingCycle,
-        maxClassesPerWeek: form.maxClassesPerWeek ? parseInt(form.maxClassesPerWeek) : undefined,
+        maxClassesPerWeek,
         isKids: form.isKids,
         stripePriceId: form.stripePriceId.trim() || null,
         stripeProductId: form.stripeProductId.trim() || null,
@@ -542,11 +580,14 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
 
           <div>
             <label htmlFor="tier-max-classes" className="mb-1 block text-xs text-tx-2">Max classes/week</label>
+            {/* Text, not type="number": a number field reports an unparseable
+                entry as "", which would save as Unlimited. parseClassLimit
+                decides instead, and refuses what it cannot read. */}
             <input
               id="tier-max-classes"
-              type="number"
-              min="1"
-              max="30"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
               value={form.maxClassesPerWeek}
               onChange={(e) => setForm((f) => ({ ...f, maxClassesPerWeek: e.target.value }))}
               className="w-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors placeholder:text-tx-3 focus:border-bd-active"
