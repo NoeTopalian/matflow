@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { decideUndo, applyUndo as applyUndoReal, sameValue, REASON, UndoStale, type AuditRowLike, type TxLike } from "@/lib/undo-registry";
+import { updateMetadata } from "@/lib/audit-snapshot";
 
 /**
  * Undo registry (1 Oct 2026, hardened after the independent review). Pure
@@ -192,6 +193,60 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     fake.membershipTier.findFirst.mockResolvedValue({ id: "tier1", name: "B", stripePriceId: "price_x" });
     await applyUndo(tx, row("membership.tier.update", { before: { name: "A" }, after: { name: "B" } }, { entityType: "MembershipTier", entityId: "tier1" }));
     expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { name: "A" } });
+  });
+
+  // B1-a (15 Oct 2026): what Undo does for a cleared class limit, and how a
+  // later edit of the same plan changes that. The metadata is built by the
+  // real route helper, so these follow what the PATCH actually records.
+  describe("membership.tier.update: undoing a cleared class limit", () => {
+    const FIELDS = ["name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "isKids", "isActive", "locationId"] as const;
+    const tierRow = (over: Record<string, unknown>): Record<string, unknown> => ({ id: "tier1", name: "Plan A", pricePence: 4500, currency: "GBP", billingCycle: "monthly", maxClassesPerWeek: 3, stripePriceId: null, ...over });
+    const clearRow = () =>
+      row(
+        "membership.tier.update",
+        updateMetadata(["maxClassesPerWeek"], tierRow({}), tierRow({ maxClassesPerWeek: null }), FIELDS),
+        { entityType: "MembershipTier", entityId: "tier1" },
+      );
+
+    it("records only the limit, and Undo restores the previous number while it is still Unlimited", async () => {
+      const r = clearRow();
+      expect(r.metadata).toMatchObject({ before: { maxClassesPerWeek: 3 }, after: { maxClassesPerWeek: null } });
+      expect(decideUndo(r, false)).toEqual({ ok: true });
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow({ maxClassesPerWeek: null }));
+      await applyUndo(tx, r);
+      expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { maxClassesPerWeek: 3 } });
+    });
+
+    it("a later edit of a different field does not block it, and that edit is kept", async () => {
+      // The later save re-sends the unchanged null limit; only the price moved,
+      // so only the price is recorded on that later row.
+      const later = updateMetadata(
+        ["pricePence", "maxClassesPerWeek"],
+        tierRow({ maxClassesPerWeek: null }),
+        tierRow({ maxClassesPerWeek: null, pricePence: 5000 }),
+        FIELDS,
+      );
+      expect(later).toMatchObject({ before: { pricePence: 4500 }, after: { pricePence: 5000 } });
+      expect(later.after).not.toHaveProperty("maxClassesPerWeek");
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow({ maxClassesPerWeek: null, pricePence: 5000 }));
+      await applyUndo(tx, clearRow());
+      expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { maxClassesPerWeek: 3 } });
+    });
+
+    it("a later edit that sets a new limit makes it stale: refused, nothing written", async () => {
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow({ maxClassesPerWeek: 5 }));
+      await expect(applyUndo(tx, clearRow())).rejects.toBeInstanceOf(UndoStale);
+      expect(fake.membershipTier.update).not.toHaveBeenCalled();
+    });
+
+    it("the check compares only the current value: cleared, set to 5, cleared again — undoing the first clear still restores 3", async () => {
+      // Documented limit (review F2): Undo is not a history replay. If the
+      // limit is back to Unlimited when the owner undoes the first clear, the
+      // row looks current and the old number returns.
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow({ maxClassesPerWeek: null }));
+      await applyUndo(tx, clearRow());
+      expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { maxClassesPerWeek: 3 } });
+    });
   });
 
   it("class.roster.add → removes the roster row; refused if already gone", async () => {

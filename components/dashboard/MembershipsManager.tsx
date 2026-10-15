@@ -46,6 +46,22 @@ export function tierCycleText(t: { pricePence: number; billingCycle: string; des
   return priceNotSet(t) ? "Billed by TeamUp" : cycleLabel(t.billingCycle);
 }
 
+/**
+ * "Max classes/week" as typed (B1-a, 15 Oct 2026). Blank — including
+ * whitespace only — means Unlimited; otherwise a whole number 1–30, the range
+ * both membership routes accept. Anything else is refused here, before a
+ * request, so a bad value can never be sent or quietly read as blank.
+ */
+export type ClassLimitInput = { kind: "blank" } | { kind: "value"; value: number } | { kind: "invalid" };
+export const CLASS_LIMIT_ERROR = "Max classes per week must be a whole number from 1 to 30, or left blank for Unlimited.";
+export function parseClassLimit(raw: string): ClassLimitInput {
+  const s = raw.trim();
+  if (s === "") return { kind: "blank" };
+  if (!/^[0-9]{1,2}$/.test(s)) return { kind: "invalid" };
+  const n = Number(s);
+  return n >= 1 && n <= 30 ? { kind: "value", value: n } : { kind: "invalid" };
+}
+
 /** Chip surfaces derived from tokens, so they stay legible on the light shell. */
 const CHIP = {
   kids: {
@@ -145,6 +161,16 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       toast("Invalid price", "error");
       return;
     }
+    const limit = parseClassLimit(form.maxClassesPerWeek);
+    if (limit.kind === "invalid") {
+      toast(CLASS_LIMIT_ERROR, "error");
+      return;
+    }
+    // Blank clears an existing plan's limit, so the PATCH must carry an
+    // explicit null (an `undefined` key is dropped by JSON and the old limit
+    // stayed). A new plan omits the key: the create route stores null when it
+    // is absent and does not accept null itself.
+    const maxClassesPerWeek = limit.kind === "value" ? limit.value : editingId ? null : undefined;
 
     setSaving(true);
     try {
@@ -154,7 +180,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
         pricePence,
         currency: form.currency,
         billingCycle: form.billingCycle,
-        maxClassesPerWeek: form.maxClassesPerWeek ? parseInt(form.maxClassesPerWeek) : undefined,
+        maxClassesPerWeek,
         isKids: form.isKids,
         stripePriceId: form.stripePriceId.trim() || null,
         stripeProductId: form.stripeProductId.trim() || null,
@@ -542,11 +568,14 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
 
           <div>
             <label htmlFor="tier-max-classes" className="mb-1 block text-xs text-tx-2">Max classes/week</label>
+            {/* Text, not type="number": a number field reports an unparseable
+                entry as "", which would save as Unlimited. parseClassLimit
+                decides instead, and refuses what it cannot read. */}
             <input
               id="tier-max-classes"
-              type="number"
-              min="1"
-              max="30"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
               value={form.maxClassesPerWeek}
               onChange={(e) => setForm((f) => ({ ...f, maxClassesPerWeek: e.target.value }))}
               className="w-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors placeholder:text-tx-3 focus:border-bd-active"
