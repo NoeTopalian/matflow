@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
-import { isVercelBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
 import { logAudit } from "@/lib/audit-log";
 import { refuseSupportSession } from "@/lib/support-session";
 
@@ -91,6 +91,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return apiError("Invalid JSON", 400);
   }
   const parsed = postSchema.safeParse(body);
+  if (parsed.success && isForeignBlobUrl(parsed.data.url, tenantId)) {
+    return apiError("Photo must be uploaded through MatFlow for this club", 400);
+  }
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
@@ -166,8 +169,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     });
     if (!removed) return apiError("Not found", 404);
 
-    // Best-effort blob cleanup (no-op for inline data: URLs).
-    if (removed.url.startsWith("https://")) {
+    // Best-effort blob cleanup (no-op for inline data: URLs); only this
+    // club's own store files are ever deleted.
+    if (isTenantBlobUrl(removed.url, tenantId)) {
       try {
         const { del } = await import("@vercel/blob");
         await del(removed.url);

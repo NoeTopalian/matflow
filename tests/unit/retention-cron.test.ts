@@ -441,34 +441,36 @@ describe("GET /api/cron/retention — abandoned import CSVs", () => {
   it("deletes only Vercel Blob URLs and still drops every row", async () => {
     vi.mocked(prisma.importJob.findMany)
       .mockResolvedValueOnce([
-        { id: "j1", fileBlobUrl: "https://abc123.blob.vercel-storage.com/imports/a.csv" },
-        { id: "j2", fileBlobUrl: "https://evil.example.com/imports/b.csv" },
-        { id: "j3", fileBlobUrl: "" },
-        { id: "j4", fileBlobUrl: "https://blob.vercel-storage.com/imports/d.csv" },
+        { id: "j1", tenantId: "t1", fileBlobUrl: "https://abc123.blob.vercel-storage.com/tenants/t1/imports/a.csv" },
+        { id: "j2", tenantId: "t1", fileBlobUrl: "https://evil.example.com/imports/b.csv" },
+        { id: "j3", tenantId: "t1", fileBlobUrl: "" },
+        { id: "j4", tenantId: "t1", fileBlobUrl: "https://blob.vercel-storage.com/tenants/t1/imports/d.csv" },
+        // Another club namespace on a row of THIS club: left in place (14 Oct 2026).
+        { id: "j5", tenantId: "t1", fileBlobUrl: "https://abc123.blob.vercel-storage.com/tenants/t2/imports/e.csv" },
       ] as never)
       .mockResolvedValue([] as never);
-    vi.mocked(prisma.importJob.deleteMany).mockResolvedValue({ count: 4 } as never);
+    vi.mocked(prisma.importJob.deleteMany).mockResolvedValue({ count: 5 } as never);
 
     const res = await GET(req(`Bearer ${SECRET}`));
     const body = (await res.json()) as { results: RuleResult[] };
 
     expect(del).toHaveBeenCalledTimes(1);
     expect(del).toHaveBeenCalledWith([
-      "https://abc123.blob.vercel-storage.com/imports/a.csv",
-      "https://blob.vercel-storage.com/imports/d.csv",
+      "https://abc123.blob.vercel-storage.com/tenants/t1/imports/a.csv",
+      "https://blob.vercel-storage.com/tenants/t1/imports/d.csv",
     ]);
     // The non-blob and empty URLs are skipped, but their rows still go.
     expect(prisma.importJob.deleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ["j1", "j2", "j3", "j4"] } },
+      where: { id: { in: ["j1", "j2", "j3", "j4", "j5"] } },
     });
-    expect(body.results.find((r) => r.rule === "importJob")?.deleted).toBe(4);
+    expect(body.results.find((r) => r.rule === "importJob")?.deleted).toBe(5);
   });
 
   it("deletes a chunked upload (db-upload://) with its abandoned job, scoped to the job's tenant", async () => {
     vi.mocked(prisma.importJob.findMany)
       .mockResolvedValueOnce([
         { id: "j1", tenantId: "t1", fileBlobUrl: "db-upload://up1" },
-        { id: "j2", tenantId: "t2", fileBlobUrl: "https://abc.blob.vercel-storage.com/imports/b.csv" },
+        { id: "j2", tenantId: "t2", fileBlobUrl: "https://abc.blob.vercel-storage.com/tenants/t2/imports/b.csv" },
       ] as never)
       .mockResolvedValue([] as never);
     vi.mocked(prisma.importJob.deleteMany).mockResolvedValue({ count: 2 } as never);
@@ -476,7 +478,7 @@ describe("GET /api/cron/retention — abandoned import CSVs", () => {
 
     await GET(req(`Bearer ${SECRET}`));
     expect(prisma.importUpload.deleteMany).toHaveBeenCalledWith({ where: { OR: [{ id: "up1", tenantId: "t1" }] } });
-    expect(del).toHaveBeenCalledWith(["https://abc.blob.vercel-storage.com/imports/b.csv"]);
+    expect(del).toHaveBeenCalledWith(["https://abc.blob.vercel-storage.com/tenants/t2/imports/b.csv"]);
     expect(prisma.importJob.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["j1", "j2"] } } });
   });
 
@@ -493,7 +495,7 @@ describe("GET /api/cron/retention — abandoned import CSVs", () => {
   it("survives a blob-storage failure and still deletes the rows", async () => {
     vi.mocked(prisma.importJob.findMany)
       .mockResolvedValueOnce([
-        { id: "j1", fileBlobUrl: "https://abc.blob.vercel-storage.com/imports/a.csv" },
+        { id: "j1", tenantId: "t1", fileBlobUrl: "https://abc.blob.vercel-storage.com/tenants/t1/imports/a.csv" },
       ] as never)
       .mockResolvedValue([] as never);
     vi.mocked(prisma.importJob.deleteMany).mockResolvedValue({ count: 1 } as never);

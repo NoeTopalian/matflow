@@ -24,7 +24,7 @@ import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
-import { isVercelBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
 import { refuseSupportSession } from "@/lib/support-session";
 
 export const runtime = "nodejs";
@@ -120,6 +120,9 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
   const parsed = putSchema.safeParse(body);
+  if (parsed.success && isForeignBlobUrl(parsed.data.url, tenantId)) {
+    return NextResponse.json({ error: "Picture must be uploaded through MatFlow for this club" }, { status: 400 });
+  }
   if (!parsed.success) {
     // Log the rejected url shape (truncated, never the full data: bytes) so a
     // future host-format mismatch is diagnosable instead of an opaque 400.
@@ -230,7 +233,7 @@ export async function DELETE(
     // Best-effort blob deletion. Failure does NOT fail the API — the row is
     // already gone from the DB and the blob will eventually be orphaned.
     // Vercel Blob has no GC sweep; orphan cleanup is a future feature-follow-up.
-    if (removed && removed.url.startsWith("https://")) {
+    if (removed && isTenantBlobUrl(removed.url, tenantId)) {
       try {
         const { del } = await import("@vercel/blob");
         await del(removed.url);

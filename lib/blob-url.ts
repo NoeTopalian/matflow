@@ -52,6 +52,45 @@ export function isVercelBlobUrl(url: string): boolean {
 }
 
 /**
+ * True if `url` is one of OUR blob URLs AND lives under this club's namespace
+ * (`/tenants/<tenantId>/`, the prefix every upload path writes: upload,
+ * imports, signatures, initiatives). Owner-path cross-tenant blob deletion
+ * (security review of PR #31, 14 Oct 2026): a club could submit another
+ * club's blob URL as a photo, then replace or delete it, and the store file
+ * of the OTHER club was deleted. Accept-time check for every client-supplied
+ * blob URL, and the filter before every del() of a stored one. `data:` and
+ * same-origin `/api/blob/` paths are not blob URLs and are judged elsewhere.
+ */
+export function isTenantBlobUrl(url: string, tenantId: string): boolean {
+  if (!tenantId || !isVercelBlobUrl(url)) return false;
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return false;
+  }
+  // No encoded separators or dot-segments anywhere in the path: a store may
+  // decode "%2F" or resolve ".." differently from the URL parser, so a path
+  // that only LOOKS like it stays under the prefix is refused outright.
+  // (A literal backslash never survives the parser: WHATWG normalises it to
+  // "/" for https URLs, so only its encoded form needs refusing.)
+  // Any percent-encoding at all is refused (double encoding such as "%252e"
+  // would survive a narrower list): no path MatFlow writes contains one.
+  if (/%|\.\./.test(pathname)) return false;
+  return pathname.startsWith(`/tenants/${tenantId}/`);
+}
+
+/**
+ * A blob-store URL (any scheme/host case, so "HTTPS://" cannot slip past a
+ * case-sensitive prefix test) that is NOT under this club's namespace. The
+ * accept-time refusal for every client-supplied photo/picture URL; data: and
+ * same-origin paths are not blob URLs and are judged by each route's schema.
+ */
+export function isForeignBlobUrl(url: string, tenantId: string): boolean {
+  return isVercelBlobUrl(url) && !isTenantBlobUrl(url, tenantId);
+}
+
+/**
  * Route a Vercel Blob URL through the authenticated image proxy so private
  * blobs resolve. Non-blob URLs (including `data:` URLs) pass through unchanged
  * so they render directly in <img>/<Image>.

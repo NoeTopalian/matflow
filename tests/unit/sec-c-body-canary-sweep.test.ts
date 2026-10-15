@@ -332,9 +332,10 @@ const LEGIT: Array<[string, string, "owner" | "member", Record<string, unknown>,
 // Two entries are harness artefacts that 500 on EVERY body under the generic fake DB (the route reads
 // fields the fake record lacks): DELETE profile-picture and POST instances/generate.
 // SF-C5 fixed 9 Oct 2026 (object-shape check before destructuring on the six routes); only the two
-// harness artefacts remain.
+// harness artefacts remained. 14 Oct 2026: DELETE profile-picture no longer 500s under the fake DB -
+// its blob cleanup now goes through isTenantBlobUrl, which tolerates a record without a url - so the
+// pinned list shrinks to one. A route that STOPS answering 5xx must be removed here, never left pinned.
 const PINNED_NULL_BODY_5XX: string[] = [
-  "DELETE /api/members/[id]/profile-picture", // harness artefact
   "POST /api/instances/generate", // harness artefact
 ];
 

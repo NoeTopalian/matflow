@@ -33,6 +33,15 @@ describe("hub Edit club control", () => {
     expect(screen.getByRole("button", { name: /Edit club as Sean/ })).toBeTruthy();
   });
 
+  it("Escape closes the dialog without starting a session (keyboard a11y, 14 Oct 2026)", async () => {
+    render(<LoginAsOwnerButton ownerUserId="u-owner" ownerName="Sean" />);
+    fireEvent.click(screen.getByRole("button", { name: /Edit club as Sean/ }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+  });
+
   it("edit mode explains the boundary and buys a support.edit grant with the edit sub-action, then sends mode=edit", async () => {
     render(<LoginAsOwnerButton ownerUserId="u-owner" ownerName="Sean" />);
     fireEvent.click(screen.getByRole("button", { name: /Edit club as Sean/ }));

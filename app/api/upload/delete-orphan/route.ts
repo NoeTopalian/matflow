@@ -20,7 +20,7 @@ import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
-import { isVercelBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isTenantBlobUrl } from "@/lib/blob-url";
 import { withTenantContext } from "@/lib/prisma-tenant";
 
 export const runtime = "nodejs";
@@ -65,6 +65,14 @@ export async function POST(req: Request) {
   // Refuse cleanup of blobs that don't carry the caller's tenant prefix in
   // their pathname — prevents a hijacked session from issuing cross-tenant
   // blob deletes.
+  // One definition of the namespace rule (lib/blob-url.ts isTenantBlobUrl,
+  // 14 Oct 2026): hardened against encoded separators and dot-segments.
+  if (!isTenantBlobUrl(url, session.user.tenantId)) {
+    return NextResponse.json(
+      { error: "URL is not in your tenant's blob namespace" },
+      { status: 403 },
+    );
+  }
   const expectedPathPrefix = `/tenants/${session.user.tenantId}/`;
   try {
     const parsedUrl = new URL(url);

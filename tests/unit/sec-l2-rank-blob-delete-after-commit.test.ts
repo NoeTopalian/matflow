@@ -73,9 +73,12 @@ vi.mock("@/lib/prisma-tenant", () => ({
 import { POST } from "@/app/api/members/[id]/rank/route";
 import { del } from "@vercel/blob";
 
-const BLOB_A = "https://abc123store.blob.vercel-storage.com/tenants/l2/old-a.png";
-const BLOB_B = "https://abc123store.blob.vercel-storage.com/tenants/l2/old-b.png";
-const NEW_PHOTO = "https://abc123store.blob.vercel-storage.com/tenants/l2/new.png";
+// Blob fixtures live under THIS club's namespace (/tenants/<tenantId>/): since
+// 14 Oct 2026 the route refuses a foreign-namespace blob URL at accept time and
+// never deletes one (tests/unit/blob-tenant-ownership.test.ts).
+const BLOB_A = "https://abc123store.blob.vercel-storage.com/tenants/tenant-L2/old-a.png";
+const BLOB_B = "https://abc123store.blob.vercel-storage.com/tenants/tenant-L2/old-b.png";
+const NEW_PHOTO = "https://abc123store.blob.vercel-storage.com/tenants/tenant-L2/new.png";
 
 function req(body: unknown): Request {
   return new Request("https://test.local/", {

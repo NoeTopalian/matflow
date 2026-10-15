@@ -7,9 +7,10 @@ import { sendPushToMember } from "@/lib/push";
 import { notesField } from "@/lib/schemas/notes-sanitiser";
 import { assertSameOrigin } from "@/lib/csrf";
 import { del } from "@vercel/blob";
-import { isVercelBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
 import { STAFF_ROLES } from "@/lib/authz";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
+import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
 
 // Lane 1 iter-2 L1-I2-S-06 [High] fix: restrict photoUrl to safe origins.
 // Previous `z.string().min(1).max(3_500_000)` accepted ANY string including
@@ -78,13 +79,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Edit-session field policy (security review I-1): photoUrl/photoCaption are
   // refused - a support photo write can destroy existing promotion photos.
   const fieldRefusal = refuseSupportEditFields(session, body, SUPPORT_EDIT_FIELD_POLICY["member.rank.award"]);
-  if (fieldRefusal) return fieldRefusal;
+  if (fieldRefusal) {
+    await recordSupportRefusal(session, { route: "POST /api/members/[id]/rank", refusedFields: await refusedFieldsOf(fieldRefusal) }, req);
+    return fieldRefusal;
+  }
   const parsed = assignSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const { rankSystemId, stripes, notes } = parsed.data;
+  // A blob photo must be one of THIS club's uploads (cross-tenant blob
+  // deletion, 14 Oct 2026): a foreign store URL is refused before any write.
+  if (parsed.data.photoUrl && isForeignBlobUrl(parsed.data.photoUrl, session.user.tenantId)) {
+    return NextResponse.json({ error: "Photo must be uploaded through MatFlow for this club" }, { status: 400 });
+  }
 
   try {
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
@@ -207,7 +216,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // `.public.` label — the old regex matched nothing and every replaced
         // promotion photo leaked as an orphaned blob. isVercelBlobUrl also
         // skips the inline `data:` URLs the upload route falls back to.
-        return oldPhotos.map((p) => p.url).filter(isVercelBlobUrl);
+        // Only this club's own store files are ever deleted; anything else
+        // stored under this row is left in place (an orphan at worst).
+        return oldPhotos.map((p) => p.url).filter((u) => isTenantBlobUrl(u, session.user.tenantId));
       });
       if (blobUrls.length > 0) {
         // Best-effort and after commit: a failure is logged, never fails the

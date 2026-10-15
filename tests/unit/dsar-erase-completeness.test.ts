@@ -160,9 +160,9 @@ const ORIGINAL_EMAIL = "alice@example.com";
 const SENTINEL = `deleted-${MEMBER_ID}@deleted.invalid`;
 const EXTERNAL_REF = "teamup:alice@example.com|Alice Smith";
 
-const BLOB_PHOTO_URL = "https://store1.blob.vercel-storage.com/photos/alice.jpg";
+const BLOB_PHOTO_URL = "https://store1.blob.vercel-storage.com/tenants/tenant-A/photos/alice.jpg"; // under THIS club: only own-namespace files are deleted (14 Oct 2026)
 const DATA_PHOTO_URL = "data:image/png;base64,AAAA";
-const BLOB_SIG_URL = "https://store1.blob.vercel-storage.com/sigs/alice.png";
+const BLOB_SIG_URL = "https://store1.blob.vercel-storage.com/tenants/tenant-A/sigs/alice.png";
 const DATA_SIG_URL = "data:image/png;base64,BBBB";
 
 beforeEach(() => {
@@ -414,6 +414,21 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
     expect(delMock.mock.invocationCallOrder[0]).toBeGreaterThan(
       photoDeleteManyMock.mock.invocationCallOrder[0],
     );
+  });
+
+  it("never deletes a blob outside this club namespace, and says so (cross-tenant blob ownership, 14 Oct 2026)", async () => {
+    const FOREIGN = "https://store1.blob.vercel-storage.com/tenants/tenant-B/photos/planted.jpg";
+    photoFindManyMock.mockResolvedValue([
+      { id: "photo-blob", url: BLOB_PHOTO_URL },
+      { id: "photo-foreign", url: FOREIGN },
+    ]);
+
+    const res = await erase();
+
+    expect(res.status).toBe(200);
+    expect(delMock).toHaveBeenCalledWith(BLOB_PHOTO_URL);
+    expect(delMock).not.toHaveBeenCalledWith(FOREIGN);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("photo-foreign"));
   });
 
   it("still erases when the Blob API fails on every file", async () => {

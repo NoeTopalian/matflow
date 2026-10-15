@@ -41,7 +41,7 @@ import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 import { NextResponse } from "next/server";
 import { get } from "@vercel/blob";
 import { auth } from "@/auth";
-import { isVercelBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isTenantBlobUrl } from "@/lib/blob-url";
 import { apiError } from "@/lib/api-error";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { STAFF_ROLES } from "@/lib/authz";
@@ -89,6 +89,11 @@ export async function GET(req: Request) {
   // Blob at all — see app/api/upload/route.ts and the other put() call sites),
   // so the pathname prefix is the tenant boundary. A URL without that prefix
   // cannot be attributed to a tenant, so it is denied rather than allowed.
+  // One definition of the namespace rule (lib/blob-url.ts isTenantBlobUrl,
+  // 14 Oct 2026): hardened against encoded separators and dot-segments.
+  if (!isTenantBlobUrl(url, session.user.tenantId)) {
+    return blobForbidden();
+  }
   const expectedPathPrefix = `/tenants/${session.user.tenantId}/`;
   let pathname: string;
   try {
