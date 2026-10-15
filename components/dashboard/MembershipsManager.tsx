@@ -101,6 +101,10 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
+  // The class limit this edit form was opened with (null = Unlimited). A save
+  // sends the limit only when the owner changed it from this value, so an
+  // unrelated edit cannot overwrite a limit another session has since set.
+  const [loadedLimit, setLoadedLimit] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   // ADR-001 D2 slice 2: the venue picker appears only once the club has more
   // than one venue; a failed read is said, not shown as "one venue".
@@ -136,6 +140,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
 
   function openEdit(tier: MembershipTierRow) {
     setEditingId(tier.id);
+    setLoadedLimit(tier.maxClassesPerWeek ?? null);
     setForm({
       name: tier.name,
       description: tier.description ?? "",
@@ -166,11 +171,18 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       toast(CLASS_LIMIT_ERROR, "error");
       return;
     }
-    // Blank clears an existing plan's limit, so the PATCH must carry an
-    // explicit null (an `undefined` key is dropped by JSON and the old limit
-    // stayed). A new plan omits the key: the create route stores null when it
-    // is absent and does not accept null itself.
-    const maxClassesPerWeek = limit.kind === "value" ? limit.value : editingId ? null : undefined;
+    const nextLimit = limit.kind === "value" ? limit.value : null;
+    // Edit: send the limit only when its normalised value differs from the
+    // one this form loaded — a number, or an explicit null to clear it (an
+    // `undefined` key is dropped by JSON, which is how a clear used to be
+    // lost). Unchanged, or changed and put back, the key is left out so the
+    // server keeps whatever it holds now. This is not general conflict
+    // protection: two people deliberately editing the limit still overwrite
+    // each other. Create: blank omits the key; the create route stores null
+    // when it is absent and does not accept null itself.
+    const maxClassesPerWeek = editingId
+      ? (nextLimit === loadedLimit ? undefined : nextLimit)
+      : (nextLimit ?? undefined);
 
     setSaving(true);
     try {

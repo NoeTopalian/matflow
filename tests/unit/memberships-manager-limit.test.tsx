@@ -153,23 +153,116 @@ describe("Max classes/week in the tier editor", () => {
     expect(writes()[0].body.maxClassesPerWeek).toBeNull();
   });
 
-  it("an unrelated edit re-sends the existing limit unchanged", async () => {
-    renderWith([tier({ maxClassesPerWeek: 3 })]);
-    openEdit("Plan A");
-    fireEvent.change(screen.getByLabelText("Price"), { target: { value: "50" } });
-    await saveEdit();
-    await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(writes()[0].body.pricePence).toBe(5000);
-    expect(writes()[0].body.maxClassesPerWeek).toBe(3);
-  });
+  // B1 correction (15 Oct 2026): the limit is sent only when the owner changed
+  // it from the value this form was opened with. These cases pin that an
+  // unrelated save from a stale page cannot overwrite a limit another session
+  // has since set — the "server" below plays that other session.
+  describe("sends the limit only when it changed from what the form loaded", () => {
+    function changePrice(v: string) {
+      fireEvent.change(screen.getByLabelText("Price"), { target: { value: v } });
+    }
 
-  it("an unrelated edit of an Unlimited plan keeps it Unlimited", async () => {
-    renderWith([tier({ maxClassesPerWeek: null })]);
-    openEdit("Plan A");
-    fireEvent.change(screen.getByLabelText("Price"), { target: { value: "50" } });
-    await saveEdit();
-    await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(writes()[0].body.maxClassesPerWeek).toBeNull();
+    it("opened Unlimited, another session sets 3: a price-only save omits the limit and 3 survives", async () => {
+      renderWith([tier({ maxClassesPerWeek: null })]);
+      openEdit("Plan A");
+      server.t1 = { ...server.t1, maxClassesPerWeek: 3 }; // the other session's save
+      changePrice("50");
+      await saveEdit();
+      await waitFor(() => expect(writes()).toHaveLength(1));
+      expect(writes()[0].body.pricePence).toBe(5000);
+      expect("maxClassesPerWeek" in writes()[0].body).toBe(false);
+      expect(server.t1.maxClassesPerWeek).toBe(3);
+      // The row shows what the server now holds, not the stale form.
+      await waitFor(() => expect(within(screen.getByRole("table")).getByText("3/wk")).toBeTruthy());
+    });
+
+    it("opened with 3, another session sets 5: a price-only save omits the limit and 5 survives", async () => {
+      renderWith([tier({ maxClassesPerWeek: 3 })]);
+      openEdit("Plan A");
+      server.t1 = { ...server.t1, maxClassesPerWeek: 5 };
+      changePrice("50");
+      await saveEdit();
+      await waitFor(() => expect(writes()).toHaveLength(1));
+      expect("maxClassesPerWeek" in writes()[0].body).toBe(false);
+      expect(server.t1.maxClassesPerWeek).toBe(5);
+      await waitFor(() => expect(within(screen.getByRole("table")).getByText("5/wk")).toBeTruthy());
+    });
+
+    it("explicitly clearing a loaded limit still sends null", async () => {
+      renderWith([tier({ maxClassesPerWeek: 3 })]);
+      openEdit("Plan A");
+      setLimit("");
+      await saveEdit();
+      await waitFor(() => expect(writes()).toHaveLength(1));
+      expect("maxClassesPerWeek" in writes()[0].body).toBe(true);
+      expect(writes()[0].body.maxClassesPerWeek).toBeNull();
+    });
+
+    it.each([
+      [3, "5", 5],
+      [3, "1", 1],
+      [null, "30", 30],
+    ])("explicitly changing a loaded %j to %j sends %i", async (loaded, typed, sent) => {
+      renderWith([tier({ maxClassesPerWeek: loaded })]);
+      openEdit("Plan A");
+      setLimit(typed);
+      await saveEdit();
+      await waitFor(() => expect(writes()).toHaveLength(1));
+      expect(writes()[0].body.maxClassesPerWeek).toBe(sent);
+    });
+
+    it.each([
+      [3, ["5", "3"]],
+      [3, ["", " 3 "]],
+      [3, ["7", "03"]],
+      [null, ["4", ""]],
+      [null, ["4", "   "]],
+    ])("changing a loaded %j and putting it back (%j) omits the key", async (loaded, steps) => {
+      renderWith([tier({ maxClassesPerWeek: loaded })]);
+      openEdit("Plan A");
+      for (const s of steps) setLimit(s);
+      changePrice("50");
+      await saveEdit();
+      await waitFor(() => expect(writes()).toHaveLength(1));
+      expect("maxClassesPerWeek" in writes()[0].body).toBe(false);
+    });
+
+    it("an untouched Unlimited plan omits the key (nothing to change)", async () => {
+      renderWith([tier({ maxClassesPerWeek: null })]);
+      openEdit("Plan A");
+      changePrice("50");
+      await saveEdit();
+      await waitFor(() => expect(writes()).toHaveLength(1));
+      expect("maxClassesPerWeek" in writes()[0].body).toBe(false);
+    });
+
+    it("re-opening after a save compares against the row the page now holds", async () => {
+      renderWith([tier({ maxClassesPerWeek: null })]);
+      openEdit("Plan A");
+      server.t1 = { ...server.t1, maxClassesPerWeek: 3 };
+      changePrice("50");
+      await saveEdit();
+      await waitFor(() => expect(within(screen.getByRole("table")).getByText("3/wk")).toBeTruthy());
+      // The sheet closed on success; open it again from the refreshed row.
+      const input = openEdit("Plan A");
+      expect(input.value).toBe("3");
+      setLimit("");
+      await saveEdit();
+      await waitFor(() => expect(writes()).toHaveLength(2));
+      expect(writes()[1].body.maxClassesPerWeek).toBeNull();
+    });
+
+    it("a different plan opened afterwards does not inherit the first plan's loaded limit", async () => {
+      renderWith([tier({ id: "t1", name: "Plan A", maxClassesPerWeek: 3 }), tier({ id: "t2", name: "Plan B", maxClassesPerWeek: null })]);
+      openEdit("Plan A");
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      openEdit("Plan B");
+      setLimit("3"); // equals Plan A's loaded value, but Plan B loaded Unlimited
+      await saveEdit();
+      await waitFor(() => expect(writes()).toHaveLength(1));
+      expect(writes()[0].url).toBe("/api/memberships/t2");
+      expect(writes()[0].body.maxClassesPerWeek).toBe(3);
+    });
   });
 
   it.each([

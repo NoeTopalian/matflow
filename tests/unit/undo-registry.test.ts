@@ -218,8 +218,9 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     });
 
     it("a later edit of a different field does not block it, and that edit is kept", async () => {
-      // The later save re-sends the unchanged null limit; only the price moved,
-      // so only the price is recorded on that later row.
+      // Only the price moved, so only the price is recorded on that later row —
+      // whether or not the request carried the unchanged limit (the editor now
+      // omits it; a client that re-sends it records the same diff).
       const later = updateMetadata(
         ["pricePence", "maxClassesPerWeek"],
         tierRow({ maxClassesPerWeek: null }),
