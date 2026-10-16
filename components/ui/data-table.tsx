@@ -85,7 +85,20 @@ export interface DataTableColumn<T> {
    * to fit a second line of content into a row.
    */
   wrap?: boolean;
+  /**
+   * Hide this column below a breakpoint. At `lg:` and up the table has no
+   * local scroller (header comment), so a table wider than the content box is
+   * CLIPPED, not scrolled: on a 1280px laptop a wide table loses its right-hand
+   * columns outright. Give the lowest-priority columns a breakpoint instead.
+   */
+  visibleFrom?: "xl" | "2xl";
 }
+
+/** Static class map (UI-RULES 11: no dynamic class fragments). */
+const VISIBLE_FROM: Record<NonNullable<DataTableColumn<unknown>["visibleFrom"]>, string> = {
+  xl: "hidden xl:table-cell",
+  "2xl": "hidden 2xl:table-cell",
+};
 
 export interface DataTableProps<T> {
   columns: DataTableColumn<T>[];
@@ -320,6 +333,7 @@ export function DataTable<T>({
                       // nub over the card's 12px radius.
                       "first:rounded-tl-[var(--r-md)] last:rounded-tr-[var(--r-md)]",
                       ALIGN[column.align ?? "left"],
+                      column.visibleFrom && VISIBLE_FROM[column.visibleFrom],
                     )}
                   >
                     {sortable ? (
@@ -344,7 +358,7 @@ export function DataTable<T>({
               ? skeletonKeys.map((index) => (
                   <tr key={`skeleton-${index}`} className="h-[var(--row-h-dense)]">
                     {columns.map((column) => (
-                      <td key={column.key} className="border-b border-bd-default px-3 py-1">
+                      <td key={column.key} className={cn("border-b border-bd-default px-3 py-1", column.visibleFrom && VISIBLE_FROM[column.visibleFrom])}>
                         <Skeleton className="h-3 w-full" />
                       </td>
                     ))}
@@ -396,6 +410,7 @@ export function DataTable<T>({
                             // padding, is what kept the tables off spec.
                             column.wrap ? "whitespace-normal" : "whitespace-nowrap",
                             ALIGN[column.align ?? "left"],
+                            column.visibleFrom && VISIBLE_FROM[column.visibleFrom],
                           )}
                         >
                           {column.cell(row)}

@@ -171,7 +171,7 @@ function paymentMeta(status?: string | null) {
 // ─── Table columns ────────────────────────────────────────────────────────────
 
 /**
- * The eight Members columns, rendered through the DataTable primitive at the
+ * The seven Members columns, rendered through the DataTable primitive at the
  * §1.5.4 dense spec (36px rows, py-2, 13px, sticky thead). Module scope keeps
  * the array identity stable so the table's sort memo survives re-renders.
  *
@@ -184,6 +184,11 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
     key: "member",
     header: "Member",
     sortValue: (m) => m.name,
+    // wrap + a capped inner row: with the default nowrap the column grew to
+    // the longest "name · email" in the club and pushed Waiver, Rank, Last
+    // Visit and Joined off the right edge at lg:, where DataTable releases its
+    // scroller (owner screenshot, 12 Oct 2026). The cap lets truncate engage.
+    wrap: true,
     // ONE line (§4a.4): name over email was a stacked cell, and a stacked cell
     // defeats --row-h-dense outright — it is why this table measured 57px
     // against a 36px spec. The email now trails the name inline and the whole
@@ -191,7 +196,10 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
     cell: (m) => (
       // A synthesised placeholder is not an address — showing it would be
       // fabricated data (UI-RULES §7) and a member of staff would try to mail it.
-      <div className="flex min-w-0 items-center gap-3" title={isSynthesisedEmail(m.email) ? "No email address" : m.email}>
+      // w-0 min-w-full: contributes nothing to the table's min-content width
+      // yet fills the cell, so the column takes whatever space the fixed
+      // columns leave and the name/email truncates inside it.
+      <div className="flex w-0 min-w-full items-center gap-3" title={isSynthesisedEmail(m.email) ? "No email address" : m.email}>
         {/* feat/member-profile-pictures Track A Phase A5: avatar slot. `sm`
             (28px) is the largest avatar a 36px row can hold with 4px cell
             padding; `md` (40px) forced the row to 48px on its own. */}
@@ -213,10 +221,11 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
   {
     key: "membership",
     header: "Membership",
+    wrap: true,
     // One line: tier, then the junior/kids chip and the age inline.
     cell: (m) => (
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="truncate" style={{ color: "var(--tx-2)" }}>{m.membershipType ?? "No membership"}</span>
+      <div className="flex w-0 min-w-full items-center gap-1.5">
+        <span className="min-w-0 truncate" title={m.membershipType ?? undefined} style={{ color: "var(--tx-2)" }}>{m.membershipType ?? "No membership"}</span>
         {m.accountType && m.accountType !== "adult" && (() => {
           const ab = ACCOUNT_BADGE[m.accountType!] ?? ACCOUNT_BADGE.adult;
           return (
@@ -234,7 +243,10 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
   {
     key: "payment",
     header: "Payment",
-    width: "8rem",
+    // 8rem wrapped "Billed by TeamUp" under the status chip on every TeamUp
+    // row, doubling the 36px dense row (owner screenshot, 12 Oct 2026). 15rem
+    // holds the longest pair, "No payment yet" + "Billed by TeamUp", on one line.
+    width: "15rem",
     cell: (m) => {
       // Suppressed for no-membership rows (e.g. a parent tied to a kid who
       // holds the membership) — the default "paid" would mislead the owner.
@@ -242,7 +254,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
       const pay = paymentMeta(m.paymentStatus);
       const PayIcon = pay.Icon;
       return (
-        <span className="inline-flex flex-wrap items-center gap-1">
+        <span className="inline-flex flex-nowrap items-center gap-1 whitespace-nowrap">
           <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: pay.bg, color: pay.color }}>
             <PayIcon className="size-3" />
             {pay.label}
@@ -269,6 +281,12 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
   {
     key: "rank",
     header: "Rank",
+    // Lowest-priority columns appear only where the content box can hold
+    // them (see DataTable visibleFrom): 1280px gains Last Visit, 1536px gains
+    // Rank. The content box is capped at max-w-6xl (1152px), so even the
+    // widest screen holds seven columns, not eight: Joined moved into the
+    // Last Visit cell's title (sorting by it stays in the Filters panel).
+    visibleFrom: "2xl",
     // §5a: a fixed-geometry badge must never be resized by its text. 8rem left
     // "Blue Belt" + 3 stripe dots one or two pixels short, so the pill wrapped
     // to two lines and deepened the whole row. 9.5rem fits the longest belt
@@ -297,13 +315,15 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
   {
     key: "lastVisit",
     header: "Last Visit",
+    visibleFrom: "xl",
     width: "8rem",
     sortValue: (m) => (m.lastVisitAt ? new Date(m.lastVisitAt) : null),
     cell: (m) => {
       const inactiveDays = daysSince(m.lastVisitAt);
       return (
         // One line: date, then the inactivity hint inline behind a separator.
-        <span className="whitespace-nowrap" style={{ color: m.lastVisitAt ? "var(--tx-2)" : "var(--tx-3)" }}>
+        // The join date rides along as the title (no Joined column; see Rank).
+        <span className="whitespace-nowrap" title={`Joined ${formatShortDate(m.joinedAt)}`} style={{ color: m.lastVisitAt ? "var(--tx-2)" : "var(--tx-3)" }}>
           {formatShortDate(m.lastVisitAt)}
           {inactiveDays !== null && inactiveDays >= 14 && (
             // suppressHydrationWarning: daysSince() calls Date.now(), so SSR
@@ -316,15 +336,6 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
         </span>
       );
     },
-  },
-  {
-    key: "joined",
-    header: "Joined",
-    width: "8rem",
-    sortValue: (m) => new Date(m.joinedAt),
-    cell: (m) => (
-      <span className="whitespace-nowrap" style={{ color: "var(--tx-3)" }}>{formatShortDate(m.joinedAt)}</span>
-    ),
   },
   {
     key: "go",
@@ -633,7 +644,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               <div className="min-w-0">
                 <p className="text-xl font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>{value}</p>
                 <p className="mt-1 truncate text-[13px] font-medium" style={{ color: "var(--tx-2)" }}>{label}</p>
-                <p className="mt-0.5 truncate text-[11px]" style={{ color: "var(--tx-3)" }}>{sub}</p>
+                <p className="mt-0.5 line-clamp-2 text-[11px]" style={{ color: "var(--tx-3)" }}>{sub}</p>
               </div>
               <Icon className="size-4 shrink-0" style={{ color: hex(color, 0.75) }} />
             </div>
@@ -645,8 +656,14 @@ export default function MembersList({ members: initial, primaryColor, role, guar
         className="rounded-2xl border p-3 mb-4"
         style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
       >
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-          <div className="relative flex-1 min-w-0">
+        {/* Search owns a full-width row at every width. The single-row xl:
+            layout gave the search box flex-1 against a wrapping chip strip,
+            and the chips won: on a 1900px screen the input collapsed to its
+            padding and its icon and clear button painted over "All" and
+            "Cancelled" (owner screenshot, 12 Oct 2026). UI-RULES 4a.2: xl:
+            is for widening only, never a structural split. */}
+        <div className="flex flex-col gap-3">
+          <div className="relative w-full min-w-0">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" style={{ color: "var(--tx-3)" }} />
             <input
               type="search"
@@ -673,7 +690,8 @@ export default function MembersList({ members: initial, primaryColor, role, guar
           {/* Pills scroll horizontally on phones but WRAP from `lg:` — a
               hidden-scrollbar strip at desktop widths buries filters the user
               cannot see (§4a.7). */}
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1 lg:flex-wrap lg:overflow-x-visible lg:pb-0">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto scrollbar-hide pb-1 lg:flex-wrap lg:overflow-x-visible lg:pb-0">
             {([
               { key: "all", label: "All", count: counts.all },
               { key: "attention", label: "Needs Attention", count: counts.attention },
@@ -724,6 +742,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               </span>
             )}
           </button>
+          </div>
         </div>
       </div>
 
