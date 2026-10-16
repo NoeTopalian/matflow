@@ -255,9 +255,9 @@ All require an operator session; all stamp `AuditLog` with `metadata.actingAs = 
 - Body: `{ reason: string (min 5 chars), confirmName: string }` — operator must type the gym name to confirm
 - `Tenant.deletedAt = now()`
 - Bumps `sessionVersion` on all users
-- `AuditLog` action: `admin.tenant.soft_deleted`, metadata includes `hardDeleteAfter` (now + 30 days, ISO)
-- Tenant disappears from default queries (`WHERE deletedAt IS NULL`), rejects all logins, recoverable for 30 days
-- Future cron will hard-delete after the grace window
+- `AuditLog` action: `admin.tenant.soft_deleted` (no `hardDeleteAfter`: nothing is scheduled)
+- Tenant disappears from default queries (`WHERE deletedAt IS NULL`), rejects all logins, and is kept so it can be reopened at any time — no window, no automatic deletion (product rule, 16 Oct 2026). The hub lists it under the "Closed" filter.
+- Permanent erasure only on the club's written request, operator-run via `purgeTenantById` (`lib/tenant-purge.ts`); never from a cron
 
 **Restore:**
 - `Tenant.deletedAt = null`
@@ -391,10 +391,10 @@ Full evidence: `docs/audit/STATE-MAP-2026-08-30/statemap-B-tenant-billing.md`.
 #### `Tenant.deletedAt`
 
 - `null` — active, appears in queries (default filter `WHERE deletedAt IS NULL`)
-- timestamp — soft-deleted: hidden from UI, blocks password login. **As built:** magic-link and Google
-  OAuth bypass this too (same bypass as `suspended`). Recoverable for 30 days, then the purge cron runs
-  — **fail-closed**: a Stripe error during purge skips that tenant silently, forever, inside a shared
-  240s/night budget with reconciliation (TARGET was a clean hard-delete on schedule)
+- timestamp — closed: hidden from the default hub list (shown under "Closed"), blocks password login. **As built:** magic-link and Google
+  OAuth bypass this too (same bypass as `suspended`). Kept and reopenable at any time; no purge cron
+  (16 Oct 2026). Erasure only on the club's written request via `purgeTenantById`, which is
+  **fail-closed** on billing: a Stripe refusal leaves the club intact, unclaimed and reopenable
 
 #### `Tenant.onboardingCompleted`
 
@@ -963,8 +963,8 @@ Kiosk check-in enforces rank gates but allows uncovered records (`coverage.kind 
 ### DSAR erase retains audit + finance rows
 `AttendanceRecord` and `Payment` are intentionally not erased — they are GDPR-justified for finance / dispute / audit purposes. The `member.dsar_erase` audit row itself is the GDPR fulfilment evidence. ([app/api/admin/dsar/erase/route.ts](../app/api/admin/dsar/erase/route.ts))
 
-### Soft-delete tenant
-30-day recovery window; `sessionVersion++` on every user kicks active JWTs immediately. Future cron will hard-delete. ([app/api/admin/customers/[id]/soft-delete/route.ts](../app/api/admin/customers/[id]/soft-delete/route.ts))
+### Close tenant ("soft-delete" route)
+No recovery window — a closed club is kept and can be reopened at any time; `sessionVersion++` on every user kicks active JWTs immediately. No cron deletes it; erasure is explicit and operator-run (`purgeTenantById`). ([app/api/admin/customers/[id]/soft-delete/route.ts](../app/api/admin/customers/[id]/soft-delete/route.ts))
 
 ### Suspended tenant rejects logins
 At auth-time, `Credentials.authorize` rejects sign-ins where `Tenant.subscriptionStatus = "suspended"`.

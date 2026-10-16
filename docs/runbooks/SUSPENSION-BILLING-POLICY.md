@@ -55,11 +55,11 @@ Use this only when un-suspend returns `billingReview.required: true`.
 
 Suspend and un-suspend make no provider calls, so there are none to fail or retry, and no Stripe command can be left half-done. Unit tests mock Stripe to fail and assert that it is never called (`tests/unit/tenant-lifecycle-constraints.test.ts`).
 
-## Restore after soft-delete (related, for completeness)
+## Reopen after closing (related, for completeness)
 
-- **Window.** Restore is allowed only within 30 days of the soft-delete. This is the published promise in `app/legal/privacy/page.tsx` §6: "a gym marked for deletion is recoverable for 30 days, after which its records are permanently erased."
-- **Refusals.** Restore is refused with 409 once the window has passed (`recovery-window-expired`), once the purge has claimed the club (`deletion-in-progress`), or once the club is gone (`permanently-deleted`). See `lib/tenant-lifecycle.ts`.
-- **Billing is not reversed.** Soft-delete still sets member subscriptions to cancel at period end, and restore does not undo that, for the same consent reason as above. After restoring a club, the operator runs the review procedure above with the club, using the soft-delete audit row (`admin.tenant.soft_deleted`, which records `stripeCancelled`, `stripeFailed` and `stripeFailedIds`).
+- **No window.** A closed club is kept and can be reopened at any time (product rule, 16 Oct 2026). The published promise in `app/legal/privacy/page.tsx` §6 is now: "a gym that closes is kept with sign-in disabled so it can reopen; its records are erased only on the gym's written request."
+- **Refusals.** Reopen is refused with 409 only once an explicit erasure has claimed the club (`deletion-in-progress`) or once the club is gone (`permanently-deleted`). See `lib/tenant-lifecycle.ts`.
+- **Billing is not reversed.** Closing still sets member subscriptions to cancel at period end, and reopening does not undo that, for the same consent reason as above. After reopening a club, the operator runs the review procedure above with the club, using the closing audit row (`admin.tenant.soft_deleted`, which records `stripeCancelled`, `stripeFailed` and `stripeFailedIds`).
 
 ## Not covered here
 
