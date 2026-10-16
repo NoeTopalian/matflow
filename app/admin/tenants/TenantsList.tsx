@@ -1,6 +1,10 @@
 "use client";
 
 // Client-side filter/sort/search over a server-rendered tenant list.
+//
+// Closed clubs (deletedAt set) are kept, not deleted (16 Oct 2026). Every
+// status view except "Closed" leaves them out; "Closed" shows only them, each
+// badged with its closing date, so an operator can find one to reopen.
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -9,10 +13,13 @@ import type { TenantRow } from "./page";
 import AdminTopNav from "../AdminTopNav";
 import { adminButtonSecondary, adminCard, adminContainer, adminPage, adminPalette } from "../admin-theme";
 import { csvRow } from "@/lib/csv";
+import { formatDate } from "@/lib/date";
 
-type StatusFilter = "all" | "active" | "trial" | "suspended" | "cancelled";
+type StatusFilter = "all" | "active" | "trial" | "suspended" | "cancelled" | "closed";
 type StripeFilter = "all" | "connected" | "broken" | "not_connected";
 type SortKey = "recent" | "members_desc" | "name_asc" | "status";
+
+const STATUS_FILTERS: readonly StatusFilter[] = ["active", "trial", "suspended", "cancelled", "closed"];
 
 function initialQuery() {
   if (typeof window === "undefined") return "";
@@ -22,7 +29,7 @@ function initialQuery() {
 function initialStatus(): StatusFilter {
   if (typeof window === "undefined") return "all";
   const status = new URL(window.location.href).searchParams.get("status");
-  return status && ["active", "trial", "suspended", "cancelled"].includes(status)
+  return status && (STATUS_FILTERS as readonly string[]).includes(status)
     ? status as StatusFilter
     : "all";
 }
@@ -64,7 +71,12 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
       );
     }
 
-    if (statusFilter !== "all") list = list.filter((t) => t.status === statusFilter);
+    // Closed clubs appear only under "Closed"; every other view is open clubs.
+    if (statusFilter === "closed") list = list.filter((t) => t.deletedAt !== null);
+    else {
+      list = list.filter((t) => t.deletedAt === null);
+      if (statusFilter !== "all") list = list.filter((t) => t.status === statusFilter);
+    }
 
     if (stripeFilter === "connected") {
       list = list.filter((t) => t.stripeConnected && t.stripeChargesEnabled !== false);
@@ -82,9 +94,12 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
     return sorted;
   }, [tenants, query, statusFilter, stripeFilter, sort]);
 
+  const openCount = useMemo(() => tenants.filter((t) => t.deletedAt === null).length, [tenants]);
+  const closedCount = tenants.length - openCount;
+
   function exportCsv() {
     const rows = [
-      ["Gym", "Slug", "Owner Name", "Owner Email", "Members", "Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created"],
+      ["Gym", "Slug", "Owner Name", "Owner Email", "Members", "Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created", "Closed"],
       ...filtered.map((t) => [
         t.name,
         t.slug,
@@ -96,6 +111,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
         t.stripeChargesEnabled === null ? "" : String(t.stripeChargesEnabled),
         String(t.onboardingCompleted),
         t.createdAt,
+        t.deletedAt ?? "",
       ]),
     ];
     // Route every cell through lib/csv.csvRow — RFC-4180 quoting AND the
@@ -122,7 +138,10 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
         <header style={header}>
           <div>
             <h1 style={title}>Tenants</h1>
-            <p style={subtitle}>Showing {filtered.length} of {tenants.length} gym{tenants.length === 1 ? "" : "s"}</p>
+            <p style={subtitle}>
+              Showing {filtered.length} of {statusFilter === "closed" ? closedCount : openCount} gym{(statusFilter === "closed" ? closedCount : openCount) === 1 ? "" : "s"}
+              {statusFilter !== "closed" && closedCount > 0 ? ` · ${closedCount} closed` : ""}
+            </p>
           </div>
         </header>
 
@@ -144,6 +163,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
               { value: "trial", label: "Trial" },
               { value: "suspended", label: "Suspended" },
               { value: "cancelled", label: "Cancelled" },
+              { value: "closed", label: "Closed" },
             ]}
             onChange={(v) => setStatusFilter(v as StatusFilter)}
           />
@@ -206,7 +226,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
                       )}
                     </td>
                     <td style={td}>{t.memberCount}</td>
-                    <td style={td}>{statusBadge(t.status)}</td>
+                    <td style={td}>{t.deletedAt ? closedBadge(t.deletedAt) : statusBadge(t.status)}</td>
                     <td style={td}>{stripeBadge(t)}</td>
                     <td style={td}>{new Date(t.createdAt).toLocaleDateString()}</td>
                     <td style={td}>
@@ -255,6 +275,11 @@ function statusBadge(status: string) {
   };
   const p = palette[status] ?? palette.cancelled;
   return <span style={badge(p.bg, p.fg)}>{status}</span>;
+}
+
+/** "Closed 3 Mar 2026" — the closing date, en-GB (lib/date.ts), in place of the status. */
+function closedBadge(deletedAt: string) {
+  return <span style={badge(adminPalette.cardSoft, adminPalette.muted)}>Closed {formatDate(deletedAt)}</span>;
 }
 
 function stripeBadge(t: TenantRow) {

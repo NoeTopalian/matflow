@@ -1,6 +1,10 @@
 // /admin/tenants — super-admin only. Server component fetches all tenants
 // + their stats; client component renders the searchable/filterable/sortable
 // list. Gated by proxy.ts admin-cookie check. Sibling to /admin/applications.
+//
+// Closed clubs (deletedAt set) are fetched too: they are kept, not deleted
+// (16 Oct 2026), and the list's "Closed" filter is where an operator finds
+// one to reopen. The default view leaves them out.
 
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { isAdminPageAuthed } from "@/lib/admin-auth";
@@ -23,12 +27,13 @@ export type TenantRow = {
   stripeChargesEnabled: boolean | null;
   onboardingCompleted: boolean;
   createdAt: string;
+  /** ISO timestamp when the club was closed; null while it is open. */
+  deletedAt: string | null;
 };
 
 async function getTenants(): Promise<TenantRow[]> {
   const tenants = await withRlsBypass((tx) =>
     tx.tenant.findMany({
-      where: { deletedAt: null },
       select: {
         id: true,
         name: true,
@@ -38,6 +43,7 @@ async function getTenants(): Promise<TenantRow[]> {
         stripeAccountStatus: true,
         onboardingCompleted: true,
         createdAt: true,
+        deletedAt: true,
         users: {
           where: { role: "owner" },
           take: 1,
@@ -64,6 +70,7 @@ async function getTenants(): Promise<TenantRow[]> {
       stripeChargesEnabled: status?.chargesEnabled ?? null,
       onboardingCompleted: t.onboardingCompleted,
       createdAt: t.createdAt.toISOString(),
+      deletedAt: t.deletedAt ? t.deletedAt.toISOString() : null,
     };
   });
 }

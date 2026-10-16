@@ -1,9 +1,12 @@
 "use client";
 
 // Danger Zone — destructive operator actions on a single tenant.
-// Three v1 actions: force password reset, suspend / re-enable, soft-delete.
-// Each gates with a typed reason; soft-delete also requires typing the gym
-// name + a 7-second cooldown on the confirm button.
+// Three v1 actions: force password reset, suspend / re-enable, close / reopen.
+// Each gates with a typed reason; closing also requires typing the gym name,
+// a 7-second cooldown on the confirm button and a step-up code. Closing keeps
+// everything (product rule, 16 Oct 2026): the gym leaves the active list and
+// refuses sign-in, and can be reopened at any time. The route path and audit
+// action names keep their historical "soft-delete" spelling.
 
 import { useEffect, useState } from "react";
 import { adminButtonSecondary, adminCard, adminPalette } from "../../admin-theme";
@@ -67,12 +70,12 @@ function CodeField({ value, onChange }: { value: string; onChange: (v: string) =
 }
 
 /**
- * Where a soft-deleted club stands (lib/tenant-lifecycle.ts). Restore is
- * possible only while "recoverable": past the 30-day window, or once the
- * purge has claimed the club, the server refuses it, so no button is offered
- * (review of lane C, D5).
+ * Where a closed club stands (lib/tenant-lifecycle.ts). Reopen is offered
+ * while "recoverable" — any age, no window. Once an explicit erasure (on the
+ * club's written request) has claimed the club, the server refuses reopen, so
+ * no button is offered (review of lane C, D5).
  */
-export type DeletionState = "live" | "recoverable" | "window-expired" | "in-progress";
+export type DeletionState = "live" | "recoverable" | "in-progress";
 
 type Props = {
   tenantId: string;
@@ -148,24 +151,16 @@ export default function DangerZone(props: Props) {
         {deletionState === "in-progress" ? (
           <Row
             title="Deletion in progress"
-            subtitle="Permanent deletion of this gym has started and cannot be undone. Some of its data may already be gone. It cannot be restored."
-            buttonLabel={null}
-            onClick={() => {}}
-            variant="danger"
-          />
-        ) : deletionState === "window-expired" ? (
-          <Row
-            title="Recovery window passed"
-            subtitle="This gym was deleted more than 30 days ago. It is due for permanent deletion and can no longer be restored."
+            subtitle="Permanent erasure of this gym, on its written request, has started and cannot be undone. Some of its data may already be gone. It cannot be reopened."
             buttonLabel={null}
             onClick={() => {}}
             variant="danger"
           />
         ) : (
           <Row
-            title={isDeleted ? "Restore gym" : "Soft-delete gym"}
-            subtitle={isDeleted ? "Restore this tenant. Members regain access; its data was kept while it was deleted." : "Mark this gym deleted. Disappears from active lists. Reversible for 30 days, then a cron hard-deletes."}
-            buttonLabel={isDeleted ? "Restore" : "Soft-delete"}
+            title={isDeleted ? "Reopen gym" : "Close gym"}
+            subtitle={isDeleted ? "Members and staff can sign in again. Everything was kept while it was closed." : "Logins are refused and the gym leaves the active list. Everything is kept; it can be reopened at any time."}
+            buttonLabel={isDeleted ? "Reopen" : "Close"}
             onClick={() => setOpen("delete")}
             variant={isDeleted ? "neutral" : "danger"}
           />
@@ -322,7 +317,7 @@ function DeleteModal({ tenantId, tenantName, isDeleted, onClose }: { tenantId: s
     setSubmitting(true);
     setError(null);
     try {
-      // Restore needs no step-up (see the soft-delete route); deletion does.
+      // Reopening needs no step-up (see the soft-delete route); closing does.
       const { ok, data } = isDeleted
         ? await (async () => {
             const res = await fetch(`/api/admin/customers/${tenantId}/soft-delete`, { method: "DELETE", headers: { "Content-Type": "application/json" } });
@@ -348,10 +343,10 @@ function DeleteModal({ tenantId, tenantName, isDeleted, onClose }: { tenantId: s
   if (isDeleted) {
     return (
       <Modal onClose={onClose} disableClose={submitting}>
-        <h3 style={modalTitle}>Restore {tenantName}</h3>
+        <h3 style={modalTitle}>Reopen {tenantName}</h3>
         {billingReview ? (
           <>
-            <p style={modalDesc}>Restored. Members and staff can sign in again.</p>
+            <p style={modalDesc}>Reopened. Members and staff can sign in again.</p>
             <p role="status" style={{ ...modalDesc, marginTop: 8 }}><strong>Billing to review:</strong> {billingReview}</p>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
               <button onClick={() => { window.location.href = "/admin/tenants"; }} style={btnPrimary}>Done</button>
@@ -359,11 +354,11 @@ function DeleteModal({ tenantId, tenantName, isDeleted, onClose }: { tenantId: s
           </>
         ) : (
           <>
-            <p style={modalDesc}>This brings the gym back. All members regain access. Its data was kept while it was deleted; member subscriptions that deletion set to stop renewing stay that way until reviewed.</p>
+            <p style={modalDesc}>This brings the gym back. All members regain access. Everything was kept while it was closed; member subscriptions that closing set to stop renewing stay that way until reviewed.</p>
             {error && <p role="alert" style={{ color: adminPalette.red, fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
               <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
-              <button onClick={submit} disabled={submitting} style={btnPrimary}>{submitting ? "Restoring…" : "Restore"}</button>
+              <button onClick={submit} disabled={submitting} style={btnPrimary}>{submitting ? "Reopening…" : "Reopen"}</button>
             </div>
           </>
         )}
@@ -375,21 +370,21 @@ function DeleteModal({ tenantId, tenantName, isDeleted, onClose }: { tenantId: s
 
   return (
     <Modal onClose={onClose} disableClose={submitting}>
-      <h3 style={modalTitle}>Soft-delete {tenantName}</h3>
-      <p style={modalDesc}>Marks the gym deleted. Disappears from active lists. Reversible for 30 days; cron hard-deletes after that.</p>
+      <h3 style={modalTitle}>Close {tenantName}</h3>
+      <p style={modalDesc}>Logins are refused and the gym leaves the active list. Everything is kept; it can be reopened at any time from the Closed filter. Nothing is deleted.</p>
       <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Reason (audit-logged)</label>
-      <textarea aria-label="Reason (audit-logged)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. test gym cleanup, customer requested deletion" rows={3} autoFocus style={textarea} />
+      <textarea aria-label="Reason (audit-logged)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. gym has shut, owner asked to close, ticket #123" rows={3} autoFocus style={textarea} />
       <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginTop: 12 }}>Type the gym name to confirm: <code>{tenantName}</code></label>
       <input aria-label="Type the gym name to confirm:" type="text" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={tenantName} style={{ ...textarea, height: "auto", fontFamily: "monospace" }} />
       <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, marginTop: 12, cursor: "pointer" }}>
         <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} style={{ marginTop: 2 }} />
-        <span>I understand all members will lose access immediately and the gym disappears from active lists.</span>
+        <span>I understand all members and staff lose access immediately and the gym leaves the active list.</span>
       </label>
       <CodeField value={code} onChange={setCode} />
       {error && <p role="alert" style={{ color: adminPalette.red, fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
         <button onClick={onClose} disabled={submitting} style={btnNeutral}>Cancel</button>
-        <button onClick={submit} disabled={!canSubmit} style={btnDanger}>{submitting ? "Deleting…" : cooldownLeft > 0 ? `Wait ${cooldownLeft}s…` : "Soft-delete gym"}</button>
+        <button onClick={submit} disabled={!canSubmit} style={btnDanger}>{submitting ? "Closing…" : cooldownLeft > 0 ? `Wait ${cooldownLeft}s…` : "Close gym"}</button>
       </div>
     </Modal>
   );
