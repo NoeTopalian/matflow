@@ -6,6 +6,8 @@
  * queries live in app/dashboard/page.tsx and feed this builder.
  */
 
+import { TRAINING_MEMBER } from "@/lib/member-population";
+
 export type ActionItemKind = "money" | "retention" | "admin" | "moment";
 
 export type ActionItem = {
@@ -31,6 +33,12 @@ export type ActionItemsInput = {
   missingWaiver: { id: string; name: string }[];
   /** Active members not seen in 14+ days — never someone who joined inside the window and has not trained yet (see atRiskMemberWhere). */
   atRisk: { id: string; name: string }[];
+  /**
+   * True while the club has no MatFlow check-in (see atRiskSuppressed). The
+   * at-risk rows are then dropped, whatever `atRisk` holds, so the named list
+   * and the headline tile are switched off by the same signal.
+   */
+  atRiskSuppressed?: boolean;
   /** Active/taster members with a dateOfBirth (filtered to the next 7 days here). */
   birthdayCandidates: { id: string; name: string; dateOfBirth: Date }[];
 };
@@ -43,8 +51,12 @@ export const AT_RISK_DAYS = 14;
  * shared by the dashboard's headline count and its named action list so the
  * two cannot disagree. A member who has never attended and joined inside the
  * window is NEW, not lapsed: the end-user simulation (30 Sep 2026) saw eight
- * members who joined that morning listed as "Not seen in 14+ days". Mirrors
- * `isQuiet` in components/dashboard/MembersList.tsx.
+ * members who joined that morning listed as "Not seen in 14+ days".
+ *
+ * NOT yet the same rule as the Members "Quiet" chip (`isQuiet` in
+ * components/dashboard/MembersList.tsx), which also requires `paid` and is
+ * never suppressed; aligning the two is T2a Part F. Until then the chip shows
+ * its own count.
  */
 export function atRiskMemberWhere(tenantId: string, now: Date) {
   const since = new Date(now);
@@ -52,9 +64,55 @@ export function atRiskMemberWhere(tenantId: string, now: Date) {
   return {
     tenantId,
     status: "active",
+    // Training members only: the TeamUp import made 219 no-login guardian
+    // drafts (active, never attend), and every one of them would otherwise be
+    // "not seen in 14 days" (T2a Part U, 17 Oct 2026; lib/member-population.ts).
+    ...TRAINING_MEMBER,
     attendances: { none: { checkInTime: { gte: since } } },
     OR: [{ joinedAt: { lt: since } }, { attendances: { some: {} } }],
   };
+}
+
+/**
+ * An attendance row made IN MatFlow — a register tick, kiosk, QR or self
+ * check-in — as opposed to history brought in by an import. The same marker
+ * the undo path uses to refuse removing imported rows (lib/undo-registry.ts,
+ * attendance undo): `checkInMethod <> 'import' AND importJobId IS NULL`.
+ */
+export const MATFLOW_CHECKIN_WHERE = {
+  checkInMethod: { not: "import" },
+  importJobId: null,
+} as const;
+
+/** What the At-Risk tile says in place of a number while it is suppressed. */
+export const AT_RISK_SUPPRESSED_NOTE = "Starts once you take your first register in MatFlow";
+export const AT_RISK_SUPPRESSED_DETAIL = "Imported visits are not counted";
+
+/** The slice of a Prisma (transaction) client the at-risk gate reads. */
+export type AtRiskGateClient = {
+  attendanceRecord: {
+    findFirst(args: {
+      where: { tenantId: string; checkInMethod: { not: "import" }; importJobId: null };
+      select: { id: true };
+    }): Promise<{ id: string } | null>;
+  };
+};
+
+/**
+ * THE one rule for whether the dashboard shows At-Risk at all (T2a Part U,
+ * owner decision Q4 A-3 option (c), 17 Oct 2026): suppressed while the club
+ * has no MatFlow check-in. Every visit on record for a club fresh off TeamUp
+ * is imported and dated before the switch, so from 14 days after the import
+ * the unsuppressed tile flags the whole club (312, then 531 on 17 Oct).
+ * Imported attendance does not count. The headline tile, the to-do row and
+ * the named action list all read this one answer.
+ */
+export async function atRiskSuppressed(tx: AtRiskGateClient, tenantId: string): Promise<boolean> {
+  const first = await tx.attendanceRecord.findFirst({
+    where: { tenantId, ...MATFLOW_CHECKIN_WHERE },
+    select: { id: true },
+  });
+  return first === null;
 }
 
 const SEVERITY: Record<ActionItemKind, number> = { money: 0, retention: 1, admin: 2, moment: 3 };
@@ -128,8 +186,8 @@ export function buildActionItems(input: ActionItemsInput): ActionItem[] {
     });
   }
 
-  // ── Retention
-  for (const m of input.atRisk) {
+  // ── Retention (switched off with the tile: see atRiskSuppressed)
+  for (const m of input.atRiskSuppressed ? [] : input.atRisk) {
     items.push({
       id: `retention-${m.id}`,
       kind: "retention",

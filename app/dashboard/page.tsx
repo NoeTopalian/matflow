@@ -15,7 +15,7 @@ type TxClient = Prisma.TransactionClient;
 import DashboardStats from "@/components/dashboard/DashboardStats";
 import SetupBanner from "@/components/dashboard/SetupBanner";
 import DeniedNotice from "@/components/dashboard/DeniedNotice";
-import { atRiskMemberWhere, buildActionItems, type ActionItem } from "@/lib/dashboard-action-items";
+import { atRiskMemberWhere, atRiskSuppressed, buildActionItems, type ActionItem } from "@/lib/dashboard-action-items";
 import { TRAINING_MEMBER } from "@/lib/member-population";
 
 /**
@@ -98,7 +98,7 @@ async function getWeekClasses(tx: TxClient, tenantId: string): Promise<DayClass[
   }));
 }
 
-async function getStats(tx: TxClient, tenantId: string) {
+async function getStats(tx: TxClient, tenantId: string, atRiskOff: boolean) {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const startOfWeek = new Date(now);
@@ -148,7 +148,8 @@ async function getStats(tx: TxClient, tenantId: string) {
       where: { tenantId, status: { in: ["active", "taster"] }, OR: owesMoneyClause(new Date()) },
     }),
     // Joined inside the window and not in yet = new, not at risk (lib/dashboard-action-items).
-    tx.member.count({ where: atRiskMemberWhere(tenantId, now) }),
+    // Not counted at all while At-Risk is suppressed (no MatFlow check-in yet).
+    atRiskOff ? Promise.resolve(0) : tx.member.count({ where: atRiskMemberWhere(tenantId, now) }),
   ]);
 
   return {
@@ -160,6 +161,7 @@ async function getStats(tx: TxClient, tenantId: string) {
     missingPhone,
     paymentsDue,
     atRiskMembers,
+    atRiskSuppressed: atRiskOff,
   };
 }
 
@@ -195,7 +197,7 @@ async function getUserTasks(tx: TxClient, tenantId: string, userId: string) {
  * The raw per-signal queries run here; lib/dashboard-action-items shapes + ranks
  * them into the typed list the UI renders.
  */
-async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionItem[]> {
+async function getActionItems(tx: TxClient, tenantId: string, atRiskOff: boolean): Promise<ActionItem[]> {
   const now = new Date();
   const thirtyDaysAgo = new Date(now);
   thirtyDaysAgo.setDate(now.getDate() - 30);
@@ -217,11 +219,13 @@ async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionIte
       select: { id: true, name: true },
       take: 25,
     }),
-    tx.member.findMany({
-      where: atRiskMemberWhere(tenantId, now),
-      select: { id: true, name: true },
-      take: 25,
-    }),
+    atRiskOff
+      ? Promise.resolve([] as { id: string; name: string }[])
+      : tx.member.findMany({
+          where: atRiskMemberWhere(tenantId, now),
+          select: { id: true, name: true },
+          take: 25,
+        }),
     // DOBs are filtered to the next-7-day window in JS (month/day, year-agnostic).
     tx.member.findMany({
       where: { tenantId, status: { in: ["active", "taster"] }, dateOfBirth: { not: null } },
@@ -246,6 +250,7 @@ async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionIte
     })),
     missingWaiver,
     atRisk,
+    atRiskSuppressed: atRiskOff,
     birthdayCandidates: birthdayCandidates
       .filter((m): m is { id: string; name: string; dateOfBirth: Date } => m.dateOfBirth !== null)
       .map((m) => ({ id: m.id, name: m.name, dateOfBirth: m.dateOfBirth })),
@@ -267,16 +272,22 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
   //
   // One shared transaction for all reads — avoids the connection-pool
   // contention that caused "Unable to start a transaction in the given time".
+  //
+  // At-Risk is read once, club-wide, and handed to both the tile and the named
+  // list so they are switched off together (T2a Part U: suppressed while the
+  // club has no MatFlow check-in; imported attendance does not count).
   const [classes, stats, setupGaps, userTasks, actionItems] = await withTenantContext(
     session!.user.tenantId,
-    (tx) =>
-      Promise.all([
+    async (tx) => {
+      const atRiskOff = await atRiskSuppressed(tx, session!.user.tenantId);
+      return Promise.all([
         getWeekClasses(tx, session!.user.tenantId),
-        getStats(tx, session!.user.tenantId),
+        getStats(tx, session!.user.tenantId, atRiskOff),
         getSetupGaps(tx, session!.user.tenantId, session!.user.role),
         getUserTasks(tx, session!.user.tenantId, session!.user.id),
-        getActionItems(tx, session!.user.tenantId),
-      ]),
+        getActionItems(tx, session!.user.tenantId, atRiskOff),
+      ]);
+    },
   );
 
   return (
