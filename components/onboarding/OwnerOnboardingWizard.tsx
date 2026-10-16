@@ -845,7 +845,8 @@ export default function OwnerOnboardingWizard({
       } else {
         // No response, or a server failure: it may or may not have arrived.
         // The retry carries the same reference, so it can't arrive twice.
-        setCsvHandoffError("We couldn't confirm your file arrived. Press Upload CSV again — if it already arrived, it won't be sent twice.");
+        const reason = res ? ` (${await serverError(res)})` : "";
+        setCsvHandoffError(`We couldn't confirm your file arrived${reason}. Press Upload CSV again — if it already arrived, it won't be sent twice. If it keeps failing, choose another option above.`);
       }
     } finally {
       setLoading(false);
