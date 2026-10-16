@@ -340,7 +340,7 @@ describe("step 4: classes", () => {
     addMondayClass("Fundamentals");
     addMondayClass("No-Gi");
     fireEvent.click(screen.getByRole("button", { name: /save 2 classes/i }));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/some classes didn't save/i), "error", expect.any(Number)));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/didn't save\. Check your connection/), "error", expect.any(Number)));
     expect(screen.getByText(/add your classes/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /save 2 classes/i }));
     await waitFor(() => expect(screen.queryByText(/add your classes/i)).toBeNull());
@@ -820,6 +820,51 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(1);
     });
 
+    it("Skip after a lost save the server did make says it was saved after all (D-02)", async () => {
+      let created = false;
+      const calls = stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return ok(created ? [fundamentals] : []);
+        if (url === "/api/classes" && method === "POST") { created = true; return "throw"; }
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Fundamentals");
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      later();
+      fireEvent.click(screen.getByRole("button", { name: /^skip/i }));
+      await screen.findByText(/make it yours/i);
+      expect(toastMock).toHaveBeenCalledWith("“Fundamentals” was saved after all — it's on your timetable.", "info", 10000);
+      expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(1);
+    });
+
+    it("a class that failed alongside an unchecked one is named too, and Skip reports it unsaved (D-01)", async () => {
+      let listCalls = 0, posts = 0;
+      stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") { listCalls++; return listCalls === 2 ? fail(503) : ok([]); }
+        if (url === "/api/classes" && method === "POST") { posts++; return "throw"; }
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Fundamentals");
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));       // A lost (list read 1 ok)
+      await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      addMonday("No-Gi");
+      toastMock.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: /save 2 classes/i }));     // list read 2 fails; B lost
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't check whether “Fundamentals” reached us.*“No-Gi” didn't save either/), "error", 10000));
+      later();
+      toastMock.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: /^skip/i }));               // list read 3 ok: neither made
+      await screen.findByText(/make it yours/i);
+      expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/“Fundamentals” and “No-Gi” weren't saved/), "info", 10000);
+      expect(posts).toBe(2);
+    });
+
     it("offline at Save (class list unreadable before any save): nothing is sent, and the next Save works (C-01)", async () => {
       let online = false;
       const calls = stubFetch((url, method) => {
@@ -832,7 +877,7 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       await screen.findByText(/add your classes/i);
       addMonday("Fundamentals");
       fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
-      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't reach MatFlow, so no classes were saved/), "error", 8000));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't load your timetable, so no classes were saved/), "error", 8000));
       expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(0);
       online = true;
       fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
@@ -851,7 +896,7 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       await screen.findByText(/add your classes/i);
       addMonday("Fundamentals");
       fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
-      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't reach MatFlow, so no classes were saved/), "error", 8000));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't load your timetable, so no classes were saved/), "error", 8000));
       expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(0);
     });
   });

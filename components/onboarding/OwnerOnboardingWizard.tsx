@@ -584,24 +584,33 @@ export default function OwnerOnboardingWizard({
    * an empty list here really is empty.
    */
   async function listClasses(): Promise<ServerClass[] | null> {
-    const res = await fetch("/api/classes?strict=1").catch(() => null);
-    if (!res || !res.ok) return null;
-    const data = (await res.json().catch(() => null)) as unknown;
-    return Array.isArray(data) ? (data as ServerClass[]) : null;
+    // Bounded: Save and Skip wait on this, and a stalled connection must not
+    // hold either button for minutes.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10_000);
+    try {
+      const res = await fetch("/api/classes?strict=1", { signal: ctrl.signal }).catch(() => null);
+      if (!res || !res.ok) return null;
+      const data = (await res.json().catch(() => null)) as unknown;
+      return Array.isArray(data) ? (data as ServerClass[]) : null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
    * Settle saves that got no answer, by the draft AS SENT (it may since have
    * been edited or removed). A class the server made anyway is adopted as
    * saved — so a later edit or removal of it is reported like any saved class.
-   * One the server didn't make is forgotten (a draft still on screen is then
-   * sent normally). Returns the names of sends that couldn't be checked now
-   * (class list unreadable) and of removed drafts that turned out not to exist.
+   * One the server didn't make is forgotten (Save then sends a draft still on
+   * screen normally). Returns the names of sends that couldn't be checked now
+   * (class list unreadable), that turned out to be saved, and that weren't.
    */
-  async function settleUnconfirmedDetailed(): Promise<{ unchecked: string[]; notMade: string[] }> {
+  async function settleUnconfirmedDetailed(): Promise<{ unchecked: string[]; madeAfterAll: string[]; notMade: string[] }> {
     const unchecked: string[] = [];
+    const madeAfterAll: string[] = [];
     const notMade: string[] = [];
-    if (unconfirmedClasses.current.size === 0) return { unchecked, notMade };
+    if (unconfirmedClasses.current.size === 0) return { unchecked, madeAfterAll, notMade };
     const before = classesBeforeRun.current;
     const list = before ? await listClasses() : null;
     for (const [draftId, sent] of [...unconfirmedClasses.current]) {
@@ -612,11 +621,12 @@ export default function OwnerOnboardingWizard({
       if (found) {
         createdClasses.current.set(draftId, sent);
         serverClassIds.current.add(found);
-      } else if (!classes.some((c) => c.id === draftId)) {
+        madeAfterAll.push(draft.name.trim());
+      } else {
         notMade.push(draft.name.trim());
       }
     }
-    return { unchecked, notMade };
+    return { unchecked, madeAfterAll, notMade };
   }
 
   async function settleUnconfirmed(): Promise<string[]> {
@@ -632,7 +642,7 @@ export default function OwnerOnboardingWizard({
   /** What to say about sends that couldn't be checked: name them and say what to do. */
   function uncheckedMessage(names: string[], retry = false): string {
     const one = names.length === 1;
-    return `We couldn't check whether ${quoteNames(names)} reached us.${retry ? " Press Save again to check once your connection is back." : ""} If this keeps happening, skip this step and look on the Timetable page: add ${one ? "it" : "any"} if missing, or delete the extra if there are two.`;
+    return `We couldn't check whether ${quoteNames(names)} reached us.${retry ? " Press Save again to check once your connection is back (or sign in again if you've been signed out)." : ""} If this keeps happening, skip this step and look on the Timetable page: add ${one ? "it" : "any"} if missing, or delete the extra if there are two.`;
   }
 
   /**
@@ -770,6 +780,7 @@ export default function OwnerOnboardingWizard({
         let createdNow = 0;
         let classFailed = false;
         const rejectedClasses: string[] = [];
+        const failedNames: string[] = [];
         // The club's classes before this run first saves any, so a class a
         // lost response created can be told apart from one that was there. No
         // class is sent until this has been read: without it, a save that gets
@@ -779,7 +790,7 @@ export default function OwnerOnboardingWizard({
         if (classesBeforeRun.current === undefined && toSend) {
           const list = await listClasses();
           if (!list) {
-            toast("We couldn't reach MatFlow, so no classes were saved. Check your connection (or sign in again if you've been signed out), then press Save again.", "error", FAIL_MS);
+            toast("We couldn't load your timetable, so no classes were saved. Check your connection (or sign in again if you've been signed out), then press Save again.", "error", FAIL_MS);
             return;
           }
           classesBeforeRun.current = new Set(list.map((c) => c.id));
@@ -836,6 +847,7 @@ export default function OwnerOnboardingWizard({
             // No answer, or a server failure: the class may exist anyway.
             if (!res || res.status >= 500) unconfirmedClasses.current.set(cls.id, JSON.stringify(cls));
             classFailed = true;
+            failedNames.push(cls.name.trim());
           }
         }
         if (createdNow > 0) {
@@ -843,17 +855,20 @@ export default function OwnerOnboardingWizard({
         }
         setSummary((s) => ({ ...s, classes: totalClasses }));
         if (rejectedClasses.length > 0) {
+          if (unchecked.length > 0) toast(uncheckedMessage(unchecked), "info", 10000);
           toast(`These classes weren't accepted: ${rejectedClasses.join("; ")}. Change or remove them, then press Save again.`, "error", FAIL_MS);
           return;
         }
         if (classFailed) {
           // A class whose answer was lost is found and adopted on the retry
           // while the class list can be read; when it can't right now, the
-          // classes concerned are named and nothing is promised.
+          // classes concerned are named and nothing is promised. Every class
+          // that failed in this press is named, so none can be dropped unseen.
+          const others = failedNames.filter((n) => !unchecked.includes(n));
           toast(
             unchecked.length > 0
-              ? uncheckedMessage(unchecked, true)
-              : "Some classes didn't save. Check your connection (or sign in again if you've been signed out), then press Save again — classes already saved won't be added twice.",
+              ? `${uncheckedMessage(unchecked, true)}${others.length > 0 ? ` ${quoteNames(others)} didn't save either.` : ""}`
+              : `${quoteNames(failedNames)} didn't save. Check your connection (or sign in again if you've been signed out), then press Save again — classes already saved won't be added twice.`,
             "error",
             10000,
           );
@@ -1023,11 +1038,22 @@ export default function OwnerOnboardingWizard({
     if (step === 4 && unconfirmedClasses.current.size > 0) {
       busyRef.current = true;
       setLoading(true);
-      const { unchecked, notMade } = await settleUnconfirmedDetailed();
-      setLoading(false);
-      busyRef.current = false;
+      let settled: Awaited<ReturnType<typeof settleUnconfirmedDetailed>> | null = null;
+      try {
+        settled = await settleUnconfirmedDetailed();
+      } finally {
+        setLoading(false);
+        busyRef.current = false;
+      }
+      const { unchecked, madeAfterAll, notMade } = settled;
+      const one = (n: string[]) => n.length === 1;
+      if (madeAfterAll.length > 0) {
+        // The last word the owner had was "didn't save": correct it.
+        toast(`${quoteNames(madeAfterAll)} ${one(madeAfterAll) ? "was" : "were"} saved after all — ${one(madeAfterAll) ? "it's" : "they're"} on your timetable.`, "info", 10000);
+        setSummary((s) => ({ ...s, classes: s.classes + madeAfterAll.length }));
+      }
       if (unchecked.length > 0) toast(uncheckedMessage(unchecked), "info", 10000);
-      if (notMade.length > 0) toast(`${quoteNames(notMade)} ${notMade.length === 1 ? "wasn't" : "weren't"} saved. Add ${notMade.length === 1 ? "it" : "them"} on the Timetable page if you want ${notMade.length === 1 ? "it" : "them"}.`, "info", 10000);
+      if (notMade.length > 0) toast(`${quoteNames(notMade)} ${one(notMade) ? "wasn't" : "weren't"} saved. Add ${one(notMade) ? "it" : "them"} on the Timetable page if you want ${one(notMade) ? "it" : "them"}.`, "info", 10000);
     }
     // Skip does not undo what this run already saved: say so, as Continue does.
     if (step === 3 && rankChangesAfterSave()) toast(RANKS_KEPT, "info", 6000);
