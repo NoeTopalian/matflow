@@ -434,6 +434,12 @@ export default function OwnerOnboardingWizard({
   // as saved. Back then Continue used to create every class and its sessions
   // a second time.
   const createdClasses = useRef<Map<string, string>>(new Map());
+  // Lost responses on step 4: drafts whose save got no answer, server ids this
+  // run created or adopted, and the club's class ids before this run saved any
+  // (undefined = not read yet; null = couldn't be read).
+  const unconfirmedClasses = useRef<Set<string>>(new Set());
+  const serverClassIds = useRef<Set<string>>(new Set());
+  const classesBeforeRun = useRef<Set<string> | null | undefined>(undefined);
   // Step 3: ranks saved in this run, by discipline#order, with what was sent.
   const savedRanks = useRef<Map<string, string>>(new Map());
 
@@ -570,10 +576,54 @@ export default function OwnerOnboardingWizard({
     return false;
   }
 
+  type ServerClass = { id: string; name: string; schedules?: Array<{ dayOfWeek: number; startTime: string; endTime: string }> };
+
+  /** The club's classes, or null when the list can't be read. */
+  async function listClasses(): Promise<ServerClass[] | null> {
+    const res = await fetch("/api/classes").catch(() => null);
+    if (!res || !res.ok) return null;
+    const data = (await res.json().catch(() => null)) as unknown;
+    return Array.isArray(data) ? (data as ServerClass[]) : null;
+  }
+
+  /**
+   * The server id of a class an unanswered save of `cls` created, if any: a
+   * class that was not there before this run, not already this run's, with
+   * the same name and the same days and times.
+   */
+  async function findLostClass(cls: ClassDraft): Promise<string | null> {
+    const before = classesBeforeRun.current;
+    if (!before) return null;
+    const list = await listClasses();
+    if (!list) return null;
+    const days = cls.days.map(uiDayToJs).sort().join(",");
+    const match = list.find((c) =>
+      !before.has(c.id) &&
+      !serverClassIds.current.has(c.id) &&
+      c.name === cls.name &&
+      (c.schedules ?? []).map((s) => s.dayOfWeek).sort().join(",") === days &&
+      (c.schedules ?? []).every((s) => s.startTime === cls.startTime && s.endTime === cls.endTime),
+    );
+    return match?.id ?? null;
+  }
+
   /** True only for the hand-off route's own "uploads aren't available" 503. */
   async function uploadsUnavailable(res: Response): Promise<boolean> {
     const body = (await res.clone().json().catch(() => null)) as { code?: unknown } | null;
     return body?.code === "uploads_unavailable";
+  }
+
+  /**
+   * A 403's reason as an owner can act on it: the server's own sentence when it
+   * is one, otherwise plain words (a platform page, or a cross-site check's
+   * technical message such as "Invalid Referer").
+   */
+  async function forbiddenReason(res: Response): Promise<string> {
+    const body = (await res.clone().json().catch(() => null)) as { error?: unknown } | null;
+    const said = typeof body?.error === "string" ? body.error.trim() : "";
+    const technical = !said || /referer|origin|csrf|forbidden/i.test(said);
+    const reason = technical ? "access was refused. Refresh the page, sign in again if asked, then try again" : said;
+    return /[.!?]$/.test(reason) ? reason : `${reason}.`;
   }
 
   /** PATCH /api/settings; null when no response arrived. */
@@ -590,7 +640,7 @@ export default function OwnerOnboardingWizard({
     if (res && res.status === 401) return SIGNED_OUT;
     // 403 is not "signed out" (support access, an authenticator or password
     // step, a cross-site check): the server's own sentence says what it is.
-    if (res && res.status === 403) return `That wasn't saved: ${await serverError(res)}`;
+    if (res && res.status === 403) return `That wasn't saved: ${await forbiddenReason(res)}`;
     // Refused as entered: retrying unchanged can't work, so say what was wrong.
     if (res && isInputRefused(res.status)) return `We couldn't save that: ${await serverError(res)}. Check what you entered and try again.`;
     return fallback;
@@ -669,6 +719,12 @@ export default function OwnerOnboardingWizard({
         let classFailed = false;
         const rejectedClasses: string[] = [];
         const editedAfterSave = classChangesAfterSave();
+        // The club's classes before this run first saved any, so a class a
+        // lost response created can be told apart from one that was there.
+        if (classesBeforeRun.current === undefined) {
+          const list = await listClasses();
+          classesBeforeRun.current = list ? new Set(list.map((c) => c.id)) : null;
+        }
         for (const cls of classes) {
           // Checked before completeness: a saved class edited down to a blank
           // draft is still on the server (classChangesAfterSave reports it).
@@ -677,6 +733,18 @@ export default function OwnerOnboardingWizard({
             continue;
           }
           if (!cls.name.trim() || cls.days.length === 0 || !cls.startTime || !cls.endTime) continue;
+          // An earlier save of this draft got no answer: if the server made the
+          // class anyway, adopt it instead of creating a second one.
+          if (unconfirmedClasses.current.has(cls.id)) {
+            const found = await findLostClass(cls);
+            if (found) {
+              createdClasses.current.set(cls.id, JSON.stringify(cls));
+              serverClassIds.current.add(found);
+              unconfirmedClasses.current.delete(cls.id);
+              totalClasses++;
+              continue;
+            }
+          }
           const [sh, sm] = cls.startTime.split(":").map(Number);
           const [eh, em] = cls.endTime.split(":").map(Number);
           const duration = Math.max((eh * 60 + em) - (sh * 60 + sm), 30);
@@ -698,7 +766,10 @@ export default function OwnerOnboardingWizard({
             }),
           }).catch(() => null);
           if (res && res.ok) {
+            const made = (await res.json().catch(() => null)) as { id?: unknown } | null;
+            if (typeof made?.id === "string") serverClassIds.current.add(made.id);
             createdClasses.current.set(cls.id, JSON.stringify(cls));
+            unconfirmedClasses.current.delete(cls.id);
             totalClasses++;
             createdNow++;
           } else if (res && isInputRefused(res.status)) {
@@ -706,6 +777,8 @@ export default function OwnerOnboardingWizard({
             // would be refused again, so name it and say why.
             rejectedClasses.push(`“${cls.name.trim()}” (${await serverError(res)})`);
           } else {
+            // No answer, or a server failure: the class may exist anyway.
+            if (!res || res.status >= 500) unconfirmedClasses.current.add(cls.id);
             classFailed = true;
           }
         }
@@ -718,9 +791,16 @@ export default function OwnerOnboardingWizard({
           return;
         }
         if (classFailed) {
-          // Classes have no server-side duplicate check: a class whose response
-          // was lost may already exist, and saving it again would add a second.
-          toast("Some classes didn't save. Check your connection (or sign in again if you've been signed out), then press Save again. Classes we confirmed as saved won't be added twice — but if your connection dropped while saving, check the Timetable page for a duplicate afterwards.", "error", 10000);
+          // A class whose answer was lost is found and adopted on the retry —
+          // unless the club's class list couldn't be read before saving, in
+          // which case a duplicate can't be ruled out and the owner is told.
+          toast(
+            classesBeforeRun.current
+              ? "Some classes didn't save. Check your connection (or sign in again if you've been signed out), then press Save again — classes already saved won't be added twice."
+              : "Some classes didn't save. Check your connection (or sign in again if you've been signed out), then press Save again. If your connection dropped while saving, check the Timetable page for a duplicate afterwards.",
+            "error",
+            10000,
+          );
           return;
         }
         if (editedAfterSave) toast(CLASSES_KEPT, "info", 6000);
@@ -908,23 +988,22 @@ export default function OwnerOnboardingWizard({
         const data = (await res.json().catch(() => ({}))) as { message?: unknown; alreadyReceived?: unknown; notesMatch?: unknown };
         let message = typeof data.message === "string" ? data.message : null;
         // A retry that found the first upload keeps the first upload's notes.
-        // The server compares with what it stored; with no record, fall back
-        // to the notes this tab sent first.
-        const notesDiffer = data.notesMatch === false || (data.notesMatch == null && notes !== (csvNotesSent.current ?? ""));
-        if (data.alreadyReceived === true && notesDiffer) {
-          message = `${message ?? ""} Notes you changed after your first attempt weren't added — email them to hello@matflow.studio.`.trim();
+        // When the server has the first upload's record it says itself, in the
+        // right channel, whether changed notes were dropped (notesMatch false).
+        // With no record, fall back to the notes this tab sent first.
+        if (data.alreadyReceived === true && data.notesMatch == null && notes !== (csvNotesSent.current ?? "")) {
+          message = `${message ?? ""} Notes you changed after your first attempt may not have been added.`.trim();
         }
         setCsvHandoffMessage(message);
         setCsvUploaded(true);
-        // Confirmed: the reference has done its job. A later deliberate
-        // resend of the same file is a new hand-off.
-        csvClientRef.current = null;
-        csvNotesSent.current = null;
-        try { sessionStorage.removeItem(csvRefKey); } catch { /* ignore */ }
+        // The reference is kept for this tab: if the page reloads before
+        // Finish, uploading the same file again finds this upload instead of
+        // sending it twice. Once the MatFlow team picks the job up, the route
+        // no longer matches it, so a genuine resend is a new hand-off.
       } else if (res && res.status === 401) {
         setCsvHandoffError("Your file wasn't sent because you've been signed out. Sign in again, then upload it here.");
       } else if (res && res.status === 403) {
-        setCsvHandoffError(`Your file wasn't sent: ${await serverError(res)}`);
+        setCsvHandoffError(`Your file wasn't sent: ${await forbiddenReason(res)}`);
       } else if (res && res.status >= 400 && res.status < 500) {
         // Refused before anything was stored (wrong type, too large, too many
         // uploads): say why; the owner can fix it or choose another file.

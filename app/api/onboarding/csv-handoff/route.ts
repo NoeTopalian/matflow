@@ -76,6 +76,12 @@ async function alreadyReceived(tenantId: string, jobId: string, submittedNotes: 
   // Whether the notes sent now are the notes the first upload stored: null
   // when there is no record to compare with.
   const notesMatch = meta ? (typeof meta.notes === "string" ? meta.notes : "") === submittedNotes : null;
+  if (notesMatch === false) {
+    // Same channel as the sentence above it.
+    message += isEmailDeliveryOn()
+      ? " Notes you changed after your first attempt weren't added — email them to hello@matflow.studio."
+      : " Notes you changed after your first attempt weren't added — pass them to your MatFlow contact too.";
+  }
   return NextResponse.json({ jobId, message, alreadyReceived: true, notesMatch }, { status: 200 });
 }
 
@@ -151,7 +157,7 @@ export async function POST(req: Request) {
   if (refMarker) {
     const existing = await withTenantContext(tenantId, (tx) =>
       tx.importJob.findFirst({
-        where: { tenantId, createdById: userId, fileBlobUrl: { contains: refMarker } },
+        where: { tenantId, createdById: userId, status: "pending_white_glove", fileBlobUrl: { contains: refMarker } },
         select: { id: true },
       }),
     );
@@ -189,7 +195,7 @@ export async function POST(req: Request) {
         // Serialise per reference and look again, so only one job is created.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${CLIENT_REF_LOCK_NS}::int4, hashtext(${`${tenantId}:${clientRef}`}::text))`;
         const raced = await tx.importJob.findFirst({
-          where: { tenantId, createdById: userId, fileBlobUrl: { contains: refMarker } },
+          where: { tenantId, createdById: userId, status: "pending_white_glove", fileBlobUrl: { contains: refMarker } },
           select: { id: true },
         });
         if (raced) return { kind: "duplicate" as const, duplicateOf: raced.id };
@@ -264,7 +270,7 @@ export async function POST(req: Request) {
       metadata: { fileName: job.fileName, sizeBytes: file.size, notes: notes || null, teamNotified: teamReached },
       req,
       durable: true,
-    }).catch(() => {});
+    }).catch((e) => console.warn("[onboarding/csv-handoff] audit write failed", e instanceof Error ? e.message : e));
 
     const message = !isEmailDeliveryOn()
       ? MAIL_OFF

@@ -344,7 +344,7 @@ describe("POST /api/onboarding/csv-handoff", () => {
       // Both lookups are scoped to this club, this owner and this reference.
       expect(findFirstMock).toHaveBeenCalledTimes(2);
       for (const [arg] of findFirstMock.mock.calls) {
-        expect(arg.where).toEqual({ tenantId: "tenant-A", createdById: "user-owner-A", fileBlobUrl: { contains: `/handoff-${REF}` } });
+        expect(arg.where).toEqual({ tenantId: "tenant-A", createdById: "user-owner-A", status: "pending_white_glove", fileBlobUrl: { contains: `/handoff-${REF}` } });
       }
     });
 
@@ -428,6 +428,35 @@ describe("POST /api/onboarding/csv-handoff", () => {
         const body = await (await POST(makeReq({ clientRef: REF, notes }))).json();
         expect(body.notesMatch).toBe(expected);
       }
+    });
+
+    it("changed notes on a replay are reported in the same channel as the reply", async () => {
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      findFirstMock.mockResolvedValueOnce({ id: "job-first" });
+      auditFindFirstMock.mockResolvedValueOnce({ metadata: { notes: "first", teamNotified: true } });
+      const on = await (await POST(makeReq({ clientRef: REF, notes: "second" }))).json();
+      expect(on.message).toMatch(/weren't added — email them to hello@matflow\.studio/);
+      process.env.EMAIL_DELIVERY = "off";
+      try {
+        findFirstMock.mockResolvedValueOnce({ id: "job-first" });
+        auditFindFirstMock.mockResolvedValueOnce({ metadata: { notes: "first" } });
+        const off = await (await POST(makeReq({ clientRef: REF, notes: "second" }))).json();
+        expect(off.message).toMatch(/let your MatFlow contact know/);
+        expect(off.message).toMatch(/weren't added — pass them to your MatFlow contact too/);
+        expect(off.message).not.toMatch(/hello@/);
+      } finally {
+        delete process.env.EMAIL_DELIVERY;
+      }
+    });
+
+    it("a failed durable audit write is logged, not swallowed silently", async () => {
+      createMock.mockResolvedValueOnce({ id: "job-new", fileName: "members.csv" });
+      logAuditMock.mockRejectedValueOnce(new Error("audit store down"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      expect((await POST(makeReq({ clientRef: REF }))).status).toBe(201);
+      expect(warn).toHaveBeenCalledWith("[onboarding/csv-handoff] audit write failed", "audit store down");
+      warn.mockRestore();
     });
 
     it("the uploads-unavailable 503 carries a machine code the wizard can tell apart", async () => {
