@@ -16,7 +16,7 @@ vi.mock("next/server", () => ({
   },
 }));
 
-const { createMock, findUniqueUserMock, findUniqueTenantMock, sendEmailMock, logAuditMock, blobPutMock, requireOwnerMock, findFirstMock, executeRawMock, delMock } = vi.hoisted(() => ({
+const { createMock, findUniqueUserMock, findUniqueTenantMock, sendEmailMock, logAuditMock, blobPutMock, requireOwnerMock, findFirstMock, executeRawMock, delMock, auditFindFirstMock } = vi.hoisted(() => ({
   createMock: vi.fn(),
   findUniqueUserMock: vi.fn(),
   findUniqueTenantMock: vi.fn(),
@@ -27,6 +27,7 @@ const { createMock, findUniqueUserMock, findUniqueTenantMock, sendEmailMock, log
   findFirstMock: vi.fn(),
   executeRawMock: vi.fn(),
   delMock: vi.fn(),
+  auditFindFirstMock: vi.fn(),
 }));
 
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
@@ -44,6 +45,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     importJob: { create: createMock, findFirst: findFirstMock },
     $executeRaw: executeRawMock,
+    auditLog: { findFirst: auditFindFirstMock },
     tenant: { findUnique: findUniqueTenantMock },
     user: { findUnique: findUniqueUserMock },
   },
@@ -82,6 +84,7 @@ beforeEach(() => {
   findFirstMock.mockResolvedValue(null);
   executeRawMock.mockResolvedValue(1);
   delMock.mockResolvedValue(undefined);
+  auditFindFirstMock.mockResolvedValue(null);
 });
 
 function makeReq(opts?: { file?: File | null; notes?: string; clientRef?: string }) {
@@ -367,6 +370,48 @@ describe("POST /api/onboarding/csv-handoff", () => {
       expect(createMock).not.toHaveBeenCalled();
       expect(sendEmailMock).not.toHaveBeenCalled();
       expect(delMock).toHaveBeenCalledWith(`https://blob.test/imports/handoff-${REF}-x1.csv`);
+    });
+
+    // Final review (16 Oct 2026): the owner may never have seen the first
+    // reply, so a replay must say what that reply would have said.
+    it("a replay with email off repeats that the team was not notified", async () => {
+      process.env.EMAIL_DELIVERY = "off";
+      try {
+        findFirstMock.mockResolvedValueOnce({ id: "job-first" });
+        const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+        const body = await (await POST(makeReq({ clientRef: REF }))).json();
+        expect(body.message).toMatch(/already have this file/i);
+        expect(body.message).toMatch(/Email is turned off for this club/);
+      } finally {
+        delete process.env.EMAIL_DELIVERY;
+      }
+    });
+
+    it("a replay says the team was told only when the first attempt recorded it", async () => {
+      findFirstMock.mockResolvedValueOnce({ id: "job-first" });
+      auditFindFirstMock.mockResolvedValueOnce({ metadata: { teamNotified: true } });
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      const body = await (await POST(makeReq({ clientRef: REF }))).json();
+      expect(body.message).toMatch(/has been told about it/);
+      expect(auditFindFirstMock.mock.calls[0][0].where).toEqual({ tenantId: "tenant-A", action: "onboarding.csv_handoff", entityId: "job-first" });
+    });
+
+    it("a replay with no record of notifying the team says so and gives the address", async () => {
+      for (const row of [null, { metadata: { teamNotified: false } }, { metadata: {} }]) {
+        findFirstMock.mockResolvedValueOnce({ id: "job-first" });
+        auditFindFirstMock.mockResolvedValueOnce(row);
+        const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+        const body = await (await POST(makeReq({ clientRef: REF }))).json();
+        expect(body.message).toMatch(/can't confirm the MatFlow team was told/);
+        expect(body.message).toMatch(/hello@matflow\.studio/);
+      }
+    });
+
+    it("the first attempt records whether the team was reached, for a later replay", async () => {
+      createMock.mockResolvedValueOnce({ id: "job-new", fileName: "members.csv" });
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      await POST(makeReq({ clientRef: REF }));
+      expect(logAuditMock.mock.calls[0][0].metadata).toMatchObject({ teamNotified: true });
     });
 
     it("a malformed reference is refused before anything is stored", async () => {

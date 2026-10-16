@@ -32,6 +32,7 @@ type WizardProps = {
   storedTimezone: string | null;
   storedLogoSize: string | null;
   alreadyOnboarded: boolean;
+  storedAnswers: unknown;
 };
 
 async function render(resume?: string) {
@@ -59,6 +60,16 @@ describe("/onboarding page", () => {
     expect(p.alreadyOnboarded).toBe(true);
     expect(p.storedTimezone).toBeNull();
     expect(p.storedName).toBeNull();
+  });
+
+  it("passes saved questionnaire answers only when they have the shape step 6 writes", async () => {
+    h.read = async () => ({ onboardingCompleted: true, name: "N", timezone: "Europe/London", logoSize: "md",
+      onboardingAnswers: { size: "21–50", goals: ["Grow"], referral: "friend", referralOther: null } });
+    expect((await render("1")).storedAnswers).toEqual({ size: "21–50", goals: ["Grow"], referral: "friend", referralOther: null });
+    for (const bad of [null, "x", { size: 3 }, { size: "1–20", goals: [1], referral: "" }, { size: "1–20", goals: [] }]) {
+      h.read = async () => ({ onboardingCompleted: true, name: "N", timezone: "Europe/London", logoSize: "md", onboardingAnswers: bad });
+      expect((await render("1")).storedAnswers).toBeNull();
+    }
   });
 
   it("a completed club without ?resume=1 goes to the dashboard", async () => {

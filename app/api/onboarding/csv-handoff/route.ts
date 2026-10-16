@@ -47,8 +47,34 @@ const formSchema = z.strictObject({
 });
 const CLIENT_REF_LOCK_NS = 0x43535648; // "CSVH"
 
-const ALREADY_RECEIVED =
-  "We already have this file — it was received the first time, so nothing was sent twice.";
+const MAIL_OFF =
+  "Your file is uploaded and safe. Email is turned off for this club, so the MatFlow team was not notified automatically and you won't get an email when it's done — let your MatFlow contact know it's there.";
+
+/**
+ * The reply to a retry that found the first hand-off. Whether the first
+ * attempt reached the MatFlow team is read from its audit row, never assumed:
+ * the owner may never have seen the first reply, which is the only place they
+ * would have been told to contact us. Unknown (no row, or the first attempt
+ * stopped before notifying) is said as unknown.
+ */
+async function alreadyReceived(tenantId: string, jobId: string) {
+  let message: string;
+  if (!isEmailDeliveryOn()) {
+    message = `We already have this file, so it wasn't sent twice. ${MAIL_OFF.replace(/^Your file is uploaded and safe\. /, "")}`;
+  } else {
+    const row = await withTenantContext(tenantId, (tx) =>
+      tx.auditLog.findFirst({
+        where: { tenantId, action: "onboarding.csv_handoff", entityId: jobId },
+        select: { metadata: true },
+      }),
+    ).catch(() => null);
+    const reached = (row?.metadata as { teamNotified?: unknown } | null | undefined)?.teamNotified === true;
+    message = reached
+      ? "We already have this file, so it wasn't sent twice. The MatFlow team has been told about it and will email you when your members are imported."
+      : "We already have this file, so it wasn't sent twice — but we can't confirm the MatFlow team was told about it. Email hello@matflow.studio so we can import it.";
+  }
+  return NextResponse.json({ jobId, message, alreadyReceived: true }, { status: 200 });
+}
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_NOTES_LEN = 500;
@@ -126,9 +152,7 @@ export async function POST(req: Request) {
         select: { id: true },
       }),
     );
-    if (existing) {
-      return NextResponse.json({ jobId: existing.id, message: ALREADY_RECEIVED, alreadyReceived: true }, { status: 200 });
-    }
+    if (existing) return alreadyReceived(tenantId, existing.id);
   }
 
   // Every accepted hand-off is stored AND emails the MatFlow team, so the
@@ -165,7 +189,7 @@ export async function POST(req: Request) {
           where: { tenantId, createdById: userId, fileBlobUrl: { contains: refMarker } },
           select: { id: true },
         });
-        if (raced) return { duplicateOf: raced.id } as const;
+        if (raced) return { kind: "duplicate" as const, duplicateOf: raced.id };
       }
       const j = await tx.importJob.create({
         data: {
@@ -181,13 +205,13 @@ export async function POST(req: Request) {
         tx.tenant.findUnique({ where: { id: tenantId }, select: { name: true, slug: true } }),
         tx.user.findUnique({ where: { id: userId }, select: { name: true, email: true } }),
       ]);
-      return { job: j, tenant: t, owner: o };
+      return { kind: "created" as const, job: j, tenant: t, owner: o };
     });
-    if ("duplicateOf" in created) {
+    if (created.kind === "duplicate") {
       // The first attempt won the race: drop this copy of the file and answer
       // with the first job. Best effort — an orphaned private blob holds no job.
       await del(blob.url).catch(() => {});
-      return NextResponse.json({ jobId: created.duplicateOf, message: ALREADY_RECEIVED, alreadyReceived: true }, { status: 200 });
+      return alreadyReceived(tenantId, created.duplicateOf);
     }
     const { job, tenant, owner } = created;
 
@@ -223,19 +247,21 @@ export async function POST(req: Request) {
       ),
     );
 
+    const teamReached = notified.some((r) => r.status === "fulfilled" && r.value?.ok === true);
+
     await logAudit({
       tenantId,
       userId,
       action: "onboarding.csv_handoff",
       entityType: "ImportJob",
       entityId: job.id,
-      metadata: { fileName: job.fileName, sizeBytes: file.size, notes: notes || null },
+      // teamNotified is read back if this hand-off is retried (alreadyReceived).
+      metadata: { fileName: job.fileName, sizeBytes: file.size, notes: notes || null, teamNotified: teamReached },
       req,
     });
 
-    const teamReached = notified.some((r) => r.status === "fulfilled" && r.value?.ok === true);
     const message = !isEmailDeliveryOn()
-      ? "Your file is uploaded and safe. Email is turned off for this club, so the MatFlow team was not notified automatically and you won't get an email when it's done — let your MatFlow contact know it's there."
+      ? MAIL_OFF
       : teamReached
         ? "We'll import your members within 1 business day and email you when they're ready."
         : "Your file is uploaded and safe, but our automatic notification to the MatFlow team didn't go through — email hello@matflow.studio so we can import it.";

@@ -22,19 +22,26 @@ interface Props {
   storedLogoSize?: "sm" | "md" | "lg" | null;
   /** True when the club already finished setup (wizard reopened with ?resume=1). */
   alreadyOnboarded?: boolean;
+  /** The club's saved questionnaire answers, so step 6 prefills them and saves only a change. */
+  storedAnswers?: StoredAnswers | null;
 }
+
+export type StoredAnswers = { size: string; goals: string[]; referral: string; referralOther: string | null };
 
 /** Shown, and the step kept, whenever a save does not succeed (Batch 1, 16 Oct 2026). */
 // Not "nothing has changed": after a dropped connection the server may have
 // saved it. Every save the wizard retries is safe to send twice.
 const SAVE_FAILED = "We couldn't confirm that saved. Check your connection and try again.";
+const SIGNED_OUT = "You've been signed out, so that wasn't saved. Sign in again, then carry on with setup.";
+// Failure messages stay up long enough to read (the default toast is 3.5 s).
+const FAIL_MS = 8000;
 // What was saved earlier in this run stays saved; the wizard never deletes.
 const RANKS_KEPT = "Belt systems and ranks you'd already saved stay as first saved, including any you removed or changed here. Change or delete them on the Ranks page.";
 const CLASSES_KEPT = "Classes you'd already saved stay as first saved, including any you removed or changed here. Change or delete them on the Timetable page.";
 
 type RankDraft = { discipline: string; name: string; order: number; color: string; stripes: number };
 
-const FINISH_FAILED ="We couldn't finish setup. Nothing is lost. Press the button again to retry.";
+const FINISH_FAILED = "We couldn't finish setup. Nothing is lost — try again.";
 
 interface ClassDraft {
   id: string;
@@ -154,6 +161,22 @@ function uid() { return Math.random().toString(36).slice(2); }
 function readDeviceTimezone(): string {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone ?? ""; }
   catch { return ""; }
+}
+
+/** Identifies "the same file" across a reload: name, size and modified time. */
+function csvFingerprint(f: File): string {
+  return `${f.name}:${f.size}:${f.lastModified}`;
+}
+
+/** The CSV hand-off reference kept for this tab, if any. */
+function readCsvRef(key: string): { fp: string; ref: string; notes: string } | null {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(key) ?? "null") as { fp?: unknown; ref?: unknown; notes?: unknown } | null;
+    if (v && typeof v.fp === "string" && typeof v.ref === "string" && /^[a-f0-9]{32}$/.test(v.ref)) {
+      return { fp: v.fp, ref: v.ref, notes: typeof v.notes === "string" ? v.notes : "" };
+    }
+  } catch { /* storage unavailable or malformed */ }
+  return null;
 }
 
 /** A second click within this window of a step change is the same gesture. */
@@ -328,6 +351,7 @@ export default function OwnerOnboardingWizard({
   storedName = null,
   storedTimezone = null,
   storedLogoSize = null,
+  storedAnswers = null,
   alreadyOnboarded = false,
 }: Props) {
   const { toast } = useToast();
@@ -410,12 +434,16 @@ export default function OwnerOnboardingWizard({
   // Step 3: ranks saved in this run, by discipline#order, with what was sent.
   const savedRanks = useRef<Map<string, string>>(new Map());
 
-  // Step 6 — questionnaire
-  const [gymSize, setGymSize] = useState("");
-  const [goals, setGoals] = useState<string[]>([]);
-  const [referral, setReferral] = useState("");
+  // Step 6 — questionnaire, prefilled from what the club already answered.
+  const [gymSize, setGymSize] = useState(storedAnswers?.size ?? "");
+  const [goals, setGoals] = useState<string[]>(storedAnswers?.goals ?? []);
+  const [referral, setReferral] = useState(storedAnswers?.referral ?? "");
   // Sub-project #4: free-text input shown when referral === "other".
-  const [referralOther, setReferralOther] = useState("");
+  const [referralOther, setReferralOther] = useState(storedAnswers?.referralOther ?? "");
+  // What the server holds, in the shape step 6 sends; a match sends nothing.
+  const savedAnswers = useRef<string | null>(storedAnswers ? JSON.stringify({
+    size: storedAnswers.size, goals: storedAnswers.goals, referral: storedAnswers.referral, referralOther: storedAnswers.referralOther,
+  }) : null);
 
   // Step 7 — payment rail (Wizard v2)
   const [paymentRail, setPaymentRail] = useState<"" | "pay_at_desk" | "stripe">("");
@@ -431,7 +459,12 @@ export default function OwnerOnboardingWizard({
   const [csvHandoffError, setCsvHandoffError] = useState<string | null>(null);
   // One reference per chosen file, resent on every retry of it, so a retry
   // after a lost response finds the first upload instead of sending it twice.
+  // Kept for this tab with the file's fingerprint (name, size, modified time),
+  // so a reload or choosing the same file again reuses it.
   const csvClientRef = useRef<string | null>(null);
+  const csvRefKey = `${stepKey}.csvref`;
+  // Notes sent with the first attempt under the current reference.
+  const csvNotesSent = useRef<string | null>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
 
   // Completion
@@ -534,14 +567,27 @@ export default function OwnerOnboardingWizard({
     return false;
   }
 
-  /** PATCH /api/settings and report whether the server accepted it. */
-  async function patchSettings(body: Record<string, unknown>): Promise<boolean> {
-    const res = await fetch("/api/settings", {
+  /** True when the response is our route's JSON error (not a platform page). */
+  async function serverJson(res: Response): Promise<boolean> {
+    const body = (await res.clone().json().catch(() => null)) as { error?: unknown } | null;
+    return !!body && typeof body.error === "string";
+  }
+
+  /** PATCH /api/settings; null when no response arrived. */
+  async function patchSettings(body: Record<string, unknown>): Promise<Response | null> {
+    return fetch("/api/settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).catch(() => null);
-    return !!res && res.ok;
+  }
+
+  /** What to tell the owner when a save did not succeed — the cause, not a guess. */
+  async function saveFailure(res: Response | null, fallback = SAVE_FAILED): Promise<string> {
+    if (res && (res.status === 401 || res.status === 403)) return SIGNED_OUT;
+    // Refused as entered: retrying unchanged can't work, so say what was wrong.
+    if (res && isInputRefused(res.status)) return `We couldn't save that: ${await serverError(res)}. Check what you entered and try again.`;
+    return fallback;
   }
 
   // Batch 1 (16 Oct 2026): every save is checked. A failed save keeps the
@@ -561,9 +607,12 @@ export default function OwnerOnboardingWizard({
         const name = gymName.trim();
         if (name && name !== savedName) body.name = name;
         if (willSetTimezone) body.timezone = detectedTimezone;
-        if (Object.keys(body).length > 0 && !(await patchSettings(body))) {
-          toast(SAVE_FAILED, "error");
-          return;
+        if (Object.keys(body).length > 0) {
+          const res = await patchSettings(body);
+          if (!res?.ok) {
+            toast(await saveFailure(res), "error", FAIL_MS);
+            return;
+          }
         }
       } else if (step === 3) {
         let totalRanks = 0;
@@ -600,11 +649,11 @@ export default function OwnerOnboardingWizard({
         for (const rank of rankDrafts()) await postRank(rank);
         setSummary((s) => ({ ...s, ranks: totalRanks }));
         if (rejectedRanks.length > 0) {
-          toast(`These ranks weren't accepted: ${rejectedRanks.join("; ")}. Change or remove them, then press Continue.`, "error", 8000);
+          toast(`These ranks weren't accepted: ${rejectedRanks.join("; ")}. Change or remove them, then try again.`, "error", FAIL_MS);
           return;
         }
         if (rankFailed) {
-          toast("Some ranks didn't save. Check your connection (or sign in again if you've been signed out) and press Continue to try again; ranks already saved won't be added twice.", "error");
+          toast("Some ranks didn't save. Check your connection (or sign in again if you've been signed out), then try again — ranks already saved won't be added twice.", "error", FAIL_MS);
           return;
         }
         if (rankEditedAfterSave) toast(RANKS_KEPT, "info", 6000);
@@ -659,11 +708,13 @@ export default function OwnerOnboardingWizard({
         }
         setSummary((s) => ({ ...s, classes: totalClasses }));
         if (rejectedClasses.length > 0) {
-          toast(`These classes weren't accepted: ${rejectedClasses.join("; ")}. Change or remove them, then press Save again.`, "error", 8000);
+          toast(`These classes weren't accepted: ${rejectedClasses.join("; ")}. Change or remove them, then press Save again.`, "error", FAIL_MS);
           return;
         }
         if (classFailed) {
-          toast("Some classes didn't save. Check your connection (or sign in again if you've been signed out) and press Save again; classes already saved won't be created twice.", "error");
+          // Classes have no server-side duplicate check: a class whose response
+          // was lost may already exist, and saving it again would add a second.
+          toast("Some classes didn't save. Check your connection (or sign in again if you've been signed out), then press Save again. Classes we confirmed as saved won't be added twice — but if your connection dropped while saving, check the Timetable page for a duplicate afterwards.", "error", 10000);
           return;
         }
         if (editedAfterSave) toast(CLASSES_KEPT, "info", 6000);
@@ -695,9 +746,9 @@ export default function OwnerOnboardingWizard({
                 ? ((await uploadRes.json().catch(() => ({}))) as { error?: string })
                 : {};
               toast(
-                `That logo didn't upload${errBody.error ? `: ${errBody.error}` : ""}. Nothing on this page has been saved yet. Press Next to try again, choose a different file, or press Skip to leave your branding as it is.`,
+                `That logo didn't upload${errBody.error ? `: ${errBody.error}` : ""}. Your current logo hasn't changed. Press Next to try again or choose a different file — or press Skip to move on without saving the rest of this page.`,
                 "error",
-                8000,
+                FAIL_MS,
               );
               return;
             }
@@ -707,8 +758,9 @@ export default function OwnerOnboardingWizard({
           if (url !== savedLogoUrl.current) body.logoUrl = url;
         }
         if (Object.keys(body).length > 0) {
-          if (!(await patchSettings(body))) {
-            toast(SAVE_FAILED, "error");
+          const res = await patchSettings(body);
+          if (!res?.ok) {
+            toast(await saveFailure(res), "error", FAIL_MS);
             return;
           }
           if (typeof body.logoSize === "string") savedLogoSize.current = logoSize;
@@ -722,19 +774,23 @@ export default function OwnerOnboardingWizard({
         // Persist questionnaire answers but don't mark onboardingCompleted —
         // there are now 2 more steps (payment rail, CSV handoff) before
         // the celebration screen.
-        const saved = await patchSettings({
-          onboardingAnswers: {
-            size: gymSize,
-            goals,
-            referral,
-            // Persist the free-text only when "other" is selected; trims and falls
-            // back to null so analytics queries on the JSON column stay clean.
-            referralOther: referral === "other" ? (referralOther.trim() || null) : null,
-          },
-        });
-        if (!saved) {
-          toast(SAVE_FAILED, "error");
-          return;
+        const answers: StoredAnswers = {
+          size: gymSize,
+          goals,
+          referral,
+          // Persist the free-text only when "other" is selected; trims and falls
+          // back to null so analytics queries on the JSON column stay clean.
+          referralOther: referral === "other" ? (referralOther.trim() || null) : null,
+        };
+        // Only a change is saved: a reopened wizard used to overwrite a club's
+        // stored answers with blank goals and referral.
+        if (JSON.stringify(answers) !== savedAnswers.current) {
+          const res = await patchSettings({ onboardingAnswers: answers });
+          if (!res?.ok) {
+            toast(await saveFailure(res), "error", FAIL_MS);
+            return;
+          }
+          savedAnswers.current = JSON.stringify(answers);
         }
       } else if (step === 7) {
         // Payment rail — record the owner's choice, for BOTH answers.
@@ -761,7 +817,7 @@ export default function OwnerOnboardingWizard({
             ),
           }).catch(() => null);
           if (!railRes || !railRes.ok) {
-            toast("Couldn't save how you take payments — try again.", "error");
+            toast(await saveFailure(railRes, "Couldn't save how you take payments — try again."), "error", FAIL_MS);
             return;
           }
         }
@@ -778,8 +834,9 @@ export default function OwnerOnboardingWizard({
         // uploaded via the upload-on-select pattern. Mark completion, and
         // only show "ready" once the server has recorded it; otherwise the
         // next dashboard visit would send the owner back to step 1.
-        if (!(await patchSettings({ onboardingCompleted: true }))) {
-          toast(FINISH_FAILED, "error");
+        const res = await patchSettings({ onboardingCompleted: true });
+        if (!res?.ok) {
+          toast(await saveFailure(res, FINISH_FAILED), "error", FAIL_MS);
           return;
         }
         setStep(FINAL_STEP);
@@ -788,7 +845,7 @@ export default function OwnerOnboardingWizard({
       setStep((s) => s + 1);
     } catch {
       // Unexpected error: stay on this step rather than advance past it.
-      toast(SAVE_FAILED, "error");
+      toast(SAVE_FAILED, "error", FAIL_MS);
     } finally {
       setLoading(false);
       busyRef.current = false;
@@ -802,11 +859,11 @@ export default function OwnerOnboardingWizard({
       // the server has recorded it.
       busyRef.current = true;
       setLoading(true);
-      const done = await patchSettings({ onboardingCompleted: true });
+      const res = await patchSettings({ onboardingCompleted: true });
       setLoading(false);
       busyRef.current = false;
-      if (!done) {
-        toast(FINISH_FAILED, "error");
+      if (!res?.ok) {
+        toast(await saveFailure(res, FINISH_FAILED), "error", FAIL_MS);
         return;
       }
       setStep(FINAL_STEP);
@@ -823,18 +880,28 @@ export default function OwnerOnboardingWizard({
     busyRef.current = true;
     setLoading(true);
     setCsvHandoffError(null);
+    const notes = csvNotes.trim();
     if (!csvClientRef.current) {
       csvClientRef.current = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+      csvNotesSent.current = notes;
+      try {
+        sessionStorage.setItem(csvRefKey, JSON.stringify({ fp: csvFingerprint(csvFile), ref: csvClientRef.current, notes }));
+      } catch { /* storage unavailable: the reference lives for this page only */ }
     }
     try {
       const fd = new FormData();
       fd.append("file", csvFile);
-      if (csvNotes.trim()) fd.append("notes", csvNotes.trim());
+      if (notes) fd.append("notes", notes);
       fd.append("clientRef", csvClientRef.current);
       const res = await fetch("/api/onboarding/csv-handoff", { method: "POST", body: fd }).catch(() => null);
       if (res && res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { message?: unknown };
-        setCsvHandoffMessage(typeof data.message === "string" ? data.message : null);
+        const data = (await res.json().catch(() => ({}))) as { message?: unknown; alreadyReceived?: unknown };
+        let message = typeof data.message === "string" ? data.message : null;
+        // A retry that found the first upload keeps the first upload's notes.
+        if (data.alreadyReceived === true && notes !== (csvNotesSent.current ?? "")) {
+          message = `${message ?? ""} The notes you changed after your first attempt weren't added — pass them to your MatFlow contact.`.trim();
+        }
+        setCsvHandoffMessage(message);
         setCsvUploaded(true);
       } else if (res && (res.status === 401 || res.status === 403)) {
         setCsvHandoffError("Your file wasn't sent because you've been signed out. Sign in again, then upload it here.");
@@ -842,11 +909,14 @@ export default function OwnerOnboardingWizard({
         // Refused before anything was stored (wrong type, too large, too many
         // uploads): say why; the owner can fix it or choose another file.
         setCsvHandoffError(`Your file wasn't sent: ${await serverError(res)}.`);
+      } else if (res && res.status === 503 && (await serverJson(res))) {
+        // Our route's 503 is "uploads aren't available" — refused before
+        // anything was stored, and retrying won't help.
+        setCsvHandoffError("Your file wasn't sent: uploads aren't available right now. Choose another option above.");
       } else {
         // No response, or a server failure: it may or may not have arrived.
         // The retry carries the same reference, so it can't arrive twice.
-        const reason = res ? ` (${await serverError(res)})` : "";
-        setCsvHandoffError(`We couldn't confirm your file arrived${reason}. Press Upload CSV again — if it already arrived, it won't be sent twice. If it keeps failing, choose another option above.`);
+        setCsvHandoffError("We couldn't confirm your file arrived. Press Upload CSV again — if it already arrived, it won't be sent twice. If it keeps failing, choose another option above.");
       }
     } finally {
       setLoading(false);
@@ -1833,8 +1903,12 @@ export default function OwnerOnboardingWizard({
                         setCsvFile(f);
                         setCsvUploaded(false);
                         setCsvHandoffError(null);
-                        // A different file is a different hand-off.
-                        csvClientRef.current = null;
+                        // The same file (even after a reload) keeps its
+                        // reference; a different file is a different hand-off.
+                        const kept = f ? readCsvRef(csvRefKey) : null;
+                        const same = !!f && !!kept && kept.fp === csvFingerprint(f);
+                        csvClientRef.current = same ? kept!.ref : null;
+                        csvNotesSent.current = same ? kept!.notes : null;
                       }}
                       className="hidden"
                     />

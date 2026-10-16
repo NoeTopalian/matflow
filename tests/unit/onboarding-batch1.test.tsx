@@ -150,13 +150,13 @@ describe("step 1 sends only what changed", () => {
 });
 
 describe("every save is checked", () => {
-  it("a 400 keeps the owner on step 1 with the failure message", async () => {
-    stubFetch(() => fail(400));
+  it("a 400 keeps the owner on step 1 and names what the server refused", async () => {
+    stubFetch(() => fail(400, "Invalid data"));
     renderWizard({ storedTimezone: DEVICE_ZONE });
     fireEvent.change(screen.getByLabelText("Gym Name"), { target: { value: "New name" } });
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm that saved/i), "error"));
-    expect(screen.getByLabelText("Gym Name")).toBeTruthy();
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't save that: Invalid data\. Check what you entered/i), "error", expect.any(Number)));
+    expect((screen.getByLabelText("Gym Name") as HTMLInputElement).value).toBe("New name");
     expect(screen.queryByText(/what do you teach/i)).toBeNull();
   });
 
@@ -165,7 +165,7 @@ describe("every save is checked", () => {
     renderWizard({ storedTimezone: DEVICE_ZONE });
     fireEvent.change(screen.getByLabelText("Gym Name"), { target: { value: "New name" } });
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm that saved/i), "error"));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm that saved/i), "error", expect.any(Number)));
     expect(screen.queryByText(/what do you teach/i)).toBeNull();
   });
 
@@ -175,7 +175,7 @@ describe("every save is checked", () => {
     renderWizard();
     fireEvent.click(await screen.findByRole("button", { name: "21–50" }));
     fireEvent.click(screen.getByRole("button", { name: /^next/i }));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm that saved/i), "error"));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm that saved/i), "error", expect.any(Number)));
     expect(patches(calls)).toHaveLength(1);
     expect(screen.getByText(/tell us about your gym/i)).toBeTruthy();
     expect(currentStep()).toBe("6");
@@ -187,7 +187,7 @@ describe("every save is checked", () => {
     renderWizard();
     fireEvent.click(await screen.findByText(/add members manually later/i));
     fireEvent.click(screen.getByRole("button", { name: /finish setup/i }));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't finish setup/i), "error"));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't finish setup/i), "error", expect.any(Number)));
     expect(patches(calls).map((c) => c.body)).toEqual([{ onboardingCompleted: true }]);
     expect(screen.getByText(/bring your members across/i)).toBeTruthy();
   });
@@ -197,7 +197,7 @@ describe("every save is checked", () => {
     openAt(9);
     renderWizard();
     fireEvent.click(await screen.findByRole("button", { name: /^skip$/i }));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't finish setup/i), "error"));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't finish setup/i), "error", expect.any(Number)));
     expect(screen.getByText(/bring your members across/i)).toBeTruthy();
   });
 
@@ -267,7 +267,7 @@ describe("step 3: ranks", () => {
     renderWizard();
     fireEvent.click(await screen.findByRole("button", { name: /judo belt system/i }));
     fireEvent.click(screen.getByRole("button", { name: /add 1 system/i }));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/some ranks didn't save/i), "error"));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/some ranks didn't save/i), "error", expect.any(Number)));
     expect(screen.getByText(/set up your ranks/i)).toBeTruthy();
     const firstPass = calls.filter((c) => c.url === "/api/ranks").length;
     fireEvent.click(screen.getByRole("button", { name: /add 1 system/i }));
@@ -333,7 +333,7 @@ describe("step 4: classes", () => {
     addMondayClass("Fundamentals");
     addMondayClass("No-Gi");
     fireEvent.click(screen.getByRole("button", { name: /save 2 classes/i }));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/some classes didn't save/i), "error"));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/some classes didn't save/i), "error", expect.any(Number)));
     expect(screen.getByText(/add your classes/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /save 2 classes/i }));
     await waitFor(() => expect(screen.queryByText(/add your classes/i)).toBeNull());
@@ -363,7 +363,7 @@ describe("step 4: classes", () => {
     await screen.findByText(/add your classes/i);
     addMondayClass("Open Mat");
     fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/sign in again/i), "error"));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/sign in again/i), "error", expect.any(Number)));
     expect(toastMock.mock.calls[0][0]).not.toMatch(/weren't accepted/);
   });
 
@@ -433,7 +433,7 @@ describe("step 5: branding", () => {
     await screen.findByText(/make it yours/i);
     await chooseLogo();
     fireEvent.click(screen.getByRole("button", { name: /^next/i }));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm that saved/i), "error"));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm that saved/i), "error", expect.any(Number)));
     expect(currentStep()).toBe("5");
     fireEvent.click(screen.getByRole("button", { name: /^next/i }));
     await waitFor(() => expect(currentStep()).toBe("6"));
@@ -451,7 +451,7 @@ describe("step 5: branding", () => {
     await screen.findByText(/make it yours/i);
     await chooseLogo();
     fireEvent.click(screen.getByRole("button", { name: /^next/i }));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/didn't upload: File too large.*Nothing on this page has been saved/), "error", 8000));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/didn't upload: File too large.*Your current logo hasn't changed/), "error", 8000));
     expect(patches(calls)).toHaveLength(0);
     expect(currentStep()).toBe("5");
   });
@@ -592,6 +592,166 @@ describe("step 9: CSV hand-off", () => {
     await waitFor(() => expect(handoffs(calls)).toHaveLength(2));
     const [a, b] = handoffs(calls);
     expect(refOf(b)).not.toBe(refOf(a));
+  });
+});
+
+describe("final review fixes (16 Oct 2026, evening)", () => {
+  it("step 1: a signed-out 401 asks the owner to sign in, not to check the connection", async () => {
+    stubFetch(() => fail(401, "Unauthorized"));
+    renderWizard({ storedTimezone: DEVICE_ZONE });
+    fireEvent.change(screen.getByLabelText("Gym Name"), { target: { value: "New name" } });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/signed out/i), "error", 8000));
+  });
+
+  it("step 6: a reopened wizard shows the saved answers and passing it unchanged sends nothing", async () => {
+    const calls = stubFetch(() => ok());
+    openAt(6);
+    renderWizard({ alreadyOnboarded: true, storedAnswers: { size: "21–50", goals: ["Grow membership"], referral: "friend", referralOther: null } });
+    await screen.findByText(/tell us about your gym/i);
+    fireEvent.click(screen.getByRole("button", { name: /^next/i }));
+    await waitFor(() => expect(currentStep()).toBe("7"));
+    expect(patches(calls)).toHaveLength(0);
+  });
+
+  it("step 6: changing an answer sends the full answer set once", async () => {
+    const calls = stubFetch(() => ok());
+    openAt(6);
+    renderWizard({ alreadyOnboarded: true, storedAnswers: { size: "21–50", goals: [], referral: "", referralOther: null } });
+    await screen.findByText(/tell us about your gym/i);
+    fireEvent.click(screen.getByRole("button", { name: "51–100" }));
+    fireEvent.click(screen.getByRole("button", { name: /^next/i }));
+    await waitFor(() => expect(currentStep()).toBe("7"));
+    expect(patches(calls).map((c) => (c.body as { onboardingAnswers: { size: string } }).onboardingAnswers.size)).toEqual(["51–100"]);
+  });
+
+  it("step 4: Skip after removing a saved class says it stays saved", async () => {
+    stubFetch(() => ok({ id: "c1" }));
+    openAt(4);
+    renderWizard();
+    await screen.findByText(/add your classes/i);
+    fireEvent.click(screen.getByRole("button", { name: /add a class/i }));
+    fireEvent.change(screen.getByLabelText("Class name"), { target: { value: "Fundamentals" } });
+    fireEvent.click(screen.getByRole("button", { name: "Mon" }));
+    fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+    await screen.findByText(/make it yours/i);
+    later();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByText(/add your classes/i);
+    fireEvent.click(screen.getByRole("button", { name: /remove class/i }));
+    later();
+    fireEvent.click(screen.getByRole("button", { name: /^skip/i }));
+    await screen.findByText(/make it yours/i);
+    expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/classes you'd already saved stay as first saved/i), "info", 6000);
+  });
+
+  async function saveCustomSystem() {
+    openAt(3);
+    renderWizard();
+    await screen.findByText(/set up your ranks/i);
+    fireEvent.click(screen.getByRole("button", { name: /build a custom rank system/i }));
+    fireEvent.change(screen.getByLabelText("Discipline name"), { target: { value: "Judo Club" } });
+    fireEvent.change(screen.getByLabelText("Name for rank 1"), { target: { value: "White" } });
+    fireEvent.click(screen.getByRole("button", { name: /^continue/i }));
+    await screen.findByText(/add your classes/i);
+    later();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByText(/set up your ranks/i);
+  }
+
+  it("step 3: removing a saved custom belt system is reported", async () => {
+    stubFetch(() => ok({ id: "r" }));
+    await saveCustomSystem();
+    fireEvent.click(screen.getByRole("button", { name: /remove custom system/i }));
+    later();
+    fireEvent.click(screen.getByRole("button", { name: /^continue/i }));
+    await screen.findByText(/add your classes/i);
+    expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/belt systems and ranks you'd already saved/i), "info", 6000);
+  });
+
+  it("step 3: renaming a saved custom rank is reported (the server keeps the first name: 409)", async () => {
+    let n = 0;
+    stubFetch((url) => (url === "/api/ranks" ? (++n === 1 ? ok({ id: "r" }) : fail(409)) : ok()));
+    await saveCustomSystem();
+    fireEvent.change(screen.getByLabelText("Name for rank 1"), { target: { value: "White Belt" } });
+    later();
+    fireEvent.click(screen.getByRole("button", { name: /^continue/i }));
+    await screen.findByText(/add your classes/i);
+    expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/belt systems and ranks you'd already saved/i), "info", 6000);
+  });
+
+  it("step 3: a retry answered 409 for ranks saved by the first pass advances with no notice", async () => {
+    // Pass 1: the third rank fails. Pass 2 (retry): the server already has
+    // every other rank (409); only the third is new.
+    let pass = 1, i = 0;
+    const calls = stubFetch((url) => {
+      if (url !== "/api/ranks") return ok();
+      i++;
+      if (pass === 1) return i === 3 ? fail(503) : ok({ id: `r${i}` });
+      return i === 3 ? ok({ id: "r3" }) : fail(409);
+    });
+    openAt(3);
+    renderWizard();
+    fireEvent.click(await screen.findByRole("button", { name: /judo belt system/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add 1 system/i }));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/some ranks didn't save/i), "error", 8000));
+    toastMock.mockClear();
+    const firstPass = calls.filter((c) => c.url === "/api/ranks").length;
+    pass = 2; i = 0;
+    fireEvent.click(screen.getByRole("button", { name: /add 1 system/i }));
+    await screen.findByText(/add your classes/i);
+    expect(firstPass).toBeGreaterThan(3);
+    expect(calls.filter((c) => c.url === "/api/ranks")).toHaveLength(firstPass * 2);
+    expect(toastMock).not.toHaveBeenCalled();
+  });
+
+  describe("CSV hand-off reference across a reload", () => {
+    const file = () => new File(["name,email\nA,a@x.test"], "members.csv", { type: "text/csv", lastModified: 1_700_000_000_000 });
+    async function pickAndUpload() {
+      fireEvent.click(await screen.findByText(/send my csv to matflow/i));
+      fireEvent.change(screen.getByLabelText("Choose a CSV file of your members"), { target: { files: [file()] } });
+      fireEvent.click(screen.getByRole("button", { name: /^upload csv/i }));
+    }
+    const refOf = (c: Call) => (c.raw as FormData).get("clientRef");
+
+    it("the same file after a reload keeps its reference; changed notes are reported on a replay", async () => {
+      let n = 0;
+      const calls = stubFetch((url) => {
+        if (url !== "/api/onboarding/csv-handoff") return ok();
+        return ++n === 1 ? "throw" : new Response(JSON.stringify({ jobId: "j1", message: "We already have this file, so it wasn't sent twice.", alreadyReceived: true }), { status: 200 });
+      });
+      openAt(9);
+      renderWizard();
+      await pickAndUpload();
+      await screen.findByText(/couldn't confirm your file arrived/i);
+      cleanup(); // the owner reloads
+      openAt(9);
+      renderWizard();
+      fireEvent.click(await screen.findByText(/send my csv to matflow/i));
+      fireEvent.change(screen.getByLabelText("Choose a CSV file of your members"), { target: { files: [file()] } });
+      fireEvent.change(screen.getByLabelText("Notes about your CSV file"), { target: { value: "phones in column G" } });
+      fireEvent.click(screen.getByRole("button", { name: /^upload csv/i }));
+      await screen.findByText(/notes you changed after your first attempt weren't added/i);
+      const sent = calls.filter((c) => c.url === "/api/onboarding/csv-handoff");
+      expect(sent).toHaveLength(2);
+      expect(refOf(sent[1])).toBe(refOf(sent[0]));
+    });
+
+    it("our 503 (uploads unavailable) says the file wasn't sent and points to another option", async () => {
+      stubFetch((url) => (url === "/api/onboarding/csv-handoff" ? fail(503, "File uploads not configured") : ok()));
+      openAt(9);
+      renderWizard();
+      await pickAndUpload();
+      expect((await screen.findByRole("alert")).textContent).toMatch(/wasn't sent: uploads aren't available right now\. Choose another option above/);
+    });
+
+    it("a 503 that is not ours (no JSON error) is treated as unconfirmed, retry-safe", async () => {
+      stubFetch((url) => (url === "/api/onboarding/csv-handoff" ? new Response("<html>Service Unavailable</html>", { status: 503 }) : ok()));
+      openAt(9);
+      renderWizard();
+      await pickAndUpload();
+      expect((await screen.findByRole("alert")).textContent).toMatch(/couldn't confirm your file arrived/i);
+    });
   });
 });
 
