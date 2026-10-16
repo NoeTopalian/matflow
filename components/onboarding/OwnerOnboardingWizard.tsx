@@ -436,10 +436,10 @@ export default function OwnerOnboardingWizard({
   const createdClasses = useRef<Map<string, string>>(new Map());
   // Lost responses on step 4: drafts whose save got no answer, server ids this
   // run created or adopted, and the club's class ids before this run saved any
-  // (undefined = not read yet; null = couldn't be read).
+  // (undefined = not read yet; no class is sent until it has been read).
   const unconfirmedClasses = useRef<Map<string, string>>(new Map()); // draft id -> the draft as sent
   const serverClassIds = useRef<Set<string>>(new Set());
-  const classesBeforeRun = useRef<Set<string> | null | undefined>(undefined);
+  const classesBeforeRun = useRef<Set<string> | undefined>(undefined);
   // Step 3: ranks saved in this run, by discipline#order, with what was sent.
   const savedRanks = useRef<Map<string, string>>(new Map());
 
@@ -591,6 +591,51 @@ export default function OwnerOnboardingWizard({
   }
 
   /**
+   * Settle saves that got no answer, by the draft AS SENT (it may since have
+   * been edited or removed). A class the server made anyway is adopted as
+   * saved — so a later edit or removal of it is reported like any saved class.
+   * One the server didn't make is forgotten (a draft still on screen is then
+   * sent normally). Returns the names of sends that couldn't be checked now
+   * (class list unreadable) and of removed drafts that turned out not to exist.
+   */
+  async function settleUnconfirmedDetailed(): Promise<{ unchecked: string[]; notMade: string[] }> {
+    const unchecked: string[] = [];
+    const notMade: string[] = [];
+    if (unconfirmedClasses.current.size === 0) return { unchecked, notMade };
+    const before = classesBeforeRun.current;
+    const list = before ? await listClasses() : null;
+    for (const [draftId, sent] of [...unconfirmedClasses.current]) {
+      const draft = JSON.parse(sent) as ClassDraft;
+      if (!before || !list) { unchecked.push(draft.name.trim()); continue; }
+      const found = findLostClass(draft, list, before);
+      unconfirmedClasses.current.delete(draftId);
+      if (found) {
+        createdClasses.current.set(draftId, sent);
+        serverClassIds.current.add(found);
+      } else if (!classes.some((c) => c.id === draftId)) {
+        notMade.push(draft.name.trim());
+      }
+    }
+    return { unchecked, notMade };
+  }
+
+  async function settleUnconfirmed(): Promise<string[]> {
+    return (await settleUnconfirmedDetailed()).unchecked;
+  }
+
+  /** “A”, “A” and “B”, “A”, “B” and “C”. */
+  function quoteNames(names: string[]): string {
+    const q = names.map((n) => `“${n}”`);
+    return q.length <= 1 ? (q[0] ?? "") : `${q.slice(0, -1).join(", ")} and ${q[q.length - 1]}`;
+  }
+
+  /** What to say about sends that couldn't be checked: name them and say what to do. */
+  function uncheckedMessage(names: string[], retry = false): string {
+    const one = names.length === 1;
+    return `We couldn't check whether ${quoteNames(names)} reached us.${retry ? " Press Save again to check once your connection is back." : ""} If this keeps happening, skip this step and look on the Timetable page: add ${one ? "it" : "any"} if missing, or delete the extra if there are two.`;
+  }
+
+  /**
    * The server id of a class an unanswered save of `cls` created: a class that
    * was not there before this run, not already this run's, with the same name
    * and the same days and times. null = checked, not there.
@@ -725,31 +770,23 @@ export default function OwnerOnboardingWizard({
         let createdNow = 0;
         let classFailed = false;
         const rejectedClasses: string[] = [];
-        // The club's classes before this run first saved any, so a class a
-        // lost response created can be told apart from one that was there.
-        if (classesBeforeRun.current === undefined) {
+        // The club's classes before this run first saves any, so a class a
+        // lost response created can be told apart from one that was there. No
+        // class is sent until this has been read: without it, a save that gets
+        // no answer could never be checked. If it can't be read now, nothing is
+        // sent and the read is tried again on the next Save.
+        const toSend = classes.some((c) => !createdClasses.current.has(c.id) && !!c.name.trim() && c.days.length > 0 && !!c.startTime && !!c.endTime);
+        if (classesBeforeRun.current === undefined && toSend) {
           const list = await listClasses();
-          classesBeforeRun.current = list ? new Set(list.map((c) => c.id)) : null;
-        }
-        // Saves that got no answer are settled first, by what was SENT (the
-        // draft may since have been edited or removed): a class the server made
-        // anyway is adopted as saved, so an edit or removal of it is reported
-        // below like any saved class. If the list can't be read, nothing is
-        // re-sent for it — a duplicate can't be ruled out.
-        let lostUnchecked = false;
-        if (unconfirmedClasses.current.size > 0) {
-          const before = classesBeforeRun.current;
-          const list = before ? await listClasses() : null;
-          for (const [draftId, sent] of [...unconfirmedClasses.current]) {
-            if (!before || !list) { lostUnchecked = true; continue; }
-            const found = findLostClass(JSON.parse(sent) as ClassDraft, list, before);
-            unconfirmedClasses.current.delete(draftId);
-            if (found) {
-              createdClasses.current.set(draftId, sent);
-              serverClassIds.current.add(found);
-            }
+          if (!list) {
+            toast("We couldn't reach MatFlow, so no classes were saved. Check your connection (or sign in again if you've been signed out), then press Save again.", "error", FAIL_MS);
+            return;
           }
+          classesBeforeRun.current = new Set(list.map((c) => c.id));
         }
+        // Saves that got no answer are settled first (settleUnconfirmed); what
+        // can't be checked now is not re-sent, and is named to the owner.
+        const unchecked = await settleUnconfirmed();
         const editedAfterSave = classChangesAfterSave();
         for (const cls of classes) {
           // Checked before completeness: a saved class edited down to a blank
@@ -810,22 +847,19 @@ export default function OwnerOnboardingWizard({
           return;
         }
         if (classFailed) {
-          // A class whose answer was lost is found and adopted on the retry,
-          // but only while the club's class list can be read. When it can't,
-          // the owner is told plainly rather than promised no duplicates.
-          const uncheckable = lostUnchecked || (unconfirmedClasses.current.size > 0 && !classesBeforeRun.current);
+          // A class whose answer was lost is found and adopted on the retry
+          // while the class list can be read; when it can't right now, the
+          // classes concerned are named and nothing is promised.
           toast(
-            uncheckable
-              ? "Some classes didn't save, and we couldn't check whether they reached us. Check your connection (or sign in again if you've been signed out), then press Save again; if it keeps failing, skip this step and check the Timetable page for duplicates."
+            unchecked.length > 0
+              ? uncheckedMessage(unchecked, true)
               : "Some classes didn't save. Check your connection (or sign in again if you've been signed out), then press Save again — classes already saved won't be added twice.",
             "error",
             10000,
           );
           return;
         }
-        if (lostUnchecked) {
-          toast("A class you saved before your connection dropped may already be on your timetable. Check the Timetable page for duplicates.", "info", FAIL_MS);
-        }
+        if (unchecked.length > 0) toast(uncheckedMessage(unchecked), "info", 10000);
         if (editedAfterSave) toast(CLASSES_KEPT, "info", 6000);
       } else if (step === 5) {
         const body: Record<string, unknown> = {};
@@ -984,13 +1018,20 @@ export default function OwnerOnboardingWizard({
       setStep(FINAL_STEP);
       return;
     }
+    // Skip past saves that got no answer: settle them first, as Save does, so
+    // the owner is told what is and isn't on the timetable.
+    if (step === 4 && unconfirmedClasses.current.size > 0) {
+      busyRef.current = true;
+      setLoading(true);
+      const { unchecked, notMade } = await settleUnconfirmedDetailed();
+      setLoading(false);
+      busyRef.current = false;
+      if (unchecked.length > 0) toast(uncheckedMessage(unchecked), "info", 10000);
+      if (notMade.length > 0) toast(`${quoteNames(notMade)} ${notMade.length === 1 ? "wasn't" : "weren't"} saved. Add ${notMade.length === 1 ? "it" : "them"} on the Timetable page if you want ${notMade.length === 1 ? "it" : "them"}.`, "info", 10000);
+    }
     // Skip does not undo what this run already saved: say so, as Continue does.
     if (step === 3 && rankChangesAfterSave()) toast(RANKS_KEPT, "info", 6000);
     if (step === 4 && classChangesAfterSave()) toast(CLASSES_KEPT, "info", 6000);
-    if (step === 4 && unconfirmedClasses.current.size > 0) {
-      // Skipping past a save that got no answer: it may have been made.
-      toast("A class you saved before your connection dropped may already be on your timetable. Check the Timetable page.", "info", FAIL_MS);
-    }
     setStep((s) => s + 1);
   }
 

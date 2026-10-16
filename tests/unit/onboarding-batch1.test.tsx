@@ -49,6 +49,12 @@ function stubFetch(respond: (url: string, method: string) => Response | Promise<
     calls.push({ url, method, body, raw: init?.body });
     const r = await respond(url, method);
     if (r === "throw") throw new TypeError("Failed to fetch");
+    // The wizard reads the club's class list (/api/classes?strict=1) before
+    // saving classes; a catch-all stub's non-list answer means "no classes".
+    if (url.startsWith("/api/classes?") && r.ok) {
+      const body = await r.clone().json().catch(() => null);
+      if (!Array.isArray(body)) return ok([]);
+    }
     return r;
   });
   vi.stubGlobal("fetch", fn as unknown as typeof fetch);
@@ -710,7 +716,7 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
       toastMock.mockClear();
       fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
-      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't check whether they reached us/), "error", 10000));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't check whether “Fundamentals” reached us. Press Save again/), "error", 10000));
       expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(1);
       expect(screen.getByText(/add your classes/i)).toBeTruthy();
     });
@@ -736,8 +742,66 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/classes you'd already saved stay as first saved/i), "info", 6000);
     });
 
-    it("Skip past a save that got no answer says it may already be on the timetable", async () => {
+    it("Skip past a save that couldn't be checked names the class and what to do", async () => {
+      let listCalls = 0;
       stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return ++listCalls === 1 ? ok([]) : fail(503);
+        if (url === "/api/classes" && method === "POST") return "throw";
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Fundamentals");
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      later();
+      fireEvent.click(screen.getByRole("button", { name: /^skip/i }));
+      await screen.findByText(/make it yours/i);
+      expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't check whether “Fundamentals” reached us.*Timetable page: add it if missing, or delete the extra/), "info", 10000);
+    });
+
+    it("a lost save the server made, whose draft the owner then removes, is adopted and reported — nothing re-sent (C-03a)", async () => {
+      let created = false;
+      const calls = stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return ok(created ? [fundamentals] : []);
+        if (url === "/api/classes" && method === "POST") { created = true; return "throw"; }
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Fundamentals");
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      fireEvent.click(screen.getByRole("button", { name: /remove class/i }));
+      fireEvent.click(screen.getByRole("button", { name: /^continue/i }));
+      await screen.findByText(/make it yours/i);
+      expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(1);
+      expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/classes you'd already saved stay as first saved, including any you removed/i), "info", 6000);
+    });
+
+    it("the same, with the list unreadable at retry: advances and names the class to check (C-03b)", async () => {
+      let listCalls = 0;
+      stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return ++listCalls === 1 ? ok([]) : fail(503);
+        if (url === "/api/classes" && method === "POST") return "throw";
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Fundamentals");
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      fireEvent.click(screen.getByRole("button", { name: /remove class/i }));
+      fireEvent.click(screen.getByRole("button", { name: /^continue/i }));
+      await screen.findByText(/make it yours/i);
+      expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't check whether “Fundamentals” reached us/), "info", 10000);
+    });
+
+    it("Skip after a lost save that never reached the server, draft removed: says it wasn't saved (C-02)", async () => {
+      const calls = stubFetch((url, method) => {
         if (url.startsWith("/api/classes?") && method === "GET") return ok([]);
         if (url === "/api/classes" && method === "POST") return "throw";
         return ok();
@@ -748,13 +812,36 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       addMonday("Fundamentals");
       fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
       await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      fireEvent.click(screen.getByRole("button", { name: /remove class/i }));
+      later();
       fireEvent.click(screen.getByRole("button", { name: /^skip/i }));
       await screen.findByText(/make it yours/i);
-      expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/may already be on your timetable/), "info", 8000);
+      expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/“Fundamentals” wasn't saved\. Add it on the Timetable page/), "info", 10000);
+      expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(1);
     });
 
-    it("when the class list can't be read, the message says to check the Timetable", async () => {
-      stubFetch((url, method) => {
+    it("offline at Save (class list unreadable before any save): nothing is sent, and the next Save works (C-01)", async () => {
+      let online = false;
+      const calls = stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return online ? ok([]) : "throw";
+        if (url === "/api/classes" && method === "POST") return online ? ok({ id: "srv-9" }) : "throw";
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Fundamentals");
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't reach MatFlow, so no classes were saved/), "error", 8000));
+      expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(0);
+      online = true;
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await screen.findByText(/make it yours/i);
+      expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(1);
+    });
+
+    it("when the class list can't be read before saving, nothing is sent and the owner is told", async () => {
+      const calls = stubFetch((url, method) => {
         if (url.startsWith("/api/classes?") && method === "GET") return fail(500);
         if (url === "/api/classes" && method === "POST") return "throw";
         return ok();
@@ -764,7 +851,8 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       await screen.findByText(/add your classes/i);
       addMonday("Fundamentals");
       fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
-      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't check whether they reached us.*check the Timetable page for duplicates/), "error", 10000));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't reach MatFlow, so no classes were saved/), "error", 8000));
+      expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(0);
     });
   });
 
