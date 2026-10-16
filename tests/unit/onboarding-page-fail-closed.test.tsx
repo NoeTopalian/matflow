@@ -33,6 +33,7 @@ type WizardProps = {
   storedLogoSize: string | null;
   alreadyOnboarded: boolean;
   storedAnswers: unknown;
+  answersUnknown: boolean;
 };
 
 async function render(resume?: string) {
@@ -70,6 +71,17 @@ describe("/onboarding page", () => {
       h.read = async () => ({ onboardingCompleted: true, name: "N", timezone: "Europe/London", logoSize: "md", onboardingAnswers: bad });
       expect((await render("1")).storedAnswers).toBeNull();
     }
+  });
+
+  it("answers are unknown (step 6 must not save) when the read fails or the stored shape is unrecognised", async () => {
+    h.read = async () => { throw new Error("down"); };
+    expect((await render()).answersUnknown).toBe(true);
+    h.read = async () => ({ onboardingCompleted: true, name: "N", timezone: "Europe/London", logoSize: "md", onboardingAnswers: { size: 3 } });
+    expect((await render("1")).answersUnknown).toBe(true);
+    h.read = async () => ({ onboardingCompleted: true, name: "N", timezone: "Europe/London", logoSize: "md", onboardingAnswers: null });
+    expect((await render("1")).answersUnknown).toBe(false);
+    h.read = async () => ({ onboardingCompleted: true, name: "N", timezone: "Europe/London", logoSize: "md", onboardingAnswers: { size: "1–20", goals: [], referral: "" } });
+    expect((await render("1")).answersUnknown).toBe(false);
   });
 
   it("a completed club without ?resume=1 goes to the dashboard", async () => {

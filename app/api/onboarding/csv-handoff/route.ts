@@ -57,23 +57,26 @@ const MAIL_OFF =
  * would have been told to contact us. Unknown (no row, or the first attempt
  * stopped before notifying) is said as unknown.
  */
-async function alreadyReceived(tenantId: string, jobId: string) {
+async function alreadyReceived(tenantId: string, jobId: string, submittedNotes: string) {
+  const row = await withTenantContext(tenantId, (tx) =>
+    tx.auditLog.findFirst({
+      where: { tenantId, action: "onboarding.csv_handoff", entityId: jobId },
+      select: { metadata: true },
+    }),
+  ).catch(() => null);
+  const meta = (row?.metadata ?? null) as { teamNotified?: unknown; notes?: unknown } | null;
   let message: string;
   if (!isEmailDeliveryOn()) {
     message = `We already have this file, so it wasn't sent twice. ${MAIL_OFF.replace(/^Your file is uploaded and safe\. /, "")}`;
   } else {
-    const row = await withTenantContext(tenantId, (tx) =>
-      tx.auditLog.findFirst({
-        where: { tenantId, action: "onboarding.csv_handoff", entityId: jobId },
-        select: { metadata: true },
-      }),
-    ).catch(() => null);
-    const reached = (row?.metadata as { teamNotified?: unknown } | null | undefined)?.teamNotified === true;
-    message = reached
+    message = meta?.teamNotified === true
       ? "We already have this file, so it wasn't sent twice. The MatFlow team has been told about it and will email you when your members are imported."
       : "We already have this file, so it wasn't sent twice — but we can't confirm the MatFlow team was told about it. Email hello@matflow.studio so we can import it.";
   }
-  return NextResponse.json({ jobId, message, alreadyReceived: true }, { status: 200 });
+  // Whether the notes sent now are the notes the first upload stored: null
+  // when there is no record to compare with.
+  const notesMatch = meta ? (typeof meta.notes === "string" ? meta.notes : "") === submittedNotes : null;
+  return NextResponse.json({ jobId, message, alreadyReceived: true, notesMatch }, { status: 200 });
 }
 
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -152,7 +155,7 @@ export async function POST(req: Request) {
         select: { id: true },
       }),
     );
-    if (existing) return alreadyReceived(tenantId, existing.id);
+    if (existing) return alreadyReceived(tenantId, existing.id, notes);
   }
 
   // Every accepted hand-off is stored AND emails the MatFlow team, so the
@@ -163,7 +166,7 @@ export async function POST(req: Request) {
 
   // Reached only by a file we would otherwise have stored — see the note above.
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return NextResponse.json({ error: "File uploads not configured" }, { status: 503 });
+    return NextResponse.json({ error: "File uploads not configured", code: "uploads_unavailable" }, { status: 503 });
   }
 
   try {
@@ -211,7 +214,7 @@ export async function POST(req: Request) {
       // The first attempt won the race: drop this copy of the file and answer
       // with the first job. Best effort — an orphaned private blob holds no job.
       await del(blob.url).catch(() => {});
-      return alreadyReceived(tenantId, created.duplicateOf);
+      return alreadyReceived(tenantId, created.duplicateOf, notes);
     }
     const { job, tenant, owner } = created;
 
@@ -249,16 +252,19 @@ export async function POST(req: Request) {
 
     const teamReached = notified.some((r) => r.status === "fulfilled" && r.value?.ok === true);
 
+    // Durable (awaited, own transaction): a retry reads teamNotified and notes
+    // back from this row (alreadyReceived). If the write still fails, the job
+    // and email stand; a later replay then says it can't confirm, which is true.
     await logAudit({
       tenantId,
       userId,
       action: "onboarding.csv_handoff",
       entityType: "ImportJob",
       entityId: job.id,
-      // teamNotified is read back if this hand-off is retried (alreadyReceived).
       metadata: { fileName: job.fileName, sizeBytes: file.size, notes: notes || null, teamNotified: teamReached },
       req,
-    });
+      durable: true,
+    }).catch(() => {});
 
     const message = !isEmailDeliveryOn()
       ? MAIL_OFF

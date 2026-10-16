@@ -24,6 +24,8 @@ interface Props {
   alreadyOnboarded?: boolean;
   /** The club's saved questionnaire answers, so step 6 prefills them and saves only a change. */
   storedAnswers?: StoredAnswers | null;
+  /** True when the club may have saved answers that couldn't be read; step 6 then saves nothing. */
+  answersUnknown?: boolean;
 }
 
 export type StoredAnswers = { size: string; goals: string[]; referral: string; referralOther: string | null };
@@ -352,6 +354,7 @@ export default function OwnerOnboardingWizard({
   storedTimezone = null,
   storedLogoSize = null,
   storedAnswers = null,
+  answersUnknown = false,
   alreadyOnboarded = false,
 }: Props) {
   const { toast } = useToast();
@@ -567,10 +570,10 @@ export default function OwnerOnboardingWizard({
     return false;
   }
 
-  /** True when the response is our route's JSON error (not a platform page). */
-  async function serverJson(res: Response): Promise<boolean> {
-    const body = (await res.clone().json().catch(() => null)) as { error?: unknown } | null;
-    return !!body && typeof body.error === "string";
+  /** True only for the hand-off route's own "uploads aren't available" 503. */
+  async function uploadsUnavailable(res: Response): Promise<boolean> {
+    const body = (await res.clone().json().catch(() => null)) as { code?: unknown } | null;
+    return body?.code === "uploads_unavailable";
   }
 
   /** PATCH /api/settings; null when no response arrived. */
@@ -584,7 +587,10 @@ export default function OwnerOnboardingWizard({
 
   /** What to tell the owner when a save did not succeed — the cause, not a guess. */
   async function saveFailure(res: Response | null, fallback = SAVE_FAILED): Promise<string> {
-    if (res && (res.status === 401 || res.status === 403)) return SIGNED_OUT;
+    if (res && res.status === 401) return SIGNED_OUT;
+    // 403 is not "signed out" (support access, an authenticator or password
+    // step, a cross-site check): the server's own sentence says what it is.
+    if (res && res.status === 403) return `That wasn't saved: ${await serverError(res)}`;
     // Refused as entered: retrying unchanged can't work, so say what was wrong.
     if (res && isInputRefused(res.status)) return `We couldn't save that: ${await serverError(res)}. Check what you entered and try again.`;
     return fallback;
@@ -784,7 +790,11 @@ export default function OwnerOnboardingWizard({
         };
         // Only a change is saved: a reopened wizard used to overwrite a club's
         // stored answers with blank goals and referral.
-        if (JSON.stringify(answers) !== savedAnswers.current) {
+        if (answersUnknown) {
+          // The club's saved answers couldn't be read: saving now could
+          // overwrite them, so nothing is sent and the owner is told.
+          toast("Your earlier answers couldn't be loaded, so these weren't saved. Nothing you'd saved before has changed.", "info", FAIL_MS);
+        } else if (JSON.stringify(answers) !== savedAnswers.current) {
           const res = await patchSettings({ onboardingAnswers: answers });
           if (!res?.ok) {
             toast(await saveFailure(res), "error", FAIL_MS);
@@ -895,21 +905,31 @@ export default function OwnerOnboardingWizard({
       fd.append("clientRef", csvClientRef.current);
       const res = await fetch("/api/onboarding/csv-handoff", { method: "POST", body: fd }).catch(() => null);
       if (res && res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { message?: unknown; alreadyReceived?: unknown };
+        const data = (await res.json().catch(() => ({}))) as { message?: unknown; alreadyReceived?: unknown; notesMatch?: unknown };
         let message = typeof data.message === "string" ? data.message : null;
         // A retry that found the first upload keeps the first upload's notes.
-        if (data.alreadyReceived === true && notes !== (csvNotesSent.current ?? "")) {
-          message = `${message ?? ""} The notes you changed after your first attempt weren't added — pass them to your MatFlow contact.`.trim();
+        // The server compares with what it stored; with no record, fall back
+        // to the notes this tab sent first.
+        const notesDiffer = data.notesMatch === false || (data.notesMatch == null && notes !== (csvNotesSent.current ?? ""));
+        if (data.alreadyReceived === true && notesDiffer) {
+          message = `${message ?? ""} Notes you changed after your first attempt weren't added — email them to hello@matflow.studio.`.trim();
         }
         setCsvHandoffMessage(message);
         setCsvUploaded(true);
-      } else if (res && (res.status === 401 || res.status === 403)) {
+        // Confirmed: the reference has done its job. A later deliberate
+        // resend of the same file is a new hand-off.
+        csvClientRef.current = null;
+        csvNotesSent.current = null;
+        try { sessionStorage.removeItem(csvRefKey); } catch { /* ignore */ }
+      } else if (res && res.status === 401) {
         setCsvHandoffError("Your file wasn't sent because you've been signed out. Sign in again, then upload it here.");
+      } else if (res && res.status === 403) {
+        setCsvHandoffError(`Your file wasn't sent: ${await serverError(res)}`);
       } else if (res && res.status >= 400 && res.status < 500) {
         // Refused before anything was stored (wrong type, too large, too many
         // uploads): say why; the owner can fix it or choose another file.
         setCsvHandoffError(`Your file wasn't sent: ${await serverError(res)}.`);
-      } else if (res && res.status === 503 && (await serverJson(res))) {
+      } else if (res && res.status === 503 && (await uploadsUnavailable(res))) {
         // Our route's 503 is "uploads aren't available" — refused before
         // anything was stored, and retrying won't help.
         setCsvHandoffError("Your file wasn't sent: uploads aren't available right now. Choose another option above.");
@@ -1040,6 +1060,8 @@ export default function OwnerOnboardingWizard({
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Gym Name</label>
               <input aria-label="Gym Name"
+                // The settings API accepts up to 100 characters.
+                maxLength={100}
                 value={gymName}
                 onChange={(e) => setGymName(e.target.value)}
                 placeholder="e.g. Total BJJ"

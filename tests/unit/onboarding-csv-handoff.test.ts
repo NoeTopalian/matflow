@@ -414,6 +414,39 @@ describe("POST /api/onboarding/csv-handoff", () => {
       expect(logAuditMock.mock.calls[0][0].metadata).toMatchObject({ teamNotified: true });
     });
 
+    it("a replay reports whether the notes sent now match what the first upload stored", async () => {
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      const cases: Array<[unknown, string | undefined, boolean | null]> = [
+        [{ metadata: { notes: "phones in G" } }, "phones in G", true],
+        [{ metadata: { notes: "phones in G" } }, "something else", false],
+        [{ metadata: { notes: null } }, undefined, true],
+        [null, "anything", null],
+      ];
+      for (const [row, notes, expected] of cases) {
+        findFirstMock.mockResolvedValueOnce({ id: "job-first" });
+        auditFindFirstMock.mockResolvedValueOnce(row);
+        const body = await (await POST(makeReq({ clientRef: REF, notes }))).json();
+        expect(body.notesMatch).toBe(expected);
+      }
+    });
+
+    it("the uploads-unavailable 503 carries a machine code the wizard can tell apart", async () => {
+      delete process.env.BLOB_READ_WRITE_TOKEN;
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      const res = await POST(makeReq());
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ code: "uploads_unavailable" });
+    });
+
+    it("the hand-off audit row is written durably (awaited), and its failure does not fail the upload", async () => {
+      createMock.mockResolvedValueOnce({ id: "job-new", fileName: "members.csv" });
+      logAuditMock.mockRejectedValueOnce(new Error("audit store down"));
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      const res = await POST(makeReq({ clientRef: REF }));
+      expect(res.status).toBe(201);
+      expect(logAuditMock.mock.calls[0][0]).toMatchObject({ durable: true });
+    });
+
     it("a malformed reference is refused before anything is stored", async () => {
       const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
       for (const bad of ["abc", "../../x", `${REF}0`, REF.toUpperCase()]) {

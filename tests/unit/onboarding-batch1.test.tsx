@@ -625,6 +625,31 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
     expect(patches(calls).map((c) => (c.body as { onboardingAnswers: { size: string } }).onboardingAnswers.size)).toEqual(["51–100"]);
   });
 
+  it("step 1: a 403 shows the server's reason, not 'signed out'", async () => {
+    stubFetch(() => fail(403, "Support access is read-only."));
+    renderWizard({ storedTimezone: DEVICE_ZONE });
+    fireEvent.change(screen.getByLabelText("Gym Name"), { target: { value: "New name" } });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith("That wasn't saved: Support access is read-only.", "error", 8000));
+  });
+
+  it("step 1: the club name input is capped at the API's 100 characters", () => {
+    stubFetch(() => ok());
+    renderWizard();
+    expect((screen.getByLabelText("Gym Name") as HTMLInputElement).maxLength).toBe(100);
+  });
+
+  it("step 6: when the saved answers could not be read, nothing is sent and the owner is told", async () => {
+    const calls = stubFetch(() => ok());
+    openAt(6);
+    renderWizard({ alreadyOnboarded: true, storedAnswers: null, answersUnknown: true });
+    fireEvent.click(await screen.findByRole("button", { name: "21–50" }));
+    fireEvent.click(screen.getByRole("button", { name: /^next/i }));
+    await waitFor(() => expect(currentStep()).toBe("7"));
+    expect(patches(calls)).toHaveLength(0);
+    expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/earlier answers couldn't be loaded/i), "info", 8000);
+  });
+
   it("step 4: Skip after removing a saved class says it stays saved", async () => {
     stubFetch(() => ok({ id: "c1" }));
     openAt(4);
@@ -731,18 +756,68 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       fireEvent.change(screen.getByLabelText("Choose a CSV file of your members"), { target: { files: [file()] } });
       fireEvent.change(screen.getByLabelText("Notes about your CSV file"), { target: { value: "phones in column G" } });
       fireEvent.click(screen.getByRole("button", { name: /^upload csv/i }));
-      await screen.findByText(/notes you changed after your first attempt weren't added/i);
+      await screen.findByText(/notes you changed after your first attempt weren't added — email them to hello@matflow\.studio/i);
       const sent = calls.filter((c) => c.url === "/api/onboarding/csv-handoff");
       expect(sent).toHaveLength(2);
       expect(refOf(sent[1])).toBe(refOf(sent[0]));
     });
 
     it("our 503 (uploads unavailable) says the file wasn't sent and points to another option", async () => {
-      stubFetch((url) => (url === "/api/onboarding/csv-handoff" ? fail(503, "File uploads not configured") : ok()));
+      stubFetch((url) => (url === "/api/onboarding/csv-handoff" ? new Response(JSON.stringify({ error: "File uploads not configured", code: "uploads_unavailable" }), { status: 503 }) : ok()));
       openAt(9);
       renderWizard();
       await pickAndUpload();
       expect((await screen.findByRole("alert")).textContent).toMatch(/wasn't sent: uploads aren't available right now\. Choose another option above/);
+    });
+
+    it("the proxy's retryable sign-in 503 (JSON, no code) is unconfirmed, not 'uploads unavailable'", async () => {
+      stubFetch((url) => (url === "/api/onboarding/csv-handoff" ? new Response(JSON.stringify({ ok: false, error: "We couldn't confirm your sign-in just now. Please try again in a moment.", retryable: true }), { status: 503 }) : ok()));
+      openAt(9);
+      renderWizard();
+      await pickAndUpload();
+      expect((await screen.findByRole("alert")).textContent).toMatch(/couldn't confirm your file arrived/i);
+    });
+
+    it("a 403 shows the server's own reason, not 'signed out'", async () => {
+      stubFetch((url) => (url === "/api/onboarding/csv-handoff" ? fail(403, "Support access is read-only.") : ok()));
+      openAt(9);
+      renderWizard();
+      await pickAndUpload();
+      const t = (await screen.findByRole("alert")).textContent ?? "";
+      expect(t).toMatch(/wasn't sent: Support access is read-only\./);
+      expect(t).not.toMatch(/signed out/i);
+    });
+
+    it("after a confirmed upload the reference is cleared: sending the same file again is a new hand-off", async () => {
+      const calls = stubFetch((url) => (url === "/api/onboarding/csv-handoff" ? new Response(JSON.stringify({ jobId: "j", message: "ok" }), { status: 201 }) : ok()));
+      openAt(9);
+      renderWizard();
+      await pickAndUpload();
+      await screen.findByText(/^ok$/);
+      fireEvent.change(screen.getByLabelText("Choose a CSV file of your members"), { target: { files: [file()] } });
+      fireEvent.click(screen.getByRole("button", { name: /^upload csv/i }));
+      await waitFor(() => expect(calls.filter((c) => c.url === "/api/onboarding/csv-handoff")).toHaveLength(2));
+      const [a, b] = calls.filter((c) => c.url === "/api/onboarding/csv-handoff");
+      expect(refOf(b)).not.toBe(refOf(a));
+    });
+
+    it("the server's notesMatch decides the notes warning when it has a record", async () => {
+      let n = 0;
+      stubFetch((url) => {
+        if (url !== "/api/onboarding/csv-handoff") return ok();
+        n++;
+        if (n === 1) return "throw";
+        return new Response(JSON.stringify({ jobId: "j1", message: "We already have this file.", alreadyReceived: true, notesMatch: true }), { status: 200 });
+      });
+      openAt(9);
+      renderWizard();
+      await pickAndUpload();
+      await screen.findByText(/couldn't confirm your file arrived/i);
+      // Local notes changed, but the server says what it stored matches: no warning.
+      fireEvent.change(screen.getByLabelText("Notes about your CSV file"), { target: { value: "something else" } });
+      fireEvent.click(screen.getByRole("button", { name: /^upload csv/i }));
+      await screen.findByText(/we already have this file/i);
+      expect(screen.queryByText(/notes you changed/i)).toBeNull();
     });
 
     it("a 503 that is not ours (no JSON error) is treated as unconfirmed, retry-safe", async () => {

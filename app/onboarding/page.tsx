@@ -42,6 +42,9 @@ export default async function OnboardingPage({
       // wizard never moves a live club's time zone on a guess.
       alreadyOnboarded={tenant ? tenant.onboardingCompleted : true}
       storedAnswers={storedAnswers}
+      // Unknown, not empty: the read failed, or the stored answers have a
+      // shape step 6 doesn't write. Step 6 must not overwrite them blind.
+      answersUnknown={!tenant || (tenant.onboardingAnswers != null && storedAnswers === null)}
     />
   );
 }
