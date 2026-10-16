@@ -2,14 +2,9 @@
  * SetupBanner — owner-facing nudge to finish onboarding items they skipped.
  *
  * Shown on the dashboard when an owner completed the wizard but left
- * meaningful gaps. Detects:
- *   - Stripe not connected (most common skip — owner can re-launch from
- *     Settings or via the resume route)
- *   - No membership tiers created
- *   - No classes scheduled
- *
- * Resume route: /onboarding?resume=1 — bypasses the onboardingCompleted
- * check on the page so owners can re-run the wizard from the start.
+ * meaningful gaps. The gaps and their links come from getSetupGaps
+ * (lib/setup-gaps.ts); each link opens the page that does the job, never the
+ * wizard (onboarding batch 1, 16 Oct 2026).
  *
  * Non-dismissible by design — these are real gaps, not nags.
  */

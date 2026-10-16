@@ -14,7 +14,21 @@ interface Props {
   tenantName: string;
   ownerName: string;
   primaryColor: string;
+  /** The club's saved name; the session's tenantName can lag a rename. */
+  storedName?: string | null;
+  /** The club's saved time zone, so step 1 only changes it when it differs. */
+  storedTimezone?: string | null;
+  /** The club's saved logo size, so step 5 only saves it when the owner changes it. */
+  storedLogoSize?: "sm" | "md" | "lg" | null;
+  /** True when the club already finished setup (wizard reopened with ?resume=1). */
+  alreadyOnboarded?: boolean;
 }
+
+/** Shown, and the step kept, whenever a save does not succeed (Batch 1, 16 Oct 2026). */
+// Not "nothing has changed": after a dropped connection the server may have
+// saved it. Every save the wizard retries is safe to send twice.
+const SAVE_FAILED = "We couldn't confirm that saved. Check your connection and try again.";
+const FINISH_FAILED = "We couldn't finish setup. Nothing is lost. Press the button again to retry.";
 
 interface ClassDraft {
   id: string;
@@ -131,10 +145,19 @@ function uid() { return Math.random().toString(36).slice(2); }
  * Empty string when the runtime will not say — step 1 then sends nothing and
  * the column keeps its Europe/London default, which is the honest outcome.
  */
-const detectedTimezone: string = (() => {
+function readDeviceTimezone(): string {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone ?? ""; }
   catch { return ""; }
-})();
+}
+
+/** A second click within this window of a step change is the same gesture. */
+const ADVANCE_GUARD_MS = 400;
+
+/** Statuses meaning "this input was refused" — retrying it unchanged won't help.
+ * 401/403/429 and 5xx are a session, rate or connection problem instead. */
+function isInputRefused(status: number): boolean {
+  return status === 400 || status === 422;
+}
 
 // ─── Belt strip preview ───────────────────────────────────────────────────────
 
@@ -222,7 +245,7 @@ function ClassForm({
           placeholder="Class name"
           className="bg-transparent text-white text-sm font-semibold outline-none flex-1 placeholder-gray-600"
         />
-        <button onClick={onRemove} className="text-gray-600 hover:text-gray-400 ml-2">
+        <button onClick={onRemove} aria-label="Remove class" className="text-gray-600 hover:text-gray-400 ml-2">
           <X className="w-4 h-4" />
         </button>
       </div>
@@ -292,7 +315,15 @@ function ClassForm({
 
 // ─── Wizard ───────────────────────────────────────────────────────────────────
 
-export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryColor: initColor }: Props) {
+export default function OwnerOnboardingWizard({
+  tenantName,
+  ownerName,
+  primaryColor: initColor,
+  storedName = null,
+  storedTimezone = null,
+  storedLogoSize = null,
+  alreadyOnboarded = false,
+}: Props) {
   const { toast } = useToast();
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -306,7 +337,12 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       if (saved >= 1 && saved <= 9) setStepState(saved);
     } catch { /* storage unavailable: start at 1 */ }
   }, [stepKey]);
+  // When the step last changed. The next step's Continue/Skip renders where
+  // the last one was, so the second click of a double click would otherwise
+  // land on it and move a second step (Batch 1).
+  const lastStepChangeAt = useRef(0);
   const setStep = useCallback((next: number | ((prev: number) => number)) => {
+    lastStepChangeAt.current = Date.now();
     setStepState((prev) => {
       const value = typeof next === "function" ? next(prev) : next;
       try { sessionStorage.setItem(stepKey, String(value)); } catch { /* ignore */ }
@@ -314,9 +350,24 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
     });
   }, [stepKey]);
   const [loading, setLoading] = useState(false);
+  // A second click before React re-renders must not start a second save.
+  // goNext/skip hold this for their whole run.
+  const busyRef = useRef(false);
+  const justChangedStep = () => Date.now() - lastStepChangeAt.current < ADVANCE_GUARD_MS;
 
-  // Step 1
-  const [gymName, setGymName] = useState(tenantName);
+  // Read on the client after mount: on the server this would be the server's
+  // zone, and the step 1 note would render differently on each side.
+  const [detectedTimezone, setDetectedTimezone] = useState<string | null>(null);
+  useEffect(() => { setDetectedTimezone(readDeviceTimezone()); }, []);
+
+  // Step 1 sends the device zone only for a club that has not finished setup
+  // and whose saved zone differs. A reopened wizard never moves the zone.
+  const willSetTimezone = !alreadyOnboarded && !!detectedTimezone && detectedTimezone !== (storedTimezone ?? "");
+
+  // Step 1: prefilled from, and compared with, the club's saved name — the
+  // session's copy can lag a rename made in Settings.
+  const savedName = storedName ?? tenantName;
+  const [gymName, setGymName] = useState(savedName);
 
   // Step 2
   const [sports, setSports] = useState<string[]>([]);
@@ -340,7 +391,18 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   const [primaryColor, setPrimaryColor] = useState(initColor);
   // Wizard Step 5 expansion to mirror Settings → Branding tab.
   const [themeMode, setThemeMode] = useState<"dark" | "light">("dark");
-  const [logoSize, setLogoSize] = useState<"sm" | "md" | "lg">("md");
+  const [logoSize, setLogoSize] = useState<"sm" | "md" | "lg">(storedLogoSize ?? "md");
+  // What the server holds now, so passing step 5 again sends nothing new.
+  const savedLogoSize = useRef<"sm" | "md" | "lg">(storedLogoSize ?? "md");
+  const uploadedLogo = useRef<{ file: File; url: string } | null>(null);
+  const savedLogoUrl = useRef<string | null>(null);
+
+  // Step 4: classes already created in this run, by draft id, with the draft
+  // as saved. Back then Continue used to create every class and its sessions
+  // a second time.
+  const createdClasses = useRef<Map<string, string>>(new Map());
+  // Step 3: ranks saved in this run, by discipline#order, with what was sent.
+  const savedRanks = useRef<Map<string, string>>(new Map());
 
   // Step 6 — questionnaire
   const [gymSize, setGymSize] = useState("");
@@ -415,46 +477,83 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
     reader.readAsDataURL(file);
   }
 
+  /** The server's reason for refusing a request, for naming it to the owner. */
+  async function serverError(res: Response): Promise<string> {
+    const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+    return typeof body.error === "string" && body.error ? body.error : `error ${res.status}`;
+  }
+
+  /** PATCH /api/settings and report whether the server accepted it. */
+  async function patchSettings(body: Record<string, unknown>): Promise<boolean> {
+    const res = await fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => null);
+    return !!res && res.ok;
+  }
+
+  // Batch 1 (16 Oct 2026): every save is checked. A failed save keeps the
+  // owner on the step with SAVE_FAILED; nothing advances wearing a tick, and
+  // only fields the owner actually changed are sent.
   async function goNext() {
+    if (busyRef.current || justChangedStep()) return;
+    busyRef.current = true;
     setLoading(true);
     try {
       if (step === 1) {
-        if (gymName.trim()) {
-          // Campaign lane L-B, J16. `Tenant.timezone` decides which day
-          // Register calls today, which day a class is filed under and when
-          // check-in opens, and prisma/schema.prisma has claimed since the
-          // column was added that it "defaults from owner browser at
-          // onboarding step 1" — which nothing did. It does now, and the
-          // screen says so rather than setting it behind the owner's back;
-          // Settings → Waiver carries the control that changes it.
-          await fetch("/api/settings", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(
-              detectedTimezone
-                ? { name: gymName.trim(), timezone: detectedTimezone }
-                : { name: gymName.trim() },
-            ),
-          });
+        // Campaign lane L-B, J16: `Tenant.timezone` decides which day Register
+        // calls today and when check-in opens. The device zone is applied
+        // only to a club still in first setup whose saved zone differs; the
+        // screen says so. A reopened wizard never moves it.
+        const body: Record<string, unknown> = {};
+        const name = gymName.trim();
+        if (name && name !== savedName) body.name = name;
+        if (willSetTimezone) body.timezone = detectedTimezone;
+        if (Object.keys(body).length > 0 && !(await patchSettings(body))) {
+          toast(SAVE_FAILED, "error");
+          return;
         }
       } else if (step === 3) {
         let totalRanks = 0;
+        let rankFailed = false;
+        let rankEditedAfterSave = false;
+        const rejectedRanks: string[] = [];
+        const postRank = async (rank: { discipline: string; name: string; order: number; color: string; stripes: number }) => {
+          const key = `${rank.discipline}#${rank.order}`;
+          const payload = JSON.stringify(rank);
+          const res = await fetch("/api/ranks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: payload,
+          }).catch(() => null);
+          if (res && res.ok) {
+            savedRanks.current.set(key, payload);
+            totalRanks++;
+          } else if (res && res.status === 409) {
+            // 409 = this rank already exists (unique per discipline+order), so a
+            // retry after a partial failure never duplicates. If this run saved
+            // it with different details, the change was not applied — say so.
+            totalRanks++;
+            const prior = savedRanks.current.get(key);
+            if (prior !== undefined && prior !== payload) rankEditedAfterSave = true;
+          } else if (res && isInputRefused(res.status)) {
+            rejectedRanks.push(`“${rank.name}” (${await serverError(res)})`);
+          } else {
+            rankFailed = true;
+          }
+        };
         for (const presetName of selectedPresets) {
           const preset = RANK_PRESETS[presetName];
           if (!preset) continue;
           for (let i = 0; i < preset.length; i++) {
-            const res = await fetch("/api/ranks", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                discipline: presetName,
-                name: preset[i].name,
-                order: i,
-                color: preset[i].color,
-                stripes: presetName === "BJJ" ? 4 : 0,
-              }),
+            await postRank({
+              discipline: presetName,
+              name: preset[i].name,
+              order: i,
+              color: preset[i].color,
+              stripes: presetName === "BJJ" ? 4 : 0,
             });
-            if (res.ok || res.status === 409) totalRanks++;
           }
         }
         // Sub-project #1: persist custom rank systems alongside presets.
@@ -465,24 +564,43 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             .map((r) => ({ name: r.name.trim(), color: r.color }))
             .filter((r) => r.name.length > 0);
           for (let i = 0; i < cleanRanks.length; i++) {
-            const res = await fetch("/api/ranks", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                discipline,
-                name: cleanRanks[i].name,
-                order: i,
-                color: cleanRanks[i].color,
-                stripes: 0,
-              }),
+            await postRank({
+              discipline,
+              name: cleanRanks[i].name,
+              order: i,
+              color: cleanRanks[i].color,
+              stripes: 0,
             });
-            if (res.ok || res.status === 409) totalRanks++;
           }
         }
         setSummary((s) => ({ ...s, ranks: totalRanks }));
+        if (rejectedRanks.length > 0) {
+          toast(`These ranks weren't accepted: ${rejectedRanks.join("; ")}. Change or remove them, then press Continue.`, "error", 8000);
+          return;
+        }
+        if (rankFailed) {
+          toast("Some ranks didn't save. Check your connection (or sign in again if you've been signed out) and press Continue to try again; ranks already saved won't be added twice.", "error");
+          return;
+        }
+        if (rankEditedAfterSave) {
+          toast("Some ranks were already saved in those positions, so their first version was kept. Change them on the Ranks page.", "info", 6000);
+        }
       } else if (step === 4) {
         let totalClasses = 0;
+        let createdNow = 0;
+        let classFailed = false;
+        const rejectedClasses: string[] = [];
+        // A class removed here after it was saved still exists on the server.
+        let editedAfterSave = [...createdClasses.current.keys()].some((id) => !classes.some((c) => c.id === id));
         for (const cls of classes) {
+          // Checked before completeness: a saved class edited down to a blank
+          // draft is still on the server and must be reported too.
+          const saved = createdClasses.current.get(cls.id);
+          if (saved !== undefined) {
+            totalClasses++;
+            if (saved !== JSON.stringify(cls)) editedAfterSave = true;
+            continue;
+          }
           if (!cls.name.trim() || cls.days.length === 0 || !cls.startTime || !cls.endTime) continue;
           const [sh, sm] = cls.startTime.split(":").map(Number);
           const [eh, em] = cls.endTime.split(":").map(Number);
@@ -503,13 +621,34 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               maxCapacity: cls.capacity ? parseInt(cls.capacity) : undefined,
               schedules,
             }),
-          });
-          if (res.ok) totalClasses++;
+          }).catch(() => null);
+          if (res && res.ok) {
+            createdClasses.current.set(cls.id, JSON.stringify(cls));
+            totalClasses++;
+            createdNow++;
+          } else if (res && isInputRefused(res.status)) {
+            // The server refused this class as entered; retrying unchanged
+            // would be refused again, so name it and say why.
+            rejectedClasses.push(`“${cls.name.trim()}” (${await serverError(res)})`);
+          } else {
+            classFailed = true;
+          }
         }
-        if (totalClasses > 0) {
+        if (createdNow > 0) {
           await fetch("/api/instances/generate", { method: "POST" }).catch(() => {});
         }
         setSummary((s) => ({ ...s, classes: totalClasses }));
+        if (rejectedClasses.length > 0) {
+          toast(`These classes weren't accepted: ${rejectedClasses.join("; ")}. Change or remove them, then press Save again.`, "error", 8000);
+          return;
+        }
+        if (classFailed) {
+          toast("Some classes didn't save. Check your connection (or sign in again if you've been signed out) and press Save again; classes already saved won't be created twice.", "error");
+          return;
+        }
+        if (editedAfterSave) {
+          toast("Classes you'd already saved stay as first saved, including any you removed here. Change or delete them on the Timetable page.", "info", 6000);
+        }
       } else if (step === 5) {
         const body: Record<string, unknown> = {};
         if (theme) {
@@ -518,52 +657,67 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           body.textColor = theme.text;
           body.bgColor = theme.bg;
           body.fontFamily = theme.font;
-          setPrimaryColor(theme.primary);
-          setSummary((s) => ({ ...s, theme: theme.name }));
         }
-        // Persist the logo-size choice from the wizard's expanded Step 5
-        // (mirrors the Settings → Branding tab control).
-        body.logoSize = logoSize;
+        // Logo size only when the owner changed it: passing this step used to
+        // reset a club's saved size to "md".
+        if (logoSize !== savedLogoSize.current) body.logoSize = logoSize;
         if (logoFile) {
-          const fd = new FormData();
-          fd.append("file", logoFile);
-          const uploadRes = await fetch("/api/upload", { method: "POST", body: fd });
-          if (uploadRes.ok) {
-            const data = await uploadRes.json() as { url?: string };
-            if (data.url) body.logoUrl = data.url;
-          } else {
-            const errBody = await uploadRes.json().catch(() => ({} as { error?: string }));
-            toast(
-              `Logo upload failed: ${errBody.error ?? `HTTP ${uploadRes.status}`}. Onboarding will continue without a logo — set it later in Settings.`,
-              "error",
-            );
+          // Upload a chosen file once; passing this step again reuses it
+          // instead of storing a second copy.
+          let url = uploadedLogo.current?.file === logoFile ? uploadedLogo.current.url : null;
+          if (!url) {
+            const fd = new FormData();
+            fd.append("file", logoFile);
+            const uploadRes = await fetch("/api/upload", { method: "POST", body: fd }).catch(() => null);
+            const data = uploadRes && uploadRes.ok
+              ? ((await uploadRes.json().catch(() => ({}))) as { url?: string })
+              : null;
+            if (!data?.url) {
+              const errBody = uploadRes && !uploadRes.ok
+                ? ((await uploadRes.json().catch(() => ({}))) as { error?: string })
+                : {};
+              toast(
+                `That logo didn't upload${errBody.error ? `: ${errBody.error}` : ""}. Nothing on this page has been saved yet. Press Next to try again, choose a different file, or press Skip to leave your branding as it is.`,
+                "error",
+                8000,
+              );
+              return;
+            }
+            url = data.url;
+            uploadedLogo.current = { file: logoFile, url };
           }
+          if (url !== savedLogoUrl.current) body.logoUrl = url;
         }
         if (Object.keys(body).length > 0) {
-          await fetch("/api/settings", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
+          if (!(await patchSettings(body))) {
+            toast(SAVE_FAILED, "error");
+            return;
+          }
+          if (typeof body.logoSize === "string") savedLogoSize.current = logoSize;
+          if (typeof body.logoUrl === "string") savedLogoUrl.current = body.logoUrl;
+        }
+        if (theme) {
+          setPrimaryColor(theme.primary);
+          setSummary((s) => ({ ...s, theme: theme.name }));
         }
       } else if (step === 6) {
         // Persist questionnaire answers but don't mark onboardingCompleted —
         // there are now 2 more steps (payment rail, CSV handoff) before
         // the celebration screen.
-        await fetch("/api/settings", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            onboardingAnswers: {
-              size: gymSize,
-              goals,
-              referral,
-              // Persist the free-text only when "other" is selected; trims and falls
-              // back to null so analytics queries on the JSON column stay clean.
-              referralOther: referral === "other" ? (referralOther.trim() || null) : null,
-            },
-          }),
-        }).catch(() => {});
+        const saved = await patchSettings({
+          onboardingAnswers: {
+            size: gymSize,
+            goals,
+            referral,
+            // Persist the free-text only when "other" is selected; trims and falls
+            // back to null so analytics queries on the JSON column stay clean.
+            referralOther: referral === "other" ? (referralOther.trim() || null) : null,
+          },
+        });
+        if (!saved) {
+          toast(SAVE_FAILED, "error");
+          return;
+        }
       } else if (step === 7) {
         // Payment rail — record the owner's choice, for BOTH answers.
         //
@@ -603,34 +757,40 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
         // somehow invoked, just advance.
       } else if (step === 9) {
         // CSV handoff — if owner chose white-glove, the file is already
-        // uploaded via the upload-on-select pattern. Mark completion.
-        await fetch("/api/settings", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ onboardingCompleted: true }),
-        }).catch(() => {});
+        // uploaded via the upload-on-select pattern. Mark completion, and
+        // only show "ready" once the server has recorded it; otherwise the
+        // next dashboard visit would send the owner back to step 1.
+        if (!(await patchSettings({ onboardingCompleted: true }))) {
+          toast(FINISH_FAILED, "error");
+          return;
+        }
         setStep(FINAL_STEP);
-        setLoading(false);
         return;
       }
       setStep((s) => s + 1);
     } catch {
-      setStep((s) => s + 1);
+      // Unexpected error: stay on this step rather than advance past it.
+      toast(SAVE_FAILED, "error");
     } finally {
       setLoading(false);
+      busyRef.current = false;
     }
   }
 
   async function skip() {
+    if (busyRef.current || justChangedStep()) return;
     if (step === 9) {
-      // Skipping the last step still completes onboarding.
+      // Skipping the last step still completes onboarding — but only once
+      // the server has recorded it.
+      busyRef.current = true;
       setLoading(true);
-      await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ onboardingCompleted: true }),
-      }).catch(() => {});
+      const done = await patchSettings({ onboardingCompleted: true });
       setLoading(false);
+      busyRef.current = false;
+      if (!done) {
+        toast(FINISH_FAILED, "error");
+        return;
+      }
       setStep(FINAL_STEP);
       return;
     }
@@ -730,9 +890,10 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <div className="flex items-center gap-3">
             {step > 1 && (
               <button
-                onClick={() => setStep((s) => s - 1)}
+                onClick={() => { if (!justChangedStep()) setStep((s) => s - 1); }}
+                disabled={loading}
                 aria-label="Back"
-                className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:bg-white/8"
+                className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:bg-white/8 disabled:opacity-40"
                 style={{ color: "rgba(255,255,255,0.4)" }}
               >
                 <ChevronLeft className="w-4 h-4" />
@@ -744,15 +905,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               </p>
             </div>
           </div>
-          {step >= 3 && step <= 6 && (
-            <button
-              onClick={skip}
-              className="text-xs font-medium"
-              style={{ color: "rgba(255,255,255,0.3)" }}
-            >
-              Skip
-            </button>
-          )}
+          {/* Batch 1: Skip lives once, in each step's footer, beside Continue. */}
         </div>
       )}
 
@@ -786,13 +939,19 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             {/* Inline rgba rather than the muted Tailwind grey the rest of this
                 step uses: UI-RULES §11 ratchets that class family down, never
                 up, and this is a new line. Same tone, no new debt. */}
-            {detectedTimezone && (
+            {detectedTimezone === null ? null : willSetTimezone ? (
               <p className="text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.45)" }}>
                 We&apos;ll set your club&apos;s time zone to{" "}
                 <span className="text-white font-medium">{detectedTimezone.replace(/_/g, " ")}</span>,
                 from this device. Change it any time in Settings → Waiver.
               </p>
-            )}
+            ) : storedTimezone ? (
+              <p className="text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.45)" }}>
+                Your club&apos;s time zone stays{" "}
+                <span className="text-white font-medium">{storedTimezone.replace(/_/g, " ")}</span>.
+                Change it any time in Settings → Waiver.
+              </p>
+            ) : null}
           </div>
 
           <button
@@ -1026,6 +1185,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
+              disabled={loading}
               className="flex-1 py-3.5 rounded-2xl text-sm font-semibold transition-all"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
             >
@@ -1097,6 +1257,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
+              disabled={loading}
               className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
             >
@@ -1317,6 +1478,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
+              disabled={loading}
               className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
             >
@@ -1339,7 +1501,6 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       {step === 6 && (
         <div className="flex-1 flex flex-col">
           <div className="mb-6">
-            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 6 of {TOTAL_STEPS}</p>
             <h1 className="text-white text-2xl font-bold tracking-tight mb-2">Tell us about your gym</h1>
             <p className="text-gray-500 text-sm">This helps us tailor MatFlow to your needs.</p>
           </div>
@@ -1448,6 +1609,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
+              disabled={loading}
               className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
             >
@@ -1469,7 +1631,6 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       {step === 7 && (
         <div className="flex-1 flex flex-col">
           <div className="mb-6">
-            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 7 of {TOTAL_STEPS}</p>
             <h1 className="text-white text-2xl font-bold tracking-tight mb-2">How will you take payments?</h1>
             <p className="text-gray-500 text-sm leading-relaxed">You can change this later from Settings → Revenue.</p>
           </div>
@@ -1543,6 +1704,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
+              disabled={loading}
               className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
             >
@@ -1564,7 +1726,6 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       {step === 8 && (
         <div className="flex-1 flex flex-col">
           <div className="mb-6">
-            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 8 of {TOTAL_STEPS}</p>
             <h1 className="text-white text-2xl font-bold tracking-tight mb-2">Secure your owner account</h1>
             <p className="text-gray-500 text-sm leading-relaxed">Two-factor auth is strongly recommended for owners. Set it up now and you&apos;ll be prompted for a 6-digit code on every future sign-in. You can save for later and enrol from your dashboard whenever you&apos;re ready.</p>
           </div>
@@ -1581,7 +1742,6 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       {step === 9 && (
         <div className="flex-1 flex flex-col">
           <div className="mb-6">
-            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 9 of {TOTAL_STEPS}</p>
             <h1 className="text-white text-2xl font-bold tracking-tight mb-2">Bring your members across</h1>
             <p className="text-gray-500 text-sm leading-relaxed">Already have a member list? Pick how you&apos;d like to get them into MatFlow.</p>
           </div>
@@ -1693,7 +1853,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: "rgba(255,255,255,0.06)" }}>📊</div>
               <div className="flex-1">
                 <p className="text-sm font-semibold text-white">Self-serve CSV upload</p>
-                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Map columns yourself in Settings → Account → Import. Best if you&apos;re comfortable matching fields.</p>
+                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Map columns yourself in Settings → Import. Best if you&apos;re comfortable matching fields.</p>
               </div>
             </button>
           </div>
@@ -1701,6 +1861,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
+              disabled={loading}
               className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
             >
