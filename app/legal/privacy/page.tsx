@@ -76,7 +76,7 @@ export default function PrivacyPage() {
           <li>Audit logs — twelve months, then deleted by a scheduled job that runs daily</li>
           <li>Email delivery logs — twelve months, deleted by the same daily job</li>
           <li>Expired sign-in links and password-reset links — purged daily, within 24 hours of expiry</li>
-          <li>Closed gyms — a gym marked for deletion is recoverable for 30 days, after which its records are permanently erased</li>
+          <li>Closed gyms — a gym that closes is kept with sign-in disabled so it can reopen; its records are erased only on the gym&apos;s written request</li>
           <li>
             Backups — our database provider keeps continuous point-in-time backups. The window depends on our current
             plan and is typically between 7 and 30 days. Because a restore rolls the database back in time, we
