@@ -658,7 +658,7 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
   });
 
   describe("step 4: a class whose save got no answer", () => {
-    const fundamentals = { id: "srv-1", name: "Fundamentals", schedules: [{ dayOfWeek: 1, startTime: "18:00", endTime: "19:00" }] };
+    const fundamentals = { id: "srv-1", name: "Fundamentals", coachName: null, location: null, maxCapacity: null, duration: 60, schedules: [{ dayOfWeek: 1, startTime: "18:00", endTime: "19:00" }] };
     function addMonday(name: string) {
       fireEvent.click(screen.getByRole("button", { name: /add a class/i }));
       fireEvent.change(screen.getAllByLabelText("Class name").at(-1)!, { target: { value: name } });
@@ -716,7 +716,7 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
       toastMock.mockClear();
       fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
-      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't check whether “Fundamentals” reached us. Press Save again/), "error", 10000));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm whether “Fundamentals” reached us. Press Save again/), "error", 10000));
       expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(1);
       expect(screen.getByText(/add your classes/i)).toBeTruthy();
     });
@@ -758,7 +758,7 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       later();
       fireEvent.click(screen.getByRole("button", { name: /^skip/i }));
       await screen.findByText(/make it yours/i);
-      expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't check whether “Fundamentals” reached us.*Timetable page: add it if missing, or delete the extra/), "info", 10000);
+      expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm whether “Fundamentals” reached us.*Timetable page: add it if missing, or delete the extra/), "info", 10000);
     });
 
     it("a lost save the server made, whose draft the owner then removes, is adopted and reported — nothing re-sent (C-03a)", async () => {
@@ -797,7 +797,7 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       fireEvent.click(screen.getByRole("button", { name: /remove class/i }));
       fireEvent.click(screen.getByRole("button", { name: /^continue/i }));
       await screen.findByText(/make it yours/i);
-      expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't check whether “Fundamentals” reached us/), "info", 10000);
+      expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm whether “Fundamentals” reached us/), "info", 10000);
     });
 
     it("Skip after a lost save that never reached the server, draft removed: says it wasn't saved (C-02)", async () => {
@@ -818,6 +818,84 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       await screen.findByText(/make it yours/i);
       expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/“Fundamentals” wasn't saved\. Add it on the Timetable page/), "info", 10000);
       expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(1);
+    });
+
+    it("two classes match a lost save: reported as uncertain, not adopted, not re-sent (CLS-02)", async () => {
+      let created = false;
+      const twin = { ...fundamentals, id: "srv-9" };
+      const calls = stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return ok(created ? [fundamentals, twin] : []);
+        if (url === "/api/classes" && method === "POST") { created = true; return "throw"; }
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Fundamentals");
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      toastMock.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm whether “Fundamentals” reached us/), "error", 10000));
+      expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(1);
+    });
+
+    it("a full page (100) without the class proves nothing: uncertain, not re-sent (CLS-01)", async () => {
+      const page = Array.from({ length: 100 }, (_, i) => ({ id: `old-${i}`, name: `Class ${String(i).padStart(3, "0")}`, schedules: [] }));
+      const calls = stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return ok(page);
+        if (url === "/api/classes" && method === "POST") return "throw";
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Zumba");
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      toastMock.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm whether “Zumba” reached us/), "error", 10000));
+      expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(1);
+    });
+
+    it("a match while an earlier save's id is unknown is not adopted (CLS-03)", async () => {
+      let posts = 0;
+      const calls = stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return ok(posts >= 2 ? [fundamentals] : []);
+        if (url === "/api/classes" && method === "POST") { posts++; return posts === 1 ? new Response("not json", { status: 201 }) : "throw"; }
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Fundamentals");
+      addMonday("Fundamentals");
+      fireEvent.click(screen.getByRole("button", { name: /save 2 classes/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      toastMock.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: /save 2 classes/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm whether “Fundamentals” reached us/), "error", 10000));
+      expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(2);
+    });
+
+    it("a different coach on the only new class is not a match (fields as sent are compared)", async () => {
+      let created = false;
+      const other = { ...fundamentals, coachName: "Someone Else" };
+      const calls = stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return ok(created ? [other] : []);
+        if (url === "/api/classes" && method === "POST") { if (!created) { created = true; return "throw"; } return ok({ id: "srv-2" }); }
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Fundamentals");
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await screen.findByText(/make it yours/i);
+      expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(2);
     });
 
     it("Skip after a lost save the server did make says it was saved after all (D-02)", async () => {
@@ -856,7 +934,7 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       addMonday("No-Gi");
       toastMock.mockClear();
       fireEvent.click(screen.getByRole("button", { name: /save 2 classes/i }));     // list read 2 fails; B lost
-      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't check whether “Fundamentals” reached us.*“No-Gi” didn't save either/), "error", 10000));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't confirm whether “Fundamentals” reached us.*“No-Gi” didn't save either/), "error", 10000));
       later();
       toastMock.mockClear();
       fireEvent.click(screen.getByRole("button", { name: /^skip/i }));               // list read 3 ok: neither made
@@ -1116,6 +1194,58 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       await pickAndUpload();
       expect((await screen.findByRole("alert")).textContent).toMatch(/couldn't confirm your file arrived/i);
     });
+  });
+});
+
+describe("failed saves stay visible beside the action (17 Oct 2026)", () => {
+  it("a failed save shows a note above the step's buttons until dismissed", async () => {
+    stubFetch(() => fail(500));
+    openAt(6);
+    renderWizard();
+    fireEvent.click(await screen.findByRole("button", { name: "21–50" }));
+    fireEvent.click(screen.getByRole("button", { name: /^next/i }));
+    const note = await screen.findByRole("alert");
+    expect(note.textContent).toMatch(/couldn't confirm that saved/i);
+    fireEvent.click(screen.getByRole("button", { name: /dismiss this message/i }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("the note clears when the next attempt succeeds", async () => {
+    let n = 0;
+    stubFetch(() => (++n === 1 ? fail(500) : ok()));
+    renderWizard({ storedTimezone: DEVICE_ZONE });
+    fireEvent.change(screen.getByLabelText("Gym Name"), { target: { value: "New name" } });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await screen.findByText(/what do you teach/i);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("the CSV card makes no turnaround promise", async () => {
+    stubFetch(() => ok());
+    openAt(9);
+    renderWizard();
+    await screen.findByText(/bring your members across/i);
+    expect(document.body.textContent).not.toMatch(/business day/i);
+  });
+
+  it("the same reference with different content: told plainly, and the next press is a new upload", async () => {
+    let n = 0;
+    const calls = stubFetch((url) => {
+      if (url !== "/api/onboarding/csv-handoff") return ok();
+      return ++n === 1 ? new Response(JSON.stringify({ error: "x", code: "handoff_ref_mismatch" }), { status: 409 }) : new Response(JSON.stringify({ jobId: "j", message: "ok" }), { status: 201 });
+    });
+    openAt(9);
+    renderWizard();
+    fireEvent.click(await screen.findByText(/send my csv to matflow/i));
+    fireEvent.change(screen.getByLabelText("Choose a CSV file of your members"), { target: { files: [new File(["a"], "m.csv", { type: "text/csv" })] } });
+    fireEvent.click(screen.getByRole("button", { name: /^upload csv/i }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/different from the one sent earlier/);
+    fireEvent.click(screen.getByRole("button", { name: /^upload csv/i }));
+    await waitFor(() => expect(calls.filter((c) => c.url === "/api/onboarding/csv-handoff")).toHaveLength(2));
+    const refs = calls.filter((c) => c.url === "/api/onboarding/csv-handoff").map((c) => (c.raw as FormData).get("clientRef"));
+    expect(refs[1]).not.toBe(refs[0]);
   });
 });
 

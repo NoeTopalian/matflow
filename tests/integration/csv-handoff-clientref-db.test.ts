@@ -130,6 +130,20 @@ describe.skipIf(KIND === "none" || KIND === "skip")(`csv hand-off clientRef on t
     expect((await jobs()).filter((j) => j.fileBlobUrl.includes(`/handoff-${r}`))).toHaveLength(1);
   }, 60_000);
 
+  it("the same reference with different content is refused and creates nothing (content hash on the job)", async () => {
+    reset();
+    const r = ref();
+    expect((await POST(req(r))).status).toBe(201);
+    const other = new FormData();
+    other.append("file", new File(["name,email\nB,b@example.test\n"], "members.csv", { type: "text/csv" }));
+    other.append("clientRef", r);
+    const res = await POST(new Request("http://localhost/api/onboarding/csv-handoff", { method: "POST", body: other }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "handoff_ref_mismatch" });
+    expect((await jobs()).filter((j) => j.fileBlobUrl.includes(`/handoff-${r}`))).toHaveLength(1);
+    expect(h.emails).toBe(1);
+  }, 60_000);
+
   it("a different file (new reference) is a new hand-off", async () => {
     reset();
     const before = (await jobs()).length;

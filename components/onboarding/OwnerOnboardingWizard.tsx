@@ -148,6 +148,30 @@ const DAYS_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 // UI day index 0=Mon..6=Sun → JS dayOfWeek (0=Sun..6=Sat)
 function uiDayToJs(d: number) { return (d + 1) % 7; }
 
+/** GET /api/classes returns at most this many classes (its defaultTake/maxTake). */
+const CLASS_PAGE = 100;
+
+type ServerClass = {
+  id: string; name: string; coachName?: string | null; location?: string | null; maxCapacity?: number | null; duration?: number | null;
+  schedules?: Array<{ dayOfWeek: number; startTime: string; endTime: string }>;
+};
+type ClassList = { items: ServerClass[]; complete: boolean };
+type LostClass = { kind: "found"; id: string } | { kind: "none" } | { kind: "uncertain" };
+
+/** Exactly what step 4 sends to POST /api/classes for a draft. */
+function classPayload(cls: ClassDraft) {
+  const [sh, sm] = cls.startTime.split(":").map(Number);
+  const [eh, em] = cls.endTime.split(":").map(Number);
+  return {
+    name: cls.name,
+    coachName: cls.coach || undefined,
+    location: cls.location || undefined,
+    duration: Math.max((eh * 60 + em) - (sh * 60 + sm), 30),
+    maxCapacity: cls.capacity ? parseInt(cls.capacity) : undefined,
+    schedules: cls.days.map((d) => ({ dayOfWeek: uiDayToJs(d), startTime: cls.startTime, endTime: cls.endTime })),
+  };
+}
+
 function hex(h: string, a: number) {
   const n = parseInt(h.replace("#", ""), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
@@ -242,6 +266,29 @@ function GymPreview({ gymName, color }: { gymName: string; color: string }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ─── Failure note ─────────────────────────────────────────────────────────────
+
+/**
+ * The last failed save on this step, shown next to the step's buttons until
+ * the owner tries again, moves on or dismisses it (onboarding batch 1, 17 Oct
+ * 2026). The toast that also fires disappears after a few seconds; this stays.
+ */
+function StepFailure({ message, onDismiss }: { message: string | null; onDismiss: () => void }) {
+  if (!message) return null;
+  return (
+    <div
+      role="alert"
+      className="mt-4 flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs leading-relaxed"
+      style={{ borderColor: "rgba(239,68,68,0.45)", background: "rgba(239,68,68,0.08)", color: "rgba(255,255,255,0.9)" }}
+    >
+      <span className="flex-1">{message}</span>
+      <button onClick={onDismiss} aria-label="Dismiss this message" className="shrink-0 p-1 -m-1" style={{ color: "rgba(255,255,255,0.7)" }}>
+        <X className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }
@@ -359,6 +406,13 @@ export default function OwnerOnboardingWizard({
 }: Props) {
   const { toast } = useToast();
   const router = useRouter();
+  // The last failed save, kept beside the step's buttons (StepFailure).
+  const [stepFailure, setStepFailure] = useState<string | null>(null);
+  /** A save failed: say so where the owner acts, and in a toast. */
+  function fail(message: string, ms = FAIL_MS) {
+    setStepFailure(message);
+    toast(message, "error", ms);
+  }
   const fileRef = useRef<HTMLInputElement>(null);
   // F-14: a refresh used to restart at step 1. The step is kept for this tab so
   // a reload lands where the owner was; a fresh sign-in starts over.
@@ -392,6 +446,8 @@ export default function OwnerOnboardingWizard({
   // zone, and the step 1 note would render differently on each side.
   const [detectedTimezone, setDetectedTimezone] = useState<string | null>(null);
   useEffect(() => { setDetectedTimezone(readDeviceTimezone()); }, []);
+  // A failure note belongs to the step it happened on.
+  useEffect(() => { setStepFailure(null); }, [step]);
 
   // Step 1 sends the device zone only for a club that has not finished setup
   // and whose saved zone differs. A reopened wizard never moves the zone.
@@ -439,7 +495,10 @@ export default function OwnerOnboardingWizard({
   // (undefined = not read yet; no class is sent until it has been read).
   const unconfirmedClasses = useRef<Map<string, string>>(new Map()); // draft id -> the draft as sent
   const serverClassIds = useRef<Set<string>>(new Set());
-  const classesBeforeRun = useRef<Set<string> | undefined>(undefined);
+  const classesBeforeRun = useRef<ClassList | undefined>(undefined);
+  // Saves that succeeded but whose new class id couldn't be read: while any
+  // exist, a matching class can't be told apart from them, so none is adopted.
+  const unidentifiedSaves = useRef(0);
   // Step 3: ranks saved in this run, by discipline#order, with what was sent.
   const savedRanks = useRef<Map<string, string>>(new Map());
 
@@ -521,7 +580,7 @@ export default function OwnerOnboardingWizard({
     try {
       file = await downscaleImage(original, IMAGE_MAX_EDGE_PX);
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Couldn't read that image", "error");
+      fail(err instanceof Error ? err.message : "Couldn't read that image");
       return;
     }
     setLogoFile(file);
@@ -576,14 +635,14 @@ export default function OwnerOnboardingWizard({
     return false;
   }
 
-  type ServerClass = { id: string; name: string; schedules?: Array<{ dayOfWeek: number; startTime: string; endTime: string }> };
-
   /**
    * The club's classes, or null when the list can't be read. `strict=1` makes
    * the route answer an internal error as a 5xx instead of an empty list, so
-   * an empty list here really is empty.
+   * an empty list here really is empty. The route returns one page of at most
+   * CLASS_PAGE classes by name; a full page may be cut short, so it is marked
+   * incomplete and "not in it" proves nothing.
    */
-  async function listClasses(): Promise<ServerClass[] | null> {
+  async function listClasses(): Promise<ClassList | null> {
     // Bounded: Save and Skip wait on this, and a stalled connection must not
     // hold either button for minutes.
     const ctrl = new AbortController();
@@ -592,7 +651,8 @@ export default function OwnerOnboardingWizard({
       const res = await fetch("/api/classes?strict=1", { signal: ctrl.signal }).catch(() => null);
       if (!res || !res.ok) return null;
       const data = (await res.json().catch(() => null)) as unknown;
-      return Array.isArray(data) ? (data as ServerClass[]) : null;
+      if (!Array.isArray(data)) return null;
+      return { items: data as ServerClass[], complete: data.length < CLASS_PAGE };
     } finally {
       clearTimeout(timer);
     }
@@ -603,8 +663,11 @@ export default function OwnerOnboardingWizard({
    * been edited or removed). A class the server made anyway is adopted as
    * saved — so a later edit or removal of it is reported like any saved class.
    * One the server didn't make is forgotten (Save then sends a draft still on
-   * screen normally). Returns the names of sends that couldn't be checked now
-   * (class list unreadable), that turned out to be saved, and that weren't.
+   * screen normally). Anything that can't be identified with confidence (list
+   * unreadable or cut short, two possible matches, an earlier save whose id
+   * is unknown) stays unsettled and is reported — never re-sent or guessed.
+   * Returns the names of sends that couldn't be settled now, that turned out
+   * to be saved, and that weren't.
    */
   async function settleUnconfirmedDetailed(): Promise<{ unchecked: string[]; madeAfterAll: string[]; notMade: string[] }> {
     const unchecked: string[] = [];
@@ -616,11 +679,12 @@ export default function OwnerOnboardingWizard({
     for (const [draftId, sent] of [...unconfirmedClasses.current]) {
       const draft = JSON.parse(sent) as ClassDraft;
       if (!before || !list) { unchecked.push(draft.name.trim()); continue; }
-      const found = findLostClass(draft, list, before);
+      const result = findLostClass(draft, list, before);
+      if (result.kind === "uncertain") { unchecked.push(draft.name.trim()); continue; }
       unconfirmedClasses.current.delete(draftId);
-      if (found) {
+      if (result.kind === "found") {
         createdClasses.current.set(draftId, sent);
-        serverClassIds.current.add(found);
+        serverClassIds.current.add(result.id);
         madeAfterAll.push(draft.name.trim());
       } else {
         notMade.push(draft.name.trim());
@@ -642,24 +706,39 @@ export default function OwnerOnboardingWizard({
   /** What to say about sends that couldn't be checked: name them and say what to do. */
   function uncheckedMessage(names: string[], retry = false): string {
     const one = names.length === 1;
-    return `We couldn't check whether ${quoteNames(names)} reached us.${retry ? " Press Save again to check once your connection is back (or sign in again if you've been signed out)." : ""} If this keeps happening, skip this step and look on the Timetable page: add ${one ? "it" : "any"} if missing, or delete the extra if there are two.`;
+    return `We couldn't confirm whether ${quoteNames(names)} reached us.${retry ? " Press Save again to check once your connection is back (or sign in again if you've been signed out)." : ""} If this keeps happening, skip this step and look on the Timetable page: add ${one ? "it" : "any"} if missing, or delete the extra if there are two.`;
   }
 
   /**
-   * The server id of a class an unanswered save of `cls` created: a class that
-   * was not there before this run, not already this run's, with the same name
-   * and the same days and times. null = checked, not there.
+   * Whether an unanswered save of `cls` made a class: one that was not there
+   * before this run, is not already this run's, and matches everything that
+   * was sent (name, coach, location, capacity, duration, days and times).
+   * Only a single match against complete lists counts as "found", and only a
+   * complete list proves "none"; anything else is "uncertain".
    */
-  function findLostClass(cls: ClassDraft, list: ServerClass[], before: Set<string>): string | null {
-    const days = cls.days.map(uiDayToJs).sort().join(",");
-    const match = list.find((c) =>
-      !before.has(c.id) &&
+  function findLostClass(cls: ClassDraft, list: ClassList, before: ClassList): LostClass {
+    const sent = classPayload(cls);
+    const days = sent.schedules.map((s) => s.dayOfWeek).sort().join(",");
+    const beforeIds = new Set(before.items.map((c) => c.id));
+    const candidates = list.items.filter((c) =>
+      !beforeIds.has(c.id) &&
       !serverClassIds.current.has(c.id) &&
-      c.name === cls.name &&
+      c.name === sent.name &&
+      (c.coachName ?? null) === (sent.coachName ?? null) &&
+      (c.location ?? null) === (sent.location ?? null) &&
+      (c.maxCapacity ?? null) === (sent.maxCapacity ?? null) &&
+      (c.duration ?? null) === sent.duration &&
       (c.schedules ?? []).map((s) => s.dayOfWeek).sort().join(",") === days &&
       (c.schedules ?? []).every((s) => s.startTime === cls.startTime && s.endTime === cls.endTime),
     );
-    return match?.id ?? null;
+    if (candidates.length > 1) return { kind: "uncertain" };
+    if (candidates.length === 1) {
+      // A class from an earlier save whose id is unknown, or one missing from
+      // a cut-short "before" list, could be this very match.
+      if (!before.complete || unidentifiedSaves.current > 0) return { kind: "uncertain" };
+      return { kind: "found", id: candidates[0].id };
+    }
+    return list.complete ? { kind: "none" } : { kind: "uncertain" };
   }
 
   /** True only for the hand-off route's own "uploads aren't available" 503. */
@@ -715,6 +794,7 @@ export default function OwnerOnboardingWizard({
     if (busyRef.current || justChangedStep()) return;
     busyRef.current = true;
     setLoading(true);
+    setStepFailure(null); // a new attempt; it is set again if this one fails
     try {
       if (step === 1) {
         // Campaign lane L-B, J16: `Tenant.timezone` decides which day Register
@@ -728,7 +808,7 @@ export default function OwnerOnboardingWizard({
         if (Object.keys(body).length > 0) {
           const res = await patchSettings(body);
           if (!res?.ok) {
-            toast(await saveFailure(res), "error", FAIL_MS);
+            fail(await saveFailure(res), FAIL_MS);
             return;
           }
         }
@@ -767,11 +847,11 @@ export default function OwnerOnboardingWizard({
         for (const rank of rankDrafts()) await postRank(rank);
         setSummary((s) => ({ ...s, ranks: totalRanks }));
         if (rejectedRanks.length > 0) {
-          toast(`These ranks weren't accepted: ${rejectedRanks.join("; ")}. Change or remove them, then try again.`, "error", FAIL_MS);
+          fail(`These ranks weren't accepted: ${rejectedRanks.join("; ")}. Change or remove them, then try again.`, FAIL_MS);
           return;
         }
         if (rankFailed) {
-          toast("Some ranks didn't save. Check your connection (or sign in again if you've been signed out), then try again — ranks already saved won't be added twice.", "error", FAIL_MS);
+          fail("Some ranks didn't save. Check your connection (or sign in again if you've been signed out), then try again — ranks already saved won't be added twice.", FAIL_MS);
           return;
         }
         if (rankEditedAfterSave) toast(RANKS_KEPT, "info", 6000);
@@ -790,10 +870,10 @@ export default function OwnerOnboardingWizard({
         if (classesBeforeRun.current === undefined && toSend) {
           const list = await listClasses();
           if (!list) {
-            toast("We couldn't load your timetable, so no classes were saved. Check your connection (or sign in again if you've been signed out), then press Save again.", "error", FAIL_MS);
+            fail("We couldn't load your timetable, so no classes were saved. Check your connection (or sign in again if you've been signed out), then press Save again.", FAIL_MS);
             return;
           }
-          classesBeforeRun.current = new Set(list.map((c) => c.id));
+          classesBeforeRun.current = list;
         }
         // Saves that got no answer are settled first (settleUnconfirmed); what
         // can't be checked now is not re-sent, and is named to the owner.
@@ -812,29 +892,15 @@ export default function OwnerOnboardingWizard({
             classFailed = true;
             continue;
           }
-          const [sh, sm] = cls.startTime.split(":").map(Number);
-          const [eh, em] = cls.endTime.split(":").map(Number);
-          const duration = Math.max((eh * 60 + em) - (sh * 60 + sm), 30);
-          const schedules = cls.days.map((d) => ({
-            dayOfWeek: uiDayToJs(d),
-            startTime: cls.startTime,
-            endTime: cls.endTime,
-          }));
           const res = await fetch("/api/classes", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: cls.name,
-              coachName: cls.coach || undefined,
-              location: cls.location || undefined,
-              duration,
-              maxCapacity: cls.capacity ? parseInt(cls.capacity) : undefined,
-              schedules,
-            }),
+            body: JSON.stringify(classPayload(cls)),
           }).catch(() => null);
           if (res && res.ok) {
             const made = (await res.json().catch(() => null)) as { id?: unknown } | null;
             if (typeof made?.id === "string") serverClassIds.current.add(made.id);
+            else unidentifiedSaves.current++;
             createdClasses.current.set(cls.id, JSON.stringify(cls));
             unconfirmedClasses.current.delete(cls.id);
             totalClasses++;
@@ -856,7 +922,7 @@ export default function OwnerOnboardingWizard({
         setSummary((s) => ({ ...s, classes: totalClasses }));
         if (rejectedClasses.length > 0) {
           if (unchecked.length > 0) toast(uncheckedMessage(unchecked), "info", 10000);
-          toast(`These classes weren't accepted: ${rejectedClasses.join("; ")}. Change or remove them, then press Save again.`, "error", FAIL_MS);
+          fail(`These classes weren't accepted: ${rejectedClasses.join("; ")}. Change or remove them, then press Save again.`, FAIL_MS);
           return;
         }
         if (classFailed) {
@@ -865,11 +931,10 @@ export default function OwnerOnboardingWizard({
           // classes concerned are named and nothing is promised. Every class
           // that failed in this press is named, so none can be dropped unseen.
           const others = failedNames.filter((n) => !unchecked.includes(n));
-          toast(
+          fail(
             unchecked.length > 0
               ? `${uncheckedMessage(unchecked, true)}${others.length > 0 ? ` ${quoteNames(others)} didn't save either.` : ""}`
               : `${quoteNames(failedNames)} didn't save. Check your connection (or sign in again if you've been signed out), then press Save again — classes already saved won't be added twice.`,
-            "error",
             10000,
           );
           return;
@@ -903,9 +968,8 @@ export default function OwnerOnboardingWizard({
               const errBody = uploadRes && !uploadRes.ok
                 ? ((await uploadRes.json().catch(() => ({}))) as { error?: string })
                 : {};
-              toast(
+              fail(
                 `That logo didn't upload${errBody.error ? `: ${errBody.error}` : ""}. Your current logo hasn't changed. Press Next to try again or choose a different file — or press Skip to move on without saving the rest of this page.`,
-                "error",
                 FAIL_MS,
               );
               return;
@@ -918,7 +982,7 @@ export default function OwnerOnboardingWizard({
         if (Object.keys(body).length > 0) {
           const res = await patchSettings(body);
           if (!res?.ok) {
-            toast(await saveFailure(res), "error", FAIL_MS);
+            fail(await saveFailure(res), FAIL_MS);
             return;
           }
           if (typeof body.logoSize === "string") savedLogoSize.current = logoSize;
@@ -949,7 +1013,7 @@ export default function OwnerOnboardingWizard({
         } else if (JSON.stringify(answers) !== savedAnswers.current) {
           const res = await patchSettings({ onboardingAnswers: answers });
           if (!res?.ok) {
-            toast(await saveFailure(res), "error", FAIL_MS);
+            fail(await saveFailure(res), FAIL_MS);
             return;
           }
           savedAnswers.current = JSON.stringify(answers);
@@ -979,7 +1043,7 @@ export default function OwnerOnboardingWizard({
             ),
           }).catch(() => null);
           if (!railRes || !railRes.ok) {
-            toast(await saveFailure(railRes, "Couldn't save how you take payments — try again."), "error", FAIL_MS);
+            fail(await saveFailure(railRes, "Couldn't save how you take payments — try again."), FAIL_MS);
             return;
           }
         }
@@ -998,7 +1062,7 @@ export default function OwnerOnboardingWizard({
         // next dashboard visit would send the owner back to step 1.
         const res = await patchSettings({ onboardingCompleted: true });
         if (!res?.ok) {
-          toast(await saveFailure(res, FINISH_FAILED), "error", FAIL_MS);
+          fail(await saveFailure(res, FINISH_FAILED), FAIL_MS);
           return;
         }
         forgetCsvRef();
@@ -1008,7 +1072,7 @@ export default function OwnerOnboardingWizard({
       setStep((s) => s + 1);
     } catch {
       // Unexpected error: stay on this step rather than advance past it.
-      toast(SAVE_FAILED, "error", FAIL_MS);
+      fail(SAVE_FAILED, FAIL_MS);
     } finally {
       setLoading(false);
       busyRef.current = false;
@@ -1017,6 +1081,7 @@ export default function OwnerOnboardingWizard({
 
   async function skip() {
     if (busyRef.current || justChangedStep()) return;
+    setStepFailure(null);
     if (step === 9) {
       // Skipping the last step still completes onboarding — but only once
       // the server has recorded it.
@@ -1026,7 +1091,7 @@ export default function OwnerOnboardingWizard({
       setLoading(false);
       busyRef.current = false;
       if (!res?.ok) {
-        toast(await saveFailure(res, FINISH_FAILED), "error", FAIL_MS);
+        fail(await saveFailure(res, FINISH_FAILED), FAIL_MS);
         return;
       }
       forgetCsvRef();
@@ -1100,6 +1165,14 @@ export default function OwnerOnboardingWizard({
         setCsvHandoffError("Your file wasn't sent because you've been signed out. Sign in again, then upload it here.");
       } else if (res && res.status === 403) {
         setCsvHandoffError(`Your file wasn't sent: ${await forbiddenReason(res)}`);
+      } else if (res && res.status === 409 && ((await res.clone().json().catch(() => null)) as { code?: unknown } | null)?.code === "handoff_ref_mismatch") {
+        // This file's content differs from the upload its reference belongs
+        // to: forget that reference, so pressing Upload again sends this file
+        // as a new hand-off rather than being matched to the earlier one.
+        csvClientRef.current = null;
+        csvNotesSent.current = null;
+        try { sessionStorage.removeItem(csvRefKey); } catch { /* ignore */ }
+        setCsvHandoffError("This file is different from the one sent earlier, so it wasn't matched to that upload. Press Upload CSV again to send it as a new upload.");
       } else if (res && res.status >= 400 && res.status < 500) {
         // Refused before anything was stored (wrong type, too large, too many
         // uploads): say why; the owner can fix it or choose another file.
@@ -1261,6 +1334,7 @@ export default function OwnerOnboardingWizard({
             ) : null}
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <button
             onClick={goNext}
             disabled={!canNext || loading}
@@ -1489,6 +1563,7 @@ export default function OwnerOnboardingWizard({
             </button>
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
@@ -1561,6 +1636,7 @@ export default function OwnerOnboardingWizard({
             </button>
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
@@ -1782,6 +1858,7 @@ export default function OwnerOnboardingWizard({
             <p className="text-[10px] text-gray-600 mt-2">Mock data — your real members will appear here once added.</p>
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
@@ -1913,6 +1990,7 @@ export default function OwnerOnboardingWizard({
             </div>
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
@@ -2008,6 +2086,7 @@ export default function OwnerOnboardingWizard({
             </div>
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
@@ -2087,7 +2166,7 @@ export default function OwnerOnboardingWizard({
               <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: "rgba(255,255,255,0.06)" }}>📨</div>
               <div className="flex-1">
                 <p className="text-sm font-semibold text-white">Send my CSV to MatFlow — we&apos;ll import it for you</p>
-                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Recommended for &gt;20 members. Drop your file below; we&apos;ll import it within 1 business day.</p>
+                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Recommended for &gt;20 members. Upload your file below and the MatFlow team will import it for you.</p>
                 {importChoice === "white_glove" && (
                   <div onClick={(e) => e.stopPropagation()} className="mt-4 space-y-3">
                     <input
@@ -2175,6 +2254,7 @@ export default function OwnerOnboardingWizard({
             </button>
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
