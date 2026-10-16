@@ -20,6 +20,7 @@ import { filterTodoItems } from "@/lib/dashboard-todo";
 import {
   AT_RISK_SUPPRESSED_DETAIL,
   AT_RISK_SUPPRESSED_NOTE,
+  AT_RISK_SUPPRESSED_TODO_NOTE,
   type ActionItem,
   type ActionItemKind,
 } from "@/lib/dashboard-action-items";
@@ -474,6 +475,8 @@ export default function DashboardStats({
               <div className="rounded-xl border px-3 py-6 flex flex-col items-center gap-2 text-center" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                 <CheckCircle2 className="w-6 h-6" style={{ color: "#22c55e" }} />
                 <p className="text-sm">All caught up — nothing to action.</p>
+                {/* At-Risk is unknown, not zero, while suppressed (UI-RULES §7). */}
+                {atRiskOff && <p className="text-xs text-tx-3">{AT_RISK_SUPPRESSED_TODO_NOTE}</p>}
               </div>
             ) : (
               filterTodoItems(todoItems).map((item) => <TodoRow key={item.label} item={item} />)
@@ -626,6 +629,7 @@ export default function DashboardStats({
                 <div className="rounded-2xl border p-6 flex flex-col items-center gap-2 text-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                   <CheckCircle2 className="w-8 h-8" style={{ color: "#22c55e" }} />
                   <p className="text-sm">All caught up — nothing to action.</p>
+                  {atRiskOff && <p className="text-xs text-tx-3">{AT_RISK_SUPPRESSED_TODO_NOTE}</p>}
                 </div>
               ) : (
                 filterTodoItems(todoItems).map(({ label, count, Icon, color, href, action }) => (

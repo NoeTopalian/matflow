@@ -15,7 +15,7 @@ type TxClient = Prisma.TransactionClient;
 import DashboardStats from "@/components/dashboard/DashboardStats";
 import SetupBanner from "@/components/dashboard/SetupBanner";
 import DeniedNotice from "@/components/dashboard/DeniedNotice";
-import { atRiskMemberWhere, atRiskSuppressed, buildActionItems, type ActionItem } from "@/lib/dashboard-action-items";
+import { buildActionItems, readAtRisk, type ActionItem, type AtRiskRead } from "@/lib/dashboard-action-items";
 import { TRAINING_MEMBER } from "@/lib/member-population";
 
 /**
@@ -98,7 +98,7 @@ async function getWeekClasses(tx: TxClient, tenantId: string): Promise<DayClass[
   }));
 }
 
-async function getStats(tx: TxClient, tenantId: string, atRiskOff: boolean) {
+async function getStats(tx: TxClient, tenantId: string, atRisk: AtRiskRead) {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const startOfWeek = new Date(now);
@@ -113,7 +113,6 @@ async function getStats(tx: TxClient, tenantId: string, atRiskOff: boolean) {
     waiverMissing,
     missingPhone,
     paymentsDue,
-    atRiskMembers,
   ] = await Promise.all([
     // Training members only: parent/guardian accounts are account holders,
     // not members (lib/member-population.ts, 2 Oct 2026).
@@ -147,9 +146,6 @@ async function getStats(tx: TxClient, tenantId: string, atRiskOff: boolean) {
     tx.member.count({
       where: { tenantId, status: { in: ["active", "taster"] }, OR: owesMoneyClause(new Date()) },
     }),
-    // Joined inside the window and not in yet = new, not at risk (lib/dashboard-action-items).
-    // Not counted at all while At-Risk is suppressed (no MatFlow check-in yet).
-    atRiskOff ? Promise.resolve(0) : tx.member.count({ where: atRiskMemberWhere(tenantId, now) }),
   ]);
 
   return {
@@ -160,8 +156,10 @@ async function getStats(tx: TxClient, tenantId: string, atRiskOff: boolean) {
     waiverMissing,
     missingPhone,
     paymentsDue,
-    atRiskMembers,
-    atRiskSuppressed: atRiskOff,
+    // Read once by readAtRisk (lib/dashboard-action-items): 0 and suppressed
+    // while the club has no MatFlow check-in, the same value the named list gets.
+    atRiskMembers: atRisk.count,
+    atRiskSuppressed: atRisk.suppressed,
   };
 }
 
@@ -197,12 +195,12 @@ async function getUserTasks(tx: TxClient, tenantId: string, userId: string) {
  * The raw per-signal queries run here; lib/dashboard-action-items shapes + ranks
  * them into the typed list the UI renders.
  */
-async function getActionItems(tx: TxClient, tenantId: string, atRiskOff: boolean): Promise<ActionItem[]> {
+async function getActionItems(tx: TxClient, tenantId: string, atRisk: AtRiskRead): Promise<ActionItem[]> {
   const now = new Date();
   const thirtyDaysAgo = new Date(now);
   thirtyDaysAgo.setDate(now.getDate() - 30);
 
-  const [overdue, recentFailed, missingWaiver, atRisk, birthdayCandidates] = await Promise.all([
+  const [overdue, recentFailed, missingWaiver, birthdayCandidates] = await Promise.all([
     tx.member.findMany({
       where: { tenantId, status: { in: ["active", "taster"] }, OR: owesMoneyClause(now) },
       select: { id: true, name: true, paymentStatus: true, membershipTierId: true, billedBy: true },
@@ -219,13 +217,6 @@ async function getActionItems(tx: TxClient, tenantId: string, atRiskOff: boolean
       select: { id: true, name: true },
       take: 25,
     }),
-    atRiskOff
-      ? Promise.resolve([] as { id: string; name: string }[])
-      : tx.member.findMany({
-          where: atRiskMemberWhere(tenantId, now),
-          select: { id: true, name: true },
-          take: 25,
-        }),
     // DOBs are filtered to the next-7-day window in JS (month/day, year-agnostic).
     tx.member.findMany({
       where: { tenantId, status: { in: ["active", "taster"] }, dateOfBirth: { not: null } },
@@ -249,8 +240,8 @@ async function getActionItems(tx: TxClient, tenantId: string, atRiskOff: boolean
       createdAt: p.createdAt,
     })),
     missingWaiver,
-    atRisk,
-    atRiskSuppressed: atRiskOff,
+    atRisk: atRisk.members,
+    atRiskSuppressed: atRisk.suppressed,
     birthdayCandidates: birthdayCandidates
       .filter((m): m is { id: string; name: string; dateOfBirth: Date } => m.dateOfBirth !== null)
       .map((m) => ({ id: m.id, name: m.name, dateOfBirth: m.dateOfBirth })),
@@ -279,13 +270,13 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
   const [classes, stats, setupGaps, userTasks, actionItems] = await withTenantContext(
     session!.user.tenantId,
     async (tx) => {
-      const atRiskOff = await atRiskSuppressed(tx, session!.user.tenantId);
+      const atRisk = await readAtRisk(tx, session!.user.tenantId, new Date());
       return Promise.all([
         getWeekClasses(tx, session!.user.tenantId),
-        getStats(tx, session!.user.tenantId, atRiskOff),
+        getStats(tx, session!.user.tenantId, atRisk),
         getSetupGaps(tx, session!.user.tenantId, session!.user.role),
         getUserTasks(tx, session!.user.tenantId, session!.user.id),
-        getActionItems(tx, session!.user.tenantId, atRiskOff),
+        getActionItems(tx, session!.user.tenantId, atRisk),
       ]);
     },
   );

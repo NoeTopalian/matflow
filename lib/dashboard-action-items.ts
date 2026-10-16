@@ -84,9 +84,18 @@ export const MATFLOW_CHECKIN_WHERE = {
   importJobId: null,
 } as const;
 
-/** What the At-Risk tile says in place of a number while it is suppressed. */
-export const AT_RISK_SUPPRESSED_NOTE = "Starts once you take your first register in MatFlow";
-export const AT_RISK_SUPPRESSED_DETAIL = "Imported visits are not counted";
+/**
+ * What the At-Risk tile says in place of a number while it is suppressed.
+ * The trigger is ANY check-in recorded in MatFlow (register, kiosk, QR,
+ * member self check-in or auto check-in: MATFLOW_CHECKIN_WHERE), not only a
+ * register, so the copy names a check-in. The detail line describes the
+ * suppression only: once it lifts, imported visits still count as visits in
+ * atRiskMemberWhere (T2a Part U residual U2).
+ */
+export const AT_RISK_SUPPRESSED_NOTE = "Starts after the first check-in recorded in MatFlow";
+export const AT_RISK_SUPPRESSED_DETAIL = "Hidden until then: imported history alone would flag the whole club";
+/** Muted line under "All caught up" while At-Risk is unknown rather than zero (UI-RULES §7). */
+export const AT_RISK_SUPPRESSED_TODO_NOTE = "At-Risk members start after the first check-in recorded in MatFlow.";
 
 /** The slice of a Prisma (transaction) client the at-risk gate reads. */
 export type AtRiskGateClient = {
@@ -103,9 +112,17 @@ export type AtRiskGateClient = {
  * owner decision Q4 A-3 option (c), 17 Oct 2026): suppressed while the club
  * has no MatFlow check-in. Every visit on record for a club fresh off TeamUp
  * is imported and dated before the switch, so from 14 days after the import
- * the unsuppressed tile flags the whole club (312, then 531 on 17 Oct).
- * Imported attendance does not count. The headline tile, the to-do row and
- * the named action list all read this one answer.
+ * the unsuppressed tile flags the whole club (about 312 active training
+ * members; the 531 seen on 17 Oct also counted the 219 guardian drafts, which
+ * atRiskMemberWhere now excludes). Imported attendance does not count. The
+ * headline tile, the to-do row and the named action list all read this one
+ * answer, through readAtRisk.
+ *
+ * Cost: while suppressed no row matches, so Postgres walks the tenant's
+ * attendance through the (tenantId, checkInTime) index on each dashboard
+ * render. Acceptable at Total BJJ's volume; if it shows up in latency, a
+ * partial index on AttendanceRecord(tenantId) WHERE checkInMethod <> 'import'
+ * AND importJobId IS NULL belongs in a later schema batch.
  */
 export async function atRiskSuppressed(tx: AtRiskGateClient, tenantId: string): Promise<boolean> {
   const first = await tx.attendanceRecord.findFirst({
@@ -113,6 +130,49 @@ export async function atRiskSuppressed(tx: AtRiskGateClient, tenantId: string): 
     select: { id: true },
   });
   return first === null;
+}
+
+export type AtRiskWhere = ReturnType<typeof atRiskMemberWhere>;
+
+/** The slice of a Prisma (transaction) client readAtRisk reads. */
+export type AtRiskReadClient = AtRiskGateClient & {
+  member: {
+    count(args: { where: AtRiskWhere }): PromiseLike<number>;
+    findMany(args: {
+      where: AtRiskWhere;
+      select: { id: true; name: true };
+      take: number;
+    }): PromiseLike<{ id: string; name: string }[]>;
+  };
+};
+
+/** One club-wide At-Risk answer: the tile count, the named rows and the gate. */
+export type AtRiskRead = {
+  suppressed: boolean;
+  count: number;
+  members: { id: string; name: string }[];
+};
+
+/** How many at-risk names the dashboard action list is fed. */
+export const AT_RISK_LIST_TAKE = 25;
+
+/**
+ * Reads At-Risk ONCE for the dashboard: the gate, then (only when the gate is
+ * open) the headline count and the named rows from the same predicate. The
+ * page hands this one value to the stats tile and to the action-item builder,
+ * so the tile, the to-do row and the named list cannot disagree. While
+ * suppressed, no member query runs at all.
+ */
+export async function readAtRisk(tx: AtRiskReadClient, tenantId: string, now: Date): Promise<AtRiskRead> {
+  if (await atRiskSuppressed(tx, tenantId)) {
+    return { suppressed: true, count: 0, members: [] };
+  }
+  const where = atRiskMemberWhere(tenantId, now);
+  const [count, members] = await Promise.all([
+    tx.member.count({ where }),
+    tx.member.findMany({ where, select: { id: true, name: true }, take: AT_RISK_LIST_TAKE }),
+  ]);
+  return { suppressed: false, count, members };
 }
 
 const SEVERITY: Record<ActionItemKind, number> = { money: 0, retention: 1, admin: 2, moment: 3 };
