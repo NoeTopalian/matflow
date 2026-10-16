@@ -18,7 +18,7 @@
  *   - Audit log onboarding.csv_handoff
  */
 import { NextResponse } from "next/server";
-import { put } from "@vercel/blob";
+import { put, del } from "@vercel/blob";
 import { randomBytes } from "crypto";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
@@ -30,8 +30,25 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { z } from "zod";
 import { checkUploadRateLimit, formFields, normaliseUploadFilename } from "@/lib/upload-guard";
 
-// Lane C2 (9 Oct 2026): exactly `file` and an optional `notes`; anything else is refused.
-const formSchema = z.strictObject({ file: z.unknown().optional(), notes: z.string().max(4000).optional() });
+// Lane C2 (9 Oct 2026): exactly `file`, an optional `notes` and (onboarding
+// batch 1, 16 Oct 2026) an optional `clientRef`; anything else is refused.
+//
+// `clientRef` makes a retry safe. The wizard mints one random reference per
+// chosen file and resends it on every retry of that file. If the first
+// attempt was accepted but its response never reached the browser, the retry
+// finds that job and returns it instead of storing the file again, creating a
+// second job and emailing the team twice. It lives in the blob pathname, so no
+// schema change is needed to look it up.
+const CLIENT_REF = /^[a-f0-9]{32}$/;
+const formSchema = z.strictObject({
+  file: z.unknown().optional(),
+  notes: z.string().max(4000).optional(),
+  clientRef: z.string().regex(CLIENT_REF).optional(),
+});
+const CLIENT_REF_LOCK_NS = 0x43535648; // "CSVH"
+
+const ALREADY_RECEIVED =
+  "We already have this file — it was received the first time, so nothing was sent twice.";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_NOTES_LEN = 500;
@@ -98,6 +115,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Only CSV files are supported" }, { status: 400 });
   }
 
+  // A retry of a hand-off that already arrived: answer with that job and do
+  // nothing else (no second file, job, email or rate-limit spend).
+  const clientRef = parsedForm.data.clientRef ?? null;
+  const refMarker = clientRef ? `/handoff-${clientRef}` : null;
+  if (refMarker) {
+    const existing = await withTenantContext(tenantId, (tx) =>
+      tx.importJob.findFirst({
+        where: { tenantId, createdById: userId, fileBlobUrl: { contains: refMarker } },
+        select: { id: true },
+      }),
+    );
+    if (existing) {
+      return NextResponse.json({ jobId: existing.id, message: ALREADY_RECEIVED, alreadyReceived: true }, { status: 200 });
+    }
+  }
+
   // Every accepted hand-off is stored AND emails the MatFlow team, so the
   // budget is spent here — after the caller's own mistakes are refused, before
   // anything is stored or sent (lane C2; lib/upload-guard.ts says what backs it).
@@ -110,7 +143,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const cuid = randomBytes(12).toString("hex");
+    const cuid = clientRef ?? randomBytes(12).toString("hex");
     // Private (audit P0-1): the handoff CSV is raw member PII — names,
     // emails, phones, dates of birth. A public blob URL is a permanent
     // unauthenticated download link, and this one was previously emailed
@@ -123,7 +156,17 @@ export async function POST(req: Request) {
       addRandomSuffix: true,
     });
 
-    const { job, tenant, owner } = await withTenantContext(tenantId, async (tx) => {
+    const created = await withTenantContext(tenantId, async (tx) => {
+      if (refMarker) {
+        // A retry can arrive while the first attempt is still being stored.
+        // Serialise per reference and look again, so only one job is created.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${CLIENT_REF_LOCK_NS}::int4, hashtext(${`${tenantId}:${clientRef}`}::text))`;
+        const raced = await tx.importJob.findFirst({
+          where: { tenantId, createdById: userId, fileBlobUrl: { contains: refMarker } },
+          select: { id: true },
+        });
+        if (raced) return { duplicateOf: raced.id } as const;
+      }
       const j = await tx.importJob.create({
         data: {
           tenantId,
@@ -140,6 +183,13 @@ export async function POST(req: Request) {
       ]);
       return { job: j, tenant: t, owner: o };
     });
+    if ("duplicateOf" in created) {
+      // The first attempt won the race: drop this copy of the file and answer
+      // with the first job. Best effort — an orphaned private blob holds no job.
+      await del(blob.url).catch(() => {});
+      return NextResponse.json({ jobId: created.duplicateOf, message: ALREADY_RECEIVED, alreadyReceived: true }, { status: 200 });
+    }
+    const { job, tenant, owner } = created;
 
     // Unset default must actually deliver — see app/api/apply/route.ts note.
     const internalRecipients = (process.env.MATFLOW_APPLICATIONS_TO ?? "noetopalian@gmail.com")

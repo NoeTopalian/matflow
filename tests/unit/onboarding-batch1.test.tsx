@@ -38,7 +38,7 @@ const OTHER_ZONE = DEVICE_ZONE === "Pacific/Chatham" ? "Pacific/Apia" : "Pacific
 const TENANT = "Total BJJ";
 const STEP_KEY = `matflow.onboarding.step.${TENANT}`;
 
-type Call = { url: string; method: string; body: unknown };
+type Call = { url: string; method: string; body: unknown; raw?: unknown };
 
 function stubFetch(respond: (url: string, method: string) => Response | Promise<Response> | "throw") {
   const calls: Call[] = [];
@@ -46,7 +46,7 @@ function stubFetch(respond: (url: string, method: string) => Response | Promise<
     const method = init?.method ?? "GET";
     let body: unknown = undefined;
     if (typeof init?.body === "string") body = JSON.parse(init.body);
-    calls.push({ url, method, body });
+    calls.push({ url, method, body, raw: init?.body });
     const r = await respond(url, method);
     if (r === "throw") throw new TypeError("Failed to fetch");
     return r;
@@ -212,6 +212,49 @@ describe("every save is checked", () => {
 });
 
 describe("step 3: ranks", () => {
+  async function saveJudoThenGoBack(calls: Call[]) {
+    openAt(3);
+    renderWizard();
+    fireEvent.click(await screen.findByRole("button", { name: /judo belt system/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add 1 system/i }));
+    await screen.findByText(/add your classes/i);
+    expect(calls.filter((c) => c.url === "/api/ranks").length).toBeGreaterThan(0);
+    later();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByText(/set up your ranks/i);
+    // Deselect the saved system.
+    fireEvent.click(screen.getByRole("button", { name: /judo belt system/i }));
+    later();
+  }
+
+  it("removing a saved belt system then Continue says it stays saved", async () => {
+    const calls = stubFetch(() => ok({ id: "r" }));
+    await saveJudoThenGoBack(calls);
+    const before = calls.filter((c) => c.url === "/api/ranks").length;
+    fireEvent.click(screen.getByRole("button", { name: /^continue/i }));
+    await screen.findByText(/add your classes/i);
+    expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/belt systems and ranks you'd already saved stay as first saved/i), "info", 6000);
+    expect(calls.filter((c) => c.url === "/api/ranks")).toHaveLength(before);
+  });
+
+  it("removing a saved belt system then Skip says it stays saved", async () => {
+    const calls = stubFetch(() => ok({ id: "r" }));
+    await saveJudoThenGoBack(calls);
+    fireEvent.click(screen.getByRole("button", { name: /^skip/i }));
+    await screen.findByText(/add your classes/i);
+    expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/belt systems and ranks you'd already saved/i), "info", 6000);
+  });
+
+  it("no notice when nothing saved was removed", async () => {
+    stubFetch(() => ok({ id: "r" }));
+    openAt(3);
+    renderWizard();
+    fireEvent.click(await screen.findByRole("button", { name: /judo belt system/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add 1 system/i }));
+    await screen.findByText(/add your classes/i);
+    expect(toastMock).not.toHaveBeenCalled();
+  });
+
   it("a failed rank save keeps the step; the retry re-sends safely (409 counts as saved)", async () => {
     let rankPosts = 0;
     const calls = stubFetch((url) => {
@@ -485,6 +528,70 @@ describe("one request per click", () => {
     await screen.findByText(/tell us about your gym/i);
     expect(screen.getAllByRole("button", { name: /^skip/i })).toHaveLength(1);
     expect(screen.getAllByText(/step 6 of 9/i)).toHaveLength(1);
+  });
+});
+
+describe("step 9: CSV hand-off", () => {
+  async function chooseCsv(name = "members.csv") {
+    openAt(9);
+    renderWizard();
+    fireEvent.click(await screen.findByText(/send my csv to matflow/i));
+    const file = new File(["name,email\nA,a@x.test"], name, { type: "text/csv" });
+    fireEvent.change(screen.getByLabelText("Choose a CSV file of your members"), { target: { files: [file] } });
+  }
+  const refOf = (c: Call) => (c.raw as FormData).get("clientRef");
+  const handoffs = (calls: Call[]) => calls.filter((c) => c.url === "/api/onboarding/csv-handoff");
+
+  it("a lost response is reported, Finish stays locked, and the retry carries the same reference", async () => {
+    let n = 0;
+    const calls = stubFetch((url) => {
+      if (url !== "/api/onboarding/csv-handoff") return ok();
+      return ++n === 1 ? "throw" : new Response(JSON.stringify({ jobId: "j1", message: "We already have this file — it was received the first time, so nothing was sent twice.", alreadyReceived: true }), { status: 200 });
+    });
+    await chooseCsv();
+    fireEvent.click(screen.getByRole("button", { name: /^upload csv/i }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/couldn't confirm your file arrived/i);
+    expect((screen.getByRole("button", { name: /finish setup/i }) as HTMLButtonElement).disabled).toBe(true);
+    const retry = screen.getByRole("button", { name: /^upload csv/i }) as HTMLButtonElement;
+    expect(retry.disabled).toBe(false);
+    fireEvent.click(retry);
+    await screen.findByText(/nothing was sent twice/i);
+    const sent = handoffs(calls);
+    expect(sent).toHaveLength(2);
+    expect(refOf(sent[0])).toMatch(/^[a-f0-9]{32}$/);
+    expect(refOf(sent[1])).toBe(refOf(sent[0]));
+    expect((screen.getByRole("button", { name: /finish setup/i }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a refused file says why and nothing claims it was uploaded", async () => {
+    stubFetch((url) => (url === "/api/onboarding/csv-handoff" ? fail(400, "Only CSV files are supported") : ok()));
+    await chooseCsv();
+    fireEvent.click(screen.getByRole("button", { name: /^upload csv/i }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/wasn't sent: Only CSV files are supported/);
+    expect(screen.queryByText(/^uploaded$/i)).toBeNull();
+  });
+
+  it("a signed-out 401 asks the owner to sign in again", async () => {
+    stubFetch((url) => (url === "/api/onboarding/csv-handoff" ? fail(401, "Unauthorized") : ok()));
+    await chooseCsv();
+    fireEvent.click(screen.getByRole("button", { name: /^upload csv/i }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/signed out/i);
+  });
+
+  it("choosing a different file starts a new hand-off with a new reference", async () => {
+    let n = 0;
+    const calls = stubFetch((url) => (url === "/api/onboarding/csv-handoff" ? (++n === 1 ? fail(503) : ok({ jobId: "j2", message: "ok" })) : ok()));
+    await chooseCsv("first.csv");
+    fireEvent.click(screen.getByRole("button", { name: /^upload csv/i }));
+    await screen.findByRole("alert");
+    const second = new File(["name\nB"], "second.csv", { type: "text/csv" });
+    fireEvent.change(screen.getByLabelText("Choose a CSV file of your members"), { target: { files: [second] } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^upload csv/i }));
+    await waitFor(() => expect(handoffs(calls)).toHaveLength(2));
+    const [a, b] = handoffs(calls);
+    expect(refOf(b)).not.toBe(refOf(a));
   });
 });
 

@@ -28,7 +28,13 @@ interface Props {
 // Not "nothing has changed": after a dropped connection the server may have
 // saved it. Every save the wizard retries is safe to send twice.
 const SAVE_FAILED = "We couldn't confirm that saved. Check your connection and try again.";
-const FINISH_FAILED = "We couldn't finish setup. Nothing is lost. Press the button again to retry.";
+// What was saved earlier in this run stays saved; the wizard never deletes.
+const RANKS_KEPT = "Belt systems and ranks you'd already saved stay as first saved, including any you removed or changed here. Change or delete them on the Ranks page.";
+const CLASSES_KEPT = "Classes you'd already saved stay as first saved, including any you removed or changed here. Change or delete them on the Timetable page.";
+
+type RankDraft = { discipline: string; name: string; order: number; color: string; stripes: number };
+
+const FINISH_FAILED ="We couldn't finish setup. Nothing is lost. Press the button again to retry.";
 
 interface ClassDraft {
   id: string;
@@ -421,6 +427,11 @@ export default function OwnerOnboardingWizard({
   const [csvNotes, setCsvNotes] = useState("");
   const [csvUploaded, setCsvUploaded] = useState(false);
   const [csvHandoffMessage, setCsvHandoffMessage] = useState<string | null>(null);
+  // Shown when a hand-off did not go through; the button stays available.
+  const [csvHandoffError, setCsvHandoffError] = useState<string | null>(null);
+  // One reference per chosen file, resent on every retry of it, so a retry
+  // after a lost response finds the first upload instead of sending it twice.
+  const csvClientRef = useRef<string | null>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
 
   // Completion
@@ -483,6 +494,46 @@ export default function OwnerOnboardingWizard({
     return typeof body.error === "string" && body.error ? body.error : `error ${res.status}`;
   }
 
+  /** Every rank step 3 would send for the current selection, in send order. */
+  function rankDrafts(): RankDraft[] {
+    const out: RankDraft[] = [];
+    for (const presetName of selectedPresets) {
+      const preset = RANK_PRESETS[presetName];
+      if (!preset) continue;
+      preset.forEach((r, i) => out.push({
+        discipline: presetName, name: r.name, order: i, color: r.color, stripes: presetName === "BJJ" ? 4 : 0,
+      }));
+    }
+    // Sub-project #1: persist custom rank systems alongside presets.
+    for (const sys of customRankSystems) {
+      const discipline = sys.discipline.trim();
+      if (!discipline) continue;
+      sys.ranks
+        .map((r) => ({ name: r.name.trim(), color: r.color }))
+        .filter((r) => r.name.length > 0)
+        .forEach((r, i) => out.push({ discipline, name: r.name, order: i, color: r.color, stripes: 0 }));
+    }
+    return out;
+  }
+
+  /** True when a rank saved earlier in this run has since been removed or changed here. */
+  function rankChangesAfterSave(): boolean {
+    const drafts = new Map(rankDrafts().map((r) => [`${r.discipline}#${r.order}`, JSON.stringify(r)]));
+    for (const [key, sent] of savedRanks.current) {
+      if (drafts.get(key) !== sent) return true;
+    }
+    return false;
+  }
+
+  /** True when a class saved earlier in this run has since been removed or changed here. */
+  function classChangesAfterSave(): boolean {
+    for (const [id, sent] of createdClasses.current) {
+      const now = classes.find((c) => c.id === id);
+      if (!now || JSON.stringify(now) !== sent) return true;
+    }
+    return false;
+  }
+
   /** PATCH /api/settings and report whether the server accepted it. */
   async function patchSettings(body: Record<string, unknown>): Promise<boolean> {
     const res = await fetch("/api/settings", {
@@ -519,7 +570,10 @@ export default function OwnerOnboardingWizard({
         let rankFailed = false;
         let rankEditedAfterSave = false;
         const rejectedRanks: string[] = [];
-        const postRank = async (rank: { discipline: string; name: string; order: number; color: string; stripes: number }) => {
+        // A belt system or rank saved earlier in this run and since removed or
+        // changed here stays on the server as first saved; say so (below).
+        if (rankChangesAfterSave()) rankEditedAfterSave = true;
+        const postRank = async (rank: RankDraft) => {
           const key = `${rank.discipline}#${rank.order}`;
           const payload = JSON.stringify(rank);
           const res = await fetch("/api/ranks", {
@@ -543,36 +597,7 @@ export default function OwnerOnboardingWizard({
             rankFailed = true;
           }
         };
-        for (const presetName of selectedPresets) {
-          const preset = RANK_PRESETS[presetName];
-          if (!preset) continue;
-          for (let i = 0; i < preset.length; i++) {
-            await postRank({
-              discipline: presetName,
-              name: preset[i].name,
-              order: i,
-              color: preset[i].color,
-              stripes: presetName === "BJJ" ? 4 : 0,
-            });
-          }
-        }
-        // Sub-project #1: persist custom rank systems alongside presets.
-        for (const sys of customRankSystems) {
-          const discipline = sys.discipline.trim();
-          if (!discipline) continue;
-          const cleanRanks = sys.ranks
-            .map((r) => ({ name: r.name.trim(), color: r.color }))
-            .filter((r) => r.name.length > 0);
-          for (let i = 0; i < cleanRanks.length; i++) {
-            await postRank({
-              discipline,
-              name: cleanRanks[i].name,
-              order: i,
-              color: cleanRanks[i].color,
-              stripes: 0,
-            });
-          }
-        }
+        for (const rank of rankDrafts()) await postRank(rank);
         setSummary((s) => ({ ...s, ranks: totalRanks }));
         if (rejectedRanks.length > 0) {
           toast(`These ranks weren't accepted: ${rejectedRanks.join("; ")}. Change or remove them, then press Continue.`, "error", 8000);
@@ -582,23 +607,18 @@ export default function OwnerOnboardingWizard({
           toast("Some ranks didn't save. Check your connection (or sign in again if you've been signed out) and press Continue to try again; ranks already saved won't be added twice.", "error");
           return;
         }
-        if (rankEditedAfterSave) {
-          toast("Some ranks were already saved in those positions, so their first version was kept. Change them on the Ranks page.", "info", 6000);
-        }
+        if (rankEditedAfterSave) toast(RANKS_KEPT, "info", 6000);
       } else if (step === 4) {
         let totalClasses = 0;
         let createdNow = 0;
         let classFailed = false;
         const rejectedClasses: string[] = [];
-        // A class removed here after it was saved still exists on the server.
-        let editedAfterSave = [...createdClasses.current.keys()].some((id) => !classes.some((c) => c.id === id));
+        const editedAfterSave = classChangesAfterSave();
         for (const cls of classes) {
           // Checked before completeness: a saved class edited down to a blank
-          // draft is still on the server and must be reported too.
-          const saved = createdClasses.current.get(cls.id);
-          if (saved !== undefined) {
+          // draft is still on the server (classChangesAfterSave reports it).
+          if (createdClasses.current.has(cls.id)) {
             totalClasses++;
-            if (saved !== JSON.stringify(cls)) editedAfterSave = true;
             continue;
           }
           if (!cls.name.trim() || cls.days.length === 0 || !cls.startTime || !cls.endTime) continue;
@@ -646,9 +666,7 @@ export default function OwnerOnboardingWizard({
           toast("Some classes didn't save. Check your connection (or sign in again if you've been signed out) and press Save again; classes already saved won't be created twice.", "error");
           return;
         }
-        if (editedAfterSave) {
-          toast("Classes you'd already saved stay as first saved, including any you removed here. Change or delete them on the Timetable page.", "info", 6000);
-        }
+        if (editedAfterSave) toast(CLASSES_KEPT, "info", 6000);
       } else if (step === 5) {
         const body: Record<string, unknown> = {};
         if (theme) {
@@ -794,24 +812,45 @@ export default function OwnerOnboardingWizard({
       setStep(FINAL_STEP);
       return;
     }
+    // Skip does not undo what this run already saved: say so, as Continue does.
+    if (step === 3 && rankChangesAfterSave()) toast(RANKS_KEPT, "info", 6000);
+    if (step === 4 && classChangesAfterSave()) toast(CLASSES_KEPT, "info", 6000);
     setStep((s) => s + 1);
   }
 
   async function uploadCsvHandoff() {
-    if (!csvFile) return;
+    if (!csvFile || busyRef.current) return;
+    busyRef.current = true;
     setLoading(true);
+    setCsvHandoffError(null);
+    if (!csvClientRef.current) {
+      csvClientRef.current = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+    }
     try {
       const fd = new FormData();
       fd.append("file", csvFile);
       if (csvNotes.trim()) fd.append("notes", csvNotes.trim());
-      const res = await fetch("/api/onboarding/csv-handoff", { method: "POST", body: fd });
-      if (res.ok) {
+      fd.append("clientRef", csvClientRef.current);
+      const res = await fetch("/api/onboarding/csv-handoff", { method: "POST", body: fd }).catch(() => null);
+      if (res && res.ok) {
         const data = (await res.json().catch(() => ({}))) as { message?: unknown };
         setCsvHandoffMessage(typeof data.message === "string" ? data.message : null);
         setCsvUploaded(true);
+      } else if (res && (res.status === 401 || res.status === 403)) {
+        setCsvHandoffError("Your file wasn't sent because you've been signed out. Sign in again, then upload it here.");
+      } else if (res && res.status >= 400 && res.status < 500) {
+        // Refused before anything was stored (wrong type, too large, too many
+        // uploads): say why; the owner can fix it or choose another file.
+        setCsvHandoffError(`Your file wasn't sent: ${await serverError(res)}.`);
+      } else {
+        // No response, or a server failure: it may or may not have arrived.
+        // The retry carries the same reference, so it can't arrive twice.
+        setCsvHandoffError("We couldn't confirm your file arrived. Press Upload CSV again — if it already arrived, it won't be sent twice.");
       }
-    } catch { /* show inline error if needed; csvUploaded stays false */ }
-    finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+      busyRef.current = false;
+    }
   }
 
   async function startStripeConnect() {
@@ -1792,6 +1831,9 @@ export default function OwnerOnboardingWizard({
                         const f = e.target.files?.[0] ?? null;
                         setCsvFile(f);
                         setCsvUploaded(false);
+                        setCsvHandoffError(null);
+                        // A different file is a different hand-off.
+                        csvClientRef.current = null;
                       }}
                       className="hidden"
                     />
@@ -1834,6 +1876,9 @@ export default function OwnerOnboardingWizard({
                     {/* What happens next comes from the server, which knows
                         whether the MatFlow team was actually notified and
                         whether email is on (7 Oct 2026, mail-dark). */}
+                    {csvHandoffError && !csvUploaded && (
+                      <p role="alert" className="text-xs" style={{ color: "rgba(255,255,255,0.85)" }}>{csvHandoffError}</p>
+                    )}
                     {csvUploaded && csvHandoffMessage && (
                       <p role="status" className="text-xs" style={{ color: "rgba(255,255,255,0.7)" }}>{csvHandoffMessage}</p>
                     )}

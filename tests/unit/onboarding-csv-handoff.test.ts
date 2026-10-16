@@ -16,7 +16,7 @@ vi.mock("next/server", () => ({
   },
 }));
 
-const { createMock, findUniqueUserMock, findUniqueTenantMock, sendEmailMock, logAuditMock, blobPutMock, requireOwnerMock } = vi.hoisted(() => ({
+const { createMock, findUniqueUserMock, findUniqueTenantMock, sendEmailMock, logAuditMock, blobPutMock, requireOwnerMock, findFirstMock, executeRawMock, delMock } = vi.hoisted(() => ({
   createMock: vi.fn(),
   findUniqueUserMock: vi.fn(),
   findUniqueTenantMock: vi.fn(),
@@ -24,6 +24,9 @@ const { createMock, findUniqueUserMock, findUniqueTenantMock, sendEmailMock, log
   logAuditMock: vi.fn().mockResolvedValue(undefined),
   blobPutMock: vi.fn(),
   requireOwnerMock: vi.fn(),
+  findFirstMock: vi.fn(),
+  executeRawMock: vi.fn(),
+  delMock: vi.fn(),
 }));
 
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
@@ -39,7 +42,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    importJob: { create: createMock },
+    importJob: { create: createMock, findFirst: findFirstMock },
+    $executeRaw: executeRawMock,
     tenant: { findUnique: findUniqueTenantMock },
     user: { findUnique: findUniqueUserMock },
   },
@@ -55,7 +59,7 @@ vi.mock("@/lib/authz", () => ({
 
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
 vi.mock("@/lib/email", () => ({ sendEmail: sendEmailMock }));
-vi.mock("@vercel/blob", () => ({ put: blobPutMock }));
+vi.mock("@vercel/blob", () => ({ put: blobPutMock, del: delMock }));
 
 vi.mock("@/lib/api-error", () => ({
   apiError: (message: string, status: number) => ({
@@ -75,15 +79,19 @@ beforeEach(() => {
   findUniqueTenantMock.mockResolvedValue({ name: "Test Gym", slug: "test-gym" });
   findUniqueUserMock.mockResolvedValue({ name: "Alice Owner", email: "alice@gym.com" });
   blobPutMock.mockResolvedValue({ url: "https://blob.test/imports/handoff-abc.csv" });
+  findFirstMock.mockResolvedValue(null);
+  executeRawMock.mockResolvedValue(1);
+  delMock.mockResolvedValue(undefined);
 });
 
-function makeReq(opts?: { file?: File | null; notes?: string }) {
+function makeReq(opts?: { file?: File | null; notes?: string; clientRef?: string }) {
   const fd = new FormData();
   if (opts?.file !== null) {
     const file = opts?.file ?? new File(["name,email\nAlice,alice@x.com"], "members.csv", { type: "text/csv" });
     fd.append("file", file);
   }
   if (opts?.notes !== undefined) fd.append("notes", opts.notes);
+  if (opts?.clientRef !== undefined) fd.append("clientRef", opts.clientRef);
   return new Request("http://localhost/api/onboarding/csv-handoff", {
     method: "POST",
     body: fd,
@@ -314,6 +322,69 @@ describe("POST /api/onboarding/csv-handoff", () => {
       const res = await POST(makeReq());
       expect(res.status, "our config is our problem, and it is a 5xx").toBe(503);
       expect(createMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // Onboarding batch 1 (16 Oct 2026): a retry after a lost response must not
+  // store the file again, create a second job or email the team twice.
+  describe("clientRef: a retried hand-off is received once", () => {
+    const REF = "0123456789abcdef0123456789abcdef";
+
+    it("a fresh reference is stored under that reference, behind a per-reference lock", async () => {
+      createMock.mockResolvedValueOnce({ id: "job-new", fileName: "members.csv" });
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      const res = await POST(makeReq({ clientRef: REF }));
+      expect(res.status).toBe(201);
+      expect(blobPutMock.mock.calls[0][0]).toBe(`tenants/tenant-A/imports/handoff-${REF}.csv`);
+      expect(executeRawMock).toHaveBeenCalledTimes(1);
+      expect(createMock).toHaveBeenCalledTimes(1);
+      // Both lookups are scoped to this club, this owner and this reference.
+      expect(findFirstMock).toHaveBeenCalledTimes(2);
+      for (const [arg] of findFirstMock.mock.calls) {
+        expect(arg.where).toEqual({ tenantId: "tenant-A", createdById: "user-owner-A", fileBlobUrl: { contains: `/handoff-${REF}` } });
+      }
+    });
+
+    it("a reference that already arrived returns that job: nothing stored, created or emailed", async () => {
+      findFirstMock.mockResolvedValueOnce({ id: "job-first" });
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      const res = await POST(makeReq({ clientRef: REF }));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ jobId: "job-first", alreadyReceived: true });
+      expect(blobPutMock).not.toHaveBeenCalled();
+      expect(createMock).not.toHaveBeenCalled();
+      expect(sendEmailMock).not.toHaveBeenCalled();
+      expect(logAuditMock).not.toHaveBeenCalled();
+    });
+
+    it("a retry that overlaps the first attempt creates no second job and drops its copy of the file", async () => {
+      findFirstMock.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "job-first" });
+      blobPutMock.mockResolvedValueOnce({ url: `https://blob.test/imports/handoff-${REF}-x1.csv` });
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      const res = await POST(makeReq({ clientRef: REF }));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ jobId: "job-first", alreadyReceived: true });
+      expect(createMock).not.toHaveBeenCalled();
+      expect(sendEmailMock).not.toHaveBeenCalled();
+      expect(delMock).toHaveBeenCalledWith(`https://blob.test/imports/handoff-${REF}-x1.csv`);
+    });
+
+    it("a malformed reference is refused before anything is stored", async () => {
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      for (const bad of ["abc", "../../x", `${REF}0`, REF.toUpperCase()]) {
+        const res = await POST(makeReq({ clientRef: bad }));
+        expect(res.status).toBe(400);
+      }
+      expect(blobPutMock).not.toHaveBeenCalled();
+      expect(findFirstMock).not.toHaveBeenCalled();
+    });
+
+    it("without a reference the route behaves as before (no lookup, no lock)", async () => {
+      createMock.mockResolvedValueOnce({ id: "job-plain", fileName: "members.csv" });
+      const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+      expect((await POST(makeReq())).status).toBe(201);
+      expect(findFirstMock).not.toHaveBeenCalled();
+      expect(executeRawMock).not.toHaveBeenCalled();
     });
   });
 

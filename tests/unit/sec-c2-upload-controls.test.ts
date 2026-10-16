@@ -11,7 +11,7 @@
  * (unknown or duplicated fields refused); client filenames normalised and never used as a key.
  * Red (evidence/C2/04-upload-red-green.log): against the HEAD route files these cells fail.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
   hits: [] as Array<{ bucket: string; hitAt: Date }>,
@@ -167,6 +167,17 @@ async function uploadRoute() {
   return (await import("@/app/api/upload/route")).POST;
 }
 const upReq = (fd: FormData, q = "") => new Request(`http://localhost/api/upload${q}`, { method: "POST", body: fd });
+
+// Warm the route graphs once, under the hook timeout (16 Oct 2026). The first
+// cold transform of /api/upload (sharp, blob, rate limiter) used to land inside
+// the first test that called uploadRoute() and measured 31 s under a parallel
+// run, past the 30 s test timeout. Later vi.resetModules() re-imports still
+// re-evaluate the module (a fresh instance, as the tests intend); only the
+// transform is reused.
+beforeAll(async () => {
+  await import("@/app/api/upload/route");
+  await import("@/app/api/onboarding/csv-handoff/route");
+});
 
 beforeEach(() => {
   h.hits.length = 0;
