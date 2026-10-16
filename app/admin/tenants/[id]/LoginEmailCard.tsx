@@ -16,7 +16,10 @@
 // the operator-only check route who holds an address in this club; when a
 // member holds it, the guided ConflictPanel moves that member's contact
 // address and then changes the owner's login address (two step-ups). A
-// half-finished resolution is resumed from the URL after a reload.
+// half-finished resolution is resumed from the URL after a reload. Since
+// 12 Oct 2026 a staff account or every holder of a duplicate can be moved
+// too (resume carries &staff=<id>), and the heading says plainly that this is
+// the owner's back-office sign-in, not a member record.
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -61,11 +64,13 @@ export default function LoginEmailCard(props: Props) {
   // A resolution interrupted after step 1 (reload, closed tab): resume at the
   // owner step with a FRESH check. Reads only; never repeats a change.
   useEffect(() => {
-    const { urlMemberId, state } = loadResume(tenantId);
-    if (!urlMemberId) return;
+    const { urlMemberId, urlStaffId, state } = loadResume(tenantId);
+    if (!urlMemberId && !urlStaffId) return;
     if (!state) {
       setResumeNotice(
-        `A conflict resolution was interrupted after step 1 (member ${urlMemberId}): that member's contact address was changed, the owner's login address was not. Check the owner's new address again to finish.`,
+        urlMemberId && !urlStaffId
+          ? `A conflict resolution was interrupted after step 1 (member ${urlMemberId}): that member's contact address was changed, the owner's login address was not. Check the owner's new address again to finish.`
+          : `A conflict resolution was interrupted after step 1 (${[urlMemberId && `member ${urlMemberId}`, urlStaffId && `staff account ${urlStaffId}`].filter(Boolean).join(", ")}): the conflicting address was moved, the owner's login address was not. Check the owner's new address again to finish.`,
       );
       return;
     }
@@ -181,9 +186,12 @@ export default function LoginEmailCard(props: Props) {
 
   return (
     <div style={{ ...adminCard, padding: 24, borderColor: adminPalette.amberSoft }}>
-      <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 8px" }}>Login email</h2>
+      <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 8px" }}>Owner&apos;s sign-in email (back office)</h2>
+      <p style={{ fontSize: 13, color: adminPalette.muted, margin: "0 0 6px", lineHeight: 1.5 }}>
+        The address {ownerName} uses to sign in to the club&apos;s dashboard. Not a member record.
+      </p>
       <p style={{ fontSize: 13, color: adminPalette.muted, margin: "0 0 12px", lineHeight: 1.5 }}>
-        The address {ownerName} types to sign in. A <strong>provisional</strong> address is an identifier only: nobody has shown that {ownerName} reads it,
+        A <strong>provisional</strong> address is an identifier only: nobody has shown that {ownerName} reads it,
         so no reset code, sign-in link or Google sign-in reaches it. Password and authenticator sign-in work either way.
       </p>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>

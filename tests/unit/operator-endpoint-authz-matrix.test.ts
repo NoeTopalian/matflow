@@ -255,6 +255,9 @@ describe("route inventory", () => {
       // Security campaign lane A (9 Oct 2026, AH-R7 / SEC-013): incident revoke-all.
       "app/api/admin/customers/[id]/revoke-access/route.ts",
       "app/api/admin/customers/[id]/soft-delete/route.ts",
+      // Hub conflicts (12 Oct 2026): the operator moves a non-owner staff
+      // account's login address (sorted position, not beside contact-email).
+      "app/api/admin/customers/[id]/staff/[userId]/login-email/route.ts",
       "app/api/admin/customers/[id]/suspend/route.ts",
       "app/api/admin/customers/[id]/totp-reset/route.ts",
       "app/api/admin/customers/[id]/transfer-ownership/route.ts",
