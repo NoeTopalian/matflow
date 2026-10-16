@@ -259,14 +259,15 @@ version), then this revocation, then re-apply post-restore-point erasures. The s
 
 ### 6.5a Neutralise the restored copy BEFORE any app is attached (lane D2, SF-80)
 After §6.5 and before any application process is pointed at the copy, run the same script's `neutralise` mode
-(`neutraliseRestoredCopy` / `neutralisationCheck`, same refusals as §6.5). It resets every soft-deleted club's purge
-clock (`deletedAt = now()`, so the first retention cron run hard-deletes nothing), revokes every kiosk and leaderboard
+(`neutraliseRestoredCopy` / `neutralisationCheck`, same refusals as §6.5). It revokes every kiosk and leaderboard
 display token, detaches every Stripe account id, and records the originals in one `admin.restore.neutralise` audit
-row. TOTP secrets are kept (they are the users' own) and proved unchanged by a digest; if the digest moves the run
+row. Closed clubs are left alone: until 16 Oct 2026 the step also reset every closed club's `deletedAt` to now() so
+the retention cron's 30-day purge could not fire on the copy; closed clubs are now kept and no cron deletes a club,
+so there is no clock to reset (the 9 Oct drill figures below predate that change). TOTP secrets are kept (they are the users' own) and proved unchanged by a digest; if the digest moves the run
 refuses and rolls back. Drill on the TEST copy (9 Oct): 7 clubs past grace, 28 kiosk + 5 leaderboard tokens and
 5 Stripe accounts neutralised, TOTP digest identical, second run idempotent, 11/11
-(`evidence/D2/restore-neutralise-drill.mjs`). A copy that skips this step would, at its first cron run, hard-delete
-every club past grace and would accept old kiosk tokens and Stripe account links.
+(`evidence/D2/restore-neutralise-drill.mjs`). A copy that skips this step would accept old kiosk tokens and Stripe
+account links.
 
 ### 6.6 restore-verify changes (SF-64) — `compare` now FAILS (it used to print) on
 policy expressions/roles/permissive flag, trigger definitions and enabled state, public function source/owner/
