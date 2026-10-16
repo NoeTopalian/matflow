@@ -92,8 +92,8 @@ export default function TermsPage() {
         <h2 className="text-lg font-semibold text-white mb-2">8. Subscription, billing, and termination</h2>
         <p>
           Your MatFlow subscription is billed monthly. You may cancel at any time. On cancellation, your gym is kept
-          with sign-in disabled so you can export your data or reactivate at any time; its records are erased only on
-          your written request to{" "}
+          with sign-in disabled so you can reactivate at any time, or ask us for an export; its records are erased
+          only on your written request to{" "}
           <a href="mailto:legal@matflow.studio" className="underline">legal@matflow.studio</a>. We may suspend your
           account for non-payment, abuse, or breach of these terms, in our reasonable discretion.
         </p>
