@@ -325,7 +325,7 @@ describe("step 4: classes", () => {
     let classPosts = 0;
     const calls = stubFetch((url, method) => {
       if (url === "/api/classes" && method === "POST") return ++classPosts === 2 ? fail(503) : ok({ id: `c${classPosts}` });
-      if (url === "/api/classes") return ok([]); // the class list: the 503 created nothing
+      if (url.startsWith("/api/classes?")) return ok([]); // the class list: the 503 created nothing
       return ok();
     });
     openAt(4);
@@ -662,7 +662,7 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
     it("is found and adopted on the retry — no second class", async () => {
       let created = false;
       const calls = stubFetch((url, method) => {
-        if (url === "/api/classes" && method === "GET") return ok(created ? [fundamentals] : []);
+        if (url.startsWith("/api/classes?") && method === "GET") return ok(created ? [fundamentals] : []);
         if (url === "/api/classes" && method === "POST") { created = true; return "throw"; } // made, answer lost
         return ok();
       });
@@ -680,7 +680,7 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
     it("a same-named class the club already had is not adopted", async () => {
       let posts = 0;
       const calls = stubFetch((url, method) => {
-        if (url === "/api/classes" && method === "GET") return ok([fundamentals]); // existed before this run
+        if (url.startsWith("/api/classes?") && method === "GET") return ok([fundamentals]); // existed before this run
         if (url === "/api/classes" && method === "POST") return ++posts === 1 ? "throw" : ok({ id: "srv-2" });
         return ok();
       });
@@ -695,9 +695,10 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(2);
     });
 
-    it("when the class list can't be read, the message says to check the Timetable", async () => {
-      stubFetch((url, method) => {
-        if (url === "/api/classes" && method === "GET") return fail(500);
+    it("a save that got no answer is not re-sent while the class list can't be read (L-01)", async () => {
+      let listCalls = 0;
+      const calls = stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return ++listCalls === 1 ? ok([]) : fail(503); // snapshot ok, retry-time read fails
         if (url === "/api/classes" && method === "POST") return "throw";
         return ok();
       });
@@ -706,7 +707,64 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       await screen.findByText(/add your classes/i);
       addMonday("Fundamentals");
       fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
-      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/check the Timetable page for a duplicate/), "error", 10000));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      toastMock.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't check whether they reached us/), "error", 10000));
+      expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(1);
+      expect(screen.getByText(/add your classes/i)).toBeTruthy();
+    });
+
+    it("an unanswered save that the owner then edits is adopted by what was sent, and the edit is reported (L-02)", async () => {
+      let created = false;
+      const calls = stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return ok(created ? [fundamentals] : []);
+        if (url === "/api/classes" && method === "POST") { created = true; return "throw"; }
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Fundamentals");
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      // The owner assumes it failed and changes the end time.
+      fireEvent.change(screen.getByLabelText("End time"), { target: { value: "19:30" } });
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await screen.findByText(/make it yours/i);
+      expect(calls.filter((c) => c.url === "/api/classes" && c.method === "POST")).toHaveLength(1);
+      expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/classes you'd already saved stay as first saved/i), "info", 6000);
+    });
+
+    it("Skip past a save that got no answer says it may already be on the timetable", async () => {
+      stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return ok([]);
+        if (url === "/api/classes" && method === "POST") return "throw";
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Fundamentals");
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledTimes(1));
+      fireEvent.click(screen.getByRole("button", { name: /^skip/i }));
+      await screen.findByText(/make it yours/i);
+      expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/may already be on your timetable/), "info", 8000);
+    });
+
+    it("when the class list can't be read, the message says to check the Timetable", async () => {
+      stubFetch((url, method) => {
+        if (url.startsWith("/api/classes?") && method === "GET") return fail(500);
+        if (url === "/api/classes" && method === "POST") return "throw";
+        return ok();
+      });
+      openAt(4);
+      renderWizard();
+      await screen.findByText(/add your classes/i);
+      addMonday("Fundamentals");
+      fireEvent.click(screen.getByRole("button", { name: /save 1 class/i }));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.stringMatching(/couldn't check whether they reached us.*check the Timetable page for duplicates/), "error", 10000));
     });
   });
 
@@ -861,6 +919,18 @@ describe("final review fixes (16 Oct 2026, evening)", () => {
       await waitFor(() => expect(calls.filter((c) => c.url === "/api/onboarding/csv-handoff")).toHaveLength(2));
       const [a, b] = calls.filter((c) => c.url === "/api/onboarding/csv-handoff");
       expect(refOf(b)).toBe(refOf(a));
+    });
+
+    it("finishing setup forgets the CSV reference for this tab (L-04)", async () => {
+      stubFetch((url) => (url === "/api/onboarding/csv-handoff" ? new Response(JSON.stringify({ jobId: "j", message: "ok" }), { status: 201 }) : ok()));
+      openAt(9);
+      renderWizard();
+      await pickAndUpload();
+      await screen.findByText(/^ok$/);
+      expect(sessionStorage.getItem(`${STEP_KEY}.csvref`)).not.toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /finish setup/i }));
+      await screen.findByText(/your gym is ready/i);
+      expect(sessionStorage.getItem(`${STEP_KEY}.csvref`)).toBeNull();
     });
 
     it("a different file after a confirmed upload is a new hand-off", async () => {

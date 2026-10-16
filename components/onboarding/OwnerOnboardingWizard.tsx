@@ -437,7 +437,7 @@ export default function OwnerOnboardingWizard({
   // Lost responses on step 4: drafts whose save got no answer, server ids this
   // run created or adopted, and the club's class ids before this run saved any
   // (undefined = not read yet; null = couldn't be read).
-  const unconfirmedClasses = useRef<Set<string>>(new Set());
+  const unconfirmedClasses = useRef<Map<string, string>>(new Map()); // draft id -> the draft as sent
   const serverClassIds = useRef<Set<string>>(new Set());
   const classesBeforeRun = useRef<Set<string> | null | undefined>(undefined);
   // Step 3: ranks saved in this run, by discipline#order, with what was sent.
@@ -578,24 +578,24 @@ export default function OwnerOnboardingWizard({
 
   type ServerClass = { id: string; name: string; schedules?: Array<{ dayOfWeek: number; startTime: string; endTime: string }> };
 
-  /** The club's classes, or null when the list can't be read. */
+  /**
+   * The club's classes, or null when the list can't be read. `strict=1` makes
+   * the route answer an internal error as a 5xx instead of an empty list, so
+   * an empty list here really is empty.
+   */
   async function listClasses(): Promise<ServerClass[] | null> {
-    const res = await fetch("/api/classes").catch(() => null);
+    const res = await fetch("/api/classes?strict=1").catch(() => null);
     if (!res || !res.ok) return null;
     const data = (await res.json().catch(() => null)) as unknown;
     return Array.isArray(data) ? (data as ServerClass[]) : null;
   }
 
   /**
-   * The server id of a class an unanswered save of `cls` created, if any: a
-   * class that was not there before this run, not already this run's, with
-   * the same name and the same days and times.
+   * The server id of a class an unanswered save of `cls` created: a class that
+   * was not there before this run, not already this run's, with the same name
+   * and the same days and times. null = checked, not there.
    */
-  async function findLostClass(cls: ClassDraft): Promise<string | null> {
-    const before = classesBeforeRun.current;
-    if (!before) return null;
-    const list = await listClasses();
-    if (!list) return null;
+  function findLostClass(cls: ClassDraft, list: ServerClass[], before: Set<string>): string | null {
     const days = cls.days.map(uiDayToJs).sort().join(",");
     const match = list.find((c) =>
       !before.has(c.id) &&
@@ -624,6 +624,13 @@ export default function OwnerOnboardingWizard({
     const technical = !said || /referer|origin|csrf|forbidden/i.test(said);
     const reason = technical ? "access was refused. Refresh the page, sign in again if asked, then try again" : said;
     return /[.!?]$/.test(reason) ? reason : `${reason}.`;
+  }
+
+  /** Setup is finished: the CSV hand-off reference has done its job for this tab. */
+  function forgetCsvRef() {
+    csvClientRef.current = null;
+    csvNotesSent.current = null;
+    try { sessionStorage.removeItem(csvRefKey); } catch { /* ignore */ }
   }
 
   /** PATCH /api/settings; null when no response arrived. */
@@ -718,13 +725,32 @@ export default function OwnerOnboardingWizard({
         let createdNow = 0;
         let classFailed = false;
         const rejectedClasses: string[] = [];
-        const editedAfterSave = classChangesAfterSave();
         // The club's classes before this run first saved any, so a class a
         // lost response created can be told apart from one that was there.
         if (classesBeforeRun.current === undefined) {
           const list = await listClasses();
           classesBeforeRun.current = list ? new Set(list.map((c) => c.id)) : null;
         }
+        // Saves that got no answer are settled first, by what was SENT (the
+        // draft may since have been edited or removed): a class the server made
+        // anyway is adopted as saved, so an edit or removal of it is reported
+        // below like any saved class. If the list can't be read, nothing is
+        // re-sent for it — a duplicate can't be ruled out.
+        let lostUnchecked = false;
+        if (unconfirmedClasses.current.size > 0) {
+          const before = classesBeforeRun.current;
+          const list = before ? await listClasses() : null;
+          for (const [draftId, sent] of [...unconfirmedClasses.current]) {
+            if (!before || !list) { lostUnchecked = true; continue; }
+            const found = findLostClass(JSON.parse(sent) as ClassDraft, list, before);
+            unconfirmedClasses.current.delete(draftId);
+            if (found) {
+              createdClasses.current.set(draftId, sent);
+              serverClassIds.current.add(found);
+            }
+          }
+        }
+        const editedAfterSave = classChangesAfterSave();
         for (const cls of classes) {
           // Checked before completeness: a saved class edited down to a blank
           // draft is still on the server (classChangesAfterSave reports it).
@@ -733,17 +759,10 @@ export default function OwnerOnboardingWizard({
             continue;
           }
           if (!cls.name.trim() || cls.days.length === 0 || !cls.startTime || !cls.endTime) continue;
-          // An earlier save of this draft got no answer: if the server made the
-          // class anyway, adopt it instead of creating a second one.
+          // Still unsettled (list unreadable): don't risk a second copy.
           if (unconfirmedClasses.current.has(cls.id)) {
-            const found = await findLostClass(cls);
-            if (found) {
-              createdClasses.current.set(cls.id, JSON.stringify(cls));
-              serverClassIds.current.add(found);
-              unconfirmedClasses.current.delete(cls.id);
-              totalClasses++;
-              continue;
-            }
+            classFailed = true;
+            continue;
           }
           const [sh, sm] = cls.startTime.split(":").map(Number);
           const [eh, em] = cls.endTime.split(":").map(Number);
@@ -778,7 +797,7 @@ export default function OwnerOnboardingWizard({
             rejectedClasses.push(`“${cls.name.trim()}” (${await serverError(res)})`);
           } else {
             // No answer, or a server failure: the class may exist anyway.
-            if (!res || res.status >= 500) unconfirmedClasses.current.add(cls.id);
+            if (!res || res.status >= 500) unconfirmedClasses.current.set(cls.id, JSON.stringify(cls));
             classFailed = true;
           }
         }
@@ -791,17 +810,21 @@ export default function OwnerOnboardingWizard({
           return;
         }
         if (classFailed) {
-          // A class whose answer was lost is found and adopted on the retry —
-          // unless the club's class list couldn't be read before saving, in
-          // which case a duplicate can't be ruled out and the owner is told.
+          // A class whose answer was lost is found and adopted on the retry,
+          // but only while the club's class list can be read. When it can't,
+          // the owner is told plainly rather than promised no duplicates.
+          const uncheckable = lostUnchecked || (unconfirmedClasses.current.size > 0 && !classesBeforeRun.current);
           toast(
-            classesBeforeRun.current
-              ? "Some classes didn't save. Check your connection (or sign in again if you've been signed out), then press Save again — classes already saved won't be added twice."
-              : "Some classes didn't save. Check your connection (or sign in again if you've been signed out), then press Save again. If your connection dropped while saving, check the Timetable page for a duplicate afterwards.",
+            uncheckable
+              ? "Some classes didn't save, and we couldn't check whether they reached us. Check your connection (or sign in again if you've been signed out), then press Save again; if it keeps failing, skip this step and check the Timetable page for duplicates."
+              : "Some classes didn't save. Check your connection (or sign in again if you've been signed out), then press Save again — classes already saved won't be added twice.",
             "error",
             10000,
           );
           return;
+        }
+        if (lostUnchecked) {
+          toast("A class you saved before your connection dropped may already be on your timetable. Check the Timetable page for duplicates.", "info", FAIL_MS);
         }
         if (editedAfterSave) toast(CLASSES_KEPT, "info", 6000);
       } else if (step === 5) {
@@ -929,6 +952,7 @@ export default function OwnerOnboardingWizard({
           toast(await saveFailure(res, FINISH_FAILED), "error", FAIL_MS);
           return;
         }
+        forgetCsvRef();
         setStep(FINAL_STEP);
         return;
       }
@@ -956,12 +980,17 @@ export default function OwnerOnboardingWizard({
         toast(await saveFailure(res, FINISH_FAILED), "error", FAIL_MS);
         return;
       }
+      forgetCsvRef();
       setStep(FINAL_STEP);
       return;
     }
     // Skip does not undo what this run already saved: say so, as Continue does.
     if (step === 3 && rankChangesAfterSave()) toast(RANKS_KEPT, "info", 6000);
     if (step === 4 && classChangesAfterSave()) toast(CLASSES_KEPT, "info", 6000);
+    if (step === 4 && unconfirmedClasses.current.size > 0) {
+      // Skipping past a save that got no answer: it may have been made.
+      toast("A class you saved before your connection dropped may already be on your timetable. Check the Timetable page.", "info", FAIL_MS);
+    }
     setStep((s) => s + 1);
   }
 
@@ -996,10 +1025,10 @@ export default function OwnerOnboardingWizard({
         }
         setCsvHandoffMessage(message);
         setCsvUploaded(true);
-        // The reference is kept for this tab: if the page reloads before
-        // Finish, uploading the same file again finds this upload instead of
-        // sending it twice. Once the MatFlow team picks the job up, the route
-        // no longer matches it, so a genuine resend is a new hand-off.
+        // The reference is kept until setup finishes: if the page reloads
+        // before Finish, uploading the same file again finds this upload
+        // instead of sending it twice. It is forgotten once setup completes
+        // (forgetCsvRef); the route matches only jobs still awaiting import.
       } else if (res && res.status === 401) {
         setCsvHandoffError("Your file wasn't sent because you've been signed out. Sign in again, then upload it here.");
       } else if (res && res.status === 403) {
