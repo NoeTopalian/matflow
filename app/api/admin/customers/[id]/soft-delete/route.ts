@@ -1,10 +1,14 @@
-// POST   /api/admin/customers/[id]/soft-delete  → set Tenant.deletedAt = now
-// DELETE /api/admin/customers/[id]/soft-delete  → clear deletedAt (restore)
+// POST   /api/admin/customers/[id]/soft-delete  → set Tenant.deletedAt = now  ("close gym")
+// DELETE /api/admin/customers/[id]/soft-delete  → clear deletedAt             ("reopen gym")
 //
-// Soft-deleted tenants disappear from the active queries (deletedAt: null
-// filter) and reject all logins at auth-time. Recoverable for 30 days; after
-// that window the retention cron (lib/tenant-purge.ts) hard-deletes, and
-// restore is refused once the window has passed or the purge has claimed it.
+// A closed club leaves the active queries (deletedAt: null filter) and rejects
+// all logins at auth-time. Everything is KEPT — members, classes, blobs — and
+// the club can be reopened at any time; there is no recovery window and no
+// scheduled deletion (product rule, Noe, 16 Oct 2026). Permanent erasure
+// happens only on the club's written request, run by an operator through
+// lib/tenant-purge.ts `purgeTenantById`; reopen is refused once such an
+// erasure has claimed the club. The route path and audit action names keep
+// their historical "soft-delete"/"restore" spelling.
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -23,12 +27,7 @@ import {
   requireStepUp,
   stepUpTarget,
 } from "@/lib/operator-step-up";
-import {
-  isTenantRowBusyError,
-  restoreRefusal,
-  restoreSoftDeletedTenant,
-  TENANT_SOFT_DELETE_GRACE_MS,
-} from "@/lib/tenant-lifecycle";
+import { isTenantRowBusyError, restoreRefusal, restoreSoftDeletedTenant } from "@/lib/tenant-lifecycle";
 
 export const runtime = "nodejs";
 
@@ -179,9 +178,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // withRlsBypass calls (tenant.update + user.updateMany + member.updateMany)
   // into ONE atomic block. Closes the TOCTOU race window between status
   // change and session invalidation.
-  // Conditional on the club still being live: two concurrent soft-deletes (or
-  // a soft-delete racing a restore) cannot both stamp, and the clock that the
-  // retention purge reads is set exactly once.
+  // Conditional on the club still being open: two concurrent closes (or a
+  // close racing a reopen) cannot both stamp, and the closing date shown in
+  // the hub is set exactly once.
   //
   // A retry after a failure here repeats only idempotent Stripe calls
   // (cancel_at_period_end is already true); the stamp happens once.
@@ -202,7 +201,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         metadata: {
           reason: parsed.data.reason,
           tenantName: tenant.name,
-          hardDeleteAfter: new Date(now.getTime() + TENANT_SOFT_DELETE_GRACE_MS).toISOString(),
           stripeCancelled,
           stripeFailed,
           stripeFailedIds: stripeFailedIds.length ? stripeFailedIds : undefined,
@@ -254,12 +252,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   }
 
   const { id: tenantId } = await params;
-  // Restore versus purge (operator audit 5 Oct 2026, finding 5). This was a
-  // read followed by an unconditional write with no window check, so a restore
-  // landing mid-purge answered 200 while the cron went on to delete the club.
-  // Now ONE conditional write on the Tenant row: it succeeds only inside the
-  // 30-day window and only while no purge has claimed the club; otherwise the
-  // operator is told the real state. See lib/tenant-lifecycle.ts.
+  // Reopen versus erase (operator audit 5 Oct 2026, finding 5). This was a
+  // read followed by an unconditional write, so a restore landing mid-erasure
+  // answered 200 while the erasure went on to delete the club. Now ONE
+  // conditional write on the Tenant row: it succeeds whenever the club is
+  // closed and no explicit erasure has claimed it — any age, no window (16 Oct
+  // 2026) — otherwise the operator is told the real state. See
+  // lib/tenant-lifecycle.ts.
   //
   // Restore needs no step-up (decision, lane D 6 Oct 2026): it destroys
   // nothing, it is undone by another soft-delete, and it is the recovery path
@@ -270,11 +269,10 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // subscription to stop renewing, and that may now be the member's own
   // wish, so the operator is told to review rather than anything being
   // resumed automatically (review of lane C, D6).
-  const now = new Date();
   let restored;
   try {
     restored = await withRlsBypass(async (tx) => {
-      const outcome = await restoreSoftDeletedTenant(tx, tenantId, now);
+      const outcome = await restoreSoftDeletedTenant(tx, tenantId);
       if (outcome.kind !== "restored") return { outcome, billingReview: null };
       const deletion = await tx.auditLog.findFirst({
         where: { tenantId, action: "admin.tenant.soft_deleted", entityType: "Tenant", entityId: tenantId },
