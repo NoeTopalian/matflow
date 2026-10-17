@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
+import { ACTIVE_MEMBER } from "@/lib/member-population";
 
 /**
  * GET /api/revenue/summary — owner only.
@@ -47,10 +48,13 @@ export async function GET() {
         where: { ...baseFilter, paidAt: { gte: sixMonthsAgo } },
         select: { amountPence: true, paidAt: true },
       }),
-      tx.member.count({ where: { tenantId, status: "active" } }),
+      // Active training members (T1): the same population as the Reports
+      // "Active members" tile, so the per-member average never divides by
+      // guardian accounts.
+      tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
       tx.member.groupBy({
         by: ["membershipType"],
-        where: { tenantId, status: "active", membershipType: { not: null } },
+        where: { tenantId, ...ACTIVE_MEMBER, membershipType: { not: null } },
         _count: true,
       }),
       tx.membershipTier.findMany({

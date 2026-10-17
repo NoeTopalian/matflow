@@ -84,7 +84,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
 
   function exportCsv() {
     const rows = [
-      ["Gym", "Slug", "Owner Name", "Owner Email", "Members", "Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created"],
+      ["Gym", "Slug", "Owner Name", "Owner Email", "Active members", "Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created"],
       ...filtered.map((t) => [
         t.name,
         t.slug,
@@ -162,7 +162,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
 
           <select aria-label="Sort tenants" value={sort} onChange={(e) => setSort(e.target.value as SortKey)} style={select}>
             <option value="recent">Sort: Most recent</option>
-            <option value="members_desc">Sort: Members high to low</option>
+            <option value="members_desc">Sort: Active members high to low</option>
             <option value="name_asc">Sort: Name A to Z</option>
             <option value="status">Sort: Status</option>
           </select>
@@ -181,7 +181,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
                 <tr>
                   <th style={th}>Gym</th>
                   <th style={th}>Owner</th>
-                  <th style={th}>Members</th>
+                  <th style={th}>Active members</th>
                   <th style={th}>Status</th>
                   <th style={th}>Stripe</th>
                   <th style={th}>Created</th>

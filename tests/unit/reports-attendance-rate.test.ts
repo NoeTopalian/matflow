@@ -123,6 +123,22 @@ describe("getReportsData — attendanceRateMode", () => {
     expect(data.attendanceRate.value).toBeLessThanOrEqual(100);
   });
 
+  it("attendance-percentage: a guardian account's check-in is not in the numerator, as it is not in the denominator", async () => {
+    // Denominator = ACTIVE_MEMBER (3), which leaves guardians out. A guardian
+    // whose status is "active" used to be added to the numerator, so the
+    // printed "(n of m)" held a person who is not in m: (4 of 3).
+    vi.mocked(prisma.attendanceRecord.findMany).mockResolvedValue([
+      { checkInTime: new Date(), memberId: "m1", member: { status: "active", accountType: "adult" } },
+      { checkInTime: new Date(), memberId: "m2", member: { status: "active", accountType: "kids" } },
+      { checkInTime: new Date(), memberId: "g1", member: { status: "active", accountType: "parent" } },
+    ] as never);
+    vi.mocked(prisma.member.groupBy).mockResolvedValue([{ status: "active", _count: 3 }] as never);
+
+    const data = await getReportsData("tenant-A", { attendanceRateMode: "attendance-percentage" });
+    expect(data.attendanceRate.numerator).toBe(2);
+    expect(data.attendanceRate.denominator).toBe(3);
+  });
+
   it("fill-rate: only capacity-bearing classes count on both sides (3 ÷ 10 = 30%, i2 excluded — no capacity)", async () => {
     const data = await getReportsData("tenant-A", { attendanceRateMode: "fill-rate" });
     expect(data.attendanceRate.mode).toBe("fill-rate");

@@ -16,6 +16,60 @@ export function formatNumber(value: number) {
   return value.toLocaleString("en-GB");
 }
 
+/**
+ * T2b (17 Oct 2026, owner decision Q6): every percentage on Reports and
+ * Analysis shows its numerator and denominator — "10% (1 of 10)". One helper
+ * so the screen and the CSV print the same text.
+ *
+ * - `pct` is the already-computed percentage (it may carry one decimal).
+ * - A base of 0, or a null/non-finite pct, renders "—": an undefined rate is
+ *   never "0%" (MATFLOW-SPECIFICATION-2026-10.md:144, divide-by-zero → null).
+ * - Counts use en-GB grouping ("1,234").
+ */
+export function formatRatio(pct: number | null, n: number, base: number): string {
+  const p = formatPct(pct, base);
+  return p === "—" ? p : `${p} ${ratioCounts(n, base)}`;
+}
+
+/** The percentage half of `formatRatio` ("10%", "3.2%"), or "—" on an empty base. */
+export function formatPct(pct: number | null, base: number): string {
+  if (base <= 0 || pct === null || !Number.isFinite(pct)) return "—";
+  return `${pct.toLocaleString("en-GB", { maximumFractionDigits: 1 })}%`;
+}
+
+/** The counts half of `formatRatio`: "(1 of 10)". */
+export function ratioCounts(n: number, base: number): string {
+  return `(${formatNumber(n)} of ${formatNumber(base)})`;
+}
+
+/** n ÷ base as a whole percentage, or null when the base is 0 (never NaN, never a fake 0). */
+export function wholePct(n: number, base: number): number | null {
+  return base > 0 ? Math.round((n / base) * 100) : null;
+}
+
+/** A signed count for a net movement: "+3", "−2" (true minus sign), "0". */
+export function formatSigned(n: number): string {
+  if (n > 0) return `+${formatNumber(n)}`;
+  if (n < 0) return `−${formatNumber(Math.abs(n))}`;
+  return "0";
+}
+
+/**
+ * A ratio as a tile value: the percentage large, its counts smaller beside
+ * it. Text content is exactly `formatRatio(...)`, so tests and screen
+ * readers read "10% (1 of 10)"; an empty base reads "—".
+ */
+export function RatioValue({ pct, n, base }: { pct: number | null; n: number; base: number }) {
+  const p = formatPct(pct, base);
+  if (p === "—") return <>—</>;
+  return (
+    <>
+      {p}{" "}
+      <span className="text-sm font-medium tabular-nums text-tx-2">{ratioCounts(n, base)}</span>
+    </>
+  );
+}
+
 export function SectionTitle({
   title,
   subtitle,
