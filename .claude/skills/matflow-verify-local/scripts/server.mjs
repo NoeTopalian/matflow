@@ -17,6 +17,8 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const PIDS = `${OUT}/pids-${PORT}.json`;
 const TLS = `${DATA}/tls`;
 const git = (...args) => spawnSync("git", args, { cwd: APP, encoding: "utf8" }).stdout.trim();
+// Uncommitted or untracked files count, except .omc/ (state written by agent tooling, never part of the build).
+const dirtyTree = () => !!git("status", "--porcelain", "--", ".", ":(exclude).omc");
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const listening = (port) => new Promise((resolve) => {
   const s = net.connect({ host: "127.0.0.1", port }, () => { s.destroy(); resolve(true); });
@@ -50,7 +52,7 @@ const kill = (pid) => {
 const [cmd] = process.argv.slice(2);
 if (cmd === "build") {
   assertWorktree();
-  const commit = git("rev-parse", "HEAD"), dirty = !!git("status", "--porcelain");
+  const commit = git("rev-parse", "HEAD"), dirty = dirtyTree();
   const r = spawnSync(node24(), ["node_modules/next/dist/bin/next", "build"], { cwd: APP, env: buildEnv(), stdio: "inherit" });
   if (r.status === 0) fs.writeFileSync(STAMP, JSON.stringify({ commit, dirty, at: new Date().toISOString() }));
   console.log(`BUILD EXIT ${r.status} commit ${commit} tree ${dirty ? "DIRTY" : "clean"}`);
@@ -60,7 +62,7 @@ if (cmd === "build") {
   if (!fs.existsSync(`${APP}/.next/BUILD_ID`)) throw new Error("no production build — run: node server.mjs build");
   // The build must be of the commit being verified, or the evidence would be credited to the wrong commit.
   const built = fs.existsSync(STAMP) ? JSON.parse(fs.readFileSync(STAMP, "utf8")) : null;
-  const head = git("rev-parse", "HEAD"), dirtyNow = !!git("status", "--porcelain");
+  const head = git("rev-parse", "HEAD"), dirtyNow = dirtyTree();
   const stale = !built ? "the build was not made by server.mjs build" : built.commit !== head ? `the build is of ${built.commit.slice(0, 8)}, HEAD is ${head.slice(0, 8)}` : built.dirty || dirtyNow ? "the tree was dirty at build time or is dirty now" : null;
   if (stale && process.env.MF_ALLOW_STALE_BUILD !== "1") throw new Error(`refusing: ${stale} — run: node server.mjs build (or set MF_ALLOW_STALE_BUILD=1 and report it)`);
   if (stale) console.log(`WARNING serving a build that is not of a clean HEAD: ${stale}`);
@@ -97,7 +99,7 @@ if (cmd === "build") {
   console.log("stopped");
 } else if (cmd === "status") {
   const p = fs.existsSync(PIDS) ? JSON.parse(fs.readFileSync(PIDS, "utf8")) : null;
-  const who = p ? `${p.app}, build of ${String(p.build).slice(0, 8)} (server ${alive(p.server) ? "running" : "gone"}, proxy ${alive(p.proxy) ? "running" : "gone"})` : "not started by this skill on this port";
+  const who = p ? `${p.app}, build of ${String(p.build ?? p.commit).slice(0, 8)} (server ${alive(p.server) ? "running" : "gone"}, proxy ${alive(p.proxy) ? "running" : "gone"})` : "not started by this skill on this port";
   console.log(`health ${await health()} — ${who}`);
 } else {
   console.log("usage: node server.mjs build | start | stop | status");
