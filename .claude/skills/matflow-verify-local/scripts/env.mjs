@@ -117,7 +117,7 @@ export function appEnv({ isolated = true } = {}) {
  * %LOCALAPPDATA%/matflow-verify/email-test.env). Only these keys are accepted; EMAIL_DELIVERY may only be
  * off or test; values are never printed. Without the file, mail stays OFF.
  */
-const EXTRA_KEYS = new Set(["RESEND_API_KEY", "RESEND_WEBHOOK_SECRET", "RESEND_FROM", "EMAIL_DELIVERY", "EMAIL_TEST_RECIPIENTS"]);
+const EXTRA_KEYS = new Set(["RESEND_API_KEY", "RESEND_WEBHOOK_SECRET", "RESEND_FROM", "EMAIL_DELIVERY", "EMAIL_TEST_RECIPIENTS", "RESEND_BASE_URL"]);
 let extraLogged = false;
 export function extraEnv() {
   const file = process.env.MF_EXTRA_ENV;
@@ -133,6 +133,8 @@ export function extraEnv() {
     out[m[1]] = m[2].trim().replace(/^"|"$/g, "");
   }
   if (out.EMAIL_DELIVERY && !["off", "test"].includes(out.EMAIL_DELIVERY.toLowerCase())) throw new Error("refusing: EMAIL_DELIVERY in MF_EXTRA_ENV must be off or test");
+  // RESEND_BASE_URL only for the local counting interceptor (scripts/readiness/release-verify.mjs mail-interceptor).
+  if (out.RESEND_BASE_URL && !/^http:\/\/127\.0\.0\.1:\d+$/.test(out.RESEND_BASE_URL)) throw new Error("refusing: RESEND_BASE_URL in MF_EXTRA_ENV must be a loopback interceptor (http://127.0.0.1:<port>)");
   if (!extraLogged) { console.log(`[matflow-verify] email test settings from ${path.basename(abs)}: ${Object.keys(out).join(", ") || "(none)"} (values not printed)`); extraLogged = true; }
   return out;
 }
