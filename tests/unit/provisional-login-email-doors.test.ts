@@ -75,10 +75,12 @@ import { POST as forgotRoute } from "@/app/api/auth/forgot-password/route";
 import { POST as resetRoute } from "@/app/api/auth/reset-password/route";
 import { isLoginEmailProvisional } from "@/lib/login-email";
 
-// Mail on/unset sends to anyone only on the Vercel production deployment (lib/email-delivery.ts, 17 Oct 2026);
-// these routes are tested with delivery on.
-beforeEach(() => { process.env.VERCEL_ENV = "production"; });
-afterEach(() => { delete process.env.VERCEL_ENV; });
+// These tests exercise the route once mail has been ACTIVATED on the production deployment
+// (EMAIL_DELIVERY=on and VERCEL_ENV=production — lib/email-delivery.ts, 17 Oct 2026). They are not
+// evidence for the isolation policy itself: that is tests/unit/email-sending-policy-table.test.ts, and
+// the local/preview case for this route is the "outside production" test below.
+beforeEach(() => { process.env.VERCEL_ENV = "production"; process.env.EMAIL_DELIVERY = "on"; });
+afterEach(() => { delete process.env.VERCEL_ENV; delete process.env.EMAIL_DELIVERY; });
 
 
 const m = {
@@ -173,6 +175,22 @@ describe("magic-link request — a provisional login email gets no link", () => 
     await request();
     expect(m.linkCreate).toHaveBeenCalledTimes(1);
     expect(m.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("outside production (local and preview), delivery on/unset with no test list: a verified owner gets nothing either", async () => {
+    for (const vercel of [undefined, "preview"]) {
+      for (const delivery of ["on", undefined]) {
+        const label = `${vercel ?? "local"} · ${delivery ?? "unset"}`;
+        if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
+        if (delivery) process.env.EMAIL_DELIVERY = delivery; else delete process.env.EMAIL_DELIVERY;
+        delete process.env.EMAIL_TEST_RECIPIENTS;
+        m.linkCreate.mockClear(); m.send.mockClear();
+        subject({ ...OWNER, loginEmailProvisionalSince: null });
+        await request();
+        expect(m.linkCreate, label).not.toHaveBeenCalled();
+        expect(m.send, label).not.toHaveBeenCalled();
+      }
+    }
   });
 
   it("a member's link never carries a provisional owner address as Reply-To", async () => {
@@ -306,8 +324,8 @@ describe("mail-dark (EMAIL_DELIVERY=off) — no orphan codes or links are minted
     expect(m.send).not.toHaveBeenCalled();
   });
 
-  it("control: with delivery on (unset) the same requests do mint", async () => {
-    delete process.env.EMAIL_DELIVERY;
+  it("control: with delivery explicitly on (production) the same requests do mint", async () => {
+    process.env.EMAIL_DELIVERY = "on"; // unset is OFF since 17 Oct 2026; VERCEL_ENV=production from the file hook
     m.user.mockResolvedValue({ id: "user-1", mustChangePassword: false, loginEmailProvisionalSince: null } as never);
     await forgotRoute(post("http://localhost/api/auth/forgot-password", { email: OWNER.email, tenantSlug: "club-a" }));
     expect(m.resetCreate).toHaveBeenCalledTimes(1);

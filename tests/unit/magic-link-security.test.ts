@@ -86,10 +86,12 @@ import { POST } from "@/app/api/magic-link/request/route";
 import { GET } from "@/app/api/magic-link/verify/route";
 import { randomBytes } from "crypto";
 
-// Mail on/unset sends to anyone only on the Vercel production deployment (lib/email-delivery.ts, 17 Oct 2026);
-// these routes are tested with delivery on.
-beforeEach(() => { process.env.VERCEL_ENV = "production"; });
-afterEach(() => { delete process.env.VERCEL_ENV; });
+// These tests exercise the route once mail has been ACTIVATED on the production deployment
+// (EMAIL_DELIVERY=on and VERCEL_ENV=production — lib/email-delivery.ts, 17 Oct 2026). They are not
+// evidence for the isolation policy itself: that is tests/unit/email-sending-policy-table.test.ts, and
+// the local/preview case for this route is the "outside production" test below.
+beforeEach(() => { process.env.VERCEL_ENV = "production"; process.env.EMAIL_DELIVERY = "on"; });
+afterEach(() => { delete process.env.VERCEL_ENV; delete process.env.EMAIL_DELIVERY; });
 
 
 const mockTenantFindUnique = vi.mocked(prisma.tenant.findUnique);
@@ -315,6 +317,28 @@ describe("request — anti-stockpile: prior tokens invalidated before new one cr
         }),
       }),
     );
+  });
+
+  it("outside production (local and preview), delivery on/unset with no test list retires and mints nothing", async () => {
+    for (const vercel of [undefined, "preview"]) {
+      for (const delivery of ["on", undefined]) {
+        const label = `${vercel ?? "local"} · ${delivery ?? "unset"}`;
+        if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
+        if (delivery) process.env.EMAIL_DELIVERY = delivery; else delete process.env.EMAIL_DELIVERY;
+        delete process.env.EMAIL_TEST_RECIPIENTS;
+        mockTokenUpdateMany.mockClear(); mockTokenCreate.mockClear();
+        mockTenantFindUnique.mockResolvedValue({ id: "t1", name: "Test Gym" } as never);
+        mockUserFindFirst.mockResolvedValue({ id: "u1" } as never);
+        const res = await POST(new Request("http://localhost/api/magic-link/request", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: "member@gym.com", tenantSlug: "test-gym" }),
+        }));
+        expect(res.status, label).toBe(200);
+        expect(mockTokenUpdateMany, label).not.toHaveBeenCalled();
+        expect(mockTokenCreate, label).not.toHaveBeenCalled();
+      }
+    }
   });
 });
 

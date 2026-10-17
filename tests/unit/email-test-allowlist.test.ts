@@ -1,11 +1,12 @@
 /**
  * Test recipient allowlist (lib/email-delivery.ts, lib/email.ts), 17 Oct 2026.
  *
- * In test mode — EMAIL_DELIVERY=test, or `on`/unset anywhere that is not
- * production — only EMAIL_TEST_RECIPIENTS receive mail. A recipient outside the
- * list is stopped in sendEmail before any lookup and before the Resend client
- * is built or called; an empty or missing list sends nothing. Production `on`
- * is unchanged. The Resend client is mocked: this is simulated evidence.
+ * In test mode — EMAIL_DELIVERY=test anywhere, or `on` anywhere that is not
+ * the Vercel production deployment — only EMAIL_TEST_RECIPIENTS receive mail.
+ * A recipient outside the list is stopped in sendEmail before any lookup and
+ * before the Resend client is built or called; an empty, missing or partly
+ * invalid list sends nothing. Unset is off. `on` on Vercel production is the
+ * only open mode. The Resend client is mocked: this is simulated evidence.
  */
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
@@ -64,32 +65,63 @@ const send = (to: string) => sendEmail({ tenantId: "t1", templateId: "test", to,
 describe("policy", () => {
   it("EMAIL_DELIVERY=test with a list → allowlist of exactly those addresses (case-insensitive)", () => {
     process.env.EMAIL_DELIVERY = "test";
-    process.env.EMAIL_TEST_RECIPIENTS = " Noe.Test@Example.test , delivered@resend.dev, not-an-address ";
+    process.env.EMAIL_TEST_RECIPIENTS = " Noe.Test@Example.test , delivered@resend.dev ,";
     const p = emailSendingPolicy();
     expect(p.kind).toBe("allowlist");
     expect(isRecipientAllowed(p, "noe.test@example.test")).toBe(true);
     expect(isRecipientAllowed(p, "DELIVERED@resend.dev")).toBe(true);
-    expect(isRecipientAllowed(p, "not-an-address")).toBe(false);
     expect(isRecipientAllowed(p, "sean@example.test")).toBe(false);
     expect(emailDeliveryMode()).toBe("on"); // screens: mail can go out (to the list)
   });
 
-  it("outside production, on/unset means test mode", () => {
-    for (const v of [undefined, "on"]) {
-      if (v) process.env.EMAIL_DELIVERY = v; else delete process.env.EMAIL_DELIVERY;
-      for (const vercel of [undefined, "preview", "development"]) {
-        if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
-        expect(emailSendingPolicy().kind).toBe("allowlist");
-      }
+  it("one entry that is not a plain address voids the whole list (fail closed)", () => {
+    process.env.EMAIL_DELIVERY = "test";
+    for (const list of ["noe.test@example.test, not-an-address", "noe.test@example.test, Sean <sean@example.test>"]) {
+      process.env.EMAIL_TEST_RECIPIENTS = list;
+      const p = emailSendingPolicy();
+      expect(isRecipientAllowed(p, "noe.test@example.test"), list).toBe(false);
+      expect(emailDeliveryMode(), list).toBe("off");
     }
   });
 
-  it("production on is unchanged: open, on the Vercel production deployment only", () => {
-    process.env.EMAIL_DELIVERY = "on";
+  it("TEST enforces the list on production too", () => {
     process.env.VERCEL_ENV = "production";
-    expect(emailSendingPolicy().kind).toBe("open");
+    process.env.EMAIL_DELIVERY = "test";
+    process.env.EMAIL_TEST_RECIPIENTS = "noe.test@example.test";
+    const p = emailSendingPolicy();
+    expect(p.kind).toBe("allowlist");
+    expect(isRecipientAllowed(p, "member@example.test")).toBe(false);
+  });
+
+  it("outside production, on means test mode", () => {
+    process.env.EMAIL_DELIVERY = "on";
+    for (const vercel of [undefined, "preview", "development"]) {
+      if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
+      expect(emailSendingPolicy().kind).toBe("allowlist");
+    }
+  });
+
+  it("unset is OFF everywhere, production included: a key, a paid plan or a deploy never starts mail", () => {
     delete process.env.EMAIL_DELIVERY;
+    process.env.RESEND_API_KEY = "re_present";
+    process.env.EMAIL_TEST_RECIPIENTS = "noe.test@example.test";
+    for (const vercel of [undefined, "preview", "production"]) {
+      if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
+      expect(emailSendingPolicy().kind, vercel ?? "local").toBe("off");
+      expect(emailDeliveryMode(), vercel ?? "local").toBe("off");
+    }
+  });
+
+  it("open sending needs the explicit activation: EMAIL_DELIVERY=on on the Vercel production deployment", () => {
+    process.env.VERCEL_ENV = "production";
+    process.env.EMAIL_DELIVERY = "on";
     expect(emailSendingPolicy().kind).toBe("open");
+    process.env.EMAIL_DELIVERY = " ON ";
+    expect(emailSendingPolicy().kind).toBe("open");
+    for (const v of ["", "true", "1", "yes", "enabled"]) {
+      process.env.EMAIL_DELIVERY = v;
+      expect(emailSendingPolicy().kind, JSON.stringify(v)).toBe("off");
+    }
   });
 
   it("the production database alone is NOT production: local dev or a preview on it mails the list only", () => {

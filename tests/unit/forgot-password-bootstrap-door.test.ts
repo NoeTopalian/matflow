@@ -56,10 +56,12 @@ import { sendEmail } from "@/lib/email";
 import { POST as forgot } from "@/app/api/auth/forgot-password/route";
 import { POST as reset } from "@/app/api/auth/reset-password/route";
 
-// Mail on/unset sends to anyone only on the Vercel production deployment (lib/email-delivery.ts, 17 Oct 2026);
-// these routes are tested with delivery on.
-beforeEach(() => { process.env.VERCEL_ENV = "production"; });
-afterEach(() => { delete process.env.VERCEL_ENV; });
+// These tests exercise the route once mail has been ACTIVATED on the production deployment
+// (EMAIL_DELIVERY=on and VERCEL_ENV=production — lib/email-delivery.ts, 17 Oct 2026). They are not
+// evidence for the isolation policy itself: that is tests/unit/email-sending-policy-table.test.ts, and
+// the local/preview case for this route is the "outside production" test below.
+beforeEach(() => { process.env.VERCEL_ENV = "production"; process.env.EMAIL_DELIVERY = "on"; });
+afterEach(() => { delete process.env.VERCEL_ENV; delete process.env.EMAIL_DELIVERY; });
 
 
 const mockUserFindFirst = vi.mocked(prisma.user.findFirst);
@@ -152,6 +154,40 @@ describe("forgot-password — a temporary-password account gets no code", () => 
 
     expect(mockPrtCreate).toHaveBeenCalledTimes(1);
     expect(mockSendEmail).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("forgot-password — outside production (local and preview)", () => {
+  it("delivery on/unset with no test list mints no code and sends nothing", async () => {
+    for (const vercel of [undefined, "preview"]) {
+      for (const delivery of ["on", undefined]) {
+        const label = `${vercel ?? "local"} · ${delivery ?? "unset"}`;
+        if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
+        if (delivery) process.env.EMAIL_DELIVERY = delivery; else delete process.env.EMAIL_DELIVERY;
+        delete process.env.EMAIL_TEST_RECIPIENTS;
+        mockPrtCreate.mockClear(); mockSendEmail.mockClear();
+        mockUserFindFirst.mockResolvedValue(null as never);
+        mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+        const res = await forgotReq("member@club.example");
+        expect(res.status, label).toBe(200);
+        expect(mockPrtCreate, label).not.toHaveBeenCalled();
+        expect(mockSendEmail, label).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it("test mode with the address listed reaches sendEmail (which enforces the list itself)", async () => {
+    delete process.env.VERCEL_ENV;
+    process.env.EMAIL_DELIVERY = "test";
+    process.env.EMAIL_TEST_RECIPIENTS = "member@club.example";
+    try {
+      mockUserFindFirst.mockResolvedValue(null as never);
+      mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+      await forgotReq("member@club.example");
+      expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.EMAIL_TEST_RECIPIENTS;
+    }
   });
 });
 

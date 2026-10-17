@@ -116,8 +116,10 @@ describe("POST /api/auth/forgot-password — RESEND_API_KEY env gate", () => {
   // log and in the EmailLog row, rather than to the caller in a status code.
   it("answers the caller 200 and tells the OPERATOR in the log, rather than 503", async () => {
     delete process.env.RESEND_API_KEY;
-    // Delivery on (unset) sends only on the Vercel production deployment (17 Oct 2026).
+    // Mail ACTIVATED on the production deployment (EMAIL_DELIVERY=on, VERCEL_ENV=production — 17 Oct
+    // 2026): the case where a missing key matters. The env is restored in afterEach.
     process.env.VERCEL_ENV = "production";
+    process.env.EMAIL_DELIVERY = "on";
     // NODE_ENV is readonly under strict TS; set via stubEnv. Reset in afterEach.
     vi.stubEnv("NODE_ENV", "production");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -141,6 +143,29 @@ describe("POST /api/auth/forgot-password — RESEND_API_KEY env gate", () => {
       "the gate is still visible — to the operator",
     ).toMatch(/RESEND_API_KEY/);
     errorSpy.mockRestore();
+  });
+
+  it("outside production (local and preview), delivery on/unset with no test list: 200, no code minted", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ id: "t1", name: "Gym" } as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: "u1" } as never);
+    const { POST } = await import("@/app/api/auth/forgot-password/route");
+    for (const vercel of [undefined, "preview"]) {
+      for (const delivery of ["on", undefined]) {
+        const label = `${vercel ?? "local"} · ${delivery ?? "unset"}`;
+        if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
+        if (delivery) process.env.EMAIL_DELIVERY = delivery; else delete process.env.EMAIL_DELIVERY;
+        delete process.env.EMAIL_TEST_RECIPIENTS;
+        vi.mocked(prisma.passwordResetToken.create).mockClear();
+        const res = await POST(new Request("http://localhost/api/auth/forgot-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: "user@gym.com", tenantSlug: "gym" }),
+        }));
+        expect(res.status, label).toBe(200);
+        expect(prisma.passwordResetToken.create, label).not.toHaveBeenCalled();
+      }
+    }
   });
 });
 

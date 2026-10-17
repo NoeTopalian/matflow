@@ -54,10 +54,12 @@ vi.mock("bcryptjs", () => ({ default: { compare: h.compare } }));
 
 import { GET, POST } from "@/app/api/account/login-email/route";
 
-// Mail on/unset sends to anyone only on the Vercel production deployment (lib/email-delivery.ts, 17 Oct 2026);
-// these routes are tested with delivery on.
-beforeEach(() => { process.env.VERCEL_ENV = "production"; });
-afterEach(() => { delete process.env.VERCEL_ENV; });
+// These tests exercise the route once mail has been ACTIVATED on the production deployment
+// (EMAIL_DELIVERY=on and VERCEL_ENV=production — lib/email-delivery.ts, 17 Oct 2026). They are not
+// evidence for the isolation policy itself: that is tests/unit/email-sending-policy-table.test.ts, and
+// the local/preview case for this route is the "outside production" test below.
+beforeEach(() => { process.env.VERCEL_ENV = "production"; process.env.EMAIL_DELIVERY = "on"; });
+afterEach(() => { delete process.env.VERCEL_ENV; delete process.env.EMAIL_DELIVERY; });
 
 
 // Audit rows carry the KEYED digest (AH-E2, 9 Oct 2026). Until then this was a
@@ -103,6 +105,16 @@ describe("GET /api/account/login-email", () => {
       expect((await (await GET()).json()).emailDelivery).toBe("off");
     } finally {
       delete process.env.EMAIL_DELIVERY;
+    }
+  });
+  it("outside production (local and preview), delivery on/unset with no test list reports off", async () => {
+    for (const vercel of [undefined, "preview"]) {
+      for (const delivery of ["on", undefined]) {
+        if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
+        if (delivery) process.env.EMAIL_DELIVERY = delivery; else delete process.env.EMAIL_DELIVERY;
+        delete process.env.EMAIL_TEST_RECIPIENTS;
+        expect((await (await GET()).json()).emailDelivery, `${vercel ?? "local"} · ${delivery ?? "unset"}`).toBe("off");
+      }
     }
   });
   it("refuses a signed-out caller", async () => {

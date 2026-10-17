@@ -21,8 +21,9 @@
  *   the write is conditional on the status that was read, so two concurrent
  *   events cannot let a lower one land last.
  * - A database failure answers 500 so Resend retries (safe because of the two
- *   rules above); unknown emails and other event types answer 200 and change
- *   nothing.
+ *   rules above). An unknown email id less than 15 minutes old answers 409
+ *   (sendEmail may not have recorded it yet) so Resend retries; an older one,
+ *   and other event types, answer 200 and change nothing.
  * - Logs carry the svix-id, Resend email id, event type and outcome only —
  *   never the secret, the body, a recipient address or a provider message.
  *   The ids and type come from the request, so they are cut to a safe
@@ -60,6 +61,18 @@ const STATUS_RANK: Record<string, number> = {
 };
 
 const EMAIL_ADDRESS = /[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+/g;
+
+// sendEmail records the Resend id only after Resend's API call returns, so a
+// fast event (email.sent especially) can arrive first. A recent unknown id is
+// answered 409 and Resend retries (5 s, then 5 min); after this window an
+// unknown id is not ours — another tool on the same Resend account — and is
+// acknowledged so it stops retrying.
+const RECENT_UNKNOWN_MS = 15 * 60 * 1000;
+
+function isRecent(createdAt: string | undefined): boolean {
+  const t = createdAt ? Date.parse(createdAt) : NaN;
+  return Number.isFinite(t) && Math.abs(Date.now() - t) <= RECENT_UNKNOWN_MS;
+}
 
 /** Map an event to the EmailLog status it means, and a reason for the operator (no addresses). */
 function mapEvent(event: ResendEvent): { status: string; reason: string | null } | null {
@@ -143,11 +156,17 @@ export async function POST(req: Request) {
   try {
     // Cross-tenant by nature: Resend does not know which club an email
     // belongs to; the unique resendId (written by sendEmail) does.
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Every lost conditional update means a strictly higher status was written,
+    // so one attempt per rank always reaches a decision.
+    for (let attempt = 0; attempt < Object.keys(STATUS_RANK).length; attempt++) {
       const existing = await withRlsBypass((tx) =>
         tx.emailLog.findUnique({ where: { resendId }, select: { id: true, status: true, recipient: true } }),
       );
-      if (!existing) return outcome("ignored_unknown_email", tag);
+      if (!existing) {
+        return isRecent(event.created_at)
+          ? outcome("retry_unknown_recent", tag, 409, { error: "Email not recorded yet; retry" })
+          : outcome("ignored_unknown_email", tag);
+      }
       if (!recipients(event).includes(existing.recipient.trim().toLowerCase())) return outcome("ignored_recipient_mismatch", tag);
 
       const currentRank = STATUS_RANK[existing.status] ?? 0;

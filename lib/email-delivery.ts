@@ -4,28 +4,31 @@
  *
  * `EMAIL_DELIVERY` decides whether MatFlow sends ANY email:
  *
- *   EMAIL_DELIVERY=off              — nothing is sent. `sendEmail` makes no
+ *   EMAIL_DELIVERY=off  (or unset)  — nothing is sent. `sendEmail` makes no
  *                                     Resend call, writes one EmailLog row at
  *                                     status "suppressed", and returns
  *                                     `{ ok: false, suppressed: "delivery_off" }`.
  *   EMAIL_DELIVERY=test             — mail goes ONLY to the addresses listed in
  *                                     EMAIL_TEST_RECIPIENTS (comma-separated,
- *                                     exact, case-insensitive). An empty or
- *                                     missing list sends nothing (fail closed).
- *   EMAIL_DELIVERY=on   (or unset)  — on the Vercel production deployment
+ *                                     exact, case-insensitive), in every
+ *                                     environment including production. An
+ *                                     empty or missing list, or one with ANY
+ *                                     entry that is not a plain address, sends
+ *                                     nothing (fail closed).
+ *   EMAIL_DELIVERY=on               — the explicit activation. Only on the
+ *                                     Vercel production deployment
  *                                     (VERCEL_ENV=production, exposed at run
- *                                     time on this project): sends go to Resend
- *                                     for any recipient. ANYWHERE ELSE — local
- *                                     dev (even with the production .env),
- *                                     the test suite, a preview, a test
- *                                     deployment — `on` means `test`: only the
- *                                     listed addresses receive mail, and with
- *                                     no list nothing is sent.
+ *                                     time on this project) does it send to any
+ *                                     recipient. ANYWHERE ELSE — local dev (even
+ *                                     with the production .env), the test
+ *                                     suite, a preview, a test deployment —
+ *                                     `on` means `test`.
  *
- * Any other value (a typo, "false", "0") is treated as OFF: when someone has
- * tried to configure the switch and got it wrong, the safe reading is "do not
- * send". The allowlist is enforced in `sendEmail` (lib/email.ts), the only
- * place that calls Resend, before any lookup or provider call.
+ * Unset and any other value (a typo, "false", "0") are OFF (17 Oct 2026):
+ * adding a Resend key, paying for Resend or deploying code never starts mail
+ * to members by itself — only someone setting EMAIL_DELIVERY=on does. The
+ * allowlist is enforced in `sendEmail` (lib/email.ts), the only place that
+ * calls Resend, before any lookup or provider call.
  *
  * Its own module, not part of lib/email.ts, so that routes can ask "is mail
  * on?" without importing the Resend client — and so the many route tests that
@@ -72,20 +75,32 @@ function isProductionRuntime(): boolean {
   return process.env.VERCEL_ENV === "production";
 }
 
-/** The EMAIL_TEST_RECIPIENTS list, normalised; entries that are not an address are dropped. */
+/**
+ * The EMAIL_TEST_RECIPIENTS list, normalised. If ANY entry is not a plain
+ * address ("Name <a@b.c>", a stray word), the whole list is treated as empty:
+ * a list someone got wrong is not one to send from.
+ */
 export function testRecipients(): ReadonlySet<string> {
-  return new Set(
-    (process.env.EMAIL_TEST_RECIPIENTS ?? "")
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter((s) => ADDRESS.test(s)),
-  );
+  const entries = (process.env.EMAIL_TEST_RECIPIENTS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (entries.some((s) => !ADDRESS.test(s))) return new Set();
+  return new Set(entries);
+}
+
+/** True when EMAIL_TEST_RECIPIENTS has an entry that is not a plain address (the list is then ignored). */
+export function testRecipientsInvalid(): boolean {
+  return (process.env.EMAIL_TEST_RECIPIENTS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .some((s) => s !== "" && !ADDRESS.test(s.toLowerCase()));
 }
 
 export function emailSendingPolicy(): EmailSendingPolicy {
   const raw = rawMode();
   if (raw === "test") return { kind: "allowlist", recipients: testRecipients() };
-  if (raw === undefined || raw === "" || raw === "on") {
+  if (raw === "on") {
     return isProductionRuntime() ? { kind: "open" } : { kind: "allowlist", recipients: testRecipients() };
   }
   return { kind: "off" };

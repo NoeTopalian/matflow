@@ -1,9 +1,11 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
-// Mail on/unset sends to anyone only on the Vercel production deployment (lib/email-delivery.ts, 17 Oct 2026);
-// these routes are tested with delivery on.
-beforeEach(() => { process.env.VERCEL_ENV = "production"; });
-afterEach(() => { delete process.env.VERCEL_ENV; });
+// These tests exercise the route once mail has been ACTIVATED on the production deployment
+// (EMAIL_DELIVERY=on and VERCEL_ENV=production — lib/email-delivery.ts, 17 Oct 2026). They are not
+// evidence for the isolation policy itself: that is tests/unit/email-sending-policy-table.test.ts, and
+// the local/preview case for this route is the "outside production" test below.
+beforeEach(() => { process.env.VERCEL_ENV = "production"; process.env.EMAIL_DELIVERY = "on"; });
+afterEach(() => { delete process.env.VERCEL_ENV; delete process.env.EMAIL_DELIVERY; });
 
 
 // Wizard v2 Step 13 — white-glove CSV handoff endpoint.
@@ -138,6 +140,24 @@ describe("POST /api/onboarding/csv-handoff", () => {
     } finally {
       sendEmailMock.mockResolvedValue({ ok: true });
     }
+  });
+
+  it("outside production (local and preview), delivery on/unset with no test list says email is off", async () => {
+    for (const vercel of [undefined, "preview"]) {
+      for (const delivery of ["on", undefined]) {
+        const label = `${vercel ?? "local"} · ${delivery ?? "unset"}`;
+        if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
+        if (delivery) process.env.EMAIL_DELIVERY = delivery; else delete process.env.EMAIL_DELIVERY;
+        delete process.env.EMAIL_TEST_RECIPIENTS;
+        createMock.mockResolvedValueOnce({ id: `job-${label}`, fileName: "members.csv" });
+        sendEmailMock.mockResolvedValue({ ok: false, logId: "l", suppressed: "delivery_off" });
+        const { POST } = await import("@/app/api/onboarding/csv-handoff/route");
+        const body = await (await POST(makeReq({}))).json();
+        expect(body.teamNotified, label).toBe(false);
+        expect(body.message, label).toMatch(/Email is turned off for this club/);
+      }
+    }
+    sendEmailMock.mockResolvedValue({ ok: true });
   });
 
   it("returns 400 when no file is provided", async () => {

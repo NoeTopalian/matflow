@@ -5,9 +5,10 @@
  * resets, sign-in links and invites fail silently. With EMAIL_DELIVERY=off
  * nothing is sent by design, so the key is not needed and must not stop the
  * app booting — but the boot log has to say, loudly, that delivery is off.
- * With delivery on (or unset) the key stays required exactly as before on the
- * Vercel production deployment. Anywhere else (17 Oct 2026) on/unset means test
- * mode: with no EMAIL_TEST_RECIPIENTS nothing can be sent, so no key is needed.
+ * With EMAIL_DELIVERY=on the key stays required on the Vercel production
+ * deployment. Since 17 Oct 2026 unset is OFF (nothing sent, no key needed, the
+ * boot log says so), and anywhere else `on` means test mode: with no usable
+ * EMAIL_TEST_RECIPIENTS nothing can be sent, so no key is needed.
  */
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { runProductionEnvGuards } from "@/lib/env-guards";
@@ -37,9 +38,17 @@ afterEach(() => {
 });
 
 describe("env-guards — RESEND_API_KEY and EMAIL_DELIVERY", () => {
-  it("still refuses to boot without RESEND_API_KEY when delivery is on (unset)", () => {
+  it("unset is OFF: boots without RESEND_API_KEY and says nothing will be sent (unset counts as off)", () => {
     vi.stubEnv("EMAIL_DELIVERY", "");
-    expect(() => runProductionEnvGuards()).toThrow(/RESEND_API_KEY/);
+    expect(() => runProductionEnvGuards()).not.toThrow();
+    expect(warn.mock.calls.some((c) => /EMAIL_DELIVERY=off \(unset counts as off\) — NO email/.test(String(c[0])))).toBe(true);
+  });
+
+  it("a test list with a bad entry is named and ignored", () => {
+    vi.stubEnv("EMAIL_DELIVERY", "test");
+    vi.stubEnv("EMAIL_TEST_RECIPIENTS", "noe.test@example.test, Sean <sean@example.test>");
+    expect(() => runProductionEnvGuards()).not.toThrow();
+    expect(warn.mock.calls.some((c) => /not a plain address — the whole list is ignored/.test(String(c[0])))).toBe(true);
   });
 
   it("still refuses to boot without RESEND_API_KEY when EMAIL_DELIVERY=on", () => {
@@ -80,7 +89,7 @@ describe("env-guards — outside the Vercel production deployment", () => {
     vi.stubEnv("VERCEL_ENV", "preview");
     vi.stubEnv("EMAIL_DELIVERY", "on");
     expect(() => runProductionEnvGuards()).not.toThrow();
-    expect(warn.mock.calls.some((c) => /TEST mode with no EMAIL_TEST_RECIPIENTS — nothing will be sent/.test(String(c[0])))).toBe(true);
+    expect(warn.mock.calls.some((c) => /TEST mode with no usable EMAIL_TEST_RECIPIENTS — nothing will be sent/.test(String(c[0])))).toBe(true);
   });
 
   it("test mode with a list still requires the key and names how many addresses receive mail", () => {

@@ -189,10 +189,32 @@ describe("duplicates, ordering and association", () => {
     expect(store.writes).toBe(1);
   });
 
-  it("an event for an email this database never sent changes nothing", async () => {
-    const r = await post(signed(ev("email.delivered", "re_from_another_environment")));
+  it("an old event for an email this database never sent is acknowledged and changes nothing", async () => {
+    const old = { ...ev("email.delivered", "re_from_another_environment"), created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString() };
+    const r = await post(signed(old));
     expect(r).toEqual({ status: 200, body: expect.objectContaining({ outcome: "ignored_unknown_email" }) });
     expect(store.writes).toBe(0);
+  });
+
+  it("an unknown email with no usable created_at is acknowledged (cannot be judged recent)", async () => {
+    for (const created_at of [undefined, "not-a-date"]) {
+      const body: Record<string, unknown> = { ...ev("email.delivered", "re_unknown") };
+      if (created_at === undefined) delete body.created_at; else body.created_at = created_at;
+      const r = await post(signed(body));
+      expect(r).toEqual({ status: 200, body: expect.objectContaining({ outcome: "ignored_unknown_email" }) });
+    }
+  });
+
+  it("a recent event that beats sendEmail's resendId write answers 409 so Resend retries; the retry applies", async () => {
+    store.rows.get("log-1")!.resendId = "pending"; // sendEmail has not recorded the id yet
+    const body = ev("email.delivered", "re_fast");
+    const first = await post(signed(body, { id: "msg_fast" }));
+    expect(first).toEqual({ status: 409, body: expect.objectContaining({ outcome: "retry_unknown_recent" }) });
+    expect(store.writes).toBe(0);
+    store.rows.get("log-1")!.resendId = "re_fast"; // the write lands
+    const retry = await post(signed(body, { id: "msg_fast" }));
+    expect(retry.body.outcome).toBe("applied");
+    expect(row().status).toBe("delivered");
   });
 
   it("an event naming a different recipient does not update the row", async () => {

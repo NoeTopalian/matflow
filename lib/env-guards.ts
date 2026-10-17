@@ -15,7 +15,7 @@
  * dev loop friction-free.
  */
 
-import { emailDeliveryMisconfigured, emailSendingPolicy, isEmailDeliveryOn } from "@/lib/email-delivery";
+import { emailDeliveryMisconfigured, emailSendingPolicy, isEmailDeliveryOn, testRecipientsInvalid } from "@/lib/email-delivery";
 
 type Severity = "error" | "warn";
 
@@ -101,16 +101,21 @@ export function runProductionEnvGuards(): void {
         "email goes only to EMAIL_TEST_RECIPIENTS (none if the list is empty).",
     );
   }
+  if (policy.kind === "allowlist" && testRecipientsInvalid()) {
+    console.warn(
+      "[env-guards] EMAIL_TEST_RECIPIENTS has an entry that is not a plain address — the whole list is ignored and nothing will be sent.",
+    );
+  }
   if (policy.kind === "allowlist") {
     console.warn(
       policy.recipients.size === 0
-        ? "[env-guards] Email is in TEST mode with no EMAIL_TEST_RECIPIENTS — nothing will be sent to anyone."
+        ? "[env-guards] Email is in TEST mode with no usable EMAIL_TEST_RECIPIENTS — nothing will be sent to anyone."
         : `[env-guards] Email is in TEST mode — only the ${policy.recipients.size} address(es) in EMAIL_TEST_RECIPIENTS receive mail.`,
     );
   }
   if (policy.kind === "off") {
     console.warn(
-      "[env-guards] EMAIL_DELIVERY=off — NO email will be sent: member and staff invites, password reset codes, " +
+      `[env-guards] EMAIL_DELIVERY=off${process.env.EMAIL_DELIVERY?.trim() ? "" : " (unset counts as off)"} — NO email will be sent: member and staff invites, password reset codes, ` +
         "sign-in links, receipts, refund notices, owner alerts (payment failed, chargeback, Stripe disconnected) " +
         "and waiver links are all suppressed and logged to EmailLog as 'suppressed'. Set EMAIL_DELIVERY=on to send.",
     );

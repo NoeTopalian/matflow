@@ -69,10 +69,12 @@ import { isTestingMode } from "@/lib/testing-mode";
 import { POST } from "@/app/api/magic-link/request/route";
 import { GET } from "@/app/api/magic-link/verify/route";
 
-// Mail on/unset sends to anyone only on the Vercel production deployment (lib/email-delivery.ts, 17 Oct 2026);
-// these routes are tested with delivery on.
-beforeEach(() => { process.env.VERCEL_ENV = "production"; });
-afterEach(() => { delete process.env.VERCEL_ENV; });
+// These tests exercise the route once mail has been ACTIVATED on the production deployment
+// (EMAIL_DELIVERY=on and VERCEL_ENV=production — lib/email-delivery.ts, 17 Oct 2026). They are not
+// evidence for the isolation policy itself: that is tests/unit/email-sending-policy-table.test.ts, and
+// the local/preview case for this route is the "outside production" test below.
+beforeEach(() => { process.env.VERCEL_ENV = "production"; process.env.EMAIL_DELIVERY = "on"; });
+afterEach(() => { delete process.env.VERCEL_ENV; delete process.env.EMAIL_DELIVERY; });
 
 
 const mockTenantFindUnique = vi.mocked(prisma.tenant.findUnique);
@@ -172,6 +174,26 @@ describe("magic-link request — a temporary-password account gets no link", () 
     expect(res.status).toBe(200);
     expect(mockTokenCreate).toHaveBeenCalledTimes(1);
     expect(mockSendEmail).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("magic-link request — outside production (local and preview)", () => {
+  it("delivery on/unset with no test list mints no link and sends nothing", async () => {
+    for (const vercel of [undefined, "preview"]) {
+      for (const delivery of ["on", undefined]) {
+        const label = `${vercel ?? "local"} · ${delivery ?? "unset"}`;
+        if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
+        if (delivery) process.env.EMAIL_DELIVERY = delivery; else delete process.env.EMAIL_DELIVERY;
+        delete process.env.EMAIL_TEST_RECIPIENTS;
+        mockTokenCreate.mockClear(); mockSendEmail.mockClear();
+        staffSubject(null);
+        mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+        const res = await requestLink("member@club.example");
+        expect(res.status, label).toBe(200);
+        expect(mockTokenCreate, label).not.toHaveBeenCalled();
+        expect(mockSendEmail, label).not.toHaveBeenCalled();
+      }
+    }
   });
 });
 
