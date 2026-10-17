@@ -176,7 +176,13 @@ describe.skipIf(!HAS_DB)("T8c: movement and headcount on a real database", () =>
     expect(by("2025-09")).toMatchObject({ rejoined: 1 });
     expect(by("2026-06")).toMatchObject({ lostCancelled: 1 });
     expect(by("2026-10")).toMatchObject({ new: 1, imported: 0 });
-    for (const r of ledgerReport.movementsByMonth.filter((m) => m.month < "2026-10")) expect(r.basis).toBe("estimated");
+    // The earliest event is cara's start on 1 Nov 2024. Months that end before
+    // it have no data ("none", never a fabricated zero); every later month
+    // before the import boundary is estimated from the ledger.
+    const beforeImport = ledgerReport.movementsByMonth.filter((m) => m.month < "2026-10");
+    for (const r of beforeImport.filter((m) => m.month < "2024-11")) expect(r.basis).toBe("none");
+    for (const r of beforeImport.filter((m) => m.month >= "2024-11")) expect(r.basis).toBe("estimated");
+    expect(beforeImport.some((m) => m.basis === "estimated")).toBe(true);
 
     // 3. Apply the back-fill on this test club, then read again: the same figures.
     const applied = await withTenantContext(a.tenantId, (tx) => applyTenantBackfill(tx, a.tenantId, { runId: `${STAMP}-run` }), { timeout: 60_000 });
