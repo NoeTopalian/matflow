@@ -113,7 +113,8 @@ const BASELINE = {
   // 30 Sep 2026: 725 → 724 — capacity colours in WeeklyCalendar from one helper.
   // 9 Oct 2026: 724 → 718 — admin conflict panel built from primitives + adminPalette (lane F).
   // 17 Oct 2026: 718 → 713 — Settings member-status rows on hue tokens (T1).
-  hexLiteral: 713,
+  // 17 Oct 2026: 713 → 707 — dead primaryColor ternaries on the Reports health tiles removed (T2b).
+  hexLiteral: 707,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.

@@ -49,7 +49,17 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import NetNewMembersCard from "./NetNewMembersCard";
-import { EmptyChart, SectionTitle, formatNumber, type TooltipPayload } from "./reports-primitives";
+import {
+  EmptyChart,
+  RatioValue,
+  SectionTitle,
+  formatNumber,
+  formatRatio,
+  formatSigned,
+  ratioCounts,
+  wholePct,
+  type TooltipPayload,
+} from "./reports-primitives";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
@@ -99,9 +109,10 @@ function hex(h: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-function formatPercent(value: number | null) {
-  if (value === null) return "No capacity";
-  return `${value}%`;
+/** A class's fill rate with the places behind it (T2b): "45% (90 of 200)", or "no capacity set". */
+function formatFill(cls: { fillRate: number | null; count: number; capacityTotal?: number }) {
+  if (cls.fillRate === null || !cls.capacityTotal) return "no capacity set";
+  return formatRatio(cls.fillRate, cls.count, cls.capacityTotal);
 }
 
 /**
@@ -115,6 +126,43 @@ function formatAttendanceRateValue(mode: AttendanceRateMode, value: number | nul
   if (value === null) return "—";
   return mode === "checkins-per-member" ? value.toLocaleString("en-GB") : `${value}%`;
 }
+
+/**
+ * The counts behind the rate readout (T2b): "(31 of 312)" for the two
+ * percentage modes, "(420 check-ins ÷ 131 members)" for the per-member
+ * average. Empty when the rate is undefined ("—" says it all).
+ */
+function attendanceRateCounts(rate: ReportsData["attendanceRate"]) {
+  if (rate.value === null || !rate.denominator) return "";
+  if (rate.mode === "checkins-per-member") {
+    return `(${formatNumber(rate.numerator)} check-ins ÷ ${formatNumber(rate.denominator)} members)`;
+  }
+  return ratioCounts(rate.numerator, rate.denominator);
+}
+
+/**
+ * Figures every surface (screen and CSV) derives from the same data, so the
+ * two can never print different numbers for one metric (T2b acceptance 3).
+ */
+function derivedShares(data: ReportsData) {
+  const { summary, checkInMethods } = data;
+  const totalMethodCount = checkInMethods.reduce((sum, row) => sum + row.count, 0);
+  const selfServiceCount = checkInMethods
+    .filter((row) => row.method === "self" || row.method === "qr")
+    .reduce((sum, row) => sum + row.count, 0);
+  return {
+    totalMethodCount,
+    selfServiceCount,
+    selfServicePct: wholePct(selfServiceCount, totalMethodCount),
+    // Q4 A-2: the active share is over CURRENT members (active, inactive,
+    // tasters), never over everyone who ever joined.
+    activeSharePct: wholePct(summary.activeMembers, summary.currentMembers),
+  };
+}
+
+/** The "Joined this month" copy (Q6, A-13): who it counts, and the net beside churn. */
+const JOINED_SCOPE = "People added in MatFlow, incl. tasters. A TeamUp refresh adds nobody.";
+const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";
 
 /** Delta as display text, or null when nothing moved. */
 function trendDelta(current: number, previous: number) {
@@ -173,9 +221,13 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     data.filters.ageGroup === "adult" ? "Adults" : data.filters.ageGroup === "kids" ? "Kids" : null,
   ].filter(Boolean).join(" · ");
   const scopedWindowLabel = filterSuffix ? `${windowLabel} · ${filterSuffix}` : windowLabel;
+  const { churn, retention } = data;
+  const recovery = data.paymentHealth.recovery;
+  const shares = derivedShares(data);
   const rows: (string | number | null)[][] = [
     ["Section", "Metric", "Value", "Detail"],
-    ["Summary", "Total members", data.summary.totalMembers, ""],
+    ["Summary", "Total members", data.summary.totalMembers, "Every training member on record, including those who have left"],
+    ["Summary", "Current members", data.summary.currentMembers, "Active and inactive members and tasters"],
     ["Summary", "Active members", data.summary.activeMembers, ""],
     // Attendance this week IS narrowed by the class/age filters (lib/reports.ts
     // attendanceScope), so its export row must say so — it was the one scoped
@@ -185,19 +237,34 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
     // The rate definition the owner chose on screen, with its formula — the
     // headline of the filter bar, previously missing from the file.
-    ["Summary", `Attendance rate — ${data.attendanceRate.label}`, formatAttendanceRateValue(data.attendanceRate.mode, data.attendanceRate.value), `${data.attendanceRate.formula} · ${scopedWindowLabel}`],
+    ["Summary", `Attendance rate — ${data.attendanceRate.label}`, [formatAttendanceRateValue(data.attendanceRate.mode, data.attendanceRate.value), attendanceRateCounts(data.attendanceRate)].filter(Boolean).join(" "), `${data.attendanceRate.formula} · ${scopedWindowLabel}`],
     ["Summary", "Active classes", data.summary.totalActiveClasses, ""],
-    ["Summary", "6-month survival", data.retentionRate === null ? "—" : `${data.retentionRate}%`, "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
+    // Health rows (T2b): the same text the tiles print, so the file and the
+    // screen agree. Club-wide — the class/age filters never scope them.
+    ["Health", "Churn this month", formatRatio(churn.ratePct, churn.cancelled, churn.base), `${CHURN_FORMULA} · club-wide`],
+    ["Health", "Joined this month", churn.joined, `Net ${formatSigned(churn.net)} this month · ${JOINED_SCOPE}`],
+    ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), "Members with a failed payment in the last 90 days who are now paid"],
+    ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
     ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
     ...data.monthlySignups.map((row) => ["Monthly signups", row.month, row.count, row.isCurrentMonth ? "Current month" : ""]),
     ...data.topClasses.map((row) => [
       "Top classes",
       row.name,
       row.count,
-      `${scopedWindowLabel}, ${row.averageAttendance}/session, fill rate ${formatPercent(row.fillRate)}`,
+      `${scopedWindowLabel}, ${row.averageAttendance}/session, fill rate ${formatFill(row)}`,
     ]),
-    ...data.membersByStatus.map((row) => ["Members by status", row.label, row.count, `${row.percentage}%`]),
-    ...data.checkInMethods.map((row) => ["Check-in methods", row.label, row.count, `${row.percentage}% · ${scopedWindowLabel}`]),
+    // Q4 A-2 split: shares over current members; those who have left are a
+    // count with no percentage — exactly as the status card shows them.
+    ...data.currentMembersByStatus.map((row) => [
+      "Current members by status",
+      row.label,
+      row.count,
+      formatRatio(row.percentage, row.count, data.summary.currentMembers),
+    ]),
+    ["Left the club", "Cancelled members", data.summary.cancelledMembers, "Not part of current members, so no percentage"],
+    ...data.checkInMethods.map((row) => ["Check-in methods", row.label, row.count, `${formatRatio(row.percentage, row.count, shares.totalMethodCount)} · ${scopedWindowLabel}`]),
+    ["Owner insights", "Self-service check-in", formatRatio(shares.selfServicePct, shares.selfServiceCount, shares.totalMethodCount), `Self or QR · ${scopedWindowLabel}`],
+    ["Owner insights", "Active share of current members", formatRatio(shares.activeSharePct, data.summary.activeMembers, data.summary.currentMembers), "Active members ÷ current members"],
     // The conversion funnel, club-wide then per coach — the same numbers and
     // the same honesty guards as the screen (null rates export as "N/A").
     ...funnelCsvRows(attribution),
@@ -427,10 +494,11 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     summary,
     weeklyAttendance,
     monthlySignups,
-    membersByStatus,
+    currentMembersByStatus,
     checkInMethods,
     topClasses,
-    churnRate,
+    churn,
+    retention,
     retentionRate,
     netNewByMonth,
     paymentHealth,
@@ -523,15 +591,13 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
   const bestClass = topClasses[0];
   const maxAttendance = Math.max(...weeklyAttendance.map((row) => row.count), 0);
   const maxTopClass = Math.max(...topClasses.map((row) => row.count), 1);
-  const totalMethodCount = checkInMethods.reduce((sum, row) => sum + row.count, 0);
-  const totalStatusCount = membersByStatus.reduce((sum, row) => sum + row.count, 0);
-  const selfServiceCount = checkInMethods
-    .filter((row) => row.method === "self" || row.method === "qr")
-    .reduce((sum, row) => sum + row.count, 0);
-  const selfServicePct = totalMethodCount > 0 ? Math.round((selfServiceCount / totalMethodCount) * 100) : 0;
-  const attentionMembers = summary.inactiveMembers + summary.cancelledMembers;
+  const { totalMethodCount, selfServiceCount, selfServicePct, activeSharePct } = derivedShares(data);
+  // Q4 A-2 (split): "need review" is inactive members only. Cancelled members
+  // have left the club; they appear as "Left the club: N", not as people to
+  // review alongside the current ones.
+  const attentionMembers = summary.inactiveMembers;
   const topMethod = checkInMethods[0];
-  const activeShare = summary.totalMembers > 0 ? Math.round((summary.activeMembers / summary.totalMembers) * 100) : 0;
+  const recovery = paymentHealth.recovery;
 
   const weeklyTickFormatter = (value: string, index: number) =>
     weeklyAttendance.length > 8 && index % 2 !== 0 ? "" : value;
@@ -688,6 +754,17 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             >
               {formatAttendanceRateValue(attendanceRate.mode, attendanceRate.value)}
             </span>
+            {/* The counts behind the number (T2b) — kept beside it, never
+                truncated; the label after it gives way first. */}
+            {attendanceRateCounts(attendanceRate) && (
+              <span
+                data-testid="rate-readout-counts"
+                className="shrink-0 text-xs tabular-nums whitespace-nowrap"
+                style={{ color: "var(--tx-2)" }}
+              >
+                {attendanceRateCounts(attendanceRate)}
+              </span>
+            )}
             <span className="text-xs truncate" style={{ color: "var(--tx-3)" }} title={attendanceRate.label}>
               {attendanceRate.label}
             </span>
@@ -753,7 +830,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 <TrendBadge
                   current={summary.attendanceThisWeek}
                   previous={summary.attendanceLastWeek}
-                  label="vs last week"
+                  label={`vs ${formatNumber(summary.attendanceLastWeek)} last week`}
                 />
               </div>
               <div className="w-full overflow-hidden [&>svg]:w-full [&>svg]:h-auto">
@@ -779,7 +856,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={Users}
           label="Active members"
           value={formatNumber(summary.activeMembers)}
-          detail={`${formatNumber(summary.totalMembers)} total members`}
+          detail={`Of ${formatNumber(summary.currentMembers)} current members (active, inactive, tasters)`}
           primaryColor={primaryColor}
           href="/dashboard/members?filter=active"
         />
@@ -789,7 +866,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           value={formatNumber(summary.attendanceThisWeek)}
           detail={filterSuffix ? `Check-ins since Monday · ${filterSuffix}` : "Check-ins since Monday"}
           primaryColor={primaryColor}
-          trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, label: "vs last week" }}
+          trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, label: `vs ${formatNumber(summary.attendanceLastWeek)} last week` }}
         />
         <MetricCard
           icon={UserPlus}
@@ -797,7 +874,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           value={formatNumber(summary.newMembersThisMonth)}
           detail="Member signups"
           primaryColor={primaryColor}
-          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: "vs last month" }}
+          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: `vs ${formatNumber(summary.newMembersLastMonth)} last month` }}
           href="/dashboard/members?filter=new-this-month"
         />
         <MetricCard
@@ -885,15 +962,19 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <InsightRow
               icon={QrCode}
               label="Self-service check-in"
-              value={`${selfServicePct}% self or QR`}
+              value={selfServicePct === null ? "No check-ins yet" : `${formatRatio(selfServicePct, selfServiceCount, totalMethodCount)} self or QR`}
               detail={topMethod ? `${topMethod.label} is the top method` : "No method data yet"}
               color="#6366f1"
             />
             <InsightRow
               icon={attentionMembers > 0 ? AlertTriangle : ShieldCheck}
               label="Member attention"
-              value={attentionMembers > 0 ? `${attentionMembers} need review` : "No inactive members"}
-              detail={`${activeShare}% of members are active`}
+              value={attentionMembers > 0 ? `${formatNumber(attentionMembers)} inactive to review` : "No inactive members"}
+              detail={
+                summary.currentMembers > 0
+                  ? `${formatRatio(activeSharePct, summary.activeMembers, summary.currentMembers)} of current members are active`
+                  : "No current members yet"
+              }
               color={attentionMembers > 0 ? "#f59e0b" : "#22c55e"}
             />
           </div>
@@ -946,7 +1027,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   key={cls.name}
                   label={cls.name}
                   value={formatNumber(cls.count)}
-                  detail={`${cls.averageAttendance}/session | ${formatPercent(cls.fillRate)} fill`}
+                  detail={`${cls.averageAttendance}/session · fill ${formatFill(cls)}`}
                   pct={Math.round((cls.count / maxTopClass) * 100)}
                   color={index === 0 ? primaryColor : hex(primaryColor, 0.62 - index * 0.08)}
                 />
@@ -958,16 +1039,24 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionTitle title="Members by Status" subtitle="Counts and share of your member base" icon={Users} />
-          {totalStatusCount === 0 ? (
-            <EmptyChart label="No member data yet" />
+          {/* Q4 A-2, split status card (T2b): shares over CURRENT members
+              only, adding to 100% ± rounding. Members who have left are a
+              count of their own with no percentage — a cancelled slice is
+              never a share of the people still on the books. */}
+          <SectionTitle
+            title="Current members by status"
+            subtitle="Share of current members: active, inactive and tasters. Excludes guardians."
+            icon={Users}
+          />
+          {summary.currentMembers === 0 ? (
+            <EmptyChart label="No current members yet" />
           ) : (
-            <div className={`grid gap-5 ${membersByStatus.length > 1 ? "sm:grid-cols-[130px_1fr]" : ""}`}>
-              {membersByStatus.length > 1 && (
+            <div className={`grid gap-5 ${currentMembersByStatus.length > 1 ? "sm:grid-cols-[130px_1fr]" : ""}`}>
+              {currentMembersByStatus.length > 1 && (
                 <ResponsiveContainer width="100%" height={130}>
                   <PieChart>
                     <Pie
-                      data={membersByStatus}
+                      data={currentMembersByStatus}
                       dataKey="count"
                       nameKey="label"
                       cx="50%"
@@ -976,7 +1065,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                       outerRadius={58}
                       strokeWidth={0}
                     >
-                      {membersByStatus.map((entry, index) => (
+                      {currentMembersByStatus.map((entry, index) => (
                         <Cell key={entry.status} fill={statusColor(entry.status, index)} />
                       ))}
                     </Pie>
@@ -984,17 +1073,17 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 </ResponsiveContainer>
               )}
               <div className="space-y-3">
-                {membersByStatus.length === 1 && (
+                {currentMembersByStatus.length === 1 && (
                   <div className="flex items-center gap-2 rounded-xl px-3 py-2 border" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>
                     <ShieldCheck className="w-4 h-4" style={{ color: "#22c55e" }} />
-                    <span className="text-sm">All tracked members are currently {membersByStatus[0].label.toLowerCase()}.</span>
+                    <span className="text-sm">All current members are {currentMembersByStatus[0].label.toLowerCase()}.</span>
                   </div>
                 )}
-                {membersByStatus.map((entry, index) => (
+                {currentMembersByStatus.map((entry, index) => (
                   <ProgressRow
                     key={entry.status}
                     label={entry.label}
-                    value={`${formatNumber(entry.count)} (${entry.percentage}%)`}
+                    value={formatRatio(entry.percentage, entry.count, summary.currentMembers)}
                     pct={entry.percentage}
                     color={statusColor(entry.status, index)}
                   />
@@ -1002,6 +1091,14 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               </div>
             </div>
           )}
+          <p
+            data-testid="left-the-club"
+            className="mt-4 border-t border-bd-default pt-3 text-sm"
+            style={{ color: "var(--tx-2)" }}
+          >
+            Left the club: <span className="font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>{formatNumber(summary.cancelledMembers)}</span>
+            <span className="text-xs" style={{ color: "var(--tx-3)" }}> · cancelled members, not part of the shares above</span>
+          </p>
         </Card>
 
         <Card>
@@ -1014,7 +1111,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 <ProgressRow
                   key={method.method}
                   label={method.label}
-                  value={`${formatNumber(method.count)} (${method.percentage}%)`}
+                  value={formatRatio(method.percentage, method.count, totalMethodCount)}
                   pct={method.percentage}
                   color={methodColor(method.method)}
                 />
@@ -1033,27 +1130,39 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           </p>
         </div>
 
-        {/* KPI row — churn and payment recovery only. Retention used to sit
-            here as a third tile and read as "1 - churn" at a glance, which it
-            is not: different cohort (6mo+ joiners vs this month's active
-            base) and a different window (a point-in-time survival check vs
-            a monthly rate). It has its own card below instead of a headline
-            neighbour (Track A churn-honesty fix). */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        {/* KPI row — churn, joined beside it, then payment recovery.
+            Retention still does NOT sit here: it read as "1 - churn" at a
+            glance, which it is not (different cohort and window), so it
+            keeps its own card below (Track A churn-honesty fix). Joined is
+            the other side of churn's ledger for the SAME month — owner
+            decision Q6 (17 Oct 2026) deliberately puts it immediately beside
+            churn, overriding the old "no neighbour" note for this tile only.
+            Every rate prints its counts, "x% (n of m)"; an empty base is "—". */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
           <MetricCard
             icon={UserMinus}
             label="Churn rate this month"
-            value={`${churnRate}%`}
-            detail="Cancellations as % of active base"
-            primaryColor={churnRate > 5 ? "#ef4444" : churnRate > 2 ? "#f59e0b" : "#22c55e"}
+            value={<RatioValue pct={churn.ratePct} n={churn.cancelled} base={churn.base} />}
+            detail={churn.base > 0 ? CHURN_FORMULA : "No active or cancelled members this month"}
+            primaryColor={primaryColor}
             href="/dashboard/members?filter=churned-this-month"
+            hrefLabel="Churn rate this month"
+          />
+          <MetricCard
+            icon={UserPlus}
+            label="Joined this month"
+            value={formatNumber(churn.joined)}
+            detail={`Net ${formatSigned(churn.net)} this month · ${JOINED_SCOPE}`}
+            primaryColor={primaryColor}
+            href="/dashboard/members?filter=new-this-month"
+            hrefLabel="Joined this month"
           />
           <MetricCard
             icon={RefreshCcw}
             label="Payment recovery rate"
-            value={paymentHealth.recoveryRate === null ? "—" : `${paymentHealth.recoveryRate}%`}
-            detail="Of members with a failed payment in last 90 days now paid"
-            primaryColor={(paymentHealth.recoveryRate ?? 50) >= 70 ? "#22c55e" : (paymentHealth.recoveryRate ?? 50) >= 40 ? "#f59e0b" : "#ef4444"}
+            value={<RatioValue pct={recovery.ratePct} n={recovery.recovered} base={recovery.failedMembers} />}
+            detail={recovery.failedMembers > 0 ? "Members with a failed payment in the last 90 days who are now paid" : "No failed payments in the last 90 days"}
+            primaryColor={primaryColor}
           />
         </div>
 
@@ -1066,7 +1175,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>
-              6-month survival: {retentionRate === null ? "—" : `${retentionRate}%`}
+              6-month survival: {formatRatio(retention.ratePct, retention.survived, retention.cohort)}
             </p>
             <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
               Of members who joined 6+ months ago, still active today. A different cohort and window to the monthly churn rate above — not its inverse, and the two numbers will not sum to 100%.

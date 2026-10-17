@@ -107,16 +107,29 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
       weeksBack: 12,
       filters: { classId: null, className: null, ageGroup: null },
       summary: {
-        totalMembers: 10, activeMembers: 8, inactiveMembers: 1, cancelledMembers: 1, tasterMembers: 0,
+        totalMembers: 10, currentMembers: 9, activeMembers: 8, inactiveMembers: 1, cancelledMembers: 1, tasterMembers: 0,
         totalCheckIns: 0, totalActiveClasses: 2, attendanceThisWeek: 0, attendanceLastWeek: 0,
-        newMembersThisMonth: 0, newMembersLastMonth: 0,
+        newMembersThisMonth: 2, newMembersLastMonth: 0,
       },
-      attendanceRate: { mode: "per_member_week", label: "Rate", value: null, formula: "a / b" },
+      attendanceRate: { mode: "per_member_week", label: "Rate", value: null, formula: "a / b", numerator: 0, denominator: 0 },
       retentionRate: null,
+      retention: { ratePct: null, survived: 0, cohort: 0 },
+      // T2b: churn with its counts and joined beside it (8 active now + 1
+      // cancelled this month = base 9; 2 joined, net +1).
+      churnRate: 11.1,
+      churn: { ratePct: 11.1, cancelled: 1, base: 9, joined: 2, net: 1 },
+      paymentHealth: {
+        overdueCount: 0, noPaymentYetCount: 0, failedLast30Days: 0, recoveryRate: 50,
+        recovery: { ratePct: 50, recovered: 1, failedMembers: 2 },
+      },
       weeklyAttendance: [],
       monthlySignups: [],
-      topClasses: [{ name: "=HYPERLINK(\"http://evil\",\"x\")", count: 3, averageAttendance: 1.5, fillRate: null }],
+      topClasses: [{ name: "=HYPERLINK(\"http://evil\",\"x\")", count: 3, averageAttendance: 1.5, fillRate: null, capacityTotal: 0 }],
       membersByStatus: [{ status: "active", label: "Active, paying", count: 8, percentage: 80 }],
+      currentMembersByStatus: [
+        { status: "active", label: "Active, paying", count: 8, percentage: 89 },
+        { status: "inactive", label: "Inactive", count: 1, percentage: 11 },
+      ],
       checkInMethods: [],
     };
     const attribution = {
@@ -134,8 +147,24 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
     expect(rows.every((r) => r.length === 4)).toBe(true);
     const topClass = rows.find((r) => r[0] === "Top classes");
     expect(topClass?.[1]).toBe("'=HYPERLINK(\"http://evil\",\"x\")");
-    const status = rows.find((r) => r[0] === "Members by status");
-    expect(status?.[1]).toBe("Active, paying");
+    // Q4 A-2 split: current members by status, shares over current members
+    // with their counts; those who left are a count with no percentage.
+    const status = rows.find((r) => r[0] === "Current members by status");
+    expect(status).toEqual(["Current members by status", "Active, paying", "8", "89% (8 of 9)"]);
+    expect(rows.some((r) => r[0] === "Members by status")).toBe(false);
+    const left = rows.find((r) => r[0] === "Left the club");
+    expect(left?.[2]).toBe("1");
+    expect(left?.[3]).not.toMatch(/%/);
+    // T2b: churn row carries the same numbers as the tile; joined beside it.
+    expect(rows.find((r) => r[1] === "Churn this month")?.[2]).toBe("11.1% (1 of 9)");
+    const joined = rows.find((r) => r[1] === "Joined this month");
+    expect(joined?.[2]).toBe("2");
+    expect(joined?.[3]).toMatch(/^Net \+1 this month · People added in MatFlow/);
+    expect(rows.find((r) => r[1] === "Payment recovery")?.[2]).toBe("50% (1 of 2)");
+    // Undefined rates export as a dash, never "0%".
+    expect(rows.find((r) => r[1] === "6-month survival")?.[2]).toBe("—");
+    expect(rows.find((r) => r[1] === "Self-service check-in")?.[2]).toBe("—");
+    expect(rows.find((r) => r[1] === "Active share of current members")?.[2]).toBe("89% (8 of 9)");
     const coach = rows.find((r) => r[0] === "Conversion by coach");
     expect(coach?.[1]).toBe("Zoé \"Coach\" 🥋");
     // No cell in the file starts with a live formula character.

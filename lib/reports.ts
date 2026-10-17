@@ -36,6 +36,37 @@ export interface AttendanceRate {
   value: number | null;
   label: string;
   formula: string;
+  /**
+   * T2b (17 Oct 2026): the two counts behind `value`, so the readout and the
+   * CSV can show "x% (n of m)" — check-ins and active members for the
+   * per-member average, attendees and active members for the percentage,
+   * check-ins and class places for the fill rate.
+   */
+  numerator: number;
+  denominator: number;
+}
+
+/**
+ * T2b (17 Oct 2026, owner decision Q6): every percentage on Reports carries
+ * its numerator and denominator. `ratePct` is null exactly when the base is
+ * 0 — the screen renders "—", never "0%" (MATFLOW-SPECIFICATION-2026-10.md
+ * :144 "divide-by-zero → null", extended to every ratio here).
+ */
+export interface ChurnFigures {
+  /** cancelled ÷ base × 100, one decimal place; null when base is 0. */
+  ratePct: number | null;
+  /** Training members whose cancelledAt falls in this calendar month. */
+  cancelled: number;
+  /** Active training members now + `cancelled` (the existing formula's base). */
+  base: number;
+  /**
+   * Training members whose joinedAt falls in the same calendar month
+   * (tasters included) — shown beside churn. A TeamUp refresh creates
+   * nobody, so until cutover this counts people added in MatFlow.
+   */
+  joined: number;
+  /** joined − cancelled for the same month. */
+  net: number;
 }
 
 export interface ReportsData {
@@ -84,7 +115,14 @@ export interface ReportsData {
     ageGroup: "adult" | "kids" | null;
   };
   summary: {
+    /** Every training member on record, in any status — including those who have left. */
     totalMembers: number;
+    /**
+     * T2b: current training members — active, inactive and tasters (not
+     * cancelled, not guardians; CURRENT_MEMBER). The denominator of the
+     * status shares and of "x% of current members are active".
+     */
+    currentMembers: number;
     activeMembers: number;
     inactiveMembers: number;
     cancelledMembers: number;
@@ -98,7 +136,20 @@ export interface ReportsData {
   };
   weeklyAttendance: { week: string; count: number; isCurrentWeek: boolean }[];
   monthlySignups: { month: string; count: number; isCurrentMonth: boolean }[];
+  /**
+   * @deprecated All-time partition (percentages over every training member
+   * ever recorded, cancelled included). Kept so the shape stays additive;
+   * the screen and the CSV read `currentMembersByStatus` instead (T2b, Q4
+   * A-2 split status card).
+   */
   membersByStatus: { status: string; label: string; count: number; percentage: number }[];
+  /**
+   * T2b: current members only (no cancelled row), each share over
+   * `summary.currentMembers`, so the rows add to 100% ± rounding. Members
+   * who have left are `summary.cancelledMembers`, shown as a count with no
+   * percentage.
+   */
+  currentMembersByStatus: { status: string; label: string; count: number; percentage: number }[];
   checkInMethods: { method: string; label: string; count: number; percentage: number }[];
   topClasses: {
     name: string;
@@ -106,9 +157,16 @@ export interface ReportsData {
     sessions: number;
     averageAttendance: number;
     fillRate: number | null;
+    /** T2b: the class places behind `fillRate` (0 when no session had capacity set). */
+    capacityTotal: number;
   }[];
+  /** Kept for compatibility (tests/e2e/full-app-qa.spec.ts reads it); 0 when the base is 0. Prefer `churn`. */
   churnRate: number;
+  /** T2b: churn with its counts, and joined beside it for the same month. */
+  churn: ChurnFigures;
   retentionRate: number | null;
+  /** T2b: the counts behind `retentionRate` (members who joined 6+ months ago, and how many are still active). */
+  retention: { ratePct: number | null; survived: number; cohort: number };
   netNewByMonth: { month: string; joined: number; cancelled: number; net: number }[];
   paymentHealth: {
     overdueCount: number;
@@ -116,6 +174,8 @@ export interface ReportsData {
     noPaymentYetCount: number;
     failedLast30Days: number;
     recoveryRate: number | null;
+    /** T2b: the counts behind `recoveryRate` (members with a failed payment in 90 days, and how many are now paid). */
+    recovery: { ratePct: number | null; recovered: number; failedMembers: number };
   };
   /** The active attendance-rate definition, computed and labelled. */
   attendanceRate: AttendanceRate;
@@ -184,19 +244,27 @@ function computeAttendanceRate(
 ): AttendanceRate {
   const meta = ATTENDANCE_RATE_MODES.find((m) => m.mode === mode) ?? ATTENDANCE_RATE_MODES[0];
   let value: number | null;
+  let numerator: number;
+  let denominator: number;
   switch (mode) {
     case "attendance-percentage":
-      value = data.activeMembers > 0 ? percent(data.distinctAttendingMembers, data.activeMembers) : null;
+      numerator = data.distinctAttendingMembers;
+      denominator = data.activeMembers;
+      value = denominator > 0 ? percent(numerator, denominator) : null;
       break;
     case "fill-rate":
-      value = data.capacitySum > 0 ? percent(data.attendedAgainstCapacity, data.capacitySum) : null;
+      numerator = data.attendedAgainstCapacity;
+      denominator = data.capacitySum;
+      value = denominator > 0 ? percent(numerator, denominator) : null;
       break;
     case "checkins-per-member":
     default:
-      value = data.activeMembers > 0 ? roundedAverage(data.totalCheckIns, data.activeMembers) : null;
+      numerator = data.totalCheckIns;
+      denominator = data.activeMembers;
+      value = denominator > 0 ? roundedAverage(numerator, denominator) : null;
       break;
   }
-  return { mode, value, label: meta.label, formula: meta.formula };
+  return { mode, value, label: meta.label, formula: meta.formula, numerator, denominator };
 }
 
 function titleCase(value: string) {
@@ -244,6 +312,12 @@ function percent(count: number, total: number) {
   return Math.round((count / total) * 100);
 }
 
+/** n ÷ base as a percentage to one decimal place; null when the base is 0 (T2b). */
+function ratePct1dp(n: number, base: number): number | null {
+  if (base <= 0) return null;
+  return Math.round((n / base) * 1000) / 10;
+}
+
 function roundedAverage(total: number, sessions: number) {
   if (sessions <= 0) return 0;
   return Math.round((total / sessions) * 10) / 10;
@@ -257,6 +331,7 @@ export function createEmptyReportsData(): ReportsData {
     filters: { classId: null, className: null, ageGroup: null },
     summary: {
       totalMembers: 0,
+      currentMembers: 0,
       activeMembers: 0,
       inactiveMembers: 0,
       cancelledMembers: 0,
@@ -271,16 +346,20 @@ export function createEmptyReportsData(): ReportsData {
     weeklyAttendance: [],
     monthlySignups: [],
     membersByStatus: [],
+    currentMembersByStatus: [],
     checkInMethods: [],
     topClasses: [],
     churnRate: 0,
+    churn: { ratePct: null, cancelled: 0, base: 0, joined: 0, net: 0 },
     retentionRate: null,
+    retention: { ratePct: null, survived: 0, cohort: 0 },
     netNewByMonth: [],
     paymentHealth: {
       overdueCount: 0,
       noPaymentYetCount: 0,
       failedLast30Days: 0,
       recoveryRate: null,
+      recovery: { ratePct: null, recovered: 0, failedMembers: 0 },
     },
     attendanceRate: computeAttendanceRate(DEFAULT_ATTENDANCE_RATE_MODE, {
       totalCheckIns: 0,
@@ -551,6 +630,20 @@ export async function getReportsData(
     }))
     .sort((a, b) => b.count - a.count);
 
+  // Q4 A-2 (split status card, T2b): shares over CURRENT members only, so a
+  // cancelled slice is never a share of the people still on the books. The
+  // count of those who left is `summary.cancelledMembers`, shown on its own.
+  const currentRows = memberStatusCounts.filter((row) => row.status !== "cancelled");
+  const currentMembers = currentRows.reduce((sum, row) => sum + row._count, 0);
+  const currentMembersByStatus = currentRows
+    .map((row) => ({
+      status: row.status,
+      label: STATUS_LABELS[row.status] ?? titleCase(row.status),
+      count: row._count,
+      percentage: percent(row._count, currentMembers),
+    }))
+    .sort((a, b) => b.count - a.count);
+
   const totalMethodCount = methodCounts.reduce((sum, row) => sum + row._count, 0);
   const checkInMethods = methodCounts
     .map((row) => ({
@@ -594,6 +687,7 @@ export async function getReportsData(
         sessions,
         averageAttendance: roundedAverage(stats.count, sessions),
         fillRate: stats.capacityTotal > 0 ? percent(stats.count, stats.capacityTotal) : null,
+        capacityTotal: stats.capacityTotal,
       };
     })
     .sort((a, b) => b.count - a.count)
@@ -616,16 +710,26 @@ export async function getReportsData(
 
   // ── Health metrics ───────────────────────────────────────────────────────
 
-  const churnRate = Math.round(
-    ((cancelledThisMonth / Math.max(activeCount + cancelledThisMonth, 1)) * 100) * 10,
-  ) / 10;
+  // Owner decision Q6 (17 Oct 2026): keep the existing formula — cancelled
+  // this month ÷ (active now + cancelled this month) — but return its counts
+  // so every surface prints "x% (n of m)". An empty base is null ("—"), not
+  // the "0%" the old Math.max(…, 1) produced; `churnRate` keeps that number
+  // only for its existing numeric readers.
+  const churnBase = activeCount + cancelledThisMonth;
+  const churnPct = ratePct1dp(cancelledThisMonth, churnBase);
+  const churn: ChurnFigures = {
+    ratePct: churnPct,
+    cancelled: cancelledThisMonth,
+    base: churnBase,
+    joined: newMembersThisMonth,
+    net: newMembersThisMonth - cancelledThisMonth,
+  };
+  const churnRate = churnPct ?? 0;
 
   // 0/0 is "no data", not "perfect": a club with no members who joined 6+
   // months ago has an UNDEFINED survival rate — surface it as null → "—", not a
   // fake 100% (same honesty rule as the attendance-rate modes).
-  const retentionRate = retentionBase > 0
-    ? Math.round((retentionActive / retentionBase) * 1000) / 10
-    : null;
+  const retentionRate = ratePct1dp(retentionActive, retentionBase);
 
   // Recovery rate: of members with a failed payment in the last 90 days,
   // what fraction now have paymentStatus='paid'?
@@ -641,9 +745,7 @@ export async function getReportsData(
 
   // No members had a failed payment → recovery rate is UNDEFINED (nothing to
   // recover), not 100%. null → "—" so the metric never claims a fake success.
-  const recoveryRate = failedMemberIds.length > 0
-    ? Math.round((recoveredCount / failedMemberIds.length) * 1000) / 10
-    : null;
+  const recoveryRate = ratePct1dp(recoveredCount, failedMemberIds.length);
 
   // The rate readout's denominator must carry the SAME age scope as its
   // numerator: under "Kids" the check-ins are kids' check-ins, so the "active
@@ -697,6 +799,7 @@ export async function getReportsData(
     },
     summary: {
       totalMembers,
+      currentMembers,
       activeMembers: statusCount.get("active") ?? 0,
       inactiveMembers: statusCount.get("inactive") ?? 0,
       cancelledMembers: statusCount.get("cancelled") ?? 0,
@@ -711,16 +814,20 @@ export async function getReportsData(
     weeklyAttendance: Array.from(weeklyMap.values()),
     monthlySignups: Array.from(monthlyMap.values()),
     membersByStatus,
+    currentMembersByStatus,
     checkInMethods,
     topClasses,
     churnRate,
+    churn,
     retentionRate,
+    retention: { ratePct: retentionRate, survived: retentionActive, cohort: retentionBase },
     netNewByMonth,
     paymentHealth: {
       overdueCount,
       noPaymentYetCount,
       failedLast30Days: failedLast30,
       recoveryRate,
+      recovery: { ratePct: recoveryRate, recovered: recoveredCount, failedMembers: failedMemberIds.length },
     },
     attendanceRate: computeAttendanceRate(attendanceRateMode, {
       totalCheckIns,
@@ -748,12 +855,21 @@ export async function getReportsData(
  * The CSV export keeps calling `getReportsData` directly: an explicit export
  * should be computed for the moment it was asked for.
  */
+/**
+ * Cache version token. Bump it whenever the `ReportsData` shape changes, so a
+ * 60-second entry written by the previous deployment is never served to code
+ * that expects the new fields (and vice versa). "v2" = T2b counts (churn,
+ * retention, recovery, rate numerator/denominator, current status shares).
+ */
+export const REPORTS_DATA_SHAPE = "v2";
+
 export function getReportsDataCached(
   tenantId: string,
   options: Parameters<typeof getReportsData>[1] = {},
 ): Promise<ReportsData> {
   const key = [
     "reports",
+    REPORTS_DATA_SHAPE,
     tenantId,
     String(clampWeeks(options.weeksBack)),
     options.classId?.trim() || "-",

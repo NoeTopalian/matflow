@@ -22,6 +22,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/page-header";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
+import { formatPct, formatRatio, ratioCounts } from "@/components/dashboard/reports-primitives";
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541"];
 const STATUS_COLORS: Record<string, string> = { active: "#67BA90", taster: "#C9F990", inactive: "#EB3163", cancelled: "#8E1F57" };
@@ -72,6 +73,12 @@ function buildReport(metrics: Metrics, answers: string[]): string {
   const engagementRate = metrics.totalMembers > 0
     ? Math.min(100, Math.round((metrics.activeMembersThisMonth / metrics.totalMembers) * 100))
     : 0;
+  // T2b: the rate always travels with its counts, "x% (n of m)".
+  const engagementText = formatRatio(
+    metrics.totalMembers > 0 ? engagementRate : null,
+    metrics.activeMembersThisMonth,
+    metrics.totalMembers,
+  );
 
   const referrals = answers[0] || "not specified";
   const events = answers[1] || "none reported";
@@ -88,7 +95,7 @@ function buildReport(metrics: Metrics, answers: string[]): string {
   lines.push(
     `This month ${metrics.gymName} maintained ${metrics.totalMembers} active members across ${metrics.activeClasses} classes. ` +
     `You recorded ${metrics.checkinsThisMonth} check-ins — ${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} last month — ` +
-    `giving an engagement rate of approximately ${engagementRate}% of your membership base.`
+    `giving an engagement rate of ${engagementText} — active members who checked in at least once.`
   );
   lines.push("");
   lines.push("## Member Growth");
@@ -368,21 +375,26 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             // Same population and wording as Reports and Members (T1).
             label: POPULATION_COPY.active.label,
             value: metrics.totalMembers,
-            sub: `${metrics.newThisMonth} new this month`,
+            // T2b: the change pill is a percentage, so its two counts sit here.
+            sub: `${metrics.newThisMonth} new this month · ${metrics.newLastMonth} last month`,
             icon: Users,
             pct: memberDelta,
           },
           {
             label: "Check-ins",
             value: metrics.checkinsThisMonth,
-            sub: "this month",
+            sub: `this month · ${metrics.checkinsLastMonth} last month`,
             icon: CalendarCheck,
             pct: checkinDelta,
           },
           {
             label: "Engagement",
-            value: `${engagementRate}%`,
-            sub: "of active members checked in",
+            // T2b: the percentage with its counts; "—" when there are no
+            // active members (an undefined rate is never "0%").
+            value: formatPct(metrics.totalMembers > 0 ? engagementRate : null, metrics.totalMembers),
+            sub: metrics.totalMembers > 0
+              ? `${ratioCounts(metrics.activeMembersThisMonth, metrics.totalMembers)} active members checked in this month`
+              : "No active members yet",
             icon: TrendingUp,
             pct: null,
           },
