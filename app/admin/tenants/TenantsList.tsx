@@ -110,7 +110,10 @@ export default function TenantsList({
 
   function exportCsv() {
     const rows = [
-      ["Gym", "Slug", "Owner Name", "Owner Email", "Members", "Subscription Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created", ...(closedView ? ["Closed"] : [])],
+      // Headers unchanged for the open view (no documented consumer; compatibility
+      // unknown), so "Status" here is the subscription status; the closed view
+      // only appends a Closed column.
+      ["Gym", "Slug", "Owner Name", "Owner Email", "Members", "Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created", ...(closedView ? ["Closed"] : [])],
       ...filtered.map((t) => [
         t.name,
         t.slug,

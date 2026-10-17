@@ -97,6 +97,9 @@ const findManyArgs = () => db.calls.find((c) => c.method === "findMany")?.args a
 const closed = (id: string) => db.tenants.find((t) => t.id === id)!;
 const rowNames = () => screen.getAllByRole("row").slice(1).map((r) => r.querySelector("td div")?.textContent);
 
+/** The tenants CSV header row as it was before this change (main c5a74c0). */
+const OPEN_CSV_HEADER = "Gym,Slug,Owner Name,Owner Email,Members,Status,Stripe Connected,Stripe Charges Enabled,Onboarding Completed,Created";
+
 /** Captures the CSV the Export button builds, restoring the mocks afterwards (afterEach). */
 function captureCsv() {
   const out = { text: Promise.resolve(""), name: "" };
@@ -142,7 +145,8 @@ describe("Tenants list — default view", () => {
     await renderList();
     fireEvent.click(screen.getByRole("button", { name: "Export CSV (2)" }));
     const text = await csv.text;
-    expect(text.split("\n")[0].includes("Closed")).toBe(false);
+    // The open view's header row is exactly the pre-existing one (compatibility).
+    expect(text.split("\n")[0]).toBe(OPEN_CSV_HEADER);
     expect(text).not.toContain("closed-club");
     expect(text).not.toContain("aged-closed");
   });
@@ -204,7 +208,7 @@ describe("Tenants list — Closed clubs view", () => {
     fireEvent.click(screen.getByRole("button", { name: "Export CSV (2)" }));
     const lines = (await csv.text).split("\n");
     expect(lines).toHaveLength(3);
-    expect(lines[0].endsWith(",Closed")).toBe(true);
+    expect(lines[0]).toBe(`${OPEN_CSV_HEADER},Closed`);
     expect(lines[1]).toContain("closed-club");
     expect(lines[1].endsWith(closed("c1").deletedAt!.toISOString())).toBe(true);
     expect(lines.join("\n")).not.toContain("open-one");
