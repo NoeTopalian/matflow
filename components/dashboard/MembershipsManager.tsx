@@ -17,6 +17,16 @@ import { Switch } from "@/components/ui/switch";
 import type { MembershipTierRow } from "@/app/dashboard/memberships/page";
 import { describeApiError } from "@/lib/api-field-errors";
 import { BILLING_CYCLES, cycleLabel, isBillingCycle, type BillingCycle } from "@/lib/billing-cycle";
+import {
+  CLASS_LIMIT_MAX,
+  CLASS_LIMIT_MIN,
+  CLASS_LIMIT_WEEK_OPTIONS,
+  classLimitSortValue,
+  classLimitText,
+  tierAllowance,
+  weeksText,
+  type ClassAllowance,
+} from "@/lib/class-allowance";
 
 interface Props {
   initialTiers: MembershipTierRow[];
@@ -47,19 +57,35 @@ export function tierCycleText(t: { pricePence: number; billingCycle: string; des
 }
 
 /**
- * "Max classes/week" as typed (B1-a, 15 Oct 2026). Blank — including
- * whitespace only — means Unlimited; otherwise a whole number 1–30, the range
- * both membership routes accept. Anything else is refused here, before a
- * request, so a bad value can never be sent or quietly read as blank.
+ * "Classes allowed" as typed (B1-a, 15 Oct 2026; widened by T7c to the
+ * allowance's 1–60). Blank — including whitespace only — means Unlimited;
+ * otherwise a whole number in the range both membership routes accept.
+ * Anything else is refused here, before a request, so a bad value can never be
+ * sent or quietly read as blank.
  */
 export type ClassLimitInput = { kind: "blank" } | { kind: "value"; value: number } | { kind: "invalid" };
-export const CLASS_LIMIT_ERROR = "Max classes per week must be a whole number from 1 to 30, or left blank for Unlimited.";
+export const CLASS_LIMIT_ERROR = `Classes allowed must be a whole number from ${CLASS_LIMIT_MIN} to ${CLASS_LIMIT_MAX}, or left blank for Unlimited.`;
 export function parseClassLimit(raw: string): ClassLimitInput {
   const s = raw.trim();
   if (s === "") return { kind: "blank" };
   if (!/^[0-9]{1,2}$/.test(s)) return { kind: "invalid" };
   const n = Number(s);
-  return n >= 1 && n <= 30 ? { kind: "value", value: n } : { kind: "invalid" };
+  return n >= CLASS_LIMIT_MIN && n <= CLASS_LIMIT_MAX ? { kind: "value", value: n } : { kind: "invalid" };
+}
+
+const sameAllowance = (a: ClassAllowance | null, b: ClassAllowance | null) =>
+  a === b || (a !== null && b !== null && a.limit === b.limit && a.weeks === b.weeks);
+
+/** The editor's note under the allowance fields: what the window means, said plainly. */
+export function allowanceNote(rawLimit: string, rawWeeks: string): string {
+  if (parseClassLimit(rawLimit).kind !== "value") return "Leave blank for Unlimited.";
+  const span = rawWeeks === "1" ? "7 days" : `${rawWeeks} weeks`;
+  return (
+    `Counted over the ${span} before each class, so several classes in one week are fine while the total stays within the allowance. ` +
+    "It is enforced as soon as you save: the member app, the kiosk and booking refuse once it is used up, and the desk and the card scanner ask before admitting. " +
+    "A lower allowance applies from the next check-in; nothing already recorded changes. " +
+    "Class-pack check-ins do not count: once the allowance is used up, a member with a class pack can still check in with a pack credit."
+  );
 }
 
 /** Chip surfaces derived from tokens, so they stay legible on the light shell. */
@@ -80,7 +106,9 @@ const emptyForm = {
   pricePence: "",
   currency: "GBP",
   billingCycle: "monthly" as BillingCycle,
-  maxClassesPerWeek: "",
+  // T7c: "Classes allowed" (blank = Unlimited) "every" N weeks.
+  classLimit: "",
+  classLimitWeeks: "1",
   isKids: false,
   // Stripe linkage. Owners paste the price_… and prod_… ids from their
   // Stripe dashboard so F2/F3 (member self-subscribe + parent-pays-for-
@@ -101,10 +129,10 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
-  // The class limit this edit form was opened with (null = Unlimited). A save
-  // sends the limit only when the owner changed it from this value, so an
-  // unrelated edit cannot overwrite a limit another session has since set.
-  const [loadedLimit, setLoadedLimit] = useState<number | null>(null);
+  // The class allowance this edit form was opened with (null = Unlimited). A
+  // save sends the allowance only when the owner changed it from this value,
+  // so an unrelated edit cannot overwrite one another session has since set.
+  const [loadedAllowance, setLoadedAllowance] = useState<ClassAllowance | null>(null);
   const [saving, setSaving] = useState(false);
   // ADR-001 D2 slice 2: the venue picker appears only once the club has more
   // than one venue; a failed read is said, not shown as "one venue".
@@ -140,14 +168,16 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
 
   function openEdit(tier: MembershipTierRow) {
     setEditingId(tier.id);
-    setLoadedLimit(tier.maxClassesPerWeek ?? null);
+    const allowance = tierAllowance(tier);
+    setLoadedAllowance(allowance);
     setForm({
       name: tier.name,
       description: tier.description ?? "",
       pricePence: String(tier.pricePence / 100),
       currency: tier.currency,
       billingCycle: isBillingCycle(tier.billingCycle) ? tier.billingCycle : "monthly",
-      maxClassesPerWeek: tier.maxClassesPerWeek != null ? String(tier.maxClassesPerWeek) : "",
+      classLimit: allowance ? String(allowance.limit) : "",
+      classLimitWeeks: String(allowance?.weeks ?? 1),
       isKids: tier.isKids,
       stripePriceId: tier.stripePriceId ?? "",
       stripeProductId: tier.stripeProductId ?? "",
@@ -166,23 +196,24 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       toast("Invalid price", "error");
       return;
     }
-    const limit = parseClassLimit(form.maxClassesPerWeek);
+    const limit = parseClassLimit(form.classLimit);
     if (limit.kind === "invalid") {
       toast(CLASS_LIMIT_ERROR, "error");
       return;
     }
-    const nextLimit = limit.kind === "value" ? limit.value : null;
-    // Edit: send the limit only when its normalised value differs from the
-    // one this form loaded — a number, or an explicit null to clear it (an
+    const weeks = Number(form.classLimitWeeks);
+    const next: ClassAllowance | null = limit.kind === "value" ? { limit: limit.value, weeks } : null;
+    // Edit: send the allowance only when it differs from the one this form
+    // loaded — both numbers, or an explicit null pair to clear it (an
     // `undefined` key is dropped by JSON, which is how a clear used to be
-    // lost). Unchanged, or changed and put back, the key is left out so the
+    // lost). Unchanged, or changed and put back, both keys are left out so the
     // server keeps whatever it holds now. This is not general conflict
-    // protection: two people deliberately editing the limit still overwrite
-    // each other. Create: blank omits the key; the create route stores null
-    // when it is absent and does not accept null itself.
-    const maxClassesPerWeek = editingId
-      ? (nextLimit === loadedLimit ? undefined : nextLimit)
-      : (nextLimit ?? undefined);
+    // protection: two people deliberately editing the allowance still
+    // overwrite each other. Create: blank omits both keys (Unlimited).
+    const send = editingId ? !sameAllowance(next, loadedAllowance) : next !== null;
+    const allowanceBody = send
+      ? { classLimit: next?.limit ?? null, classLimitWeeks: next?.weeks ?? null }
+      : {};
 
     setSaving(true);
     try {
@@ -192,7 +223,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
         pricePence,
         currency: form.currency,
         billingCycle: form.billingCycle,
-        maxClassesPerWeek,
+        ...allowanceBody,
         isKids: form.isKids,
         stripePriceId: form.stripePriceId.trim() || null,
         stripeProductId: form.stripeProductId.trim() || null,
@@ -337,16 +368,16 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
     },
     {
       key: "classLimit",
-      header: "Class limit",
-      width: "7rem",
+      header: "Classes allowed",
+      width: "9rem",
       align: "right",
-      // Null means "Unlimited", which is the LARGEST class limit, not a blank.
-      // Left raw it sorts as an empty value and sinks to the bottom in both
-      // directions, which reads as the smallest.
-      sortValue: (t) => t.maxClassesPerWeek ?? Number.MAX_SAFE_INTEGER,
+      // Unlimited is the LARGEST allowance, not a blank: left raw it sorts as
+      // an empty value and sinks to the bottom in both directions. Allowances
+      // over different spans sort by their average per week.
+      sortValue: (t) => classLimitSortValue(tierAllowance(t)),
       cell: (t) => (
-        <span className="whitespace-nowrap text-tx-2">
-          {t.maxClassesPerWeek != null ? `${t.maxClassesPerWeek}/wk` : "Unlimited"}
+        <span className="whitespace-nowrap text-tx-2" data-testid="tier-class-limit">
+          {classLimitText(tierAllowance(t))}
         </span>
       ),
     },
@@ -452,8 +483,12 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                 )}
                 <p className="truncate text-xs text-tx-4">
                   {tierPriceText(t)} · {tierCycleText(t)}
-                  {t.maxClassesPerWeek != null && ` · max ${t.maxClassesPerWeek}/wk`}
                   {` · ${t.activeMembers} active ${t.activeMembers === 1 ? "member" : "members"}`}
+                </p>
+                {/* T7c: the allowance on its own line, so a phone card never
+                    truncates it away; Unlimited is shown too, as in the table. */}
+                <p className="text-xs text-tx-3" data-testid="tier-card-allowance">
+                  Classes: {classLimitText(tierAllowance(t))}
                 </p>
                 {t.isKids && (
                   <span className="mt-1 inline-flex">
@@ -578,21 +613,49 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
             </select>
           </div>
 
-          <div>
-            <label htmlFor="tier-max-classes" className="mb-1 block text-xs text-tx-2">Max classes/week</label>
-            {/* Text, not type="number": a number field reports an unparseable
-                entry as "", which would save as Unlimited. parseClassLimit
-                decides instead, and refuses what it cannot read. */}
-            <input
-              id="tier-max-classes"
-              type="text"
-              inputMode="numeric"
-              autoComplete="off"
-              value={form.maxClassesPerWeek}
-              onChange={(e) => setForm((f) => ({ ...f, maxClassesPerWeek: e.target.value }))}
-              className="w-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors placeholder:text-tx-3 focus:border-bd-active"
-              placeholder="Unlimited"
-            />
+          {/* T7c (Sean note 5): "N classes every M weeks", one rolling window. */}
+          <div className="sm:col-span-2" role="group" aria-labelledby="tier-allowance-label">
+            <p id="tier-allowance-label" className="mb-1 text-xs text-tx-2">Class allowance</p>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="w-32">
+                <label htmlFor="tier-class-limit" className="mb-1 block text-[11px] text-tx-3">Classes allowed</label>
+                {/* Text, not type="number": a number field reports an
+                    unparseable entry as "", which would save as Unlimited.
+                    parseClassLimit decides instead, and refuses what it
+                    cannot read. */}
+                <input
+                  id="tier-class-limit"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={form.classLimit}
+                  onChange={(e) => setForm((f) => ({ ...f, classLimit: e.target.value }))}
+                  className="w-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors placeholder:text-tx-3 focus:border-bd-active"
+                  placeholder="Unlimited"
+                />
+              </div>
+              <div>
+                <label htmlFor="tier-class-limit-weeks" className="mb-1 block text-[11px] text-tx-3">every</label>
+                {/* Disabled while "Classes allowed" is blank: a period on its
+                    own saves as Unlimited, so it must not look chosen. */}
+                <Select
+                  id="tier-class-limit-weeks"
+                  aria-label="every (weeks)"
+                  value={form.classLimitWeeks}
+                  onChange={(e) => setForm((f) => ({ ...f, classLimitWeeks: e.target.value }))}
+                  disabled={form.classLimit.trim() === ""}
+                  title={form.classLimit.trim() === "" ? "Enter how many classes first; blank is Unlimited." : undefined}
+                  className="w-32"
+                >
+                  {CLASS_LIMIT_WEEK_OPTIONS.map((w) => (
+                    <option key={w} value={String(w)}>{weeksText(w)}</option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            <p className="mt-1.5 text-[11px] text-tx-4" data-testid="tier-allowance-note">
+              {allowanceNote(form.classLimit, form.classLimitWeeks)}
+            </p>
           </div>
 
           <div className="flex items-center gap-3 sm:col-span-2">

@@ -10,6 +10,10 @@ export type MembershipTierRow = {
   currency: string;
   billingCycle: string;
   maxClassesPerWeek: number | null;
+  /** T7c: "N classes every M weeks"; read through tierAllowance() in
+   *  lib/class-allowance.ts, never directly (the reader rule lives there). */
+  classLimit: number | null;
+  classLimitWeeks: number | null;
   isKids: boolean;
   isActive: boolean;
   createdAt: string;
@@ -49,6 +53,8 @@ export default async function MembershipsPage() {
     currency: t.currency,
     billingCycle: t.billingCycle,
     maxClassesPerWeek: t.maxClassesPerWeek,
+    classLimit: t.classLimit,
+    classLimitWeeks: t.classLimitWeeks,
     isKids: t.isKids,
     isActive: t.isActive,
     createdAt: t.createdAt.toISOString(),

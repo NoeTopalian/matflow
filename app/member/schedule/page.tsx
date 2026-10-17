@@ -643,6 +643,10 @@ export default function MemberSchedulePage() {
   const [scheduleLoading, setScheduleLoading] = useState(true);
   // UI-RULES §7: a failed load is an error, never "No classes today".
   const [loadError, setLoadError] = useState<string | null>(null);
+  // T7: "2 of 4 classes used in the last 4 weeks" for a plan with an
+  // allowance. Supplementary to the grid, so its failure is said in its own
+  // line rather than replacing the timetable (and never shown as nothing).
+  const [allowance, setAllowance] = useState<{ kind: "loading" } | { kind: "ready"; text: string | null } | { kind: "error" }>({ kind: "loading" });
 
   const outerRef    = useRef<HTMLDivElement>(null); // overflow-hidden viewport
   const stripRef    = useRef<HTMLDivElement>(null); // 3-panel strip
@@ -867,6 +871,14 @@ export default function MemberSchedulePage() {
         setSubscribed(new Set(data.classIds ?? []));
       });
 
+    // T7: the plan allowance line. Not part of the grid's all-or-nothing load.
+    fetch("/api/member/me/allowance", { cache: "no-store" })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((d: { allowance?: { text?: unknown } | null }) => {
+        setAllowance({ kind: "ready", text: typeof d.allowance?.text === "string" ? d.allowance.text : null });
+      })
+      .catch(() => setAllowance({ kind: "error" }));
+
     // Raw exception text never reaches the member (UI-RULES §7/§10).
     Promise.all([classes, subs])
       .catch(() => setLoadError("Couldn't load your timetable — tap to retry"))
@@ -970,6 +982,17 @@ export default function MemberSchedulePage() {
             Today
           </button>
         </div>
+
+        {allowance.kind === "ready" && allowance.text && (
+          <p className="text-xs font-medium px-1 mb-2" style={{ color: "var(--member-text)" }} data-testid="schedule-allowance">
+            {allowance.text}
+          </p>
+        )}
+        {allowance.kind === "error" && (
+          <p className="text-xs px-1 mb-2" style={{ color: "var(--member-text-muted)" }} data-testid="schedule-allowance">
+            Couldn&apos;t load how many classes your plan has left.
+          </p>
+        )}
 
         {/* Day pills */}
         <div ref={dayScrollRef} className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-hide">

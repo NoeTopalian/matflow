@@ -4,9 +4,10 @@ import { z } from "zod";
 import { requireApiStaff } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
-import { restorePackCreditsForAttendance, staffTierAsk } from "@/lib/checkin";
+import { restorePackCreditsForAttendance, staffAllowanceAsk, staffTierAsk, type AllowanceFacts } from "@/lib/checkin";
 import { checkinRefusal } from "@/lib/checkin-refusal";
 import { TIER_OVERRIDE_REASON } from "@/lib/class-tier-gate";
+import { ALLOWANCE_OVERRIDE_REASON } from "@/lib/class-allowance";
 
 const schema = z.object({
   memberId: z.string().min(1),
@@ -31,6 +32,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid data" }, { status: 400 });
   const tierConfirmed = parsed.data.acknowledged?.includes(TIER_OVERRIDE_REASON) === true;
+  const allowanceConfirmed = parsed.data.acknowledged?.includes(ALLOWANCE_OVERRIDE_REASON) === true;
 
   try {
     const outcome = await withTenantContext(tenantId, async (tx) => {
@@ -41,7 +43,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // 2026: coaches see all, theirs highlighted). Tenancy only.
           class: { tenantId },
         },
-        select: { id: true, classId: true, class: { select: { name: true } } },
+        select: { id: true, classId: true, date: true, startTime: true, class: { select: { name: true } } },
       });
       if (!instance) return "no-instance" as const;
       const member = await tx.member.findFirst({
@@ -62,6 +64,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // when the tick would admit someone: a member already in is not
         // re-judged.
         let tierOverridden = false;
+        let overAllowance: AllowanceFacts | null = null;
         if (!existing) {
           const tier = await staffTierAsk(
             tx,
@@ -71,6 +74,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           );
           if (tier.kind === "tier_not_included") return tier;
           tierOverridden = tier.overridden;
+          // T7: the plan allowance, asked the same way, under the Member lock
+          // taken after staffTierAsk's Class lock (the engine's order).
+          const allowance = await staffAllowanceAsk(
+            tx,
+            { tenantId, memberId: member.id, confirmed: allowanceConfirmed },
+            { id: instance.id, date: instance.date, startTime: instance.startTime },
+          );
+          if (allowance.kind === "member_not_found") return "no-member" as const;
+          if (allowance.kind === "allowance_reached") return allowance;
+          if (allowance.kind === "open" && allowance.overridden) overAllowance = allowance.facts;
         }
         const record = await tx.attendanceRecord.upsert({
           where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
@@ -92,12 +105,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // A row another device created between the read and the upsert hits
         // the no-op update branch; it is ours only if it reads as this tick's.
         const created = !existing && record.checkInMethod === "admin" && record.checkedInById === userId;
+        const overrides: string[] = [];
+        if (created && tierOverridden) overrides.push(TIER_OVERRIDE_REASON);
+        if (created && overAllowance) overrides.push(ALLOWANCE_OVERRIDE_REASON);
         return {
           kind: "marked" as const,
           memberId: member.id,
           recordId: record.id,
           created,
-          overrides: created && tierOverridden ? [TIER_OVERRIDE_REASON] : [],
+          overrides,
+          overAllowance: created ? overAllowance : null,
         };
       } else {
         // Unmark is the inverse of a check-in: if the attendance was covered
@@ -114,12 +131,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           await tx.attendanceRecord.deleteMany({ where: { id: { in: ids } } });
         }
       }
-      return { kind: "marked" as const, memberId: member.id, recordId: null, created: false, overrides: [] as string[] };
+      return {
+        kind: "marked" as const, memberId: member.id, recordId: null, created: false,
+        overrides: [] as string[], overAllowance: null as AllowanceFacts | null,
+      };
     });
 
     if (outcome === "no-instance") return NextResponse.json({ error: "Class not found" }, { status: 404 });
     if (outcome === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
-    if (outcome.kind === "tier_not_included") {
+    if (outcome.kind === "tier_not_included" || outcome.kind === "allowance_reached") {
       // The askable answer the register reads: confirm, then send
       // acknowledged: ["tier_not_included"] to admit.
       const refusal = checkinRefusal(outcome)!;
@@ -136,6 +156,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             classInstanceId, memberId: outcome.memberId, recordId: outcome.recordId, created: outcome.created,
             // The gates staff admitted past, as POST /api/checkin records them.
             ...(outcome.overrides.length > 0 ? { overrides: outcome.overrides } : {}),
+            ...(outcome.overAllowance ? { overAllowance: outcome.overAllowance } : {}),
           }
         : { classInstanceId, memberId: outcome.memberId },
       req,

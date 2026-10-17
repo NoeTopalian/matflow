@@ -10,6 +10,7 @@
 import type { PerformCheckinResult as CheckinResult } from "@/lib/checkin";
 import { tierRefusalSentence } from "@/lib/class-tier-gate";
 import { classNotLiveSentence } from "@/lib/class-live";
+import { allowanceRefusalSentence } from "@/lib/class-allowance";
 
 export type CheckinRefusalReason =
   | "class_not_found"
@@ -27,11 +28,18 @@ export type CheckinRefusalReason =
   | "kids_class"
   | "venue_not_covered"
   | "tier_not_included"
+  | "allowance_reached"
   | "member_not_found";
 
 export type CheckinRefusal = {
   status: 402 | 403 | 404 | 409;
-  body: { error: string; reason: CheckinRefusalReason; askable?: boolean };
+  body: {
+    error: string;
+    reason: CheckinRefusalReason;
+    askable?: boolean;
+    /** allowance_reached only: the count, so a staff client can word its question. */
+    allowance?: { used: number; limit: number; weeks: number; nextFree: { date: string; time: string } | null };
+  };
 };
 
 function ukDate(d: Date): string {
@@ -60,7 +68,7 @@ export const TEAMUP_NO_PLAN_REFUSAL = "Your membership is with TeamUp and no pla
  */
 export function checkinRefusal(
   result: CheckinResult,
-  club: { paymentRail?: string | null } = {},
+  club: { paymentRail?: string | null; /** A parent checking in a child: the child's name, for the allowance refusal. */ memberName?: string | null } = {},
 ): CheckinRefusal | null {
   switch (result.kind) {
     case "class_not_found":
@@ -150,6 +158,22 @@ export function checkinRefusal(
           error: tierRefusalSentence(result.className, result.tierName),
           reason: "tier_not_included",
           ...(result.askable ? { askable: true } : {}),
+        },
+      };
+    case "allowance_reached":
+      // T7: the count and the date the next class frees up, in the member's
+      // words. On a staff door the answer is askable: the register confirms
+      // and resends with acknowledged: ["allowance_reached"].
+      return {
+        status: 403,
+        body: {
+          error: allowanceRefusalSentence(result, club.memberName ?? null),
+          reason: "allowance_reached",
+          ...(result.askable ? { askable: true } : {}),
+          allowance: {
+            used: result.used, limit: result.limit, weeks: result.weeks, nextFree: result.nextFree,
+            ...(result.around ? { around: true } : {}),
+          },
         },
       };
     case "member_not_found":

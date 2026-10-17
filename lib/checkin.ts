@@ -23,6 +23,56 @@
 // with `overrides: ["tier_not_included"]` for the route to record. A class
 // with no memberships selected, or with a roster, is not tier-gated.
 //
+// ALLOWANCE (T7, Sean note 5; owner decisions 17 Oct 2026): a plan with
+// "N classes every M weeks" (lib/class-allowance.ts) is enforced as soon as
+// the owner sets it. `allowanceGate` follows the tier gate's door profile:
+// self and kiosk "refuse" with the count and the date the next class frees
+// up; the register (admin), the card scanner (qr) and the coach tick "ask",
+// and an admission past the allowance is reported in `overrides` as
+// "allowance_reached" with `overAllowance` for the route's audit row. A
+// check-in paid by a class pack is not counted and not gated.
+//
+// Lock order on EVERY check-in write transaction: Class FOR UPDATE
+// (capacityState / staffTierAsk), then the Member row (memberLock: FOR NO KEY
+// UPDATE, see there for why not FOR UPDATE), then
+// statement C (lib/class-allowance-count.ts, a plain read), then the pack
+// decrement and the AttendanceRecord insert. The Member lock is taken
+// unconditionally, whatever the plan and the door, because whether a plan is
+// limited is itself configuration that can change mid-check-in: a lock taken
+// only when an earlier read said "limited" would not serialise against a
+// check-in that read "Unlimited" a moment before (planning evidence §8b.3
+// C10 and §8c rule 4). Two check-ins for the same member therefore queue on
+// the Member row, and the second one's count starts after the first commits.
+// Lock-order audit (17 Oct 2026, revised after review): every check-in path
+// is Class, then Member, then a pack. The writers that touch the same rows in
+// another order were aligned rather than documented:
+//  - an owner's undo-to batch (lib/undo-batch.ts) locks every Class it will
+//    touch, then every Member, before running any handler, so a member edit
+//    followed by a class edit, a roster restore (KEY SHARE on Class), or a
+//    pack credit restored before a member edit can no longer form a cycle;
+//  - the Stripe dispute webhook (app/api/stripe/webhook/route.ts) writes the
+//    Member row before it voids the disputed pack (Member, then pack);
+//  - member deletion locks the Member row before touching its packs
+//    (lib/member-delete.ts), so a pack check-in holding the Member lock cannot
+//    deadlock with a cascade (§8b.3 C1).
+// The refund route and the charge.refunded / invoice.voided webhook legs
+// touch a pack and no Member row, so they wait at most; they cannot cycle.
+//
+// Coverage is re-checked under the Member lock (R-ALLOW rule 2, §8c): the
+// coverage, venue, hold and tier decisions are made from a read taken before
+// the write transaction, so the lock re-reads the columns they depend on and
+// a plan, payment or hold change committed in between restarts the check-in
+// from the top (memberChangedSince / MemberChangedMidCheckin).
+//
+// Class packs and the allowance (owner decision: a pack redemption does not
+// count against the plan). Which pays is decided in ONE write transaction:
+//  - a member the plan does not cover pays with a pack where they have one,
+//    at the member app and the kiosk alike: not counted, not gated;
+//  - a covered member is counted against the allowance; once it is used up
+//    on a refusing door (member app, parent, kiosk), a usable pack pays for
+//    the class instead of a refusal (and that visit is not counted);
+//  - staff doors never spend a pack: they ask, as before.
+//
 // CAPACITY, added round 3. `Class.maxCapacity` was enforced at BOOKING only
 // (`/api/member/class-subscriptions/[classId]`, round 1 defect L-F 1) and
 // nowhere at check-in, so a class that seats twelve took a fourteenth person
@@ -70,6 +120,14 @@ import { isOverdue } from "@/lib/overdue";
 import { isAdultAccount } from "@/lib/account-type";
 import { classTierCovers, TIER_OVERRIDE_REASON, type TierGateMode } from "@/lib/class-tier-gate";
 import { doorLifecycle } from "@/lib/class-lifecycle";
+import {
+  ALLOWANCE_OVERRIDE_REASON,
+  allowanceVerdict,
+  slotMinute,
+  type AllowanceGateMode,
+  type LocalSlot,
+} from "@/lib/class-allowance";
+import { readAllowanceSnapshot } from "@/lib/class-allowance-count";
 
 
 /**
@@ -155,9 +213,35 @@ export type PerformCheckinArgs = {
    * the write-phase re-check are T4c's.
    */
   enforceClassStateGate?: boolean;
+  /**
+   * T7: the member's plan allowance ("N classes every M weeks"). "refuse" for
+   * the member-decided doors (self, parent, kiosk); "ask" for the staff doors
+   * (register, card scanner), refused with an askable answer unless
+   * `allowanceOverrideConfirmed`, then admitted and reported in `overrides`.
+   * Omitted = "off" (system paths, tests). Judged inside the write
+   * transaction after the Class lock, under the Member lock.
+   */
+  allowanceGate?: AllowanceGateMode;
+  /** Staff saw the "allowance used" question and admitted anyway. */
+  allowanceOverrideConfirmed?: boolean;
   // Staff user id when method=admin (the person clicking "check in" in the
   // dashboard). Null/undefined for self / kiosk / auto / system.
   checkedInByUserId?: string | null;
+};
+
+/** A gate a staff door admitted past on confirmation. */
+export type CheckinOverride = typeof TIER_OVERRIDE_REASON | typeof ALLOWANCE_OVERRIDE_REASON;
+
+/** The allowance count a refusal, a question or an override carries. */
+export type AllowanceFacts = {
+  /** Counted classes in the busiest window containing this session (excluding it). */
+  used: number;
+  limit: number;
+  weeks: number;
+  /** When the next class frees up, in the club's clock; null if it cannot be stated. */
+  nextFree: LocalSlot | null;
+  /** The busiest window ends after this session (a later visit was recorded first); the copy says "within W weeks of this class". */
+  around?: true;
 };
 
 export type PerformCheckinResult =
@@ -171,8 +255,10 @@ export type PerformCheckinResult =
        * let the room quietly fill past what the coach planned for.
        */
       overCapacity?: { taken: number; maxCapacity: number };
-      /** Gates staff admitted past (T6a: "tier_not_included"). Recorded by the route. */
-      overrides?: Array<typeof TIER_OVERRIDE_REASON>;
+      /** Gates staff admitted past (T6a "tier_not_included", T7 "allowance_reached"). Recorded by the route. */
+      overrides?: Array<CheckinOverride>;
+      /** T7: set when staff admitted past the allowance; the facts the audit row records. */
+      overAllowance?: AllowanceFacts;
     }
   | { kind: "class_not_found" }
   | { kind: "class_full"; taken: number; maxCapacity: number }
@@ -199,6 +285,12 @@ export type PerformCheckinResult =
       /** True on a staff door: staff may admit after confirming. */
       askable: boolean;
     }
+  | ({
+      /** T7: the member's plan allowance is used up for this session's window. */
+      kind: "allowance_reached";
+      /** True on a staff door: staff may admit after confirming. */
+      askable: boolean;
+    } & AllowanceFacts)
   | {
       kind: "outside_window";
       when: "before" | "after";
@@ -374,6 +466,218 @@ export async function staffTierAsk(
   );
 }
 
+export type AllowanceGateState =
+  | { kind: "open"; overridden: false }
+  | ({ kind: "open"; overridden: true } & { facts: AllowanceFacts })
+  | { kind: "duplicate" }
+  | { kind: "member_not_found" }
+  | ({ kind: "allowance_reached"; askable: boolean } & AllowanceFacts);
+
+/**
+ * The columns of the Member row the gates and the coverage decision read
+ * before the write transaction. The Member lock re-reads them (dates as epoch
+ * milliseconds, the same convention statement C uses), so a change committed
+ * between that read and the lock is seen and the check-in restarts.
+ */
+export type GateMemberView = {
+  membershipTierId: string | null;
+  paymentStatus: string | null;
+  stripeSubscriptionId: string | null;
+  nextDueAt: Date | null;
+  holdUntil: Date | null;
+  waiverAccepted: boolean | null;
+  accountType: string | null;
+};
+
+type MemberLockRow = {
+  id: string;
+  membershipTierId?: string | null;
+  paymentStatus?: string | null;
+  stripeSubscriptionId?: string | null;
+  nextDueAtMs?: number | null;
+  holdUntilMs?: number | null;
+  waiverAccepted?: boolean | null;
+  accountType?: string | null;
+};
+
+/**
+ * Thrown inside a write transaction when the Member row changed between the
+ * pre-transaction read and the Member lock. performCheckin rolls the attempt
+ * back (nothing was written yet) and runs the whole check-in again, so every
+ * gate is judged on the row as it stands under the lock.
+ */
+export class MemberChangedMidCheckin extends Error {
+  constructor() {
+    super("The member's plan, payment or hold changed during the check-in");
+    this.name = "MemberChangedMidCheckin";
+  }
+}
+
+/** How many times a check-in restarts on MemberChangedMidCheckin before it answers "error". */
+const MEMBER_CHANGED_RESTARTS = 2;
+
+const ms = (d: Date | null | undefined): number | null => (d ? d.getTime() : null);
+
+/**
+ * True when the locked row differs from the pre-transaction read on any
+ * column a gate or the coverage decision used. A column the lock row does not
+ * carry is not compared (the SELECT below always carries all of them).
+ */
+export function memberChangedSince(pre: GateMemberView, locked: MemberLockRow): boolean {
+  const pairs: Array<[keyof MemberLockRow, unknown]> = [
+    ["membershipTierId", pre.membershipTierId ?? null],
+    ["paymentStatus", pre.paymentStatus ?? null],
+    ["stripeSubscriptionId", pre.stripeSubscriptionId ?? null],
+    ["nextDueAtMs", ms(pre.nextDueAt)],
+    ["holdUntilMs", ms(pre.holdUntil)],
+    ["waiverAccepted", pre.waiverAccepted ?? null],
+    ["accountType", pre.accountType ?? null],
+  ];
+  for (const [key, before] of pairs) {
+    if (!(key in locked)) continue;
+    const raw = locked[key];
+    const now = raw === undefined || raw === null ? null : typeof raw === "string" && key.endsWith("Ms") ? Number(raw) : raw;
+    if (now !== before) return true;
+  }
+  return false;
+}
+
+/**
+ * The Member row lock: the second lock of every check-in write transaction,
+ * always after the Class lock. Taken whatever the plan and the door (see the
+ * header: a conditional lock cannot serialise against a check-in that read
+ * "Unlimited" a moment before). Null = the member is not in this club (or was
+ * deleted first), and nothing is written. The row comes back with the columns
+ * the gates read, for memberChangedSince.
+ *
+ * Strength: FOR NO KEY UPDATE, the row-write lock an ordinary UPDATE takes.
+ * The owner decision (17 Oct 2026) said "FOR UPDATE"; NO KEY UPDATE gives the
+ * same serialisation between check-ins (it conflicts with itself, with every
+ * UPDATE and with DELETE), and differs in one way only: it does NOT conflict
+ * with the FOR KEY SHARE that every foreign-key insert referencing this member
+ * takes (an imported attendance row, a roster row, a booking, an undo). With
+ * FOR UPDATE such an insert would wait on a check-in, and a transaction that
+ * inserted for this member and then touched the class's row (an attendance
+ * import creating a session, an undo batch) would deadlock with a check-in
+ * holding the Class row. The member-deletion cascade still waits (its lock
+ * and its DELETE are FOR UPDATE).
+ */
+async function memberLock(tx: Prisma.TransactionClient, tenantId: string, memberId: string): Promise<MemberLockRow | null> {
+  const rows = await tx.$queryRaw<MemberLockRow[]>`
+    SELECT "id", "membershipTierId", "paymentStatus", "stripeSubscriptionId",
+           (EXTRACT(EPOCH FROM "nextDueAt") * 1000)::float8 AS "nextDueAtMs",
+           (EXTRACT(EPOCH FROM "holdUntil") * 1000)::float8 AS "holdUntilMs",
+           "waiverAccepted", "accountType"
+      FROM "Member" WHERE "id" = ${memberId} AND "tenantId" = ${tenantId} FOR NO KEY UPDATE
+  `;
+  return rows[0] ?? null;
+}
+
+/**
+ * T7 allowance judgement, run INSIDE the write transaction, AFTER the Class
+ * lock, the tier gate and the Member lock, BEFORE any pack decrement or
+ * insert: statement C (readAllowanceSnapshot) gives the plan's allowance,
+ * whether the member is already in this session, and their counted visits,
+ * from one snapshot taken after the lock; the verdict is decided in
+ * TypeScript. A member already in this session answers "duplicate" before the
+ * allowance, so a double tap says "already checked in", never "allowance used".
+ */
+async function judgeAllowance(
+  tx: Prisma.TransactionClient,
+  args: Pick<PerformCheckinArgs, "tenantId" | "memberId" | "allowanceGate" | "allowanceOverrideConfirmed">,
+  session: { id: string; date: Date; startTime: string },
+): Promise<AllowanceGateState> {
+  const mode = args.allowanceGate ?? "off";
+  if (mode === "off") return { kind: "open", overridden: false };
+  const snap = await readAllowanceSnapshot(tx, {
+    tenantId: args.tenantId,
+    memberId: args.memberId,
+    centre: session.date,
+    currentInstanceId: session.id,
+  });
+  if (!snap) return { kind: "member_not_found" };
+  if (snap.alreadyIn) return { kind: "duplicate" };
+  if (!snap.allowance) return { kind: "open", overridden: false };
+  const v = allowanceVerdict(snap.allowance, slotMinute(session), snap.visits);
+  if (!v.exhausted) return { kind: "open", overridden: false };
+  const facts: AllowanceFacts = {
+    used: v.used, limit: v.limit, weeks: v.weeks, nextFree: v.nextFree,
+    ...(v.around ? { around: true as const } : {}),
+  };
+  if (mode === "ask" && args.allowanceOverrideConfirmed === true) return { kind: "open", overridden: true, facts };
+  return { kind: "allowance_reached", askable: mode === "ask", ...facts };
+}
+
+/**
+ * T7 for a staff door that marks without performCheckin (the coach tick
+ * route): the Member lock, then the allowance in "ask" mode. MUST be called
+ * after staffTierAsk in the same transaction, so the Class lock is already
+ * held and the order stays Class, then Member.
+ */
+export async function staffAllowanceAsk(
+  tx: Prisma.TransactionClient,
+  args: { tenantId: string; memberId: string; confirmed: boolean },
+  session: { id: string; date: Date; startTime: string },
+): Promise<AllowanceGateState> {
+  if (!(await memberLock(tx, args.tenantId, args.memberId))) return { kind: "member_not_found" };
+  return judgeAllowance(
+    tx,
+    { tenantId: args.tenantId, memberId: args.memberId, allowanceGate: "ask", allowanceOverrideConfirmed: args.confirmed },
+    session,
+  );
+}
+
+/**
+ * Spend one credit of the member's usable pack (earliest expiry first), or
+ * null when there is none. The decrement is a single guarded UPDATE, so two
+ * concurrent check-ins can never both take the last credit (security audit
+ * iteration 2 / M10). Called after the Member lock: Class, Member, pack.
+ */
+async function claimPack(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  memberId: string,
+): Promise<{ id: string; creditsRemaining: number } | null> {
+  const pack = await tx.memberClassPack.findFirst({
+    where: {
+      memberId,
+      tenantId,
+      status: "active",
+      creditsRemaining: { gt: 0 },
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { expiresAt: "asc" },
+    select: { id: true },
+  });
+  if (!pack) return null;
+  // updateMany returns count=0 if a concurrent request beat us to it.
+  const claimed = await tx.memberClassPack.updateMany({
+    where: { id: pack.id, creditsRemaining: { gt: 0 } },
+    data: { creditsRemaining: { decrement: 1 } },
+  });
+  if (claimed.count === 0) return null;
+  const refreshed = await tx.memberClassPack.findUnique({
+    where: { id: pack.id },
+    select: { creditsRemaining: true },
+  });
+  return { id: pack.id, creditsRemaining: refreshed?.creditsRemaining ?? 0 };
+}
+
+/** The overrides and facts a success carries for the route to record. */
+function overrideFields(tierOverridden: boolean, allowance: AllowanceGateState): {
+  overrides?: CheckinOverride[];
+  overAllowance?: AllowanceFacts;
+} {
+  const overrides: CheckinOverride[] = [];
+  if (tierOverridden) overrides.push(TIER_OVERRIDE_REASON);
+  const allowanceOverridden = allowance.kind === "open" && allowance.overridden;
+  if (allowanceOverridden) overrides.push(ALLOWANCE_OVERRIDE_REASON);
+  return {
+    ...(overrides.length > 0 ? { overrides } : {}),
+    ...(allowanceOverridden ? { overAllowance: allowance.facts } : {}),
+  };
+}
+
 /**
  * Never throws: a failure on any read or write becomes { kind: "error" },
  * logged once, so every door (desk, kiosk, card, register) answers with its own
@@ -381,7 +685,17 @@ export async function staffTierAsk(
  */
 export async function performCheckin(args: PerformCheckinArgs): Promise<PerformCheckinResult> {
   try {
-    return await performCheckinUnguarded(args);
+    // R-ALLOW rule 2: a plan, payment or hold change that committed between
+    // the pre-transaction read and the Member lock restarts the check-in, so
+    // every gate is judged on the row as it stands under the lock.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await performCheckinUnguarded(args);
+      } catch (e: unknown) {
+        if (e instanceof MemberChangedMidCheckin && attempt < MEMBER_CHANGED_RESTARTS) continue;
+        throw e;
+      }
+    }
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") return { kind: "duplicate" };
     console.error("[checkin] unexpected failure", e);
@@ -567,12 +881,30 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     !isOverdue(memberRecord, new Date());
   const covered = hasActiveSubscription || hasDeskMembership;
 
+  // The columns the gates above were judged on, re-checked under the Member
+  // lock inside each write transaction (R-ALLOW rule 2).
+  const gateView: GateMemberView = {
+    membershipTierId: memberRecord.membershipTierId ?? null,
+    paymentStatus: memberRecord.paymentStatus ?? null,
+    stripeSubscriptionId: memberRecord.stripeSubscriptionId ?? null,
+    nextDueAt: memberRecord.nextDueAt ?? null,
+    holdUntil: memberRecord.holdUntil ?? null,
+    waiverAccepted: memberRecord.waiverAccepted ?? null,
+    accountType: memberRecord.accountType ?? null,
+  };
+  /** The Member lock, second in the order; restarts the check-in if the row moved. */
+  const lockMember = async (tx: Prisma.TransactionClient): Promise<boolean> => {
+    const locked = await memberLock(tx, tenantId, memberId);
+    if (!locked) return false;
+    if (memberChangedSince(gateView, locked)) throw new MemberChangedMidCheckin();
+    return true;
+  };
+
   try {
     if (args.requireCoverage && !covered) {
-      // Try to redeem a class pack atomically. The decrement must be a single
-      // guarded UPDATE so two concurrent check-ins for the same member can't
-      // both see `creditsRemaining: 1`, both pass the gt:0 check, and both
-      // decrement → -1. (Security audit iteration 2 / M10, 2026-05-07.)
+      // Not covered by the plan (member app, parent): a class pack pays, or
+      // nothing does. A check-in a pack pays for is not counted against the
+      // plan allowance (owner decision), so it is not gated.
       const result = await withTenantContext(tenantId, async (tx) => {
         // Capacity first — inside this transaction, before a credit is spent.
         // Refusing after the decrement would cost the member a class they
@@ -584,38 +916,10 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         if (cap && args.enforceCapacity && cap.taken >= cap.maxCapacity) {
           return { kind: "class_full" as const, ...cap };
         }
-
-        // Find a candidate (which pack to attempt) — earliest expiry first.
-        const activePack = await tx.memberClassPack.findFirst({
-          where: {
-            memberId,
-            tenantId,
-            status: "active",
-            creditsRemaining: { gt: 0 },
-            expiresAt: { gt: new Date() },
-          },
-          orderBy: { expiresAt: "asc" },
-          select: { id: true },
-        });
-        if (!activePack) return { kind: "no_coverage" as const };
-
-        // Atomic guard: only decrement if creditsRemaining is still > 0.
-        // updateMany returns count=0 if a concurrent request beat us to it.
-        const claimed = await tx.memberClassPack.updateMany({
-          where: { id: activePack.id, creditsRemaining: { gt: 0 } },
-          data: { creditsRemaining: { decrement: 1 } },
-        });
-        if (claimed.count === 0) {
-          // Race lost — someone else exhausted the credits between findFirst
-          // and updateMany. Member has no other usable pack at this moment.
-          return { kind: "no_coverage" as const };
-        }
-
-        // Read back the new value for the caller's response.
-        const refreshed = await tx.memberClassPack.findUnique({
-          where: { id: activePack.id },
-          select: { creditsRemaining: true },
-        });
+        // T7: the Member lock, second in the order, then the pack.
+        if (!(await lockMember(tx))) return { kind: "member_not_found" as const };
+        const pack = await claimPack(tx, tenantId, memberId);
+        if (!pack) return { kind: "no_coverage" as const };
         const record = await tx.attendanceRecord.create({
           data: {
             tenantId,
@@ -626,18 +930,19 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
           },
         });
         await tx.classPackRedemption.create({
-          data: { memberPackId: activePack.id, attendanceRecordId: record.id },
+          data: { memberPackId: pack.id, attendanceRecordId: record.id },
         });
         return {
           kind: "pack_redeemed" as const,
           record,
-          creditsRemaining: refreshed?.creditsRemaining ?? 0,
+          creditsRemaining: pack.creditsRemaining,
           overCapacity: cap && cap.taken >= cap.maxCapacity ? cap : undefined,
           tierOverridden: tier.overridden,
         };
       });
 
       if (result.kind === "tier_not_included") return result;
+      if (result.kind === "member_not_found") return { kind: "member_not_found" };
       if (result.kind === "class_full") {
         return { kind: "class_full", taken: result.taken, maxCapacity: result.maxCapacity };
       }
@@ -654,14 +959,35 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       };
     }
 
-    // Coverage not required (admin / kiosk / auto) OR an active subscription
-    // is on file — record straight.
+    // Coverage not required (admin / kiosk / auto) OR the plan covers the
+    // member. One transaction decides who pays and records it:
+    //  - the kiosk, for a member the plan does not cover, spends a usable pack
+    //    first (as it always has, so credits do not pile up): not counted, not
+    //    gated - the same answer the member app gives that member;
+    //  - otherwise the visit is counted against the allowance; on a refusing
+    //    door (member app, kiosk) a used-up allowance falls through to a
+    //    usable pack, which pays instead and is not counted;
+    //  - staff doors (register, card scanner) never spend a pack: they ask.
+    const kioskPackFirst = method === "kiosk" && !covered;
     const straight = await withTenantContext(tenantId, async (tx) => {
       const cap = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
       const tier = await tierGateState(tx, args, instance.classId, instance.class.name);
       if (tier.kind === "tier_not_included") return tier;
       if (cap && args.enforceCapacity && cap.taken >= cap.maxCapacity) {
         return { kind: "class_full" as const, ...cap };
+      }
+      // T7: Member lock, then the pack or the allowance, then the insert.
+      if (!(await lockMember(tx))) return { kind: "member_not_found" as const };
+      let pack = kioskPackFirst ? await claimPack(tx, tenantId, memberId) : null;
+      let allowance: AllowanceGateState = { kind: "open", overridden: false };
+      if (!pack) {
+        allowance = await judgeAllowance(tx, args, instance);
+        if (allowance.kind === "member_not_found" || allowance.kind === "duplicate") return allowance;
+        if (allowance.kind === "allowance_reached") {
+          if (!allowance.askable) pack = await claimPack(tx, tenantId, memberId);
+          if (!pack) return allowance;
+          allowance = { kind: "open", overridden: false };
+        }
       }
       const created = await tx.attendanceRecord.create({
         data: {
@@ -672,6 +998,11 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
           checkedInById: args.checkedInByUserId ?? null,
         },
       });
+      if (pack) {
+        await tx.classPackRedemption.create({
+          data: { memberPackId: pack.id, attendanceRecordId: created.id },
+        });
+      }
       return {
         kind: "created" as const,
         record: created,
@@ -679,59 +1010,34 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         // stands; the caller says so.
         overCapacity: cap && cap.taken >= cap.maxCapacity ? cap : undefined,
         tierOverridden: tier.overridden,
+        allowance,
+        pack,
       };
     });
     if (straight.kind === "tier_not_included") return straight;
+    if (straight.kind === "member_not_found") return { kind: "member_not_found" };
+    if (straight.kind === "duplicate") return { kind: "duplicate" };
+    if (straight.kind === "allowance_reached") {
+      const { kind, askable, used, limit, weeks, nextFree, around } = straight;
+      return { kind, askable, used, limit, weeks, nextFree, ...(around ? { around } : {}) };
+    }
     if (straight.kind === "class_full") {
       return { kind: "class_full", taken: straight.taken, maxCapacity: straight.maxCapacity };
     }
     const record = straight.record;
     const overCapacity = straight.overCapacity;
-    const overrides = straight.tierOverridden ? { overrides: [TIER_OVERRIDE_REASON] } : {};
+    const overrides = overrideFields(straight.tierOverridden, straight.allowance);
 
-    // Pack-redeem opportunistically for kiosk path so credits don't pile up
-    // when a member already has a pack but no subscription.
-    //
-    // Concurrency: same atomic guard as the self/requireCoverage path above —
-    // updateMany with creditsRemaining gt:0 prevents two simultaneous kiosk
-    // check-ins from both decrementing the same pack to -1.
+    if (straight.pack) {
+      return {
+        kind: "success",
+        record,
+        coverage: { kind: "pack", creditsRemaining: straight.pack.creditsRemaining },
+        ...(overCapacity ? { overCapacity } : {}),
+        ...overrides,
+      };
+    }
     if (method === "kiosk" && !hasActiveSubscription) {
-      const packResult = await withTenantContext(tenantId, async (tx) => {
-        const pack = await tx.memberClassPack.findFirst({
-          where: {
-            memberId,
-            tenantId,
-            status: "active",
-            creditsRemaining: { gt: 0 },
-            expiresAt: { gt: new Date() },
-          },
-          orderBy: { expiresAt: "asc" },
-          select: { id: true },
-        });
-        if (!pack) return null;
-        const claimed = await tx.memberClassPack.updateMany({
-          where: { id: pack.id, creditsRemaining: { gt: 0 } },
-          data: { creditsRemaining: { decrement: 1 } },
-        });
-        if (claimed.count === 0) return null; // race lost — pack exhausted by another concurrent kiosk check-in
-        const refreshed = await tx.memberClassPack.findUnique({
-          where: { id: pack.id },
-          select: { creditsRemaining: true },
-        });
-        await tx.classPackRedemption.create({
-          data: { memberPackId: pack.id, attendanceRecordId: record.id },
-        });
-        return { creditsRemaining: refreshed?.creditsRemaining ?? 0 };
-      });
-      if (packResult) {
-        return {
-          kind: "success",
-          record,
-          coverage: { kind: "pack", creditsRemaining: packResult.creditsRemaining },
-          ...(overCapacity ? { overCapacity } : {}),
-          ...overrides,
-        };
-      }
       return {
         kind: "success",
         record,
@@ -749,6 +1055,8 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       ...overrides,
     };
   } catch (e: unknown) {
+    // Not a failure: performCheckin restarts the whole check-in.
+    if (e instanceof MemberChangedMidCheckin) throw e;
     if ((e as { code?: string }).code === "P2002") return { kind: "duplicate" };
     // Connection register gap 2 (30 Sep 2026): every door answered a 500 and
     // nothing was logged, so a check-in outage was invisible. Logged once

@@ -54,9 +54,12 @@ describe("SEC-033 raw SQL is parameterised", () => {
       "lib/attendance-import.ts", // release-digest read (lane D third pass): only tenantId is interpolated, as a bind parameter
       "lib/auth-lockout.ts", // lane A4 (R6-N1): failure-slot reservation, C3's advisory lock + conditional insert; buckets, ids, caps, window, exempt flag and lock namespace are bind parameters
       "lib/checkin.ts",
+      "lib/class-allowance-count.ts", // T7: statement C, the allowance read after the Member lock; tenantId, memberId, session id and the date range are bind parameters
       "lib/login-email.ts",
+      "lib/member-delete.ts", // T7: Member row lock (SELECT … FOR UPDATE) opening the deletion cascade; id and tenantId are bind parameters
       "lib/prisma-tenant.ts",
       "lib/rate-limit.ts", // lane C3: per-bucket advisory lock + conditional insert; bucket, window, id, max and the lock namespace are bind parameters
+      "lib/undo-batch.ts", // T7 review: undo-to pre-pass locking Class then Member rows in id order; tenantId and the id arrays are bind parameters
     ]);
   });
   it("no ORM query takes a computed key (orderBy/select/where built from a variable name)", () => {

@@ -19,6 +19,7 @@ import { performCheckin } from "@/lib/checkin";
 import { KIDS_CLASS_REFUSAL } from "@/lib/checkin-refusal";
 import { tierRefusalSentence } from "@/lib/class-tier-gate";
 import { classNotLiveSentence } from "@/lib/class-live";
+import { allowanceRefusalSentence } from "@/lib/class-allowance";
 import { logAudit } from "@/lib/audit-log";
 import { normaliseIp, summariseUa } from "@/lib/login-fingerprint";
 import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
@@ -115,6 +116,9 @@ export async function POST(
     // T6b: a paused or archived class is not offered at the tablet, and a
     // session minted before the pause is refused by instance id too.
     enforceClassStateGate: true,
+    // T7: the plan allowance is refused at the tablet with the count and the
+    // date the next class frees up; staff can still admit at the desk.
+    allowanceGate: "refuse",
   });
 
   switch (result.kind) {
@@ -233,6 +237,11 @@ export async function POST(
     case "tier_not_included":
       return NextResponse.json(
         { error: tierRefusalSentence(result.className, result.tierName), reason: "tier_not_included" },
+        { status: 403 },
+      );
+    case "allowance_reached":
+      return NextResponse.json(
+        { error: allowanceRefusalSentence(result), reason: "allowance_reached" },
         { status: 403 },
       );
     case "no_coverage":

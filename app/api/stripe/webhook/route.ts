@@ -972,6 +972,29 @@ export async function POST(req: NextRequest) {
         // notification is dispute_opened_owner, queued below with the evidence
         // deadline and the dashboard link; the unit suite pins exactly one send
         // per owner per opened dispute.
+
+        // B2: keep Member.paymentStatus in sync so the dashboard "payments due"
+        // tile and reports payment-health reflect an active or lost chargeback.
+        // 'won' with no prior refund returns the member to paid; every other
+        // dispute state is funds-at-risk/clawed-back → overdue. Mirrors the
+        // invoice.payment_failed leg's overdue flip.
+        //
+        // Lock order (T7 review, 17 Oct 2026): the Member row is written FIRST,
+        // before the pack void below. A class-pack check-in takes the Member row
+        // and then the pack (lib/checkin.ts); writing pack-then-Member here made
+        // a cycle with it (Postgres 40P01: the webhook retried and the member
+        // saw a check-in error). Member, then pack, matches the check-in and
+        // member deletion.
+        const disputeMemberId = member?.id ?? linkedPayment?.memberId ?? null;
+        if (disputeMemberId) {
+          const disputeMemberStatus =
+            status === "won" && !linkedPayment?.refundedAmountPence ? "paid" : "overdue";
+          await tx.member.update({
+            where: { id: disputeMemberId },
+            data: { paymentStatus: disputeMemberStatus },
+          });
+        }
+
         if (linkedPayment) {
           if (status === "won") {
             // B5: a dispute won AFTER a (goodwill) refund must NOT resurrect the
@@ -1023,21 +1046,6 @@ export async function POST(req: NextRequest) {
               data: { status: "disputed" },
             });
           }
-        }
-
-        // B2: keep Member.paymentStatus in sync so the dashboard "payments due"
-        // tile and reports payment-health reflect an active or lost chargeback.
-        // 'won' with no prior refund returns the member to paid; every other
-        // dispute state is funds-at-risk/clawed-back → overdue. Mirrors the
-        // invoice.payment_failed leg's overdue flip.
-        const disputeMemberId = member?.id ?? linkedPayment?.memberId ?? null;
-        if (disputeMemberId) {
-          const disputeMemberStatus =
-            status === "won" && !linkedPayment?.refundedAmountPence ? "paid" : "overdue";
-          await tx.member.update({
-            where: { id: disputeMemberId },
-            data: { paymentStatus: disputeMemberStatus },
-          });
         }
 
         // B4: persist the dispute outcome to AuditLog (append-only, owner-

@@ -11,6 +11,9 @@ const FIELD_LABELS: Record<string, string> = {
   dateOfBirth: "Date of birth",
   paidAt: "Date paid",
   maxClassesPerWeek: "Classes per week",
+  // T7c: the plan editor's "Classes allowed … every … weeks".
+  classLimit: "Classes allowed",
+  classLimitWeeks: "Weeks",
 };
 
 function fieldLabel(field: string): string {

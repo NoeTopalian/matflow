@@ -39,6 +39,70 @@ export function planUndoTo(rows: AuditRowLike[], targetId: string, undoneIds: Re
   return { reversible, skipped };
 }
 
+const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
+
+/**
+ * The Class and Member rows a batch will write, read off the audit rows:
+ * classes from class edits and roster rows; members from member edits, roster
+ * and attendance rows, and (by record id) the members whose check-ins an
+ * attendance undo removes.
+ */
+export function batchLockTargets(items: PlanItem[]): { classIds: string[]; memberIds: string[]; recordIds: string[] } {
+  const classIds = new Set<string>();
+  const memberIds = new Set<string>();
+  const recordIds = new Set<string>();
+  for (const { row } of items) {
+    const m = (row.metadata && typeof row.metadata === "object" ? row.metadata : {}) as Record<string, unknown>;
+    if (row.entityType === "Class" && str(row.entityId)) classIds.add(row.entityId);
+    if (row.entityType === "Member" && str(row.entityId)) memberIds.add(row.entityId);
+    const classId = str(m.classId);
+    if (classId) classIds.add(classId);
+    for (const key of ["memberId", "childMemberId"] as const) {
+      const id = str(m[key]);
+      if (id) memberIds.add(id);
+    }
+    const recordId = str(m.recordId) ?? (row.entityType === "AttendanceRecord" && !row.entityId.includes(":") ? str(row.entityId) : null);
+    if (recordId) recordIds.add(recordId);
+  }
+  const sorted = (x: Set<string>) => [...x].sort();
+  return { classIds: sorted(classIds), memberIds: sorted(memberIds), recordIds: sorted(recordIds) };
+}
+
+/**
+ * T7 lock order (planning evidence §8b.4). A check-in locks Class, then
+ * Member, then a pack (lib/checkin.ts). A batch replays handlers newest first,
+ * so it could otherwise take them in any order: a member edit then a class
+ * edit (Member, then Class), a member edit then a roster restore (the roster
+ * insert's KEY SHARE on Class waits on a check-in's Class lock), or an
+ * attendance undo that gives a pack credit back before a member edit (pack,
+ * then Member). Each is a deadlock with a concurrent check-in for that member.
+ * So before any handler runs, the batch locks every Class it will touch, then
+ * every Member, each in id order. Every later write in the batch then lands on
+ * a row it already holds, or on a pack after the Member (the check-in's order).
+ * FOR NO KEY UPDATE: the strength of the batch's own UPDATEs; it conflicts
+ * with the check-in's Class FOR UPDATE and Member FOR NO KEY UPDATE.
+ */
+export async function lockBatchRows(tx: TxLike, tenantId: string, items: PlanItem[]): Promise<void> {
+  if (items.length < 2) return; // one handler cannot interleave with itself
+  const { classIds, memberIds, recordIds } = batchLockTargets(items);
+  if (classIds.length > 0) {
+    await tx.$queryRaw`
+      SELECT "id" FROM "Class"
+       WHERE "tenantId" = ${tenantId} AND "id" = ANY(${classIds}::text[])
+       ORDER BY "id" FOR NO KEY UPDATE
+    `;
+  }
+  if (memberIds.length > 0 || recordIds.length > 0) {
+    await tx.$queryRaw`
+      SELECT "id" FROM "Member"
+       WHERE "tenantId" = ${tenantId}
+         AND ("id" = ANY(${memberIds}::text[])
+              OR "id" IN (SELECT "memberId" FROM "AttendanceRecord" WHERE "id" = ANY(${recordIds}::text[])))
+       ORDER BY "id" FOR NO KEY UPDATE
+    `;
+  }
+}
+
 export type UndoOutcome =
   | { ok: true; undone: string[] }
   | { ok: false; failedAt: string; action: string; reason: string };
@@ -53,6 +117,7 @@ export async function executeUndo(
   items: PlanItem[],
   actor: { tenantId: string; userId: string; ipAddress?: string | null; userAgent?: string | null },
 ): Promise<string[]> {
+  await lockBatchRows(tx, actor.tenantId, items);
   const undone: string[] = [];
   for (const { row } of items) {
     try {

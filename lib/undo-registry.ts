@@ -129,7 +129,12 @@ const RESTORABLE: Record<string, readonly string[]> = {
     // T6b: Resume / Restore clears it; undoing that puts the archive back.
     "deletedAt",
   ],
-  MembershipTier: ["name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "isKids", "isActive", "locationId"],
+  MembershipTier: [
+    "name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "isKids", "isActive", "locationId",
+    // T7c: the class allowance pair (lib/class-allowance.ts). A row recorded
+    // before T7c carries only maxClassesPerWeek and still restores that.
+    "classLimit", "classLimitWeeks",
+  ],
   RankSystem: ["discipline", "name", "order", "color", "stripes"],
   Location: ["name", "address", "isDefault"],
 };
@@ -394,6 +399,14 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
     guard(current, restore) {
       if (current.stripePriceId && ("pricePence" in restore || "currency" in restore || "billingCycle" in restore)) {
         throw new UndoStale("This plan has a Stripe price; change the price from the Memberships page so Stripe is updated too.");
+      }
+      // T7c: the allowance is a pair (MembershipTier_classLimit_pair_check).
+      // A restore that would leave one set and the other blank is refused in
+      // words rather than by the database.
+      const limit = "classLimit" in restore ? restore.classLimit : current.classLimit;
+      const weeks = "classLimitWeeks" in restore ? restore.classLimitWeeks : current.classLimitWeeks;
+      if ((limit == null) !== (weeks == null)) {
+        throw new UndoStale("This plan's class allowance has changed since; set it again from the Memberships page.");
       }
     },
   }),

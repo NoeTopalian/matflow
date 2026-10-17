@@ -31,7 +31,12 @@ export const checkinSchema = z.object({
   // their membership does not include). Recorded on the attendance.mark audit
   // row. Only "tier_not_included" changes a rule: the staff door ASKS about a
   // class outside the member's plan (T6a, Q3), and this is the confirmation.
-  acknowledged: z.array(z.enum(["on_hold", "waiver_unsigned", "kids_class", "tier_not_included"])).max(4).optional(),
+  // "allowance_reached" (T7) is the other rule-changing answer: staff saw
+  // that the member's plan allowance is used up and admitted anyway.
+  acknowledged: z
+    .array(z.enum(["on_hold", "waiver_unsigned", "kids_class", "tier_not_included", "allowance_reached"]))
+    .max(5)
+    .optional(),
 });
 
 export async function POST(req: Request) {
@@ -71,6 +76,8 @@ export async function POST(req: Request) {
   // The member who pressed the button on a member-side check-in: the member
   // themselves, or the parent checking in a child. Null on the staff path.
   let actorMemberId: string | null = null;
+  // T7: a parent checking in a child is told whose allowance is used up.
+  let childName: string | null = null;
 
   if (memberId) {
     // Admin checking in a specific member — validate member belongs to this tenant
@@ -121,11 +128,12 @@ export async function POST(req: Request) {
     const kid = await withTenantContext(tenantId, (tx) =>
       tx.member.findFirst({
         where: { id: onBehalfOfMemberId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
-        select: { id: true },
+        select: { id: true, name: true },
       }),
     );
     if (!kid) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = kid.id;
+    childName = kid.name ?? null;
     actorMemberId = parentMemberId;
     // Parent-of-kid path inherits the self profile: rank gate, roster gate,
     // time window, and coverage all apply. The parent isn't bypassing
@@ -186,6 +194,12 @@ export async function POST(req: Request) {
     // T6b: a paused or archived class is closed to the member deciding; the
     // desk still admits (T4c owns the per-door modes).
     enforceClassStateGate: isSelf,
+    // T7: the plan allowance ("N classes every M weeks"). The member deciding
+    // is refused with the count and the date the next class frees up; the
+    // desk is asked and admits only with the register's confirmation, which
+    // the audit row records with the count.
+    allowanceGate: isSelf ? "refuse" : "ask",
+    allowanceOverrideConfirmed: !isSelf && !!acknowledged?.includes("allowance_reached"),
     // Record which staff user clicked "check in" so the attendance row can
     // show "by [admin name]". Only stamped on staff-driven check-ins.
     checkedInByUserId: effectiveMethod === "admin" ? session.user.id : null,
@@ -217,6 +231,8 @@ export async function POST(req: Request) {
             ...(acknowledged && acknowledged.length > 0 ? { acknowledged: [...new Set(acknowledged)] } : {}),
             // The gates the engine actually admitted past on staff say-so.
             ...(result.overrides && result.overrides.length > 0 ? { overrides: result.overrides } : {}),
+            // T7: the allowance count staff admitted past.
+            ...(result.overAllowance ? { overAllowance: result.overAllowance } : {}),
           },
           req,
         });
@@ -261,7 +277,7 @@ export async function POST(req: Request) {
           paymentRail = null;
         }
       }
-      const refusal = checkinRefusal(result, { paymentRail });
+      const refusal = checkinRefusal(result, { paymentRail, memberName: childName });
       if (refusal) return NextResponse.json(refusal.body, { status: refusal.status });
       return NextResponse.json({ error: "Unknown check-in result" }, { status: 500 });
     }

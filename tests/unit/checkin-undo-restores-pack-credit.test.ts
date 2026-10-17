@@ -77,8 +77,10 @@ vi.mock("@/lib/prisma", () => ({
     member: { findFirst: memberFindFirstMock },
     classInstance: { findFirst: classInstanceFindFirstMock },
     // T6a: the coach mark takes the Class row lock and reads the class's
-    // membership list (none here, so the tier ask is open).
-    $queryRaw: vi.fn(async () => []),
+    // membership list (none here, so the tier ask is open). T7: then the
+    // Member row lock (a row back = the member exists) and the allowance
+    // read (no plan columns = Unlimited).
+    $queryRaw: vi.fn(async () => [{ id: "row" }]),
     classMembershipTier: { findMany: vi.fn(async () => []) },
   },
 }));
@@ -116,7 +118,9 @@ import { POST as coachAttendance } from "@/app/api/coach/instances/[id]/attendan
 beforeEach(() => {
   vi.clearAllMocks();
   memberFindFirstMock.mockResolvedValue({ id: "m-1" });
-  classInstanceFindFirstMock.mockResolvedValue({ id: "ci-1", classId: "c-1", class: { name: "Fundamentals" } });
+  classInstanceFindFirstMock.mockResolvedValue({
+    id: "ci-1", classId: "c-1", date: new Date("2026-10-17T00:00:00.000Z"), startTime: "18:00", class: { name: "Fundamentals" },
+  });
   attendanceDeleteManyMock.mockResolvedValue({ count: 1 });
   redemptionDeleteManyMock.mockResolvedValue({ count: 1 });
   packUpdateMock.mockResolvedValue({});
