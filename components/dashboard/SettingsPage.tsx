@@ -18,6 +18,7 @@ import ImportReconciliation from "@/components/dashboard/ImportReconciliation";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import LocationsCard from "@/components/dashboard/LocationsCard";
+import PublicPageSection from "@/components/dashboard/PublicPageSection";
 import { SettingImpact } from "@/components/dashboard/SettingImpact";
 import { StaffUnlockControl } from "@/components/dashboard/UnlockSignIn";
 import { StaffTotpResetControl } from "@/components/dashboard/StaffTotpReset";
@@ -1600,6 +1601,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* The club's public contact email (1 Oct 2026): what members see
               and reply to; never a login. Owner only, like every tenant write. */}
           {isOwner && !supportEdit && <ContactEmailSection initialEmail={settings?.contactEmail ?? null} />}
+          {/* T9c: the opt-in public club page. Owner only; never in a support
+              session (publishing stays with the owner). */}
+          {isOwner && !supportScope && <PublicPageSection />}
           {/* ADR-001 D2: venues inside the club. Owner and manager edit. */}
           <LocationsCard canEdit={(isOwner || role === "manager") && !supportEdit} />
           <div className="grid grid-cols-3 gap-3">
