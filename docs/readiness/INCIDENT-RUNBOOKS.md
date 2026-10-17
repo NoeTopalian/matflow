@@ -11,7 +11,7 @@ Each runbook: detect → contain → escalate → recover → verify. Support ho
 
 ## 2. Suspected tenant exposure (one club sees another's data)
 - **Detect:** a report, a Sentry event with a foreign `tenantId`, or a failed cross-tenant cell in the assess suite.
-- **Contain:** if confirmed on production, close the route (guard deploy) or promote the last known-good deployment. Do not wait for root cause.
+- **Contain:** if confirmed on production, close the route (guard deploy, built fresh) or put the domain behind deployment protection / maintenance mode. Never promote an old deployment (it restores retired secrets; `docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md` §4). Do not wait for root cause.
 - **Escalate:** P0. Record what was visible, to whom, for how long. UK GDPR breach assessment (72 hours) may apply; Noe decides with qualified advice.
 - **Recover:** fix with a red-on-revert test; run `scripts/test-rls-enforced.mjs` and the isolation lanes (lb-2, the two-club loop) before redeploying.
 - **Verify:** the exact leaking request now answers 404; both clubs' data unchanged.
@@ -25,7 +25,7 @@ Each runbook: detect → contain → escalate → recover → verify. Support ho
 
 ## 4. Failed deploy or bad release
 - **Detect:** Vercel build fails, `/api/health` is not `db:ok`, or the post-deploy smoke fails.
-- **Contain:** Vercel → promote the previous deployment (instant). Migrations are additive by convention, so the previous app works on the migrated schema; a non-additive migration is itself the finding.
+- **Contain:** fix forward — `git revert` built fresh, or rebuild the previous commit fresh; while it builds, deployment protection or maintenance mode. Never Vercel Instant Rollback / Promote of the previous deployment (it restores retired secrets; rule adopted in PR #27, procedure in `docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md` §4). Migrations are additive by convention, so older code works on the migrated schema; a non-additive migration is itself the finding.
 - **Escalate:** P1 if any club cannot check in or take money.
 - **Recover:** fix forward on a branch; full gates; redeploy.
 - **Verify:** the smoke set (health, login page, a club's short URL, dashboard redirect, leaderboard token 200 and a bad token 404).

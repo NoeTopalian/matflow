@@ -4,6 +4,15 @@ Source-of-truth for everything that's not yet done. Two halves: things only you 
 
 ---
 
+## 2026-10-17 — product follow-ups found by the browser verification smoke run
+
+Seen on a production build of `1796d9d` against the test branch (synthetic club). Not fixed; each needs its own branch.
+
+- [ ] **Settings → contact email: Save button is 32 px tall at 390 px width** (target 44 px tap height; `components/dashboard/ContactEmailSection.tsx`, `Button size="compact"`).
+- [ ] **Settings renders the contact email section twice** (two `aria-label="Contact email"` inputs, one hidden) — find why `ContactEmailSection` mounts twice in `components/dashboard/SettingsPage.tsx` and make it one.
+
+---
+
 ## 2026-08-18 — money-path + honesty pass (branch `feat/dashboard-desktop-system`)
 
 Six commits. All four static gates green at the end: `tsc` 0, `npm run lint` 0 errors,

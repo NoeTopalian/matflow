@@ -24,7 +24,7 @@
 ## Incident response — first 5 minutes
 
 1. **Triage.** Hit `/api/health` first. If it returns `{status:"degraded"}`, DB is down. Otherwise app is up — narrow to a specific surface.
-2. **Check Vercel deploys.** Did a deploy land in the last hour? If yes, that's your suspect — rollback (see below) before deeper investigation.
+2. **Check Vercel deploys.** Did a deploy land in the last hour? If yes, that's your suspect — recover by fixing forward (see "Deploy / rollback" below; never Promote an old deployment) before deeper investigation.
 3. **Check Sentry.** What's the most recent error event? What route + user-agent + tenant? Use the `x-request-id` from response headers to correlate logs.
 4. **Check Vercel logs.** Filter by route and look for `[rate-limit]`, `[env-guards]`, or `[auth]` warnings.
 5. **Confirm scope.** Is it one tenant, all tenants, or just one user? Different scope = different fix.
@@ -36,7 +36,7 @@
 ### "Site is down — Vercel returns 500/503 from every route"
 
 Likely causes (in order):
-- **Recent deploy broke something.** Roll back: Vercel dashboard → Deployments → find last good deploy → ⋮ menu → Promote to Production.
+- **Recent deploy broke something.** Fix forward with `git revert` (see "Deploy / rollback" below). Never Promote or Instant Rollback an old deployment; if a revert build is too slow, use Vercel deployment protection or maintenance mode instead.
 - **DB is unreachable.** `/api/health` returns 503. Check Neon dashboard for incidents.
 - **Required env var missing.** `instrumentation.ts` runs `runProductionEnvGuards()` at boot which throws if `RESEND_API_KEY` / `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `STRIPE_CLIENT_ID` / `MATFLOW_ADMIN_SECRET` is missing in production. Set the missing var in Vercel → Settings → Environment Variables → Save → no redeploy needed.
 
@@ -72,15 +72,13 @@ This is the worst-case for a multi-tenant SaaS. Stop, don't poke around — pres
 
 ## Deploy / rollback
 
-### Roll back to last known-good
-Vercel dashboard → Deployments → last good deploy → ⋮ → Promote to Production. Takes ~30s.
+### Roll back = fix forward (never Promote)
+Never use Vercel Instant Rollback or "Promote to Production" on an old deployment: it brings back that build's old environment (retired secrets, old flags) as well as its code. Rule adopted in the hub release (PR #27, 12 Oct 2026); full procedure in [`docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md`](security/INCIDENT-AND-RESTORE-RUNBOOK.md) §4.
 
-### Roll forward (fix-forward)
 ```bash
-git revert <bad-sha>
-git push origin main
+git revert <bad-sha>      # on a branch; run the gates; merge with Noe's approval
 ```
-Vercel auto-deploys the revert commit. Faster than rollback if you're already mid-fix.
+Vercel builds the revert fresh with the current environment (a push to `main` also runs `prisma migrate deploy` against production). If older code must run, rebuild that commit fresh — never promote its old deployment. Emergency stop while a revert builds: deployment protection or maintenance mode.
 
 ### Maintenance mode (planned downtime)
 Vercel → Settings → Environment Variables → add `MAINTENANCE_MODE=true` → Save. Propagates within ~30s without redeploy. To exit, set it to `false` (or delete the var).

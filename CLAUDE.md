@@ -40,7 +40,7 @@ Production uses Neon's `-pooler` host; pool size is capped in `lib/prisma.ts`. S
 - **Push** any branch (branch pushes create Vercel preview builds). **Open or update a PR** only as approved (draft unless told otherwise).
 - **Merge** only on explicit approval: `gh pr merge <n> --merge --match-head-commit <sha>`. A push or merge to `main` auto-deploys **and migrates production**.
 - **Noe runs** Vercel actions, production env vars, anything against production Postgres, credential rotation, and enters all credentials and MFA codes. No production data writes or customer account changes by the agent.
-- **Never Vercel Instant Rollback or Promote** — fix forward ([`docs/readiness/OPERATOR-REMEDIATION-DEPLOY-PACKAGE.md`](docs/readiness/OPERATOR-REMEDIATION-DEPLOY-PACKAGE.md); this supersedes §5 of [`docs/runbooks/DEPLOY-2026-10.md`](docs/runbooks/DEPLOY-2026-10.md)).
+- **Never Vercel Instant Rollback or Promote** — fix forward (adopted in PR #27, 12 Oct 2026; procedure in [`docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md`](docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md) §4).
 - Never print secrets or connection strings. Never `git add -A` (sensitive files in the repo root). Never commit `.env`.
 
 ## Detail
