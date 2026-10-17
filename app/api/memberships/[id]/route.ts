@@ -7,6 +7,7 @@ import { updateMetadata } from "@/lib/audit-snapshot";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { billingCycleSchema } from "@/lib/billing-cycle";
+import { ALLOWANCE_FIELDS, allowanceColumns, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
 
 const patchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -14,7 +15,12 @@ const patchSchema = z.object({
   pricePence: z.number().int().min(0).max(10_000_000, "Price must be £100,000 or less").optional(),
   currency: z.string().length(3).regex(/^[A-Z]{3}$/).optional(),
   billingCycle: billingCycleSchema.optional(),
+  // Legacy single weekly limit (a page loaded before T7c); null clears.
   maxClassesPerWeek: z.number().int().min(1).max(30).optional().nullable(),
+  // T7c: "N classes every M weeks"; both together, both null clears to
+  // Unlimited (refineAllowance). The route writes all three columns in step.
+  classLimit: classLimitSchema.nullable().optional(),
+  classLimitWeeks: classLimitWeeksSchema.nullable().optional(),
   isKids: z.boolean().optional(),
   isActive: z.boolean().optional(),
   // ADR-001 D2 slice 2: the venue this tier covers; null = every venue.
@@ -23,7 +29,7 @@ const patchSchema = z.object({
   // Both nullable so owners can unlink a tier from Stripe later.
   stripePriceId: z.string().regex(/^price_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
   stripeProductId: z.string().regex(/^prod_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
-});
+}).superRefine(refineAllowance);
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
@@ -47,6 +53,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
     }
 
+    // The allowance keys become the three columns, written together (a
+    // reduced limit applies from the next check-in; nothing recorded changes).
+    const { maxClassesPerWeek, classLimit, classLimitWeeks, ...rest } = parsed.data;
+    const allowance = allowanceColumns({ maxClassesPerWeek, classLimit, classLimitWeeks });
+    const data: Record<string, unknown> = { ...rest, ...(allowance ?? {}) };
+
     const outcome = await withTenantContext(tenantId, async (tx) => {
       if (parsed.data.locationId) {
         const loc = await tx.location.findFirst({ where: { id: parsed.data.locationId, tenantId }, select: { id: true } });
@@ -55,7 +67,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       const before = await tx.membershipTier.findFirst({ where: { id, tenantId } });
       const r = await tx.membershipTier.updateMany({
         where: { id, tenantId },
-        data: parsed.data as Record<string, unknown>,
+        data,
       });
       if (r.count === 0) return null;
       const fresh = await tx.membershipTier.findFirst({ where: { id, tenantId } });
@@ -72,10 +84,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       entityType: "MembershipTier",
       entityId: id,
       metadata: updateMetadata(
-        Object.keys(parsed.data),
+        Object.keys(data),
         before as unknown as Record<string, unknown> | null,
         fresh as unknown as Record<string, unknown>,
-        ["name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "isKids", "isActive", "locationId"],
+        ["name", "description", "pricePence", "currency", "billingCycle", ...ALLOWANCE_FIELDS, "isKids", "isActive", "locationId"],
       ),
       req,
     });

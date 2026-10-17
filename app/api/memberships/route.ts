@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { billingCycleSchema } from "@/lib/billing-cycle";
+import { allowanceColumns, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
@@ -14,7 +15,13 @@ const createSchema = z.object({
   pricePence: z.number().int().min(0).max(10_000_000, "Price must be £100,000 or less"),
   currency: z.string().length(3).regex(/^[A-Z]{3}$/),
   billingCycle: billingCycleSchema,
+  // Legacy single weekly limit, still accepted from a page loaded before T7c.
+  // Never together with classLimit/classLimitWeeks (refineAllowance).
   maxClassesPerWeek: z.number().int().min(1).max(30).optional(),
+  // T7c: "N classes every M weeks" (lib/class-allowance.ts). Both or neither;
+  // null or absent = Unlimited.
+  classLimit: classLimitSchema.nullable().optional(),
+  classLimitWeeks: classLimitWeeksSchema.nullable().optional(),
   isKids: z.boolean(),
   // ADR-001 D2 slice 2: the venue this tier covers; null/absent = every venue.
   locationId: z.string().min(1).max(64).optional().nullable(),
@@ -24,7 +31,7 @@ const createSchema = z.object({
   // prefixes mirror Stripe's documented id shapes.
   stripePriceId: z.string().regex(/^price_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
   stripeProductId: z.string().regex(/^prod_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
-});
+}).superRefine(refineAllowance);
 
 export async function GET() {
   try {
@@ -64,7 +71,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    const { name, description, pricePence, currency, billingCycle, maxClassesPerWeek, isKids, stripePriceId, stripeProductId, locationId } = parsed.data;
+    const { name, description, pricePence, currency, billingCycle, isKids, stripePriceId, stripeProductId, locationId } = parsed.data;
+    const allowance = allowanceColumns(parsed.data) ?? { classLimit: null, classLimitWeeks: null, maxClassesPerWeek: null };
 
     // A venue from another club must not attach — refused, never dropped.
     if (locationId) {
@@ -81,7 +89,7 @@ export async function POST(req: Request) {
           pricePence,
           currency,
           billingCycle,
-          maxClassesPerWeek: maxClassesPerWeek ?? null,
+          ...allowance,
           isKids,
           stripePriceId: stripePriceId ?? null,
           stripeProductId: stripeProductId ?? null,
@@ -96,7 +104,7 @@ export async function POST(req: Request) {
       action: "membership.tier.create",
       entityType: "MembershipTier",
       entityId: tier.id,
-      metadata: { name, pricePence, billingCycle, isKids, hasStripePriceId: !!stripePriceId },
+      metadata: { name, pricePence, billingCycle, isKids, classLimit: allowance.classLimit, classLimitWeeks: allowance.classLimitWeeks, hasStripePriceId: !!stripePriceId },
       req,
     });
 

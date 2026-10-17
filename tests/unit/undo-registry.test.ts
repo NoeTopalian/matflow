@@ -250,6 +250,63 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     });
   });
 
+  // T7c (17 Oct 2026): the allowance pair is restorable; rows recorded before
+  // T7c (maxClassesPerWeek only) still restore that column.
+  describe("membership.tier.update: undoing a class allowance change", () => {
+    const FIELDS = ["name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "classLimit", "classLimitWeeks", "isKids", "isActive", "locationId"] as const;
+    const tierRow = (over: Record<string, unknown>): Record<string, unknown> => ({
+      id: "tier1", name: "Plan A", pricePence: 4500, currency: "GBP", billingCycle: "monthly",
+      maxClassesPerWeek: 3, classLimit: 3, classLimitWeeks: 1, stripePriceId: null, ...over,
+    });
+    const asRow = (m: Record<string, unknown>) => row("membership.tier.update", m, { entityType: "MembershipTier", entityId: "tier1" });
+
+    it("3 every week -> 4 every 4 weeks: Undo restores all three columns", async () => {
+      const after = tierRow({ maxClassesPerWeek: null, classLimit: 4, classLimitWeeks: 4 });
+      const r = asRow(updateMetadata(["classLimit", "classLimitWeeks", "maxClassesPerWeek"], tierRow({}), after, FIELDS));
+      expect(decideUndo(r, false)).toEqual({ ok: true });
+      fake.membershipTier.findFirst.mockResolvedValue(after);
+      await applyUndo(tx, r);
+      expect(fake.membershipTier.update).toHaveBeenCalledWith({
+        where: { id: "tier1" },
+        data: { maxClassesPerWeek: 3, classLimit: 3, classLimitWeeks: 1 },
+      });
+    });
+
+    it("4 every 4 weeks -> Unlimited: Undo puts the allowance back", async () => {
+      const before = tierRow({ maxClassesPerWeek: null, classLimit: 4, classLimitWeeks: 4 });
+      const after = tierRow({ maxClassesPerWeek: null, classLimit: null, classLimitWeeks: null });
+      const r = asRow(updateMetadata(["classLimit", "classLimitWeeks", "maxClassesPerWeek"], before, after, FIELDS));
+      fake.membershipTier.findFirst.mockResolvedValue(after);
+      await applyUndo(tx, r);
+      expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { classLimit: 4, classLimitWeeks: 4 } });
+    });
+
+    it("a later allowance change makes it stale: refused, nothing written", async () => {
+      const before = tierRow({ maxClassesPerWeek: null, classLimit: 4, classLimitWeeks: 4 });
+      const after = tierRow({ maxClassesPerWeek: null, classLimit: 6, classLimitWeeks: 4 });
+      const r = asRow(updateMetadata(["classLimit", "classLimitWeeks", "maxClassesPerWeek"], before, after, FIELDS));
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow({ maxClassesPerWeek: null, classLimit: 8, classLimitWeeks: 4 }));
+      await expect(applyUndo(tx, r)).rejects.toBeInstanceOf(UndoStale);
+      expect(fake.membershipTier.update).not.toHaveBeenCalled();
+    });
+
+    it("a pre-T7c row restores maxClassesPerWeek alone", async () => {
+      const r = asRow({ fields: ["maxClassesPerWeek"], before: { maxClassesPerWeek: 3 }, after: { maxClassesPerWeek: null } });
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow({ maxClassesPerWeek: null, classLimit: null, classLimitWeeks: null }));
+      await applyUndo(tx, r);
+      expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { maxClassesPerWeek: 3 } });
+    });
+
+    it("a restore that would split the pair is refused in words, not by the database", async () => {
+      // A hand-built row whose before carries the number alone, against a row
+      // that is Unlimited now: classLimit would be set with no weeks.
+      const r = asRow({ fields: ["classLimit"], before: { classLimit: 4 }, after: { classLimit: null } });
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow({ maxClassesPerWeek: null, classLimit: null, classLimitWeeks: null }));
+      await expect(applyUndo(tx, r)).rejects.toThrow(/class allowance has changed since/);
+      expect(fake.membershipTier.update).not.toHaveBeenCalled();
+    });
+  });
+
   it("class.roster.add → removes the roster row; refused if already gone", async () => {
     fake.classRoster.deleteMany.mockResolvedValue({ count: 1 });
     await applyUndo(tx, row("class.roster.add", { classId: "c1", memberId: "m1" }, { entityType: "ClassRoster", entityId: "cr1" }));
