@@ -29,14 +29,21 @@ export type MemberStatusEventReason = (typeof MEMBER_STATUS_EVENT_REASONS)[numbe
 /**
  * What a TeamUp import job was doing when it wrote an event (T8d). Mirrors the
  * CHECK on `MemberStatusEvent.sourceAction` (migration
- * 20261017022302_status_event_source_provenance). Every one of these is written
- * with `reason = 'import'`, so conversion math and the create-import rollback
- * guard, which key on the reason, keep treating them as machine writes.
+ * 20261017022302_status_event_source_provenance, widened by
+ * 20261017024714_status_event_backfill_source_action). Every one of these is
+ * written with `reason = 'import'`, so conversion math and the create-import
+ * rollback guard, which key on the reason, keep treating them as machine writes.
+ *
+ * `import_backfill` (T8b) marks history reconstructed from a job's TeamUp
+ * ledger and dated BEFORE the member's first existing event. It is written only
+ * through `recordStatusEventsBulk(..., { placement: "before-first" })` and is
+ * what the back-fill's idempotency check and rollback key on.
  */
 export const MEMBER_STATUS_EVENT_SOURCE_ACTIONS = [
   "import_create",
   "import_refresh",
   "import_rollback",
+  "import_backfill",
 ] as const;
 
 export type MemberStatusEventSourceAction = (typeof MEMBER_STATUS_EVENT_SOURCE_ACTIONS)[number];
@@ -73,9 +80,12 @@ export interface RecordStatusEventInput {
  * error in a caller, so it throws inside the caller's transaction and the
  * status write it belongs to rolls back with it.
  */
-function assertProvenance(input: RecordStatusEventInput) {
+function assertProvenance(input: RecordStatusEventInput, placement: StatusEventPlacement = "clamp") {
   const hasJob = input.sourceJobId !== undefined;
   const hasAction = input.sourceAction !== undefined;
+  if (placement === "before-first" && input.sourceAction !== "import_backfill") {
+    throw new StatusEventPlacementRefused("[member-status] before-first placement is for import_backfill events only");
+  }
   if (!hasJob && !hasAction) return;
   if (hasJob !== hasAction || !input.sourceJobId) {
     throw new Error("[member-status] sourceJobId and sourceAction are given together");
@@ -85,6 +95,31 @@ function assertProvenance(input: RecordStatusEventInput) {
   }
   if (!(MEMBER_STATUS_EVENT_SOURCE_ACTIONS as readonly string[]).includes(input.sourceAction!)) {
     throw new Error("[member-status] unknown sourceAction");
+  }
+  // A back-filled event describes history, not "now": it may only go in
+  // before the member's first event, never through the clamp (which would
+  // move it forward to the latest event and reorder the history).
+  if (input.sourceAction === "import_backfill" && placement !== "before-first") {
+    throw new StatusEventPlacementRefused("[member-status] import_backfill events are written with placement before-first only");
+  }
+}
+
+/**
+ * How the bulk writer places supplied dates.
+ * - `clamp` (default, T8a): each date is clamped to [member's latest event, now].
+ * - `before-first` (T8b): every row must carry a date; per member the dates
+ *   must be strictly increasing in input order and strictly earlier than the
+ *   member's FIRST existing event. Nothing is clamped: a violation throws
+ *   StatusEventPlacementRefused inside the caller's transaction, so the whole
+ *   batch rolls back. The latest-event invariant holds because every row lands
+ *   before an event that is already on record.
+ */
+export type StatusEventPlacement = "clamp" | "before-first";
+
+export class StatusEventPlacementRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StatusEventPlacementRefused";
   }
 }
 
@@ -180,10 +215,13 @@ export async function recordStatusEvent(
 export async function recordStatusEventsBulk(
   tx: TxClient,
   inputs: RecordStatusEventInput[],
+  options: { placement?: StatusEventPlacement } = {},
 ): Promise<number> {
-  for (const input of inputs) assertProvenance(input);
+  const placement = options.placement ?? "clamp";
+  for (const input of inputs) assertProvenance(input, placement);
   const rows = inputs.filter((input) => input.fromStatus !== input.toStatus);
   if (rows.length === 0) return 0;
+  if (placement === "before-first") return insertBeforeFirst(tx, rows);
   // One lookup for the whole batch: the latest event per member that was
   // given a date. Rows without a date need no lookup and keep the default.
   const dated = rows.filter((r) => r.occurredAt);
@@ -211,5 +249,43 @@ export async function recordStatusEventsBulk(
   });
   for (const [tenantId, count] of clampedByTenant) warnClamped(tenantId, count);
   const result = await tx.memberStatusEvent.createMany({ data });
+  return result.count;
+}
+
+/** The before-first path (T8b): validate every date against the member's first event, then insert unchanged. */
+async function insertBeforeFirst(tx: TxClient, rows: RecordStatusEventInput[]): Promise<number> {
+  const lastSupplied = new Map<string, number>();
+  for (const r of rows) {
+    const t = r.occurredAt?.getTime();
+    if (t === undefined || Number.isNaN(t)) {
+      throw new StatusEventPlacementRefused("[member-status] before-first placement needs a valid occurredAt on every row");
+    }
+    const key = `${r.tenantId}:${r.memberId}`;
+    const prev = lastSupplied.get(key);
+    if (prev !== undefined && t <= prev) {
+      throw new StatusEventPlacementRefused("[member-status] before-first dates must be strictly increasing per member");
+    }
+    lastSupplied.set(key, t);
+  }
+  const first = await tx.memberStatusEvent.groupBy({
+    by: ["tenantId", "memberId"],
+    where: {
+      tenantId: { in: [...new Set(rows.map((r) => r.tenantId))] },
+      memberId: { in: [...new Set(rows.map((r) => r.memberId))] },
+    },
+    _min: { occurredAt: true },
+  });
+  const firstAt = new Map<string, number>();
+  for (const f of first) if (f._min.occurredAt) firstAt.set(`${f.tenantId}:${f.memberId}`, f._min.occurredAt.getTime());
+  for (const r of rows) {
+    const limit = firstAt.get(`${r.tenantId}:${r.memberId}`);
+    if (limit !== undefined && r.occurredAt!.getTime() >= limit) {
+      // No personal data: which club, and that a date was refused.
+      throw new StatusEventPlacementRefused(
+        `[member-status] supplied occurredAt is not earlier than the member's first event (club ${r.tenantId})`,
+      );
+    }
+  }
+  const result = await tx.memberStatusEvent.createMany({ data: rows.map((r) => eventData(r, r.occurredAt)) });
   return result.count;
 }

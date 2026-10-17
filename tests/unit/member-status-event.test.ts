@@ -219,8 +219,8 @@ describe("occurredAt (T8a)", () => {
 describe("provenance (T8d)", () => {
   const imp = { tenantId: "t1", memberId: "m1", fromStatus: "active", toStatus: "cancelled", reason: "import" as const };
 
-  it("exposes the three CHECK-constrained source actions", () => {
-    expect([...MEMBER_STATUS_EVENT_SOURCE_ACTIONS]).toEqual(["import_create", "import_refresh", "import_rollback"]);
+  it("exposes the CHECK-constrained source actions (T8d's three, plus T8b's import_backfill)", () => {
+    expect([...MEMBER_STATUS_EVENT_SOURCE_ACTIONS]).toEqual(["import_create", "import_refresh", "import_rollback", "import_backfill"]);
   });
 
   it("single writer: passes both through on an import event", async () => {

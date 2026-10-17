@@ -400,7 +400,7 @@ model MemberStatusEvent {
   // refresh rollback (and on rows written by builds before T8d). Deliberately
   // NO foreign key to ImportJob: purging a job must never cascade into history.
   sourceJobId  String?
-  // CHECK: import_create | import_refresh | import_rollback (enforced by migration)
+  // CHECK: import_create | import_refresh | import_rollback | import_backfill (T8b) (enforced by migration)
   sourceAction String?
 
   @@index([tenantId, memberId, occurredAt])
