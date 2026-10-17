@@ -17,7 +17,13 @@ import {
 import { Sheet } from "@/components/ui/sheet";
 import type { DayClass } from "@/components/dashboard/WeeklyCalendar";
 import { filterTodoItems } from "@/lib/dashboard-todo";
-import type { ActionItem, ActionItemKind } from "@/lib/dashboard-action-items";
+import {
+  AT_RISK_SUPPRESSED_DETAIL,
+  AT_RISK_SUPPRESSED_NOTE,
+  AT_RISK_SUPPRESSED_TODO_NOTE,
+  type ActionItem,
+  type ActionItemKind,
+} from "@/lib/dashboard-action-items";
 import { capacityLabel, spacesLeftText } from "@/lib/capacity-label";
 import AddTaskModal, { type CreatedTask } from "@/components/dashboard/AddTaskModal";
 
@@ -51,6 +57,8 @@ interface Props {
     missingPhone: number;
     paymentsDue: number;
     atRiskMembers: number;
+    /** True while the club has no MatFlow check-in: tile, to-do row and list are off. */
+    atRiskSuppressed?: boolean;
   };
   classes: DayClass[];
   tenantName: string;
@@ -112,6 +120,7 @@ function classStatus(cls: DayClass) {
 function MetricCard({
   label,
   value,
+  note,
   detail,
   color,
   icon: Icon,
@@ -120,6 +129,8 @@ function MetricCard({
 }: {
   label: string;
   value: string | number;
+  /** Shown in place of `value` when there is no honest number to show yet. */
+  note?: string;
   detail: string;
   color: string;
   icon: React.ElementType;
@@ -133,9 +144,13 @@ function MetricCard({
           <p className="text-[11px] uppercase tracking-[0.12em] font-semibold" style={{ color: "var(--tx-2)" }}>
             {label}
           </p>
-          <p className="text-2xl font-bold mt-2 leading-none" style={{ color: "var(--tx-1)" }}>
-            {value}
-          </p>
+          {note ? (
+            <p className="text-sm font-medium mt-2 text-tx-2">{note}</p>
+          ) : (
+            <p className="text-2xl font-bold mt-2 leading-none" style={{ color: "var(--tx-1)" }}>
+              {value}
+            </p>
+          )}
           <p className="text-xs mt-2" style={{ color: "var(--tx-3)" }}>
             {detail}
           </p>
@@ -272,7 +287,11 @@ export default function DashboardStats({
   // Auto-derived gym-health items (waivers, payments, etc.) kept SEPARATE from
   // the badge total below so the "All caught up" empty state can gate on the
   // joint condition (no auto items AND no user tasks) — audit C-4 fix.
-  const autoTodoCount = stats.waiverMissing + stats.paymentsDue + stats.missingPhone + stats.atRiskMembers;
+  // At-Risk is off while the club has no MatFlow check-in (T2a Part U): every
+  // visit on record is imported, so a count would flag the whole club.
+  const atRiskOff = stats.atRiskSuppressed === true;
+  const atRiskCount = atRiskOff ? 0 : stats.atRiskMembers;
+  const autoTodoCount = stats.waiverMissing + stats.paymentsDue + stats.missingPhone + atRiskCount;
   const ownerTodoCount = autoTodoCount + myOpenTaskCount;
 
   const todoItems: TodoItem[] = [
@@ -304,7 +323,7 @@ export default function DashboardStats({
     },
     {
       label: "Members not seen in 14 days",
-      count: stats.atRiskMembers,
+      count: atRiskCount,
       Icon: AlertTriangle,
       color: "#a78bfa",
       href: "/dashboard/members?filter=quiet",
@@ -409,7 +428,17 @@ export default function DashboardStats({
           icon={CalendarCheck}
           href="/dashboard/coach"
         />
-        <MetricCard label="At-Risk Members" value={stats.atRiskMembers} detail="Not seen in 14 days" color="#a78bfa" icon={AlertTriangle} href="/dashboard/members?filter=quiet" />
+        {/* Suppressed: a neutral line instead of a number, and no link to a
+            list the tile does not stand behind. */}
+        <MetricCard
+          label="At-Risk Members"
+          value={atRiskCount}
+          note={atRiskOff ? AT_RISK_SUPPRESSED_NOTE : undefined}
+          detail={atRiskOff ? AT_RISK_SUPPRESSED_DETAIL : "Not seen in 14 days"}
+          color="#a78bfa"
+          icon={AlertTriangle}
+          href={atRiskOff ? undefined : "/dashboard/members?filter=quiet"}
+        />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] gap-4">
@@ -446,6 +475,8 @@ export default function DashboardStats({
               <div className="rounded-xl border px-3 py-6 flex flex-col items-center gap-2 text-center" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                 <CheckCircle2 className="w-6 h-6" style={{ color: "#22c55e" }} />
                 <p className="text-sm">All caught up — nothing to action.</p>
+                {/* At-Risk is unknown, not zero, while suppressed (UI-RULES §7). */}
+                {atRiskOff && <p className="text-xs text-tx-3">{AT_RISK_SUPPRESSED_TODO_NOTE}</p>}
               </div>
             ) : (
               filterTodoItems(todoItems).map((item) => <TodoRow key={item.label} item={item} />)
@@ -598,6 +629,7 @@ export default function DashboardStats({
                 <div className="rounded-2xl border p-6 flex flex-col items-center gap-2 text-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                   <CheckCircle2 className="w-8 h-8" style={{ color: "#22c55e" }} />
                   <p className="text-sm">All caught up — nothing to action.</p>
+                  {atRiskOff && <p className="text-xs text-tx-3">{AT_RISK_SUPPRESSED_TODO_NOTE}</p>}
                 </div>
               ) : (
                 filterTodoItems(todoItems).map(({ label, count, Icon, color, href, action }) => (
