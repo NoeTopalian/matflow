@@ -42,6 +42,12 @@ export async function GET(req: Request) {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch {
+    // ?strict=1 (onboarding batch 1): the setup wizard decides whether a class
+    // already exists from this list, so an empty list must mean empty — a read
+    // failure is answered as a failure for it. Other callers keep [].
+    if (new URL(req.url).searchParams.get("strict") === "1") {
+      return NextResponse.json({ error: "Couldn't load classes" }, { status: 503, headers: { "Cache-Control": "private, no-store" } });
+    }
     return NextResponse.json([], {
       headers: { "Cache-Control": "private, no-store" },
     });

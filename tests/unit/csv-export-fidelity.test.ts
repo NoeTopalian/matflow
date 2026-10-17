@@ -13,6 +13,13 @@ import { csvCell, csvDocument, CSV_UTF8_BOM } from "@/lib/csv";
 // pure CSV builder never calls them, so a stub is enough for the import.
 vi.mock("next/navigation", () => ({ useRouter: () => ({}), useSearchParams: () => new URLSearchParams() }));
 
+// Imported at module level, not inside the test (16 Oct 2026): ReportsView
+// pulls in recharts, lucide-react and several dashboard panels, and a cold
+// transform of that graph measured 12–24 s alone and passed the 30 s test
+// timeout under full-suite load. Module loading is not the behaviour under
+// test, so it belongs to collection, not to the test's own time budget.
+import { reportsCsv } from "@/components/dashboard/ReportsView";
+
 /** A strict RFC-4180 reader: the oracle the exports are checked against. */
 function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
@@ -101,8 +108,7 @@ describe("csvDocument — encoding and line endings", () => {
 });
 
 describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => {
-  it("passes every cell through the guard, writes a BOM and parses back row for row", async () => {
-    const { reportsCsv } = await import("@/components/dashboard/ReportsView");
+  it("passes every cell through the guard, writes a BOM and parses back row for row", () => {
     const data = {
       weeksBack: 12,
       filters: { classId: null, className: null, ageGroup: null },
