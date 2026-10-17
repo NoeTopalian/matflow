@@ -245,3 +245,63 @@ describe("membership limit clearing — server contract", () => {
     expect(mockCreate).not.toHaveBeenCalled();
   });
 });
+
+// ─── T7a-2 characterisation: the server already clears a description on null ─
+// Same shape as B1-a: the defect was client-side (the editor never sent null
+// for a cleared description). These pin the server contract the fixed editor
+// relies on; the routes are unchanged by T7a-2.
+
+describe("membership description clearing — server contract", () => {
+  const row = (description: string | null) => ({
+    id: "tier-1", tenantId: "tenant-A", name: "Plan A", description, pricePence: 4500,
+    currency: "GBP", billingCycle: "monthly", maxClassesPerWeek: null, isKids: false, isActive: true,
+    locationId: null, stripePriceId: null, stripeProductId: null, createdAt: new Date(), updatedAt: new Date(),
+  });
+
+  it("PATCH description: null writes null and audits the old text → null", async () => {
+    mockAuth.mockResolvedValue({ user: { role: "owner", tenantId: "tenant-A", id: "user-1" } } as never);
+    mockUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockFindFirst.mockResolvedValueOnce(row("Adults") as never).mockResolvedValueOnce(row(null) as never);
+
+    const req = new Request("http://localhost/api/memberships/tier-1", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: null }),
+    });
+    const res = await PATCH(req, { params: Promise.resolve({ id: "tier-1" }) });
+    expect(res.status).toBe(200);
+    expect(mockUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "tier-1", tenantId: "tenant-A" }, data: { description: null } }),
+    );
+    const meta = mockLogAudit.mock.calls[0][0].metadata as Record<string, unknown>;
+    expect(meta.before).toEqual({ description: "Adults" });
+    expect(meta.after).toEqual({ description: null });
+  });
+
+  it("PATCH without the key leaves the description out of the write", async () => {
+    mockAuth.mockResolvedValue({ user: { role: "owner", tenantId: "tenant-A", id: "user-1" } } as never);
+    mockUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockFindFirst.mockResolvedValue(row("Adults") as never);
+
+    const req = new Request("http://localhost/api/memberships/tier-1", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pricePence: 5000 }),
+    });
+    await PATCH(req, { params: Promise.resolve({ id: "tier-1" }) });
+    const data = mockUpdateMany.mock.calls[0][0].data as Record<string, unknown>;
+    expect("description" in data).toBe(false);
+  });
+
+  it("POST refuses an explicit null description, which is why the editor omits a blank one on create", async () => {
+    mockAuth.mockResolvedValue({ user: { role: "owner", tenantId: "tenant-A", id: "user-1" } } as never);
+    const req = new Request("http://localhost/api/memberships", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Plan B", pricePence: 4000, currency: "GBP", billingCycle: "monthly", isKids: false, description: null }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+});
