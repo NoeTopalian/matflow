@@ -1,45 +1,76 @@
-# Resend — configuration checklist for isolated testing (17 Oct 2026)
+# Resend — configuration checklist for the isolated real-email test (17 Oct 2026)
 
-Branch `feat/email-test-isolation`. Production is unchanged and customer sending stays **off**. Secrets are reported by presence and scope only. "Verified" means checked on 17 Oct 2026 as stated; "Blocked" names who can unblock it. Setup is **not complete** until one authorised test email and its signed webhook succeed in the isolated environment (step M7 below).
+Branch `feat/email-test-isolation`. Production is unchanged. Secrets are reported by presence and scope only. "Verified" means checked on 17 Oct 2026 as stated; "Blocked" names who can unblock it. The test is **not complete** until all five success conditions at the end hold.
 
-## Facts that shape the set-up
-- **A Resend webhook is account-wide.** It is created with an endpoint and event types only — no domain or API-key filter (Resend docs, *Create Webhook*). A separate API key therefore does **not** isolate webhook events: a test endpoint on the production Resend account would receive production events too. Isolation needs a **separate Resend account/team** for testing.
-- Resend signs webhooks with Svix; verify on the raw body; retries keep the same `svix-id`; retry schedule immediately, 5 s, 5 min, 30 min, 2 h, 5 h, 10 h, 10 h; failing endpoints are disabled automatically (Resend docs, *Verify Webhooks Requests*, *Retries and Replays*, *Event Types*).
-- Test addresses `delivered@`, `bounced@`, `complained@`, `suppressed@resend.dev` simulate outcomes and **count against quota** (Resend docs, *Send Test Emails*).
-- The only call into Resend is `sendEmail` in `lib/email.ts` (one `to`, no cc/bcc, To/Cc/Bcc extra headers dropped; pinned by `tests/unit/email-test-allowlist.test.ts`).
-- `email.suppressed` is recorded as `bounced`, so later sends to that address short-circuit; a webhook secret that is not a `whsec_` value answers 503.
-- The test-branch EmailLog shows **440 rows `sent` in the last 30 days** (439 `application_internal`, 1 `invite_member`; `node scripts/readiness/email-log-report.mjs --env <main checkout>/.env.test --days 30`, 17 Oct 15:51 UTC): earlier local/test runs reached a real Resend account. From this branch on, anything that is not production sends only to `EMAIL_TEST_RECIPIENTS`.
+## What Resend's official documentation says (read 17 Oct 2026, ~19:10 UK)
+| Topic | Documented | Source |
+|---|---|---|
+| Test sender | The `resend.dev` domain "is only available for testing purposes and can only send emails to the email address associated with your Resend account"; anything else returns 403 "You can only send testing emails to your own email address". | *403 Error Using resend.dev Domain* (knowledge base) |
+| Possible conflict | The *Domains* page says "You must add and verify at least one domain to send emails with Resend." If the test team refuses the `resend.dev` sender, this test is **blocked** (a domain needs DNS changes, which are not authorised). | *Verified Domains* |
+| Permitted recipient | Therefore exactly one: the address you sign in to Resend with. | as above |
+| Test addresses | `delivered@`, `bounced@`, `complained@`, `suppressed@resend.dev` (with `+label`); they "count against your account's sending quota". **Not used in this test.** | *Send Test Emails*, *What email addresses to use for testing?* |
+| Teams | "Resend allows multiple teams to be managed under a single email address. Each team is distinct, with its own API keys, billing, and usage." Switch teams from the team name at the top left. The page I read does not describe the create-team control, so the step below does not name one. | *Managing Teams* |
+| API key permissions | Created "with a name, permission, and optional domain restriction". A Sending-access key calling any other endpoint gets `401 restricted_api_key` "This API key is restricted to only send emails"; `Full access` is needed for anything else. "You cannot view or edit an API key value after it has been created." | *Manage API keys*, *Errors* |
+| Webhook events | `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.failed`, `email.suppressed` (also `opened`, `clicked`, `received`, `scheduled`, which this app ignores). | *Event Types* |
+| Signature verification | Signing secret on the webhook details page; verify with the raw request body ("Some frameworks parse the request as JSON and then stringify it, and this will also break the signature verification"); headers `svix-id`, `svix-timestamp`, `svix-signature`. | *Verify Webhooks Requests* |
+| Retries | Immediately, 5 s, 5 min, 30 min, 2 h, 5 h, 10 h, 10 h. An endpoint that keeps failing is disabled automatically and the team is emailed. Messages can be replayed from the dashboard. | *Retries and Replays* |
+| **Not documented** | Whether a retry reuses the same `svix-id`, and the timestamp tolerance (5 minutes is the `svix` library's own default). The handler does not depend on either: it is idempotent on the stored status, and the tolerance is enforced by the library. | — |
 
-## Checklist: CURRENT → REQUIRED → STATUS
+## Facts from this codebase
+- The only call into Resend is `sendEmail` in `lib/email.ts` (one `to`, no cc/bcc, To/Cc/Bcc extra headers dropped). Pinned by `tests/unit/email-test-allowlist.test.ts` and `tests/unit/sec-d-mail-holds.test.ts`.
+- Sending policy: unset and unrecognised `EMAIL_DELIVERY` are OFF everywhere. `test` sends only to `EMAIL_TEST_RECIPIENTS` everywhere. `on` is open only on the Vercel production deployment. Pinned by `tests/unit/email-sending-policy-table.test.ts`.
+- The password-reset email carries a **6-digit code that expires in 2 minutes**, not a link. It is entered on the app's own reset screen, so the test opens that screen on the **isolated** app first.
+- Webhook route: it requires a full `whsec_` secret (svix itself accepts weak ones) and refuses bodies over 256 KB. A recent unknown email id gets 409 (retry); `email.suppressed` is stored as `bounced`.
+- **Unresolved:** the test-branch `EmailLog` holds **440 rows `sent` in the 30 days to 17 Oct**, so earlier local runs reached a real Resend account through a key whose account is unknown. That key, found in local `.env` files, **must not be used**. The preflight compares the test key's fingerprint against every `RESEND_API_KEY` in the main checkout's and the worktree's `.env` files and refuses a match.
 
-| # | Setting | Current value / state | Required state | Status |
-|---|---|---|---|---|
-| 1 | Resend account / plan / sending limits | Production account: plan, usage and limits not readable without the dashboard | A **separate** test account/team on the free plan; no upgrade | **Blocked — Noe** (M1) |
-| 2 | Test API key | `RESEND_API_KEY` exists in Vercel **Production only** (Sensitive) and in the main checkout's `.env.test` (account unknown). Local test servers no longer read either: they take mail settings only from `MF_EXTRA_ENV` | Key in the **test** account, permission **Sending access** (not Full access), domain-restricted if the test account has a domain | **Blocked — Noe** (M2). Note: `docs/EMAIL-SETUP-RUNBOOK.md` step 4 asks for Full access "for webhooks"; webhooks are registered in the dashboard, sending needs only Sending access |
-| 3 | Sending domain / DNS | `matflow.studio` (read 17 Oct): DKIM `resend._domainkey` present; `send.matflow.studio` MX `feedback-smtp.eu-west-1.amazonses.com` + SPF `include:amazonses.com` present; **no DMARC**; no root MX. Resend's verification status: not readable without the dashboard | Isolated test: **no DNS change** — use the test account's own sender (Resend's testing sender if it has no domain). Production later: confirm verified in Resend; add DMARC only after you decide (proposal: `p=none` with a report address) | Test: **ready** (nothing to change). Production DNS: **Blocked — Noe** (read status, M6) |
-| 4 | From / Reply-To | `RESEND_FROM` in Vercel Production + Preview (value hidden). Code default `MatFlow <onboarding@resend.dev>`. Club-voiced templates reply to the club's contact email (never a provisional login address) | Test: `RESEND_FROM` = the test account's permitted sender, in the private file. Production: unchanged | Code **verified**; value **Blocked — Noe** (M2) |
-| 5 | Test webhook URL, events, signing secret | No `RESEND_WEBHOOK_SECRET` in any Vercel environment (production webhook answers 503 by design). No test endpoint known | Endpoint `https://<tunnel>/api/webhooks/resend`; events `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.failed`, `email.suppressed`; its signing secret only in the private file | Handler **verified** (16 unit tests with real Svix signatures; 9 signed events against a local production build — SIMULATED). Registration **Blocked — Noe** (M4, M5) |
-| 6 | Where each secret lives | Production: unchanged. Preview: no Resend key, no webhook secret. Local isolated server: `MF_EXTRA_ENV` private file outside git (`RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `RESEND_FROM`, `EMAIL_DELIVERY`, `EMAIL_TEST_RECIPIENTS`, loopback `RESEND_BASE_URL` only; anything else refused; values never printed) | As current; nothing added to Vercel for testing | **Verified** (`server.mjs` refusal rules, run 17 Oct) |
-| 7 | Sending mode | Production: **off** (public `/api/tenant/totalbjj` and `/ironpathbjj` report `emailDelivery=off`, 17 Oct 15:50 UTC). Code: `EMAIL_DELIVERY` = `off` \| `test` \| `on`. **Unset and unrecognised values are OFF everywhere.** `test` sends only to the list, production included. `on` sends to anyone **only** on the Vercel production deployment (`VERCEL_ENV=production`); anywhere else — including a local server or preview on the production database — it behaves as `test`. An empty, missing or partly invalid list sends nothing and reports `off`. A key, a paid plan or a deploy never changes the mode | Isolated test: `EMAIL_DELIVERY=test`. Production: stays `off` until you approve activation | **Verified** (unit tests) |
-| 8 | Test-recipient allowlist | `EMAIL_TEST_RECIPIENTS` (new). Enforced in `sendEmail` before any lookup or provider call; empty/missing list sends nothing; blocked sends are logged `suppressed_not_allowlisted` | Exactly: your own address. Optionally `delivered@resend.dev` (quota only). **Never Sean** without your explicit authorisation | Enforcement **verified** (unit tests; SIMULATED run: blocked recipient 0 provider requests, listed recipient exactly 1). Addresses **Blocked — Noe** (M3) |
-| 9 | Scheduled jobs and queued retries | Vercel crons run only on the production deployment; `CRON_SECRET` absent in every Vercel environment → every cron route answers 503 (code; execution logs not read). The local test server has no scheduler. No code re-sends EmailLog rows; there is no email queue or backlog | Unchanged during testing. A paid upgrade cannot release a backlog because none exists; suppressed rows are never re-sent | **Verified** (code). Cron execution history: **Unverified** |
-| 10 | Failure visibility and stop control | EmailLog statuses (`sent`, `delivered`, `delivery_delayed`, `failed`, `bounced`, `complained`, `suppressed` + reason); webhook log line per event (svix id, email id, type, outcome — no addresses); new read-only `scripts/readiness/email-log-report.mjs` (test branch by default, production refused). Stop: `EMAIL_DELIVERY=off` (Vercel applies env changes on the next deployment) | As current; an in-app view is a later product change | **Verified** locally |
+## Production configuration — observed vs unknown
+- **Observed (17 Oct 15:50 UTC):** public `GET /api/tenant/totalbjj` and `/ironpathbjj` returned `emailDelivery: "off"`.
+- **Observed (17 Oct, `vercel env ls`):** the variable names `EMAIL_DELIVERY`, `RESEND_API_KEY` (Production only) and `RESEND_FROM` (Production + Preview) exist. `EMAIL_TEST_RECIPIENTS`, `RESEND_WEBHOOK_SECRET` and `CRON_SECRET` exist in no environment.
+- **Unknown:** the value of `EMAIL_DELIVERY` (Vercel hides it), and which Resend account the production key belongs to. "Email off" is how the deployed code behaved at that moment. It does not prove what the variable holds.
+- **Inference, not observation:** under the deployed code (`e954482`), `"off"` is reported for any value other than unset, empty or `on`. Under this branch's code, every value other than exactly `on` (or `test`, which needs a list) sends nothing. `EMAIL_TEST_RECIPIENTS` does not exist in production, so `test` would also send nothing. This holds only if the hidden value is not `on`; to know, read the value in Vercel.
 
-## Manual steps for Noe (never paste a key, secret or address into chat)
-- **M1** Resend dashboard → create a separate team/account for testing (free plan; do not upgrade). Read its sending limits on the dashboard.
-- **M2** In that test account: API keys → Create → name `matflow-local-test`, permission **Sending access**. Note the permitted sender (Domains page; with no domain it is Resend's testing sender).
-- **M3** Decide the exact test recipients: your own address; optionally `delivered@resend.dev`.
-- **M4** Approve installing Cloudflare's tunnel client (`winget install Cloudflare.cloudflared`) — or name another tunnel. I start the local server and the webhook gate; you then run `cloudflared tunnel --url http://127.0.0.1:3995` and keep that window open; it prints a `https://….trycloudflare.com` URL. **The tunnel points at the webhook gate (port 3995), never at the app (3991):** the gate forwards only `POST /api/webhooks/resend` and answers 404 to everything else, so the sign-in pages and APIs of the test server are never public.
-- **M5** Test account → Webhooks → Add endpoint `https://<that URL>/api/webhooks/resend`, the seven `email.*` events in row 5 → copy its signing secret.
-- **M6** Create the private file `%LOCALAPPDATA%\matflow-verify\email-test-isolation\email-test.env` in Notepad (outside any repository) with exactly these lines, filled in by you:
-  ```
-  EMAIL_DELIVERY=test
-  EMAIL_TEST_RECIPIENTS=<your address>[,delivered@resend.dev]
-  RESEND_API_KEY=<the Sending-access key from M2>
-  RESEND_FROM=<the permitted sender from M2>
-  RESEND_WEBHOOK_SECRET=<the signing secret from M5>
-  ```
-  Tell me only "file ready".
-- **M7** I then start the isolated server with `MF_EXTRA_ENV` pointing at that file, trigger one password-reset email to your address on a synthetic test club, and read back the test-branch EmailLog: `sent` with a real Resend id, then `delivered` from the signed webhook (REAL provider evidence, recorded separately from the simulated runs). Afterwards: delete the webhook endpoint (or disable it), stop the tunnel, delete the private file.
-- Before production is ever put into `test` mode (not part of this test): two known gaps must be closed first — routes still retire or mint sign-in, invite and waiver links for an address the test list will then block (review M-1, 17 Oct), and the login page still offers email to everyone (L-4). And add `RESEND_API_KEY` before setting `EMAIL_DELIVERY=test` with a list: with a list and no key the production boot check refuses to start (L-6).
-- Production (later, separately): read `matflow.studio` verification status and sending limits in the production account; activation only after your commercial go-ahead and explicit approval.
+## Isolation for the first real test
+| Layer | Isolated by | Checked by |
+|---|---|---|
+| Resend | A **separate team** (its own API keys, billing and usage); the webhook is registered in that team only | Noe creates the key and webhook there. The preflight confirms the key is Sending-access and differs from every local key. The test team's dashboard shows the one email afterwards |
+| Credentials | Private file `%LOCALAPPDATA%\matflow-verify\email-test-isolation\email-test.env`, outside every git checkout; accepted keys only; values never printed | `extraEnv()` in `.claude/skills/matflow-verify-local/scripts/env.mjs` (refuses files inside git, unknown keys, malformed lines) |
+| App | Local production build of this branch (`server.mjs`), `VERCEL_ENV` removed, `EMAIL_DELIVERY=test` | `server.mjs start` prints the build commit |
+| Database | Neon **test** branch (`ep-hidden-salad`); production refused by host guard | `assertTestUrl` in `env.mjs` |
+| Club | Synthetic `mfv-…` club from `fixture.mjs`; member 2 temporarily holds Noe's address | `email-real-test.mjs teardown` removes the club and reports any row still holding the address (must be 0) |
+| Inbound | `webhook-gate.mjs` on 127.0.0.1:3995 forwards **only** `POST /api/webhooks/resend`, bounded at 256 KB while reading, Svix headers only; the tunnel points at the gate, never the app | `tests/unit/webhook-gate.test.ts` (runs the real script) |
+| Recipients | `EMAIL_TEST_RECIPIENTS` = exactly one address (Noe's); the preflight refuses more than one, `resend.dev`, Sean/Total BJJ, placeholders | `email-real-test.mjs preflight`; `blocked` proves an unlisted address is refused before Resend with the real key loaded |
+
+## Steps (one at a time; never paste a key, secret or address into chat)
+1. **Test team and sender.** In Resend, create a separate team for testing (free; do not upgrade). Check that its Domains page has no domain: the sender is then Resend's testing sender, and the only possible recipient is the address you sign in with. Read the team's sending limits on its Usage page.
+2. **API key.** In that team, go to API keys and create a key named `matflow-local-test` with **Sending access** and no domain restriction. Copy it once; Resend will not show it again.
+3. **Private file.** In Notepad, create `%LOCALAPPDATA%\matflow-verify\email-test-isolation\email-test.env`:
+   ```
+   EMAIL_DELIVERY=test
+   EMAIL_TEST_RECIPIENTS=<the address you sign in to Resend with>
+   RESEND_API_KEY=<the key from step 2>
+   RESEND_FROM=MatFlow Test <onboarding@resend.dev>
+   ```
+   (The webhook secret line is added in step 6.) Say "file ready". I run `email-real-test.mjs preflight --before-webhook` and report each check by label.
+4. **Local app and gate.** I build and start this branch on the test branch with your file, create the synthetic club, and start the gate. I then run `blocked`, which proves an unlisted address is refused before Resend with your key loaded.
+5. **Tunnel.** Approve installing `cloudflared` (`winget install Cloudflare.cloudflared`). Then run `cloudflared tunnel --url http://127.0.0.1:3995` and keep the window open. **Use port 3995 (the gate), never 3991 (the app).**
+6. **Webhook.** In the test team, add a webhook with the URL `https://<the trycloudflare address>/api/webhooks/resend` and the seven `email.*` events above. Copy its signing secret into the file's last line, then say "secret added". I restart the app with it and rerun the preflight in full.
+7. **Your authorisation and the one email.** I show the masked recipient and the final preflight. You confirm the address and say "send". You then open `https://localhost:3993/login?club=<slug>` (the local certificate is self-signed; your browser will warn), choose "Forgot password", enter your address **once** and enter the code within 2 minutes with a new password.
+8. **Verify and clean up.** I run `verify`, then:
+   - you stop `cloudflared` and disable the test webhook in Resend;
+   - I stop the app and the gate, and run `teardown`;
+   - you delete the private file, or keep it for another run; that is your call.
+
+**Success** requires all five:
+- the email arrives;
+- its code resets the password on the isolated app (`V3`);
+- a genuine signed Resend event moves that one EmailLog row to `delivered` (`V2`);
+- no address other than yours reaches Resend (`B1`, `V1`, `V5`);
+- cleanup leaves the tunnel and gate stopped, the webhook disabled, and no row holding your address.
+
+## Kept unresolved: production test mode
+Production is never put into `test` mode by this work. Before it ever is, three gaps from the 17 Oct review must be closed:
+- **M-1:** routes still retire or mint sign-in, invite and waiver links for an address the test list will then block.
+- **L-4:** the login page still offers email to everyone.
+- **L-6:** with a list but no key, the production boot check refuses to start.
+
+Production activation needs your commercial go-ahead and explicit approval.
