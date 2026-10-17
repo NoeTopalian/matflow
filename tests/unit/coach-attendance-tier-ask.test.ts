@@ -31,6 +31,7 @@ vi.mock("@/lib/audit-log", () => ({ logAudit: h.logAudit }));
 vi.mock("@/lib/checkin", () => ({
   restorePackCreditsForAttendance: vi.fn(async () => 0),
   staffTierAsk: h.staffTierAsk,
+  staffAllowanceAsk: vi.fn(async () => ({ kind: "open", overridden: false })),
 }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>

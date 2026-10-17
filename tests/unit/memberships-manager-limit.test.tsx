@@ -160,12 +160,16 @@ describe("allowanceNote", () => {
     expect(allowanceNote("abc", "4")).toBe("Leave blank for Unlimited.");
   });
 
-  it("states the rolling window, the next-check-in rule and that nothing enforces it yet", () => {
+  it("states the rolling window, that it is enforced as soon as it is saved, and the next-check-in rule", () => {
     const four = allowanceNote("4", "4");
     expect(four).toContain("the 4 weeks before each class");
     expect(four).toContain("several classes in one week are fine");
     expect(four).toContain("applies from the next check-in; nothing already recorded changes");
-    expect(four).toContain("Check-ins do not enforce allowances yet.");
+    expect(four).toContain("It is enforced as soon as you save");
+    expect(four).toContain("the member app, the kiosk and booking refuse once it is used up");
+    expect(four).toContain("the desk and the card scanner ask before admitting");
+    expect(four).toContain("Class-pack check-ins do not count.");
+    expect(four).not.toContain("do not enforce");
     expect(allowanceNote("3", "1")).toContain("the 7 days before each class");
   });
 });

@@ -34,6 +34,11 @@ vi.mock("@/lib/prisma", () => ({
     member: { findFirst: vi.fn().mockResolvedValue(null) },
     // T6b: a paused-looking class is checked for a pre-T6b archive row.
     auditLog: { findMany: vi.fn().mockResolvedValue([]) },
+    // T7: the allowance is judged at the class's next session in the club's
+    // clock. No sessions and (from $queryRaw's class row) no plan columns
+    // read as Unlimited, so these cases book as before.
+    tenant: { findUnique: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
+    classInstance: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -268,10 +273,12 @@ describe("POST /api/member/class-subscriptions/[classId]", () => {
     // A count followed by an insert is not enough under READ COMMITTED: two
     // members booking the last place both read the same count and both insert.
     // The lock is what makes the second wait, re-count and see the place gone.
-    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+    // Two raw statements: the Class lock first, then (T7) the plain allowance read.
+    expect(mockQueryRaw).toHaveBeenCalledTimes(2);
     const sqlParts = (mockQueryRaw.mock.calls[0][0] as unknown as { join?: (s: string) => string } | string[]);
     const sqlText = Array.isArray(sqlParts) ? sqlParts.join("?") : String(sqlParts);
     expect(sqlText).toMatch(/FOR UPDATE/i);
+    expect(sqlText).toContain('FROM "Class"');
   });
 });
 

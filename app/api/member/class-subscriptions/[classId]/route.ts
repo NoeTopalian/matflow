@@ -4,6 +4,7 @@
  *
  * Tenant-scoped: the class must belong to the member's tenant.
  */
+import type { Prisma } from "@prisma/client";
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
@@ -12,6 +13,9 @@ import { classTierCovers, tierRefusalSentence } from "@/lib/class-tier-gate";
 import { classNotLiveSentence } from "@/lib/class-live";
 import { doorLifecycle } from "@/lib/class-lifecycle";
 import { checkinRefusal } from "@/lib/checkin-refusal";
+import { allowanceVerdict, allowanceRefusalSentence, nowMinute, slotMinute } from "@/lib/class-allowance";
+import { readAllowanceSnapshot } from "@/lib/class-allowance-count";
+import { usableTimezone } from "@/lib/class-time";
 
 export const runtime = "nodejs";
 
@@ -111,6 +115,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
         }
       }
 
+      // T7: the plan allowance, as the member app's check-in judges it. A
+      // booking is a standing place, not an attendance, so it is judged for
+      // the class's next session (or now, when none is scheduled yet): a
+      // member whose allowance is used up for that session is told the count
+      // and when the next class frees up, and can book from then.
+      const allowance = await bookingAllowance(tx, r.tenantId, r.memberId, classId);
+      if (allowance) return { kind: "allowance" as const, ...allowance };
+
       const { maxCapacity } = locked[0];
       if (maxCapacity !== null) {
         // Excluding the caller keeps a re-booking idempotent: a member who
@@ -145,6 +157,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
         { status: 403 },
       );
     }
+    if (typeof created === "object" && created.kind === "allowance") {
+      return NextResponse.json(
+        { error: allowanceRefusalSentence(created), reason: "allowance_reached" },
+        { status: 403 },
+      );
+    }
     if (created === "full") {
       return NextResponse.json(
         {
@@ -161,6 +179,44 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
     }
   }
   return NextResponse.json({ success: true, classId }, { status: 201 });
+}
+
+/**
+ * T7: the allowance verdict for a booking, or null when the plan allows it
+ * (or is Unlimited). Judged at the class's next session that has not started
+ * yet in the club's clock; with none scheduled, at now.
+ */
+async function bookingAllowance(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  memberId: string,
+  classId: string,
+) {
+  const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+  const now = new Date();
+  const nowAt = nowMinute(now, usableTimezone(tenant?.timezone));
+  const upcoming = await tx.classInstance.findMany({
+    where: {
+      classId,
+      class: { tenantId },
+      isCancelled: false,
+      sourceImportJobId: null,
+      date: { gte: new Date(now.getTime() - 2 * 86_400_000) },
+    },
+    orderBy: [{ date: "asc" }, { startTime: "asc" }],
+    select: { id: true, date: true, startTime: true },
+    take: 20,
+  });
+  const next = upcoming.find((i) => slotMinute(i) >= nowAt) ?? null;
+  const snap = await readAllowanceSnapshot(tx, {
+    tenantId,
+    memberId,
+    centre: next?.date ?? now,
+    currentInstanceId: next?.id ?? null,
+  });
+  if (!snap?.allowance) return null;
+  const v = allowanceVerdict(snap.allowance, next ? slotMinute(next) : nowAt, snap.visits);
+  return v.exhausted ? { used: v.used, limit: v.limit, weeks: v.weeks, nextFree: v.nextFree } : null;
 }
 
 export async function DELETE(req: Request, ctx: { params: Promise<{ classId: string }> }) {

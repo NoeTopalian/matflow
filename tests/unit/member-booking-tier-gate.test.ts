@@ -25,6 +25,9 @@ vi.mock("@/lib/prisma-tenant", () => ({
       classRoster: { count: h.rosterCount, findFirst: h.rosterFindFirst },
       member: { findFirst: h.memberFindFirst },
       classSubscription: { create: h.subCreate, count: h.subCount, deleteMany: vi.fn() },
+      // T7: no sessions and no plan columns = Unlimited; the tier gate is what these cases measure.
+      tenant: { findUnique: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
+      classInstance: { findMany: vi.fn().mockResolvedValue([]) },
     }),
 }));
 

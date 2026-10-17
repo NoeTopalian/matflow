@@ -126,8 +126,9 @@ type ScanStatus =
   | "member_not_found"
   | "class_not_found"
   | "class_cancelled"
-  // T6a: the class's memberships do not include this member's plan. Nothing
-  // recorded; the row offers "Admit anyway", which resends the card confirmed.
+  // T6a: the class's memberships do not include this member's plan, or (T7)
+  // their plan allowance is used up. Nothing recorded; the row offers "Admit
+  // anyway", which resends the card confirmed.
   | "needs_confirmation"
   | "error"
   | "request_failed"
@@ -148,8 +149,31 @@ type ScanRow = {
   memberName?: string;
   /** needs_confirmation only: the question the server put (names the class and plan). */
   question?: string;
+  /** needs_confirmation only: which question it is. */
+  reason?: ConfirmReason;
+  /** Answers the coach already gave for this card (a card can be asked twice). */
+  acked?: ConfirmReason[];
   at: number;
 };
+
+/** The questions the scanner can be asked (T6a tier, T7 allowance). */
+type ConfirmReason = "tier_not_included" | "allowance_reached";
+
+/** The row label for a card awaiting confirmation, by question. */
+const CONFIRM_LABEL: Record<ConfirmReason, string> = {
+  tier_not_included: "Not on their plan",
+  allowance_reached: "Allowance used",
+};
+
+/** What the screen reader says for a card awaiting confirmation, by question. */
+const CONFIRM_ANNOUNCE: Record<ConfirmReason, (name?: string) => string> = {
+  tier_not_included: (n) => `${n ?? "That card"}, not included in their membership. Admit anyway, or leave them out.`,
+  allowance_reached: (n) => `${n ?? "That card"}, class allowance used. Admit anyway, or leave them out.`,
+};
+
+function labelFor(status: ScanStatus, reason?: ConfirmReason): string {
+  return status === "needs_confirmation" && reason ? CONFIRM_LABEL[reason] : STATUS_COPY[status].label;
+}
 
 /**
  * What a coach is told for each outcome, in plain language. Deliberately says
@@ -297,7 +321,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
    * is the most recently SCANNED row: a card that rides the 10 s timeout
    * settles after five later cards, and the line above the fold must name it.
    */
-  const [lastSettled, setLastSettled] = useState<{ status: ScanStatus; memberName?: string } | null>(null);
+  const [lastSettled, setLastSettled] = useState<{ status: ScanStatus; memberName?: string; reason?: ConfirmReason } | null>(null);
   /**
    * The one sentence the status region speaks. `seq` is the React key of the
    * rendered text: setting an identical string twice is a state bail-out with
@@ -333,7 +357,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
    * existing row goes back to pending and settles in place, rather than a new
    * row appearing for the same card.
    */
-  const submitToken = useCallback(async (token: string, confirm?: { at: number }) => {
+  const submitToken = useCallback(async (token: string, confirm?: { at: number; acknowledged: ConfirmReason[] }) => {
     const classInstanceId = selectedRef.current;
     if (!classInstanceId) return;
     // Captured now: a late response must un-see from the Set this token was
@@ -346,26 +370,33 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
     // visibly different from a card that never decoded — and the list is in
     // scan order, not response order.
     if (confirm) {
-      setRows((prev) => prev.map((r) => (r.token === token && r.at === at ? { ...r, status: "pending", question: undefined } : r)));
+      setRows((prev) =>
+        prev.map((r) =>
+          r.token === token && r.at === at
+            ? { ...r, status: "pending", question: undefined, reason: undefined, acked: confirm.acknowledged }
+            : r,
+        ),
+      );
     } else {
       setRows((prev) => [{ token, status: "pending", at }, ...prev]);
     }
 
     // The pending row becomes the outcome, in place.
-    const settle = (status: ScanStatus, memberName?: string, question?: string) => {
+    const settle = (status: ScanStatus, memberName?: string, question?: string, reason?: ConfirmReason) => {
       setRows((prev) => {
         const i = prev.findIndex((r) => r.token === token && r.at === at);
         // No row: a session switch cleared the list while this was in flight.
         // The scan still recorded, into the class it was sent to — Stop cannot
         // recall a request already on the wire — so the outcome is shown,
         // never dropped. Labelling the row with its own session is later work.
-        if (i === -1) return [{ token, status, memberName, question, at }, ...prev];
+        if (i === -1) return [{ token, status, memberName, question, reason, acked: confirm?.acknowledged, at }, ...prev];
         const next = prev.slice();
-        next[i] = { ...prev[i], status, memberName, question };
+        next[i] = { ...prev[i], status, memberName, question, reason };
         return next;
       });
-      setLastSettled({ status, memberName });
-      setAnnouncement((prev) => ({ text: ANNOUNCE[status](memberName), seq: prev.seq + 1 }));
+      setLastSettled({ status, memberName, reason });
+      const spoken = status === "needs_confirmation" && reason ? CONFIRM_ANNOUNCE[reason](memberName) : ANNOUNCE[status](memberName);
+      setAnnouncement((prev) => ({ text: spoken, seq: prev.seq + 1 }));
       // The long buzz: the coach's eyes are on the stack, and this is the one
       // signal that says "look at the phone". Absent on iOS, inert on desktop.
       if (!IN_REGISTER.has(status)) navigator.vibrate?.(200);
@@ -382,7 +413,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
         body: JSON.stringify({
           classInstanceId,
           tokens: [token],
-          ...(confirm ? { acknowledged: ["tier_not_included"] } : {}),
+          ...(confirm && confirm.acknowledged.length > 0 ? { acknowledged: confirm.acknowledged } : {}),
         }),
         // Never follow a redirect: the proxy answers an expired session with a
         // 307 to /login, and following it hands back the login PAGE as a 200,
@@ -430,6 +461,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
         result.status as ScanStatus,
         result.memberName,
         typeof result.question === "string" ? result.question : undefined,
+        result.reason === "allowance_reached" || result.reason === "tier_not_included" ? result.reason : undefined,
       );
     } catch {
       settle("network");
@@ -648,7 +680,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
                 // fold on a phone, so the coach never scrolls to know the
                 // card in their hand went in.
                 <p className="text-sm text-tx-2">
-                  Last: {last.memberName ?? NO_NAME[last.status]} — {STATUS_COPY[last.status].label}
+                  Last: {last.memberName ?? NO_NAME[last.status]} — {labelFor(last.status, last.reason)}
                 </p>
               )}
             </div>
@@ -750,12 +782,20 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
                     {copy.hint && <p className="text-sm text-tx-3">{copy.hint}</p>}
                     {r.status === "needs_confirmation" && (
                       <>
-                        <p className="text-sm text-tx-3">{r.question ?? "This class isn't included in their membership. Admit anyway?"}</p>
+                        <p className="text-sm text-tx-3">{r.question ??
+                            (r.reason === "allowance_reached"
+                              ? "Their class allowance is used up. Admit anyway?"
+                              : "This class isn't included in their membership. Admit anyway?")}</p>
                         <Button
                           className="mt-2"
                           variant="secondary"
                           size="compact"
-                          onClick={() => void submitToken(r.token, { at: r.at })}
+                          onClick={() =>
+                            void submitToken(r.token, {
+                              at: r.at,
+                              acknowledged: [...new Set([...(r.acked ?? []), r.reason ?? "tier_not_included"])],
+                            })
+                          }
                         >
                           Admit anyway
                         </Button>
@@ -763,7 +803,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
                     )}
                   </div>
                   <span className="shrink-0 text-sm font-medium" style={{ color: ink }}>
-                    {copy.label}
+                    {labelFor(r.status, r.reason)}
                   </span>
                 </li>
               );

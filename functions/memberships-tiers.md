@@ -71,7 +71,7 @@ When a tier is created (and Stripe Connect is configured), some setups also crea
 - **No tier change history** — if an owner edits "Monthly £60" → "Monthly £65", existing members' `membershipType` string still says "Monthly Unlimited" but the price has changed silently. No version snapshot on Member.
 - **String match coupling** — `Member.membershipType` is a free-text field, not an FK to MembershipTier. Easy to drift (typos, renames).
 - **No member-facing upgrade flow** — members can't switch tiers from inside the app; staff has to do it manually.
-- **Class allowance not enforced yet** — configured and shown (T7c); no check-in route reads it until T7 lands. The editor says so.
+- **Class allowance enforced (T7)** — a rolling "N classes every M weeks" window, enforced from the moment a limit is saved. Member app, kiosk and booking refuse with the count and the next free date; desk register, card scanner and coach tick ask and record the override on the audit row. Class-pack check-ins and imported history do not count. Lock order Class then Member (`lib/checkin.ts`).
 
 ## Files
 

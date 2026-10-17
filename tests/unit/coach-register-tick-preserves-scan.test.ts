@@ -50,6 +50,8 @@ vi.mock("@/lib/checkin", () => ({
   restorePackCreditsForAttendance: vi.fn(async () => 0),
   // T6a: the class has no membership list here, so the tier ask is open.
   staffTierAsk: vi.fn(async () => ({ kind: "open", overridden: false })),
+  // T7: the plan has no allowance here, so the allowance ask is open.
+  staffAllowanceAsk: vi.fn(async () => ({ kind: "open", overridden: false })),
 }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>

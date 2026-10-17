@@ -83,7 +83,8 @@ export function allowanceNote(rawLimit: string, rawWeeks: string): string {
   const span = rawWeeks === "1" ? "7 days" : `${rawWeeks} weeks`;
   return (
     `Counted over the ${span} before each class, so several classes in one week are fine while the total stays within the allowance. ` +
-    "A lower allowance applies from the next check-in; nothing already recorded changes. Check-ins do not enforce allowances yet."
+    "It is enforced as soon as you save: the member app, the kiosk and booking refuse once it is used up, and the desk and the card scanner ask before admitting. " +
+    "A lower allowance applies from the next check-in; nothing already recorded changes. Class-pack check-ins do not count."
   );
 }
 

@@ -33,6 +33,7 @@ import { staleBillingWarning, billingSourceLabel } from "@/lib/billing-source";
 import type { TodaySession } from "@/components/dashboard/SessionPicker";
 import { isAdultAccount } from "@/lib/account-type";
 import { tierAskSentence } from "@/lib/class-tier-gate";
+import { allowanceAskSentence, type LocalSlot } from "@/lib/class-allowance";
 
 type RegisterMember = {
   memberId: string;
@@ -93,7 +94,16 @@ type Candidate = {
 };
 
 /** What the person marking was asked about and admitted anyway — recorded on the audit row. */
-type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class" | "tier_not_included";
+type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class" | "tier_not_included" | "allowance_reached";
+
+/** T7: the count the server sends with an askable allowance refusal. */
+type AllowanceBody = { used: number; limit: number; weeks: number; nextFree: LocalSlot | null };
+
+function allowanceFrom(body: unknown): AllowanceBody | null {
+  const a = (body as { allowance?: unknown } | null)?.allowance as Partial<AllowanceBody> | undefined;
+  if (!a || typeof a.used !== "number" || typeof a.limit !== "number" || typeof a.weeks !== "number") return null;
+  return { used: a.used, limit: a.limit, weeks: a.weeks, nextFree: a.nextFree ?? null };
+}
 
 /** Token-safe tint (UI-RULES §2). */
 function tint(color: string, percent: number) {
@@ -331,6 +341,26 @@ export default function RegisterPanel({
         });
         if (!confirmed) return false;
         return mark(memberId, who, [...acknowledged, "tier_not_included"]);
+      }
+      // T7: the member's plan allowance is used up. The member app and kiosk
+      // refuse; the desk is asked with the count and the date it frees up,
+      // and the admission is recorded with that count on the audit row.
+      const allowance = allowanceFrom(body);
+      if (
+        outcome.kind === "refused" &&
+        outcome.reason === "allowance_reached" &&
+        (body as { askable?: unknown } | null)?.askable === true &&
+        allowance &&
+        !acknowledged.includes("allowance_reached")
+      ) {
+        setMarking(null);
+        const confirmed = await ask({
+          title: "Class allowance used",
+          body: allowanceAskSentence(who?.name ?? "This member", allowance),
+          confirmLabel: "Admit anyway",
+        });
+        if (!confirmed) return false;
+        return mark(memberId, who, [...acknowledged, "allowance_reached"]);
       }
       // "Already checked in" is the truth, not a failure: the reload shows it.
       // Any other 409 (cancelled class, closed window) is the refusal it is.

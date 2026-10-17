@@ -140,13 +140,15 @@ describe("check-in against Class.maxCapacity", () => {
   it("locks the Class row before counting, so two last-place check-ins cannot both win", async () => {
     attendanceCountMock.mockResolvedValue(0);
     await performCheckin({ ...BASE, method: "self", enforceCapacity: true });
-    expect(queryRawMock).toHaveBeenCalledTimes(1);
+    // Two raw statements: the Class lock first, then (T7) the Member lock.
+    expect(queryRawMock).toHaveBeenCalledTimes(2);
     // A count followed by an insert is not enough under READ COMMITTED. The
     // guard is `SELECT ... FOR UPDATE` on the Class, in the SAME transaction as
     // the insert — the mechanism the booking route already uses.
     const sql = queryRawMock.mock.calls[0][0] as { strings?: string[] } | string[];
     const text = (Array.isArray(sql) ? sql : (sql.strings ?? [])).join(" ");
     expect(text).toContain("FOR UPDATE");
+    expect(text).toContain('"Class"');
   });
 
   it("excludes the caller from the count, so a re-check-in is not told the class is full", async () => {

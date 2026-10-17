@@ -35,6 +35,7 @@ import { verifyCardToken } from "@/lib/card-token";
 import { performCheckin } from "@/lib/checkin";
 import { logAudit } from "@/lib/audit-log";
 import { tierAskSentence } from "@/lib/class-tier-gate";
+import { allowanceAskSentence } from "@/lib/class-allowance";
 
 /**
  * One request per card is what the client actually sends, so a dropped
@@ -63,7 +64,10 @@ const schema = z.object({
   // T6a (Q3): the scanner ASKS about a class outside the member's membership.
   // The coach's "Admit anyway" resends that one card with this confirmation;
   // the admission is recorded on the card_scan audit row as an override.
-  acknowledged: z.array(z.enum(["tier_not_included"])).max(1).optional(),
+  // T7: "allowance_reached" is the same kind of answer for a member whose plan
+  // allowance is used up. A card can be asked both questions in turn, so the
+  // client resends with every answer given so far.
+  acknowledged: z.array(z.enum(["tier_not_included", "allowance_reached"])).max(2).optional(),
 });
 
 /**
@@ -80,8 +84,9 @@ type ScanStatus =
   | "member_not_found"
   | "class_not_found"
   | "class_cancelled"
-  // T6a: the class's memberships do not include this member's plan. Nothing
-  // was recorded; the coach is asked and may resend with `acknowledged`.
+  // T6a: the class's memberships do not include this member's plan, or (T7)
+  // their plan allowance is used up. Nothing was recorded; the coach is asked
+  // and may resend with `acknowledged`.
   | "needs_confirmation"
   | "error";
 
@@ -93,7 +98,7 @@ type ScanResult = {
   memberId?: string;
   memberName?: string;
   /** needs_confirmation only: the machine reason and the question to put to the coach. */
-  reason?: "tier_not_included";
+  reason?: "tier_not_included" | "allowance_reached";
   question?: string;
 };
 
@@ -118,6 +123,7 @@ export async function POST(req: Request) {
   }
   const { classInstanceId, tokens, acknowledged } = parsed.data;
   const tierConfirmed = !!acknowledged?.includes("tier_not_included");
+  const allowanceConfirmed = !!acknowledged?.includes("allowance_reached");
 
   let rl;
   try {
@@ -204,7 +210,7 @@ export async function POST(req: Request) {
   const memberById = new Map(members.map((m) => [m.id, m]));
 
   let recorded = 0;
-  const overrides: { memberId: string; reasons: string[] }[] = [];
+  const overrides: { memberId: string; reasons: string[]; overAllowance?: unknown }[] = [];
   for (const v of verified) {
     const member = memberById.get(v.memberId);
     if (!member) {
@@ -244,6 +250,9 @@ export async function POST(req: Request) {
       // confirms and the card is resent with the acknowledgement.
       tierGate: "ask",
       tierOverrideConfirmed: tierConfirmed,
+      // T7: the plan allowance is asked about the same way.
+      allowanceGate: "ask",
+      allowanceOverrideConfirmed: allowanceConfirmed,
       checkedInByUserId: userId,
     });
 
@@ -253,7 +262,11 @@ export async function POST(req: Request) {
         recorded += 1;
         results[v.index] = { ...base, status: "success" };
         if (outcome.overrides && outcome.overrides.length > 0) {
-          overrides.push({ memberId: member.id, reasons: outcome.overrides });
+          overrides.push({
+            memberId: member.id,
+            reasons: outcome.overrides,
+            ...(outcome.overAllowance ? { overAllowance: outcome.overAllowance } : {}),
+          });
         }
         break;
       case "tier_not_included":
@@ -262,6 +275,14 @@ export async function POST(req: Request) {
           status: "needs_confirmation",
           reason: "tier_not_included",
           question: tierAskSentence(member.name, outcome.className, outcome.tierName),
+        };
+        break;
+      case "allowance_reached":
+        results[v.index] = {
+          ...base,
+          status: "needs_confirmation",
+          reason: "allowance_reached",
+          question: allowanceAskSentence(member.name, outcome),
         };
         break;
       case "duplicate":
