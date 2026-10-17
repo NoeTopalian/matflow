@@ -68,7 +68,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
   },
 }));
 
-import { PATCH } from "@/app/api/settings/public-page/route";
+import { GET, PATCH } from "@/app/api/settings/public-page/route";
 
 const OWNER = { user: { id: "u-1", tenantId: "t-A", role: "owner" } };
 const OK_GATE = { ok: true, session: OWNER, tenantId: "t-A", userId: "u-1", role: "owner" };
@@ -173,9 +173,52 @@ describe("PATCH /api/settings/public-page", () => {
     expect(h.audits).toEqual([]);
   });
 
-  it("rejects a malformed phone and email", async () => {
-    expect((await patch({ phone: "call me" })).status).toBe(400);
-    expect((await patch({ email: "not-an-email" })).status).toBe(400);
+  it("rejects a malformed phone and email with plain-English messages", async () => {
+    const badPhone = await patch({ phone: "call me" });
+    expect(badPhone.status).toBe(400);
+    const phoneBody = (await badPhone.json()) as { details: { fieldErrors: Record<string, string[]> } };
+    expect(phoneBody.details.fieldErrors.phone[0]).toMatch(/^Enter a phone number/);
+    const badEmail = await patch({ email: "not-an-email" });
+    expect(badEmail.status).toBe(400);
+    const emailBody = (await badEmail.json()) as { details: { fieldErrors: Record<string, string[]> } };
+    expect(emailBody.details.fieldErrors.email[0]).toMatch(/^Enter a valid email address/);
     expect(h.updates).toEqual([]);
+  });
+
+  it("a phone or email of only spaces clears the field instead of failing", async () => {
+    h.tenant.publicPageEmail = "old@club.example";
+    h.tenant.publicPagePhone = "+44 115 000 0000";
+    const res = await patch({ email: "   ", phone: "  " });
+    expect(res.status).toBe(200);
+    expect(h.tenant.publicPageEmail).toBeNull();
+    expect(h.tenant.publicPagePhone).toBeNull();
+  });
+
+  it("trims a valid email and phone before saving", async () => {
+    await patch({ email: "  hello@club.example ", phone: " 0115 000 0000 " });
+    expect(h.tenant.publicPageEmail).toBe("hello@club.example");
+    expect(h.tenant.publicPagePhone).toBe("0115 000 0000");
+  });
+});
+
+describe("GET /api/settings/public-page", () => {
+  const read = async () =>
+    (await (GET() as unknown as Promise<{ status: number; json: () => Promise<Record<string, unknown>> }>)).json();
+
+  beforeEach(() => {
+    h.tiers = [];
+    h.tenant.reviewLockedAt = null;
+  });
+
+  it("flags a logo the public page cannot show (legacy blob or external)", async () => {
+    h.tenant.logoUrl = "https://abc.private.blob.vercel-storage.com/tenants/t-A/logo.png";
+    expect((await read()).logoNotPublic).toBe(true);
+  });
+
+  it("does not flag an inline logo, or no logo at all", async () => {
+    h.tenant.logoUrl = "data:image/webp;base64,UklGRhIAAABXRUJQ";
+    expect((await read()).logoNotPublic).toBe(false);
+    h.tenant.logoUrl = null;
+    expect((await read()).logoNotPublic).toBe(false);
   });
 });

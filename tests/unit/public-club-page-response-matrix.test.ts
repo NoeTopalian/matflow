@@ -6,11 +6,18 @@
 // noindex metadata. Only a published club renders, and only it is indexable.
 // Review-locked clubs may publish (Q9 E-10 proposed default) without prices.
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import type { ReactElement } from "react";
 
-const { gateRows, contentCalls, authMock } = vi.hoisted(() => ({
+const { gateRows, contentCalls, authMock, gateReads, ip } = vi.hoisted(() => ({
   gateRows: new Map<string, Record<string, unknown> | "throw">(),
   contentCalls: [] as { tenantId: string; model: string; args: Record<string, unknown> }[],
   authMock: vi.fn(),
+  gateReads: { n: 0 },
+  ip: { value: "203.0.113.7" },
+}));
+
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ "x-vercel-forwarded-for": ip.value }),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -31,6 +38,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
         findUnique: async ({ where, select }: { where: { slug: string }; select: Record<string, unknown> }) => {
           // The gate read must stay on its fixed field list.
           expect(Object.keys(select).sort()).toEqual(["deletedAt", "id", "publicPageEnabled", "subscriptionStatus"]);
+          gateReads.n++;
           const row = gateRows.get(where.slug);
           if (row === "throw") throw new Error("db down");
           return row ?? null;
@@ -47,7 +55,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
         findFirst: rec("tenant", {
           name: `Club ${tenantId}`,
           slug: `slug-${tenantId}`,
-          logoUrl: null,
+          logoUrl: "data:image/png;base64,iVBORw0KGgo=",
           logoSize: "md",
           primaryColor: "#3b82f6",
           secondaryColor: "#2563eb",
@@ -78,6 +86,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
 }));
 
 import ClubSlugPage, { generateMetadata } from "@/app/[slug]/page";
+import { forgetPublicGate, resolvePublishedClubId } from "@/lib/public-club-page-server";
 
 const active = (id: string, over: Record<string, unknown> = {}) => ({
   id,
@@ -88,6 +97,9 @@ const active = (id: string, over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  forgetPublicGate();
+  gateReads.n = 0;
+  ip.value = "203.0.113.7";
   gateRows.clear();
   contentCalls.length = 0;
   authMock.mockReset();
@@ -171,5 +183,81 @@ describe("T9c /[slug] identical-response matrix", () => {
     expect(own.outcome).toBe("rendered");
     expect((own.el as { props: { preview?: boolean } }).props.preview).toBe(true);
     expect(own.meta).toEqual({ robots: { index: false, follow: false } });
+  });
+
+  it("?preview=1 refuses an owner session that is half signed in", async () => {
+    authMock.mockResolvedValue({ user: { id: "u", tenantId: "t-off", role: "owner", totpPending: true } });
+    expect((await respond("optedout", { preview: "1" })).outcome).toBe("REDIRECT:/login?club=optedout");
+    authMock.mockResolvedValue({ user: { id: "u", tenantId: "t-off", role: "owner", mustChangePassword: true } });
+    expect((await respond("optedout", { preview: "1" })).outcome).toBe("REDIRECT:/login?club=optedout");
+    authMock.mockResolvedValue({ user: { tenantId: "t-off", role: "owner" } });
+    expect((await respond("optedout", { preview: "1" })).outcome).toBe("REDIRECT:/login?club=optedout");
+  });
+
+  it("the published page points the logo at the cacheable route; only the owner preview inlines it", async () => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const published = renderToStaticMarkup((await respond("published")).el as ReactElement);
+    expect(published).toContain('src="/api/tenant/slug-t-pub/logo"');
+    expect(published).not.toContain("data:image/png");
+    // No tier id reaches the markup.
+    expect(published).not.toContain("tier1");
+
+    authMock.mockResolvedValue({ user: { id: "u", tenantId: "t-off", role: "owner" } });
+    const preview = renderToStaticMarkup((await respond("optedout", { preview: "1" })).el as ReactElement);
+    expect(preview).toContain("data:image/png;base64");
+  });
+});
+
+describe("T9c gate throttle", () => {
+  it("caches each slug's answer, so a burst on one slug is one read", async () => {
+    for (let i = 0; i < 5; i++) expect(await resolvePublishedClubId("published", { clientIp: "a" })).toBe("t-pub");
+    for (let i = 0; i < 5; i++) expect(await resolvePublishedClubId("nosuch", { clientIp: "a" })).toBeNull();
+    expect(gateReads.n).toBe(2);
+  });
+
+  it("never caches a failed lookup", async () => {
+    await resolvePublishedClubId("outage");
+    await resolvePublishedClubId("outage");
+    expect(gateReads.n).toBe(2);
+  });
+
+  it("expires after the TTL and can be forgotten after a save", async () => {
+    const t0 = 1_000_000;
+    await resolvePublishedClubId("published", { now: t0 });
+    await resolvePublishedClubId("published", { now: t0 + 29_000 });
+    expect(gateReads.n).toBe(1);
+    await resolvePublishedClubId("published", { now: t0 + 31_000 });
+    expect(gateReads.n).toBe(2);
+    forgetPublicGate("Published");
+    await resolvePublishedClubId("published", { now: t0 + 32_000 });
+    expect(gateReads.n).toBe(3);
+  });
+
+  it("fresh skips the cache (the logo route)", async () => {
+    await resolvePublishedClubId("published");
+    await resolvePublishedClubId("published", { fresh: true });
+    expect(gateReads.n).toBe(2);
+  });
+
+  it("a visitor over the cache-miss budget gets the unknown-slug answer, with no read", async () => {
+    const now = 5_000_000;
+    for (let i = 0; i < 120; i++) await resolvePublishedClubId(`random-${i}`, { clientIp: "flood", now });
+    expect(gateReads.n).toBe(120);
+    // Over budget: even a published club answers like an unknown slug, and no
+    // database read happens.
+    expect(await resolvePublishedClubId("published", { clientIp: "flood", now })).toBeNull();
+    expect(gateReads.n).toBe(120);
+    // Another visitor is unaffected; the flood's budget refills after a minute.
+    expect(await resolvePublishedClubId("published", { clientIp: "other", now })).toBe("t-pub");
+    forgetPublicGate("published");
+    expect(await resolvePublishedClubId("published", { clientIp: "flood", now: now + 61_000 })).toBe("t-pub");
+  });
+
+  it("the page answers an over-budget visitor with the same redirect as an unknown slug", async () => {
+    ip.value = "198.51.100.9";
+    for (let i = 0; i < 120; i++) await resolvePublishedClubId(`random-${i}`, { clientIp: ip.value });
+    const r = await respond("published");
+    expect(r.outcome).toBe("REDIRECT:/login?club=published");
+    expect(r.meta).toEqual({ robots: { index: false, follow: false } });
   });
 });

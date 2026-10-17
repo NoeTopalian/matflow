@@ -1,12 +1,20 @@
 // T9c public club page against a real database (ticket T9c, Tests §3).
 //
-// Two synthetic published clubs. Club A carries one live class plus every kind
+// Two synthetic published clubs. Club A carries its live classes plus every kind
 // of class that must NOT be published: an imported history class (inactive,
 // sourceImportJobId set), a paused class, a removed class, a class with no
-// schedule, a class whose only schedule has ended, and a roster-only class.
-// Club B has its own live class and branding. A's page must list only A's live
-// class; B's data must never appear. Runs on the Neon TEST branch (owner role)
-// and in CI under the NOBYPASSRLS role; skipped without a database.
+// schedule, a class whose only schedule has ended, a class whose only schedule
+// starts next month, and a roster-only class. Club B has its own live class and
+// branding. A's page must list only A's live classes; B's data must never
+// appear. Skipped without a database.
+//
+// RLS: fixtures are written through withRlsBypass and the reads go through
+// withTenantContext, under whatever role DATABASE_URL connects as. On the Neon
+// TEST branch that is the owner role, which bypasses RLS, so this suite proves
+// the application-layer `where: { tenantId }` filters (the live control, per
+// lib/public-club-page-server.ts). It proves RLS as well only when run with
+// DATABASE_URL set to a NOBYPASSRLS role, as CI does for rls-foundation.test.ts
+// (.github/workflows/ci.yml); this file is not yet on that CI step.
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { loadClubContent, resolvePublishedClubId, listPublishedClubSlugs } from "@/lib/public-club-page-server";
@@ -18,6 +26,8 @@ const PREFIX = "pubpage-";
 describe.skipIf(!HAS_DB)("T9c public club page (integration)", () => {
   let tenantA = "";
   let tenantB = "";
+  let coachUserId = "";
+  let liveClassId = "";
   const slugA = `${PREFIX}a-${STAMP}`;
   const slugB = `${PREFIX}b-${STAMP}`;
   const slugOff = `${PREFIX}off-${STAMP}`;
@@ -40,8 +50,24 @@ describe.skipIf(!HAS_DB)("T9c public club page (integration)", () => {
         create: [{ dayOfWeek, startTime, endTime, ...extra }],
       });
 
-      await tx.class.create({ data: { tenantId: a.id, name: "A Live No-Gi", maxCapacity: 20, schedules: sched(1, "18:00", "19:00") } });
-      await tx.class.create({ data: { tenantId: a.id, name: "A Live Kids", isKids: true, schedules: sched(6, "10:00", "10:45") } });
+      const coach = await tx.user.create({
+        data: { tenantId: a.id, email: `coach-${STAMP}@pubpage.local`, name: "Coach Riley", passwordHash: "x", role: "coach" },
+      });
+      coachUserId = coach.id;
+      const live = await tx.class.create({
+        data: { tenantId: a.id, name: "A Live No-Gi", maxCapacity: 20, coachUserId: coach.id, schedules: sched(1, "18:00", "19:00") },
+      });
+      liveClassId = live.id;
+      await tx.class.create({
+        data: { tenantId: a.id, name: "A Live Kids", isKids: true, coachName: "Coach Jo", schedules: sched(6, "10:00", "10:45") },
+      });
+      await tx.class.create({
+        data: {
+          tenantId: a.id,
+          name: "A Starts Next Month",
+          schedules: sched(0, "09:00", "10:00", { startDate: new Date(Date.now() + 30 * 86_400_000) }),
+        },
+      });
       await tx.class.create({
         data: { tenantId: a.id, name: "A Imported History", isActive: false, sourceImportJobId: "job-x", schedules: sched(2, "18:00", "19:00") },
       });
@@ -55,7 +81,9 @@ describe.skipIf(!HAS_DB)("T9c public club page (integration)", () => {
       const m = await tx.member.create({ data: { tenantId: a.id, name: "Private Member", email: `pm-${STAMP}@pubpage.local` } });
       await tx.classRoster.create({ data: { tenantId: a.id, classId: rosterOnly.id, memberId: m.id } });
 
-      await tx.membershipTier.create({ data: { tenantId: a.id, name: "A Public Tier", pricePence: 6000, showOnPublicPage: true } });
+      await tx.membershipTier.create({
+        data: { tenantId: a.id, name: "A Public Tier", description: "Staff note: legacy plan", pricePence: 6000, showOnPublicPage: true },
+      });
       await tx.membershipTier.create({ data: { tenantId: a.id, name: "A Hidden Tier", pricePence: 9000 } });
 
       await tx.class.create({ data: { tenantId: b.id, name: "B Secret Class", schedules: sched(1, "06:00", "07:00") } });
@@ -74,6 +102,7 @@ describe.skipIf(!HAS_DB)("T9c public club page (integration)", () => {
       await tx.class.deleteMany({ where: scope });
       await tx.membershipTier.deleteMany({ where: scope });
       await tx.member.deleteMany({ where: scope });
+      await tx.user.deleteMany({ where: scope });
       await tx.tenant.deleteMany({ where: { id: { in: ids } } });
     });
   });
@@ -90,11 +119,28 @@ describe.skipIf(!HAS_DB)("T9c public club page (integration)", () => {
     const page = await loadClubContent(tenantA);
     expect(page).not.toBeNull();
     expect(page!.name).toBe("Pub Page A");
+    // "A Starts Next Month" is not on this week's timetable.
     expect(page!.sessions.map((s) => s.className).sort()).toEqual(["A Live Kids", "A Live No-Gi"]);
     expect(page!.tiers.map((t) => t.name)).toEqual(["A Public Tier"]);
 
+    // Exact shapes: no capacity, no ids, no tier description.
+    for (const s of page!.sessions) {
+      expect(Object.keys(s).sort()).toEqual(
+        ["className", "coach", "dayOfWeek", "durationMin", "endTime", "isKids", "key", "startTime", "venue"],
+      );
+    }
+    for (const t of page!.tiers) {
+      expect(Object.keys(t).sort()).toEqual(["isKids", "key", "name", "price"]);
+    }
+    // Coach names come from coachUser.name or coachName only.
+    const coachOf = Object.fromEntries(page!.sessions.map((s) => [s.className, s.coach]));
+    expect(coachOf).toEqual({ "A Live No-Gi": "Coach Riley", "A Live Kids": "Coach Jo" });
+
     const json = JSON.stringify(page);
-    for (const leak of ["B Secret Class", "B Tier", "Pub Page B", "Private Member", "private-a@pubpage.local", "A Hidden Tier", "maxCapacity"]) {
+    for (const leak of [
+      "B Secret Class", "B Tier", "Pub Page B", "Private Member", "private-a@pubpage.local", "A Hidden Tier",
+      "Staff note", coachUserId, liveClassId, tenantA,
+    ]) {
       expect(json, leak).not.toContain(leak);
     }
   });

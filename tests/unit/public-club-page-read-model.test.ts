@@ -9,6 +9,7 @@ import {
   PUBLIC_SCHEDULE_SELECT,
   PUBLIC_TIER_SELECT,
   publicClassWhere,
+  publicScheduleWhere,
   publicTierWhere,
   buildPublicClubPage,
   buildPublicSessions,
@@ -56,7 +57,6 @@ function tenantRow(over: Record<string, unknown> = {}) {
 
 const classes = [
   {
-    id: "c1",
     name: "No-Gi",
     isKids: false,
     duration: 60,
@@ -70,7 +70,6 @@ const classes = [
     ],
   },
   {
-    id: "c2",
     name: "Kids BJJ",
     isKids: true,
     duration: 45,
@@ -107,19 +106,28 @@ describe("T9c read model — approved field lists", () => {
     }
   });
 
-  it("class read has no capacity, roster, rank or coach id", () => {
+  it("class read has no id, capacity, roster, rank or coach id", () => {
     expect(Object.keys(PUBLIC_CLASS_SELECT).sort()).toEqual(
-      ["coachName", "coachUser", "duration", "id", "isKids", "location", "locationRef", "name"].sort(),
+      ["coachName", "coachUser", "duration", "isKids", "location", "locationRef", "name"].sort(),
     );
     expect(PUBLIC_CLASS_SELECT.coachUser).toEqual({ select: { name: true } });
     expect(PUBLIC_CLASS_SELECT.locationRef).toEqual({ select: { name: true } });
     expect(Object.keys(PUBLIC_SCHEDULE_SELECT).sort()).toEqual(["dayOfWeek", "endTime", "startTime"]);
   });
 
-  it("tier read has no Stripe ids, member counts or venue", () => {
+  it("tier read has no id, description, Stripe ids, member counts or venue", () => {
     expect(Object.keys(PUBLIC_TIER_SELECT).sort()).toEqual(
-      ["billingCycle", "currency", "description", "id", "isKids", "name", "pricePence"].sort(),
+      ["billingCycle", "currency", "isKids", "name", "pricePence"].sort(),
     );
+  });
+
+  it("schedule predicate: active, already started, not yet ended", () => {
+    const now = new Date("2026-10-17T12:00:00Z");
+    expect(publicScheduleWhere(now)).toEqual({
+      isActive: true,
+      startDate: { lte: now },
+      OR: [{ endDate: null }, { endDate: { gte: now } }],
+    });
   });
 
   it("live-class and tier predicates carry the tenant filter and exclude imported, paused, removed and roster-only classes", () => {
@@ -160,6 +168,22 @@ describe("T9c view model", () => {
     expect(rows[2]).toMatchObject({ coach: "Coach Jo", venue: "Northside", durationMin: 45, isKids: true });
   });
 
+  it("each session carries exactly the public fields, with unique keys and no ids", () => {
+    const twin = [
+      ...classes,
+      // Two schedules of one class on the same day and time must not collide.
+      { ...classes[0], schedules: [{ dayOfWeek: 1, startTime: "18:00", endTime: "19:00" }] },
+    ];
+    const rows = buildPublicSessions(twin);
+    for (const r of rows) {
+      expect(Object.keys(r).sort()).toEqual(
+        ["className", "coach", "dayOfWeek", "durationMin", "endTime", "isKids", "key", "startTime", "venue"],
+      );
+    }
+    expect(new Set(rows.map((r) => r.key)).size).toBe(rows.length);
+    for (const r of rows) expect(r.key).toMatch(/^\d-\d\d:\d\d-\d+$/);
+  });
+
   it("publishes known prices only, cheapest first, and none while review-locked", () => {
     const page = buildPublicClubPage(tenantRow(), classes, tiers);
     expect(page.tiers.map((t) => [t.name, t.price])).toEqual([
@@ -167,6 +191,14 @@ describe("T9c view model", () => {
       ["Unlimited", "£65.00 a month"],
     ]);
     expect(buildPublicClubPage(tenantRow({ reviewLockedAt: new Date() }), classes, tiers).tiers).toEqual([]);
+  });
+
+  it("each tier carries exactly name, price, kids flag and a position key", () => {
+    const page = buildPublicClubPage(tenantRow(), classes, tiers);
+    for (const t of page.tiers) {
+      expect(Object.keys(t).sort()).toEqual(["isKids", "key", "name", "price"]);
+    }
+    expect(page.tiers.map((t) => t.key)).toEqual(["tier-0", "tier-1"]);
   });
 
   it("never carries a blob or external logo, the review lock, or any non-public key", () => {

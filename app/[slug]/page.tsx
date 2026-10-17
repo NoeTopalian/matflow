@@ -23,6 +23,7 @@
 // (tests/unit/public-club-slug-reserved.test.ts).
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { auth } from "@/auth";
 import { getPublishedClubPage, previewClubPageFor } from "@/lib/public-club-page-server";
 import {
@@ -37,16 +38,22 @@ import {
 import { FONT_IMPORTS, extractFontName, isSafeFontFamily } from "@/lib/fonts";
 import { hex, readableOn, legibleInk, isHexColor, DEFAULT_TENANT_PRIMARY, DEFAULT_TENANT_BG } from "@/lib/color";
 import PublicTimetable from "@/components/public-club/PublicTimetable";
+import { getClientIp } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ slug: string }> };
 
+/** The visitor's IP, for the gate's per-IP cache-miss budget. */
+async function visitorIp(): Promise<string> {
+  return getClientIp({ headers: await headers() });
+}
+
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { slug } = await params;
   const normalised = normaliseClubSlug(slug);
   if (isNonClubSlug(normalised)) return NOT_PUBLISHED_METADATA;
-  const page = await getPublishedClubPage(normalised);
+  const page = await getPublishedClubPage(normalised, await visitorIp());
   if (!page) return NOT_PUBLISHED_METADATA;
   return clubMetadata(page);
 }
@@ -60,7 +67,7 @@ export default async function ClubSlugPage({
 
   if (isNonClubSlug(normalised)) notFound();
 
-  const page = await getPublishedClubPage(normalised);
+  const page = await getPublishedClubPage(normalised, await visitorIp());
   if (page) return <PublicClubView page={page} />;
 
   // Owner preview (Settings → Public page → Preview): the signed-in owner of
@@ -71,8 +78,12 @@ export default async function ClubSlugPage({
   const sp = await searchParams;
   if (sp.preview === "1") {
     const session = await auth();
-    if (session?.user?.role === "owner") {
-      const preview = await previewClubPageFor(normalised, session.user.tenantId);
+    // proxy.ts passes a bare slug through before its second-factor and
+    // forced-password-change gates, so they are applied here: a half
+    // signed-in owner session is not the authenticated owner.
+    const user = session?.user;
+    if (user?.id && user.role === "owner" && !user.totpPending && !user.mustChangePassword) {
+      const preview = await previewClubPageFor(normalised, user.tenantId);
       if (preview) return <PublicClubView page={preview} preview />;
     }
   }
@@ -157,7 +168,12 @@ function PublicClubView({ page, preview = false }: { page: PublicClubPage; previ
           {page.logoDataUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={page.logoDataUrl}
+              // A published page points at the cacheable logo route rather
+              // than inlining the base64 (which would ship twice, in the HTML
+              // and the RSC payload, on every anonymous view and crawl). The
+              // route 404s for an unpublished club, so the owner's preview
+              // keeps the inline value.
+              src={preview ? page.logoDataUrl : `/api/tenant/${encodeURIComponent(page.slug)}/logo`}
               alt={`${page.name} logo`}
               className={`mb-6 w-auto object-contain ${LOGO_HEIGHT[page.logoSize] ?? LOGO_HEIGHT.md}`}
               style={{ maxWidth: "240px" }}
@@ -182,7 +198,9 @@ function PublicClubView({ page, preview = false }: { page: PublicClubPage; previ
               <a
                 href={joinHref}
                 className="inline-flex flex-1 items-center justify-center rounded-xl px-5 py-3.5 text-sm font-semibold transition-opacity hover:opacity-90"
-                style={{ background: primary, color: onPrimary }}
+                // The border keeps the main call to action visible when the
+                // club's primary matches its background (UI-RULES §2a).
+                style={{ background: primary, color: onPrimary, border: `1px solid ${hex(ink, 0.24)}` }}
                 data-testid="public-club-join"
               >
                 Join / book a trial
@@ -211,7 +229,7 @@ function PublicClubView({ page, preview = false }: { page: PublicClubPage; previ
             <h2 id="prices-heading" className="text-lg font-semibold">Membership</h2>
             <ul className="mt-4 grid gap-3 sm:grid-cols-2" data-testid="public-club-tiers">
               {page.tiers.map((t) => (
-                <li key={t.id} className="rounded-2xl border p-4" style={{ borderColor: line, background: panel }}>
+                <li key={t.key} className="rounded-2xl border p-4" style={{ borderColor: line, background: panel }}>
                   <div className="flex items-baseline justify-between gap-3">
                     <p className="font-semibold">
                       {t.name}
@@ -223,9 +241,6 @@ function PublicClubView({ page, preview = false }: { page: PublicClubPage; previ
                     </p>
                     <p className="shrink-0 text-sm font-semibold tabular-nums">{t.price}</p>
                   </div>
-                  {t.description && (
-                    <p className="mt-1.5 text-sm" style={{ opacity: 0.7 }}>{t.description}</p>
-                  )}
                 </li>
               ))}
             </ul>
@@ -280,7 +295,7 @@ function PublicClubView({ page, preview = false }: { page: PublicClubPage; previ
           </section>
         )}
 
-        <footer className="mt-16 text-center text-xs" style={{ opacity: 0.4 }}>
+        <footer className="mt-16 text-center text-xs" style={{ opacity: 0.65 }}>
           Powered by MatFlow
         </footer>
       </div>

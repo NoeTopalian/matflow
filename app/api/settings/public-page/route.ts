@@ -22,12 +22,14 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { logAuditStrict } from "@/lib/audit-log";
 import { updateMetadata } from "@/lib/audit-snapshot";
 import { formatTierPrice, PRICE_NOT_SET } from "@/lib/membership-tier-format";
+import { forgetPublicGate } from "@/lib/public-club-page-server";
 import {
   PUBLIC_ADDRESS_MAX,
   PUBLIC_DESCRIPTION_MAX,
   PUBLIC_EMAIL_MAX,
   PUBLIC_PHONE_MAX,
   clubPageUrl,
+  inlineLogo,
 } from "@/lib/public-club-page";
 
 const PUBLIC_FIELDS = {
@@ -61,20 +63,37 @@ const publicPagePatchSchema = z
   .object({
     enabled: z.boolean().optional(),
     description: optionalText(PUBLIC_DESCRIPTION_MAX),
+    // Trimmed BEFORE the empty check, so a field of only spaces clears it
+    // rather than failing validation.
     email: z
-      .union([z.literal(""), z.string().trim().email().max(PUBLIC_EMAIL_MAX)])
+      .string()
+      .trim()
+      .pipe(
+        z.union([
+          z.literal(""),
+          z
+            .string()
+            .max(PUBLIC_EMAIL_MAX, { message: `Keep the email to ${PUBLIC_EMAIL_MAX} characters or fewer.` })
+            .email({ message: "Enter a valid email address, such as hello@yourclub.com." }),
+        ]),
+      )
       .transform((v) => (v === "" ? null : v))
       .nullable()
       .optional(),
     phone: z
-      .union([
-        z.literal(""),
-        z
-          .string()
-          .trim()
-          .max(PUBLIC_PHONE_MAX)
-          .regex(/^\+?[0-9 ()-]{5,}$/, { message: "Use digits, spaces, brackets, hyphens and an optional leading +" }),
-      ])
+      .string()
+      .trim()
+      .pipe(
+        z.union([
+          z.literal(""),
+          z
+            .string()
+            .max(PUBLIC_PHONE_MAX, { message: `Keep the phone number to ${PUBLIC_PHONE_MAX} characters or fewer.` })
+            .regex(/^\+?[0-9 ()-]{5,}$/, {
+              message: "Enter a phone number using digits, spaces, brackets or hyphens, with an optional leading +.",
+            }),
+        ]),
+      )
       .transform((v) => (v === "" ? null : v))
       .nullable()
       .optional(),
@@ -101,7 +120,7 @@ export async function GET() {
     const { tenant, tiers } = await withTenantContext(tenantId, async (tx) => {
       const tenant = await tx.tenant.findFirst({
         where: { id: tenantId },
-        select: { slug: true, reviewLockedAt: true, ...PUBLIC_FIELDS },
+        select: { slug: true, reviewLockedAt: true, logoUrl: true, ...PUBLIC_FIELDS },
       });
       const tiers = await tx.membershipTier.findMany({
         where: { tenantId, isActive: true },
@@ -121,6 +140,10 @@ export async function GET() {
       url: clubPageUrl(tenant.slug),
       path: `/${tenant.slug}`,
       reviewLocked: tenant.reviewLockedAt !== null,
+      // A logo is set but cannot be served anonymously (a legacy private-blob
+      // or external logo, which T9b does not migrate): the public page shows
+      // the letter avatar instead, so Settings says so.
+      logoNotPublic: !!tenant.logoUrl && inlineLogo(tenant.logoUrl) === null,
       tiers: tiers.map(tierView),
     });
   } catch (e) {
@@ -231,6 +254,8 @@ export async function PATCH(req: Request) {
     try {
       revalidatePath(`/${outcome.after.slug}`);
     } catch {}
+    // This instance's gate cache answers at once; others within its 30 s TTL.
+    forgetPublicGate(outcome.after.slug);
 
     return NextResponse.json({
       ok: true,

@@ -94,16 +94,53 @@ describe("app/sitemap.ts", () => {
   });
 });
 
+// Google's robots.txt semantics (RFC 9309): a rule matches by prefix, "*" is
+// any run of characters, a trailing "$" anchors the end of the URL, and the
+// longest matching rule wins (allow wins a tie).
+function robotsAllows(path: string, allow: string[], disallow: string[]): boolean {
+  const toRe = (rule: string) => {
+    const anchored = rule.endsWith("$");
+    const body = (anchored ? rule.slice(0, -1) : rule)
+      .split("*")
+      .map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+      .join(".*");
+    return new RegExp(`^${body}${anchored ? "$" : ""}`);
+  };
+  const best = (rules: string[]) =>
+    rules.filter((r) => toRe(r).test(path)).reduce((n, r) => Math.max(n, r.length), -1);
+  const a = best(allow);
+  const d = best(disallow);
+  return d < 0 || a >= d;
+}
+
 describe("app/robots.ts", () => {
-  it("keeps login, dashboard, member, admin and api disallowed, and allows the club logo for previews", () => {
-    const r = robots();
-    const rule = Array.isArray(r.rules) ? r.rules[0] : r.rules;
-    for (const p of ["/login", "/dashboard/", "/member/", "/admin/", "/api/", "/kiosk/", "/waiver", "/leaderboard/"]) {
-      expect(rule.disallow, p).toContain(p);
+  const r = robots();
+  const rule = Array.isArray(r.rules) ? r.rules[0] : r.rules;
+  const allow = ([] as string[]).concat(rule.allow ?? []);
+  const disallow = ([] as string[]).concat(rule.disallow ?? []);
+  const allowed = (p: string) => robotsAllows(p, allow, disallow);
+
+  it("keeps every private surface disallowed, bare and below, with or without a query", () => {
+    for (const p of [
+      "/login", "/login?club=northside", "/dashboard", "/dashboard/members", "/member", "/member/home",
+      "/admin", "/admin/hub", "/api/settings", "/kiosk/abc", "/onboarding", "/set-password",
+      "/set-password?token=x", "/waiver", "/waiver/abc", "/leaderboard/tok", "/print/x", "/preview",
+    ]) {
+      expect(allowed(p), p).toBe(false);
     }
-    expect(rule.allow).toContain("/");
-    expect(rule.allow).toContain("/api/tenant/*/logo");
     expect(r.sitemap).toBe("https://matflow.studio/sitemap.xml");
+  });
+
+  it("allows the marketing pages, club pages and the club logo for link previews", () => {
+    for (const p of ["/", "/apply", "/legal/terms", "/northside", "/api/tenant/northside/logo"]) {
+      expect(allowed(p), p).toBe(true);
+    }
+  });
+
+  it("allows a club whose slug merely starts with a private segment", () => {
+    for (const p of ["/loginbjj", "/waiverly", "/preview-bjj", "/set-password-club", "/memberships-bjj", "/dashboardgym"]) {
+      expect(allowed(p), p).toBe(true);
+    }
   });
 });
 

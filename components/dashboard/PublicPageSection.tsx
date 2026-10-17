@@ -14,6 +14,7 @@
  * form an owner could save over their real settings.
  */
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Globe, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -33,8 +34,26 @@ type PublicPageSettings = {
   url: string;
   path: string;
   reviewLocked: boolean;
+  /** A logo is set but the public page cannot show it (legacy blob or external). */
+  logoNotPublic?: boolean;
   tiers: TierOption[];
 };
+
+/** Owner-facing names for the API's field keys (UI-RULES §10: no internals). */
+const FIELD_LABELS: Record<string, string> = {
+  enabled: "Public page switch",
+  description: "Short description",
+  email: "Public email",
+  phone: "Public phone",
+  address: "Address",
+  publicTierIds: "Membership prices",
+};
+
+function sameSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
+}
 
 const fieldCls = "w-full bg-transparent border rounded-xl px-3 py-2.5 text-sm placeholder:text-[var(--tx-4)] transition-colors";
 const fieldStyle = { borderColor: "var(--bd-default)", color: "var(--tx-1)" } as const;
@@ -88,8 +107,16 @@ export default function PublicPageSection() {
         details?: { fieldErrors?: Record<string, string[]> };
       };
       if (!res.ok) {
-        const field = data.details?.fieldErrors ? Object.entries(data.details.fieldErrors)[0] : undefined;
-        setError(field ? `${field[0]}: ${field[1][0]}` : data.error ?? "Couldn't save the public page settings.");
+        const field = data.details?.fieldErrors
+          ? Object.entries(data.details.fieldErrors).find(([, msgs]) => msgs && msgs.length > 0)
+          : undefined;
+        if (field) {
+          setError(`${FIELD_LABELS[field[0]] ?? "One of the fields"}: ${field[1][0]}`);
+        } else if (data.error && data.error !== "Invalid data") {
+          setError(data.error);
+        } else {
+          setError("Couldn't save the public page settings. Check the details above and try again.");
+        }
         return;
       }
       const wasEnabled = loaded?.enabled ?? false;
@@ -108,6 +135,17 @@ export default function PublicPageSection() {
       setSaving(false);
     }
   }
+
+  // The switch and fields only take effect on Save; say so while they differ
+  // from what was loaded, so nobody leaves believing the page is live (or off).
+  const dirty =
+    loaded !== null &&
+    (enabled !== loaded.enabled ||
+      description.trim() !== (loaded.description ?? "") ||
+      email.trim() !== (loaded.email ?? "") ||
+      phone.trim() !== (loaded.phone ?? "") ||
+      address.trim() !== (loaded.address ?? "") ||
+      !sameSet(tierIds, new Set(loaded.tiers.filter((t) => t.showOnPublicPage).map((t) => t.id))));
 
   function toggleTier(id: string, on: boolean) {
     setTierIds((prev) => {
@@ -154,6 +192,13 @@ export default function PublicPageSection() {
             <Switch checked={enabled} onCheckedChange={setEnabled} aria-labelledby="public-page-switch-label" />
           </div>
 
+          {loaded.logoNotPublic && (
+            <p className="text-xs" style={{ color: "var(--hue-warning-ink)" }} data-testid="public-page-logo-note">
+              Your logo won&apos;t show on the public page, so your club&apos;s initial is shown instead. Upload the logo
+              again under Branding to fix this.
+            </p>
+          )}
+
           <label className="block text-xs font-medium" style={{ color: "var(--tx-3)" }}>
             Short description
             <textarea
@@ -189,13 +234,23 @@ export default function PublicPageSection() {
 
           <fieldset className="space-y-2">
             <legend className="text-xs font-medium" style={{ color: "var(--tx-3)" }}>Show these membership prices</legend>
+            <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+              Each ticked membership shows its name and price, with a Kids label on kids&apos; plans. Membership
+              descriptions are never shown.
+            </p>
             {loaded.reviewLocked && (
               <p className="text-xs" style={{ color: "var(--hue-warning-ink)" }}>
                 Your club is in review mode, so no prices are shown on the public page until review ends.
               </p>
             )}
             {loaded.tiers.length === 0 ? (
-              <p className="text-xs" style={{ color: "var(--tx-3)" }}>No active memberships yet — add them under Revenue.</p>
+              <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+                No active memberships yet. Add them under{" "}
+                <Link href="/dashboard/memberships" className="underline underline-offset-2" style={{ color: "var(--tx-2)" }}>
+                  Memberships
+                </Link>
+                .
+              </p>
             ) : (
               <ul className="space-y-1.5">
                 {loaded.tiers.map((t) => (
@@ -218,6 +273,15 @@ export default function PublicPageSection() {
           </fieldset>
 
           {error && <p role="alert" className="text-xs text-[var(--hue-danger-ink)]">{error}</p>}
+          {dirty && !error && (
+            <p role="status" className="text-xs font-medium" style={{ color: "var(--hue-warning-ink)" }} data-testid="public-page-unsaved">
+              {enabled !== loaded.enabled
+                ? enabled
+                  ? "Unsaved changes. Press Save to publish your page."
+                  : "Unsaved changes. Press Save to take your page down."
+                : "Unsaved changes. Press Save to update your page."}
+            </p>
+          )}
 
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={() => void save()} disabled={saving} size="compact">

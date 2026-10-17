@@ -35,7 +35,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ slug: st
     );
   }
   const { slug } = await params;
-  const tenantId = await resolvePublishedClubId(slug);
+  const tenantId = await resolvePublishedClubId(slug, { fresh: true });
   if (!tenantId) return NOT_FOUND();
 
   let logoUrl: string | null = null;

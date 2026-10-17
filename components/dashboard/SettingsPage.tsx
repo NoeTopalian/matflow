@@ -692,6 +692,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [bgCol, setBgCol]               = useState("#111111");
   const [fontFamily, setFontFamily]     = useState("Inter, sans-serif");
   const [logoPreview, setLogoPreview]   = useState<string | null>(settings?.logoUrl ?? null);
+  // The logo the server last confirmed. A failed upload falls back to this,
+  // never to the local preview (see saveBranding).
+  const [savedLogoUrl, setSavedLogoUrl] = useState<string | null>(settings?.logoUrl ?? null);
   const [logoFile, setLogoFile]         = useState<File | null>(null);
   const [logoBg, setLogoBg]             = useState<"none" | "black" | "white">("none");
   const [logoSize, setLogoSize]         = useState<"sm" | "md" | "lg">((settings?.logoSize as "sm" | "md" | "lg") ?? "md");
@@ -1114,7 +1117,13 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           // unreadable image, a rate limit, or the route being unreachable.
           const errBody = await upRes.json().catch(() => ({} as { error?: string }));
           uploadError = errBody.error ?? `Logo upload failed (HTTP ${upRes.status})`;
-          finalLogoUrl = logoPreview;
+          // Keep the logo the server already has. logoPreview is the
+          // browser's FileReader data URL: never re-encoded by sharp, so it can
+          // carry EXIF (phone GPS) at up to 1600px, or be an image sharp
+          // refused as hostile. Logos are public (T9b), so only the sanitised
+          // ≤512px WebP from /api/upload?purpose=logo may ever be saved.
+          finalLogoUrl = savedLogoUrl;
+          setLogoPreview(savedLogoUrl);
         }
       }
 
@@ -1180,10 +1189,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         // the old ones. Drop it so the screen reflects the server, not a wish.
         try { localStorage.removeItem("gym-settings"); } catch { /* storage unavailable */ }
         toast(saveError, "error");
-      } else if (uploadError) {
-        toast(`Branding saved, but ${uploadError}`, "error");
       } else {
-        toast("Branding saved — member app updated", "success");
+        const confirmed = typeof finalLogoUrl === "string" && finalLogoUrl.length > 0 ? finalLogoUrl : null;
+        setSavedLogoUrl(confirmed);
+        setLogoPreview(confirmed);
+        if (uploadError) {
+          toast(`Branding saved, but ${uploadError}`, "error");
+        } else {
+          toast("Branding saved — member app updated", "success");
+        }
       }
     } catch {
       toast("Failed to save branding", "error");

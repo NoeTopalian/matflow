@@ -45,7 +45,7 @@ const STATIC_ENTRIES: MetadataRoute.Sitemap = [
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Only clubs that opted in to a public page AND admit sign-in. Opted-out,
   // suspended, cancelled, deleted and reserved slugs never appear.
-  let clubs: { slug: string; updatedAt: Date | null }[] = [];
+  let clubs: { slug: string }[] = [];
   try {
     clubs = await listPublishedClubSlugs();
     console.info(`[sitemap] published club pages: ${clubs.length}`);
@@ -58,7 +58,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ...STATIC_ENTRIES,
     ...clubs.map((c) => ({
       url: clubPageUrl(c.slug),
-      ...(c.updatedAt ? { lastModified: c.updatedAt } : {}),
+      // No lastModified: the only stored date is when the page was published,
+      // and later edits to the description, timetable or prices would not
+      // move it. An absent lastmod is better than one that says "unchanged".
       changeFrequency: "weekly" as const,
       priority: 0.7,
     })),

@@ -18,7 +18,11 @@
  *            (owner decision: the timetable is filterable by coach), day and
  *            start/end.
  *   Tiers:   only tiers the owner ticked "show on public page", active, with a
- *            known price. None at all while the club is review-locked.
+ *            known price: name, price and the kids flag (never the tier's
+ *            free-text description). None at all while the club is
+ *            review-locked.
+ *
+ * A schedule appears from its startDate, never before. No row ids at all.
  *
  * NEVER PUBLIC: members, rosters, capacity, attendance, staff other than the
  * coach name on a class, the private contactEmail/address/billing fields,
@@ -102,8 +106,9 @@ export const PUBLIC_TENANT_SELECT = {
   reviewLockedAt: true,
 } as const;
 
+// No row ids: the timetable is a client component, so whatever it is handed
+// goes into the anonymous RSC payload.
 export const PUBLIC_CLASS_SELECT = {
-  id: true,
   name: true,
   isKids: true,
   duration: true,
@@ -119,10 +124,11 @@ export const PUBLIC_SCHEDULE_SELECT = {
   endTime: true,
 } as const;
 
+// Name and price only (Noe's decision covers prices for ticked tiers). The
+// free-text description is written for staff and members, so it is never
+// read here; Settings says exactly what a ticked tier publishes.
 export const PUBLIC_TIER_SELECT = {
-  id: true,
   name: true,
-  description: true,
   pricePence: true,
   currency: true,
   billingCycle: true,
@@ -145,10 +151,16 @@ export function publicClassWhere(tenantId: string) {
   } as const;
 }
 
-/** An active weekly schedule that has not ended. */
+/**
+ * An active weekly schedule that has started and not ended. A schedule set to
+ * start next month does not run this week, so it is neither on the timetable
+ * nor in the derived opening hours (lib/class-instances.ts honours startDate
+ * the same way).
+ */
 export function publicScheduleWhere(now: Date) {
   return {
     isActive: true,
+    startDate: { lte: now },
     OR: [{ endDate: null }, { endDate: { gte: now } }],
   };
 }
@@ -165,6 +177,7 @@ export const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
 export type PublicSession = {
+  /** Position-based React key; never a database id. */
   key: string;
   className: string;
   dayOfWeek: number;
@@ -177,9 +190,9 @@ export type PublicSession = {
 };
 
 export type PublicTier = {
-  id: string;
+  /** Position-based React key; never a database id. */
+  key: string;
   name: string;
-  description: string | null;
   price: string;
   isKids: boolean;
 };
@@ -208,7 +221,6 @@ export type PublicClubPage = {
 };
 
 type ClassRow = {
-  id: string;
   name: string;
   isKids: boolean;
   duration: number | null;
@@ -220,9 +232,7 @@ type ClassRow = {
 };
 
 type TierRow = {
-  id: string;
   name: string;
-  description: string | null;
   pricePence: number;
   currency: string;
   billingCycle: string;
@@ -264,7 +274,7 @@ function minutesBetween(start: string, end: string): number | null {
 
 /** One row per weekly slot, Monday first, then by start time. */
 export function buildPublicSessions(classes: ClassRow[]): PublicSession[] {
-  const rows: PublicSession[] = [];
+  const rows: Omit<PublicSession, "key">[] = [];
   for (const c of classes) {
     const venue = c.locationRef?.name?.trim() || c.location?.trim() || null;
     // The coach's user id is never selected for the anonymous page; the name
@@ -274,7 +284,6 @@ export function buildPublicSessions(classes: ClassRow[]): PublicSession[] {
       if (s.dayOfWeek < 0 || s.dayOfWeek > 6) continue;
       if (!TIME_RE.test(s.startTime)) continue;
       rows.push({
-        key: `${c.id}-${s.dayOfWeek}-${s.startTime}`,
         className: c.name,
         dayOfWeek: s.dayOfWeek,
         startTime: s.startTime,
@@ -292,7 +301,9 @@ export function buildPublicSessions(classes: ClassRow[]): PublicSession[] {
       a.startTime.localeCompare(b.startTime) ||
       a.className.localeCompare(b.className),
   );
-  return rows;
+  // The index makes the key unique even when two schedules of one class share
+  // a day and start time.
+  return rows.map((r, i) => ({ key: `${r.dayOfWeek}-${r.startTime}-${i}`, ...r }));
 }
 
 /** Tiers with a known price only; "Price not set" is not something to publish. */
@@ -301,10 +312,9 @@ export function buildPublicTiers(tiers: TierRow[]): PublicTier[] {
     .map((t) => ({ t, price: formatTierPrice(t) }))
     .filter(({ price }) => price !== PRICE_NOT_SET)
     .sort((a, b) => a.t.pricePence - b.t.pricePence || a.t.name.localeCompare(b.t.name))
-    .map(({ t, price }) => ({
-      id: t.id,
+    .map(({ t, price }, i) => ({
+      key: `tier-${i}`,
       name: t.name,
-      description: t.description?.trim() || null,
       price,
       isKids: t.isKids,
     }));
