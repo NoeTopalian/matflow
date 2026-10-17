@@ -17,17 +17,18 @@ try {
   if (cmd === "create") {
     if (state.club) { console.log(JSON.stringify({ exists: state.club.slug })); process.exit(0); }
     const S = `mfv-${Date.now().toString(36)}`;
-    const password = `H-${randomBytes(12).toString("base64url")}-a1A`;
+    // Random per run; kept only in the output folder's fixture-state.json, never in git.
+    const ownerPass = randomBytes(18).toString("base64url");
     const secret = newSecret();
     await bypass(async (tx) => {
       const t = await tx.tenant.create({ data: { name: `${S} Synthetic Club`, slug: S, onboardingCompleted: flag !== "--onboarding", subscriptionStatus: "trial" } });
       const u = await tx.user.create({ data: {
         tenantId: t.id, email: `${S}-owner@example.test`, name: "Sam Synthetic", role: "owner",
-        passwordHash: await bcrypt.hash(password, 10), totpEnabled: true, totpSecret: secret,
+        passwordHash: await bcrypt.hash(ownerPass, 10), totpEnabled: true, totpSecret: secret,
         totpRecoveryCodes: Array.from({ length: 8 }, (_, i) => sha256(`${S}-rc-${i}`)),
       } });
       for (let i = 1; i <= 2; i++) await tx.member.create({ data: { tenantId: t.id, name: `Member ${i}`, email: `${S}-m${i}@example.test` } });
-      state.club = { tenantId: t.id, slug: S, name: t.name, owner: { id: u.id, email: u.email, password, secret } };
+      state.club = { tenantId: t.id, slug: S, name: t.name, owner: { id: u.id, email: u.email, password: ownerPass, secret } };
     });
     saveState();
     console.log(JSON.stringify({ created: state.club.slug, onboarding: flag === "--onboarding" }));
