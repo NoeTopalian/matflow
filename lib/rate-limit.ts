@@ -403,7 +403,7 @@ export async function resetRateLimit(bucket: string) {
  * request that arrives with no proxy headers at all should collide with every
  * other such request rather than get a private allowance.
  */
-export function getClientIp(req: Request): string {
+export function getClientIp(req: { headers: Pick<Headers, "get"> }): string {
   const vercel = req.headers.get("x-vercel-forwarded-for")?.trim();
   if (vercel) return vercel.split(",")[0].trim();
 

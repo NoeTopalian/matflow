@@ -102,6 +102,17 @@ model Tenant {
   reviewLockedAt         DateTime?
   reviewSnapshotAt       DateTime?
   reviewNote             String?
+  // T9c opt-in public club page at /[slug] (Q9, Noe 17 Oct 2026). OFF by
+  // default: while false, /[slug] redirects to the branded login exactly as
+  // before. Written only by the owner through /api/settings/public-page
+  // (audited). The contact fields are what the owner chose to publish — the
+  // club's private contactEmail/address are never shown on the public page.
+  publicPageEnabled      Boolean   @default(false)
+  publicPageEnabledAt    DateTime?
+  publicPageDescription  String?
+  publicPageEmail        String?
+  publicPagePhone        String?
+  publicPageAddress      String?
 
   users             User[]
   members           Member[]
@@ -1332,6 +1343,9 @@ model MembershipTier {
   // gate. Both fields are nullable so existing tenants don't break.
   stripePriceId     String?
   stripeProductId   String?
+  // T9c: the owner chose to show this tier's price on the public club page.
+  // Default false, so no price is published until the owner ticks it.
+  showOnPublicPage  Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

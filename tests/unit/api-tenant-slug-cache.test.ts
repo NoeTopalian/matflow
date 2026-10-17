@@ -57,6 +57,45 @@ describe("GET /api/tenant/[slug] — cache header contract", () => {
     expect((res.headers as unknown as Record<string, string>)["Cache-Control"]).toBe(EXPECTED_CACHE);
   });
 
+  // T9b acceptance 4: the branded login renders the owner's logo size, so the
+  // anonymous payload carries logoSize. Cache headers are unchanged.
+  it("selects logoSize and returns it in the body, with the same cache header", async () => {
+    let selected: Record<string, unknown> | undefined;
+    const row = {
+      name: "Total BJJ",
+      slug: "totalbjj",
+      logoUrl: "data:image/webp;base64,UklGRhIAAABXRUJQ",
+      logoSize: "lg",
+      primaryColor: "#3b82f6",
+      secondaryColor: "#2563eb",
+      textColor: "#ffffff",
+      bgColor: "#111111",
+      fontFamily: "'Inter', sans-serif",
+      subscriptionStatus: "active",
+      deletedAt: null,
+    };
+    mockedBypass.mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        tenant: {
+          findUnique: async (args: { select: Record<string, unknown> }) => {
+            selected = args.select;
+            return row;
+          },
+        },
+      })) as never);
+
+    const res = await GET(makeReq(), { params: Promise.resolve({ slug: "totalbjj" }) });
+    expect(res.status).toBe(200);
+    expect(selected?.logoSize).toBe(true);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.logoSize).toBe("lg");
+    expect(body.logoUrl).toBe(row.logoUrl);
+    // The gate fields still never leave the server.
+    expect(body).not.toHaveProperty("subscriptionStatus");
+    expect(body).not.toHaveProperty("deletedAt");
+    expect((res.headers as unknown as Record<string, string>)["Cache-Control"]).toBe(EXPECTED_CACHE);
+  });
+
   it("does NOT set Cache-Control on the 404 path (so a future tenant can claim a free slug without stale cache)", async () => {
     mockedBypass.mockResolvedValue(null as never);
 
