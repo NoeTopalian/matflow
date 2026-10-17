@@ -30,7 +30,8 @@ import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { ErrorState } from "@/components/ui/ErrorState";
-import type { TenantSettings, StaffMember } from "@/app/dashboard/settings/page";
+import type { TenantSettings, StaffMember, SettingsPopulationCounts } from "@/app/dashboard/settings/page";
+import { POPULATION_COPY } from "@/lib/member-population";
 import { waiverEditorStart, waiverSaveValues, defaultWaiverText, type WaiverText } from "@/lib/waiver-editor";
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { toBlobProxyUrl } from "@/lib/blob-url";
@@ -39,7 +40,10 @@ import { cyclePriceSuffix } from "@/lib/billing-cycle";
 interface Props {
   settings: TenantSettings | null;
   staff: StaffMember[];
+  /** Training members only, by status (guardian accounts are never a status row). */
   statusCounts: Record<string, number>;
+  /** On hold (billing axis) and guardian accounts, shown apart from the status rows. */
+  populationCounts?: SettingsPopulationCounts;
   primaryColor: string;
   role: string;
   currentUserId: string;
@@ -653,7 +657,7 @@ function MemberSelfBillingSection({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function SettingsPage({ settings, staff: initialStaff, statusCounts, primaryColor, role, currentUserId, totpEnabled: initTotpEnabled = false, stripeConnected: initStripeConnected = false, stripeAccountId: initStripeAccountId = null, supportScope = null }: Props) {
+export default function SettingsPage({ settings, staff: initialStaff, statusCounts, populationCounts = { onHold: 0, guardians: 0 }, primaryColor, role, currentUserId, totpEnabled: initTotpEnabled = false, stripeConnected: initStripeConnected = false, stripeAccountId: initStripeAccountId = null, supportScope = null }: Props) {
   // F-3 (edit-access remediation): in a support EDIT session only branding,
   // links, check-in windows and timezone are writable (lib/support-session.ts
   // SUPPORT_EDIT_FIELD_POLICY). Revenue, store, staff, account, waiver, import
@@ -1603,7 +1607,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <LocationsCard canEdit={(isOwner || role === "manager") && !supportEdit} />
           <div className="grid grid-cols-3 gap-3">
             {[
-              { label: "Members", value: totalMembers || settings?.memberCount || 0 },
+              // The same population as the Reports "Active members" tile and the
+              // Members page headline (T1, owner decision Q4 A-1, 17 Oct 2026).
+              { label: POPULATION_COPY.active.label, value: statusCounts.active ?? settings?.memberCount ?? 0 },
               { label: "Staff",   value: settings?.staffCount ?? staff.length },
               { label: "Classes", value: settings?.classCount ?? 0 },
             ].map(({ label, value }) => (
@@ -1615,17 +1621,22 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
 
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
-            <h2 className="text-tx-1 font-semibold text-sm mb-4">Member Status</h2>
+            <h2 className="text-tx-1 font-semibold text-sm">Member status</h2>
+            <p className="text-tx-3 text-xs mt-0.5 mb-4">Training members. {POPULATION_COPY.training.excludes}.</p>
             {/* Label/value rows on a fixed 200px label column, values LEFT
                 aligned (§4a.1). `justify-between` in a full-width card threw
                 the value to the far edge — the eye had to track ~750px of
                 nothing to read a two-character count. */}
+            {/* Training members by status. A hold is not a status (MATFLOW-
+                SPECIFICATION-2026-10.md:102-103: the status axes are never
+                conflated): it used to sit here as a "Paused" row keyed on a
+                status no member can have, so it always read nothing. It is now read from paymentStatus and
+                shown below the status rows, with guardian accounts. */}
             {[
-              { key: "active",    label: "Active",    color: "#10b981" },
-              { key: "taster",    label: "Tasters",   color: "#3b82f6" },
-              { key: "paused",    label: "Paused",    color: "#f59e0b" },
-              { key: "inactive",  label: "Inactive",  color: "#6b7280" },
-              { key: "cancelled", label: "Cancelled", color: "#ef4444" },
+              { key: "active",    label: "Active",    color: "var(--hue-success)" },
+              { key: "taster",    label: "Tasters",   color: "var(--hue-info)" },
+              { key: "inactive",  label: "Inactive",  color: "var(--tx-4)" },
+              { key: "cancelled", label: "Cancelled", color: "var(--hue-danger)" },
             ].map(({ key, label, color }) => {
               const count = statusCounts[key] ?? 0;
               if (count === 0) return null;
@@ -1640,6 +1651,22 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               );
             })}
             {totalMembers === 0 && <p className="text-tx-3 text-sm text-center py-4">No members yet</p>}
+            {(populationCounts.onHold > 0 || populationCounts.guardians > 0) && (
+              <div className="mt-3 pt-3 border-t border-bd-default">
+                {[
+                  { key: "on-hold", label: POPULATION_COPY.onHold.label, count: populationCounts.onHold, note: POPULATION_COPY.onHold.excludes },
+                  { key: "guardians", label: POPULATION_COPY.guardian.label, count: populationCounts.guardians, note: POPULATION_COPY.guardian.excludes },
+                ].filter((row) => row.count > 0).map((row) => (
+                  <div key={row.key} className="grid grid-cols-[200px_minmax(0,1fr)] items-start gap-4 py-2">
+                    <span className="text-tx-2 text-sm">{row.label}</span>
+                    <span className="min-w-0">
+                      <span className="text-tx-1 text-sm font-semibold tabular-nums">{row.count}</span>
+                      <span className="block text-tx-3 text-xs mt-0.5">{row.note}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>

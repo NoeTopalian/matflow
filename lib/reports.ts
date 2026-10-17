@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { noPaymentYetWhere } from "@/lib/overdue";
-import { TRAINING_MEMBER } from "@/lib/member-population";
+import { ACTIVE_MEMBER, LEFT_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 
 export interface ClassOption {
   id: string;
@@ -465,11 +465,11 @@ export async function getReportsData(
       }),
       // Health metrics — churn (D1: date by cancelledAt, not updatedAt, so an
       // unrelated edit to a cancelled member doesn't re-bucket them into churn)
-      tx.member.count({ where: { tenantId, status: "cancelled", cancelledAt: { gte: currentMonthStart }, ...TRAINING_MEMBER } }),
-      tx.member.count({ where: { tenantId, status: "active", ...TRAINING_MEMBER } }),
+      tx.member.count({ where: { tenantId, ...LEFT_MEMBER, cancelledAt: { gte: currentMonthStart } } }),
+      tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
       // Retention: joined ≥6 months ago
       tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, ...TRAINING_MEMBER } }),
-      tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, status: "active", ...TRAINING_MEMBER } }),
+      tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, ...ACTIVE_MEMBER } }),
       // Payment health — D5: match the dashboard "payments due" tile predicate
       // (only active/taster members count as overdue; a cancelled member isn't
       // chased). Keeps the dashboard tile and this report in agreement.
@@ -485,7 +485,7 @@ export async function getReportsData(
       }),
       // Net-new chart: members cancelled in the last 6 months (D1: by cancelledAt)
       tx.member.findMany({
-        where: { tenantId, status: "cancelled", cancelledAt: { gte: sixMonthsAgo }, ...TRAINING_MEMBER },
+        where: { tenantId, ...LEFT_MEMBER, cancelledAt: { gte: sixMonthsAgo } },
         select: { cancelledAt: true },
       }),
     ]),

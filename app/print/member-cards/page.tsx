@@ -1,5 +1,6 @@
 import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { ACTIVE_MEMBER } from "@/lib/member-population";
 import { signCardToken } from "@/lib/card-token";
 import { ErrorState } from "@/components/ui/ErrorState";
 import {
@@ -75,8 +76,10 @@ export default async function MemberCardsPage({
       tenantId: ctx.tenantId,
       // A single card takes that member whatever their status — staff
       // reprint for someone who has just come back. The bulk sheet is
-      // active members only.
-      ...(memberId ? { id: memberId } : { status: "active" }),
+      // active training members only: guardian accounts are not members
+      // and get no card (T1, Q9 A-6 default, 17 Oct 2026). A single
+      // guardian's card by id still prints.
+      ...(memberId ? { id: memberId } : { ...ACTIVE_MEMBER }),
     };
 
     const rows = await tx.member.findMany({

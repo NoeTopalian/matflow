@@ -1,6 +1,7 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import AnalysisView from "@/components/dashboard/AnalysisView";
 import { requireRole } from "@/lib/authz";
+import { ACTIVE_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 
 export const metadata = { title: "Analysis | MatFlow" };
 
@@ -31,13 +32,15 @@ export default async function AnalysisPage() {
     activeMemberIdsThisMonth,
   ] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
-      tx.member.count({ where: { tenantId, status: "active" } }),
-      tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
-      tx.member.count({ where: { tenantId, joinedAt: { gte: startOfLastMonth, lte: endOfLastMonth } } }),
+      // Training members only (T1): guardian accounts are not members, so
+      // they are neither "active members" nor "new this month".
+      tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
+      tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth }, ...TRAINING_MEMBER } }),
+      tx.member.count({ where: { tenantId, joinedAt: { gte: startOfLastMonth, lte: endOfLastMonth }, ...TRAINING_MEMBER } }),
       tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: startOfMonth } } }),
       tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: startOfLastMonth, lte: endOfLastMonth } } }),
       tx.class.count({ where: { tenantId, isActive: true } }),
-      tx.member.groupBy({ by: ["status"], where: { tenantId }, _count: true }),
+      tx.member.groupBy({ by: ["status"], where: { tenantId, ...TRAINING_MEMBER }, _count: true }),
       tx.attendanceRecord.findMany({
         // Audit iter-2-database A8I2-P-H-2: cap at 60k rows. At a busy
         // 500-member tenant ~200 classes/month × 20 members = 24k rows over
@@ -60,7 +63,10 @@ export default async function AnalysisPage() {
       tx.attendanceRecord
         .groupBy({
           by: ["memberId"],
-          where: { tenantId, checkInTime: { gte: startOfMonth } },
+          // Engagement is measured over active training members (T1): the
+          // numerator counts only attendees who are in the denominator, so a
+          // cancelled member's or a guardian's check-in cannot lift the rate.
+          where: { tenantId, checkInTime: { gte: startOfMonth }, member: { ...ACTIVE_MEMBER } },
         })
         .then((groups) => groups.length),
     ]),

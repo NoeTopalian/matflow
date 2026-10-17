@@ -102,8 +102,12 @@ describe("'Waiver missing' has one definition: active or taster, unsigned", () =
     expect(isWaiverMissing({ status: "cancelled", waiverAccepted: false })).toBe(false);
     expect(isWaiverMissing({ status: "active", waiverAccepted: true })).toBe(false);
   });
-  it("the dashboard count uses the same statuses", () => {
+  it("the dashboard count uses the same statuses", async () => {
+    // T1: the dashboard spreads the shared CAN_TRAIN_MEMBER population, which
+    // is active or taster (and not a guardian account).
     const src = readFileSync(path.join(process.cwd(), "app/dashboard/page.tsx"), "utf8");
-    expect(src).toMatch(/status: \{ in: \["active", "taster"\] \}, waiverAccepted: false/);
+    expect(src).toMatch(/\.\.\.CAN_TRAIN_MEMBER, waiverAccepted: false/);
+    const { CAN_TRAIN_MEMBER } = await import("@/lib/member-population");
+    expect(CAN_TRAIN_MEMBER.status).toEqual({ in: ["active", "taster"] });
   });
 });

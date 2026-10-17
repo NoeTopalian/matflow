@@ -138,7 +138,10 @@ export async function GET(req: Request) {
         cursor: cursor ? { id: cursor } : undefined,
         skip,
         take,
-        orderBy: { joinedAt: "desc" },
+        // `id` breaks ties: an import stamps many members with the same
+        // joinedAt, and without a total order a cursor page can repeat or skip
+        // rows (T1).
+        orderBy: [{ joinedAt: "desc" }, { id: "desc" }],
       }),
     );
 

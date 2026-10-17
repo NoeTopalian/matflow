@@ -17,6 +17,7 @@ import {
 import { hex, readableOn } from "@/lib/color";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { POPULATION_COPY } from "@/lib/member-population";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/page-header";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
@@ -364,7 +365,8 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
         <aside className="grid grid-cols-2 gap-3 lg:order-2 lg:grid-cols-1 lg:content-start">
         {[
           {
-            label: "Active Members",
+            // Same population and wording as Reports and Members (T1).
+            label: POPULATION_COPY.active.label,
             value: metrics.totalMembers,
             sub: `${metrics.newThisMonth} new this month`,
             icon: Users,
@@ -380,7 +382,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
           {
             label: "Engagement",
             value: `${engagementRate}%`,
-            sub: "members active",
+            sub: "of active members checked in",
             icon: TrendingUp,
             pct: null,
           },

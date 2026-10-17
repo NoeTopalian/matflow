@@ -33,6 +33,15 @@ import AttributionFields, { emptyAttribution, type AttributionValue } from "@/co
 import { resolveSignupCredit } from "@/lib/signup-credit";
 import { BilledByTeamUpPill } from "@/components/dashboard/BilledByTeamUpPill";
 import { paymentStatusLabel } from "@/lib/payment-status";
+import {
+  POPULATION_COPY,
+  isActiveMember,
+  isCurrentMember,
+  isGuardianAccount,
+  isLeftMember,
+  isOnHold,
+  type PopulationKey,
+} from "@/lib/member-population";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -361,6 +370,29 @@ const QUIET_THRESHOLD_DAYS = 14;
 // server-local convention lib/reports.ts uses for its own month buckets.
 const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "churned-this-month", "guardians", "guardian-review"];
 
+/**
+ * The landing view (T1, owner decision Q4 A-1, Noe 17 Oct 2026): the page
+ * opens on Active — active training members, holds included and marked — so
+ * its headline is the same number as the Reports "Active members" tile.
+ * "All current" (active, inactive and tasters) stays one click away.
+ */
+const DEFAULT_FILTER: StatusFilter = "active";
+
+/**
+ * Which named population the header and the first tile describe for each
+ * filter. Filters that slice a population (Needs attention, Overdue, Quiet…)
+ * are drawn from current members, so the headline names that base.
+ */
+const HEADLINE_POPULATION: Partial<Record<StatusFilter, PopulationKey>> = {
+  active: "active",
+  all: "current",
+  inactive: "inactive",
+  taster: "taster",
+  cancelled: "left",
+  "on-hold": "onHold",
+  guardians: "guardian",
+};
+
 function isThisCalendarMonth(iso?: string | null) {
   if (!iso) return false;
   const d = new Date(iso);
@@ -378,10 +410,11 @@ function isThisCalendarMonth(iso?: string | null) {
  * plan) inflated Current Members, Paid, Waivers Missing, Missing Phone and —
  * a fortnight later — Quiet. They stay findable: the "Parents & guardians"
  * chip lists them, and a search on All looks at everyone.
+ *
+ * T1 (17 Oct 2026): this is now the shared GUARDIAN_ACCOUNT twin itself, not
+ * a copy of its rule.
  */
-export function isAccountHolderOnly(m: { accountType?: string | null }) {
-  return m.accountType === "parent";
-}
+export const isAccountHolderOnly = isGuardianAccount;
 
 /**
  * "Waiver missing" = someone who can train (active or taster) with no signed
@@ -443,7 +476,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const requestedFilter = searchParams.get("filter");
-  const urlFilter = FILTERS.includes(requestedFilter as StatusFilter) ? requestedFilter as StatusFilter : "all";
+  const urlFilter = FILTERS.includes(requestedFilter as StatusFilter) ? requestedFilter as StatusFilter : DEFAULT_FILTER;
   const [members, setMembers] = useState<MemberRow[]>(initial);
   const [query, setQuery] = useState("");
   const [localStatusFilter, setLocalStatusFilter] = useState<StatusFilter | null>(null);
@@ -462,6 +495,17 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   const [reviewCount, setReviewCount] = useState<number | null>(canReviewGuardians ? guardianReviewCount : null);
   const statusFilter = localStatusFilter ?? urlFilter;
 
+  // A chip choice is written to the URL so a reload or a shared link opens
+  // the same view (T1). The native History API syncs useSearchParams without
+  // a server round trip — router.replace would re-run the page's member load.
+  const selectFilter = useCallback((key: StatusFilter) => {
+    setLocalStatusFilter(key);
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    params.set("filter", key);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }, []);
+
   // Unique membership types from the list
   const membershipTypes = useMemo(() => {
     const types = Array.from(new Set(members.map((m) => m.membershipType).filter(Boolean))) as string[];
@@ -472,15 +516,22 @@ export default function MembersList({ members: initial, primaryColor, role, guar
     // D4: cancelled members are not current. They appear under the Cancelled
     // (and the two Reports drill-through) filters, and under "All" only when
     // the desk is searching — a returning member is still findable by name,
-    // with the Cancelled tag on the row.
-    const searchingAll = statusFilter === "all" && query.trim() !== "";
+    // with the Cancelled tag on the row. T1: the landing view is now Active,
+    // so a name typed there still looks at everyone, exactly as it did when
+    // All was the landing view.
+    const searchingAll = (statusFilter === "all" || statusFilter === "active") && query.trim() !== "";
     const includeCancelled = INCLUDES_CANCELLED.includes(statusFilter) || searchingAll;
     let list = includeCancelled ? members : members.filter((m) => m.status !== "cancelled");
     // Parent/guardian accounts are listed under their own chip and found by a
     // search on All; every other view is training members, matching its count.
     if (statusFilter === "guardians") list = list.filter(isAccountHolderOnly);
     else if (!searchingAll) list = list.filter((m) => !isAccountHolderOnly(m));
-    if (statusFilter === "guardians" || statusFilter === "guardian-review") {
+    if (searchingAll) {
+      // Everyone matching the search, whatever their standing.
+    } else if (statusFilter === "active") {
+      // The shared predicate behind the Reports "Active members" tile.
+      list = list.filter(isActiveMember);
+    } else if (statusFilter === "guardians" || statusFilter === "guardian-review") {
       // guardians: already narrowed above. guardian-review renders the queue
       // (GuardianReviewQueue), which loads its own rows from the server.
     } else if (statusFilter === "attention") {
@@ -502,7 +553,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
     } else if (statusFilter === "churned-this-month") {
       list = list.filter((m) => m.status === "cancelled" && isThisCalendarMonth(m.cancelledAt));
     } else if (statusFilter === "on-hold") {
-      list = list.filter((m) => m.paymentStatus === "paused");
+      list = list.filter(isOnHold);
     } else if (statusFilter !== "all") {
       list = list.filter((m) => m.status === statusFilter);
     }
@@ -560,8 +611,11 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   // still asked for attention. The rows under each chip match its count.
   // Parent/guardian accounts are not training members either (see
   // isAccountHolderOnly) — counted only under their own chip.
-  const current = members.filter((m) => m.status !== "cancelled" && !isAccountHolderOnly(m));
-  const accountHolders = members.filter((m) => m.status !== "cancelled" && isAccountHolderOnly(m));
+  // T1: every population below is the shared client twin of the server's
+  // where-fragment (lib/member-population.ts), so the Active chip, the header
+  // and the first tile count exactly what Reports counts.
+  const current = members.filter(isCurrentMember);
+  const accountHolders = members.filter((m) => m.status !== "cancelled" && isGuardianAccount(m));
   const showGuardianQueue = statusFilter === "guardian-review" && canReviewGuardians;
   const quietMembers = current.filter(isQuiet);
   const counts: Record<string, number> = {
@@ -572,17 +626,35 @@ export default function MembersList({ members: initial, primaryColor, role, guar
     missingPhone: current.filter((m) => !m.phone?.trim()).length,
     quiet: quietMembers.length,
     paid: current.filter((m) => (m.paymentStatus ?? "paid") === "paid").length,
-    active:    current.filter((m) => m.status === "active").length,
+    active:    members.filter(isActiveMember).length,
     inactive:  current.filter((m) => m.status === "inactive").length,
-    onHold:    current.filter((m) => m.paymentStatus === "paused").length,
-    cancelled: members.filter((m) => m.status === "cancelled" && !isAccountHolderOnly(m)).length,
+    onHold:    current.filter(isOnHold).length,
+    activeOnHold: members.filter((m) => isActiveMember(m) && isOnHold(m)).length,
+    cancelled: members.filter(isLeftMember).length,
     guardians: accountHolders.length,
     guardianReview: reviewCount ?? 0,
     taster:    current.filter((m) => m.status === "taster").length,
     kids:      current.filter((m) => !!m.parentMemberId).length,
   };
 
-  const activeFilterCount = (statusFilter !== "all" ? 1 : 0) + (membershipFilter !== "all" ? 1 : 0) + (sortBy !== "name-asc" ? 1 : 0);
+  // The header and the first tile follow the selected population (T1) and
+  // say, in the shared copy, what that number includes and leaves out.
+  const headlineKey: PopulationKey = HEADLINE_POPULATION[statusFilter] ?? "current";
+  const headlineCounts: Partial<Record<PopulationKey, number>> = {
+    active: counts.active,
+    current: counts.all,
+    inactive: counts.inactive,
+    taster: counts.taster,
+    left: counts.cancelled,
+    onHold: counts.onHold,
+    guardian: counts.guardians,
+  };
+  const headlineCount = headlineCounts[headlineKey] ?? counts.all;
+  const headlineCopy = POPULATION_COPY[headlineKey];
+  // Q4 A-1: members on hold stay inside the Active headline, marked as such.
+  const holdNote = headlineKey === "active" && counts.activeOnHold > 0 ? `${counts.activeOnHold} on hold` : null;
+
+  const activeFilterCount = (statusFilter !== DEFAULT_FILTER ? 1 : 0) + (membershipFilter !== "all" ? 1 : 0) + (sortBy !== "name-asc" ? 1 : 0);
 
   return (
     <div className="w-full">
@@ -591,7 +663,19 @@ export default function MembersList({ members: initial, primaryColor, role, guar
           action are both gone — §1.5.3 allows no glow or gradients. */}
       <PageHeader
         title="Members"
-        description={`${counts.all} current members · ${counts.attention} need attention`}
+        description={
+          <>
+            <span data-testid="members-headline">
+              {headlineCount} {headlineCopy.label.toLowerCase()}
+              {holdNote ? `, ${holdNote}` : ""}
+            </span>
+            {" · "}
+            {counts.attention} need attention
+            <span className="mt-0.5 block text-xs text-tx-3" data-testid="members-headline-scope">
+              {headlineCopy.includes}. {headlineCopy.excludes}.
+            </span>
+          </>
+        }
         action={
           canAdd || (reviewCount ?? 0) > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -600,7 +684,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               {(reviewCount ?? 0) > 0 && (
                 <Button
                   variant="secondary"
-                  onClick={() => setLocalStatusFilter("guardian-review")}
+                  onClick={() => selectFilter("guardian-review")}
                   aria-label={`${reviewCount} guardian suggestions to review`}
                 >
                   <ShieldCheck className="size-4" />
@@ -632,18 +716,21 @@ export default function MembersList({ members: initial, primaryColor, role, guar
           (5 wide only at 1024px+) and constraining the text column with
           min-w-0 + truncate fixes it across mobile, tablet, and desktop. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
-        {[
-          { label: "Current Members", value: counts.all, sub: "Excludes cancelled & guardians", color: primaryColor, Icon: Users },
-          { label: "Paid", value: counts.paid, sub: "Membership current", color: "#22c55e", Icon: CheckCircle2 },
-          { label: "Overdue", value: counts.overdue, sub: "Needs chasing", color: "#f97316", Icon: AlertTriangle },
-          { label: "Waivers Missing", value: counts.waiverMissing, sub: "Active & tasters", color: "#f59e0b", Icon: FileCheck2 },
-          { label: "Tasters", value: counts.taster, sub: "Convert soon", color: "#38bdf8", Icon: CalendarCheck },
-        ].map(({ label, value, sub, color, Icon }) => (
-          <Card key={label} padding="tight">
+        {([
+          // Follows the selected population (T1); on the landing view this is
+          // Active, the Reports "Active members" number.
+          { id: "headline", label: headlineCopy.label, value: headlineCount, sub: headlineCopy.excludes, note: holdNote ? `Includes ${holdNote}` : null, color: primaryColor, Icon: Users },
+          { id: "paid", label: "Paid", value: counts.paid, sub: "Membership current", color: "#22c55e", Icon: CheckCircle2 },
+          { id: "overdue", label: "Overdue", value: counts.overdue, sub: "Needs chasing", color: "#f97316", Icon: AlertTriangle },
+          { id: "waivers", label: "Waivers Missing", value: counts.waiverMissing, sub: "Active & tasters", color: "#f59e0b", Icon: FileCheck2 },
+          { id: "tasters", label: "Tasters", value: counts.taster, sub: "Convert soon", color: "#38bdf8", Icon: CalendarCheck },
+        ] as { id: string; label: string; value: number; sub: string; note?: string | null; color: string; Icon: typeof Users }[]).map(({ id, label, value, sub, note, color, Icon }) => (
+          <Card key={id} padding="tight" data-testid={`members-tile-${id}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-xl font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>{value}</p>
                 <p className="mt-1 truncate text-[13px] font-medium" style={{ color: "var(--tx-2)" }}>{label}</p>
+                {note && <p className="mt-0.5 text-[11px] font-medium text-tx-2">{note}</p>}
                 <p className="mt-0.5 line-clamp-2 text-[11px]" style={{ color: "var(--tx-3)" }}>{sub}</p>
               </div>
               <Icon className="size-4 shrink-0" style={{ color: hex(color, 0.75) }} />
@@ -693,7 +780,11 @@ export default function MembersList({ members: initial, primaryColor, role, guar
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
           <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto scrollbar-hide pb-1 lg:flex-wrap lg:overflow-x-visible lg:pb-0">
             {([
-              { key: "all", label: "All", count: counts.all },
+              // Active leads: it is the landing view and the Reports "Active
+              // members" population (T1). "All current" is the wider view —
+              // active, inactive and tasters — labelled as such.
+              { key: "active", label: "Active", count: counts.active },
+              { key: "all", label: "All current", count: counts.all },
               { key: "attention", label: "Needs Attention", count: counts.attention },
               { key: "overdue", label: "Overdue", count: counts.overdue },
               { key: "waiver-missing", label: "Waiver Missing", count: counts.waiverMissing },
@@ -707,11 +798,12 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               { key: "guardians", label: "Parents & guardians", count: counts.guardians },
               ...(canReviewGuardians ? [{ key: "guardian-review" as const, label: "Guardian suggestions to review", count: counts.guardianReview }] : []),
             ] as { key: StatusFilter; label: string; count: number }[])
-              .filter((item) => item.key === "all" || item.key === statusFilter || item.count > 0)
+              .filter((item) => item.key === "all" || item.key === "active" || item.key === statusFilter || item.count > 0)
               .map((item) => (
                 <button
                   key={item.key}
-                  onClick={() => setLocalStatusFilter(item.key)}
+                  onClick={() => selectFilter(item.key)}
+                  aria-pressed={statusFilter === item.key}
                   className="px-3 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap shrink-0 border"
                   style={{
                     background: statusFilter === item.key ? hex(primaryColor, 0.16) : "var(--sf-1)",
@@ -804,7 +896,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
 
           {/* Reset */}
           {activeFilterCount > 0 && (
-            <button onClick={() => { setLocalStatusFilter("all"); setMembershipFilter("all"); setSortBy("name-asc"); }} className="text-xs text-[var(--hue-danger-ink)] hover:underline">
+            <button onClick={() => { selectFilter(DEFAULT_FILTER); setMembershipFilter("all"); setSortBy("name-asc"); }} className="text-xs text-[var(--hue-danger-ink)] hover:underline">
               Clear all filters
             </button>
           )}
