@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { addLoginClaimSql } from "./login-claim-fake";
 import { emailDigest } from "@/lib/login-email";
 import { generateSecret, generateSync } from "otplib";
@@ -53,6 +53,12 @@ vi.mock("@/lib/audit-log", () => ({ logAudit: h.logAudit }));
 vi.mock("bcryptjs", () => ({ default: { compare: h.compare } }));
 
 import { GET, POST } from "@/app/api/account/login-email/route";
+
+// Mail on/unset sends to anyone only on the Vercel production deployment (lib/email-delivery.ts, 17 Oct 2026);
+// these routes are tested with delivery on.
+beforeEach(() => { process.env.VERCEL_ENV = "production"; });
+afterEach(() => { delete process.env.VERCEL_ENV; });
+
 
 // Audit rows carry the KEYED digest (AH-E2, 9 Oct 2026). Until then this was a
 // plain SHA-256, which is dictionary-reversible for a predictable address; the

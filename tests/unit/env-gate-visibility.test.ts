@@ -116,6 +116,8 @@ describe("POST /api/auth/forgot-password — RESEND_API_KEY env gate", () => {
   // log and in the EmailLog row, rather than to the caller in a status code.
   it("answers the caller 200 and tells the OPERATOR in the log, rather than 503", async () => {
     delete process.env.RESEND_API_KEY;
+    // Delivery on (unset) sends only on the Vercel production deployment (17 Oct 2026).
+    process.env.VERCEL_ENV = "production";
     // NODE_ENV is readonly under strict TS; set via stubEnv. Reset in afterEach.
     vi.stubEnv("NODE_ENV", "production");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

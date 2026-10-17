@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach, afterAll } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterAll, afterEach } from "vitest";
 
 // Mailbox doors on a bootstrap account (3 Oct 2026): forgot-password and
 // reset-password.
@@ -55,6 +55,12 @@ import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
 import { POST as forgot } from "@/app/api/auth/forgot-password/route";
 import { POST as reset } from "@/app/api/auth/reset-password/route";
+
+// Mail on/unset sends to anyone only on the Vercel production deployment (lib/email-delivery.ts, 17 Oct 2026);
+// these routes are tested with delivery on.
+beforeEach(() => { process.env.VERCEL_ENV = "production"; });
+afterEach(() => { delete process.env.VERCEL_ENV; });
+
 
 const mockUserFindFirst = vi.mocked(prisma.user.findFirst);
 const mockMemberFindFirst = vi.mocked(prisma.member.findFirst);

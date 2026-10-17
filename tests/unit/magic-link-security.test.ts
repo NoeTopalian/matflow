@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -85,6 +85,12 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { POST } from "@/app/api/magic-link/request/route";
 import { GET } from "@/app/api/magic-link/verify/route";
 import { randomBytes } from "crypto";
+
+// Mail on/unset sends to anyone only on the Vercel production deployment (lib/email-delivery.ts, 17 Oct 2026);
+// these routes are tested with delivery on.
+beforeEach(() => { process.env.VERCEL_ENV = "production"; });
+afterEach(() => { delete process.env.VERCEL_ENV; });
+
 
 const mockTenantFindUnique = vi.mocked(prisma.tenant.findUnique);
 const mockUserFindFirst = vi.mocked(prisma.user.findFirst);

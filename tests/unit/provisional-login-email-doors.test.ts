@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach, afterAll } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterAll, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 
 // Provisional login email (7 Oct 2026, US-001): the doors.
@@ -74,6 +74,12 @@ import { GET as verifyLinkRoute } from "@/app/api/magic-link/verify/route";
 import { POST as forgotRoute } from "@/app/api/auth/forgot-password/route";
 import { POST as resetRoute } from "@/app/api/auth/reset-password/route";
 import { isLoginEmailProvisional } from "@/lib/login-email";
+
+// Mail on/unset sends to anyone only on the Vercel production deployment (lib/email-delivery.ts, 17 Oct 2026);
+// these routes are tested with delivery on.
+beforeEach(() => { process.env.VERCEL_ENV = "production"; });
+afterEach(() => { delete process.env.VERCEL_ENV; });
+
 
 const m = {
   tenant: vi.mocked(prisma.tenant.findUnique),

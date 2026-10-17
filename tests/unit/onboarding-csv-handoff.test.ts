@@ -1,4 +1,10 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+
+// Mail on/unset sends to anyone only on the Vercel production deployment (lib/email-delivery.ts, 17 Oct 2026);
+// these routes are tested with delivery on.
+beforeEach(() => { process.env.VERCEL_ENV = "production"; });
+afterEach(() => { delete process.env.VERCEL_ENV; });
+
 
 // Wizard v2 Step 13 — white-glove CSV handoff endpoint.
 // Verifies file validation, ImportJob row creation with status='pending_white_glove',
