@@ -136,7 +136,7 @@ describe("signature (svix, raw body)", () => {
     expect(store.writes).toBe(0);
   });
 
-  it("a body larger than 256 KB is refused before it is read", async () => {
+  it("a declared Content-Length over 256 KB is refused before the body is read", async () => {
     const big = new Request("http://localhost/api/webhooks/resend", {
       method: "POST",
       headers: { "content-type": "application/json", "content-length": String(300 * 1024) },

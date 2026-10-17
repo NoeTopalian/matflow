@@ -103,7 +103,7 @@ async function setup() {
   const hash = await bcrypt.hash(randomBytes(12).toString("hex"), 10);
   const rows = await q(`update "Member" set email = $1, "passwordHash" = $2 where "tenantId" = $3 and email = $4 returning id`, [r.address, hash, c.tenantId, m2]);
   if (rows.length !== 1) throw new Error("member 2 not found");
-  state.real = { memberId: rows[0].id, addressFp: fp(r.address), hashFp: fp(hash) };
+  state.real = { memberId: rows[0].id, addressFp: fp(r.address), hashFp: fp(hash), mode: label() };
   saveState();
   console.log(`setup done: club ${c.slug}; member 2 is ${mask(r.address)} with a password.`);
   console.log(`Isolated app reset screen: ${BASE}/login?club=${c.slug}  ->  "Forgot password"`);
@@ -115,6 +115,7 @@ async function blocked() {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
   const c = state.club;
   if (!c || !state.real) throw new Error("run setup first");
+  if (label() !== state.real.mode) throw new Error(`refusing: setup ran ${state.real.mode} but the private file now says ${label()}`);
   const L = ledger("email-real-blocked");
   const before = await providerRows(c.tenantId);
   const res = await fetch(`${BASE}/api/auth/forgot-password`, { method: "POST", headers: { "content-type": "application/json", origin: BASE, "x-lane-ip": "10.93.2.1" }, body: JSON.stringify({ email: c.owner.email, tenantSlug: c.slug }) });
@@ -131,6 +132,7 @@ async function verify() {
   if (!c || !real) throw new Error("run setup first");
   const r = recipient(settings());
   if (r.error || fp(r.address) !== real.addressFp) throw new Error("refusing: the private file's recipient changed since setup");
+  if (label() !== real.mode) throw new Error(`refusing: setup ran ${real.mode} but the private file now says ${label()} — evidence would be mislabelled`);
   const L = ledger("email-real-verify");
   let sends = await providerRows(c.tenantId);
   // V1 — exactly one email reached Resend, to the confirmed address.
@@ -159,21 +161,36 @@ async function verify() {
 }
 
 async function teardown() {
-  const real = state.real;
-  const res = spawnSync(node24(), [path.join(HERE, "fixture.mjs"), "teardown"], { cwd: APP, encoding: "utf8", env: { ...process.env, MF_APP: APP } });
-  console.log(res.stdout.split(/\r?\n/).filter((l) => l.includes("tornDown") || l.includes("nothingToTearDown")).join("\n"));
-  if (real && process.env.MF_EXTRA_ENV) {
+  const c = state.club, real = state.real;
+  let address = null;
+  if (real) {
+    // The address is needed to prove nothing still holds it; refuse rather than skip that proof.
     const r = recipient(settings());
-    if (!r.error) {
-      const left = (await q(
-        `select (select count(*) from "EmailLog" where lower(recipient) = $1)::int email_log,
-                (select count(*) from "PasswordResetToken" where lower(email) = $1)::int reset_tokens,
-                (select count(*) from "MagicLinkToken" where lower(email) = $1)::int magic_links,
-                (select count(*) from "Member" where lower(email) = $1)::int members,
-                (select count(*) from "User" where lower(email) = $1)::int users,
-                (select count(*) from "AuditLog" where metadata::text ilike '%' || $1 || '%')::int audit`, [r.address]))[0];
-      console.log(`rows still holding ${mask(r.address)} anywhere in the test branch: ${JSON.stringify(left)}`);
-    }
+    if (r.error || fp(r.address) !== real.addressFp) throw new Error("refusing: teardown needs MF_EXTRA_ENV with the same recipient as setup, to check every table for it");
+    address = r.address;
+  }
+  if (c && address) {
+    // First take the address off the synthetic member, so a failed fixture teardown cannot leave it behind,
+    // and remove the rate-limit buckets that embed it ("forgot:<slug>:<address>", "reset-attempt:<slug>:<address>").
+    await q(`update "Member" set email = $1 where "tenantId" = $2 and lower(email) = $3`, [`${c.slug}-m2@example.test`, c.tenantId, address]);
+    await q(`delete from "RateLimitHit" where position($1 in lower(bucket)) > 0 or position(':' || $2 || ':' in bucket) > 0`, [address, c.slug]);
+  }
+  const res = spawnSync(node24(), [path.join(HERE, "fixture.mjs"), "teardown"], { cwd: APP, encoding: "utf8", env: { ...process.env, MF_APP: APP } });
+  const out = res.stdout.split(/\r?\n/).filter((l) => l.includes("tornDown") || l.includes("nothingToTearDown")).join("\n");
+  console.log(out);
+  if (res.status !== 0 || !out) throw new Error(`fixture teardown failed — state kept so it can be re-run: ${(res.stderr || res.stdout).slice(-300)}`);
+  if (address) {
+    const left = (await q(
+      `select (select count(*) from "EmailLog" where lower(recipient) = $1)::int email_log,
+              (select count(*) from "PasswordResetToken" where lower(email) = $1)::int reset_tokens,
+              (select count(*) from "MagicLinkToken" where lower(email) = $1)::int magic_links,
+              (select count(*) from "Member" where lower(email) = $1)::int members,
+              (select count(*) from "User" where lower(email) = $1)::int users,
+              (select count(*) from "RateLimitHit" where position($1 in lower(bucket)) > 0)::int rate_limit_buckets,
+              (select count(*) from "AuditLog" where position($1 in lower(metadata::text)) > 0)::int audit`, [address]))[0];
+    const total = Object.values(left).reduce((a, b) => a + b, 0);
+    console.log(`rows still holding ${mask(address)} anywhere in the test branch: ${JSON.stringify(left)} — ${total === 0 ? "none" : "NOT CLEAN"}`);
+    if (total !== 0) process.exitCode = 1;
   }
   delete state.club; delete state.real; saveState();
 }

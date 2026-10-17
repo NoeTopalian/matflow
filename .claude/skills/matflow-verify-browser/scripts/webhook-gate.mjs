@@ -11,6 +11,7 @@ import http from "node:http";
 const GATE_PORT = Number(process.env.WEBHOOK_GATE_PORT ?? 3995);
 const APP_PORT = Number(process.env.MF_PORT ?? 3991);
 const MAX_BYTES = Number(process.env.WEBHOOK_GATE_MAX_BYTES ?? 256 * 1024); // Resend event payloads are a few KB
+const IDLE_MS = Number(process.env.WEBHOOK_GATE_IDLE_MS ?? 10_000); // upload idle limit (tests shorten it)
 const ROUTE = "/api/webhooks/resend";
 const PASS_HEADERS = ["content-type", "svix-id", "svix-timestamp", "svix-signature"];
 const counts = { forwarded: 0, refused: 0, tooLarge: 0 };
@@ -25,7 +26,7 @@ function refuse(req, res, status, result) {
 }
 
 const server = http.createServer((req, res) => {
-  req.setTimeout(10_000, () => { if (!res.headersSent) { counts.refused++; refuse(req, res, 408, "408 timeout"); } });
+  req.setTimeout(IDLE_MS, () => { if (!res.headersSent) { counts.refused++; refuse(req, res, 408, "408 timeout"); } });
   const loopback = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress ?? "");
   // cloudflared connects from loopback too; it adds cf-connecting-ip, so tunnel traffic can never read the counter.
   if (req.method === "GET" && req.url === "/__gate" && loopback && !req.headers["cf-connecting-ip"]) {
@@ -48,6 +49,9 @@ const server = http.createServer((req, res) => {
   });
   req.on("end", () => {
     if (stopped) return;
+    // The 10 s idle limit guards the upload only; from here the upstream timeout (15 s) decides, so a slow app
+    // answer is passed back instead of Resend's connection being reset under it.
+    req.setTimeout(0);
     const body = Buffer.concat(chunks);
     const headers = { "content-length": String(body.length), host: `127.0.0.1:${APP_PORT}` };
     for (const h of PASS_HEADERS) if (typeof req.headers[h] === "string") headers[h] = req.headers[h];

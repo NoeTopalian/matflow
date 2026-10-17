@@ -20,7 +20,7 @@ Branch `feat/email-test-isolation`. Production is unchanged. Secrets are reporte
 - The only call into Resend is `sendEmail` in `lib/email.ts` (one `to`, no cc/bcc, To/Cc/Bcc extra headers dropped). Pinned by `tests/unit/email-test-allowlist.test.ts` and `tests/unit/sec-d-mail-holds.test.ts`.
 - Sending policy: unset and unrecognised `EMAIL_DELIVERY` are OFF everywhere. `test` sends only to `EMAIL_TEST_RECIPIENTS` everywhere. `on` is open only on the Vercel production deployment. Pinned by `tests/unit/email-sending-policy-table.test.ts`.
 - The password-reset email carries a **6-digit code that expires in 2 minutes**, not a link. It is entered on the app's own reset screen, so the test opens that screen on the **isolated** app first.
-- Webhook route: it requires a full `whsec_` secret (svix itself accepts weak ones) and refuses bodies over 256 KB. A recent unknown email id gets 409 (retry); `email.suppressed` is stored as `bounced`.
+- Webhook route: it requires a full `whsec_` secret (svix itself accepts weak ones) and refuses a declared `Content-Length` over 256 KB before reading. A streamed body is bounded by Vercel's request limit in production and, in this test, cut at 256 KB by the gate while it is read. A recent unknown email id gets 409 (retry); `email.suppressed` is stored as `bounced`.
 - **Unresolved:** the test-branch `EmailLog` holds **440 rows `sent` in the 30 days to 17 Oct**, so earlier local runs reached a real Resend account through a key whose account is unknown. That key, found in local `.env` files, **must not be used**. The preflight compares the test key's fingerprint against every `RESEND_API_KEY` in the main checkout's and the worktree's `.env` files and refuses a match.
 
 ## Production configuration — observed vs unknown

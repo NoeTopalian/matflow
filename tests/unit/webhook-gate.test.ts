@@ -47,13 +47,13 @@ beforeAll(async () => {
     req.on("data", (c) => (body += c));
     req.on("end", () => {
       seen.push({ method: req.method, url: req.url, headers: req.headers, body });
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, outcome: "applied" }));
+      const answer = () => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: true, outcome: "applied" })); };
+      if (body.includes("slow-app")) setTimeout(answer, 1500); else answer();
     });
   });
   await new Promise<void>((r) => app.listen(appPort, "127.0.0.1", () => r()));
   gate = spawn(process.execPath, [GATE], {
-    env: { ...process.env, WEBHOOK_GATE_PORT: String(gatePort), MF_PORT: String(appPort), WEBHOOK_GATE_MAX_BYTES: String(MAX) },
+    env: { ...process.env, WEBHOOK_GATE_PORT: String(gatePort), MF_PORT: String(appPort), WEBHOOK_GATE_MAX_BYTES: String(MAX), WEBHOOK_GATE_IDLE_MS: "500" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   await new Promise<void>((resolve, reject) => {
@@ -101,6 +101,12 @@ describe("webhook gate — only the webhook route reaches the app", () => {
     expect(got[0]).toMatchObject({ method: "POST", url: "/api/webhooks/resend", body });
     expect(got[0].headers).toMatchObject({ "svix-id": "msg_1", "svix-timestamp": "1700000000", "svix-signature": "v1,abc", "content-type": "application/json" });
     for (const h of ["cookie", "authorization", "x-forwarded-for", "cf-connecting-ip"]) expect(got[0].headers[h], h).toBeUndefined();
+  });
+
+  it("an app that answers after the upload idle limit still gets its answer back (the connection is not reset)", async () => {
+    const r = await call("POST", "/api/webhooks/resend", { headers: { "content-type": "application/json" }, body: JSON.stringify({ marker: "slow-app" }) });
+    expect(r.status).toBe(200);
+    expect(r.body).toContain("applied");
   });
 
   it("a body over the limit is refused while it is read (declared or streamed) and never forwarded", async () => {

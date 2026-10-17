@@ -135,7 +135,9 @@ export async function POST(req: Request) {
     return outcome("misconfigured_secret", "", 503, { error: "Webhook secret is not valid" });
   }
 
-  // Resend events are a few KB; refuse a large unauthenticated body before reading it.
+  // Resend events are a few KB; refuse a DECLARED large body before reading it.
+  // A streamed (chunked) body is bounded by the platform's request limit on
+  // Vercel and, for the local real-email test, by webhook-gate.mjs.
   if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) {
     return outcome("body_too_large", "", 413, { error: "Payload too large" });
   }
