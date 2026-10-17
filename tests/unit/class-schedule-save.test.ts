@@ -269,6 +269,23 @@ describe("Task 3c — the instances a moved slot orphaned", () => {
     expect(body.scheduleChange?.instancesCreated).toBe(8);
   });
 
+  // T6b: a paused class gets no new sessions. A schedule edit sent to one (the
+  // API allows it) still reconciles its slots, but mints nothing; Resume
+  // mints the rolling window when it comes back.
+  it("a PAUSED class's schedule edit reconciles slots but mints no sessions", async () => {
+    mockPrisma.$queryRaw.mockResolvedValueOnce([{ id: "c1", isActive: false, deletedAt: null }]);
+    const { body } = await patch({ schedules: [MON_19] });
+    expect(mockPrisma.classSchedule.createMany).toHaveBeenCalled();
+    expect(mockPrisma.classInstance.createMany).not.toHaveBeenCalled();
+    expect(body.scheduleChange?.instancesCreated).toBe(0);
+  });
+
+  it("an ARCHIVED class's schedule edit mints no sessions either", async () => {
+    mockPrisma.$queryRaw.mockResolvedValueOnce([{ id: "c1", isActive: false, deletedAt: new Date("2026-08-01T00:00:00Z") }]);
+    await patch({ schedules: [MON_19] });
+    expect(mockPrisma.classInstance.createMany).not.toHaveBeenCalled();
+  });
+
   // Verifier lane 3 (30 Sep 2026): changing only the END time left every
   // upcoming session at the old end (sessions are unique on class + date +
   // start, so regeneration skipped them) and the kiosk closed early.

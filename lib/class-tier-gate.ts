@@ -70,6 +70,19 @@ export function tierAskSentence(memberName: string, className: string, tierName:
 export const TIER_LOCKED_LABEL = "Not included in your membership";
 
 /**
+ * T6a: whether Home's sign-in sheet treats a class as locked. `eligibility`
+ * is the member's own (buildMemberSchedule). A parent signing a child in is
+ * judged on the child's plan at the door, so the parent's own lock does not
+ * apply to that sign-in.
+ */
+export function isTierLockedForSelf(
+  cls: { eligibility?: string | null },
+  signingInAs: string | null,
+): boolean {
+  return signingInAs === null && cls.eligibility === "tier_not_included";
+}
+
+/**
  * T6d: the badge a squad / comp class (one with a roster) carries on the
  * kiosk class list, the staff session picker and the register.
  */

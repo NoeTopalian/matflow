@@ -9,7 +9,9 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
 import { classTierCovers, tierRefusalSentence } from "@/lib/class-tier-gate";
-import { classLifecycle, classNotLiveSentence } from "@/lib/class-live";
+import { classNotLiveSentence } from "@/lib/class-live";
+import { doorLifecycle } from "@/lib/class-lifecycle";
+import { checkinRefusal } from "@/lib/checkin-refusal";
 
 export const runtime = "nodejs";
 
@@ -64,31 +66,45 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
       // T6b: a paused or archived class takes no new bookings. Read after the
       // Class lock, so a pause that committed first is honoured. Existing
       // bookings are kept (and hidden) by the pause itself.
-      const state = classLifecycle(locked[0]);
+      // doorLifecycle reads a pre-T6b archive (no deletedAt) as archived.
+      const state = await doorLifecycle(tx, r.tenantId, locked[0]);
       if (state !== "active") {
         return { kind: "not_live" as const, className: locked[0].name, state };
+      }
+
+      // T6d composition: a class with a roster (a comp / squad class) is
+      // governed by its roster, here as at the member app's check-in. A
+      // member on it may book regardless of tier; a member who is not on it
+      // is refused with the check-in's own sentence, and the tier list is
+      // not consulted (classTierCovers relies on this gate for that case).
+      const rosterCount = await tx.classRoster.count({ where: { classId, tenantId: r.tenantId } });
+      if (rosterCount > 0) {
+        const onRoster = await tx.classRoster.findFirst({
+          where: { classId, memberId: r.memberId, tenantId: r.tenantId },
+          select: { id: true },
+        });
+        if (!onRoster) return "not-rostered" as const;
       }
 
       // T6a: the same membership gate as the member app's check-in, read
       // after the same Class lock, so a booking and a check-in can never
       // disagree about who a class is for. A class with no memberships
       // selected, or with a roster, is not tier-gated.
-      const tierRows = await tx.classMembershipTier.findMany({
-        where: { classId, tenantId: r.tenantId },
-        select: { tierId: true },
-      });
+      const tierRows = rosterCount > 0
+        ? []
+        : await tx.classMembershipTier.findMany({
+            where: { classId, tenantId: r.tenantId },
+            select: { tierId: true },
+          });
       if (tierRows.length > 0) {
-        const [rosterCount, member] = await Promise.all([
-          tx.classRoster.count({ where: { classId, tenantId: r.tenantId } }),
-          tx.member.findFirst({
-            where: { id: r.memberId, tenantId: r.tenantId },
-            select: { membershipTierId: true, membershipTier: { select: { name: true } } },
-          }),
-        ]);
+        const member = await tx.member.findFirst({
+          where: { id: r.memberId, tenantId: r.tenantId },
+          select: { membershipTierId: true, membershipTier: { select: { name: true } } },
+        });
         const covered = classTierCovers({
           allowedTierIds: tierRows.map((t) => t.tierId),
           memberTierId: member?.membershipTierId ?? null,
-          hasRoster: rosterCount > 0,
+          hasRoster: false,
         });
         if (!covered) {
           return { kind: "tier" as const, className: locked[0].name, tierName: member?.membershipTier?.name ?? null };
@@ -112,6 +128,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
       return "ok" as const;
     });
     if (created === "no-class") return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    if (created === "not-rostered") {
+      // The check-in's own roster refusal, so both doors read the same.
+      const refusal = checkinRefusal({ kind: "roster_not_listed" })!;
+      return NextResponse.json(refusal.body, { status: refusal.status });
+    }
     if (typeof created === "object" && created.kind === "not_live") {
       return NextResponse.json(
         { error: classNotLiveSentence(created.className, created.state), reason: "class_paused" },

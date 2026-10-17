@@ -584,17 +584,47 @@ function InactiveClassList({
 }
 
 /** The counted confirmation for an archive (T6b): what is kept, in numbers. */
-export function archiveConfirmBody(counts: { attendanceCount: number; rosterCount: number; bookingCount: number }): string {
+export function archiveConfirmBody(
+  counts: { attendanceCount: number; rosterCount: number; bookingCount: number },
+  lifecycle?: ClassRow["lifecycle"],
+): string {
   const kept: string[] = [];
+  const nonZero = [counts.attendanceCount, counts.rosterCount, counts.bookingCount].filter((n) => n > 0);
   if (counts.attendanceCount > 0) kept.push(plural(counts.attendanceCount, "check-in", "check-ins"));
   if (counts.rosterCount > 0) kept.push(`${plural(counts.rosterCount, "member", "members")} on its roster`);
   if (counts.bookingCount > 0) kept.push(plural(counts.bookingCount, "booking", "bookings"));
-  const keeps = kept.length > 0 ? ` Its ${kept.join(", ")} are kept.` : " It has no check-ins, roster or bookings yet.";
+  // "Its 1 check-in is kept", "Its 2 bookings are kept", "Its 1 check-in, 1 booking are kept".
+  const verb = nonZero.length === 1 && nonZero[0] === 1 ? "is" : "are";
+  const keeps = kept.length > 0 ? ` Its ${kept.join(", ")} ${verb} kept.` : " It has no check-ins, roster or bookings yet.";
+  // A paused class is already off the timetable and gets no new sessions.
+  const lead = lifecycle === "paused"
+    ? "It moves from Paused to Archived."
+    : "It comes off the timetable, the member app, booking and the kiosk, and no new sessions are made.";
   return (
-    "It comes off the timetable, the member app, booking and the kiosk, and no new sessions are made." +
+    lead +
     keeps +
     " Check-ins stay in reports. You can restore it from Paused and archived, or undo this from Activity."
   );
+}
+
+/**
+ * The timetable row for a class POST /api/classes just created. The response
+ * carries `allowedTiers` ({id, name, isActive}); a response without it (an
+ * older server) is mapped from `allowedTierIds` against the club's tiers, so
+ * the row's "For: …" chip and the form reopened on it never read as
+ * "Everyone" for a class that is restricted.
+ */
+export function createdClassRow(
+  created: ClassRow & { allowedTierIds?: string[] },
+  membershipTiers: readonly TierOption[],
+): ClassRow {
+  const { allowedTierIds, ...row } = created;
+  if (Array.isArray(row.allowedTiers)) return row;
+  const ids = allowedTierIds ?? [];
+  return {
+    ...row,
+    allowedTiers: ids.map((id) => membershipTiers.find((t) => t.id === id)).filter((t): t is TierOption => !!t),
+  };
 }
 
 // ─── Schedule row input ───────────────────────────────────────────────────────
@@ -1334,17 +1364,21 @@ function ClassForm({
                 <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>
                   Already on the roster but not in the list above (usually a parent or guardian account, which is not a training member):
                 </p>
-                {unlisted.map((id) => (
-                  <label key={id} className="flex items-center gap-2 text-xs cursor-pointer rounded px-2 py-1 hover:bg-sf-2" style={{ color: "var(--tx-2)" }}>
-                    <input
-                      type="checkbox"
-                      checked
-                      onChange={() => toggleRosterMember(id)}
-                      className="accent-[var(--color-primary)]"
-                    />
-                    <span>{names.get(id) ?? "Member not listed"}</span>
-                  </label>
-                ))}
+                {unlisted.map((id) => {
+                  const inputId = `roster-unlisted-${id}`;
+                  const label = names.get(id) ?? "Member not listed";
+                  return (
+                    <div key={id} className="flex items-center gap-2 text-xs rounded px-2 py-1 hover:bg-sf-2" style={{ color: "var(--tx-2)" }}>
+                      <Checkbox
+                        id={inputId}
+                        checked
+                        onCheckedChange={() => toggleRosterMember(id)}
+                        aria-label={label}
+                      />
+                      <label htmlFor={inputId} className="cursor-pointer">{label}</label>
+                    </div>
+                  );
+                })}
               </div>
             );
           })()}
@@ -1658,8 +1692,8 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         // `instancesCreated` is a report about the save (the sessions minted
         // for the next eight weeks), not a field of the class — kept off the row
         // and put in the toast, so "created" also says it is on the timetable.
-        const { instancesCreated, ...created } = (await res.json()) as { instancesCreated: number } & ClassRow;
-        setClasses((prev) => [...prev, created]);
+        const { instancesCreated, ...created } = (await res.json()) as { instancesCreated: number; allowedTierIds?: string[] } & ClassRow;
+        setClasses((prev) => [...prev, createdClassRow(created, membershipTiers)]);
         showToast(`Class created · ${instancesCreated} sessions added to the timetable`, "success");
       }
       setDrawerOpen(false);
@@ -1730,7 +1764,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
       }
       const confirmed = await ask({
         title: `Archive ${cls.name}?`,
-        body: archiveConfirmBody(counts),
+        body: archiveConfirmBody(counts, cls.lifecycle),
         confirmLabel: "Archive class",
       });
       if (!confirmed) return;

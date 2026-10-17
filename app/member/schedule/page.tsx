@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Bell, BellOff, Lock, X } from "lucide-react";
 import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
+import { bookingFailureMessage } from "@/lib/checkin-outcome";
 import { classCategoryTag } from "@/lib/class-category";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { useToast } from "@/components/ui/Toast";
@@ -329,7 +330,9 @@ function DayGrid({
   // The API keys today's instance by class + start time, so a class that meets
   // on several days carries today's flag on every day's entry; it only means
   // anything on today's grid.
-  const spans = dayClasses.map((c) => ({ ...spanMinutes(c.time, c.endTime), cancelled: showNow && c.cancelled === true, neverNext: c.kidsClassForAdult === true }));
+  const spans = dayClasses.map((c) => ({ ...spanMinutes(c.time, c.endTime), cancelled: showNow && c.cancelled === true, neverNext: c.kidsClassForAdult === true || c.eligibility === "tier_not_included" || c.eligibility === "rank_below" || c.eligibility === "rank_above" }));
+  // ^ the same classes Home's next class leaves out (pickNextClass in
+  //   lib/member-stats.ts): ones the door would refuse this member.
   const states = sessionStates(spans, nowMinutes, showNow);
   const packed = packLanes(spans, { maxLanes: 3 });
   const [expandedClusters, setExpandedClusters] = useState<Set<number>>(() => new Set());
@@ -885,12 +888,21 @@ export default function MemberSchedulePage() {
       else n.add(id);
       return n;
     });
+    let failure: string | null = null;
     try {
       const res = await fetch(`/api/member/class-subscriptions/${id}`, {
         method: wasSubscribed ? "DELETE" : "POST",
       });
-      if (!res.ok) throw new Error(`status ${res.status}`);
+      if (!res.ok) {
+        // T6a/T6b: the refusal names the class and the plan (or says the
+        // class is paused) — show that, not a guess (the list may be stale).
+        const body = await res.json().catch(() => null);
+        failure = bookingFailureMessage(res.status, body, wasSubscribed);
+      }
     } catch {
+      failure = bookingFailureMessage(0, null, wasSubscribed);
+    }
+    if (failure) {
       // Audit D8: roll back AND tell the member — previously the button
       // flipped back with no feedback at all.
       setSubscribed((prev) => {
@@ -899,12 +911,7 @@ export default function MemberSchedulePage() {
         else n.delete(id);
         return n;
       });
-      toast(
-        wasSubscribed
-          ? "Couldn't unsubscribe — please try again."
-          : "Couldn't subscribe to this class — it may be invite-only.",
-        "error",
-      );
+      toast(failure, "error");
     }
   };
 

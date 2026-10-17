@@ -516,10 +516,15 @@ export async function buildMemberChildren(
     return base.map((kid) => ({ ...kid, timetable: [] as KidTimetableEntry[] }));
   }
 
+  // T6b: a paused or archived class keeps its bookings and already-minted
+  // sessions, but it is off the parent's Home too. Cancelled sessions stay
+  // (the view flags them), so this is liveSessionWhere minus isCancelled.
   const instances = await tx.classInstance.findMany({
     where: {
       classId: { in: Array.from(allClassIds) },
       date: { gte: windowStart, lt: windowEnd },
+      sourceImportJobId: null,
+      class: liveClassWhere(tenantId),
     },
     select: {
       id: true,

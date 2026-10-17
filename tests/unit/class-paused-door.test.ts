@@ -8,6 +8,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const h = vi.hoisted(() => ({
   cls: { isActive: false as boolean, deletedAt: null as Date | null },
   recordCreate: vi.fn(),
+  // Lifecycle audit rows (newest first) for the pre-T6b archive check.
+  auditRows: [] as Array<{ entityId: string; action: string; createdAt: Date }>,
 }));
 
 vi.mock("@/lib/prisma-tenant", () => ({
@@ -39,6 +41,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
       memberClassPack: { findFirst: vi.fn().mockResolvedValue(null), updateMany: vi.fn(), findUnique: vi.fn() },
       classPackRedemption: { create: vi.fn() },
       $queryRaw: vi.fn().mockResolvedValue([{ maxCapacity: null }]),
+      auditLog: { findMany: vi.fn(async () => h.auditRows) },
     }),
   ),
 }));
@@ -62,6 +65,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.cls.isActive = false;
   h.cls.deletedAt = null;
+  h.auditRows = [];
   h.recordCreate.mockResolvedValue({ id: "ar-1", tenantId: "t-1", memberId: "m-1", classInstanceId: "ci-1", checkInMethod: "self" });
 });
 
@@ -80,6 +84,12 @@ describe("T6b — paused / archived class at the member-decided doors", () => {
 
   it("an ARCHIVED class is refused with state archived", async () => {
     h.cls.deletedAt = new Date("2026-10-01T00:00:00Z");
+    const r = await performCheckin(SELF);
+    expect(r).toEqual({ kind: "class_paused", className: "Fundamentals", state: "archived" });
+  });
+
+  it("a class archived before T6b (isActive false, no deletedAt, latest lifecycle row class.deleted) is refused as ARCHIVED, never 'ask staff when it's back'", async () => {
+    h.auditRows = [{ entityId: "c-1", action: "class.deleted", createdAt: new Date("2026-09-01T10:00:00Z") }];
     const r = await performCheckin(SELF);
     expect(r).toEqual({ kind: "class_paused", className: "Fundamentals", state: "archived" });
   });

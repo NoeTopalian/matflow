@@ -193,7 +193,9 @@ export async function POST(req: Request) {
 
   switch (result.kind) {
     case "success":
-      if (effectiveMethod === "admin") {
+      // T6a (Q3): a staff override is always recorded, so a staff "auto"
+      // admission past the tier gate writes the row as an "admin" one does.
+      if (effectiveMethod === "admin" || (effectiveMethod === "auto" && (result.overrides?.length ?? 0) > 0)) {
         // A staff mark is audited. The coach register's raw upsert used to be
         // the only staff mark that wrote a row; since 18 Sep 2026 every screen
         // marks through this route, so the row lives here — the same shape as
@@ -207,7 +209,7 @@ export async function POST(req: Request) {
           metadata: {
             classInstanceId,
             memberId: resolvedMemberId,
-            method: "admin",
+            method: effectiveMethod,
             // performCheckin only succeeds by creating the row (an existing one
             // is a refusal), so the undo may remove exactly this record.
             recordId: result.record.id,

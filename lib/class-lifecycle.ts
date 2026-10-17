@@ -12,6 +12,25 @@ import type { Prisma } from "@prisma/client";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker } from "@/lib/today-sessions";
 import { usableTimezone } from "@/lib/class-time";
+import { classLifecycle, type ClassLifecycle } from "@/lib/class-live";
+
+/**
+ * The lifecycle a door reports for a class that is not live, with a pre-T6b
+ * archive (isActive false, deletedAt null, latest lifecycle row
+ * class.deleted) read as archived, the same as the timetable reads it. Only
+ * a paused-looking class costs a query, and only on the refusal path, so a
+ * member is never told "ask staff when it's back" about a class its owner
+ * archived.
+ */
+export async function doorLifecycle(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  c: { id: string; isActive: boolean; deletedAt: Date | string | null },
+): Promise<ClassLifecycle> {
+  const state = classLifecycle(c);
+  if (state !== "paused") return state;
+  return (await legacyArchivedAt(tx, tenantId, [c.id])).has(c.id) ? "archived" : "paused";
+}
 
 /**
  * Mint the class's sessions from the club's today for the rolling window.

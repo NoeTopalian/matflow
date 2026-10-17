@@ -85,8 +85,12 @@ export const REASON = {
   selfEdit: "The member made this change themselves — ask them to change it back from their profile.",
   // T6b: true for every class.deleted row written before 17 Oct 2026 — the old
   // route recorded counts but not the state the class was in — and Restore
-  // now exists, so the sentence can point at it.
-  archivedNoSnapshot: "This class was archived before its previous state was recorded. Restore it from Paused and archived on the Timetable page.",
+  // now exists, so the sentence can point at it. Conditional on purpose: the
+  // class may have been restored since, and `decide` sees only the row.
+  archivedNoSnapshot: "This class was archived before its previous state was recorded, so this can't be undone from here. If it is still archived, restore it from Paused and archived on the Timetable page.",
+  // T6b: an old pause row would otherwise put an archived class back as
+  // "active but archived" and mint sessions for it.
+  archivedSince: "This class has been archived since. Restore it from Paused and archived on the Timetable page.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -332,11 +336,21 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
       // T6b: an imported history class never goes on the timetable, not even
       // by undoing an old row that recorded it as active.
       if (restore.isActive === true && current.sourceImportJobId) throw new UndoStale(IMPORTED_CLASS_REACTIVATE_REFUSAL);
+      // T6b: undoing an old pause after the class was archived would set
+      // isActive back to true while deletedAt stays set — a class that is
+      // "active" but archived. Refuse; Restore is the way back.
+      if (restore.isActive === true && current.deletedAt != null && !("deletedAt" in restore)) {
+        throw new UndoStale(REASON.archivedSince);
+      }
     },
     async afterApply(tx, row, restore) {
       // Undoing a pause or an archive brings the class back on the timetable:
-      // mint the sessions no generator made while it was off.
-      if (restore.isActive === true && row.tenantId) await mintUpcomingSessions(tx, row.tenantId, row.entityId);
+      // mint the sessions no generator made while it was off. Only when the
+      // class ends up live (the guard has refused active-but-archived).
+      const endsArchived = "deletedAt" in restore && restore.deletedAt != null;
+      if (restore.isActive === true && !endsArchived && row.tenantId) {
+        await mintUpcomingSessions(tx, row.tenantId, row.entityId);
+      }
     },
   }),
   // T6b: archive = isActive false + deletedAt now. The row records the state

@@ -457,7 +457,7 @@ export default function RegisterPanel({
         <p className="flex items-center gap-2 text-xs text-tx-3" data-testid="register-squad-only">
           <span
             className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase"
-            style={{ background: tint("var(--hue-info)", 12), color: "var(--hue-info)" }}
+            style={{ background: tint("var(--hue-info)", 12), color: "var(--hue-info-ink)" }}
           >
             {SQUAD_ONLY_LABEL}
           </span>
@@ -521,7 +521,7 @@ export default function RegisterPanel({
                       </span>
                     )}
                     {m.accountType !== "adult" && (
-                      <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: tint("var(--hue-info)", 12), color: "var(--hue-info)" }}>
+                      <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: tint("var(--hue-info)", 12), color: "var(--hue-info-ink)" }}>
                         {m.accountType.toUpperCase()}
                       </span>
                     )}

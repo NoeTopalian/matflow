@@ -46,7 +46,11 @@ const {
 
 vi.mock("@/lib/api-authz", () => ({ requireApiStaff: requireApiStaffMock }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
-vi.mock("@/lib/checkin", () => ({ restorePackCreditsForAttendance: vi.fn(async () => 0) }));
+vi.mock("@/lib/checkin", () => ({
+  restorePackCreditsForAttendance: vi.fn(async () => 0),
+  // T6a: the class has no membership list here, so the tier ask is open.
+  staffTierAsk: vi.fn(async () => ({ kind: "open", overridden: false })),
+}));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
     fn({
@@ -72,7 +76,7 @@ beforeEach(async () => {
     userId: "user_coach",
     role: "coach",
   });
-  instanceFindFirstMock.mockResolvedValue({ id: "inst_1" });
+  instanceFindFirstMock.mockResolvedValue({ id: "inst_1", classId: "cls_1", class: { name: "Fundamentals" } });
   memberFindFirstMock.mockResolvedValue({ id: "mem_1" });
   upsertMock.mockResolvedValue({});
   findUniqueMock.mockResolvedValue(null);

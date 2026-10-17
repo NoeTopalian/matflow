@@ -13,7 +13,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => ({})) }));
-vi.mock("@/lib/class-lifecycle", () => ({ mintUpcomingSessions: vi.fn(async () => 16) }));
+vi.mock("@/lib/class-lifecycle", () => ({
+  mintUpcomingSessions: vi.fn(async () => 16),
+  // No pre-T6b archive rows unless a test says so.
+  legacyArchivedAt: vi.fn(async () => new Map()),
+}));
 vi.mock("@/auth", () => ({
   auth: vi.fn(async () => ({ user: { id: "u1", role: "owner", tenantId: "t1" } })),
 }));
@@ -31,7 +35,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
 }));
 
 import { logAudit } from "@/lib/audit-log";
-import { mintUpcomingSessions } from "@/lib/class-lifecycle";
+import { mintUpcomingSessions, legacyArchivedAt } from "@/lib/class-lifecycle";
 
 const ARCHIVED = new Date("2026-10-10T09:00:00.000Z");
 
@@ -112,5 +116,39 @@ describe("PATCH /api/classes/[id] — lifecycle", () => {
     expect(res.status).toBe(200);
     expect(mockPrisma.class.updateMany.mock.calls[0][0].data.deletedAt).toBeUndefined();
     expect(mintUpcomingSessions).not.toHaveBeenCalled();
+    expect(vi.mocked(logAudit).mock.calls[0][0].metadata).not.toHaveProperty("lifecycle");
+  });
+});
+
+describe("PATCH /api/classes/[id] — the audit row names the lifecycle change", () => {
+  it("Pause, Resume and Restore record lifecycle: paused / resumed / restored", async () => {
+    const { PATCH } = await import("@/app/api/classes/[id]/route");
+    const cases: Array<[Record<string, unknown>, Record<string, unknown>, boolean, string]> = [
+      [{ isActive: true, deletedAt: null }, { isActive: false, deletedAt: null }, false, "paused"],
+      [{ isActive: false, deletedAt: null }, { isActive: true, deletedAt: null }, true, "resumed"],
+      [{ isActive: false, deletedAt: ARCHIVED }, { isActive: true, deletedAt: null }, true, "restored"],
+    ];
+    for (const [before, after, isActive, lifecycle] of cases) {
+      vi.mocked(logAudit).mockClear();
+      classStates({ sourceImportJobId: null }, before, after);
+      const res = await PATCH(patch({ isActive }), { params: Promise.resolve({ id: "c1" }) });
+      expect(res.status).toBe(200);
+      expect(vi.mocked(logAudit).mock.calls[0][0].metadata).toMatchObject({ lifecycle });
+    }
+  });
+
+  it("restoring a class archived before T6b (no deletedAt) records it as restored, with the archive date, so Undo puts it back archived", async () => {
+    const legacyOn = new Date("2026-09-01T10:00:00.000Z");
+    vi.mocked(legacyArchivedAt).mockResolvedValueOnce(new Map([["c1", legacyOn]]));
+    classStates({ sourceImportJobId: null }, { isActive: false, deletedAt: null }, { isActive: true, deletedAt: null });
+    const { PATCH } = await import("@/app/api/classes/[id]/route");
+    const res = await PATCH(patch({ isActive: true }), { params: Promise.resolve({ id: "c1" }) });
+    expect(res.status).toBe(200);
+    expect(legacyArchivedAt).toHaveBeenCalledWith(mockPrisma, "t1", ["c1"]);
+    expect(vi.mocked(logAudit).mock.calls[0][0].metadata).toMatchObject({
+      lifecycle: "restored",
+      before: { isActive: false, deletedAt: legacyOn.toISOString() },
+      after: { isActive: true, deletedAt: null },
+    });
   });
 });

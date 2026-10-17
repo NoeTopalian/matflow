@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import React from "react";
-import TimetableManager, { archiveConfirmBody } from "@/components/dashboard/TimetableManager";
+import TimetableManager, { archiveConfirmBody, createdClassRow } from "@/components/dashboard/TimetableManager";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
 
 const toastSpy = vi.fn();
@@ -93,6 +93,40 @@ describe("archiveConfirmBody — the counted confirmation", () => {
   });
   it("says so when there is nothing to keep", () => {
     expect(archiveConfirmBody({ attendanceCount: 0, rosterCount: 0, bookingCount: 0 })).toMatch(/no check-ins, roster or bookings yet/);
+  });
+  it("uses 'is kept' for a single item of one, 'are kept' otherwise", () => {
+    expect(archiveConfirmBody({ attendanceCount: 1, rosterCount: 0, bookingCount: 0 })).toMatch(/Its 1 check-in is kept\./);
+    expect(archiveConfirmBody({ attendanceCount: 0, rosterCount: 0, bookingCount: 1 })).toMatch(/Its 1 booking is kept\./);
+    expect(archiveConfirmBody({ attendanceCount: 2, rosterCount: 0, bookingCount: 0 })).toMatch(/Its 2 check-ins are kept\./);
+    expect(archiveConfirmBody({ attendanceCount: 1, rosterCount: 0, bookingCount: 1 })).toMatch(/Its 1 check-in, 1 booking are kept\./);
+  });
+  it("archiving an already-paused class says it moves from Paused to Archived", () => {
+    const text = archiveConfirmBody({ attendanceCount: 3, rosterCount: 0, bookingCount: 0 }, "paused");
+    expect(text).toMatch(/^It moves from Paused to Archived\./);
+    expect(text).not.toMatch(/comes off the timetable/);
+  });
+});
+
+describe("createdClassRow — a new class keeps its membership list", () => {
+  const TIERS = [
+    { id: "t-adv", name: "Advanced", isActive: true },
+    { id: "t-beg", name: "Beginners", isActive: true },
+  ];
+  const base = { id: "c9", name: "Advanced Gi" } as unknown as ClassRow;
+
+  it("uses the allowedTiers the server returns", () => {
+    const row = createdClassRow({ ...base, allowedTiers: [TIERS[0]], allowedTierIds: ["t-adv"] }, TIERS);
+    expect(row.allowedTiers).toEqual([TIERS[0]]);
+    expect("allowedTierIds" in row).toBe(false);
+  });
+
+  it("maps allowedTierIds against the club's tiers when the response has no allowedTiers", () => {
+    const row = createdClassRow({ ...base, allowedTierIds: ["t-adv", "t-beg"] }, TIERS);
+    expect(row.allowedTiers?.map((t) => t.name)).toEqual(["Advanced", "Beginners"]);
+  });
+
+  it("an open class reads as open", () => {
+    expect(createdClassRow({ ...base, allowedTierIds: [] }, TIERS).allowedTiers).toEqual([]);
   });
 });
 

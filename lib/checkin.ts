@@ -69,6 +69,7 @@ import { isOnHold } from "@/lib/member-hold";
 import { isOverdue } from "@/lib/overdue";
 import { isAdultAccount } from "@/lib/account-type";
 import { classTierCovers, TIER_OVERRIDE_REASON, type TierGateMode } from "@/lib/class-tier-gate";
+import { doorLifecycle } from "@/lib/class-lifecycle";
 
 
 /**
@@ -305,7 +306,7 @@ async function capacityState(
   return { taken, maxCapacity };
 }
 
-type TierGateState =
+export type TierGateState =
   | { kind: "open"; overridden: boolean }
   | { kind: "tier_not_included"; className: string; tierName: string | null; askable: boolean };
 
@@ -348,6 +349,29 @@ async function tierGateState(
     tierName: member?.membershipTier?.name ?? null,
     askable: mode === "ask",
   };
+}
+
+/**
+ * T6a (Q3) for a staff door that marks without performCheckin (the coach
+ * attendance route): the same tier gate in "ask" mode, after the same Class
+ * row lock, so the admission is judged against the committed tier list and an
+ * override is reported back for the route to record.
+ */
+export async function staffTierAsk(
+  tx: Prisma.TransactionClient,
+  args: { tenantId: string; memberId: string; confirmed: boolean },
+  classId: string,
+  className: string,
+): Promise<TierGateState> {
+  await tx.$queryRaw`
+    SELECT "id" FROM "Class" WHERE "id" = ${classId} AND "tenantId" = ${args.tenantId} FOR UPDATE
+  `;
+  return tierGateState(
+    tx,
+    { tenantId: args.tenantId, memberId: args.memberId, tierGate: "ask", tierOverrideConfirmed: args.confirmed },
+    classId,
+    className,
+  );
 }
 
 /**
@@ -400,10 +424,16 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
   // T6b: a paused or archived class's sessions are kept (history, bookings)
   // but are not a class a member can walk into on their own say-so.
   if (args.enforceClassStateGate && (!instance.class.isActive || instance.class.deletedAt)) {
+    // A class archived before T6b carries no deletedAt; doorLifecycle reads
+    // it as archived (as the timetable does) so the sentence stays true.
+    const cls = instance.class;
+    const state = cls.deletedAt
+      ? "archived"
+      : await withTenantContext(tenantId, (tx) => doorLifecycle(tx, tenantId, cls));
     return {
       kind: "class_paused",
-      className: instance.class.name,
-      state: instance.class.deletedAt ? "archived" : "paused",
+      className: cls.name,
+      state: state === "archived" ? "archived" : "paused",
     };
   }
 

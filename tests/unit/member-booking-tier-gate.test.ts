@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   queryRaw: vi.fn(),
   tierFindMany: vi.fn(),
   rosterCount: vi.fn(),
+  rosterFindFirst: vi.fn(),
   memberFindFirst: vi.fn(),
   subCreate: vi.fn(),
   subCount: vi.fn(),
@@ -21,7 +22,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
     fn({
       $queryRaw: h.queryRaw,
       classMembershipTier: { findMany: h.tierFindMany },
-      classRoster: { count: h.rosterCount },
+      classRoster: { count: h.rosterCount, findFirst: h.rosterFindFirst },
       member: { findFirst: h.memberFindFirst },
       classSubscription: { create: h.subCreate, count: h.subCount, deleteMany: vi.fn() },
     }),
@@ -38,6 +39,7 @@ beforeEach(() => {
   h.queryRaw.mockImplementation(async () => { h.order.push("lock"); return [{ id: "c-adv", name: "Advanced", maxCapacity: null, isActive: true, deletedAt: null, sourceImportJobId: null }]; });
   h.tierFindMany.mockImplementation(async () => { h.order.push("tiers"); return [{ tierId: "t-adv" }]; });
   h.rosterCount.mockResolvedValue(0);
+  h.rosterFindFirst.mockResolvedValue(null);
   h.memberFindFirst.mockResolvedValue({ membershipTierId: "t-beg", membershipTier: { name: "Beginners Unlimited" } });
   h.subCreate.mockResolvedValue({});
 });
@@ -70,8 +72,29 @@ describe("booking — tier gate", () => {
     expect((await book()).status).toBe(201);
   });
 
-  it("a rostered class is governed by its roster", async () => {
+  it("a rostered class is governed by its roster: a rostered member books regardless of tier", async () => {
     h.rosterCount.mockResolvedValue(4);
+    h.rosterFindFirst.mockResolvedValue({ id: "r-1" });
     expect((await book()).status).toBe(201);
+    expect(h.subCreate).toHaveBeenCalled();
+    expect(h.tierFindMany).not.toHaveBeenCalled();
+  });
+
+  it("a member not on a roster class's roster is refused with the check-in's roster sentence, whatever their plan", async () => {
+    h.rosterCount.mockResolvedValue(4);
+    h.rosterFindFirst.mockResolvedValue(null);
+    // On an included plan, and with no tiers at all: still refused.
+    h.memberFindFirst.mockResolvedValue({ membershipTierId: "t-adv", membershipTier: { name: "Advanced Unlimited" } });
+    for (const tiers of [[{ tierId: "t-adv" }], []]) {
+      h.tierFindMany.mockResolvedValue(tiers);
+      const res = await book();
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: string; reason: string };
+      expect(body).toEqual({ error: "You're not on the roster for this class.", reason: "roster_not_listed" });
+    }
+    expect(h.subCreate).not.toHaveBeenCalled();
+    expect(h.rosterFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { classId: "c-adv", memberId: "m-1", tenantId: "t1" },
+    }));
   });
 });

@@ -32,6 +32,8 @@ vi.mock("@/lib/prisma", () => ({
     classMembershipTier: { findMany: vi.fn().mockResolvedValue([]) },
     classRoster: { count: vi.fn().mockResolvedValue(0) },
     member: { findFirst: vi.fn().mockResolvedValue(null) },
+    // T6b: a paused-looking class is checked for a pre-T6b archive row.
+    auditLog: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 

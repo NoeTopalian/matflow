@@ -4,11 +4,17 @@ import { z } from "zod";
 import { requireApiStaff } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
-import { restorePackCreditsForAttendance } from "@/lib/checkin";
+import { restorePackCreditsForAttendance, staffTierAsk } from "@/lib/checkin";
+import { checkinRefusal } from "@/lib/checkin-refusal";
+import { TIER_OVERRIDE_REASON } from "@/lib/class-tier-gate";
 
 const schema = z.object({
   memberId: z.string().min(1),
   attended: z.boolean(),
+  // T6a (Q3): the gates staff confirmed, as POST /api/checkin takes them.
+  // "tier_not_included" admits a member whose plan the class's memberships
+  // do not include; the admission is recorded as an override.
+  acknowledged: z.array(z.string().max(40)).max(10).optional(),
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -24,6 +30,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid data" }, { status: 400 });
+  const tierConfirmed = parsed.data.acknowledged?.includes(TIER_OVERRIDE_REASON) === true;
 
   try {
     const outcome = await withTenantContext(tenantId, async (tx) => {
@@ -34,7 +41,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // 2026: coaches see all, theirs highlighted). Tenancy only.
           class: { tenantId },
         },
-        select: { id: true },
+        select: { id: true, classId: true, class: { select: { name: true } } },
       });
       if (!instance) return "no-instance" as const;
       const member = await tx.member.findFirst({
@@ -50,6 +57,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
           select: { id: true },
         });
+        // T6a (Q3): a staff door ASKS when the class's memberships do not
+        // include the member's plan, exactly as the desk register does. Only
+        // when the tick would admit someone: a member already in is not
+        // re-judged.
+        let tierOverridden = false;
+        if (!existing) {
+          const tier = await staffTierAsk(
+            tx,
+            { tenantId, memberId: member.id, confirmed: tierConfirmed },
+            instance.classId,
+            instance.class.name,
+          );
+          if (tier.kind === "tier_not_included") return tier;
+          tierOverridden = tier.overridden;
+        }
         const record = await tx.attendanceRecord.upsert({
           where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
           // `checkedInById` names the staff member who ticked, exactly as
@@ -70,7 +92,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // A row another device created between the read and the upsert hits
         // the no-op update branch; it is ours only if it reads as this tick's.
         const created = !existing && record.checkInMethod === "admin" && record.checkedInById === userId;
-        return { memberId: member.id, recordId: record.id, created };
+        return {
+          kind: "marked" as const,
+          memberId: member.id,
+          recordId: record.id,
+          created,
+          overrides: created && tierOverridden ? [TIER_OVERRIDE_REASON] : [],
+        };
       } else {
         // Unmark is the inverse of a check-in: if the attendance was covered
         // by a class pack, the credit goes back in the same transaction
@@ -86,11 +114,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           await tx.attendanceRecord.deleteMany({ where: { id: { in: ids } } });
         }
       }
-      return { memberId: member.id, recordId: null, created: false };
+      return { kind: "marked" as const, memberId: member.id, recordId: null, created: false, overrides: [] as string[] };
     });
 
     if (outcome === "no-instance") return NextResponse.json({ error: "Class not found" }, { status: 404 });
     if (outcome === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    if (outcome.kind === "tier_not_included") {
+      // The askable answer the register reads: confirm, then send
+      // acknowledged: ["tier_not_included"] to admit.
+      const refusal = checkinRefusal(outcome)!;
+      return NextResponse.json(refusal.body, { status: refusal.status });
+    }
 
     await logAudit({
       tenantId, userId,
@@ -98,7 +132,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       entityType: "AttendanceRecord",
       entityId: `${classInstanceId}:${outcome.memberId}`,
       metadata: parsed.data.attended
-        ? { classInstanceId, memberId: outcome.memberId, recordId: outcome.recordId, created: outcome.created }
+        ? {
+            classInstanceId, memberId: outcome.memberId, recordId: outcome.recordId, created: outcome.created,
+            // The gates staff admitted past, as POST /api/checkin records them.
+            ...(outcome.overrides.length > 0 ? { overrides: outcome.overrides } : {}),
+          }
         : { classInstanceId, memberId: outcome.memberId },
       req,
     });

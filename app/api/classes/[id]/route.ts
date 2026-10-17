@@ -13,7 +13,7 @@ import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { dayMarkerUtc, usableTimezone } from "@/lib/class-time";
 import { classRefError, CLASS_REF_ERRORS } from "@/lib/class-refs";
 import { classLifecycle, IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
-import { mintUpcomingSessions } from "@/lib/class-lifecycle";
+import { mintUpcomingSessions, legacyArchivedAt } from "@/lib/class-lifecycle";
 
 /** A tier vanished between the pre-flight and the write: roll the edit back. */
 class TierRefError extends Error {}
@@ -111,6 +111,48 @@ async function rosterAfterEdit(
 }
 
 /**
+ * T6a/T6d: the members whose booking this edit removes on membership grounds.
+ *  - The list changes: judged against the new list (unless a roster governs).
+ *  - The list stays, but the edit removes the class's roster (an empty roster
+ *    body, or a rank gate, which clears it): the existing list starts to
+ *    apply, so members booked outside it lose their booking rather than being
+ *    left booked on a class they will be refused at.
+ * Must run before the roster is rewritten (it reads whether a roster existed).
+ */
+async function tierCascade(
+  tx: Tx,
+  tenantId: string,
+  classId: string,
+  edit: {
+    wantsTiers: boolean;
+    nextTierIds: readonly string[];
+    wantsRoster: boolean;
+    wantsRankGate: boolean;
+    rosterIds: string[];
+    /** The list before this edit, when the caller already read it. */
+    currentTierIds?: readonly string[];
+  },
+): Promise<string[]> {
+  const rosterMayClear = edit.wantsRoster || edit.wantsRankGate;
+  if (!edit.wantsTiers && !rosterMayClear) return [];
+  const readTiers = async () =>
+    edit.currentTierIds
+      ?? (await tx.classMembershipTier.findMany({ where: { classId, tenantId }, select: { tierId: true } })).map((t) => t.tierId);
+  if (edit.wantsTiers && !sameIds(await readTiers(), edit.nextTierIds)) {
+    const hasRosterAfter = await rosterAfterEdit(tx, tenantId, classId, edit.wantsRoster, edit.wantsRankGate, edit.rosterIds);
+    return tierLosers(tx, tenantId, classId, edit.nextTierIds, hasRosterAfter);
+  }
+  if (!rosterMayClear) return [];
+  // The list is unchanged. Only a roster that existed and is now removed
+  // makes it start to apply.
+  if (await rosterAfterEdit(tx, tenantId, classId, edit.wantsRoster, edit.wantsRankGate, edit.rosterIds)) return [];
+  const hadRoster = (await tx.classRoster.count({ where: { classId, tenantId } })) > 0;
+  if (!hadRoster) return [];
+  const currentTierIds = await readTiers();
+  return currentTierIds.length > 0 ? tierLosers(tx, tenantId, classId, currentTierIds, false) : [];
+}
+
+/**
  * What a schedule edit did, so the operator can be told rather than guess.
  * RULES §5: a cascade that removes user-visible state must be visible to the
  * user, and it is recorded by id — a count cannot restore anything.
@@ -154,6 +196,11 @@ async function reconcileSchedules(
   classId: string,
   desired: ScheduleInput[],
   timeZone: string,
+  // T6b: false when the class is paused or archived after this edit. Its
+  // slots and orphaned sessions are still reconciled, but no new sessions
+  // are minted: a paused class gets none until it comes back, and Resume /
+  // Restore mint the rolling window then (mintUpcomingSessions).
+  mint: boolean = true,
 ): Promise<ScheduleChange> {
   // RULES §4: ClassSchedule and ClassInstance carry no tenantId, so every
   // read and every write below scopes through the class relation. The caller
@@ -279,10 +326,12 @@ async function reconcileSchedules(
   // whose time just changed would otherwise have no check-in until tomorrow.
   // Idempotent against @@unique([classId, date, startTime]) (task 3b), so this
   // and the cron cannot fight.
-  const rows = buildInstanceRows([{ id: classId, schedules: active }], {
-    from,
-    days: ROLLING_WINDOW_DAYS,
-  });
+  const rows = mint
+    ? buildInstanceRows([{ id: classId, schedules: active }], {
+        from,
+        days: ROLLING_WINDOW_DAYS,
+      })
+    : [];
   const created =
     rows.length > 0
       ? await tx.classInstance.createMany({ data: rows, skipDuplicates: true })
@@ -476,14 +525,9 @@ export async function PATCH(req: Request, { params }: Params) {
         losers = [...losers, ...subs.map((s) => s.memberId)];
       }
       // T6a preview only: the authoritative set is recomputed after the lock.
-      let tierPreview: string[] = [];
-      const currentTiers = wantsTiers
-        ? (await tx.classMembershipTier.findMany({ where: { classId: id, tenantId }, select: { tierId: true } })).map((t) => t.tierId)
-        : [];
-      if (wantsTiers && !sameIds(currentTiers, nextTierIds)) {
-        const hasRosterAfter = await rosterAfterEdit(tx, tenantId, id, wantsRoster, wantsRankGate, rosterIds);
-        tierPreview = await tierLosers(tx, tenantId, id, nextTierIds, hasRosterAfter);
-      }
+      const tierPreview = await tierCascade(tx, tenantId, id, {
+        wantsTiers, nextTierIds, wantsRoster, wantsRankGate, rosterIds,
+      });
       return { kind: "ok" as const, affected: Array.from(new Set(losers)), rosterIds, tierPreview };
     });
 
@@ -520,10 +564,17 @@ export async function PATCH(req: Request, { params }: Params) {
       // roster, tier or booking write. A check-in takes the same lock before it
       // reads the tier list (lib/checkin.ts), so it is judged against whichever
       // list committed first, never a half-written one.
-      const owned = await tx.$queryRaw<{ id: string }[]>`
-        SELECT "id" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
+      const owned = await tx.$queryRaw<{ id: string; isActive?: boolean; deletedAt?: Date | null }[]>`
+        SELECT "id", "isActive", "deletedAt" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
       `;
       if (owned.length === 0) return null;
+      // T6b: whether the class is live once this edit lands. A Resume /
+      // Restore makes it live; a pause does not; otherwise it keeps its state.
+      const liveAfterEdit = parsed.data.isActive === true
+        ? true
+        : parsed.data.isActive === false
+          ? false
+          : owned[0].isActive !== false && owned[0].deletedAt == null;
 
       // T6a: replace the membership list inside the lock. The ids were proved
       // to be this club's in the pre-flight; re-read here so a tier deleted in
@@ -551,14 +602,18 @@ export async function PATCH(req: Request, { params }: Params) {
           }
         }
       }
-      // The narrowing cascade's members, computed after the lock, and only
-      // when the list actually changed.
-      const tierAffected = wantsTiers && !sameIds(tiersBefore, tiersAfter)
-        ? await tierLosers(
-            tx, tenantId, id, tiersAfter,
-            await rosterAfterEdit(tx, tenantId, id, wantsRoster, wantsRankGate, rosterIds),
-          )
-        : [];
+      // The narrowing cascade's members, computed after the lock: when the
+      // list actually changed, or when the roster is removed and the class's
+      // existing list starts to apply. Runs before the roster write below, so
+      // "had a roster" reads the roster as it was.
+      const tierAffected = await tierCascade(tx, tenantId, id, {
+        wantsTiers,
+        nextTierIds: tiersAfter,
+        wantsRoster,
+        wantsRankGate,
+        rosterIds,
+        currentTierIds: wantsTiers ? tiersBefore : undefined,
+      });
 
       // Mutual exclusion: setting rank fields clears roster; setting roster clears rank fields.
       if (wantsRankGate) {
@@ -604,6 +659,7 @@ export async function PATCH(req: Request, { params }: Params) {
               (await tx.tenant.findFirst({ where: { id: tenantId }, select: { timezone: true } }))
                 ?.timezone,
             ),
+            liveAfterEdit,
           )
         : null;
 
@@ -648,6 +704,22 @@ export async function PATCH(req: Request, { params }: Params) {
       // while it was off the timetable; mint the rolling window now.
       const cameBack = parsed.data.isActive === true && !!before && classLifecycle(before) !== "active";
       const sessionsCreatedOnResume = cameBack ? await mintUpcomingSessions(tx, tenantId, id) : 0;
+      // T6b: what this edit did to the class's lifecycle, so Activity and Undo
+      // can say "Paused" / "Resumed" / "Restored" rather than a column name.
+      // A class archived before T6b (isActive false, deletedAt null, latest
+      // lifecycle row class.deleted) is RESTORED, not resumed, and its archive
+      // date is recorded so undoing this puts it back as archived.
+      let legacyArchivedOn: Date | null = null;
+      if (cameBack && before && !before.deletedAt) {
+        legacyArchivedOn = (await legacyArchivedAt(tx, tenantId, [id])).get(id) ?? null;
+      }
+      const lifecycleChange: "paused" | "resumed" | "restored" | null = !before
+        ? null
+        : cameBack
+          ? (before.deletedAt || legacyArchivedOn ? "restored" : "resumed")
+          : parsed.data.isActive === false && classLifecycle(before) === "active"
+            ? "paused"
+            : null;
       const found = await tx.class.findFirst({
         where: { id, tenantId },
         include: {
@@ -658,7 +730,10 @@ export async function PATCH(req: Request, { params }: Params) {
       if (!found) return null;
       const { allowedTiers, ...rest } = found;
       const cls = { ...rest, allowedTiers: (allowedTiers ?? []).map((t) => t.tier) };
-      return { cls, scheduleChange, before, tiersBefore, tiersAfter, tierAffected, allAffected, sessionsCreatedOnResume };
+      return {
+        cls, scheduleChange, before, tiersBefore, tiersAfter, tierAffected, allAffected, sessionsCreatedOnResume,
+        lifecycleChange, legacyArchivedOn,
+      };
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -685,12 +760,16 @@ export async function PATCH(req: Request, { params }: Params) {
               allowedTierIds: { before: updated.tiersBefore, after: updated.tiersAfter },
               tierCascadeMemberIds: updated.tierAffected,
             }
-          : {}),
+          : updated.tierAffected.length > 0
+            // The roster was removed and the existing list started to apply.
+            ? { tierCascadeMemberIds: updated.tierAffected }
+            : {}),
         // Same rule for the timetable cascade: the ids of every upcoming
         // session the schedule edit deleted, not just how many (RULES §5 — a
         // count cannot restore anything).
         ...(updated.scheduleChange ? { scheduleChange: updated.scheduleChange } : {}),
         ...(updated.sessionsCreatedOnResume > 0 ? { sessionsCreatedOnResume: updated.sessionsCreatedOnResume } : {}),
+        ...(updated.lifecycleChange ? { lifecycle: updated.lifecycleChange } : {}),
         // `isActive` and `deletedAt` before and after (T6b): undoing a Resume
         // or Restore puts the class back exactly as paused or archived.
         ...(() => {
@@ -699,6 +778,13 @@ export async function PATCH(req: Request, { params }: Params) {
             updated.cls as unknown as Record<string, unknown>,
             ["name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration", "maxCapacity", "isKids", "category", "requiredRankId", "maxRankId", "color", "isActive", "deletedAt"],
           );
+          // A pre-T6b archive carried no deletedAt; record the archive date
+          // it is read by, so undoing this Restore puts it back as archived
+          // (with deletedAt set) rather than as paused.
+          if (updated.legacyArchivedOn && changed.includes("isActive")) {
+            b.deletedAt = updated.legacyArchivedOn.toISOString();
+            a.deletedAt = null;
+          }
           return changed.length > 0 ? { before: b, after: a } : {};
         })(),
       },

@@ -36,6 +36,8 @@ const mockPrisma = {
   // T6a: the timetable page reads the club's tiers; the schedule reads the member's plan.
   membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
   member: { findFirst: vi.fn().mockResolvedValue(null) },
+  // T6b: a paused-looking class is checked for a pre-T6b archive (class.deleted) row.
+  auditLog: { findMany: vi.fn().mockResolvedValue([]) },
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({
@@ -177,6 +179,20 @@ describe("Task 3e — every Class reader filters deletedAt", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/archived/);
     expect(mockPrisma.classInstance.createMany).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/classes/[id]/instances calls a class archived before T6b (no deletedAt) archived, not paused", async () => {
+    mockPrisma.class.findFirst.mockResolvedValue({ id: "c1", isActive: false, deletedAt: null, sourceImportJobId: null, schedules: [] });
+    mockPrisma.auditLog.findMany.mockResolvedValueOnce([
+      { entityId: "c1", action: "class.deleted", createdAt: new Date("2026-09-01T10:00:00Z") },
+    ]);
+    const { POST } = await import("@/app/api/classes/[id]/instances/route");
+    const res = await POST(
+      new Request("http://test/api/classes/c1/instances", { method: "POST", body: JSON.stringify({ weeks: 4 }) }),
+      { params: Promise.resolve({ id: "c1" }) },
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/archived.*Restore it first/);
   });
 
   it("a successful per-class Generate writes class.instances_generated", async () => {

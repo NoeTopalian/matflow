@@ -7,6 +7,7 @@ import { buildInstanceRows } from "@/lib/class-instances";
 import { clubDayMarker } from "@/lib/today-sessions";
 import { usableTimezone } from "@/lib/class-time";
 import { classLifecycle } from "@/lib/class-live";
+import { doorLifecycle } from "@/lib/class-lifecycle";
 import { logAudit } from "@/lib/audit-log";
 
 type Params = { params: Promise<{ id: string }> };
@@ -83,7 +84,11 @@ export async function POST(req: Request, { params }: Params) {
   // [INFERRED residual] the read takes no lock: a pause committing between it
   // and the insert below can leave new sessions on a paused class. They are
   // inert: the member app and kiosk refuse a paused class's sessions.
-  const lifecycle = classLifecycle(cls);
+  // A class archived before T6b carries no deletedAt; read it as archived,
+  // as the timetable does, so the sentence points at Restore, not Resume.
+  const lifecycle = classLifecycle(cls) === "paused"
+    ? await withTenantContext(session.user.tenantId, (tx) => doorLifecycle(tx, session.user.tenantId, cls))
+    : classLifecycle(cls);
   if (lifecycle !== "active") {
     return NextResponse.json(
       {

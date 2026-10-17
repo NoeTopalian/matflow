@@ -60,7 +60,9 @@ describe("class.deleted (Archive) — decide", () => {
   it("a pre-T6b row (counts only, no prior state) is refused with a TRUE reason pointing at Restore", () => {
     const legacy = row("class.deleted", { soft: true, force: true, attendanceCount: 31, rosterCount: 12 });
     expect(decideUndo(legacy, false)).toEqual({ ok: false, reason: REASON.archivedNoSnapshot });
-    expect(REASON.archivedNoSnapshot).toMatch(/Restore it from Paused and archived/);
+    expect(REASON.archivedNoSnapshot).toMatch(/restore it from Paused and archived/i);
+    // True even when the class has been restored since (decide sees only the row).
+    expect(REASON.archivedNoSnapshot).toMatch(/If it is still archived/);
     // Not the generic "Recorded before snapshots were kept" sentence.
     expect(decideUndo(legacy, false)).not.toEqual({ ok: false, reason: REASON.noSnapshot });
   });
@@ -127,6 +129,32 @@ describe("class.updated (Pause / Resume / Restore) — undo through the snapshot
     await applyUndo(tx, row("class.updated", { fields: ["isActive"], before: { isActive: true }, after: { isActive: false } }));
     expect(fake.class.update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { isActive: true } });
     expect(mintUpcomingSessions).toHaveBeenCalledWith(tx, "t1", "c1");
+  });
+
+  it("undoing an old PAUSE after the class was archived is refused (never 'active but archived', nothing minted)", async () => {
+    fake.class.findFirst.mockResolvedValue({
+      id: "c1", tenantId: "t1", isActive: false, deletedAt: new Date(ARCHIVED_AT), sourceImportJobId: null,
+    });
+    const pauseRow = row("class.updated", { fields: ["isActive"], before: { isActive: true }, after: { isActive: false } });
+    await expect(applyUndo(tx, pauseRow)).rejects.toThrow(REASON.archivedSince);
+    expect(fake.class.update).not.toHaveBeenCalled();
+    expect(mintUpcomingSessions).not.toHaveBeenCalled();
+  });
+
+  it("undoing the Restore of a pre-T6b archive puts it back ARCHIVED (deletedAt set), not paused", async () => {
+    // The PATCH records the legacy archive date as before.deletedAt.
+    fake.class.findFirst.mockResolvedValue({ id: "c1", tenantId: "t1", isActive: true, deletedAt: null, sourceImportJobId: null });
+    await applyUndo(tx, row("class.updated", {
+      fields: ["isActive"],
+      lifecycle: "restored",
+      before: { isActive: false, deletedAt: "2026-09-01T10:00:00.000Z" },
+      after: { isActive: true, deletedAt: null },
+    }));
+    expect(fake.class.update).toHaveBeenCalledWith({
+      where: { id: "c1" },
+      data: { isActive: false, deletedAt: new Date("2026-09-01T10:00:00.000Z") },
+    });
+    expect(mintUpcomingSessions).not.toHaveBeenCalled();
   });
 
   it("never puts an imported history class on the timetable", async () => {
