@@ -26,8 +26,8 @@ export type NetNewPoint = {
   lostCancelled: number;
   lostCompleted: number;
   net: number;
-  /** Active members at month end (now, for the current month). */
-  headcount: number;
+  /** Active members at month end (now, for the current month); null when the month has no data. */
+  headcount: number | null;
   /** The part of `net` above zero (0 when the month lost members) — the green shading. */
   netAbove: number;
   /** The part of `net` below zero (0 when the month gained) — the red shading. */
@@ -59,12 +59,19 @@ export function readNetNewView(raw: unknown): NetNewView | null {
   return isNetNewView(raw) ? raw : null;
 }
 
+/**
+ * One point per month, starting at the first month with data: months that
+ * ended before the club's earliest event (basis "none") are left out rather
+ * than drawn as zero, so the chart never shows a month nobody can account for.
+ */
 export function buildNetNewSeries(membership: {
   movementsByMonth: readonly MonthMovement[];
   headcountByMonth: readonly MonthHeadcount[];
 }): NetNewPoint[] {
   const heads = new Map(membership.headcountByMonth.map((h) => [h.month, h]));
-  return membership.movementsByMonth.map((m) => {
+  const firstData = membership.movementsByMonth.findIndex((m) => m.basis !== "none");
+  const months = firstData < 0 ? [] : membership.movementsByMonth.slice(firstData);
+  return months.map((m) => {
     const h = heads.get(m.month);
     return {
       key: m.month,
@@ -76,7 +83,7 @@ export function buildNetNewSeries(membership: {
       lostCancelled: m.lostCancelled,
       lostCompleted: m.lostCompleted,
       net: m.net,
-      headcount: h?.headcount ?? 0,
+      headcount: h ? h.headcount : null,
       netAbove: Math.max(m.net, 0),
       netBelow: Math.min(m.net, 0),
       basis: m.basis,
@@ -103,7 +110,7 @@ export function symmetricDomain(points: NetNewPoint[], key: "net"): [number, num
  * the largest month so the top point never sits on the frame. Never below 1.
  */
 export function headcountDomain(points: NetNewPoint[]): [0, number] {
-  const max = points.reduce((acc, p) => Math.max(acc, p.headcount), 0);
+  const max = points.reduce((acc, p) => Math.max(acc, p.headcount ?? 0), 0);
   if (max <= 0) return [0, 1];
   const step = max <= 10 ? 2 : max <= 50 ? 10 : max <= 200 ? 25 : max <= 1000 ? 100 : 500;
   return [0, Math.ceil((max + 1) / step) * step];
@@ -114,25 +121,36 @@ export function headcountDomain(points: NetNewPoint[]): [0, number] {
  * before the first recorded event), for the shaded "estimated" band; null when
  * the first month is not estimated. A partly estimated month is marked in its
  * tooltip instead, so the band never covers a recorded month.
+ *
+ * `next` is the month after the run (null when the run reaches the end). On a
+ * point scale (the Net line and Members views have no bars) a band from
+ * `from` to `to` has zero width for one month and stops at the centre of the
+ * last estimated month, so those views draw it to `next`: the estimate covers
+ * the change into the first recorded month-end.
  */
 export function estimatedRange(
   points: NetNewPoint[],
   which: "basis" | "headcountBasis" = "basis",
-): { from: string; to: string } | null {
+): { from: string; to: string; next: string | null } | null {
   let end = -1;
   while (end + 1 < points.length && points[end + 1][which] === "estimated") end += 1;
   if (end < 0) return null;
-  return { from: points[0].month, to: points[end].month };
+  return { from: points[0].month, to: points[end].month, next: points[end + 1]?.month ?? null };
 }
 
-/** Tooltip and CSV words for a month's basis; null when it is recorded. */
-export function basisNote(basis: MembershipBasis): string | null {
-  if (basis === "estimated") return "Estimated from your TeamUp history";
+/**
+ * Tooltip and CSV words for a month's basis; null when it is recorded.
+ * `caption` says what the estimate came from (estimatedCaption in
+ * lib/membership-movement.ts); never TeamUp for a club whose estimate is not.
+ */
+export function basisNote(basis: MembershipBasis, caption = "Estimated"): string | null {
+  if (basis === "estimated") return caption;
   if (basis === "mixed") return "Partly estimated";
+  if (basis === "none") return "No data";
   return null;
 }
 
 /** Nothing to draw: no months, or no movement and no members in any month. */
 export function isNetNewEmpty(points: NetNewPoint[]): boolean {
-  return points.length === 0 || points.every((p) => p.joined === 0 && p.lost === 0 && p.headcount === 0);
+  return points.length === 0 || points.every((p) => p.joined === 0 && p.lost === 0 && !p.headcount);
 }

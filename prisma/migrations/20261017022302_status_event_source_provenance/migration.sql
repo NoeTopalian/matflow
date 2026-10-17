@@ -1,10 +1,14 @@
 -- All-or-nothing (see tests/unit/migrations-are-atomic.test.ts).
 BEGIN;
 
--- T8d (17 Oct 2026): status events written by a TeamUp import carry the job
+-- T8d (17 Oct 2026): status events written by an import job carry the job
 -- that wrote them and what that job was doing (create, refresh, or a refresh
 -- rollback), so a headcount or churn series built from events can be audited
--- per job and a back-fill can key on it.
+-- per job and a back-fill can key on it. T8b (same day) adds import_backfill:
+-- history reconstructed from a job's TeamUp ledger and dated before the
+-- member's first event; the back-fill keys its idempotency and rollback on
+-- it. The canonical list is MEMBER_STATUS_EVENT_SOURCE_ACTIONS in
+-- lib/member-status.ts.
 --
 -- Expand-only. Both columns are nullable with no default and no back-fill
 -- here: every existing row reads as before, and a build from before this
@@ -28,7 +32,7 @@ ADD COLUMN "sourceAction" TEXT;
 -- validates trivially.
 ALTER TABLE "MemberStatusEvent"
   ADD CONSTRAINT "MemberStatusEvent_sourceAction_check"
-  CHECK ("sourceAction" IN ('import_create', 'import_refresh', 'import_rollback')) NOT VALID;
+  CHECK ("sourceAction" IN ('import_create', 'import_refresh', 'import_rollback', 'import_backfill')) NOT VALID;
 
 ALTER TABLE "MemberStatusEvent" VALIDATE CONSTRAINT "MemberStatusEvent_sourceAction_check";
 

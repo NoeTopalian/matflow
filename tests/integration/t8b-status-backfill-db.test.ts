@@ -13,8 +13,8 @@
 //   7. The latest-event invariant holds for every member before and after.
 //   8. The widened CHECK admits import_backfill and still refuses an unknown action.
 //
-// Needs migrations 20261017022302_status_event_source_provenance and
-// 20261017024714_status_event_backfill_source_action applied. Runs only through
+// Needs migration 20261017022302_status_event_source_provenance applied (its
+// CHECK admits import_backfill). Runs only through
 // the guarded runners (a Neon child branch, never production). Skips when
 // DATABASE_URL is unset. Prefix t8b-; count-checked teardown of this file's
 // clubs only.

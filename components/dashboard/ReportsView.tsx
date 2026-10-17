@@ -51,7 +51,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import NetNewMembersCard from "./NetNewMembersCard";
-import { MEMBERSHIP_COPY } from "@/lib/membership-movement";
+import { MEMBERSHIP_COPY, estimatedCaption } from "@/lib/membership-movement";
 import type { MembershipReport } from "@/lib/membership-report";
 import { basisNote } from "@/lib/net-new-series";
 import {
@@ -183,6 +183,17 @@ export function classComposition(topClasses: ReportsData["topClasses"]) {
 
 /** The "Joined this month" copy (Q6, A-13): who it counts, and the net beside churn. */
 const JOINED_SCOPE = "People added in MatFlow, incl. tasters. A TeamUp refresh adds nobody.";
+
+/**
+ * The net printed beside churn (T2b) is the Net New Members card's own figure
+ * for the current club month (Q6: new + rejoined − lost), so the page never
+ * shows two different nets for one month. Without a current month: the scope alone.
+ */
+export function joinedNetDetail(m: Pick<MembershipReport, "movementsByMonth">): string {
+  const current = m.movementsByMonth.find((r) => r.isCurrentMonth);
+  if (!current || current.basis === "none") return JOINED_SCOPE;
+  return `Net ${formatSigned(current.net)} this month (new + rejoined − lost) · ${JOINED_SCOPE}`;
+}
 const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";
 
 /** Delta as display text, or null when nothing moved. */
@@ -258,32 +269,35 @@ export function reportsCsvFilename(generatedAt: string): string {
  * T8c: the movement tally for the window, one row per month (new, rejoined,
  * lost with its split, net) and the active-member headcount at each month
  * end — the same figures the Net New Members card draws, with each month's
- * basis ("Estimated from your TeamUp history") so an estimate never reads as
- * a record. Net is a number cell, so a negative month stays a number.
+ * basis (what it was estimated from) so an estimate never reads as a record.
+ * Months that ended before the club's earliest event have no data and are
+ * left out, as on the card. Net is a number cell, so a negative month stays a
+ * number.
  */
 export function membershipCsvRows(m: MembershipReport): (string | number | null)[][] {
   if (m.movementsByMonth.length === 0) return [];
   const t = m.totals;
+  const caption = estimatedCaption(m);
   const split = (r: MembershipReport["totals"]) =>
     `New ${r.new} · Rejoined ${r.rejoined} · Lost ${r.lost} (cancelled ${r.lostCancelled}, completed course ${r.lostCompleted})`;
   return [
     ["Membership movement", `${m.window.from} – ${m.window.to}`, t.net, `${split(t)} · ${MEMBERSHIP_COPY.definition} ${MEMBERSHIP_COPY.deletion}`],
-    ...m.movementsByMonth.map((r) => [
+    ...m.movementsByMonth.filter((r) => r.basis !== "none").map((r) => [
       "Membership movement by month",
       r.label,
       r.net,
       [
         split(r),
-        r.imported > 0 ? `Brought over from TeamUp without dated history ${r.imported}` : null,
+        r.imported > 0 ? `Brought over by an import without dated history ${r.imported}` : null,
         r.otherIn > 0 || r.otherOut > 0 ? `Other changes in ${r.otherIn}, out ${r.otherOut}` : null,
-        basisNote(r.basis),
+        basisNote(r.basis, caption),
       ].filter(Boolean).join(" · "),
     ]),
-    ...m.headcountByMonth.map((h) => [
+    ...m.headcountByMonth.filter((h) => h.basis !== "none").map((h) => [
       "Active members at month end",
       h.label,
       h.headcount,
-      [h.isCurrentMonth ? "Today, equals Active members" : MEMBERSHIP_COPY.headcount, basisNote(h.basis)].filter(Boolean).join(" · "),
+      [h.isCurrentMonth ? "Today, equals Active members" : MEMBERSHIP_COPY.headcount, basisNote(h.basis, caption)].filter(Boolean).join(" · "),
     ]),
   ];
 }
@@ -328,7 +342,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // Health rows (T2b): the same text the tiles print, so the file and the
     // screen agree. Club-wide — the class/age filters never scope them.
     ["Health", "Churn this month", formatRatio(churn.ratePct, churn.cancelled, churn.base), `${CHURN_FORMULA} · club-wide`],
-    ["Health", "Joined this month", churn.joined, `Net ${formatSigned(churn.net)} this month · ${JOINED_SCOPE}`],
+    ["Health", "Joined this month", churn.joined, joinedNetDetail(data.membership)],
     ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), "Members with a failed payment in the last 90 days who are now paid"],
     ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
     ...membershipCsvRows(data.membership),
@@ -1082,7 +1096,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionTitle title="New Members" subtitle="Joins per month, last 6 months" icon={UserPlus} />
+          <SectionTitle title="First joins" subtitle="First joins per month by join date, last 6 months" icon={UserPlus} />
           {monthlySignups.every((row) => row.count === 0) ? (
             <EmptyChart label="No signup data yet" />
           ) : (
@@ -1251,7 +1265,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             icon={UserPlus}
             label="Joined this month"
             value={formatNumber(churn.joined)}
-            detail={`Net ${formatSigned(churn.net)} this month · ${JOINED_SCOPE}`}
+            detail={joinedNetDetail(membership)}
             primaryColor={primaryColor}
             href="/dashboard/members?filter=new-this-month"
             hrefLabel="Joined this month"

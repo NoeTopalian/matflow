@@ -133,6 +133,8 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
       checkInMethods: [],
       // T8c: movement and headcount by month; the first month is estimated.
       membership: {
+        historySource: "ledger",
+        fromJoinDates: 0,
         window: { from: "Sep 26", to: "Oct 26", months: 2 },
         totals: { new: 3, rejoined: 1, lost: 2, lostCancelled: 1, lostCompleted: 1, net: 2, imported: 5, otherIn: 0, otherOut: 0 },
         movementsByMonth: [
@@ -177,7 +179,8 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
     expect(rows.find((r) => r[1] === "Churn this month")?.[2]).toBe("11.1% (1 of 9)");
     const joined = rows.find((r) => r[1] === "Joined this month");
     expect(joined?.[2]).toBe("2");
-    expect(joined?.[3]).toMatch(/^Net \+1 this month · People added in MatFlow/);
+    // The net beside churn is the Net New Members card's figure for this month (T8c review).
+    expect(joined?.[3]).toMatch(/^Net \+3 this month \(new \+ rejoined − lost\) · People added in MatFlow/);
     expect(rows.find((r) => r[1] === "Payment recovery")?.[2]).toBe("50% (1 of 2)");
     // Undefined rates export as a dash, never "0%".
     expect(rows.find((r) => r[1] === "6-month survival")?.[2]).toBe("—");
@@ -193,7 +196,7 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
     const byMonth = rows.filter((r) => r[0] === "Membership movement by month");
     expect(byMonth.map((r) => [r[1], r[2]])).toEqual([["Sep 26", "-1"], ["Oct 26", "3"]]);
     expect(byMonth[0][3]).toContain("Estimated from your TeamUp history");
-    expect(byMonth[1][3]).toContain("Brought over from TeamUp without dated history 5");
+    expect(byMonth[1][3]).toContain("Brought over by an import without dated history 5");
     expect(byMonth[1][3]).toContain("Partly estimated");
     const heads = rows.filter((r) => r[0] === "Active members at month end");
     expect(heads.map((r) => [r[1], r[2]])).toEqual([["Sep 26", "0"], ["Oct 26", "8"]]);

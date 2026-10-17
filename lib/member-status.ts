@@ -27,10 +27,11 @@ export const MEMBER_STATUS_EVENT_REASONS = [
 export type MemberStatusEventReason = (typeof MEMBER_STATUS_EVENT_REASONS)[number];
 
 /**
- * What a TeamUp import job was doing when it wrote an event (T8d). Mirrors the
- * CHECK on `MemberStatusEvent.sourceAction` (migration
- * 20261017022302_status_event_source_provenance, widened by
- * 20261017024714_status_event_backfill_source_action). Every one of these is
+ * What an import job was doing when it wrote an event (T8d). Mirrors the CHECK
+ * on `MemberStatusEvent.sourceAction` (migration
+ * 20261017022302_status_event_source_provenance). `import_create` is written
+ * by every create import (TeamUp or generic: the job id is true either way);
+ * refresh, rollback and back-fill are TeamUp-only operations. Every one of these is
  * written with `reason = 'import'`, so conversion math and the create-import
  * rollback guard, which key on the reason, keep treating them as machine writes.
  *
@@ -239,12 +240,16 @@ export async function recordStatusEventsBulk(
   }
   const now = new Date();
   const clampedByTenant = new Map<string, number>();
+  // The floor moves with the batch: two dated rows for one member clamp
+  // against the latest of everything before them, the earlier row in this
+  // batch included, so the second can never land before the first.
   const data = rows.map((input) => {
     if (!input.occurredAt) return eventData(input, undefined);
     const at = clampOccurredAt(input.occurredAt, latestByMember.get(input.memberId) ?? null, now);
     if (at.getTime() !== input.occurredAt.getTime()) {
       clampedByTenant.set(input.tenantId, (clampedByTenant.get(input.tenantId) ?? 0) + 1);
     }
+    latestByMember.set(input.memberId, at);
     return eventData(input, at);
   });
   for (const [tenantId, count] of clampedByTenant) warnClamped(tenantId, count);

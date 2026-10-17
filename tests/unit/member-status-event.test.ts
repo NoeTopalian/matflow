@@ -200,6 +200,21 @@ describe("occurredAt (T8a)", () => {
     warn.mockRestore();
   });
 
+  it("bulk: two dated rows for one member in one batch keep their order (the floor moves with the batch)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = makeDatedTx(null, [{ memberId: "m1", _max: { occurredAt: new Date("2026-10-01T00:00:00Z") } }]);
+    await recordStatusEventsBulk(h.tx, [
+      { ...base, fromStatus: "active", toStatus: "inactive", occurredAt: new Date("2026-10-08T00:00:00Z") },
+      { ...base, fromStatus: "inactive", toStatus: "cancelled", occurredAt: new Date("2026-10-05T00:00:00Z") },
+    ]);
+    const rows = h.createMany.mock.calls[0][0].data;
+    expect(rows[0].occurredAt).toEqual(new Date("2026-10-08T00:00:00Z"));
+    // Clamped up to the first row, not to the pre-batch latest (1 Oct).
+    expect(rows[1].occurredAt).toEqual(new Date("2026-10-08T00:00:00Z"));
+    expect(warn).toHaveBeenCalledWith("[member-status] supplied occurredAt clamped", { tenantId: "t1", count: 1 });
+    warn.mockRestore();
+  });
+
   it("bulk: no lookup at all when no row carries a date", async () => {
     const h = makeDatedTx(null);
     await recordStatusEventsBulk(h.tx, [{ ...base }]);

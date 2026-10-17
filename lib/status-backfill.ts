@@ -53,8 +53,11 @@ type TxClient = Prisma.TransactionClient;
  * with reason `import`, changedById null, `sourceJobId` = the ledger's job and
  * `sourceAction` = `import_backfill` (T8d provenance, A-10). The writer
  * refuses any date not earlier than the member's first event, which rolls the
- * club's transaction back. Idempotency: a club that already has any
- * import_backfill event is "already applied" and gets no rows. Rollback
+ * club's transaction back. Idempotency is per MEMBER: a member who already has
+ * any import_backfill event is left out of the plan (counted in
+ * membersAlreadyBackfilled), so a member brought in by a later create import
+ * is back-filled by the next run while nobody is written twice. A club whose
+ * every datable member is already back-filled is "already applied". Rollback
  * deletes exactly the import_backfill events: import-day, refresh and staff
  * events are never touched.
  *
@@ -294,8 +297,11 @@ export type BackfillEventInput = RecordStatusEventInput & { occurredAt: Date; so
 export interface TenantBackfillPlan {
   tenantId: string;
   timeZone: string;
-  /** Back-filled events already on record for this club (a second run writes nothing). */
+  /** Back-filled events already on record for this club. */
   existingBackfillEvents: number;
+  /** Members left out because they already have back-filled events (idempotency is per member). */
+  membersAlreadyBackfilled: number;
+  /** Back-filled events exist and there is nothing left to write: a re-run writes nothing. */
   alreadyApplied: boolean;
   ledgerRows: number;
   membersWithLedger: number;
@@ -313,6 +319,12 @@ export interface TenantBackfillPlan {
   byMonth: Record<string, Record<BackfillKind, number>>;
   /** One entry per member skipped, by ledger row id. */
   exceptions: BackfillException[];
+  /**
+   * Members skipped because a date the history depends on is missing
+   * (undated_start / undated_end). Ids only. Reports count these as "TeamUp
+   * history without dates"; other exceptions are not that.
+   */
+  undatedMemberIds: string[];
   exceptionCounts: Record<BackfillExceptionKind, number>;
 }
 
@@ -325,9 +337,13 @@ export async function planTenantBackfill(tx: TxClient, tenantId: string): Promis
   const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
   const timeZone = usableTimezone(tenant?.timezone);
 
-  const existingBackfillEvents = await tx.memberStatusEvent.count({
+  const backfilled = await tx.memberStatusEvent.groupBy({
+    by: ["memberId"],
     where: { tenantId, sourceAction: STATUS_BACKFILL_SOURCE_ACTION },
+    _count: { _all: true },
   });
+  const alreadyBackfilled = new Set(backfilled.map((b) => b.memberId));
+  const existingBackfillEvents = backfilled.reduce((s, b) => s + (b._count?._all ?? 0), 0);
 
   const ledger = await tx.importedMembership.findMany({
     where: { tenantId, memberId: { not: null }, disposition: "member_history" },
@@ -382,7 +398,8 @@ export async function planTenantBackfill(tx: TxClient, tenantId: string): Promis
     tenantId,
     timeZone,
     existingBackfillEvents,
-    alreadyApplied: existingBackfillEvents > 0,
+    membersAlreadyBackfilled: 0,
+    alreadyApplied: false,
     ledgerRows: rows.length,
     membersWithLedger: rowsByMember.size,
     membersPlanned: 0,
@@ -393,6 +410,7 @@ export async function planTenantBackfill(tx: TxClient, tenantId: string): Promis
     byMonth: {},
     exceptions: [],
     exceptionCounts: { erased_member: 0, undated_start: 0, undated_end: 0, end_before_start: 0, unknown_status: 0 },
+    undatedMemberIds: [],
   };
   const except = (e: BackfillException) => {
     plan.exceptions.push(e);
@@ -403,6 +421,11 @@ export async function planTenantBackfill(tx: TxClient, tenantId: string): Promis
     const member = memberById.get(memberId);
     const all = rowsByMember.get(memberId)!;
     if (!member) continue; // not visible in this club: nothing to write against
+    if (alreadyBackfilled.has(memberId)) {
+      // Idempotent per member: their dated history is already on record.
+      plan.membersAlreadyBackfilled += 1;
+      continue;
+    }
     if (ERASED_EMAIL.test(member.email)) {
       except({ kind: "erased_member", ledgerRowIds: all.map((r) => r.id).sort() });
       continue;
@@ -428,6 +451,7 @@ export async function planTenantBackfill(tx: TxClient, tenantId: string): Promis
     plan.excludedRows += d.excludedRowIds.length;
     if (d.exception) {
       except(d.exception);
+      if (d.exception.kind === "undated_start" || d.exception.kind === "undated_end") plan.undatedMemberIds.push(memberId);
       continue;
     }
     if (d.transitions.length === 0) continue;
@@ -449,6 +473,7 @@ export async function planTenantBackfill(tx: TxClient, tenantId: string): Promis
       plan.byMonth[month][t.kind] += 1;
     }
   }
+  plan.alreadyApplied = existingBackfillEvents > 0 && plan.inputs.length === 0;
   return plan;
 }
 
@@ -456,6 +481,21 @@ export async function planTenantBackfill(tx: TxClient, tenantId: string): Promis
 export function monthTotals(byMonth: Record<string, Record<BackfillKind, number>>): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [month, kinds] of Object.entries(byMonth)) out[month] = BACKFILL_KINDS.reduce((s, k) => s + kinds[k], 0);
+  return out;
+}
+
+/**
+ * What one run added per month: back-filled events on record after the run
+ * minus before it. Idempotency is per member, so a later run adds to earlier
+ * runs' rows; this, not the club's whole total, is what must equal the run's
+ * preview (monthTotals of its plan). Months with no change are left out.
+ */
+export function monthDelta(after: Record<string, number>, before: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const month of new Set([...Object.keys(after), ...Object.keys(before)])) {
+    const d = (after[month] ?? 0) - (before[month] ?? 0);
+    if (d !== 0) out[month] = d;
+  }
   return out;
 }
 
@@ -508,6 +548,7 @@ export async function applyTenantBackfill(
         ranAt: new Date().toISOString(),
         written,
         membersPlanned: plan.membersPlanned,
+        membersAlreadyBackfilled: plan.membersAlreadyBackfilled,
         excludedRows: plan.excludedRows,
         exceptions: plan.exceptions.length,
         exceptionCounts: plan.exceptionCounts,

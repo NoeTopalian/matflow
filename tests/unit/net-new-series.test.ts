@@ -20,7 +20,7 @@ import type { MembershipBasis, MonthHeadcount, MonthMovement } from "@/lib/membe
 function month(
   key: string,
   label: string,
-  t: Partial<MonthMovement> & { headcount: number },
+  t: Partial<MonthMovement> & { headcount: number | null },
   basis: MembershipBasis = "recorded",
   headBasis: MembershipBasis = basis,
 ): { mv: MonthMovement; hc: MonthHeadcount } {
@@ -66,6 +66,19 @@ describe("buildNetNewSeries", () => {
   it("returns nothing for nothing", () => {
     expect(buildNetNewSeries({ movementsByMonth: [], headcountByMonth: [] })).toEqual([]);
   });
+
+  it("leaves out the leading months with no data (basis none): never drawn as zero", () => {
+    const s = buildNetNewSeries(
+      membership([
+        month("2026-02", "Feb 26", { headcount: null }, "none"),
+        month("2026-03", "Mar 26", { headcount: null }, "none"),
+        month("2026-04", "Apr 26", { new: 2, headcount: 2 }, "estimated"),
+        month("2026-05", "May 26", { headcount: 2 }),
+      ]),
+    );
+    expect(s.map((p) => p.month)).toEqual(["Apr 26", "May 26"]);
+    expect(buildNetNewSeries(membership([month("2026-02", "Feb 26", { headcount: null }, "none")]))).toEqual([]);
+  });
 });
 
 describe("axes", () => {
@@ -88,14 +101,20 @@ describe("axes", () => {
 describe("estimated band and notes", () => {
   it("shades only the leading run of wholly estimated months", () => {
     const s = buildNetNewSeries(fixture);
-    expect(estimatedRange(s)).toEqual({ from: "Apr 26", to: "May 26" });
-    expect(estimatedRange(s, "headcountBasis")).toEqual({ from: "Apr 26", to: "May 26" });
+    // `next` lets the point-scale views draw the band to the first recorded month.
+    expect(estimatedRange(s)).toEqual({ from: "Apr 26", to: "May 26", next: "Jun 26" });
+    expect(estimatedRange(s, "headcountBasis")).toEqual({ from: "Apr 26", to: "May 26", next: "Jun 26" });
     expect(estimatedRange(buildNetNewSeries(membership([month("2026-07", "Jul 26", { headcount: 1 })])))).toBeNull();
+    const allEstimated = buildNetNewSeries(membership([month("2026-07", "Jul 26", { headcount: 1 }, "estimated")]));
+    expect(estimatedRange(allEstimated)).toEqual({ from: "Jul 26", to: "Jul 26", next: null });
   });
 
   it("names the basis in words, and says nothing for a recorded month", () => {
-    expect(basisNote("estimated")).toBe("Estimated from your TeamUp history");
+    expect(basisNote("estimated", "Estimated from your TeamUp history")).toBe("Estimated from your TeamUp history");
+    // Never TeamUp unless the caller says the estimate came from it.
+    expect(basisNote("estimated")).toBe("Estimated");
     expect(basisNote("mixed")).toBe("Partly estimated");
+    expect(basisNote("none")).toBe("No data");
     expect(basisNote("recorded")).toBeNull();
   });
 });

@@ -378,7 +378,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 reason: "import" as const,
                 changedById: null,
                 // T8d: the job that created this member, so its first event can
-                // be traced to the upload that wrote it.
+                // be traced to the upload that wrote it. Every create import
+                // (TeamUp or generic) stamps it: the job id is true either way,
+                // and the T8d provenance back-fill does the same from
+                // Member.importJobId.
                 sourceJobId: jobId,
                 sourceAction: "import_create" as const,
               })),

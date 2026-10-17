@@ -14,8 +14,10 @@
  *             zero whatever the size of the club.
  * Above the chart: the window and its tally (new, rejoined, lost, net), not
  * just a signed number, and the definition in words. Months before the first
- * recorded event are shaded and captioned "Estimated from your TeamUp
- * history"; they are never drawn as recorded.
+ * recorded event are shaded and captioned with what they were estimated from
+ * (the TeamUp history, or join and cancellation dates); they are never drawn
+ * as recorded. Months before the club's earliest event are left out, never
+ * drawn as zero. An empty club sees the empty state alone.
  *
  * The view is a per-viewer convenience remembered in localStorage; it never
  * touches the URL because it changes nothing about the data. Colours come
@@ -53,7 +55,7 @@ import {
   type NetNewPoint,
   type NetNewView,
 } from "@/lib/net-new-series";
-import { MEMBERSHIP_COPY } from "@/lib/membership-movement";
+import { MEMBERSHIP_COPY, estimatedCaption } from "@/lib/membership-movement";
 import type { MembershipReport } from "@/lib/membership-report";
 import { formatDate } from "@/lib/date";
 
@@ -102,17 +104,19 @@ function NetNewTooltip({
   payload,
   label,
   mode,
+  caption,
 }: {
   active?: boolean;
   payload?: TooltipPayload[];
   label?: string;
   mode: NetNewView;
+  caption: string;
 }) {
   if (!active || !payload?.length) return null;
   const p = (payload[0]?.payload ?? {}) as Partial<NetNewPoint>;
   const net = Number(p.net ?? 0);
   const basis = mode === "members" ? p.headcountBasis : p.basis;
-  const note = basis ? basisNote(basis) : null;
+  const note = basis ? basisNote(basis, caption) : null;
   return (
     <div className="rounded-xl border border-bd-default bg-sf-0 px-3 py-2 text-sm shadow-xl space-y-1">
       <p className="text-xs mb-1 font-semibold text-tx-3">{label}</p>
@@ -146,13 +150,18 @@ function SignedDot(props: { cx?: number; cy?: number; payload?: { net?: number }
   return <circle cx={cx} cy={cy} r={4} fill={up ? SUCCESS : DANGER} stroke="var(--sf-0)" strokeWidth={1.5} />;
 }
 
-/** The shaded band behind wholly estimated months (a fill; its label uses the text token). */
-function estimatedBand(range: { from: string; to: string } | null) {
+/**
+ * The shaded band behind wholly estimated months (a fill; its label uses the
+ * text token). The bar view has a band scale, so x2 = the last estimated month
+ * covers it whole. The line views have a point scale, where that would give a
+ * zero-width band for one month, so they run it to the next month's point.
+ */
+function estimatedBand(range: { from: string; to: string; next: string | null } | null, pointScale: boolean) {
   if (!range) return null;
   return (
     <ReferenceArea
       x1={range.from}
-      x2={range.to}
+      x2={pointScale ? range.next ?? range.to : range.to}
       fill="var(--sf-2)"
       fillOpacity={0.8}
       stroke="none"
@@ -167,8 +176,9 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
   const points = useMemo(() => buildNetNewSeries(membership), [membership]);
   const empty = isNetNewEmpty(points);
   const current = NET_NEW_VIEWS.find((v) => v.value === view) ?? NET_NEW_VIEWS[0];
-  const band = estimatedBand(estimatedRange(points, view === "members" ? "headcountBasis" : "basis"));
+  const band = estimatedBand(estimatedRange(points, view === "members" ? "headcountBasis" : "basis"), view !== "bars");
   const anyEstimated = points.some((p) => p.basis !== "recorded" || p.headcountBasis !== "recorded");
+  const caption = estimatedCaption(membership);
   const t = membership.totals;
   const today = points[points.length - 1];
 
@@ -205,7 +215,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
   return (
     <Card data-testid="net-new-card">
       <SectionTitle title="Net New Members" subtitle={current.subtitle} icon={TrendingUp} actions={control} fixedSubtitleHeight />
-      {points.length > 0 && (
+      {!empty && (
         <div className="mb-3 space-y-1">
           <p className="text-sm text-tx-1" data-testid="net-new-tally">
             <span className="text-tx-3">
@@ -218,7 +228,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
               ({formatNumber(t.lostCancelled)} cancelled, {formatNumber(t.lostCompleted)} completed course)
             </span>{" "}
             · net <span className="font-semibold tabular-nums">{formatSigned(t.net)}</span>
-            {today && (
+            {today && today.headcount !== null && (
               <>
                 {" "}· <span className="font-semibold tabular-nums">{formatNumber(today.headcount)}</span> active members today
               </>
@@ -245,7 +255,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
                 {band}
                 <XAxis dataKey="month" tick={AXIS_TICK} axisLine={false} tickLine={false} />
                 <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip content={<NetNewTooltip mode="bars" />} cursor={{ fill: "var(--sf-2)" }} />
+                <Tooltip content={<NetNewTooltip mode="bars" caption={caption} />} cursor={{ fill: "var(--sf-2)" }} />
                 <Bar dataKey="joined" stackId="a" fill={SUCCESS} radius={[0, 0, 0, 0]} maxBarSize={34} name="Joined" />
                 <Bar dataKey="lost" stackId="b" fill={DANGER} radius={[6, 6, 0, 0]} maxBarSize={34} name="Lost" />
               </BarChart>
@@ -255,7 +265,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
                 {band}
                 <XAxis dataKey="month" tick={AXIS_TICK} axisLine={false} tickLine={false} />
                 <YAxis domain={symmetricDomain(points, "net")} tick={AXIS_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip content={<NetNewTooltip mode="net" />} cursor={{ stroke: "var(--bd-default)" }} />
+                <Tooltip content={<NetNewTooltip mode="net" caption={caption} />} cursor={{ stroke: "var(--bd-default)" }} />
                 <Area dataKey="netAbove" baseValue={0} type="monotone" fill={SUCCESS} fillOpacity={0.18} stroke="none" isAnimationActive={false} name="Gained" />
                 <Area dataKey="netBelow" baseValue={0} type="monotone" fill={DANGER} fillOpacity={0.18} stroke="none" isAnimationActive={false} name="Lost" />
                 <ReferenceLine y={0} stroke="var(--tx-3)" strokeDasharray="4 4" />
@@ -275,7 +285,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
                   width={48}
                   label={{ value: MEMBERSHIP_COPY.headcountAxis, angle: -90, position: "insideLeft", fill: "var(--tx-3)", fontSize: 11 }}
                 />
-                <Tooltip content={<NetNewTooltip mode="members" />} cursor={{ stroke: "var(--bd-default)" }} />
+                <Tooltip content={<NetNewTooltip mode="members" caption={caption} />} cursor={{ stroke: "var(--bd-default)" }} />
                 <Area dataKey="headcount" baseValue={0} type="monotone" fill="var(--hue-info)" fillOpacity={0.14} stroke="none" isAnimationActive={false} name="Active members" />
                 <Line dataKey="headcount" type="monotone" stroke="var(--tx-1)" strokeWidth={2} dot={{ r: 3, fill: "var(--tx-1)" }} activeDot={{ r: 5 }} name="Active members" />
               </ComposedChart>
@@ -283,13 +293,13 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
           </ResponsiveContainer>
         </div>
       )}
-      {points.length > 0 && (
+      {!empty && (
         <div className="mt-2 space-y-0.5 text-xs text-tx-3" data-testid="net-new-notes">
           {anyEstimated && (
             <p data-testid="net-new-estimated">
               {membership.boundary
-                ? `${MEMBERSHIP_COPY.estimated}: months before ${formatDate(membership.boundary)} are reconstructed, not recorded at the time.`
-                : `${MEMBERSHIP_COPY.estimated}: nothing in this window was recorded at the time.`}
+                ? `${caption}: months before ${formatDate(membership.boundary)} are reconstructed, not recorded at the time.`
+                : `${caption}: nothing in this window was recorded at the time.`}
             </p>
           )}
           {membership.undatedHistory > 0 && (

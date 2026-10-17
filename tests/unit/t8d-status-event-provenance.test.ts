@@ -257,17 +257,16 @@ describe("T8d migration: expand-only provenance columns", () => {
     expect(body).toMatch(/CREATE INDEX "MemberStatusEvent_tenantId_sourceJobId_idx" ON "MemberStatusEvent"\("tenantId", "sourceJobId"\)/);
   });
 
-  it("adds the CHECK NOT VALID, then validates it, and the list is the writer's first three actions", () => {
+  it("adds the CHECK NOT VALID, then validates it, and the list is the writer's whole list", () => {
     const add = body.indexOf('ADD CONSTRAINT "MemberStatusEvent_sourceAction_check"');
     const validate = body.indexOf('VALIDATE CONSTRAINT "MemberStatusEvent_sourceAction_check"');
     expect(add).toBeGreaterThan(-1);
     expect(validate).toBeGreaterThan(add);
     expect(body.slice(add, validate)).toMatch(/NOT VALID/);
     const list = /CHECK \("sourceAction" IN \(([^)]*)\)\)/.exec(body)?.[1] ?? "";
-    // T8b's migration (..._status_event_backfill_source_action) widens this
-    // list with import_backfill; tests/unit/t8b-status-backfill.test.ts checks
-    // that the newest definition equals the writer's whole list.
-    expect(list.split(",").map((s) => s.trim().replace(/'/g, ""))).toEqual(MEMBER_STATUS_EVENT_SOURCE_ACTIONS.slice(0, 3));
+    // import_backfill (T8b) is folded into this one migration: neither was
+    // ever applied, so no second migration drops and re-adds the CHECK.
+    expect(list.split(",").map((s) => s.trim().replace(/'/g, ""))).toEqual([...MEMBER_STATUS_EVENT_SOURCE_ACTIONS]);
   });
 
   it("drops, renames and rewrites nothing, and has no foreign key to ImportJob", () => {

@@ -10,6 +10,7 @@ import {
   buildMembership,
   clubMonthWindows,
   compareEvents,
+  estimatedCaption,
   headcountSeries,
   memberMovements,
   movements,
@@ -131,6 +132,40 @@ describe("memberMovements: the owner's Q6 definitions", () => {
   it("a member with no events has no movement", () => {
     expect(memberMovements([])).toEqual([]);
   });
+
+  it("set inactive by hand, then active again: a pause and its reversal, never a rejoin", () => {
+    const moves = memberMovements([
+      ev("a", "active", "2026-01-10T00:00:00Z"),
+      ev("a", "inactive", "2026-04-02T00:00:00Z", { fromStatus: "active" }),
+      ev("a", "active", "2026-05-20T00:00:00Z", { fromStatus: "inactive" }),
+    ]);
+    expect(moves.map((m) => m.kind)).toEqual(["new", "otherOut", "otherIn"]);
+  });
+
+  it("set inactive by hand, then cancelled: a loss at the cancellation, paired with the pause reversed", () => {
+    const moves = memberMovements([
+      ev("a", "active", "2026-01-10T00:00:00Z"),
+      ev("a", "inactive", "2026-04-02T00:00:00Z", { fromStatus: "active" }),
+      ev("a", "cancelled", "2026-06-15T00:00:00Z", { fromStatus: "inactive" }),
+      ev("a", "active", "2026-09-01T00:00:00Z", { fromStatus: "cancelled" }),
+    ]);
+    expect(moves.map((m) => m.kind)).toEqual(["new", "otherOut", "otherIn", "lostCancelled", "rejoined"]);
+    expect(moves[2].at.toISOString()).toBe(moves[3].at.toISOString());
+  });
+
+  it("a taster who went to cancelled and later started is new; a former member brought over by an import is a rejoin", () => {
+    const taster = memberMovements([
+      ev("a", "taster", "2026-01-10T00:00:00Z"),
+      ev("a", "cancelled", "2026-01-20T00:00:00Z", { fromStatus: "taster" }),
+      ev("a", "active", "2026-03-01T00:00:00Z", { fromStatus: "cancelled" }),
+    ]);
+    expect(taster.map((m) => m.kind)).toEqual(["new"]);
+    const former = memberMovements([
+      ev("b", "cancelled", IMPORT_DAY, { reason: "import", fromStatus: null, sourceAction: "import_create" }),
+      ev("b", "active", "2026-10-12T00:00:00Z", { fromStatus: "cancelled" }),
+    ]);
+    expect(former.map((m) => m.kind)).toEqual(["rejoined"]);
+  });
 });
 
 describe("clubMonthWindows: calendar months in the club's timezone", () => {
@@ -203,10 +238,69 @@ describe("buildMembership", () => {
     expect(m.movementsByMonth[11]).toMatchObject({ new: 1, imported: 0 });
   });
 
-  it("no recorded event at all: every month is estimated", () => {
+  it("no event of any kind: every month has no data (never a fabricated zero)", () => {
     const m = buildMembership({ events: [], live: [], now: NOW, timeZone: TZ, boundary: null });
-    expect(m.movementsByMonth.every((r) => r.basis === "estimated")).toBe(true);
-    expect(m.headcountByMonth.every((r) => r.headcount === 0)).toBe(true);
+    expect(m.movementsByMonth.every((r) => r.basis === "none")).toBe(true);
+    expect(m.headcountByMonth.every((r) => r.basis === "none" && r.headcount === null)).toBe(true);
+    expect(m.firstDataAt).toBeNull();
+  });
+
+  it("months that end before the earliest event of any kind are 'none', and the window starts at the first month with data", () => {
+    const m = buildMembership({
+      events: [
+        ev("a", "active", "2026-03-10T00:00:00Z", { estimated: true }),
+        ev("a", "active", IMPORT_DAY, { reason: "import", fromStatus: null, sourceAction: "import_create" }),
+      ],
+      live: [{ id: "a", status: "active" }],
+      now: NOW,
+      timeZone: TZ,
+      boundary: IMPORT_DAY,
+    });
+    const march = m.headcountByMonth.findIndex((h) => h.month === "2026-03");
+    for (const h of m.headcountByMonth.slice(0, march)) expect(h).toMatchObject({ basis: "none", headcount: null });
+    for (const r of m.movementsByMonth.slice(0, march)) expect(r.basis).toBe("none");
+    expect(m.headcountByMonth[march]).toMatchObject({ basis: "estimated", headcount: 1 });
+    expect(m.window).toEqual({ from: "Mar 26", to: "Oct 26", months: 8 });
+    expect(m.firstDataAt).toBe("2026-03-10T00:00:00.000Z");
+  });
+
+  it("a pause undone in the same month: no rejoin, net 0, and the headcount still adds up", () => {
+    const m = buildMembership({
+      events: [
+        ev("a", "active", "2025-06-01T00:00:00Z"),
+        ev("a", "inactive", "2026-10-06T09:00:00Z", { fromStatus: "active" }),
+        // The Activity-log undo writes a staff_edit event back to active.
+        ev("a", "active", "2026-10-06T09:05:00Z", { fromStatus: "inactive" }),
+      ],
+      live: [{ id: "a", status: "active" }],
+      now: NOW,
+      timeZone: TZ,
+      boundary: new Date("2025-01-01T00:00:00Z"),
+    });
+    expect(m.movementsByMonth[11]).toMatchObject({ rejoined: 0, new: 0, lost: 0, net: 0, otherIn: 1, otherOut: 1 });
+    expect(m.headcountByMonth[11].headcount).toBe(1);
+  });
+
+  it("a pause then a cancellation: the cancellation month counts one lost and the movement identity holds", () => {
+    const m = buildMembership({
+      events: [
+        ev("a", "active", "2025-06-01T00:00:00Z"),
+        ev("a", "inactive", "2026-07-02T00:00:00Z", { fromStatus: "active" }),
+        ev("a", "cancelled", "2026-09-10T00:00:00Z", { fromStatus: "inactive" }),
+      ],
+      live: [{ id: "a", status: "cancelled" }],
+      now: NOW,
+      timeZone: TZ,
+      boundary: new Date("2025-01-01T00:00:00Z"),
+    });
+    const by = (k: string) => m.movementsByMonth.find((r) => r.month === k)!;
+    expect(by("2026-07")).toMatchObject({ otherOut: 1, lost: 0, net: 0 });
+    expect(by("2026-09")).toMatchObject({ lostCancelled: 1, otherIn: 1, net: -1 });
+    let prev = m.openingHeadcount;
+    m.headcountByMonth.forEach((h, i) => {
+      expect((h.headcount ?? 0) - prev).toBe(tallyChange(m.movementsByMonth[i]));
+      prev = h.headcount ?? 0;
+    });
   });
 
   it("reconciles a replay that disagrees with the current status, so today equals the live active count", () => {
@@ -232,7 +326,7 @@ describe("buildMembership", () => {
       timeZone: TZ,
       boundary: new Date("2025-01-01T00:00:00Z"),
     });
-    expect(m.headcountByMonth.every((r) => r.headcount === 0)).toBe(true);
+    expect(m.headcountByMonth.every((r) => !r.headcount)).toBe(true);
     expect(m.totals.new).toBe(0);
   });
 
@@ -259,8 +353,8 @@ describe("buildMembership", () => {
     const m = buildMembership({ events, live, now: NOW, timeZone: TZ, boundary: IMPORT_DAY });
     let prev = m.openingHeadcount;
     m.headcountByMonth.forEach((h, i) => {
-      expect(h.headcount - prev).toBe(tallyChange(m.movementsByMonth[i]));
-      prev = h.headcount;
+      expect((h.headcount ?? 0) - prev).toBe(tallyChange(m.movementsByMonth[i]));
+      prev = h.headcount ?? 0;
     });
     expect(m.headcountByMonth[11].headcount).toBe(live.filter((x) => x.status === "active").length);
     expect(m.reconciled).toBe(0);
@@ -338,8 +432,9 @@ describe("the movement identity, as a property over randomised streams", () => {
       const m = buildMembership({ events, live, now: NOW, timeZone: TZ, boundary: new Date(START + SPAN / 2) });
       let prev = m.openingHeadcount;
       m.headcountByMonth.forEach((h, i) => {
-        expect(h.headcount - prev).toBe(tallyChange(m.movementsByMonth[i]));
-        prev = h.headcount;
+        if (h.basis === "none") expect(h.headcount).toBeNull();
+        expect((h.headcount ?? 0) - prev).toBe(tallyChange(m.movementsByMonth[i]));
+        prev = h.headcount ?? 0;
       });
       for (const t of m.movementsByMonth) {
         expect(t.lost).toBe(t.lostCancelled + t.lostCompleted);
@@ -369,11 +464,38 @@ describe("joinDateHistory: earlier history from join and cancellation dates", ()
     expect(out.map((e) => e.toStatus)).toEqual(["active", "cancelled"]);
   });
 
+  it("a member who predates the event log: the first transition's fromStatus is their earlier state, so a staff cancellation after the boundary is one lost", () => {
+    const cancel = ev("x", "cancelled", "2026-10-05T10:00:00Z", { fromStatus: "active" });
+    const prior = joinDateHistory(member("cancelled", "2025-02-01T00:00:00Z", "2026-10-05T10:00:00Z"), [cancel], NOW);
+    expect(prior.map((e) => [e.toStatus, e.occurredAt.toISOString(), e.estimated])).toEqual([["active", "2025-02-01T00:00:00.000Z", true]]);
+    const m = buildMembership({
+      events: [cancel, ...prior],
+      live: [{ id: "x", status: "cancelled" }],
+      now: NOW,
+      timeZone: TZ,
+      boundary: new Date("2026-10-05T10:00:00Z"),
+    });
+    expect(m.movementsByMonth[11]).toMatchObject({ lostCancelled: 1, net: -1 });
+    expect(m.headcountByMonth[10]).toMatchObject({ headcount: 1, basis: "estimated" });
+    // A join date not before the event: the earlier state sits 1 ms before it.
+    const late = joinDateHistory(member("cancelled", "2026-10-06T00:00:00Z"), [cancel], NOW);
+    expect(late.map((e) => e.occurredAt.toISOString())).toEqual(["2026-10-05T09:59:59.999Z"]);
+  });
+
   it("invents nothing: no cancellation date, inactive, a non-import first event, or a join after it", () => {
     const opening = (to: string) => ev("x", to, IMPORT_DAY, { reason: "import", fromStatus: null, sourceAction: "import_create" });
     expect(joinDateHistory(member("cancelled", "2024-01-10T00:00:00Z"), [opening("cancelled")], NOW)).toEqual([]);
     expect(joinDateHistory(member("inactive", "2024-01-10T00:00:00Z"), [opening("inactive")], NOW)).toEqual([]);
     expect(joinDateHistory(member("active", "2024-01-10T00:00:00Z"), [ev("x", "active", "2026-01-01T00:00:00Z")], NOW)).toEqual([]);
     expect(joinDateHistory(member("active", "2026-10-05T00:00:00Z"), [opening("active")], NOW)).toEqual([]);
+  });
+});
+
+describe("estimatedCaption: what an estimate came from", () => {
+  it("names TeamUp only when the estimate came from the TeamUp ledger", () => {
+    expect(estimatedCaption({ historySource: "backfill", fromJoinDates: 0 })).toBe("Estimated from your TeamUp history");
+    expect(estimatedCaption({ historySource: "ledger", fromJoinDates: 3 })).toBe("Estimated from your TeamUp history and join and cancellation dates");
+    expect(estimatedCaption({ historySource: "none", fromJoinDates: 2 })).toBe("Estimated from join and cancellation dates");
+    expect(estimatedCaption({ historySource: "none", fromJoinDates: 0 })).toBe("Estimated");
   });
 });

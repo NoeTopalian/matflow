@@ -8,7 +8,7 @@
  *   2. The writer's before-first placement (acceptance 7).
  *   3. Plan, apply, re-apply, rollback, erased members, two clubs
  *      (acceptances 1 to 6).
- *   4. The migration widening the sourceAction CHECK.
+ *   4. The sourceAction CHECK admits import_backfill (folded into T8d's migration).
  *   5. The script's target guard refuses production.
  */
 import { describe, it, expect, vi } from "vitest";
@@ -19,6 +19,7 @@ import {
   clubMidnight,
   clubMonthKey,
   deriveMemberTransitions,
+  monthDelta,
   monthTotals,
   planTenantBackfill,
   rollbackTenantBackfill,
@@ -332,6 +333,7 @@ function fakeTx(db: Db) {
         return [...groups.values()].map((es) => ({
           ...Object.fromEntries(by.map((b) => [b, es[0][b]])),
           _min: { occurredAt: new Date(Math.min(...es.map((e) => (e.occurredAt as Date).getTime()))) },
+          _count: { _all: es.length },
         }));
       },
       createMany: vi.fn(async ({ data }: { data: Rec[] }) => {
@@ -398,6 +400,8 @@ describe("T8b plan, apply, re-apply and rollback (in-memory club)", () => {
       { kind: "undated_end", ledgerRowIds: ["lA5"] },
     ]);
     expect(plan.inputs.some((i) => i.memberId === "gone" || i.memberId === "noDate")).toBe(false);
+    // Only the undated member counts as "TeamUp history without dates"; the erased one does not.
+    expect(plan.undatedMemberIds).toEqual(["noDate"]);
     expect(monthTotals(plan.byMonth)).toEqual({ "2025-01": 1, "2025-02": 1, "2025-06": 1, "2025-09": 1, "2025-12": 1 });
     expect(plan.byMonth["2025-06"]).toMatchObject({ cancelled: 1 });
     expect(plan.byMonth["2025-09"]).toMatchObject({ rejoin: 1 });
@@ -438,6 +442,37 @@ describe("T8b plan, apply, re-apply and rollback (in-memory club)", () => {
     expect(db.events.length).toBe(before);
     expect(tx.memberStatusEvent.createMany).not.toHaveBeenCalled();
     expect(db.audit).toHaveLength(1);
+  });
+
+  it("idempotency is per member: a member from a later create import is back-filled by the next run, nobody twice", async () => {
+    const db = club();
+    await applyTenantBackfill(fakeTx(db) as never, "tA", { runId: "run-1" });
+    const firstRun = db.events.filter((e) => e.sourceAction === "import_backfill").map((e) => e.id).sort();
+    // A second TeamUp create import brings in a new member with dated ledger rows.
+    const LATER = new Date("2026-10-12T10:00:00Z");
+    db.jobs.push({ id: "jobA3", tenantId: "tA", createdAt: LATER });
+    db.members.push({ id: "kai", tenantId: "tA", email: "kai@example.test", importJobId: "jobA3", createdAt: LATER, status: "active" });
+    db.ledger.push({ id: "lK1", tenantId: "tA", memberId: "kai", importJobId: "jobA3", status: "cancelled", type: "recurring", entitlement: "history", startDate: D("2025-04-01"), cancelledDate: D("2025-08-31"), expiryDate: null, completedAt: null, disposition: "member_history", sourceRow: 2 });
+    db.ledger.push({ id: "lK2", tenantId: "tA", memberId: "kai", importJobId: "jobA3", status: "active", type: "recurring", entitlement: "current", startDate: D("2026-01-05"), cancelledDate: null, expiryDate: null, completedAt: null, disposition: "member_history", sourceRow: 3 });
+    db.events.push({ id: "ik", tenantId: "tA", memberId: "kai", fromStatus: null, toStatus: "active", reason: "import", occurredAt: LATER, sourceJobId: "jobA3", sourceAction: "import_create" });
+
+    const plan = await planTenantBackfill(fakeTx(db) as never, "tA");
+    expect(plan.alreadyApplied).toBe(false);
+    expect(plan.membersAlreadyBackfilled).toBe(2); // ada and tom
+    expect(plan.inputs.map((i) => i.memberId)).toEqual(["kai", "kai", "kai"]);
+    expect(plan.inputs.every((i) => i.sourceJobId === "jobA3")).toBe(true);
+
+    const r = await applyTenantBackfill(fakeTx(db) as never, "tA", { runId: "run-2" });
+    expect(r).toMatchObject({ status: "applied", written: 3 });
+    const all = db.events.filter((e) => e.sourceAction === "import_backfill");
+    expect(all.filter((e) => e.memberId !== "kai").map((e) => e.id).sort()).toEqual(firstRun);
+    // A third run has nothing left to write.
+    expect((await applyTenantBackfill(fakeTx(db) as never, "tA", { runId: "run-3" })).status).toBe("already_applied");
+  });
+
+  it("monthDelta: what one run added, so a later run is checked against its own preview", () => {
+    expect(monthDelta({ "2025-01": 3, "2025-04": 1, "2025-09": 2 }, { "2025-01": 3, "2025-09": 1 })).toEqual({ "2025-04": 1, "2025-09": 1 });
+    expect(monthDelta({ "2025-01": 2 }, { "2025-01": 2 })).toEqual({});
   });
 
   it("rollback removes only the back-filled rows; import-day and staff events stay (acceptance 3)", async () => {
@@ -504,17 +539,12 @@ describe("T8b plan, apply, re-apply and rollback (in-memory club)", () => {
 
 // ── 4. Migration ─────────────────────────────────────────────────────────────
 
-describe("T8b migration: the sourceAction CHECK gains import_backfill", () => {
+describe("T8b migration: the sourceAction CHECK admits import_backfill", () => {
   const DIR = join(process.cwd(), "prisma", "migrations");
-  const dir = readdirSync(DIR).find((d) => d.endsWith("_status_event_backfill_source_action"));
-  const sql = dir ? readFileSync(join(DIR, dir, "migration.sql"), "utf8") : "";
-  const body = sql.split(/\r?\n/).map((l) => l.replace(/--.*$/, "")).join("\n");
+  const all = readdirSync(DIR).filter((d) => /^\d{14}_/.test(d)).sort();
 
-  it("sorts after the T8d migration and is the newest to define the constraint", () => {
-    const all = readdirSync(DIR).filter((d) => /^\d{14}_/.test(d)).sort();
-    const t8d = all.find((d) => d.endsWith("_status_event_source_provenance"))!;
-    expect(dir).toBeTruthy();
-    expect(dir! > t8d).toBe(true);
+  it("is folded into the T8d migration: one definer, no drop-and-re-add migration", () => {
+    expect(all.some((d) => d.endsWith("_status_event_backfill_source_action"))).toBe(false);
     const definers = all.filter((d) => {
       try {
         return readFileSync(join(DIR, d, "migration.sql"), "utf8").includes('ADD CONSTRAINT "MemberStatusEvent_sourceAction_check"');
@@ -522,27 +552,15 @@ describe("T8b migration: the sourceAction CHECK gains import_backfill", () => {
         return false;
       }
     });
-    expect(definers.at(-1)).toBe(dir);
-  });
-
-  it("drops and re-adds the constraint NOT VALID, then validates, with the writer's list", () => {
-    const drop = body.indexOf('DROP CONSTRAINT IF EXISTS "MemberStatusEvent_sourceAction_check"');
-    const add = body.indexOf('ADD CONSTRAINT "MemberStatusEvent_sourceAction_check"');
-    const validate = body.indexOf('VALIDATE CONSTRAINT "MemberStatusEvent_sourceAction_check"');
-    expect(drop).toBeGreaterThan(-1);
-    expect(add).toBeGreaterThan(drop);
-    expect(validate).toBeGreaterThan(add);
-    expect(body.slice(add, validate)).toMatch(/NOT VALID/);
+    expect(definers).toHaveLength(1);
+    expect(definers[0]).toMatch(/_status_event_source_provenance$/);
+    const body = readFileSync(join(DIR, definers[0], "migration.sql"), "utf8")
+      .split(/\r?\n/)
+      .map((l) => l.replace(/--.*$/, ""))
+      .join("\n");
+    expect(body).not.toMatch(/\bDROP\b/i);
     const list = /CHECK \("sourceAction" IN \(([^)]*)\)\)/.exec(body)?.[1] ?? "";
-    expect(list.split(",").map((s) => s.trim().replace(/'/g, ""))).toEqual([...MEMBER_STATUS_EVENT_SOURCE_ACTIONS]);
-  });
-
-  it("touches nothing else: one transaction, no column, table, index, rename or row write", () => {
-    const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
-    expect(lines[0]).toBe("BEGIN;");
-    expect(lines.at(-1)).toBe("COMMIT;");
-    expect(body).not.toMatch(/\bCOLUMN\b|\bCREATE\b|\bRENAME\b|\bUPDATE\b|\bINSERT\b|\bDELETE\b|DROP TABLE|DROP INDEX/i);
-    expect(body.match(/\bDROP\b/gi)).toHaveLength(1);
+    expect(list.split(",").map((x) => x.trim().replace(/'/g, ""))).toContain("import_backfill");
   });
 });
 

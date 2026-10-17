@@ -115,6 +115,22 @@ describe("NetNewMembersCard", () => {
     expect(screen.getByTestId("net-new-notes").textContent).toContain("Members deleted from MatFlow are not in past months.");
   });
 
+  it("names what the estimate came from: join and cancellation dates for a club without TeamUp history", () => {
+    render(<NetNewMembersCard membership={report({ historySource: "none", fromJoinDates: 6 })} />);
+    const note = screen.getByTestId("net-new-estimated").textContent ?? "";
+    expect(note).toMatch(/^Estimated from join and cancellation dates: months before 3 Oct 2026/);
+    expect(note).not.toContain("TeamUp");
+  });
+
+  it("the line views run the estimated band to the next month's point, so one estimated month is never a zero-width band", async () => {
+    render(<NetNewMembersCard membership={report()} />);
+    // Bars (band scale): the band covers the estimated months whole.
+    expect(document.querySelector("[data-estimated-band='Aug 26|Sep 26']")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Members" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Members" }).getAttribute("aria-pressed")).toBe("true"));
+    expect(document.querySelector("[data-estimated-band='Aug 26|Oct 26']")).toBeTruthy();
+  });
+
   it("says nothing is estimated when every month is recorded", () => {
     const r = report();
     render(
@@ -186,7 +202,7 @@ describe("NetNewMembersCard", () => {
       />,
     );
     const other = screen.getByTestId("net-new-other-moves").textContent ?? "";
-    expect(other).toContain("+120 brought over from TeamUp without dated history");
+    expect(other).toContain("+120 brought over by an import without dated history");
     expect(other).toContain("+1 / −2 other changes");
     const notes = screen.getByTestId("net-new-notes").textContent ?? "";
     expect(notes).toContain("4 imported members have TeamUp history without dates");
@@ -206,6 +222,10 @@ describe("NetNewMembersCard", () => {
     );
     expect(screen.getByText("No membership movement data yet")).toBeTruthy();
     expect(screen.queryByTestId("net-new-chart")).toBeNull();
+    // The empty state stands alone: no zero tally, definition or caveats around it.
+    expect(screen.queryByTestId("net-new-tally")).toBeNull();
+    expect(screen.queryByTestId("net-new-definition")).toBeNull();
+    expect(screen.queryByTestId("net-new-notes")).toBeNull();
     // The switch is still offered: the view is a preference, not a data state.
     expect(screen.getByRole("group", { name: "Net new members view" })).toBeTruthy();
   });

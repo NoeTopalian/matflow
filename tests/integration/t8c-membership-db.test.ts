@@ -9,8 +9,8 @@
 //   4. Cross-tenant isolation: one club's events never reach another's series,
 //      and a read for another club under this club's context returns nothing.
 //
-// Needs migrations 20261017022302_status_event_source_provenance and
-// 20261017024714_status_event_backfill_source_action applied. Runs only through
+// Needs migration 20261017022302_status_event_source_provenance applied (its
+// CHECK admits import_backfill). Runs only through
 // the guarded runners (a Neon child branch, never production). Skips when
 // DATABASE_URL is unset. Prefix t8c-; count-checked teardown of this file's
 // clubs only.
@@ -198,7 +198,8 @@ describe.skipIf(!HAS_DB)("T8c: movement and headcount on a real database", () =>
     expect(bReport.headcountByMonth.at(-1)!.headcount).toBe(1);
     expect(bReport.totals.new).toBe(1);
     const crossed = await withTenantContext(a.tenantId, (tx) => loadMembershipReport(tx, b.tenantId, { now, months: MONTHS }));
-    expect(crossed.headcountByMonth.every((h) => h.headcount === 0)).toBe(true);
+    // Nothing readable: every month has no data (never a fabricated zero).
+    expect(crossed.headcountByMonth.every((h) => h.basis === "none" && h.headcount === null)).toBe(true);
     expect(crossed.totals.new).toBe(0);
   });
 });

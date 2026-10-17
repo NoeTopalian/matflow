@@ -889,7 +889,9 @@ export async function getReportsData(
  * entry. "v2" = T2b counts (churn, retention, recovery, rate
  * numerator/denominator, current status shares). T2c added no field.
  * "v3" = summary.activeOnHoldMembers (T1 review, 17 Oct 2026).
- * "v4" = membership: movement and headcount by month (T8c, 17 Oct 2026).
+ * "v4" = membership: movement and headcount by month (T8c, 17 Oct 2026; the
+ * review added firstDataAt, basis "none" and a nullable headcount before v4
+ * ever shipped, so the token was not bumped again).
  */
 export const REPORTS_CACHE_VERSION = "v4";
 

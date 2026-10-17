@@ -6,8 +6,8 @@
  * writes it as MemberStatusEvent rows with reason import, changedById null,
  * sourceJobId = the ledger's job and sourceAction = import_backfill.
  *
- * Needs migrations 20261017022302_status_event_source_provenance and
- * 20261017024714_status_event_backfill_source_action. Run first on a Neon
+ * Needs migration 20261017022302_status_event_source_provenance (its CHECK
+ * admits import_backfill). Run first on a Neon
  * child branch. Release R4 rules: a snapshot immediately before apply, and the
  * preview reviewed by Noe. This build REFUSES the production endpoint.
  *
@@ -107,6 +107,7 @@ async function main() {
       `${TAG} club ${p.tenantId} (${p.timeZone}): ${p.ledgerRows} ledger row(s), ${p.membersWithLedger} member(s); ` +
         `${p.inputs.length} event(s) for ${p.membersPlanned} member(s); ${p.excludedRows} row(s) left out (scheduled or after the first event); ` +
         `${p.membersOnSeveralJobs} member(s) on several jobs (${p.rowsFromOtherJobs} row(s) from other jobs ignored)` +
+        (p.membersAlreadyBackfilled > 0 ? `; ${p.membersAlreadyBackfilled} member(s) already back-filled, left out` : "") +
         (p.alreadyApplied ? `; ALREADY APPLIED (${p.existingBackfillEvents} back-filled event(s) on record)` : ""),
     );
     for (const month of Object.keys(p.byMonth).sort()) {
@@ -156,7 +157,9 @@ async function main() {
       totalWritten += r.written;
       const after = await withTenantContext(tenantId, (tx) => sb.detectBackfill(tx, tenantId, p.timeZone), { timeout: 60_000 });
       const expected = sb.monthTotals(p.byMonth);
-      const monthsMatch = JSON.stringify(Object.entries(after.byMonth).sort()) === JSON.stringify(Object.entries(expected).sort());
+      // This run's rows only: an earlier run's back-filled members stay on record.
+      const added = sb.monthDelta(after.byMonth, before.byMonth);
+      const monthsMatch = JSON.stringify(Object.entries(added).sort()) === JSON.stringify(Object.entries(expected).sort());
       console.log(
         `${TAG} club ${tenantId}: ${r.status}, ${r.written} written; months match preview ${monthsMatch ? "yes" : "NO"}; ` +
           `duplicates ${after.duplicates}; latest-event mismatches ${before.latestEventMismatches} -> ${after.latestEventMismatches}`,

@@ -16,10 +16,13 @@
  *
  * Two kinds of move cross the active line without being a join or a loss, and
  * are counted apart so the headcount always adds up (acceptance 1):
- * - imported  a member brought over by a TeamUp import with no earlier dated
+ * - imported  a member brought over by an import with no earlier dated
  *             history (the import is an opening balance, not a join);
  * - otherIn / otherOut  corrections: an import refresh rollback, a member
- *             set inactive or taster by hand, and the reconciliation below.
+ *             set inactive or taster by hand and back again (a pause is not
+ *             an end, so its reversal is not a rejoin), and the
+ *             reconciliation below. A paused member who is then cancelled is
+ *             lost at the cancellation, with a paired otherIn (memberMovements).
  * So headcount(end) - headcount(start) = net + imported + otherIn - otherOut.
  *
  * Replay order is (occurredAt, createdAt, id), the order lib/member-status.ts
@@ -61,8 +64,12 @@ export interface Movement {
   estimated: boolean;
 }
 
-/** recorded: from events written at the time · estimated: reconstructed · mixed: some of each. */
-export type MembershipBasis = "recorded" | "estimated" | "mixed";
+/**
+ * recorded: from events written at the time · estimated: reconstructed ·
+ * mixed: some of each · none: the month ended before the club's earliest
+ * event of any kind, so there is nothing to count (never drawn as a zero).
+ */
+export type MembershipBasis = "recorded" | "estimated" | "mixed" | "none";
 
 export interface MovementTally {
   new: number;
@@ -90,8 +97,8 @@ export interface MonthMovement extends MovementTally {
 export interface MonthHeadcount {
   month: string;
   label: string;
-  /** Active training members at month end (now, for the current month). */
-  headcount: number;
+  /** Active training members at month end (now, for the current month); null when the month has no data (basis "none"). */
+  headcount: number | null;
   basis: MembershipBasis;
   isCurrentMonth: boolean;
   /** The instant counted (ISO): the last millisecond of the month, or now. */
@@ -102,6 +109,9 @@ export interface MembershipSeries {
   timeZone: string;
   /** First recorded (not back-filled) status event, ISO; months before it are estimated. Null when nothing is recorded. */
   boundary: string | null;
+  /** The earliest event of any kind (recorded or reconstructed), ISO; months that end before it are basis "none". */
+  firstDataAt: string | null;
+  /** `from` is the first month with data and `months` counts from there (never padded with empty months). */
   window: { from: string; to: string; months: number };
   /** Active members just before the window opens, so the first month's change can be checked too. */
   openingHeadcount: number;
@@ -120,11 +130,22 @@ export const MEMBERSHIP_COPY = {
     "New: first ever start. Rejoined: started again after leaving. Lost: cancelled, or finished a prepaid course. Net = new + rejoined − lost.",
   headcount: "Active members at month end",
   headcountAxis: "Active members",
-  estimated: "Estimated from your TeamUp history",
   deletion: "Members deleted from MatFlow are not in past months.",
-  imported: "brought over from TeamUp without dated history",
+  imported: "brought over by an import without dated history",
   other: "other changes (set inactive or taster by hand, or corrected)",
 } as const;
+
+/**
+ * What an estimated month was reconstructed from, in words: the TeamUp ledger
+ * (back-filled or planned in memory) and/or members' join and cancellation
+ * dates. Never names TeamUp for a club whose estimate did not come from it.
+ */
+export function estimatedCaption(src: { historySource: "backfill" | "ledger" | "none"; fromJoinDates: number }): string {
+  const parts: string[] = [];
+  if (src.historySource !== "none") parts.push("your TeamUp history");
+  if (src.fromJoinDates > 0) parts.push("join and cancellation dates");
+  return parts.length > 0 ? `Estimated from ${parts.join(" and ")}` : "Estimated";
+}
 
 // ── Ordering and state ───────────────────────────────────────────────────────
 
@@ -189,33 +210,62 @@ function endsCourse(e: MovementEvent): boolean {
   );
 }
 
-/** Every crossing of the active line for ONE member, oldest first. */
+/**
+ * Every crossing of the active line for ONE member, oldest first.
+ *
+ * "Rejoined" needs a previous END (Q6): a counted loss (cancelled, or a
+ * completed course), or a first known state that is already cancelled or
+ * inactive (a former member brought over by an import, or reconstructed from
+ * dates). Leaving active any other way (set inactive or taster by hand, a
+ * rollback) is "otherOut" and leaves the member PAUSED: coming back from a
+ * pause is "otherIn", so a pause and its reversal (an Activity-log undo
+ * included) net to zero. A paused member who is then cancelled, or whose
+ * course then ends, is a loss at that date (Lost = cancellation); because the
+ * pause already took them out of the headcount, the loss is paired with an
+ * "otherIn" at the same instant so headcount(end) - headcount(start) still
+ * equals net + imported + otherIn - otherOut.
+ */
 export function memberMovements(events: readonly MovementEvent[]): Movement[] {
   const sorted = [...events].sort(compareEvents);
   const out: Movement[] = [];
   let state: string | null = null;
-  let everActive = false;
+  let ended = false;
+  let paused = false;
   for (let i = 0; i < sorted.length; ) {
     let j = i;
     while (j + 1 < sorted.length && sorted[j + 1].occurredAt.getTime() === sorted[i].occurredAt.getTime()) j += 1;
     const last = sorted[j];
+    const push = (kind: MovementKind) =>
+      out.push({ memberId: last.memberId, at: last.occurredAt, kind, estimated: last.estimated === true });
     const wasActive = state === "active";
     const isActive = last.toStatus === "active";
-    if (wasActive !== isActive) {
-      let kind: MovementKind;
-      if (isActive) {
-        kind = isImportOpening(last) ? "imported" : isCorrection(last) ? "otherIn" : everActive ? "rejoined" : "new";
-        everActive = true;
-      } else if (isImportOpening(last) || isCorrection(last)) {
-        kind = "otherOut";
-      } else if (last.toStatus === "cancelled") {
-        kind = "lostCancelled";
-      } else if (endsCourse(last)) {
-        kind = "lostCompleted";
+    const machine = isImportOpening(last) || isCorrection(last);
+    const isEnd = last.toStatus === "cancelled" || endsCourse(last);
+    if (isActive && !wasActive) {
+      push(isImportOpening(last) ? "imported" : isCorrection(last) || paused ? "otherIn" : ended ? "rejoined" : "new");
+      ended = false;
+      paused = false;
+    } else if (!isActive && wasActive) {
+      if (machine || !isEnd) {
+        push("otherOut");
+        paused = true;
       } else {
-        kind = "otherOut";
+        push(last.toStatus === "cancelled" ? "lostCancelled" : "lostCompleted");
+        ended = true;
       }
-      out.push({ memberId: last.memberId, at: last.occurredAt, kind, estimated: last.estimated === true });
+    } else if (!isActive) {
+      const formerMember =
+        last.toStatus === "cancelled" ||
+        (last.toStatus === "inactive" && (isImportOpening(last) || last.estimated === true));
+      if (state === null && formerMember) {
+        // First known state is already a former member's: a later start is a rejoin.
+        ended = true;
+      } else if (paused && isEnd && !machine) {
+        push("otherIn");
+        push(last.toStatus === "cancelled" ? "lostCancelled" : "lostCompleted");
+        paused = false;
+        ended = true;
+      }
     }
     state = last.toStatus;
     i = j + 1;
@@ -349,15 +399,27 @@ export function buildMembership(input: BuildMembershipInput): MembershipSeries {
     if (i >= 0) estimatedMoves[i] += 1;
   }
 
+  // The earliest event of any kind. A month that ended before it has nothing to
+  // count: it is "none" (no headcount), never an estimated or recorded zero.
+  let first: number | null = null;
+  for (const list of byMember.values()) {
+    const t = list[0]?.occurredAt.getTime();
+    if (t !== undefined && (first === null || t < first)) first = t;
+  }
+  const noData = (w: MonthWindow) => first === null || w.at.getTime() < first;
+
   const b = boundary?.getTime() ?? null;
   const movementBasis = (w: MonthWindow, i: number): MembershipBasis => {
+    if (noData(w)) return "none";
     if (b === null || w.at.getTime() < b) return "estimated";
     return w.start.getTime() >= b && estimatedMoves[i] === 0 ? "recorded" : "mixed";
   };
   const headcountBasis = (w: MonthWindow, i: number): MembershipBasis => {
+    if (noData(w)) return "none";
     if (b === null || w.at.getTime() < b) return "estimated";
     return estimatedActive[i] > 0 ? "mixed" : "recorded";
   };
+  const firstWithData = windows.find((w) => !noData(w)) ?? windows[windows.length - 1];
 
   const totals = emptyTally();
   for (const t of tallies) {
@@ -369,12 +431,13 @@ export function buildMembership(input: BuildMembershipInput): MembershipSeries {
   return {
     timeZone,
     boundary: boundary ? boundary.toISOString() : null,
-    window: { from: windows[0].label, to: windows[windows.length - 1].label, months: count },
+    firstDataAt: first === null ? null : new Date(first).toISOString(),
+    window: { from: firstWithData.label, to: windows[windows.length - 1].label, months: windows.length - windows.indexOf(firstWithData) },
     openingHeadcount,
     headcountByMonth: windows.map((w, i) => ({
       month: w.key,
       label: w.label,
-      headcount: headcounts[i],
+      headcount: noData(w) ? null : headcounts[i],
       basis: headcountBasis(w, i),
       isCurrentMonth: w.isCurrent,
       at: w.at.toISOString(),
