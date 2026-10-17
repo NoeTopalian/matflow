@@ -659,15 +659,23 @@ export default function MemberSchedulePage() {
   // previous hardcoded `PRIMARY` ignored tenant branding entirely.
   const [primaryColor, setPrimaryColor] = useState(PRIMARY);
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("gym-settings");
-      if (raw) {
-        const settings = JSON.parse(raw) as { primaryColor?: string };
-        if (settings.primaryColor && /^#[0-9a-f]{6}$/i.test(settings.primaryColor)) {
-          setPrimaryColor(settings.primaryColor);
+    let cancelled = false;
+    // Deferred to a microtask so the effect body does not set state
+    // synchronously (react-hooks/set-state-in-effect); same pattern as
+    // app/member/home/page.tsx.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      try {
+        const raw = localStorage.getItem("gym-settings");
+        if (raw) {
+          const settings = JSON.parse(raw) as { primaryColor?: string };
+          if (settings.primaryColor && /^#[0-9a-f]{6}$/i.test(settings.primaryColor)) {
+            setPrimaryColor(settings.primaryColor);
+          }
         }
-      }
-    } catch { /* localStorage unavailable in SSR / private mode — fall back to default */ }
+      } catch { /* localStorage unavailable in SSR / private mode — fall back to default */ }
+    });
+    return () => { cancelled = true; };
   }, []);
 
   // Active-hours window for the week (recomputed when the schedule loads)
