@@ -46,8 +46,18 @@ const mockSubDeleteMany = vi.mocked(prisma.classSubscription.deleteMany);
 const mockSubCount = vi.mocked(prisma.classSubscription.count);
 
 /** The locking read resolves to the class row, or to nothing for a foreign id. */
-function classRow(over: Partial<{ id: string; maxCapacity: number | null }> = {}) {
-  return [{ id: over.id ?? "cls-1", maxCapacity: over.maxCapacity ?? null }];
+function classRow(
+  over: Partial<{ id: string; maxCapacity: number | null; isActive: boolean; deletedAt: Date | null; sourceImportJobId: string | null }> = {},
+) {
+  return [{
+    id: over.id ?? "cls-1",
+    name: "Fundamentals",
+    maxCapacity: over.maxCapacity ?? null,
+    // T6b: the lock also reads the lifecycle; a live class by default.
+    isActive: over.isActive ?? true,
+    deletedAt: over.deletedAt ?? null,
+    sourceImportJobId: over.sourceImportJobId ?? null,
+  }];
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -73,10 +83,11 @@ describe("GET /api/member/me/subscriptions", () => {
     // unscoped read handed the member dead class ids forever with no UI to
     // clear them. The tenant scope this case was written to defend is intact
     // and now carries the visibility scope too.
+    // T6b: the shared live-class predicate, which also drops imported history.
     expect(mockSubFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         memberId: "mem-1",
-        class: { tenantId: "tenant-A", isActive: true, deletedAt: null },
+        class: { tenantId: "tenant-A", isActive: true, deletedAt: null, sourceImportJobId: null },
       },
     }));
   });
@@ -198,6 +209,47 @@ describe("POST /api/member/class-subscriptions/[classId]", () => {
     expect(mockSubCount).toHaveBeenCalledWith({
       where: { classId: "cls-1", memberId: { not: "mem-1" } },
     });
+  });
+
+  // ── T6b: a paused or archived class takes no new bookings ────────────────
+
+  it("refuses to book a PAUSED class with the shared sentence and reason, and writes nothing", async () => {
+    mockAuth.mockResolvedValue({ user: { tenantId: "tenant-A", memberId: "mem-1" } } as never);
+    mockQueryRaw.mockResolvedValue(classRow({ isActive: false }) as never);
+
+    const { POST } = await import("@/app/api/member/class-subscriptions/[classId]/route");
+    const res = await POST(new Request("http://localhost"), { params: Promise.resolve({ classId: "cls-1" }) });
+
+    expect(res!.status).toBe(409);
+    const body = await res!.json() as { error: string; reason: string };
+    expect(body.reason).toBe("class_paused");
+    expect(body.error).toMatch(/Fundamentals is paused/);
+    expect(mockSubCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses to book an ARCHIVED class, saying it is no longer on the timetable", async () => {
+    mockAuth.mockResolvedValue({ user: { tenantId: "tenant-A", memberId: "mem-1" } } as never);
+    mockQueryRaw.mockResolvedValue(classRow({ isActive: false, deletedAt: new Date("2026-10-01T00:00:00Z") }) as never);
+
+    const { POST } = await import("@/app/api/member/class-subscriptions/[classId]/route");
+    const res = await POST(new Request("http://localhost"), { params: Promise.resolve({ classId: "cls-1" }) });
+
+    expect(res!.status).toBe(409);
+    const body = await res!.json() as { error: string; reason: string };
+    expect(body.reason).toBe("class_paused");
+    expect(body.error).toMatch(/no longer on the timetable/);
+    expect(mockSubCreate).not.toHaveBeenCalled();
+  });
+
+  it("an imported history class answers like a missing one (404)", async () => {
+    mockAuth.mockResolvedValue({ user: { tenantId: "tenant-A", memberId: "mem-1" } } as never);
+    mockQueryRaw.mockResolvedValue(classRow({ isActive: false, sourceImportJobId: "job-1" }) as never);
+
+    const { POST } = await import("@/app/api/member/class-subscriptions/[classId]/route");
+    const res = await POST(new Request("http://localhost"), { params: Promise.resolve({ classId: "cls-1" }) });
+
+    expect(res!.status).toBe(404);
+    expect(mockSubCreate).not.toHaveBeenCalled();
   });
 
   it("takes a row lock on the class before counting, so two bookings cannot share the last place", async () => {

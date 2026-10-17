@@ -73,7 +73,8 @@ export const AUDIT_LABELS: Record<string, string> = {
   // ── Classes & timetable ───────────────────────────────────────────────────
   "class.created": "Created a class",
   "class.updated": "Updated a class",
-  "class.deleted": "Deleted a class",
+  // T6b: DELETE /api/classes/[id] archives (history kept, restorable).
+  "class.deleted": "Archived a class",
   "class.instances_generated": "Generated timetable sessions",
   "class.instance_cancelled": "Cancelled a session",
   "class.instance_restored": "Restored a cancelled session",

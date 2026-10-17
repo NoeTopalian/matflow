@@ -14,6 +14,7 @@ import { resolveCoachName } from "@/lib/class-coach";
 import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
 import { isAdultAccount } from "@/lib/account-type";
 import { classTierCovers } from "@/lib/class-tier-gate";
+import { liveClassWhere } from "@/lib/class-live";
 
 export type AttendanceByClass = { id: string; name: string; count: number };
 
@@ -250,7 +251,7 @@ export async function computeMemberStats(
     // candidates; pickNextClass drops the ones already started.
     tx.classInstance.findMany({
       where: {
-        class: { tenantId, isActive: true, deletedAt: null },
+        class: liveClassWhere(tenantId),
         date: { gte: new Date(now.getTime() - 36 * 3_600_000) },
         isCancelled: false,
       },

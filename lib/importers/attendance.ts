@@ -468,7 +468,15 @@ export function cuidCreatedAt(id: string, now: Date = new Date()): Date | null {
   if (!Number.isFinite(ms) || ms < Date.UTC(2015, 0, 1) || ms > now.getTime() + 86_400_000) return null;
   return new Date(ms);
 }
-export type RosterClass = { id: string; name: string; isActive: boolean; historical: boolean; locationId: string | null };
+export type RosterClass = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  historical: boolean;
+  /** T6b: archived (deletedAt set). Still a match target: archiving keeps history. */
+  archived?: boolean;
+  locationId: string | null;
+};
 export type RosterLocation = { id: string; name: string };
 
 export type PersonDecision = { action: "member"; targetId: string } | { action: "pending" };
@@ -863,7 +871,11 @@ export function planAttendanceImport(
     p.candidates = [...cands.entries()].slice(0, 5).map(([memberId, reason]) => ({ memberId, reason }));
   }
   for (const o of offerings.values()) {
-    const hits = opts.classes.filter((c) => c.isActive && !c.historical && norm(c.name) === norm(o.label));
+    // A class on the timetable first; failing that (T6b) a paused or archived
+    // class of the same name, whose history this most likely is.
+    const named = opts.classes.filter((c) => !c.historical && norm(c.name) === norm(o.label));
+    const live = named.filter((c) => c.isActive);
+    const hits = live.length > 0 ? live : named;
     o.suggestedClassId = hits.length === 1 ? hits[0].id : null;
   }
   for (const v of venues.values()) {

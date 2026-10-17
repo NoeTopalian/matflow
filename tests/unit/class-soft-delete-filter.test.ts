@@ -149,11 +149,52 @@ describe("Task 3e — every Class reader filters deletedAt", () => {
       { params: Promise.resolve({ id: "c1" }) },
     );
 
-    expect(whereOfCall(mockPrisma.class.findFirst)).toMatchObject({
-      id: "c1",
-      tenantId: "t1",
-      deletedAt: null,
+    // T6b: the route reads the class by id + tenant, then refuses a paused or
+    // archived one with a sentence (a 409, not a silent 404) and mints nothing.
+    expect(whereOfCall(mockPrisma.class.findFirst)).toMatchObject({ id: "c1", tenantId: "t1" });
+    expect(mockPrisma.classInstance.createMany).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/classes/[id]/instances refuses a PAUSED class and says so", async () => {
+    mockPrisma.class.findFirst.mockResolvedValue({ id: "c1", isActive: false, deletedAt: null, sourceImportJobId: null, schedules: [] });
+    const { POST } = await import("@/app/api/classes/[id]/instances/route");
+    const res = await POST(
+      new Request("http://test/api/classes/c1/instances", { method: "POST", body: JSON.stringify({ weeks: 4 }) }),
+      { params: Promise.resolve({ id: "c1" }) },
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/paused/);
+    expect(mockPrisma.classInstance.createMany).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/classes/[id]/instances refuses an ARCHIVED class and says so", async () => {
+    mockPrisma.class.findFirst.mockResolvedValue({ id: "c1", isActive: false, deletedAt: new Date(), sourceImportJobId: null, schedules: [] });
+    const { POST } = await import("@/app/api/classes/[id]/instances/route");
+    const res = await POST(
+      new Request("http://test/api/classes/c1/instances", { method: "POST", body: JSON.stringify({ weeks: 4 }) }),
+      { params: Promise.resolve({ id: "c1" }) },
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/archived/);
+    expect(mockPrisma.classInstance.createMany).not.toHaveBeenCalled();
+  });
+
+  it("a successful per-class Generate writes class.instances_generated", async () => {
+    mockPrisma.class.findFirst.mockResolvedValue({
+      id: "c1", isActive: true, deletedAt: null, sourceImportJobId: null,
+      schedules: [{ dayOfWeek: 1, startTime: "10:00", endTime: "11:00" }],
     });
+    mockPrisma.classInstance.createMany.mockResolvedValue({ count: 4 });
+    const { logAudit } = await import("@/lib/audit-log");
+    const { POST } = await import("@/app/api/classes/[id]/instances/route");
+    const res = await POST(
+      new Request("http://test/api/classes/c1/instances", { method: "POST", body: JSON.stringify({ weeks: 4 }) }),
+      { params: Promise.resolve({ id: "c1" }) },
+    );
+    expect(res.status).toBe(200);
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "class.instances_generated", entityType: "Class", entityId: "c1", metadata: expect.objectContaining({ created: 4, weeks: 4 }) }),
+    );
   });
 });
 

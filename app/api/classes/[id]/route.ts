@@ -11,6 +11,8 @@ import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { dayMarkerUtc, usableTimezone } from "@/lib/class-time";
 import { classRefError, CLASS_REF_ERRORS } from "@/lib/class-refs";
+import { classLifecycle, IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
+import { mintUpcomingSessions } from "@/lib/class-lifecycle";
 
 /** A tier vanished between the pre-flight and the write: roll the edit back. */
 class TierRefError extends Error {}
@@ -30,6 +32,11 @@ const updateSchema = z.object({
   requiredRankId: z.string().optional().nullable(),
   maxRankId: z.string().optional().nullable(),
   color: z.string().max(20).optional().nullable(),
+  // T6b lifecycle: `false` PAUSES the class (hidden from the timetable,
+  // booking, member app and kiosk; no new sessions; history and bookings
+  // kept). `true` RESUMES a paused class or RESTORES an archived one: it also
+  // clears `deletedAt`. Archiving is DELETE. Refused (409) for a class an
+  // attendance-history import created.
   isActive: z.boolean().optional(),
   // A kids class refuses adults at self and kiosk check-in (lib/checkin.ts).
   isKids: z.boolean().optional(),
@@ -380,8 +387,16 @@ export async function PATCH(req: Request, { params }: Params) {
     // subscriber member ids for any class id it held, and even under RLS the
     // dry run answered 200 for a class that was not the caller's.
     const pre = await withTenantContext(tenantId, async (tx) => {
-      const owned = await tx.class.findFirst({ where: { id, tenantId }, select: { id: true } });
+      const owned = await tx.class.findFirst({
+        where: { id, tenantId },
+        select: { id: true, sourceImportJobId: true },
+      });
       if (!owned) return { kind: "not_found" as const };
+
+      // T6b: imported history classes are locked out of reactivation. They
+      // were created inactive with no schedule to hold past sessions; putting
+      // one on the timetable would offer a class that never ran.
+      if (parsed.data.isActive === true && owned.sourceImportJobId) return { kind: "imported" as const };
 
       // Finding E-2: rank, coach and location ids must be this club's. Checked
       // here, before the write transaction, so a refusal never follows a
@@ -470,6 +485,9 @@ export async function PATCH(req: Request, { params }: Params) {
 
     if (pre.kind === "not_found") return NextResponse.json({ error: "Not found" }, { status: 404 });
     if (pre.kind === "bad_ref") return NextResponse.json({ error: pre.error }, { status: 400 });
+    if (pre.kind === "imported") {
+      return NextResponse.json({ error: IMPORTED_CLASS_REACTIVATE_REFUSAL, reason: "imported_class" }, { status: 409 });
+    }
     const { affected, rosterIds, tierPreview } = pre;
 
     if (dryRun) {
@@ -604,6 +622,10 @@ export async function PATCH(req: Request, { params }: Params) {
         maxRankId: wantsRoster ? null : parsed.data.maxRankId,
         color: parsed.data.color,
         isActive: parsed.data.isActive,
+        // T6b: resume / restore clears the archive marker too, so a restored
+        // class is never "active but hidden everywhere". Pausing leaves an
+        // archived class archived.
+        deletedAt: parsed.data.isActive === true ? null : undefined,
         isKids: parsed.data.isKids,
         locationId: parsed.data.locationId,
       };
@@ -617,6 +639,10 @@ export async function PATCH(req: Request, { params }: Params) {
         data: classFields,
       });
       if (r.count === 0) return null;
+      // T6b: a class coming back (Resume / Restore) had no sessions generated
+      // while it was off the timetable; mint the rolling window now.
+      const cameBack = parsed.data.isActive === true && !!before && classLifecycle(before) !== "active";
+      const sessionsCreatedOnResume = cameBack ? await mintUpcomingSessions(tx, tenantId, id) : 0;
       const found = await tx.class.findFirst({
         where: { id, tenantId },
         include: {
@@ -627,7 +653,7 @@ export async function PATCH(req: Request, { params }: Params) {
       if (!found) return null;
       const { allowedTiers, ...rest } = found;
       const cls = { ...rest, allowedTiers: (allowedTiers ?? []).map((t) => t.tier) };
-      return { cls, scheduleChange, before, tiersBefore, tiersAfter, tierAffected, allAffected };
+      return { cls, scheduleChange, before, tiersBefore, tiersAfter, tierAffected, allAffected, sessionsCreatedOnResume };
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -659,11 +685,14 @@ export async function PATCH(req: Request, { params }: Params) {
         // session the schedule edit deleted, not just how many (RULES §5 — a
         // count cannot restore anything).
         ...(updated.scheduleChange ? { scheduleChange: updated.scheduleChange } : {}),
+        ...(updated.sessionsCreatedOnResume > 0 ? { sessionsCreatedOnResume: updated.sessionsCreatedOnResume } : {}),
+        // `isActive` and `deletedAt` before and after (T6b): undoing a Resume
+        // or Restore puts the class back exactly as paused or archived.
         ...(() => {
           const { before: b, after: a, changed } = snapshotDiff(
             updated.before as unknown as Record<string, unknown> | null,
             updated.cls as unknown as Record<string, unknown>,
-            ["name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration", "maxCapacity", "isKids", "requiredRankId", "maxRankId", "color", "isActive"],
+            ["name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration", "maxCapacity", "isKids", "requiredRankId", "maxRankId", "color", "isActive", "deletedAt"],
           );
           return changed.length > 0 ? { before: b, after: a } : {};
         })(),
@@ -673,7 +702,11 @@ export async function PATCH(req: Request, { params }: Params) {
 
     // `scheduleChange` rides alongside the class so the client can say what
     // actually happened instead of an unconditional "Class updated".
-    return NextResponse.json({ ...updated.cls, scheduleChange: updated.scheduleChange });
+    return NextResponse.json({
+      ...updated.cls,
+      scheduleChange: updated.scheduleChange,
+      sessionsCreatedOnResume: updated.sessionsCreatedOnResume,
+    });
   } catch (e) {
     // Thrown, not returned, so the transaction rolls back: no roster, tier or
     // booking change survives a refused tier list.
@@ -684,6 +717,24 @@ export async function PATCH(req: Request, { params }: Params) {
   }
 }
 
+/**
+ * DELETE /api/classes/[id] — ARCHIVE the class (T6b, Sean note 7).
+ *
+ * Archive = `isActive = false` plus `deletedAt = now()`: removed from the
+ * timetable and every list, history kept (reports still count its
+ * check-ins), bookings and sessions kept, restorable from the timetable's
+ * "Paused and archived" section and undoable from Activity. Nothing is
+ * deleted, so there is no 409 "force" dance any more: the owner is shown the
+ * counts in a confirmation first.
+ *
+ * `?dryRun=1` returns those counts without changing anything — the counted
+ * confirmation reads it. `?force=true` is still accepted (old clients send
+ * it) and changes nothing.
+ *
+ * The audit row records the state the class was in before (`before`: paused
+ * or active) so Undo puts back exactly that — a class paused before it was
+ * archived goes back to paused, not active.
+ */
 export async function DELETE(req: Request, { params }: Params) {
   // Lane 1 iter-1 CSRF-sweep [High]: assertSameOrigin guard. Inserted by the
   // bulk-fix script in audit/loop-fixes-01-dashboard.
@@ -697,55 +748,78 @@ export async function DELETE(req: Request, { params }: Params) {
 
   const { id } = await params;
   const tenantId = session.user.tenantId;
-  const force = new URL(req.url).searchParams.get("force") === "true";
+  const search = new URL(req.url).searchParams;
+  const force = search.get("force") === "true";
+  const dryRun = search.get("dryRun") === "1";
 
   try {
     // OWNERSHIP FIRST — before anything is counted, let alone returned.
     //
-    // Task 6's precondition counts are disclosed in the 409 body, and they used
-    // to be computed before this handler had established that the class belongs
-    // to the caller's club at all. Each count carried its own tenant predicate,
-    // so the numbers were scoped — but that made the refusal depend on two
-    // separate `where` clauses staying right for ever, in a body returned
-    // before any ownership gate. One edit away from telling gym A how busy gym
-    // B's class is and how many members are on its roster. The same reasoning
-    // the PATCH route above already carries.
+    // The counts below are disclosed (in the dry run, and on the audit row),
+    // and they used to be computed before this handler had established that
+    // the class belongs to the caller's club at all. Each count carried its
+    // own tenant predicate, so the numbers were scoped — but that made the
+    // answer depend on separate `where` clauses staying right for ever. One
+    // edit away from telling gym A how busy gym B's class is.
     const owned = await withTenantContext(tenantId, (tx) =>
-      tx.class.findFirst({ where: { id, tenantId }, select: { id: true } }),
+      tx.class.findFirst({
+        where: { id, tenantId },
+        select: { id: true, isActive: true, deletedAt: true, sourceImportJobId: true },
+      }),
     );
     if (!owned) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
-
-    // Task 6: precondition counts. Refuse delete if attendance OR roster exists, unless ?force=true.
-    const [attendanceCount, rosterCount] = await withTenantContext(tenantId, (tx) =>
-      Promise.all([
-        tx.attendanceRecord.count({ where: { classInstance: { class: { id, tenantId } } } }),
-        tx.classRoster.count({ where: { classId: id, tenantId } }),
-      ]),
-    );
-
-    if (!force && (attendanceCount > 0 || rosterCount > 0)) {
+    // Imported history is not on the timetable and is owned by the import's
+    // own Rollback, which knows exactly which rows it created.
+    if (owned.sourceImportJobId) {
       return NextResponse.json(
-        {
-          error: "Class has attendance or roster history. Pass ?force=true to delete anyway.",
-          attendanceCount,
-          rosterCount,
-        },
+        { error: "This class holds imported attendance history. Undo the import with its own Rollback instead.", reason: "imported_class" },
         { status: 409 },
       );
     }
 
-    // Soft-delete by setting isActive = false
+    // What the archive keeps, for the counted confirmation and the audit row.
+    const [attendanceCount, rosterCount, bookingCount] = await withTenantContext(tenantId, (tx) =>
+      Promise.all([
+        tx.attendanceRecord.count({ where: { classInstance: { class: { id, tenantId } } } }),
+        tx.classRoster.count({ where: { classId: id, tenantId } }),
+        // ClassSubscription carries no tenantId column: scoped through the member.
+        tx.classSubscription.count({ where: { classId: id, member: { tenantId } } }),
+      ]),
+    );
+
+    if (dryRun) {
+      return NextResponse.json({
+        dryRun: true,
+        state: classLifecycle(owned),
+        attendanceCount,
+        rosterCount,
+        bookingCount,
+      });
+    }
+
+    // Already archived: nothing to do, and no second audit row to confuse Undo.
+    if (owned.deletedAt) {
+      return NextResponse.json({ success: true, alreadyArchived: true });
+    }
+
+    const archivedAt = new Date();
+    // Guarded on the state just read, so `before` on the audit row is exactly
+    // what this write replaced: a pause or resume committing in between makes
+    // this match nothing rather than record the wrong prior state.
     const result = await withTenantContext(tenantId, (tx) =>
       tx.class.updateMany({
-        where: { id, tenantId },
-        data: { isActive: false },
+        where: { id, tenantId, deletedAt: null, isActive: owned.isActive },
+        data: { isActive: false, deletedAt: archivedAt },
       }),
     );
 
     if (result.count === 0) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "This class changed while it was being archived. Refresh the page and try again." },
+        { status: 409 },
+      );
     }
 
     await logAudit({
@@ -754,12 +828,21 @@ export async function DELETE(req: Request, { params }: Params) {
       action: "class.deleted",
       entityType: "Class",
       entityId: id,
-      metadata: { soft: true, force, attendanceCount, rosterCount },
+      metadata: {
+        soft: true,
+        archived: true,
+        force,
+        attendanceCount,
+        rosterCount,
+        bookingCount,
+        before: { isActive: owned.isActive, deletedAt: null },
+        after: { isActive: false, deletedAt: archivedAt.toISOString() },
+      },
       req,
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, archivedAt: archivedAt.toISOString(), attendanceCount, rosterCount, bookingCount });
   } catch {
-    return NextResponse.json({ error: "Failed to delete class" }, { status: 500 });
+    return NextResponse.json({ error: "Could not archive the class. Try again." }, { status: 500 });
   }
 }

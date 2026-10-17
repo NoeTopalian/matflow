@@ -9,10 +9,12 @@
  */
 import type { PerformCheckinResult as CheckinResult } from "@/lib/checkin";
 import { tierRefusalSentence } from "@/lib/class-tier-gate";
+import { classNotLiveSentence } from "@/lib/class-live";
 
 export type CheckinRefusalReason =
   | "class_not_found"
   | "class_cancelled"
+  | "class_paused"
   | "rank_below"
   | "rank_above"
   | "outside_window"
@@ -65,6 +67,9 @@ export function checkinRefusal(
       return { status: 404, body: { error: "Class not found", reason: "class_not_found" } };
     case "class_cancelled":
       return { status: 409, body: { error: "Class has been cancelled", reason: "class_cancelled" } };
+    case "class_paused":
+      // T6b: names the class and says whether it is paused or gone.
+      return { status: 409, body: { error: classNotLiveSentence(result.className, result.state), reason: "class_paused" } };
     case "rank_below":
       return { status: 403, body: { error: "Your current rank is below this class's required rank.", reason: "rank_below" } };
     case "rank_above":

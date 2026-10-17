@@ -17,6 +17,7 @@ import SetupBanner from "@/components/dashboard/SetupBanner";
 import DeniedNotice from "@/components/dashboard/DeniedNotice";
 import { atRiskMemberWhere, buildActionItems, type ActionItem } from "@/lib/dashboard-action-items";
 import { TRAINING_MEMBER } from "@/lib/member-population";
+import { liveClassWhere } from "@/lib/class-live";
 
 /**
  * Wizard v2 SetupBanner support: detect setup gaps for owner accounts that
@@ -31,7 +32,10 @@ async function getSetupGaps(tx: TxClient, tenantId: string, role: string): Promi
       select: { stripeConnected: true, onboardingCompleted: true, contactEmail: true, billingContactEmail: true },
     }),
     tx.membershipTier.count({ where: { tenantId } }),
-    tx.class.count({ where: { tenantId, deletedAt: null } }),
+    // T6b: classes ON THE TIMETABLE. A club whose classes are all paused,
+    // archived or imported history has nothing scheduled, so the banner says
+    // "Schedule a class".
+    tx.class.count({ where: liveClassWhere(tenantId) }),
     tx.member.count({ where: { tenantId } }),
   ]);
 
@@ -73,7 +77,7 @@ async function getWeekClasses(tx: TxClient, tenantId: string): Promise<DayClass[
     where: {
       // The week's live classes; sessions an attendance-history import created
       // (on a historical class, or with no recorded end) are history only.
-      class: { tenantId, isActive: true, deletedAt: null },
+      class: liveClassWhere(tenantId),
       sourceImportJobId: null,
       date: { gte: monday, lte: sunday },
       isCancelled: false,

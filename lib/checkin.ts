@@ -145,6 +145,15 @@ export type PerformCheckinArgs = {
   tierGate?: TierGateMode;
   /** Staff saw the "not included in their membership" question and admitted anyway. */
   tierOverrideConfirmed?: boolean;
+  /**
+   * T6b: refuse a session of a PAUSED or ARCHIVED class (Class.isActive false
+   * or deletedAt set). The member-decided doors (self, parent, kiosk) pass
+   * true: the class is hidden from them, and a session minted before the
+   * pause must not admit by instance id either. Staff doors leave it off and
+   * admit as before (the desk can see the room); the full per-door modes and
+   * the write-phase re-check are T4c's.
+   */
+  enforceClassStateGate?: boolean;
   // Staff user id when method=admin (the person clicking "check in" in the
   // dashboard). Null/undefined for self / kiosk / auto / system.
   checkedInByUserId?: string | null;
@@ -167,6 +176,12 @@ export type PerformCheckinResult =
   | { kind: "class_not_found" }
   | { kind: "class_full"; taken: number; maxCapacity: number }
   | { kind: "class_cancelled" }
+  | {
+      /** T6b: the class is paused or archived; the member-decided doors refuse. */
+      kind: "class_paused";
+      className: string;
+      state: "paused" | "archived";
+    }
   | { kind: "member_not_found" }
   | { kind: "rank_below" }
   | { kind: "rank_above" }
@@ -382,6 +397,15 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
   // the method — the desk and card paths do not enforce the time window.
   if (!instance || instance.sourceImportJobId || instance.class.sourceImportJobId) return { kind: "class_not_found" };
   if (instance.isCancelled) return { kind: "class_cancelled" };
+  // T6b: a paused or archived class's sessions are kept (history, bookings)
+  // but are not a class a member can walk into on their own say-so.
+  if (args.enforceClassStateGate && (!instance.class.isActive || instance.class.deletedAt)) {
+    return {
+      kind: "class_paused",
+      className: instance.class.name,
+      state: instance.class.deletedAt ? "archived" : "paused",
+    };
+  }
 
   // Rank gate.
   if (args.enforceRankGate && (instance.class.requiredRankId || instance.class.maxRankId)) {

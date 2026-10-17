@@ -566,7 +566,11 @@ model Class {
   coachUser      User?       @relation("ClassCoach", fields: [coachUserId], references: [id], onDelete: SetNull)
   color          String?
   isActive       Boolean     @default(true)
-  deletedAt      DateTime? // Sprint 5 US-509: soft-delete (separate from isActive — isActive=false is "paused", deletedAt is "removed from history")
+  // T6b lifecycle (Sean note 7): isActive=false + deletedAt null = PAUSED (off the
+  // timetable, booking and kiosk; reversible). deletedAt set = ARCHIVED (removed
+  // from the timetable and lists; history KEPT, reports still count it; Restore
+  // clears both). Every reader uses lib/class-live liveClassWhere.
+  deletedAt      DateTime?
   createdAt      DateTime    @default(now())
 
   schedules     ClassSchedule[]

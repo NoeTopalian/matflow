@@ -18,6 +18,7 @@ import { verifyKioskMemberToken } from "@/lib/kiosk-token";
 import { performCheckin } from "@/lib/checkin";
 import { KIDS_CLASS_REFUSAL } from "@/lib/checkin-refusal";
 import { tierRefusalSentence } from "@/lib/class-tier-gate";
+import { classNotLiveSentence } from "@/lib/class-live";
 import { logAudit } from "@/lib/audit-log";
 import { normaliseIp, summariseUa } from "@/lib/login-fingerprint";
 import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
@@ -111,6 +112,9 @@ export async function POST(
     // T6a: a class whose memberships do not include the member's plan is
     // refused at the tablet with the class and the plan named (Q3).
     tierGate: "refuse",
+    // T6b: a paused or archived class is not offered at the tablet, and a
+    // session minted before the pause is refused by instance id too.
+    enforceClassStateGate: true,
   });
 
   switch (result.kind) {
@@ -142,6 +146,12 @@ export async function POST(
       return NextResponse.json({ error: "Class not found" }, { status: 404 });
     case "class_cancelled":
       return NextResponse.json({ error: "This class has been cancelled", reason: "class_cancelled" }, { status: 409 });
+    case "class_paused":
+      // T6b: the same sentence as the member app, naming the class.
+      return NextResponse.json(
+        { error: classNotLiveSentence(result.className, result.state), reason: "class_paused" },
+        { status: 409 },
+      );
     case "rank_below":
       return NextResponse.json(
         { error: "This class is for a higher belt — please ask staff." },

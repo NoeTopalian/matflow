@@ -12,6 +12,10 @@
 // The rule these tests fix in place: resolve the class by { id, tenantId }
 // FIRST; a class that is not ours is 404 and nothing is counted, nothing is
 // read and nothing is written.
+//
+// T6b (17 Oct 2026): DELETE now ARCHIVES (isActive false + deletedAt now) and
+// there is no 409 for history any more — the counts are read by `?dryRun=1`
+// for the owner's counted confirmation. The ownership rule is unchanged.
 
 import { vi, describe, it, expect, beforeEach, beforeAll } from "vitest";
 
@@ -31,6 +35,7 @@ const {
   mockClassFindFirst,
   mockAttendanceCount,
   mockRosterCount,
+  mockBookingCount,
   mockClassUpdateMany,
   mockLogAudit,
 } = vi.hoisted(() => ({
@@ -38,6 +43,7 @@ const {
   mockClassFindFirst: vi.fn(),
   mockAttendanceCount: vi.fn(),
   mockRosterCount: vi.fn(),
+  mockBookingCount: vi.fn(),
   mockClassUpdateMany: vi.fn(),
   mockLogAudit: vi.fn(),
 }));
@@ -51,6 +57,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
       class: { findFirst: mockClassFindFirst, updateMany: mockClassUpdateMany },
       attendanceRecord: { count: mockAttendanceCount },
       classRoster: { count: mockRosterCount },
+      classSubscription: { count: mockBookingCount },
     }),
 }));
 
@@ -67,9 +74,10 @@ const params = Promise.resolve({ id: "cls_1" });
 beforeEach(() => {
   vi.clearAllMocks();
   mockAuth.mockResolvedValue({ user: { id: "usr_1", role: "owner", tenantId: TENANT } });
-  mockClassFindFirst.mockResolvedValue({ id: "cls_1" });
+  mockClassFindFirst.mockResolvedValue({ id: "cls_1", isActive: true, deletedAt: null, sourceImportJobId: null });
   mockAttendanceCount.mockResolvedValue(0);
   mockRosterCount.mockResolvedValue(0);
+  mockBookingCount.mockResolvedValue(0);
   mockClassUpdateMany.mockResolvedValue({ count: 1 });
 });
 
@@ -82,16 +90,17 @@ describe("DELETE /api/classes/[id] — ownership before disclosure", () => {
     expect(res.status).toBe(404);
     expect(mockAttendanceCount).not.toHaveBeenCalled();
     expect(mockRosterCount).not.toHaveBeenCalled();
+    expect(mockBookingCount).not.toHaveBeenCalled();
     expect(mockClassUpdateMany).not.toHaveBeenCalled();
     expect(mockLogAudit).not.toHaveBeenCalled();
   });
 
-  it("the 404 body carries no counts — a foreign class answers like a missing one", async () => {
+  it("the 404 body carries no counts — a foreign class answers like a missing one, dry run included", async () => {
     mockClassFindFirst.mockResolvedValue(null);
     mockAttendanceCount.mockResolvedValue(31);
     mockRosterCount.mockResolvedValue(12);
 
-    const body = await (await DELETE(req(), { params })).json();
+    const body = await (await DELETE(req("?dryRun=1"), { params })).json();
 
     expect(body).toEqual({ error: "Not found" });
     expect(JSON.stringify(body)).not.toContain("31");
@@ -106,40 +115,83 @@ describe("DELETE /api/classes/[id] — ownership before disclosure", () => {
     );
   });
 
-  it("still refuses a class of our own that has history, and still says how much", async () => {
+  it("?dryRun=1 says how much history a class of ours has, and changes nothing", async () => {
+    mockAttendanceCount.mockResolvedValue(31);
+    mockRosterCount.mockResolvedValue(12);
+    mockBookingCount.mockResolvedValue(4);
+
+    const res = await DELETE(req("?dryRun=1"), { params });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ dryRun: true, state: "active", attendanceCount: 31, rosterCount: 12, bookingCount: 4 });
+    expect(mockClassUpdateMany).not.toHaveBeenCalled();
+    expect(mockLogAudit).not.toHaveBeenCalled();
+  });
+
+  it("archives a class WITH history without any force flag (no 409 dance), and audits the prior state", async () => {
     mockAttendanceCount.mockResolvedValue(31);
     mockRosterCount.mockResolvedValue(12);
 
     const res = await DELETE(req(), { params });
-    const body = await res.json();
 
+    expect(res.status).toBe(200);
+    const update = mockClassUpdateMany.mock.calls[0][0] as { where: Record<string, unknown>; data: { isActive: boolean; deletedAt: Date } };
+    expect(update.where).toMatchObject({ id: "cls_1", tenantId: TENANT, deletedAt: null, isActive: true });
+    expect(update.data.isActive).toBe(false);
+    expect(update.data.deletedAt).toBeInstanceOf(Date);
+    expect(mockLogAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "class.deleted",
+        entityId: "cls_1",
+        metadata: expect.objectContaining({
+          archived: true,
+          attendanceCount: 31,
+          rosterCount: 12,
+          before: { isActive: true, deletedAt: null },
+          after: { isActive: false, deletedAt: update.data.deletedAt.toISOString() },
+        }),
+      }),
+    );
+  });
+
+  it("archiving a PAUSED class records that it was paused, so Undo returns it to paused", async () => {
+    mockClassFindFirst.mockResolvedValue({ id: "cls_1", isActive: false, deletedAt: null, sourceImportJobId: null });
+
+    const res = await DELETE(req(), { params });
+
+    expect(res.status).toBe(200);
+    expect(mockClassUpdateMany.mock.calls[0][0].where).toMatchObject({ isActive: false, deletedAt: null });
+    expect(mockLogAudit.mock.calls[0][0].metadata.before).toEqual({ isActive: false, deletedAt: null });
+  });
+
+  it("?force=true is still accepted from old clients and archives the same way", async () => {
+    const res = await DELETE(req("?force=true"), { params });
+    expect(res.status).toBe(200);
+    expect(mockClassUpdateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("an already archived class is a no-op: no second write, no second audit row", async () => {
+    mockClassFindFirst.mockResolvedValue({ id: "cls_1", isActive: false, deletedAt: new Date("2026-10-01T00:00:00Z"), sourceImportJobId: null });
+    const res = await DELETE(req(), { params });
+    expect(res.status).toBe(200);
+    expect((await res.json()).alreadyArchived).toBe(true);
+    expect(mockClassUpdateMany).not.toHaveBeenCalled();
+    expect(mockLogAudit).not.toHaveBeenCalled();
+  });
+
+  it("an imported history class is refused with a sentence and left alone", async () => {
+    mockClassFindFirst.mockResolvedValue({ id: "cls_1", isActive: false, deletedAt: null, sourceImportJobId: "job_1" });
+    const res = await DELETE(req(), { params });
     expect(res.status).toBe(409);
-    expect(body.attendanceCount).toBe(31);
-    expect(body.rosterCount).toBe(12);
+    expect((await res.json()).error).toMatch(/Rollback/);
     expect(mockClassUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("?force=true soft-deletes our own class and audits it", async () => {
-    mockAttendanceCount.mockResolvedValue(31);
-    mockRosterCount.mockResolvedValue(12);
-
-    const res = await DELETE(req("?force=true"), { params });
-
-    expect(res.status).toBe(200);
-    expect(mockClassUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ id: "cls_1", tenantId: TENANT }),
-        data: { isActive: false },
-      }),
-    );
-    expect(mockLogAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "class.deleted", entityId: "cls_1" }),
-    );
-  });
-
-  it("a clean class of our own soft-deletes without force", async () => {
+  it("a state change racing the archive matches nothing and is reported, not audited", async () => {
+    mockClassUpdateMany.mockResolvedValue({ count: 0 });
     const res = await DELETE(req(), { params });
-    expect(res.status).toBe(200);
-    expect(mockClassUpdateMany).toHaveBeenCalled();
+    expect(res.status).toBe(409);
+    expect(mockLogAudit).not.toHaveBeenCalled();
   });
 });

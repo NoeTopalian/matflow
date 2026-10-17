@@ -35,7 +35,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.order.length = 0;
   h.auth.mockResolvedValue({ user: { tenantId: "t1", memberId: "m-1" } });
-  h.queryRaw.mockImplementation(async () => { h.order.push("lock"); return [{ id: "c-adv", name: "Advanced", maxCapacity: null }]; });
+  h.queryRaw.mockImplementation(async () => { h.order.push("lock"); return [{ id: "c-adv", name: "Advanced", maxCapacity: null, isActive: true, deletedAt: null, sourceImportJobId: null }]; });
   h.tierFindMany.mockImplementation(async () => { h.order.push("tiers"); return [{ tierId: "t-adv" }]; });
   h.rosterCount.mockResolvedValue(0);
   h.memberFindFirst.mockResolvedValue({ membershipTierId: "t-beg", membershipTier: { name: "Beginners Unlimited" } });

@@ -14,6 +14,7 @@ import { hashToken } from "@/lib/token-hash";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
 import { todayWindow, usableTimezone } from "@/lib/class-time";
+import { liveSessionWhere } from "@/lib/class-live";
 
 export const runtime = "nodejs";
 
@@ -74,10 +75,10 @@ export async function GET(
     tx.classInstance.findMany({
       where: {
         date: { gte: start, lt: end },
-        isCancelled: false,
-        // Live classes only; imported history is never offered at the door.
-        class: { tenantId: tenant.id, isActive: true, deletedAt: null },
-        sourceImportJobId: null,
+        // T6b: live sessions only. Not cancelled, not imported history, and
+        // the class neither paused nor archived nor itself imported history
+        // (the class-level import filter was missing before liveSessionWhere).
+        ...liveSessionWhere(tenant.id),
       },
       include: {
         class: {

@@ -18,6 +18,7 @@ import type { Prisma } from "@prisma/client";
 import { computeMemberStats } from "@/lib/member-stats";
 import { resolveCoachName } from "@/lib/class-coach";
 import { classTierCovers } from "@/lib/class-tier-gate";
+import { liveClassWhere } from "@/lib/class-live";
 
 /**
  * Why a member can or cannot use a class, as the Schedule and Home read it.
@@ -293,7 +294,9 @@ export async function buildMemberSchedule(
     // RULES §5: same soft-delete filter as /api/member/schedule. These two
     // queries are the same read behind two routes; a filter added to one and
     // not the other is a hole with a fix in front of it.
-    where: { tenantId, isActive: true, deletedAt: null },
+    // T6b: the shared live-class predicate (paused, archived and imported
+    // history classes are not on the member's day).
+    where: liveClassWhere(tenantId),
     select: {
       id: true,
       name: true,

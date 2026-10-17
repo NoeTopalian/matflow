@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireApiStaff } from "@/lib/api-authz";
 import { classStatus, todayWindow, usableTimezone, type ClassStatusVariant } from "@/lib/class-time";
 import { ensureTodayInstances } from "@/lib/today-sessions";
+import { liveClassWhere } from "@/lib/class-live";
 
 export async function GET() {
   const gate = await requireApiStaff();
@@ -33,7 +34,7 @@ export async function GET() {
         // Live classes only: a class an attendance-history import created to
         // hold past sessions is inactive and never part of today's running
         // order (3 Oct 2026).
-        class: { tenantId, isActive: true, deletedAt: null },
+        class: liveClassWhere(tenantId),
         // A session an attendance import created (history only, no end time) is not part of today's running order.
         sourceImportJobId: null,
         date: { gte: start, lt: end },

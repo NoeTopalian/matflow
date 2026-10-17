@@ -25,6 +25,7 @@ import { resolveCoachName } from "@/lib/class-coach";
 import { isAdultAccount } from "@/lib/account-type";
 import { classTierCovers } from "@/lib/class-tier-gate";
 import type { ScheduleEligibility } from "@/lib/member-home";
+import { liveClassWhere } from "@/lib/class-live";
 
 const DEMO_CLASSES = [
   { id: "m1",  name: "Fundamentals BJJ", startTime: "09:30", endTime: "10:30", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 1, color: "#3b82f6" },
@@ -66,7 +67,9 @@ export async function GET(req: Request) {
           // to filter it. `isActive: false` is "paused"; `deletedAt` is
           // "removed" — a removed class reappearing on the member timetable is
           // the failure mode a soft-delete exists to prevent.
-          where: { tenantId: session.user.tenantId, isActive: true, deletedAt: null },
+          // T6b: live classes only (liveClassWhere) — a paused or archived
+          // class, or imported history, is not on the member timetable.
+          where: liveClassWhere(session.user.tenantId),
           select: {
             id: true,
             name: true,

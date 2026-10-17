@@ -6,6 +6,8 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { buildInstanceRows } from "@/lib/class-instances";
 import { clubDayMarker } from "@/lib/today-sessions";
 import { usableTimezone } from "@/lib/class-time";
+import { classLifecycle } from "@/lib/class-live";
+import { logAudit } from "@/lib/audit-log";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -70,12 +72,30 @@ export async function POST(req: Request, { params }: Params) {
 
   const cls = await withTenantContext(session.user.tenantId, (tx) =>
     tx.class.findFirst({
-      // RULES §5: a removed class must not have new instances minted for it.
-      where: { id, tenantId: session.user.tenantId, deletedAt: null },
+      where: { id, tenantId: session.user.tenantId },
       include: { schedules: { where: { isActive: true } } },
     }),
   );
-  if (!cls) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // Imported history is never on the timetable: it answers like a missing class.
+  if (!cls || cls.sourceImportJobId) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // T6b (RULES §5): a paused or archived class gets no new sessions. Said in a
+  // sentence rather than a bare 404, so the owner knows why nothing happened.
+  // [INFERRED residual] the read takes no lock: a pause committing between it
+  // and the insert below can leave new sessions on a paused class. They are
+  // inert: the member app and kiosk refuse a paused class's sessions.
+  const lifecycle = classLifecycle(cls);
+  if (lifecycle !== "active") {
+    return NextResponse.json(
+      {
+        error:
+          lifecycle === "archived"
+            ? "This class is archived, so no sessions were generated. Restore it first."
+            : "This class is paused, so no sessions were generated. Resume it first.",
+        reason: "class_paused",
+      },
+      { status: 409 },
+    );
+  }
 
   // The CLUB's today at UTC midnight — the one spelling every writer uses
   // since the round-3 day-marker migration. `new Date(); setHours(0,0,0,0)`
@@ -102,6 +122,16 @@ export async function POST(req: Request, { params }: Params) {
     const created = await withTenantContext(session.user.tenantId, (tx) =>
       tx.classInstance.createMany({ data: candidates, skipDuplicates: true }),
     );
+    // T6b: the per-class Generate is recorded, like the club-wide one.
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "class.instances_generated",
+      entityType: "Class",
+      entityId: id,
+      metadata: { weeks: parsed.data.weeks, created: created.count, scope: "class" },
+      req,
+    });
     return NextResponse.json({ created: created.count });
   } catch {
     return NextResponse.json({ error: "Failed to generate instances" }, { status: 500 });

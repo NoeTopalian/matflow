@@ -183,6 +183,9 @@ export async function POST(req: Request) {
     // confirmation the register sends back (recorded on the audit row).
     tierGate: isSelf ? "refuse" : "ask",
     tierOverrideConfirmed: !isSelf && !!acknowledged?.includes("tier_not_included"),
+    // T6b: a paused or archived class is closed to the member deciding; the
+    // desk still admits (T4c owns the per-door modes).
+    enforceClassStateGate: isSelf,
     // Record which staff user clicked "check in" so the attendance row can
     // show "by [admin name]". Only stamped on staff-driven check-ins.
     checkedInByUserId: effectiveMethod === "admin" ? session.user.id : null,
