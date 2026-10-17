@@ -1,82 +1,51 @@
 # CLAUDE.md — MatFlow
 
-## Stack
-Next.js 16 + TypeScript + Tailwind v4 (CSS-first, no tailwind.config) + Prisma + Neon Postgres + NextAuth v5. Multi-tenant. Installable web app (manifest + minimal service worker; push delivery not yet live — do not claim it).
+Next.js 16 + TypeScript + Tailwind v4 (CSS-first) + Prisma 7 (`@prisma/adapter-pg`) + Neon Postgres + NextAuth v5. Multi-tenant. Installable web app (push delivery not live — do not claim it).
 
-## UI
+## Runtime and commands
 
-**Before writing or changing any UI, read [`docs/UI-RULES.md`](docs/UI-RULES.md). Its rules override existing code patterns.** Highlights: staff dashboard is light, member portal/kiosk dark tenant-branded; tokens (`--sf-*`/`--tx-*`/`--bd-*`) not hex; primitives from `components/ui/` (Button, Dialog, Switch, Toast…) not raw elements; no fabricated placeholder data; an HTTP error is never an empty state. `docs/design.md` is reference only — superseded by UI-RULES.md.
+- **Node 24** (`package.json` engines `>=24.18.1 <25`). The system `node` is 25; put Node 24 first on `Path`. Run builds from PowerShell (Turbopack fails under the Bash tool with 0xc0000142).
+- **Work in a git worktree without `.env`** (`git worktree add …`, then a real `npm ci`). The main checkout's `.env` is **production** (Neon `ep-bold-wave`, live Stripe/Resend/auth secrets).
+- Lint `npm run lint` · all tests `npm test` · one file `npx vitest run <path>` · e2e `npx playwright test <spec>` (loads `.env.test`).
+- **Start:** never `npm run dev` or bare `next dev` in the main checkout — it loads production `.env`. Use the `matflow-verify-browser` skill's server (production build on the test branch).
+- **Build:** `npm run build` runs `scripts/maybe-migrate.mjs` first, which migrates whatever `DATABASE_URL`/`MIGRATION_DATABASE_URL` is in the shell. Locally use the `matflow-verify-local` skill's build, which never migrates.
+
+## Test environment
+
+- Neon **test branch** `ep-hidden-salad`, configured in `.env.test` in the main checkout (gitignored): `DATABASE_URL`, `TEST_DATABASE_URL`, `RESTRICTED_DATABASE_URL` (`matflow_app` role).
+- Guards that refuse production: `tests/setup-test-db.ts`, `playwright.config.ts`, `scripts/migrate-test-branch.mjs`, `scripts/reset-test-branch-auth.mjs`. Details: [`tests/integration/README.md`](tests/integration/README.md).
+- Without `TEST_DATABASE_URL` the database test files skip. Skipped is not passed.
+- Synthetic data only (`example.test` addresses, fixture clubs created and torn down by the run). Never real clubs, members or production.
+
+## Verification workflow (user skills in `~/.claude/skills`)
+
+1. `matflow-verify-local` — focused tests, lint, full suite, DB suites as both roles, production build, with the commit each ran on.
+2. `matflow-verify-browser` — real journey on the test branch: desktop and phone width, keyboard, forced failed saves, retries.
+3. `matflow-completion-report` — what changed, what was tested, what is unverified, exact release state.
+
+## Tenant isolation (essential)
+
+- `import { prisma } from "@/lib/prisma"` — never `new PrismaClient()`.
+- Tenant data goes through `withTenantContext(ctx.tenantId, (tx) => …)` (`lib/prisma-tenant.ts`) **and** every query filters `where: { tenantId }`. RLS is the backstop, not the defence.
+- Authorise first (`lib/authz.ts`): `requireSession()` any signed-in user · `requireStaff()` owner, manager, coach or admin · `requireOwnerOrManager()` · `requireOwner()`.
+- Rules and safe patterns: [`docs/TENANT-SCOPE-CONVENTION.md`](docs/TENANT-SCOPE-CONVENTION.md).
+- Reports: extend `lib/reports.ts` `getReportsData`; never fabricate numbers.
 
 ## Database
 
-**Connection:** Neon Postgres. URL in `.env` as `DATABASE_URL`. Production must use Neon's **pooled host** — the one with `-pooler` in the hostname. `pgbouncer=true` / `connection_limit=1` do nothing here: they are Prisma native-engine params and this app runs the `@prisma/adapter-pg` driver, which ignores them. Per-instance connections are capped by the pg Pool `max` in `lib/prisma.ts`.
+Production uses Neon's `-pooler` host; pool size is capped in `lib/prisma.ts`. Schema changes: `npx prisma migrate dev --name <change>` against the test branch, never `db push`, never against production from local. Raw SQL only in a script under `scripts/`, never psql against production.
 
-**Always use the singleton client.** Never `new PrismaClient()`.
+## Approval boundaries — Noe approves each action; approval for one does not cover the next
 
-```ts
-import { prisma } from "@/lib/prisma";
-```
+- **Push** any branch (branch pushes create Vercel preview builds). **Open or update a PR** only as approved (draft unless told otherwise).
+- **Merge** only on explicit approval: `gh pr merge <n> --merge --match-head-commit <sha>`. A push or merge to `main` auto-deploys **and migrates production**.
+- **Noe runs** Vercel actions, production env vars, anything against production Postgres, credential rotation, and enters all credentials and MFA codes. No production data writes or customer account changes by the agent.
+- **Never Vercel Instant Rollback or Promote** — fix forward ([`docs/readiness/OPERATOR-REMEDIATION-DEPLOY-PACKAGE.md`](docs/readiness/OPERATOR-REMEDIATION-DEPLOY-PACKAGE.md); this supersedes §5 of [`docs/runbooks/DEPLOY-2026-10.md`](docs/runbooks/DEPLOY-2026-10.md)).
+- Never print secrets or connection strings. Never `git add -A` (sensitive files in the repo root). Never commit `.env`.
 
-**For tenant-scoped reads/writes**, use the RLS-aware wrapper. Postgres RLS policies (migration `20260503100000_rls_policies_foundation`) act as a backstop — the application-layer `where: { tenantId }` filter is still required.
+## Detail
 
-```ts
-import { withTenantContext } from "@/lib/prisma-tenant";
-
-const ctx = await requireStaff();
-const members = await withTenantContext(ctx.tenantId, (tx) =>
-  tx.member.findMany({ where: { tenantId: ctx.tenantId } }),
-);
-```
-
-**Inspecting the DB ad-hoc:**
-- `npx prisma studio` — GUI browser, opens on :5555
-- `npx prisma db pull --print` — confirm schema matches DB
-- For raw SQL: use `prisma.$queryRaw` in a one-off script under `scripts/`, never psql against prod
-
-**Schema changes:**
-- Always `npx prisma migrate dev --name <change>` — never `db push` (it skips migration history)
-- Migrations live in `prisma/migrations/`
-- Run `npx prisma generate` after schema edits if the dev server doesn't pick it up
-
-**Stale `prisma/dev.db`:** leftover from earlier SQLite phase. Ignore — provider is `postgresql`. Safe to delete if it bothers you.
-
-## Reports
-
-The reports feature is real and uses live DB data:
-
-- API: `app/api/reports/route.ts` (GET, weeks param 4–24) and `app/api/reports/generate/route.ts`
-- Data layer: `lib/reports.ts` exports `getReportsData(tenantId, { weeksBack })`
-- UI: `app/dashboard/reports/page.tsx`
-- Access: `owner` and `manager` roles only
-
-When asked for analytics, gym stats, or "a report on X":
-1. Query via `getReportsData` if the metric exists there — extend it rather than duplicate
-2. For one-off analytics, query through `withTenantContext` so RLS applies
-3. Never fabricate numbers — if the data isn't queryable, say so
-
-## Multi-tenancy
-
-Every model with tenant data carries `tenantId`. Every query that touches tenant data must filter on it. RLS is the backstop, not the primary defence — application-layer filters come first.
-
-Auth helpers in `auth.ts` and `lib/authz.ts`:
-- `requireSession()` — any authenticated user
-- `requireStaff()` — owner or manager
-- `requireOwner()` — owner only
-
-## Conventions
-
-- British English in user-facing copy
-- Prefer editing existing files over creating new ones
-- Keep new components in `components/` mirroring the route structure
-- Tests live in `tests/{unit,integration}/` — Vitest
-- Run before claiming done: `npm run lint && npm test && npm run build`
-
-## Don't
-
-- Don't `git add -A` — sensitive files exist in repo root
-- Don't run migrations against production from local
-- Don't bypass `withTenantContext` for tenant-scoped data
-- Don't commit `.env`
+[`docs/RULES.md`](docs/RULES.md) (product rules) · [`docs/UI-RULES.md`](docs/UI-RULES.md) — read before any UI change; overrides existing patterns · [`docs/RUNBOOK.md`](docs/RUNBOOK.md) and [`docs/runbooks/`](docs/runbooks/) (deploy, DB role, restore, account editing) · [`docs/readiness/`](docs/readiness/) — dated evidence; facts there hold as of their date, re-check before relying on them. British English in user-facing copy. Tests in `tests/{unit,integration}/`.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
