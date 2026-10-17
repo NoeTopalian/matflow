@@ -6,6 +6,7 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { isAdminPageAuthed } from "@/lib/admin-auth";
 import { redirect } from "next/navigation";
 import TenantsList from "./TenantsList";
+import { ACTIVE_MEMBER } from "@/lib/member-population";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,7 +45,10 @@ async function getTenants(): Promise<TenantRow[]> {
           select: { id: true, email: true, name: true },
           orderBy: { createdAt: "asc" },
         },
-        _count: { select: { members: true } },
+        // The club's own "Active members" number (T1, Q4 A-1): every row,
+        // guardians and cancelled members included, read as a member count
+        // well above the figure the owner sees.
+        _count: { select: { members: { where: { ...ACTIVE_MEMBER } } } },
       },
       orderBy: { createdAt: "desc" },
     }),

@@ -62,10 +62,14 @@ export type StaffMember = {
  * the billing axis (paymentStatus "paused"), never a status row; guardian
  * accounts are not members and are counted under their own label.
  */
-export type SettingsPopulationCounts = { onHold: number; guardians: number };
+/**
+ * onHold: current members on hold (any status). activeOnHold: the part of
+ * "Active members" that is on hold, which the tile marks (Q4 A-1).
+ */
+export type SettingsPopulationCounts = { onHold: number; guardians: number; activeOnHold?: number };
 
 async function getData(tenantId: string, userId: string) {
-  const [tenant, staff, memberStats, currentUser, onHold, guardians] = await withTenantContext(tenantId, (tx) =>
+  const [tenant, staff, memberStats, currentUser, onHold, guardians, activeOnHold] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       tx.tenant.findUniqueOrThrow({
         where: { id: tenantId },
@@ -95,13 +99,14 @@ async function getData(tenantId: string, userId: string) {
       }),
       tx.member.count({ where: { tenantId, ...CURRENT_MEMBER, ...ON_HOLD } }),
       tx.member.count({ where: { tenantId, ...GUARDIAN_ACCOUNT, status: { not: "cancelled" } } }),
+      tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER, ...ON_HOLD } }),
     ]),
   );
 
   const statusCounts: Record<string, number> = {};
   for (const s of memberStats) statusCounts[s.status] = s._count.status;
 
-  const populationCounts: SettingsPopulationCounts = { onHold, guardians };
+  const populationCounts: SettingsPopulationCounts = { onHold, guardians, activeOnHold };
 
   return { tenant, staff, statusCounts, populationCounts, totpEnabled: currentUser?.totpEnabled ?? false };
 }

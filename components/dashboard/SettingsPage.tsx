@@ -1609,13 +1609,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             {[
               // The same population as the Reports "Active members" tile and the
               // Members page headline (T1, owner decision Q4 A-1, 17 Oct 2026).
-              { label: POPULATION_COPY.active.label, value: statusCounts.active ?? settings?.memberCount ?? 0 },
-              { label: "Staff",   value: settings?.staffCount ?? staff.length },
-              { label: "Classes", value: settings?.classCount ?? 0 },
-            ].map(({ label, value }) => (
+              // Members on hold stay inside it and are marked; guardians are
+              // left out — the same words as the Reports tile.
+              {
+                label: POPULATION_COPY.active.label,
+                value: statusCounts.active ?? settings?.memberCount ?? 0,
+                note: `Includes ${populationCounts.activeOnHold ?? 0} on hold · excludes guardians`,
+              },
+              { label: "Staff",   value: settings?.staffCount ?? staff.length, note: null },
+              { label: "Classes", value: settings?.classCount ?? 0, note: null },
+            ].map(({ label, value, note }) => (
               <div key={label} className="rounded-2xl border p-4 text-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
                 <p className="text-tx-1 text-2xl font-bold">{value}</p>
                 <p className="text-tx-3 text-xs mt-0.5">{label}</p>
+                {note && <p className="text-tx-3 text-[11px] mt-0.5" data-testid="settings-active-note">{note}</p>}
               </div>
             ))}
           </div>

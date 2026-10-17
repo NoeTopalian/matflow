@@ -45,6 +45,7 @@ import {
   Users,
 } from "lucide-react";
 import type { ReportsData, AttendanceRateMode } from "@/lib/reports";
+import { POPULATION_COPY } from "@/lib/member-population";
 import type { AttributionData } from "@/lib/attribution";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -161,6 +162,22 @@ function derivedShares(data: ReportsData) {
   };
 }
 
+/**
+ * What the "Active members" number counts (Q4 A-1): the shared population
+ * copy plus the on-hold count it includes, so the tile, the CSV row and the
+ * Members page describe one number the same way.
+ */
+export function activeMembersDetail(summary: Pick<ReportsData["summary"], "activeOnHoldMembers" | "currentMembers">): string {
+  return `Includes ${formatNumber(summary.activeOnHoldMembers ?? 0)} on hold · of ${formatNumber(summary.currentMembers)} current members · ${POPULATION_COPY.active.excludes}`;
+}
+
+/** The top classes the class-mix donut shares check-ins across. */
+export function classComposition(topClasses: ReportsData["topClasses"]) {
+  const top = topClasses.slice(0, 6);
+  const total = top.reduce((sum, cls) => sum + cls.count, 0);
+  return { top, total, label: `top ${top.length} ${top.length === 1 ? "class" : "classes"}` };
+}
+
 /** The "Joined this month" copy (Q6, A-13): who it counts, and the net beside churn. */
 const JOINED_SCOPE = "People added in MatFlow, incl. tasters. A TeamUp refresh adds nobody.";
 const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";
@@ -260,12 +277,12 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     ["Report", "Generated at", validGeneratedAt(data.generatedAt) ? formatDateTime(data.generatedAt) : "—", "Figures cached for up to 60 seconds"],
     ["Summary", "Total members", data.summary.totalMembers, "Every training member on record, including those who have left"],
     ["Summary", "Current members", data.summary.currentMembers, "Active and inactive members and tasters"],
-    ["Summary", "Active members", data.summary.activeMembers, ""],
+    ["Summary", "Active members", data.summary.activeMembers, activeMembersDetail(data.summary)],
     // Attendance this week IS narrowed by the class/age filters (lib/reports.ts
     // attendanceScope), so its export row must say so — it was the one scoped
     // number leaving the page unlabelled (assessment lane 5).
     ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Last week: ${data.summary.attendanceLastWeek}${filterSuffix ? ` · ${filterSuffix}` : ""}`],
-    ["Summary", "New members this month", data.summary.newMembersThisMonth, `Last month: ${data.summary.newMembersLastMonth}`],
+    ["Summary", "New members this month", data.summary.newMembersThisMonth, `Last month: ${data.summary.newMembersLastMonth} · ${JOINED_SCOPE}`],
     ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
     // The rate definition the owner chose on screen, with its formula — the
     // headline of the filter bar, previously missing from the file.
@@ -279,6 +296,15 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
     ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
     ...data.monthlySignups.map((row) => ["Monthly signups", row.month, row.count, row.isCurrentMonth ? "Current month" : ""]),
+    ...(() => {
+      const mix = classComposition(data.topClasses);
+      return mix.top.map((row) => [
+        "Class composition",
+        row.name,
+        row.count,
+        `${formatRatio(wholePct(row.count, mix.total), row.count, mix.total)} of check-ins across the ${mix.label} · ${scopedWindowLabel}`,
+      ]);
+    })(),
     ...data.topClasses.map((row) => [
       "Top classes",
       row.name,
@@ -634,12 +660,13 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
   const weeklyTickFormatter = (value: string, index: number) =>
     weeklyAttendance.length > 8 && index % 2 !== 0 ? "" : value;
 
-  const classCompositionSlices: DonutSlice[] = topClasses.slice(0, 6).map((cls, i) => ({
+  const classMix = classComposition(topClasses);
+  const classCompositionSlices: DonutSlice[] = classMix.top.map((cls, i) => ({
     label: cls.name,
     value: cls.count,
     color: HERO_PALETTE[i % HERO_PALETTE.length],
   }));
-  const totalClassCheckins = classCompositionSlices.reduce((s, d) => s + d.value, 0);
+  const totalClassCheckins = classMix.total;
 
   const trendPoints = weeklyAttendance.map((row) => ({ label: row.week, value: row.count }));
 
@@ -828,7 +855,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
       {/* Hero chart row — donut (attendance composition) + sparkline (12-week trend) */}
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-4">
         <Card>
-          <SectionTitle title="Class composition" subtitle={`Share of check-ins by class — ${scopedWindowLabel}`} icon={Trophy} />
+          {/* Shares are over the check-ins of the classes shown (the top six at
+              most), not over every check-in; the subtitle and centre say so. */}
+          <SectionTitle title="Class composition" subtitle={`Share of check-ins across the ${classMix.label} — ${scopedWindowLabel}`} icon={Trophy} />
           {/* Chart and its empty state share a minimum height so a filter that
               empties one card does not move everything beneath it (lane 1). */}
           {totalClassCheckins === 0 ? (
@@ -839,11 +868,11 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 data={classCompositionSlices}
                 size={200}
                 thickness={28}
-                centerLabel="Check-ins"
+                centerLabel={`Check-ins, ${classMix.label}`}
                 centerValue={formatNumber(totalClassCheckins)}
               />
               <div className="flex-1 min-w-0 w-full">
-                <DonutLegend data={classCompositionSlices} />
+                <DonutLegend data={classCompositionSlices} showCounts />
               </div>
             </div>
           )}
@@ -888,7 +917,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={Users}
           label="Active members"
           value={formatNumber(summary.activeMembers)}
-          detail={`Of ${formatNumber(summary.currentMembers)} current members (active, inactive, tasters)`}
+          detail={activeMembersDetail(summary)}
           primaryColor={primaryColor}
           href="/dashboard/members?filter=active"
         />
@@ -904,7 +933,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={UserPlus}
           label="New this month"
           value={formatNumber(summary.newMembersThisMonth)}
-          detail="Member signups"
+          detail={JOINED_SCOPE}
           primaryColor={primaryColor}
           trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: `vs ${formatNumber(summary.newMembersLastMonth)} last month` }}
           href="/dashboard/members?filter=new-this-month"

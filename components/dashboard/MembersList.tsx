@@ -471,7 +471,7 @@ function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null }
  */
 const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month"];
 
-type ViewRow = Pick<MemberRow, "status" | "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt">;
+type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt">>;
 
 /**
  * Whether a member belongs under a chip when nobody is searching. The single

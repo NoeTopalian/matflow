@@ -56,7 +56,7 @@ async function renderOverview() {
       // The synthetic club of the T1 acceptance: active 3 (one on hold),
       // inactive 1, taster 1, cancelled 2 — training members only.
       statusCounts: { active: 3, inactive: 1, taster: 1, cancelled: 2 },
-      populationCounts: { onHold: 1, guardians: 2 },
+      populationCounts: { onHold: 1, guardians: 2, activeOnHold: 1 },
       primaryColor: "#3b82f6",
       role: "owner",
       currentUserId: "u-1",
@@ -71,6 +71,8 @@ describe("Settings — member status uses the shared populations (T1)", () => {
     await renderOverview();
     const label = screen.getByText("Active members");
     expect(label.parentElement!.querySelector("p")!.textContent).toBe("3");
+    // Q4 A-1: the members on hold are inside it and marked, as on Reports.
+    expect(screen.getByTestId("settings-active-note").textContent).toBe("Includes 1 on hold · excludes guardians");
   });
 
   it("shows On hold 1 and guardians apart from the status rows, and no Paused status row", async () => {

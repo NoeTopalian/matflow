@@ -177,7 +177,7 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <StatCard label="This Month" value={summary.totalThisMonth} sub="check-ins" icon={Calendar} primaryColor={primaryColor} />
         <StatCard label="This Week" value={summary.totalThisWeek} sub="check-ins" icon={TrendingUp} primaryColor={primaryColor} />
-        <StatCard label="Active Members" value={summary.uniqueMembersThisMonth} sub="this month" icon={Users} primaryColor={primaryColor} />
+        <StatCard label="Members who trained" value={summary.uniqueMembersThisMonth} sub="distinct members checked in this month" icon={Users} primaryColor={primaryColor} />
         <StatCard label="Top Class" value={summary.topClass ?? "—"} sub="this month" icon={Award} primaryColor={primaryColor} />
       </div>
 

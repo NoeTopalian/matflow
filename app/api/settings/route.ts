@@ -4,6 +4,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { revalidateTagLogged } from "@/lib/revalidate-tag-logged";
 import { z } from "zod";
+import { ACTIVE_MEMBER } from "@/lib/member-population";
 import { logAudit } from "@/lib/audit-log";
 import { updateMetadata } from "@/lib/audit-snapshot";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -167,7 +168,8 @@ export async function GET() {
           createdAt: true,
           _count: {
             select: {
-              members: true,
+              // Active training members, as every staff surface counts them (T1).
+              members: { where: { ...ACTIVE_MEMBER } },
               users: true,
               classes: { where: { isActive: true } },
             },

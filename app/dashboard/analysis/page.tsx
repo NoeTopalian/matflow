@@ -90,9 +90,15 @@ export default async function AnalysisPage() {
   }
 
   const STATUS_LABELS: Record<string, string> = { active: "Active", inactive: "Inactive", cancelled: "Cancelled", taster: "Taster" };
+  // Q4 A-2, as on Reports' "Current members by status": the mix is shared over
+  // CURRENT members only (active, inactive, tasters); members who have left
+  // are a count of their own with no share, so Analysis and Reports give the
+  // same "Active" percentage for the same club.
   const membersByStatus = statusGroups
+    .filter((g) => g.status !== "cancelled")
     .map((g) => ({ status: g.status, label: STATUS_LABELS[g.status] ?? g.status, count: g._count }))
     .sort((a, b) => b.count - a.count);
+  const leftMembers = statusGroups.find((g) => g.status === "cancelled")?._count ?? 0;
 
   const metrics = {
     totalMembers,
@@ -105,6 +111,7 @@ export default async function AnalysisPage() {
     monthLabel: now.toLocaleString("default", { month: "long", year: "numeric" }),
     gymName: session.user.tenantName,
     membersByStatus,
+    leftMembers,
     monthlyTrend,
   };
 

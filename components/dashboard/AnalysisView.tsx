@@ -41,7 +41,10 @@ interface Metrics {
   activeMembersThisMonth: number;
   monthLabel: string;
   gymName: string;
+  /** Current members only (active, inactive, tasters) — Q4 A-2. */
   membersByStatus?: { status: string; label: string; count: number }[];
+  /** Training members who have left: a count, never a share of the mix. */
+  leftMembers?: number;
   monthlyTrend?: { label: string; value: number }[];
 }
 
@@ -64,7 +67,7 @@ const QUESTIONS = [
 
 // ─── Report generator ─────────────────────────────────────────────────────────
 
-function buildReport(metrics: Metrics, answers: string[]): string {
+export function buildReport(metrics: Metrics, answers: string[]): string {
   const growthDir = metrics.newThisMonth >= metrics.newLastMonth ? "up" : "down";
   const growthDiff = Math.abs(metrics.newThisMonth - metrics.newLastMonth);
   const checkinDir = metrics.checkinsThisMonth >= metrics.checkinsLastMonth ? "up" : "down";
@@ -94,8 +97,11 @@ function buildReport(metrics: Metrics, answers: string[]): string {
   lines.push("## Overview");
   lines.push(
     `This month ${metrics.gymName} maintained ${metrics.totalMembers} active members across ${metrics.activeClasses} classes. ` +
-    `You recorded ${metrics.checkinsThisMonth} check-ins — ${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} last month — ` +
-    `giving an engagement rate of ${engagementText} — active members who checked in at least once.`
+    `You recorded ${metrics.checkinsThisMonth} check-ins — ${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} last month` +
+    // An empty base has no rate: say so in words rather than printing "—".
+    (metrics.totalMembers > 0
+      ? ` — giving an engagement rate of ${engagementText} — active members who checked in at least once.`
+      : ", with no engagement rate yet (no active members).")
   );
   lines.push("");
   lines.push("## Member Growth");
@@ -111,7 +117,10 @@ function buildReport(metrics: Metrics, answers: string[]): string {
   lines.push(
     `With ${metrics.checkinsThisMonth} total check-ins and ${metrics.totalMembers} active members, ` +
     `the average member attended roughly ${metrics.totalMembers > 0 ? (metrics.checkinsThisMonth / metrics.totalMembers).toFixed(1) : "0"} classes this month. ` +
-    (engagementRate >= 60
+    // No active members → no rate, so no verdict on it either.
+    (metrics.totalMembers === 0
+      ? ""
+      : engagementRate >= 60
       ? "This is a healthy engagement level — your members are showing up consistently."
       : engagementRate >= 35
       ? "Engagement is moderate. Look at who hasn't checked in recently and consider a personal outreach."
@@ -307,7 +316,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="text-[11px] uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Member mix</p>
-                <p className="text-sm font-semibold mt-0.5" style={{ color: "var(--tx-1)" }}>By status</p>
+                <p className="text-sm font-semibold mt-0.5" style={{ color: "var(--tx-1)" }}>Current members by status</p>
               </div>
               <Users className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
             </div>
@@ -321,23 +330,32 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                   }))}
                   size={130}
                   thickness={20}
-                  // The centre is the sum of the slices around it. It used to be
-                  // `totalMembers` — ACTIVE members only — so "9 TOTAL" sat above
-                  // Active 9 + Cancelled 1 + Inactive 1 (end-user simulation,
-                  // 30 Sep 2026). Active alone is the "Active Members" tile.
+                  // The centre is the sum of the slices around it: current
+                  // members (Q4 A-2, the same base as Reports' "Current members
+                  // by status"). Those who have left are counted below, with
+                  // no share. Active alone is the "Active members" tile.
                   centerValue={String(metrics.membersByStatus.reduce((sum, m) => sum + m.count, 0))}
-                  centerLabel="All members"
+                  centerLabel="Current members"
                 />
                 <div className="flex-1 min-w-0">
-                  <DonutLegend data={metrics.membersByStatus.map((m, i): DonutSlice => ({
-                    label: m.label,
-                    value: m.count,
-                    color: STATUS_COLORS[m.status] ?? HERO_PALETTE[i % HERO_PALETTE.length],
-                  }))} />
+                  <DonutLegend
+                    showCounts
+                    data={metrics.membersByStatus.map((m, i): DonutSlice => ({
+                      label: m.label,
+                      value: m.count,
+                      color: STATUS_COLORS[m.status] ?? HERO_PALETTE[i % HERO_PALETTE.length],
+                    }))}
+                  />
                 </div>
               </div>
             ) : (
-              <p className="text-sm" style={{ color: "var(--tx-3)" }}>No member data yet</p>
+              <p className="text-sm" style={{ color: "var(--tx-3)" }}>No current members yet</p>
+            )}
+            {metrics.leftMembers !== undefined && (
+              <p data-testid="analysis-left-the-club" className="mt-3 border-t border-bd-default pt-2 text-xs text-tx-2">
+                Left the club: <span className="font-semibold tabular-nums text-tx-1">{metrics.leftMembers.toLocaleString("en-GB")}</span>
+                <span className="text-tx-3"> · cancelled members, not part of the shares above</span>
+              </p>
             )}
           </Card>
 

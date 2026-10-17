@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { noPaymentYetWhere } from "@/lib/overdue";
-import { ACTIVE_MEMBER, LEFT_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
+import { ACTIVE_MEMBER, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER, isActiveMember } from "@/lib/member-population";
 
 export interface ClassOption {
   id: string;
@@ -127,6 +127,12 @@ export interface ReportsData {
     inactiveMembers: number;
     cancelledMembers: number;
     tasterMembers: number;
+    /**
+     * Active training members whose membership is on hold (ACTIVE_MEMBER +
+     * ON_HOLD). They stay inside activeMembers (owner decision Q4 A-1) and the
+     * tile marks them: "includes N on hold".
+     */
+    activeOnHoldMembers: number;
     totalCheckIns: number;
     totalActiveClasses: number;
     attendanceThisWeek: number;
@@ -336,6 +342,7 @@ export function createEmptyReportsData(): ReportsData {
       inactiveMembers: 0,
       cancelledMembers: 0,
       tasterMembers: 0,
+      activeOnHoldMembers: 0,
       totalCheckIns: 0,
       totalActiveClasses: 0,
       attendanceThisWeek: 0,
@@ -453,6 +460,7 @@ export async function getReportsData(
     failedLast30,
     membersWithRecentFailed,
     cancelledByMonth,
+    activeOnHoldMembers,
   ] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       tx.attendanceRecord.findMany({
@@ -461,7 +469,7 @@ export async function getReportsData(
         // below — same rows already fetched for the weekly chart, no new
         // query, so the distinct-attendee count shares the identical window
         // and filter scope as everything else on this page.
-        select: { checkInTime: true, memberId: true, member: { select: { status: true } } },
+        select: { checkInTime: true, memberId: true, member: { select: { status: true, accountType: true } } },
         take: 10000,
       }).then((rows) => {
         if (rows.length === 10000) console.warn("[reports] truncated at 10000 rows (attendance window)");
@@ -567,6 +575,8 @@ export async function getReportsData(
         where: { tenantId, ...LEFT_MEMBER, cancelledAt: { gte: sixMonthsAgo } },
         select: { cancelledAt: true },
       }),
+      // Q4 A-1: members on hold stay inside "Active members" and are marked there.
+      tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER, ...ON_HOLD } }),
     ]),
     // ~12 parallel aggregate queries in one transaction — needs more than the
     // default budget on large tenants (was expiring with P2028/commit-expired).
@@ -599,7 +609,10 @@ export async function getReportsData(
     // here, which could push the rate past 100% — count a distinct attendee only
     // while they are currently active. The weekly chart bucket above still counts
     // every check-in regardless of status.
-    if (rec.member?.status === "active") distinctAttendingMemberIds.add(rec.memberId);
+    // The denominator is ACTIVE_MEMBER, which leaves guardian accounts out, so
+    // the numerator uses the same predicate: a guardian's check-in is never a
+    // "(n of m)" person who is missing from m.
+    if (rec.member && isActiveMember(rec.member)) distinctAttendingMemberIds.add(rec.memberId);
   }
 
   const monthlyMap = new Map<string, { month: string; count: number; isCurrentMonth: boolean }>();
@@ -804,6 +817,7 @@ export async function getReportsData(
       inactiveMembers: statusCount.get("inactive") ?? 0,
       cancelledMembers: statusCount.get("cancelled") ?? 0,
       tasterMembers: statusCount.get("taster") ?? 0,
+      activeOnHoldMembers,
       totalCheckIns,
       totalActiveClasses,
       attendanceThisWeek,
@@ -848,8 +862,9 @@ export async function getReportsData(
  * the new fields (and vice versa); old and new deployments never share an
  * entry. "v2" = T2b counts (churn, retention, recovery, rate
  * numerator/denominator, current status shares). T2c added no field.
+ * "v3" = summary.activeOnHoldMembers (T1 review, 17 Oct 2026).
  */
-export const REPORTS_CACHE_VERSION = "v2";
+export const REPORTS_CACHE_VERSION = "v3";
 
 /**
  * The cached read the reports page and API use. Under 25 concurrent staff

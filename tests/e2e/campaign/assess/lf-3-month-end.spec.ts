@@ -865,7 +865,8 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
         expect(overflows, `${label}: content scrolls horizontally inside its tile`).toBe(false);
 
         // The trend pill, when present, sits fully inside the tile.
-        const pills = tile.getByText(/vs last (week|month)/);
+        // T2b: the pill names the previous figure, "vs 12 last week".
+        const pills = tile.getByText(/vs [\d,]+ last (week|month)/);
         for (let p = 0; p < (await pills.count()); p++) {
           const pill = pills.nth(p).locator("xpath=ancestor::span[1]");
           expect(inside(await pill.boundingBox(), tileBox), `${label}: trend pill clipped by its tile`).toBe(true);
