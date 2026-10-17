@@ -4,7 +4,7 @@
 // only the Svix signature headers and the content type are passed on — the app verifies the signature itself.
 //   node webhook-gate.mjs
 //   env: WEBHOOK_GATE_PORT (default 3995), MF_PORT (the app, default 3991), WEBHOOK_GATE_MAX_BYTES (default 262144)
-//   GET http://127.0.0.1:<gate>/__gate — loopback only, never through the tunnel → {"forwarded":n,"refused":n,"tooLarge":n}
+//   GET http://127.0.0.1:<gate>/__gate — loopback only, never through the tunnel -> {"forwarded":n,"refused":n,"tooLarge":n}
 // Prints one line per request: method, a sanitised path and the result. Never a header value or a body.
 import http from "node:http";
 
@@ -15,7 +15,7 @@ const ROUTE = "/api/webhooks/resend";
 const PASS_HEADERS = ["content-type", "svix-id", "svix-timestamp", "svix-signature"];
 const counts = { forwarded: 0, refused: 0, tooLarge: 0 };
 const safe = (s) => String(s ?? "").replace(/[^A-Za-z0-9/_.:?=&-]/g, "").slice(0, 80);
-const note = (req, result) => console.log(`[webhook-gate] ${safe(req.method)} ${safe(req.url)} → ${result}`);
+const note = (req, result) => console.log(`[webhook-gate] ${safe(req.method)} ${safe(req.url)} -> ${result}`);
 
 function refuse(req, res, status, result) {
   res.writeHead(status, { connection: "close" });
@@ -55,7 +55,7 @@ const server = http.createServer((req, res) => {
     const up = http.request({ host: "127.0.0.1", port: APP_PORT, method: "POST", path: ROUTE, headers, timeout: 15_000 }, (r) => {
       res.writeHead(r.statusCode ?? 502, { "content-type": r.headers["content-type"] ?? "application/json" });
       r.pipe(res);
-      note(req, `forwarded → app ${r.statusCode}`);
+      note(req, `forwarded -> app ${r.statusCode}`);
     });
     up.on("timeout", () => up.destroy(new Error("upstream timeout")));
     up.on("error", () => { if (!res.headersSent) { res.writeHead(502); res.end(); } note(req, "502 app unreachable"); });
@@ -65,4 +65,4 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(GATE_PORT, "127.0.0.1", () =>
-  console.log(`[webhook-gate] listening on 127.0.0.1:${GATE_PORT} → app 127.0.0.1:${APP_PORT}; only POST ${ROUTE}; max body ${MAX_BYTES} bytes`));
+  console.log(`[webhook-gate] listening on 127.0.0.1:${GATE_PORT} -> app 127.0.0.1:${APP_PORT}; only POST ${ROUTE}; max body ${MAX_BYTES} bytes`));

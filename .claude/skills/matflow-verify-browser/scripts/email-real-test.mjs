@@ -8,7 +8,8 @@
 //   node email-real-test.mjs blocked      an unlisted address (the club owner) is refused before Resend
 //   node email-real-test.mjs verify       after Noe's reset: one provider send, signed webhook, reset used, no others
 //   node email-real-test.mjs teardown     removes the club and checks no row anywhere still holds the address
-// Ledger rows are labelled REAL; evidence goes to the output folder (outside git).
+// Ledger rows are labelled REAL, or SIMULATED when the private file points RESEND_BASE_URL at a local stand-in (a dry
+// run); evidence goes to the output folder (outside git).
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -24,6 +25,8 @@ const WEBHOOK_SECRET = /^whsec_[A-Za-z0-9+/]{32,}={0,2}$/; // the route's own ru
 const mask = (a) => { const [u, d] = String(a).split("@"); return d ? `${u.slice(0, 1)}…@${d}` : "…"; };
 const fp = (v) => createHash("sha256").update(String(v)).digest("hex");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** REAL only when the run talks to Resend itself; a loopback RESEND_BASE_URL (dry run) makes every row SIMULATED. */
+const label = () => (settings().RESEND_BASE_URL ? "SIMULATED" : "REAL");
 
 /** The private settings, validated by the same parser the server uses (refuses keys, files inside git, bad lines). */
 function settings() {
@@ -103,7 +106,7 @@ async function setup() {
   state.real = { memberId: rows[0].id, addressFp: fp(r.address), hashFp: fp(hash) };
   saveState();
   console.log(`setup done: club ${c.slug}; member 2 is ${mask(r.address)} with a password.`);
-  console.log(`Isolated app reset screen: ${BASE}/login?club=${c.slug}  →  "Forgot password"`);
+  console.log(`Isolated app reset screen: ${BASE}/login?club=${c.slug}  ->  "Forgot password"`);
 }
 
 const providerRows = (tenantId) => q(`select id, recipient, status, "resendId", "errorMessage" from "EmailLog" where "tenantId" = $1 and "resendId" is not null`, [tenantId]);
@@ -118,7 +121,7 @@ async function blocked() {
   await sleep(1500);
   const row = (await q(`select status, "errorMessage", "resendId" from "EmailLog" where "tenantId" = $1 and lower(recipient) = lower($2) order by "createdAt" desc limit 1`, [c.tenantId, c.owner.email]))[0];
   const after = await providerRows(c.tenantId);
-  L.check("allowlist", "B1 REAL server, Resend key loaded: the unlisted club owner is refused before Resend (suppressed_not_allowlisted, no provider id, no provider send)", res.status === 200 && row?.status === "suppressed" && /^suppressed_not_allowlisted/.test(row?.errorMessage ?? "") && !row?.resendId && after.length === before.length && before.length === 0, { http: res.status, status: row?.status, providerSendsBefore: before.length, providerSendsAfter: after.length });
+  L.check("allowlist", `B1 [${label()}] server with the key loaded: the unlisted club owner is refused before Resend (suppressed_not_allowlisted, no provider id, no provider send)`, res.status === 200 && row?.status === "suppressed" && /^suppressed_not_allowlisted/.test(row?.errorMessage ?? "") && !row?.resendId && after.length === before.length && before.length === 0, { http: res.status, status: row?.status, providerSendsBefore: before.length, providerSendsAfter: after.length });
   console.log(`\n${L.summary()} — ledger ${L.path}`);
   process.exit(L.rows.some((x) => x.result === "FAIL") ? 1 : 0);
 }
@@ -131,26 +134,26 @@ async function verify() {
   const L = ledger("email-real-verify");
   let sends = await providerRows(c.tenantId);
   // V1 — exactly one email reached Resend, to the confirmed address.
-  L.check("send", "V1 exactly one provider send in this club, to the confirmed address [REAL]", sends.length === 1 && sends[0].recipient.toLowerCase() === r.address, { providerSends: sends.length, to: sends.map((s) => mask(s.recipient)) });
+  L.check("send", `V1 exactly one provider send in this club, to the confirmed address [${label()}]`, sends.length === 1 && sends[0].recipient.toLowerCase() === r.address, { providerSends: sends.length, to: sends.map((s) => mask(s.recipient)) });
   // V2 — a genuine signed Resend event moved that row (allow time for delivery).
   for (let i = 0; i < 36 && sends[0] && !["delivered", "bounced", "complained"].includes(sends[0].status); i++) { await sleep(5000); sends = await providerRows(c.tenantId); }
   const id = sends[0]?.resendId ?? "-";
   const lines = fs.readFileSync(path.join(OUT, `server-${APP_PORT}.log`), "utf8").split(/\r?\n/).filter((l) => l.includes("[resend-webhook]") && l.includes(`email=${id}`));
-  L.check("webhook", "V2 a signed Resend webhook updated that row to delivered [REAL]", sends[0]?.status === "delivered" && lines.some((l) => /type=email\.delivered .*outcome=applied/.test(l)), {
+  L.check("webhook", `V2 a signed Resend webhook updated that row to delivered [${label()}]`, sends[0]?.status === "delivered" && lines.some((l) => /type=email\.delivered .*outcome=applied/.test(l)), {
     status: sends[0]?.status, resendId: id,
     events: lines.map((l) => { const m = l.match(/svix=(\S+) .*type=(\S+) .*outcome=(\S+)/); return m ? `${m[2]}:${m[3]} (${m[1]})` : null; }).filter(Boolean),
   });
   // V3 — the code worked against the isolated app: the token is spent and the synthetic member's password changed.
   const tok = await q(`select used from "PasswordResetToken" where "tenantId" = $1 and lower(email) = $2 order by "createdAt" desc limit 1`, [c.tenantId, r.address]);
   const mem = await q(`select "passwordHash" from "Member" where id = $1`, [real.memberId]);
-  L.check("reset", "V3 the emailed code reset the password on the isolated app (token used, password changed) [REAL]", tok[0]?.used === true && mem[0] && fp(mem[0].passwordHash) !== real.hashFp, { tokenUsed: tok[0]?.used ?? null, passwordChanged: mem[0] ? fp(mem[0].passwordHash) !== real.hashFp : null });
+  L.check("reset", `V3 the emailed code reset the password on the isolated app (token used, password changed) [${label()}]`, tok[0]?.used === true && mem[0] && fp(mem[0].passwordHash) !== real.hashFp, { tokenUsed: tok[0]?.used ?? null, passwordChanged: mem[0] ? fp(mem[0].passwordHash) !== real.hashFp : null });
   // V4 — the gate forwarded webhook traffic and nothing else reached the app through it.
   let gate = null;
   try { gate = await (await fetch(`http://127.0.0.1:${GATE_PORT}/__gate`)).json(); } catch { /* gate stopped */ }
-  L.check("gate", "V4 webhook traffic came through the gate; everything else was refused there [REAL]", (gate?.forwarded ?? 0) >= 1, gate ?? { gate: "not reachable" });
+  L.check("gate", `V4 webhook traffic came through the gate; everything else was refused there [${label()}]`, (gate?.forwarded ?? 0) >= 1, gate ?? { gate: "not reachable" });
   // V5 — the unlisted owner never reached Resend.
   const owner = await q(`select count(*)::int n from "EmailLog" where "tenantId" = $1 and lower(recipient) = lower($2) and "resendId" is not null`, [c.tenantId, c.owner.email]);
-  L.check("allowlist", "V5 no provider send to anyone but the confirmed address [REAL]", owner[0].n === 0 && sends.every((s) => s.recipient.toLowerCase() === r.address), { ownerProviderSends: owner[0].n });
+  L.check("allowlist", `V5 no provider send to anyone but the confirmed address [${label()}]`, owner[0].n === 0 && sends.every((s) => s.recipient.toLowerCase() === r.address), { ownerProviderSends: owner[0].n });
   console.log(`\n${L.summary()} — ledger ${L.path}`);
   process.exit(L.rows.some((x) => x.result === "FAIL") ? 1 : 0);
 }
