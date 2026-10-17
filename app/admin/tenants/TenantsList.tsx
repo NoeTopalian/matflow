@@ -1,14 +1,17 @@
 "use client";
 
 // Client-side filter/sort/search over a server-rendered tenant list.
+// The server picks the view (open clubs, or "Closed clubs" = soft-deleted);
+// search, filters, counts and the CSV all work within the rows of that view.
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import type { TenantRow } from "./page";
+import type { TenantRow, TenantView } from "./page";
 import AdminTopNav from "../AdminTopNav";
 import { adminButtonSecondary, adminCard, adminContainer, adminPage, adminPalette } from "../admin-theme";
 import { csvRow } from "@/lib/csv";
+import { formatDate } from "@/lib/date";
 
 type StatusFilter = "all" | "active" | "trial" | "suspended" | "cancelled";
 type StripeFilter = "all" | "connected" | "broken" | "not_connected";
@@ -35,8 +38,19 @@ function initialStripe(): StripeFilter {
     : "all";
 }
 
-export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
+export default function TenantsList({
+  tenants,
+  view = "open",
+  openCount = view === "open" ? tenants.length : 0,
+  closedCount = view === "closed" ? tenants.length : 0,
+}: {
+  tenants: TenantRow[];
+  view?: TenantView;
+  openCount?: number;
+  closedCount?: number;
+}) {
   const router = useRouter();
+  const closedView = view === "closed";
   const [query, setQuery] = useState(initialQuery);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialStatus);
   const [stripeFilter, setStripeFilter] = useState<StripeFilter>(initialStripe);
@@ -75,16 +89,29 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
     }
 
     const sorted = [...list];
-    if (sort === "recent") sorted.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+    // "Most recent" means most recently closed in the closed view.
+    if (sort === "recent" && closedView) sorted.sort((a, b) => +new Date(b.deletedAt ?? 0) - +new Date(a.deletedAt ?? 0));
+    else if (sort === "recent") sorted.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
     else if (sort === "members_desc") sorted.sort((a, b) => b.memberCount - a.memberCount);
     else if (sort === "name_asc") sorted.sort((a, b) => a.name.localeCompare(b.name));
     else if (sort === "status") sorted.sort((a, b) => a.status.localeCompare(b.status));
     return sorted;
-  }, [tenants, query, statusFilter, stripeFilter, sort]);
+  }, [tenants, query, statusFilter, stripeFilter, sort, closedView]);
+
+  /** The other view, keeping the current search and filters. */
+  function viewHref(target: TenantView) {
+    const params = new URLSearchParams();
+    if (target === "closed") params.set("view", "closed");
+    if (query) params.set("q", query);
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (stripeFilter !== "all") params.set("stripe", stripeFilter);
+    const s = params.toString();
+    return s ? `/admin/tenants?${s}` : "/admin/tenants";
+  }
 
   function exportCsv() {
     const rows = [
-      ["Gym", "Slug", "Owner Name", "Owner Email", "Members", "Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created"],
+      ["Gym", "Slug", "Owner Name", "Owner Email", "Members", "Subscription Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created", ...(closedView ? ["Closed"] : [])],
       ...filtered.map((t) => [
         t.name,
         t.slug,
@@ -96,6 +123,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
         t.stripeChargesEnabled === null ? "" : String(t.stripeChargesEnabled),
         String(t.onboardingCompleted),
         t.createdAt,
+        ...(closedView ? [t.deletedAt ?? ""] : []),
       ]),
     ];
     // Route every cell through lib/csv.csvRow — RFC-4180 quoting AND the
@@ -108,7 +136,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `matflow-tenants-${new Date().toISOString().split("T")[0]}.csv`;
+    a.download = `matflow-tenants-${closedView ? "closed-" : ""}${new Date().toISOString().split("T")[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -122,9 +150,27 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
         <header style={header}>
           <div>
             <h1 style={title}>Tenants</h1>
-            <p style={subtitle}>Showing {filtered.length} of {tenants.length} gym{tenants.length === 1 ? "" : "s"}</p>
+            <p style={subtitle}>
+              Showing {filtered.length} of {tenants.length} {closedView ? "closed" : "open"} club{tenants.length === 1 ? "" : "s"}
+            </p>
           </div>
         </header>
+
+        <nav aria-label="Club view" style={viewNav}>
+          <Link href={viewHref("open")} aria-current={closedView ? undefined : "page"} style={viewTab(!closedView)}>
+            Open clubs ({openCount})
+          </Link>
+          <Link href={viewHref("closed")} aria-current={closedView ? "page" : undefined} style={viewTab(closedView)}>
+            Closed clubs ({closedCount})
+          </Link>
+        </nav>
+
+        {closedView && (
+          <p style={closedNote}>
+            Closed clubs were soft-deleted from their club page&apos;s Danger zone. Their owners, staff and members cannot
+            sign in. Opening a club only shows its details; restoring it is a separate action on that page.
+          </p>
+        )}
 
         <div style={controls}>
           <input aria-label="Search name, slug, owner email"
@@ -136,7 +182,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
           />
 
           <FilterChips
-            label="Status"
+            label="Subscription"
             current={statusFilter}
             options={[
               { value: "all", label: "All" },
@@ -161,10 +207,10 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
           />
 
           <select aria-label="Sort tenants" value={sort} onChange={(e) => setSort(e.target.value as SortKey)} style={select}>
-            <option value="recent">Sort: Most recent</option>
+            <option value="recent">{closedView ? "Sort: Recently closed" : "Sort: Most recent"}</option>
             <option value="members_desc">Sort: Members high to low</option>
             <option value="name_asc">Sort: Name A to Z</option>
-            <option value="status">Sort: Status</option>
+            <option value="status">Sort: Subscription</option>
           </select>
 
           <button onClick={exportCsv} style={adminButtonSecondary}>Export CSV ({filtered.length})</button>
@@ -172,7 +218,7 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
 
         {filtered.length === 0 ? (
           <div style={{ ...adminCard, padding: "48px 24px", textAlign: "center", color: adminPalette.muted }}>
-            No tenants match your filters.
+            {tenants.length === 0 ? (closedView ? "No closed clubs." : "No open clubs.") : "No clubs match your filters."}
           </div>
         ) : (
           <div style={{ ...adminCard, overflowX: "auto" }}>
@@ -182,10 +228,11 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
                   <th style={th}>Gym</th>
                   <th style={th}>Owner</th>
                   <th style={th}>Members</th>
-                  <th style={th}>Status</th>
+                  <th style={th}>Subscription</th>
                   <th style={th}>Stripe</th>
                   <th style={th}>Created</th>
-                  <th style={th}></th>
+                  {closedView && <th style={th}>Closed</th>}
+                  <th style={th}><span style={srOnly}>Details</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -209,8 +256,9 @@ export default function TenantsList({ tenants }: { tenants: TenantRow[] }) {
                     <td style={td}>{statusBadge(t.status)}</td>
                     <td style={td}>{stripeBadge(t)}</td>
                     <td style={td}>{new Date(t.createdAt).toLocaleDateString()}</td>
+                    {closedView && <td style={td}>{t.deletedAt ? formatDate(t.deletedAt) : "-"}</td>}
                     <td style={td}>
-                      <Link href={`/admin/tenants/${t.id}`} style={rowAction}>View</Link>
+                      <Link href={`/admin/tenants/${t.id}`} style={rowAction} aria-label={`View ${t.name}`}>View</Link>
                     </td>
                   </tr>
                 ))}
@@ -275,6 +323,25 @@ const title: React.CSSProperties = { fontSize: 28, fontWeight: 750, margin: 0 };
 const subtitle: React.CSSProperties = { color: adminPalette.muted, margin: "4px 0 0", fontSize: 14 };
 const nav: React.CSSProperties = { display: "flex", gap: 16, fontSize: 13, alignItems: "center", flexWrap: "wrap" };
 const controls: React.CSSProperties = { display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "center" };
+const viewNav: React.CSSProperties = { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 };
+function viewTab(active: boolean): React.CSSProperties {
+  return {
+    padding: "10px 14px",
+    minHeight: 44,
+    boxSizing: "border-box",
+    display: "inline-flex",
+    alignItems: "center",
+    borderRadius: 8,
+    border: `1px solid ${active ? adminPalette.brand : adminPalette.border}`,
+    background: active ? adminPalette.brand : adminPalette.card,
+    color: active ? adminPalette.card : adminPalette.text,
+    fontSize: 13,
+    fontWeight: 750,
+    textDecoration: "none",
+  };
+}
+const closedNote: React.CSSProperties = { color: adminPalette.muted, fontSize: 13, margin: "0 0 12px", maxWidth: 760 };
+const srOnly: React.CSSProperties = { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" };
 const searchInput: React.CSSProperties = {
   flex: "1 1 240px",
   minWidth: 220,
