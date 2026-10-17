@@ -93,21 +93,17 @@ export default async function AdminTenantsPage({ searchParams }: { searchParams?
 
   const sp = (await searchParams) ?? {};
   const view: TenantView = first(sp.view) === "closed" ? "closed" : "open";
-  const q = first(sp.q), status = first(sp.status), stripe = first(sp.stripe);
   const { rows, openCount, closedCount } = await getTenants(view);
-  // Keyed on the URL's view and filters: Back/Forward or a nav link to another
-  // URL remounts the list with that URL's state, so the address bar and the
-  // visible filters cannot disagree. Typing only rewrites the URL in place.
+  // Keyed on the URL's view and filters as the server saw them, so navigating
+  // to a different server-rendered URL remounts the list; the list itself
+  // reads its filters from the browser's URL (see TenantsList).
   return (
     <TenantsList
-      key={`${view}|${q}|${status}|${stripe}`}
+      key={`${view}|${first(sp.q)}|${first(sp.status)}|${first(sp.stripe)}`}
       tenants={rows}
       view={view}
       openCount={openCount}
       closedCount={closedCount}
-      initialQuery={q}
-      initialStatus={status}
-      initialStripe={stripe}
     />
   );
 }

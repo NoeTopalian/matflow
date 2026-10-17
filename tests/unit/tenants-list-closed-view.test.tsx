@@ -13,7 +13,7 @@ import { formatDate } from "@/lib/date";
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/tenants",
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn(), back: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(window.location.search),
   useParams: () => ({ id: "c1" }),
   redirect: (url: string) => { throw new Error(`redirect:${url}`); },
   notFound: () => { throw new Error("notFound"); },
@@ -85,6 +85,10 @@ afterEach(() => {
 });
 
 async function renderList(params: Record<string, string | string[]> = {}) {
+  // The browser's URL matches what the server was asked for.
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) for (const x of [v].flat()) qs.append(k, x);
+  window.history.replaceState(null, "", `/admin/tenants${qs.toString() ? `?${qs}` : ""}`);
   const { default: Page } = await import("@/app/admin/tenants/page");
   const element = await Page({ searchParams: Promise.resolve(params) });
   return render(element);

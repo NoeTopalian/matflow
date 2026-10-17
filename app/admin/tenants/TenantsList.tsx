@@ -5,7 +5,7 @@
 // search, filters, counts and the CSV all work within the rows of that view.
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { TenantRow, TenantView } from "./page";
 import AdminTopNav from "../AdminTopNav";
@@ -17,7 +17,7 @@ type StatusFilter = "all" | "active" | "trial" | "suspended" | "cancelled";
 type StripeFilter = "all" | "connected" | "broken" | "not_connected";
 type SortKey = "recent" | "members_desc" | "name_asc" | "status";
 
-// Initial filters come from the URL, read on the server and passed in.
+// Filters live in the URL (q, status, stripe), read with useSearchParams.
 function toStatus(status: string | undefined): StatusFilter {
   return status && ["active", "trial", "suspended", "cancelled"].includes(status)
     ? status as StatusFilter
@@ -35,32 +35,33 @@ export default function TenantsList({
   view = "open",
   openCount = view === "open" ? tenants.length : 0,
   closedCount = view === "closed" ? tenants.length : 0,
-  initialQuery = "",
-  initialStatus,
-  initialStripe,
 }: {
   tenants: TenantRow[];
   view?: TenantView;
   openCount?: number;
   closedCount?: number;
-  initialQuery?: string;
-  initialStatus?: string;
-  initialStripe?: string;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const closedView = view === "closed";
-  const [query, setQuery] = useState(initialQuery);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => toStatus(initialStatus));
-  const [stripeFilter, setStripeFilter] = useState<StripeFilter>(() => toStripe(initialStripe));
+  // Start from the browser's URL: after Back from a club page this is the URL
+  // the list last wrote, so a typed search survives.
+  const [query, setQuery] = useState(() => searchParams.get("q") ?? "");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => toStatus(searchParams.get("status") ?? undefined));
+  const [stripeFilter, setStripeFilter] = useState<StripeFilter>(() => toStripe(searchParams.get("stripe") ?? undefined));
   const [sort, setSort] = useState<SortKey>("recent");
 
+  // Keep the URL equal to the visible filters, also after a navigation that
+  // changed the URL without remounting the list (e.g. the top-nav Tenants link).
+  const urlKey = searchParams.toString();
   useEffect(() => {
     const url = new URL(window.location.href);
     if (query) url.searchParams.set("q", query); else url.searchParams.delete("q");
     if (statusFilter !== "all") url.searchParams.set("status", statusFilter); else url.searchParams.delete("status");
     if (stripeFilter !== "all") url.searchParams.set("stripe", stripeFilter); else url.searchParams.delete("stripe");
-    window.history.replaceState({}, "", url.toString());
-  }, [query, statusFilter, stripeFilter]);
+    // A plain state object lets Next sync useSearchParams with the new URL.
+    if (url.toString() !== window.location.href) window.history.replaceState({}, "", url.toString());
+  }, [query, statusFilter, stripeFilter, urlKey]);
 
   const filtered = useMemo(() => {
     let list = tenants;
