@@ -22,6 +22,7 @@ import { parseTeamUp } from "@/lib/importers/teamup";
 import {
   changedFields,
   planRefresh,
+  refreshEventOccurredAt,
   refreshWrite,
   REFRESH_MEMBER_SELECT,
   standingOf,
@@ -797,9 +798,15 @@ async function commitRefresh({
         await tx.member.updateMany({ where: { id: c.memberId, tenantId, billedBy: "teamup" }, data: refreshWrite(c.after) });
         applied.push(change);
       }
+      // T8a (Q6 D-7): each change is dated by the TeamUp source — the file's
+      // cancellation date for a move into cancelled, else the export time —
+      // and the writer clamps it to the member's latest event and to now.
       await recordStatusEventsBulk(
         tx,
-        applied.map((c) => ({ tenantId, memberId: c.memberId, fromStatus: c.before.status, toStatus: c.after.status, reason: "import" as const, changedById: null })),
+        applied.map((c) => {
+          const occurredAt = refreshEventOccurredAt(c, job.sourceExportedAt);
+          return { tenantId, memberId: c.memberId, fromStatus: c.before.status, toStatus: c.after.status, reason: "import" as const, changedById: null, ...(occurredAt ? { occurredAt } : {}) };
+        }),
       );
       const cur = await tx.importJob.findUnique({ where: { id: job.id }, select: { manifest: true } });
       const man = (cur?.manifest ?? {}) as Record<string, unknown>;

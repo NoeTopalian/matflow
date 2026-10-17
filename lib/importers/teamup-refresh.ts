@@ -305,3 +305,47 @@ export function planRefreshRollback(
 export function refreshFieldLabel(f: RefreshOwnedField): string {
   return FIELD_WORDS[f];
 }
+
+/**
+ * When a refresh's status change happened (T8a, Q6 D-7: the TeamUp source
+ * date). A move INTO cancelled whose file carries a cancellation date is dated
+ * that day at UTC midnight; anything else is dated by the export time of the
+ * file. `undefined` (no export time recorded) leaves the event at write time.
+ * The status writer then clamps it to no earlier than the member's latest
+ * event and no later than now, so this is a request, never a reordering.
+ */
+export function refreshEventOccurredAt(c: Pick<RefreshChange, "before" | "after">, sourceExportedAt: Date | null): Date | undefined {
+  if (c.after.status === "cancelled" && c.before.status !== "cancelled" && c.after.cancelledAt) {
+    const day = c.after.cancelledAt.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      const d = new Date(`${day}T00:00:00.000Z`);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+  }
+  return sourceExportedAt ?? undefined;
+}
+
+/**
+ * The date each restored member's FORWARD refresh event carries, so the
+ * rollback's reverse event can carry the same date (T8a, A-9): replayed for
+ * any day, history then reads as if the refresh never happened, and the
+ * reverse sorts after the forward on its later `createdAt`.
+ *
+ * `events` are the members' import events, newest first by
+ * (occurredAt, createdAt, id). The forward event is the newest import event
+ * moving that member from the change's `before` status to its `after` status;
+ * a member with none (an older run whose event cannot be found) is left out,
+ * and their reverse event is dated at write time as before.
+ */
+export function forwardEventDates(
+  restore: Array<Pick<RefreshChange, "memberId" | "before" | "after">>,
+  events: Array<{ memberId: string; fromStatus: string | null; toStatus: string; occurredAt: Date }>,
+): Map<string, Date> {
+  const out = new Map<string, Date>();
+  for (const c of restore) {
+    if (c.before.status === c.after.status) continue;
+    const e = events.find((x) => x.memberId === c.memberId && x.fromStatus === c.before.status && x.toStatus === c.after.status);
+    if (e) out.set(c.memberId, e.occurredAt);
+  }
+  return out;
+}

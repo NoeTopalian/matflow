@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { parseTeamUp } from "@/lib/importers/teamup";
-import { planRefresh, REFRESH_OWNED_FIELDS } from "@/lib/importers/teamup-refresh";
+import { planRefresh, REFRESH_OWNED_FIELDS, refreshEventOccurredAt, forwardEventDates } from "@/lib/importers/teamup-refresh";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -95,7 +95,8 @@ function keyOf(name: string): string {
 type Member = Record<string, unknown> & { id: string };
 type Job = Record<string, unknown> & { id: string };
 
-let db: { members: Member[]; jobs: Job[]; events: unknown[]; memberWrites: { where: unknown; data: Record<string, unknown> }[] };
+type Event = Record<string, unknown> & { memberId: string; occurredAt: Date; createdAt: Date; seq: number };
+let db: { members: Member[]; jobs: Job[]; events: Event[]; memberWrites: { where: unknown; data: Record<string, unknown> }[] };
 
 const CREATE_JOB = "job_create";
 const EXPORT_1 = new Date("2026-09-01T08:00:00Z");
@@ -134,7 +135,11 @@ function seed() {
       member({ id: "m_local", name: "Lou Local", billedBy: "matflow", externalRef: null, billingStatusAsOf: null, billingStatusSource: null }),
     ],
     jobs: [],
-    events: [],
+    // The first import's create events, dated at its export (T8a fixtures).
+    events: ["m_ada", "m_tom", "m_uma", "m_gone"].map((memberId, seq) => ({
+      tenantId: "t1", memberId, fromStatus: null, toStatus: "active", reason: "import", changedById: null,
+      occurredAt: EXPORT_1, createdAt: EXPORT_1, seq,
+    })),
     memberWrites: [],
   };
 }
@@ -161,6 +166,17 @@ function matches(row: Record<string, unknown>, where: Record<string, unknown>): 
   });
 }
 
+/** Replay order (occurredAt, createdAt, id), newest first. */
+function newestFirst(a: Event, b: Event): number {
+  return b.occurredAt.getTime() - a.occurredAt.getTime() || b.createdAt.getTime() - a.createdAt.getTime() || b.seq - a.seq;
+}
+
+/** A member's status on a date, replayed from the events (null before the first). */
+function statusOn(memberId: string, at: Date): string | null {
+  const mine = db.events.filter((e) => e.memberId === memberId && e.occurredAt <= at).sort(newestFirst);
+  return mine.length ? (mine[0].toStatus as string) : null;
+}
+
 function pick(row: Record<string, unknown>, select?: Record<string, unknown>) {
   if (!select) return { ...row };
   return Object.fromEntries(Object.keys(select).map((k) => [k, row[k] ?? null]));
@@ -181,7 +197,31 @@ function makeTx() {
       createMany: async () => { throw new Error("a refresh must not create members"); },
     },
     membershipTier: { findMany: async () => [] },
-    memberStatusEvent: { createMany: async ({ data }: { data: unknown[] }) => { db.events.push(...data); return { count: data.length }; } },
+    // HARNESS (T8a, 17 Oct 2026): events keep occurredAt (column default: the
+    // write time) and createdAt (always the write time, strictly increasing
+    // here), and the writer's clamp lookup (groupBy) and the rollback's
+    // forward-event read (findMany) are modelled over them.
+    memberStatusEvent: {
+      createMany: async ({ data }: { data: Record<string, unknown>[] }) => {
+        for (const d of data) {
+          const seq = db.events.length;
+          const written = new Date(Date.now() + seq);
+          db.events.push({ occurredAt: written, ...d, createdAt: written, seq } as Event);
+        }
+        return { count: data.length };
+      },
+      groupBy: async ({ where }: { where: Record<string, unknown> }) => {
+        const max = new Map<string, Date>();
+        for (const e of db.events) {
+          if (!matches(e, where)) continue;
+          const cur = max.get(e.memberId);
+          if (!cur || e.occurredAt > cur) max.set(e.memberId, e.occurredAt);
+        }
+        return [...max].map(([memberId, occurredAt]) => ({ memberId, _max: { occurredAt } }));
+      },
+      findMany: async ({ where, select }: { where: Record<string, unknown>; select?: Record<string, unknown> }) =>
+        db.events.filter((e) => matches(e, where)).sort(newestFirst).map((e) => pick(e, select)),
+    },
     importJob: {
       findFirst: async ({ where, select }: { where: Record<string, unknown>; select?: Record<string, unknown> }) => {
         const j = db.jobs.find((x) => matches(x, where));
@@ -489,5 +529,95 @@ describe("upload: the same-file refusal compares jobs of the same mode only", ()
     const res2 = (await uploadPOST(new Request("http://localhost/x", { method: "POST", body: fd2 }))) as unknown as Res;
     expect(res2.status).toBe(400);
     expect(db.jobs).toHaveLength(0);
+  });
+});
+
+// ── Dating (T8a, Q6 D-7 and A-9) ─────────────────────────────────────────────
+
+describe("refresh and rollback dating (T8a)", () => {
+  const TOM_CANCELLED = new Date("2026-09-20T00:00:00.000Z");
+
+  it("dates a cancellation by the file's Cancelled Date at UTC midnight; createdAt stays the write time", async () => {
+    refreshJob({ status: "preview" });
+    const before = Date.now();
+    const res = (await commitPOST(req(), params("job_refresh"))) as unknown as Res;
+    expect(res.status).toBe(200);
+    const tom = db.events.filter((e) => e.memberId === "m_tom" && e.toStatus === "cancelled");
+    expect(tom).toHaveLength(1);
+    expect(tom[0].occurredAt.toISOString()).toBe(TOM_CANCELLED.toISOString());
+    expect(tom[0].createdAt.getTime()).toBeGreaterThanOrEqual(before);
+    // Replayed: active until the cancellation day, cancelled from it.
+    expect(statusOn("m_tom", new Date("2026-09-19T23:59:59Z"))).toBe("active");
+    expect(statusOn("m_tom", new Date())).toBe("cancelled");
+  });
+
+  it("clamps to the member's latest event: a later staff edit is never re-ordered behind the refresh", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const STAFF_EDIT = new Date("2026-09-25T10:00:00.000Z");
+    db.events.push(
+      { tenantId: "t1", memberId: "m_tom", fromStatus: "active", toStatus: "inactive", reason: "staff_edit", changedById: "u1", occurredAt: new Date("2026-09-24T10:00:00Z"), createdAt: new Date("2026-09-24T10:00:00Z"), seq: db.events.length },
+      { tenantId: "t1", memberId: "m_tom", fromStatus: "inactive", toStatus: "active", reason: "staff_edit", changedById: "u1", occurredAt: STAFF_EDIT, createdAt: STAFF_EDIT, seq: db.events.length + 1 },
+    );
+    refreshJob({ status: "preview" });
+    await commitPOST(req(), params("job_refresh"));
+    const cancel = db.events.find((e) => e.memberId === "m_tom" && e.toStatus === "cancelled")!;
+    expect(cancel.occurredAt.toISOString()).toBe(STAFF_EDIT.toISOString());
+    // The latest event's toStatus equals Member.status for every touched member.
+    for (const id of ["m_ada", "m_tom", "m_uma"]) {
+      expect(statusOn(id, new Date())).toBe(db.members.find((m) => m.id === id)!.status);
+    }
+    warn.mockRestore();
+  });
+
+  it("a rolled-back refresh: the reverse event carries the forward date, and every date replays to the pre-refresh status", async () => {
+    refreshJob({ status: "preview" });
+    await commitPOST(req(), params("job_refresh"));
+    const res = (await rollbackPOST(req(), params("job_refresh"))) as unknown as Res;
+    expect(res.status).toBe(200);
+
+    const forward = db.events.find((e) => e.memberId === "m_tom" && e.toStatus === "cancelled")!;
+    const reverse = db.events.find((e) => e.memberId === "m_tom" && e.fromStatus === "cancelled" && e.toStatus === "active")!;
+    expect(reverse.occurredAt.toISOString()).toBe(forward.occurredAt.toISOString());
+    expect(reverse.createdAt.getTime()).toBeGreaterThan(forward.createdAt.getTime());
+
+    for (const at of [EXPORT_1, TOM_CANCELLED, new Date("2026-09-25T00:00:00Z"), new Date()]) {
+      expect(statusOn("m_tom", at)).toBe("active");
+    }
+    expect(db.members.find((m) => m.id === "m_tom")!.status).toBe("active");
+  });
+});
+
+describe("refreshEventOccurredAt / forwardEventDates (pure, T8a)", () => {
+  const st = (status: string, cancelledAt: string | null = null) => ({
+    status, paymentStatus: "paid", cancelledAt, membershipType: null, membershipTierId: null, billingStatusAsOf: null, billingStatusSource: null,
+  });
+
+  it("a move into cancelled with a file date takes that day; anything else takes the export time; no export time means write time", () => {
+    expect(refreshEventOccurredAt({ before: st("active"), after: st("cancelled", "2026-10-05T00:00:00.000Z") }, EXPORT_2)!.toISOString())
+      .toBe("2026-10-05T00:00:00.000Z");
+    expect(refreshEventOccurredAt({ before: st("active"), after: st("cancelled") }, EXPORT_2)).toEqual(EXPORT_2);
+    expect(refreshEventOccurredAt({ before: st("active"), after: st("inactive") }, EXPORT_2)).toEqual(EXPORT_2);
+    // Already cancelled: the cancellation is not this refresh's transition.
+    expect(refreshEventOccurredAt({ before: st("cancelled", "2026-01-01T00:00:00.000Z"), after: st("active") }, EXPORT_2)).toEqual(EXPORT_2);
+    expect(refreshEventOccurredAt({ before: st("active"), after: st("inactive") }, null)).toBeUndefined();
+  });
+
+  it("finds the newest import event that made the forward move, and skips members with none", () => {
+    const at = new Date("2026-09-20T00:00:00Z");
+    const map = forwardEventDates(
+      [
+        { memberId: "a", before: st("active"), after: st("cancelled") },
+        { memberId: "b", before: st("active"), after: st("inactive") },
+        { memberId: "c", before: st("active"), after: st("active") },
+      ],
+      [
+        { memberId: "a", fromStatus: "active", toStatus: "cancelled", occurredAt: at },
+        { memberId: "a", fromStatus: "active", toStatus: "cancelled", occurredAt: new Date("2026-01-01T00:00:00Z") },
+        { memberId: "b", fromStatus: null, toStatus: "active", occurredAt: at },
+      ],
+    );
+    expect(map.get("a")).toEqual(at);
+    expect(map.has("b")).toBe(false);
+    expect(map.has("c")).toBe(false);
   });
 });
