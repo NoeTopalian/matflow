@@ -275,15 +275,17 @@ async function rollbackRefresh(
         ? await tx.memberStatusEvent.findMany({
             where: { tenantId, memberId: { in: moved.map((c) => c.memberId) }, reason: "import" },
             orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
-            select: { memberId: true, fromStatus: true, toStatus: true, occurredAt: true },
+            select: { memberId: true, fromStatus: true, toStatus: true, occurredAt: true, sourceJobId: true, sourceAction: true },
           })
         : [];
-      const forwardAt = forwardEventDates(moved, forwardEvents);
+      // T8d: the forward event this job wrote is found by its provenance first.
+      const forwardAt = forwardEventDates(moved, forwardEvents, job.id);
       await recordStatusEventsBulk(
         tx,
         restore.map((c) => {
           const occurredAt = forwardAt.get(c.memberId);
-          return { tenantId, memberId: c.memberId, fromStatus: c.after.status, toStatus: c.before.status, reason: "import" as const, changedById: null, ...(occurredAt ? { occurredAt } : {}) };
+          // T8d: the reversal carries the same job, as a rollback.
+          return { tenantId, memberId: c.memberId, fromStatus: c.after.status, toStatus: c.before.status, reason: "import" as const, changedById: null, sourceJobId: job.id, sourceAction: "import_rollback" as const, ...(occurredAt ? { occurredAt } : {}) };
         }),
       );
       const restoredIds = [...alreadyRestored, ...restore.map((c) => c.memberId)];

@@ -3,6 +3,7 @@ import {
   recordStatusEvent,
   recordStatusEventsBulk,
   MEMBER_STATUS_EVENT_REASONS,
+  MEMBER_STATUS_EVENT_SOURCE_ACTIONS,
   clampOccurredAt,
 } from "@/lib/member-status";
 
@@ -209,5 +210,55 @@ describe("occurredAt (T8a)", () => {
   it("clampOccurredAt: an equal date is kept (ties sort on createdAt, then id)", () => {
     const latest = new Date("2026-10-10T00:00:00Z");
     expect(clampOccurredAt(new Date(latest), latest, new Date("2026-10-20T00:00:00Z"))).toEqual(latest);
+  });
+});
+
+// T8d: provenance. Optional sourceJobId + sourceAction pass straight through on
+// import events; absent, the insert is exactly what it was (the cases above,
+// whose four-reason assertion is unchanged). Anything else is refused.
+describe("provenance (T8d)", () => {
+  const imp = { tenantId: "t1", memberId: "m1", fromStatus: "active", toStatus: "cancelled", reason: "import" as const };
+
+  it("exposes the three CHECK-constrained source actions", () => {
+    expect([...MEMBER_STATUS_EVENT_SOURCE_ACTIONS]).toEqual(["import_create", "import_refresh", "import_rollback"]);
+  });
+
+  it("single writer: passes both through on an import event", async () => {
+    const { tx, create } = makeTx();
+    await recordStatusEvent(tx, { ...imp, sourceJobId: "job_1", sourceAction: "import_refresh" });
+    expect(create.mock.calls[0][0].data).toMatchObject({ reason: "import", sourceJobId: "job_1", sourceAction: "import_refresh" });
+  });
+
+  it("bulk writer: passes both through per row, and leaves them out of rows that carry none", async () => {
+    const { tx, createMany } = makeTx();
+    await recordStatusEventsBulk(tx, [
+      { ...imp, fromStatus: null, toStatus: "active", sourceJobId: "job_c", sourceAction: "import_create" },
+      { ...imp, memberId: "m2", sourceJobId: "job_r", sourceAction: "import_rollback" },
+      { ...imp, memberId: "m3" },
+    ]);
+    const rows = createMany.mock.calls[0][0].data as Array<Record<string, unknown>>;
+    expect(rows[0]).toMatchObject({ fromStatus: null, sourceJobId: "job_c", sourceAction: "import_create" });
+    expect(rows[1]).toMatchObject({ sourceJobId: "job_r", sourceAction: "import_rollback" });
+    expect("sourceJobId" in rows[2]).toBe(false);
+    expect("sourceAction" in rows[2]).toBe(false);
+  });
+
+  it("refuses provenance on a non-import event, half a pair, or an unknown action; nothing is written", async () => {
+    const { tx, create, createMany } = makeTx();
+    await expect(
+      recordStatusEvent(tx, { ...imp, reason: "staff_edit", changedById: "u1", sourceJobId: "job_1", sourceAction: "import_refresh" }),
+    ).rejects.toThrow(/import events only/);
+    await expect(recordStatusEvent(tx, { ...imp, sourceJobId: "job_1" })).rejects.toThrow(/together/);
+    await expect(recordStatusEvent(tx, { ...imp, sourceAction: "import_refresh" })).rejects.toThrow(/together/);
+    await expect(recordStatusEvent(tx, { ...imp, sourceJobId: "", sourceAction: "import_refresh" })).rejects.toThrow(/together/);
+    await expect(
+      recordStatusEventsBulk(tx, [{ ...imp, sourceJobId: "job_1", sourceAction: "import_purge" as never }]),
+    ).rejects.toThrow(/unknown sourceAction/);
+    // Even a no-op transition is checked: a bad caller is caught on every call.
+    await expect(
+      recordStatusEventsBulk(tx, [{ ...imp, toStatus: "active", fromStatus: "active", reason: "stripe_webhook", sourceJobId: "j", sourceAction: "import_create" }]),
+    ).rejects.toThrow(/import events only/);
+    expect(create).not.toHaveBeenCalled();
+    expect(createMany).not.toHaveBeenCalled();
   });
 });

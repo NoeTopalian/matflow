@@ -395,10 +395,18 @@ model MemberStatusEvent {
   changedBy   User?    @relation("MemberStatusEventChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
   occurredAt  DateTime @default(now())
   createdAt   DateTime @default(now())
+  // T8d: which TeamUp import job wrote this event, and what that job was doing.
+  // Null on every event not written by a TeamUp import create, refresh or
+  // refresh rollback (and on rows written by builds before T8d). Deliberately
+  // NO foreign key to ImportJob: purging a job must never cascade into history.
+  sourceJobId  String?
+  // CHECK: import_create | import_refresh | import_rollback (enforced by migration)
+  sourceAction String?
 
   @@index([tenantId, memberId, occurredAt])
   @@index([tenantId, occurredAt])
   @@index([changedById])
+  @@index([tenantId, sourceJobId])
 }
 
 // ─── Push Subscriptions (PWA web-push) ───────────────────────────────────────

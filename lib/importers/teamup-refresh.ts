@@ -336,15 +336,24 @@ export function refreshEventOccurredAt(c: Pick<RefreshChange, "before" | "after"
  * moving that member from the change's `before` status to its `after` status;
  * a member with none (an older run whose event cannot be found) is left out,
  * and their reverse event is dated at write time as before.
+ *
+ * T8d: given `jobId`, the event this refresh job wrote (provenance
+ * `import_refresh` + `jobId`) is preferred. Without one, only an event with no
+ * provenance at all (written before T8d) may stand in for it: an event another
+ * job is known to have written is never taken as this job's forward move.
  */
 export function forwardEventDates(
   restore: Array<Pick<RefreshChange, "memberId" | "before" | "after">>,
-  events: Array<{ memberId: string; fromStatus: string | null; toStatus: string; occurredAt: Date }>,
+  events: Array<{ memberId: string; fromStatus: string | null; toStatus: string; occurredAt: Date; sourceJobId?: string | null; sourceAction?: string | null }>,
+  jobId?: string,
 ): Map<string, Date> {
   const out = new Map<string, Date>();
   for (const c of restore) {
     if (c.before.status === c.after.status) continue;
-    const e = events.find((x) => x.memberId === c.memberId && x.fromStatus === c.before.status && x.toStatus === c.after.status);
+    const moves = events.filter((x) => x.memberId === c.memberId && x.fromStatus === c.before.status && x.toStatus === c.after.status);
+    const e = jobId
+      ? moves.find((x) => x.sourceJobId === jobId && x.sourceAction === "import_refresh") ?? moves.find((x) => !x.sourceJobId)
+      : moves[0];
     if (e) out.set(c.memberId, e.occurredAt);
   }
   return out;

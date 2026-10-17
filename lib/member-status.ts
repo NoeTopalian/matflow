@@ -26,6 +26,21 @@ export const MEMBER_STATUS_EVENT_REASONS = [
 
 export type MemberStatusEventReason = (typeof MEMBER_STATUS_EVENT_REASONS)[number];
 
+/**
+ * What a TeamUp import job was doing when it wrote an event (T8d). Mirrors the
+ * CHECK on `MemberStatusEvent.sourceAction` (migration
+ * 20261017022302_status_event_source_provenance). Every one of these is written
+ * with `reason = 'import'`, so conversion math and the create-import rollback
+ * guard, which key on the reason, keep treating them as machine writes.
+ */
+export const MEMBER_STATUS_EVENT_SOURCE_ACTIONS = [
+  "import_create",
+  "import_refresh",
+  "import_rollback",
+] as const;
+
+export type MemberStatusEventSourceAction = (typeof MEMBER_STATUS_EVENT_SOURCE_ACTIONS)[number];
+
 export interface RecordStatusEventInput {
   tenantId: string;
   memberId: string;
@@ -43,6 +58,34 @@ export interface RecordStatusEventInput {
    * key is left out of the insert entirely.
    */
   occurredAt?: Date;
+  /**
+   * Provenance (T8d): the ImportJob that wrote this event. Given together with
+   * `sourceAction`, and only on `reason: "import"` events; the writer refuses
+   * anything else. Absent on every other writer: both keys are then left out
+   * of the insert and the columns stay null.
+   */
+  sourceJobId?: string;
+  sourceAction?: MemberStatusEventSourceAction;
+}
+
+/**
+ * Provenance is all-or-nothing and import-only. A violation is a programming
+ * error in a caller, so it throws inside the caller's transaction and the
+ * status write it belongs to rolls back with it.
+ */
+function assertProvenance(input: RecordStatusEventInput) {
+  const hasJob = input.sourceJobId !== undefined;
+  const hasAction = input.sourceAction !== undefined;
+  if (!hasJob && !hasAction) return;
+  if (hasJob !== hasAction || !input.sourceJobId) {
+    throw new Error("[member-status] sourceJobId and sourceAction are given together");
+  }
+  if (input.reason !== "import") {
+    throw new Error("[member-status] provenance is recorded on import events only");
+  }
+  if (!(MEMBER_STATUS_EVENT_SOURCE_ACTIONS as readonly string[]).includes(input.sourceAction!)) {
+    throw new Error("[member-status] unknown sourceAction");
+  }
 }
 
 /*
@@ -76,7 +119,7 @@ function warnClamped(tenantId: string, count: number) {
   console.warn("[member-status] supplied occurredAt clamped", { tenantId, count });
 }
 
-/** The data object one event inserts; `occurredAt` spread only when supplied. */
+/** The data object one event inserts; `occurredAt` and provenance spread only when supplied. */
 function eventData(input: RecordStatusEventInput, occurredAt: Date | undefined) {
   return {
     tenantId: input.tenantId,
@@ -86,6 +129,9 @@ function eventData(input: RecordStatusEventInput, occurredAt: Date | undefined) 
     reason: input.reason,
     changedById: input.changedById ?? null,
     ...(occurredAt ? { occurredAt } : {}),
+    ...(input.sourceJobId && input.sourceAction
+      ? { sourceJobId: input.sourceJobId, sourceAction: input.sourceAction }
+      : {}),
   };
 }
 
@@ -106,6 +152,7 @@ export async function recordStatusEvent(
   tx: TxClient,
   input: RecordStatusEventInput,
 ): Promise<{ id: string } | null> {
+  assertProvenance(input);
   if (input.fromStatus === input.toStatus) return null;
   let occurredAt: Date | undefined;
   if (input.occurredAt) {
@@ -126,12 +173,15 @@ export async function recordStatusEvent(
 /**
  * Bulk variant for the importer: one `createMany` for a whole batch, inside the
  * caller's transaction. No-op transitions are filtered out first, same rule as
- * the single writer. Returns the number of rows actually written.
+ * the single writer. Returns the number of rows actually written. The TeamUp
+ * create, refresh and refresh-rollback call sites pass `sourceJobId` and
+ * `sourceAction` on every row (T8d).
  */
 export async function recordStatusEventsBulk(
   tx: TxClient,
   inputs: RecordStatusEventInput[],
 ): Promise<number> {
+  for (const input of inputs) assertProvenance(input);
   const rows = inputs.filter((input) => input.fromStatus !== input.toStatus);
   if (rows.length === 0) return 0;
   // One lookup for the whole batch: the latest event per member that was

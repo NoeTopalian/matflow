@@ -377,6 +377,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 toStatus: m.status,
                 reason: "import" as const,
                 changedById: null,
+                // T8d: the job that created this member, so its first event can
+                // be traced to the upload that wrote it.
+                sourceJobId: jobId,
+                sourceAction: "import_create" as const,
               })),
             );
           }
@@ -461,7 +465,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             });
             await recordStatusEventsBulk(
               tx,
-              createdRows.map((m) => ({ tenantId, memberId: m.id, fromStatus: null, toStatus: m.status, reason: "import" as const, changedById: null })),
+              createdRows.map((m) => ({ tenantId, memberId: m.id, fromStatus: null, toStatus: m.status, reason: "import" as const, changedById: null, sourceJobId: jobId, sourceAction: "import_create" as const })),
             );
           }
           return { inserted: result.count, refused };
@@ -805,7 +809,8 @@ async function commitRefresh({
         tx,
         applied.map((c) => {
           const occurredAt = refreshEventOccurredAt(c, job.sourceExportedAt);
-          return { tenantId, memberId: c.memberId, fromStatus: c.before.status, toStatus: c.after.status, reason: "import" as const, changedById: null, ...(occurredAt ? { occurredAt } : {}) };
+          // T8d: provenance — this refresh job, doing a refresh.
+          return { tenantId, memberId: c.memberId, fromStatus: c.before.status, toStatus: c.after.status, reason: "import" as const, changedById: null, sourceJobId: job.id, sourceAction: "import_refresh" as const, ...(occurredAt ? { occurredAt } : {}) };
         }),
       );
       const cur = await tx.importJob.findUnique({ where: { id: job.id }, select: { manifest: true } });

@@ -621,3 +621,65 @@ describe("refreshEventOccurredAt / forwardEventDates (pure, T8a)", () => {
     expect(map.has("c")).toBe(false);
   });
 });
+
+// ── Provenance (T8d) ─────────────────────────────────────────────────────────
+
+describe("refresh and rollback provenance (T8d)", () => {
+  it("every refresh event names the refresh job as import_refresh; reason stays import and no person is named", async () => {
+    refreshJob({ status: "preview" });
+    const seeded = db.events.length;
+    const res = (await commitPOST(req(), params("job_refresh"))) as unknown as Res;
+    expect(res.status).toBe(200);
+    const written = db.events.slice(seeded);
+    expect(written.length).toBeGreaterThan(0);
+    for (const e of written) {
+      expect(e).toMatchObject({ reason: "import", changedById: null, sourceJobId: "job_refresh", sourceAction: "import_refresh" });
+    }
+    // Acceptance 1: TeamUp cancelled Tom; the event says so, from this job.
+    expect(written.find((e) => e.memberId === "m_tom")).toMatchObject({ fromStatus: "active", toStatus: "cancelled", sourceJobId: "job_refresh", sourceAction: "import_refresh" });
+  });
+
+  it("a rollback's reverse events carry the same job as import_rollback, dated at the forward event (A-9)", async () => {
+    refreshJob({ status: "preview" });
+    await commitPOST(req(), params("job_refresh"));
+    const forwardCount = db.events.length;
+    const res = (await rollbackPOST(req(), params("job_refresh"))) as unknown as Res;
+    expect(res.status).toBe(200);
+    const reverse = db.events.slice(forwardCount);
+    expect(reverse.length).toBeGreaterThan(0);
+    for (const e of reverse) {
+      expect(e).toMatchObject({ reason: "import", changedById: null, sourceJobId: "job_refresh", sourceAction: "import_rollback" });
+    }
+    const forward = db.events.find((e) => e.memberId === "m_tom" && e.sourceAction === "import_refresh")!;
+    const back = reverse.find((e) => e.memberId === "m_tom")!;
+    expect(back).toMatchObject({ fromStatus: "cancelled", toStatus: "active" });
+    expect(back.occurredAt.toISOString()).toBe(forward.occurredAt.toISOString());
+  });
+
+  it("forwardEventDates with a job id: this job's event first, an event with no provenance next, never another job's", () => {
+    const st = (status: string) => ({ status, paymentStatus: "paid", cancelledAt: null, membershipType: null, membershipTierId: null, billingStatusAsOf: null, billingStatusSource: null });
+    const OWN = new Date("2026-09-20T00:00:00Z");
+    const OTHER = new Date("2026-09-25T00:00:00Z");
+    const LEGACY = new Date("2026-09-10T00:00:00Z");
+    const move = (memberId: string) => ({ memberId, before: st("active"), after: st("cancelled") });
+    const ev = (memberId: string, occurredAt: Date, sourceJobId: string | null, sourceAction: string | null) =>
+      ({ memberId, fromStatus: "active", toStatus: "cancelled", occurredAt, sourceJobId, sourceAction });
+    // Newest first, as the route reads them.
+    const map = forwardEventDates(
+      [move("a"), move("b"), move("c")],
+      [
+        ev("a", OTHER, "job_other", "import_refresh"),
+        ev("a", OWN, "job_mine", "import_refresh"),
+        ev("b", OTHER, "job_other", "import_refresh"),
+        ev("b", LEGACY, null, null),
+        ev("c", OTHER, "job_other", "import_refresh"),
+      ],
+      "job_mine",
+    );
+    expect(map.get("a")).toEqual(OWN);
+    expect(map.get("b")).toEqual(LEGACY);
+    expect(map.has("c")).toBe(false);
+    // Without a job id the old rule stands: the newest matching move.
+    expect(forwardEventDates([move("a")], [ev("a", OTHER, "job_other", "import_refresh"), ev("a", OWN, "job_mine", "import_refresh")]).get("a")).toEqual(OTHER);
+  });
+});
