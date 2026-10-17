@@ -69,6 +69,9 @@ const EMAIL_ADDRESS = /[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+/g;
 // acknowledged so it stops retrying.
 const RECENT_UNKNOWN_MS = 15 * 60 * 1000;
 
+const WEBHOOK_SECRET = /^whsec_[A-Za-z0-9+/]{32,}={0,2}$/;
+const MAX_BODY_BYTES = 256 * 1024;
+
 function isRecent(createdAt: string | undefined): boolean {
   const t = createdAt ? Date.parse(createdAt) : NaN;
   return Number.isFinite(t) && Math.abs(Date.now() - t) <= RECENT_UNKNOWN_MS;
@@ -120,15 +123,22 @@ export async function POST(req: Request) {
   const secret = process.env.RESEND_WEBHOOK_SECRET;
   if (!secret) return outcome("not_configured", "", 503, { error: "Webhook secret not configured" });
 
+  // Not a full Svix secret (the whsec_… value Resend shows; at least 24 key
+  // bytes): a set-up fault, not a bad request — 503 so it is not mistaken for
+  // forged traffic. svix itself accepts "whsec_" or a short value, and a key
+  // that weak would let anyone sign events.
   let webhook: Webhook;
   try {
-    webhook = new Webhook(secret);
+    if (!WEBHOOK_SECRET.test(secret.trim())) throw new Error("weak secret");
+    webhook = new Webhook(secret.trim());
   } catch {
-    // Not a Svix secret (it must be the whsec_… value Resend shows): a set-up
-    // fault, not a bad request — 503 so it is not mistaken for forged traffic.
     return outcome("misconfigured_secret", "", 503, { error: "Webhook secret is not valid" });
   }
 
+  // Resend events are a few KB; refuse a large unauthenticated body before reading it.
+  if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) {
+    return outcome("body_too_large", "", 413, { error: "Payload too large" });
+  }
   const rawBody = await req.text();
   try {
     webhook.verify(rawBody, {

@@ -125,10 +125,25 @@ describe("signature (svix, raw body)", () => {
     expect(store.writes).toBe(0);
   });
 
-  it("a secret that is not a Svix secret → 503 (set-up fault), not 401, nothing processed", async () => {
-    process.env.RESEND_WEBHOOK_SECRET = "whsec_%%%not-base64%%%";
-    const r = await post(signed(ev("email.delivered")));
-    expect(r).toEqual({ status: 503, body: expect.objectContaining({ outcome: "misconfigured_secret" }) });
+  it("a secret that is not a full Svix secret → 503 (set-up fault), not 401, nothing processed", async () => {
+    // svix itself accepts "whsec_" and "abcd", and a signature made with that weak key verifies.
+    for (const weak of ["whsec_%%%not-base64%%%", "whsec_", "abcd", `whsec_${randomBytes(8).toString("base64")}`]) {
+      process.env.RESEND_WEBHOOK_SECRET = weak;
+      const forged = weak.startsWith("whsec_%") ? signed(ev("email.delivered")) : signed(ev("email.delivered"), { secret: weak });
+      const r = await post(forged);
+      expect(r, weak).toEqual({ status: 503, body: expect.objectContaining({ outcome: "misconfigured_secret" }) });
+    }
+    expect(store.writes).toBe(0);
+  });
+
+  it("a body larger than 256 KB is refused before it is read", async () => {
+    const big = new Request("http://localhost/api/webhooks/resend", {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(300 * 1024) },
+      body: "{}",
+    });
+    const res = await (await import("@/app/api/webhooks/resend/route")).POST(big);
+    expect(res.status).toBe(413);
     expect(store.writes).toBe(0);
   });
 });

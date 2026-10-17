@@ -93,6 +93,15 @@ describe("policy", () => {
     expect(isRecipientAllowed(p, "member@example.test")).toBe(false);
   });
 
+  it("a non-ASCII look-alike of a listed address is refused (Kelvin sign lower-cases to k)", () => {
+    process.env.EMAIL_DELIVERY = "test";
+    process.env.EMAIL_TEST_RECIPIENTS = "kate@example.test";
+    const p = emailSendingPolicy();
+    expect("Kate@example.test".toLowerCase()).toBe("kate@example.test"); // the trap
+    expect(isRecipientAllowed(p, "Kate@example.test")).toBe(false);
+    expect(isRecipientAllowed(p, "Kate@example.test")).toBe(true);
+  });
+
   it("outside production, on means test mode", () => {
     process.env.EMAIL_DELIVERY = "on";
     for (const vercel of [undefined, "preview", "development"]) {
@@ -236,7 +245,7 @@ describe("static guard: one sending boundary", () => {
     for (const e of fs.readdirSync(root, { withFileTypes: true })) if (e.isFile() && CODE.test(e.name)) files.push(e.name);
     const offenders = files.filter((f) => {
       const src = fs.readFileSync(path.join(root, f), "utf8");
-      if (/\bemails\.(send|create)\s*\(|\bbatch\.(send|create)\s*\(|new Resend\s*\(/.test(src) && f !== "lib/email.ts") return true;
+      if (/\bemails\.(send|create)\s*\(|\bbatch\.(send|create)\s*\(|new Resend\s*\(|from\s*["']resend["']|require\(\s*["']resend["']\s*\)|api\.resend\.com/.test(src) && f !== "lib/email.ts") return true;
       return f === "lib/email.ts" && /\b(cc|bcc)\s*:/.test(src);
     });
     expect(offenders).toEqual([]);

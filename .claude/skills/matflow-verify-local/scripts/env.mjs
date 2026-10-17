@@ -106,9 +106,12 @@ export function appEnv({ isolated = true } = {}) {
     env.STRIPE_CLIENT_ID = "ca_invalid_local";
     env.RESEND_API_KEY = "re_invalid_local_never_sends";
   }
-  delete env.EMAIL_TEST_RECIPIENTS;
-  delete env.RESEND_WEBHOOK_SECRET;
-  delete env.RESEND_BASE_URL; // only from MF_EXTRA_ENV (loopback), never inherited from the shell
+  // Email settings come only from MF_EXTRA_ENV, never inherited from the shell — in any letter case (Windows
+  // environment names are case-insensitive, so a lower-case copy would otherwise reach the server).
+  for (const k of Object.keys(env)) {
+    if (/^(EMAIL_TEST_RECIPIENTS|RESEND_WEBHOOK_SECRET|RESEND_BASE_URL)$/i.test(k)) delete env[k];
+    else if (/^EMAIL_DELIVERY$/i.test(k) && k !== "EMAIL_DELIVERY") delete env[k];
+  }
   Object.assign(env, extraEnv());
   return env;
 }

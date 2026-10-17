@@ -106,11 +106,18 @@ export function emailSendingPolicy(): EmailSendingPolicy {
   return { kind: "off" };
 }
 
-/** Whether `to` may receive mail under `policy`. Exact address match, case-insensitive. */
+/**
+ * Whether `to` may receive mail under `policy`. Exact address match,
+ * case-insensitive. In test mode a non-ASCII address is refused: some
+ * characters lower-case to ASCII (the Kelvin sign K → "k"), so the address
+ * sent would not be the address listed.
+ */
 export function isRecipientAllowed(policy: EmailSendingPolicy, to: string): boolean {
   if (policy.kind === "open") return true;
   if (policy.kind === "off") return false;
-  return policy.recipients.has(to.trim().toLowerCase());
+  const address = to.trim();
+  if (!/^[\x21-\x7e]+$/.test(address)) return false;
+  return policy.recipients.has(address.toLowerCase());
 }
 
 export function emailDeliveryMode(): EmailDeliveryMode {

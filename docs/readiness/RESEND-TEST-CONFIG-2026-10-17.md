@@ -29,7 +29,7 @@ Branch `feat/email-test-isolation`. Production is unchanged and customer sending
 - **M1** Resend dashboard → create a separate team/account for testing (free plan; do not upgrade). Read its sending limits on the dashboard.
 - **M2** In that test account: API keys → Create → name `matflow-local-test`, permission **Sending access**. Note the permitted sender (Domains page; with no domain it is Resend's testing sender).
 - **M3** Decide the exact test recipients: your own address; optionally `delivered@resend.dev`.
-- **M4** Approve installing Cloudflare's tunnel client (`winget install Cloudflare.cloudflared`) — or name another tunnel. I start the local server; you then run `cloudflared tunnel --url http://127.0.0.1:3991` and keep that window open; it prints a `https://….trycloudflare.com` URL.
+- **M4** Approve installing Cloudflare's tunnel client (`winget install Cloudflare.cloudflared`) — or name another tunnel. I start the local server and the webhook gate; you then run `cloudflared tunnel --url http://127.0.0.1:3995` and keep that window open; it prints a `https://….trycloudflare.com` URL. **The tunnel points at the webhook gate (port 3995), never at the app (3991):** the gate forwards only `POST /api/webhooks/resend` and answers 404 to everything else, so the sign-in pages and APIs of the test server are never public.
 - **M5** Test account → Webhooks → Add endpoint `https://<that URL>/api/webhooks/resend`, the seven `email.*` events in row 5 → copy its signing secret.
 - **M6** Create the private file `%LOCALAPPDATA%\matflow-verify\email-test-isolation\email-test.env` in Notepad (outside any repository) with exactly these lines, filled in by you:
   ```
@@ -41,4 +41,5 @@ Branch `feat/email-test-isolation`. Production is unchanged and customer sending
   ```
   Tell me only "file ready".
 - **M7** I then start the isolated server with `MF_EXTRA_ENV` pointing at that file, trigger one password-reset email to your address on a synthetic test club, and read back the test-branch EmailLog: `sent` with a real Resend id, then `delivered` from the signed webhook (REAL provider evidence, recorded separately from the simulated runs). Afterwards: delete the webhook endpoint (or disable it), stop the tunnel, delete the private file.
+- Before production is ever put into `test` mode (not part of this test): two known gaps must be closed first — routes still retire or mint sign-in, invite and waiver links for an address the test list will then block (review M-1, 17 Oct), and the login page still offers email to everyone (L-4). And add `RESEND_API_KEY` before setting `EMAIL_DELIVERY=test` with a list: with a list and no key the production boot check refuses to start (L-6).
 - Production (later, separately): read `matflow.studio` verification status and sending limits in the production account; activation only after your commercial go-ahead and explicit approval.
