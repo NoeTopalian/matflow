@@ -1103,13 +1103,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       if (logoFile) {
         const fd = new FormData();
         fd.append("file", logoFile);
-        const upRes = await fetch("/api/upload", { method: "POST", body: fd });
+        const upRes = await fetch("/api/upload?purpose=logo", { method: "POST", body: fd });
         if (upRes.ok) {
           const { url } = await upRes.json();
           finalLogoUrl = url;
         } else {
           // Surface the failure instead of silently writing logoUrl=null to the DB.
-          // Common cause: BLOB_READ_WRITE_TOKEN missing in Vercel env (returns 503).
+          // purpose=logo never touches Blob (T9b), so this is a refused or
+          // unreadable image, a rate limit, or the route being unreachable.
           const errBody = await upRes.json().catch(() => ({} as { error?: string }));
           uploadError = errBody.error ?? `Logo upload failed (HTTP ${upRes.status})`;
           finalLogoUrl = logoPreview;
@@ -1138,11 +1139,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       root.style.setProperty("--color-text-muted",       hex(textCol, 0.4));
       root.style.setProperty("--color-text-subtle",      hex(textCol, 0.2));
 
-      // 3. Save to DB. Allow data: URLs through so members see the logo even
-      // when Vercel Blob isn't configured (BLOB_READ_WRITE_TOKEN missing) —
-      // the base64 stays bounded because the file was downscaled in the
-      // browser on selection and /api/settings caps the column at 3M chars.
-      // The proper fix is to provision Blob; this is a resilience fallback.
+      // 3. Save to DB. Logos are stored inline as a raster data: URL (T9b) so
+      // they render with no session on the login page, kiosk, leaderboard and
+      // public club page. The base64 stays bounded: /api/upload?purpose=logo
+      // re-encodes to a ≤512px WebP, and /api/settings caps the column at 3M
+      // chars and refuses external links (lib/logo-url.ts).
       try {
         const persistedLogoUrl =
           typeof finalLogoUrl === "string" && finalLogoUrl.length > 0

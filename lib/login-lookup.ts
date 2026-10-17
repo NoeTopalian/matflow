@@ -2,6 +2,8 @@ export interface GymBranding {
   name: string;
   slug: string;
   logoUrl: string | null;
+  /** The owner's logo-size choice (Settings → Branding). Absent on older payloads. */
+  logoSize?: string | null;
   primaryColor: string;
   secondaryColor: string;
   textColor: string;
@@ -15,6 +17,16 @@ export interface GymBranding {
    * says nothing about any one account.
    */
   emailDelivery?: "on" | "off";
+}
+
+/**
+ * The login door's logo height for each Settings → Branding size (T9b).
+ * "md" is the 120px the page always used; an unknown or absent value is "md".
+ */
+export const LOGIN_LOGO_PX: Record<"sm" | "md" | "lg", number> = { sm: 88, md: 120, lg: 160 };
+
+export function loginLogoPx(logoSize: string | null | undefined): number {
+  return logoSize === "sm" || logoSize === "lg" ? LOGIN_LOGO_PX[logoSize] : LOGIN_LOGO_PX.md;
 }
 
 export interface LookupResult {
