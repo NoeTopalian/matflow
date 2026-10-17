@@ -19,9 +19,9 @@ Next.js 16 + TypeScript + Tailwind v4 (CSS-first) + Prisma 7 (`@prisma/adapter-p
 
 ## Verification workflow (project skills in [`.claude/skills/`](.claude/skills/))
 
-1. `matflow-verify-local` — focused tests, lint, full suite, DB suites as both roles, production build, with the commit each ran on.
-2. `matflow-verify-browser` — real journey on the test branch: desktop and phone width, keyboard, forced failed saves, retries.
-3. `matflow-completion-report` — what changed, what was tested, what is unverified, exact release state.
+1. `matflow-verify-local` — **before saying any code change is done**: focused tests, lint, full suite, DB suites as both roles, production build, with the commit each ran on.
+2. `matflow-verify-browser` — **whenever a change affects what someone sees or does**: a journey written for the changed behaviour (the reference smoke run alone verifies nothing) on the test branch — desktop and phone width, keyboard, forced failed saves, retries.
+3. `matflow-completion-report` — **at the end of every coding task**: what changed, what was tested, what is unverified, exact release state.
 
 ## Tenant isolation (essential)
 

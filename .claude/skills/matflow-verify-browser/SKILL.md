@@ -19,7 +19,7 @@ Production build of your worktree, served over HTTPS on localhost, against the N
    - **failed saves**: force a network failure (`route.abort`) and a server error (`route.fulfill` 4xx/5xx) — the message stays beside the action, typed values are kept, nothing is saved;
    - **retries**: the retry sends exactly one request, the error clears, reload shows the saved value;
    - no uncaught page errors.
-   `node $B/smoke.mjs` itself is the reference run (contact email in Settings).
+   `node $B/smoke.mjs` itself is the reference run (contact email in Settings): it proves the harness works, not your change. The journey you report must drive the screens and actions the change touches and assert the changed behaviour on screen and in the database.
 5. Teardown: `node $B/fixture.mjs teardown` (prints rows left; must be 0) and `node $L/server.mjs stop`.
 
 Results: PASS/FAIL/NOTE ledger and screenshots (addresses masked) in `%LOCALAPPDATA%\matflow-verify\<worktree>`. A NOTE is a measurement, not a pass. Report the commit the build was made from. Anything not exercised (real email, Stripe, blob storage, push) is **unverified** — say so.
