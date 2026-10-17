@@ -47,8 +47,10 @@ const ARGS = {
 };
 
 beforeEach(() => {
-  // Production sending path (17 Oct 2026): outside production only EMAIL_TEST_RECIPIENTS receive mail.
+  // The ACTIVATED production path (17 Oct 2026): EMAIL_DELIVERY=on on the Vercel production deployment is the
+  // only open mode. Not evidence for the isolation policy — that is email-sending-policy-table.test.ts.
   process.env.VERCEL_ENV = "production";
+  process.env.EMAIL_DELIVERY = "on";
   findFirstMock.mockReset();
   createMock.mockReset();
   resendSendMock.mockReset();
@@ -80,4 +82,5 @@ describe("lib/email.ts — mail-disabled short-circuit (no RESEND_API_KEY)", () 
 
 afterEach(() => {
   delete process.env.VERCEL_ENV;
+  delete process.env.EMAIL_DELIVERY;
 });

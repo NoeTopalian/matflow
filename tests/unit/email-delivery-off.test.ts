@@ -67,8 +67,10 @@ const VARS: Record<string, string> = {
 let logSeq = 0;
 
 beforeEach(() => {
-  // Production sending path (17 Oct 2026): outside production only EMAIL_TEST_RECIPIENTS receive mail.
+  // The ACTIVATED production path (17 Oct 2026): EMAIL_DELIVERY=on on the Vercel production deployment is the
+  // only open mode. Not evidence for the isolation policy — that is email-sending-policy-table.test.ts.
   process.env.VERCEL_ENV = "production";
+  process.env.EMAIL_DELIVERY = "on";
   findFirstMock.mockReset();
   createMock.mockReset();
   createMock.mockImplementation(() => Promise.resolve({ id: `log-${++logSeq}` }));
@@ -87,11 +89,15 @@ afterEach(() => {
 });
 
 describe("EMAIL_DELIVERY mode parsing", () => {
-  it("defaults to on when unset or empty, so existing environments keep sending", () => {
+  it("unset or empty is OFF, even on production (17 Oct 2026: a key or a deploy never starts mail)", () => {
     delete process.env.EMAIL_DELIVERY;
-    expect(emailDeliveryMode()).toBe("on");
+    expect(emailDeliveryMode()).toBe("off");
     process.env.EMAIL_DELIVERY = "";
-    expect(isEmailDeliveryOn()).toBe(true);
+    expect(isEmailDeliveryOn()).toBe(false);
+    expect(emailDeliveryMisconfigured()).toBe(false);
+  });
+
+  it("explicit on (any case/whitespace) is on, on the production deployment", () => {
     process.env.EMAIL_DELIVERY = " ON ";
     expect(isEmailDeliveryOn()).toBe(true);
     expect(emailDeliveryMisconfigured()).toBe(false);
@@ -159,7 +165,7 @@ describe("sendEmail with EMAIL_DELIVERY=off", () => {
 
 describe("sendEmail — provisional login email recipient (delivery ON)", () => {
   it("suppresses any template to a provisional login address, logs suppressed_provisional, never calls Resend", async () => {
-    delete process.env.EMAIL_DELIVERY;
+    process.env.EMAIL_DELIVERY = "on"; // the explicit activation; VERCEL_ENV=production from beforeEach
     userFindFirstMock.mockResolvedValue({ id: "u-owner", loginEmailProvisionalSince: new Date("2026-10-07T00:00:00Z") });
     for (const templateId of ["password_reset", "magic_link", "import_complete", "payment_failed_owner", "invite_member"] as const) {
       const r = await sendEmail({ tenantId: "t-1", templateId, to: "Provisional@Example.com", vars: VARS });
@@ -186,7 +192,7 @@ describe("sendEmail — provisional login email recipient (delivery ON)", () => 
   });
 
   it("system mail (_system tenant) to an address provisional in a club is suppressed too", async () => {
-    delete process.env.EMAIL_DELIVERY;
+    process.env.EMAIL_DELIVERY = "on"; // the explicit activation; VERCEL_ENV=production from beforeEach
     userFindFirstMock.mockResolvedValue({ id: "u-owner", loginEmailProvisionalSince: new Date("2026-10-07T00:00:00Z") });
     const r = await sendEmail({ tenantId: "_system", templateId: "application_received", to: "owner@club.example", vars: VARS });
     expect(r).toEqual({ ok: false, logId: expect.any(String), suppressed: "provisional_recipient" });
@@ -194,7 +200,7 @@ describe("sendEmail — provisional login email recipient (delivery ON)", () => 
   });
 
   it("fails closed: if the provisional check cannot run, nothing is sent", async () => {
-    delete process.env.EMAIL_DELIVERY;
+    process.env.EMAIL_DELIVERY = "on"; // the explicit activation; VERCEL_ENV=production from beforeEach
     userFindFirstMock.mockRejectedValue(new Error("db down"));
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const r = await sendEmail({ tenantId: "t-1", templateId: "test", to: "m@example.com", vars: VARS });
@@ -204,7 +210,7 @@ describe("sendEmail — provisional login email recipient (delivery ON)", () => 
   });
 
   it("a verified (non-provisional) address still sends", async () => {
-    delete process.env.EMAIL_DELIVERY;
+    process.env.EMAIL_DELIVERY = "on"; // the explicit activation; VERCEL_ENV=production from beforeEach
     userFindFirstMock.mockResolvedValue(null);
     const r = await sendEmail({ tenantId: "t-1", templateId: "test", to: "m@example.com", vars: VARS });
     expect(r.ok).toBe(true);
@@ -214,7 +220,7 @@ describe("sendEmail — provisional login email recipient (delivery ON)", () => 
 
 describe("sendEmail with delivery on (control)", () => {
   it("sends through Resend as before", async () => {
-    delete process.env.EMAIL_DELIVERY;
+    process.env.EMAIL_DELIVERY = "on"; // the explicit activation; VERCEL_ENV=production from beforeEach
     const r = await sendEmail({ tenantId: "t-1", templateId: "test", to: "m@example.com", vars: VARS });
     expect(r.ok).toBe(true);
     expect(r.suppressed).toBeUndefined();
@@ -224,4 +230,5 @@ describe("sendEmail with delivery on (control)", () => {
 
 afterEach(() => {
   delete process.env.VERCEL_ENV;
+  delete process.env.EMAIL_DELIVERY;
 });

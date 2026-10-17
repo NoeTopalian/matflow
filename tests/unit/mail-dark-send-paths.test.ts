@@ -192,16 +192,18 @@ describe("EMAIL_DELIVERY=off — routes that send surface 'not sent', never succ
 });
 
 describe("the login screen learns that email is off", () => {
-  it("GET /api/tenant/[slug] carries emailDelivery: off (and on when the switch is unset)", async () => {
+  it("GET /api/tenant/[slug] carries emailDelivery: off when off or unset, on only when explicitly on (production)", async () => {
     h.handlers["tenant.findUnique"] = () => ({
       name: "Mail Dark Gym", slug: "maildark", logoUrl: null, primaryColor: "#000000", secondaryColor: "#000000",
       textColor: "#ffffff", bgColor: null, fontFamily: null, subscriptionStatus: "active", deletedAt: null,
     });
-    const off = await tenantLookup(new Request("http://localhost/api/tenant/maildark"), { params: Promise.resolve({ slug: "maildark" }) });
-    expect((await off.json()).emailDelivery).toBe("off");
-    delete process.env.EMAIL_DELIVERY;
-    const on = await tenantLookup(new Request("http://localhost/api/tenant/maildark"), { params: Promise.resolve({ slug: "maildark" }) });
-    expect((await on.json()).emailDelivery).toBe("on");
+    const look = async () =>
+      (await (await tenantLookup(new Request("http://localhost/api/tenant/maildark"), { params: Promise.resolve({ slug: "maildark" }) })).json()).emailDelivery;
+    expect(await look()).toBe("off");
+    delete process.env.EMAIL_DELIVERY; // unset is OFF since 17 Oct 2026, on production too
+    expect(await look()).toBe("off");
+    process.env.EMAIL_DELIVERY = "on";
+    expect(await look()).toBe("on");
   });
 });
 
