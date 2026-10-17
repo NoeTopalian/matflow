@@ -282,11 +282,8 @@ Schema migrations live in `prisma/migrations/`. Each has a forward `migration.sq
 1. **First, don't panic.** Application-layer code expecting the new schema may fail, but the DB itself is consistent.
 2. **Fix forward — do not revert the migration file:**
    - Reverting a migration's commit does not change the database. Write a new forward migration that undoes the change, on a branch; run the gates; merge only with Noe's approval (a push to `main` runs `prisma migrate deploy` against production). Never `migrate reset`, never restore the database to undo code (`docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md` §4 step 3).
-3. **Reverse the SQL by hand** if the change is destructive (e.g. dropped a column):
-   - Restore from the most recent backup (Sundays 03:00 UTC), OR
-   - Hand-write the inverse SQL: `ALTER TABLE ... ADD COLUMN ...`, etc.
-4. **Mark the failed migration applied** so Prisma doesn't re-run it on the next deploy:
-   - `INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name, ...) VALUES (...);` — copy the format from an adjacent successful row.
+3. **If data was lost** (a destructive change ran, e.g. a dropped column): the forward migration restores the structure; recover rows by restoring into an isolated branch, never onto production (`docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md` §2.2; the weekly dump is not a reliable source, §2.6), and Noe decides any cut-over (§2.5).
+4. **If a migration failed part-way** (`_prisma_migrations.finished_at IS NULL`): Noe follows `docs/runbooks/DEPLOY-2026-10.md` §5 — inverse SQL for only what it applied, then `npx prisma migrate resolve --rolled-back <migration_name>` against production — rather than editing `_prisma_migrations` by hand.
 
 ### Specific rollback recipes
 

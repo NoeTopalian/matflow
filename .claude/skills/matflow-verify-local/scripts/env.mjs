@@ -17,7 +17,7 @@ const fwd = (p) => p.replace(/\\/g, "/");
 const WIN = process.platform === "win32";
 
 /** package.json engines: >=24.18.1 <25. */
-const supported = (v) => { const [maj, min] = v.replace(/^v/, "").split(".").map(Number); return maj === 24 && min >= 18; };
+const supported = (v) => { const [maj, min, pat] = v.replace(/^v/, "").split(".").map(Number); return maj === 24 && (min > 18 || (min === 18 && pat >= 1)); };
 
 /** MF_NODE24 from this process, or from the user's saved variables (a session started before it was set lacks it). */
 function savedNode24() {
