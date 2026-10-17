@@ -2,6 +2,9 @@ import { unstable_cache } from "next/cache";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { noPaymentYetWhere } from "@/lib/overdue";
 import { ACTIVE_MEMBER, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER, isActiveMember } from "@/lib/member-population";
+import { emptyMembershipReport, loadMembershipReport, type MembershipReport } from "@/lib/membership-report";
+
+export type { MembershipReport } from "@/lib/membership-report";
 
 export interface ClassOption {
   id: string;
@@ -173,7 +176,19 @@ export interface ReportsData {
   retentionRate: number | null;
   /** T2b: the counts behind `retentionRate` (members who joined 6+ months ago, and how many are still active). */
   retention: { ratePct: number | null; survived: number; cohort: number };
+  /**
+   * @deprecated Joins by joinedAt against members currently cancelled, by
+   * cancelledAt (a rejoin vanishes). Kept so the shape stays additive; the Net
+   * New Members card and the CSV read `membership` instead (T8c).
+   */
   netNewByMonth: { month: string; joined: number; cancelled: number; net: number }[];
+  /**
+   * T8c: movement (new, rejoined, lost incl. completed course, net) and
+   * active-member headcount per club month, replayed from status history
+   * (lib/membership-movement.ts). The current month's headcount equals
+   * `summary.activeMembers`. Club-wide: never scoped by the class or age filter.
+   */
+  membership: MembershipReport;
   paymentHealth: {
     overdueCount: number;
     /** "No payment yet" on a plan, MatFlow-billed (lib/overdue noPaymentYetWhere — the Outstanding list's rule). */
@@ -361,6 +376,7 @@ export function createEmptyReportsData(): ReportsData {
     retentionRate: null,
     retention: { ratePct: null, survived: 0, cohort: 0 },
     netNewByMonth: [],
+    membership: emptyMembershipReport(),
     paymentHealth: {
       overdueCount: 0,
       noPaymentYetCount: 0,
@@ -798,6 +814,15 @@ export async function getReportsData(
     };
   });
 
+  // T8c: movement and headcount, in its own read (one events findMany plus the
+  // ledger when the back-fill has not been applied), after the block above so
+  // the report never holds two pooled connections at once.
+  const membership = await withTenantContext(
+    tenantId,
+    (tx) => loadMembershipReport(tx, tenantId, { now }),
+    { maxWait: 10_000, timeout: 30_000 },
+  );
+
   const resolvedClass = resolvedClassId
     ? classOptionsRaw.find((c) => c.id === resolvedClassId) ?? null
     : null;
@@ -836,6 +861,7 @@ export async function getReportsData(
     retentionRate,
     retention: { ratePct: retentionRate, survived: retentionActive, cohort: retentionBase },
     netNewByMonth,
+    membership,
     paymentHealth: {
       overdueCount,
       noPaymentYetCount,
@@ -863,8 +889,9 @@ export async function getReportsData(
  * entry. "v2" = T2b counts (churn, retention, recovery, rate
  * numerator/denominator, current status shares). T2c added no field.
  * "v3" = summary.activeOnHoldMembers (T1 review, 17 Oct 2026).
+ * "v4" = membership: movement and headcount by month (T8c, 17 Oct 2026).
  */
-export const REPORTS_CACHE_VERSION = "v3";
+export const REPORTS_CACHE_VERSION = "v4";
 
 /**
  * The cached read the reports page and API use. Under 25 concurrent staff

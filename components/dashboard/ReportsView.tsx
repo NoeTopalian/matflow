@@ -51,6 +51,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import NetNewMembersCard from "./NetNewMembersCard";
+import { MEMBERSHIP_COPY } from "@/lib/membership-movement";
+import type { MembershipReport } from "@/lib/membership-report";
+import { basisNote } from "@/lib/net-new-series";
 import {
   EmptyChart,
   RatioValue,
@@ -252,6 +255,40 @@ export function reportsCsvFilename(generatedAt: string): string {
 }
 
 /**
+ * T8c: the movement tally for the window, one row per month (new, rejoined,
+ * lost with its split, net) and the active-member headcount at each month
+ * end — the same figures the Net New Members card draws, with each month's
+ * basis ("Estimated from your TeamUp history") so an estimate never reads as
+ * a record. Net is a number cell, so a negative month stays a number.
+ */
+export function membershipCsvRows(m: MembershipReport): (string | number | null)[][] {
+  if (m.movementsByMonth.length === 0) return [];
+  const t = m.totals;
+  const split = (r: MembershipReport["totals"]) =>
+    `New ${r.new} · Rejoined ${r.rejoined} · Lost ${r.lost} (cancelled ${r.lostCancelled}, completed course ${r.lostCompleted})`;
+  return [
+    ["Membership movement", `${m.window.from} – ${m.window.to}`, t.net, `${split(t)} · ${MEMBERSHIP_COPY.definition} ${MEMBERSHIP_COPY.deletion}`],
+    ...m.movementsByMonth.map((r) => [
+      "Membership movement by month",
+      r.label,
+      r.net,
+      [
+        split(r),
+        r.imported > 0 ? `Brought over from TeamUp without dated history ${r.imported}` : null,
+        r.otherIn > 0 || r.otherOut > 0 ? `Other changes in ${r.otherIn}, out ${r.otherOut}` : null,
+        basisNote(r.basis),
+      ].filter(Boolean).join(" · "),
+    ]),
+    ...m.headcountByMonth.map((h) => [
+      "Active members at month end",
+      h.label,
+      h.headcount,
+      [h.isCurrentMonth ? "Today, equals Active members" : MEMBERSHIP_COPY.headcount, basisNote(h.basis)].filter(Boolean).join(" · "),
+    ]),
+  ];
+}
+
+/**
  * The Reports CSV as text: BOM, CRLF, every cell through csvCell
  * (lib/csv.ts csvDocument). Pure, so the export is testable without a browser.
  * The first data row states when the figures were computed (T2c): the CSV is
@@ -294,6 +331,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     ["Health", "Joined this month", churn.joined, `Net ${formatSigned(churn.net)} this month · ${JOINED_SCOPE}`],
     ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), "Members with a failed payment in the last 90 days who are now paid"],
     ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
+    ...membershipCsvRows(data.membership),
     ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
     ...data.monthlySignups.map((row) => ["Monthly signups", row.month, row.count, row.isCurrentMonth ? "Current month" : ""]),
     ...(() => {
@@ -558,7 +596,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     churn,
     retention,
     retentionRate,
-    netNewByMonth,
+    membership,
     paymentHealth,
     weeksBack,
     classOptions,
@@ -1044,7 +1082,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionTitle title="New Members" subtitle="Last 6 months" icon={UserPlus} />
+          <SectionTitle title="New Members" subtitle="Joins per month, last 6 months" icon={UserPlus} />
           {monthlySignups.every((row) => row.count === 0) ? (
             <EmptyChart label="No signup data yet" />
           ) : (
@@ -1247,7 +1285,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         {/* Net-new chart runs the full width (Noe, 25 Sep: "from the left side of
             the screen to the right"), with its own view switch; Payment Health
             sits under it with its three figures side by side. */}
-        <NetNewMembersCard rows={netNewByMonth} />
+        <NetNewMembersCard membership={membership} />
         <div className="grid grid-cols-1 gap-4">
           <Card>
             <SectionTitle title="Payment Health" subtitle="Current overdue and recent failures" icon={CreditCard} />
