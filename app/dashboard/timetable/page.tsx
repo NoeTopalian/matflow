@@ -27,7 +27,8 @@ export type ClassRow = {
     startTime: string;
     endTime: string;
   }[];
-  roster?: { memberId: string }[];
+  /** T6d: `name` lets the picker show a rostered guardian account it no longer lists. */
+  roster?: { memberId: string; name?: string }[];
   /** T6a: memberships that include the class. [] = everyone. */
   allowedTiers?: { id: string; name: string; isActive: boolean }[];
 };
@@ -53,7 +54,7 @@ async function getClasses(tenantId: string): Promise<ClassRow[]> {
         // the PATCH route read those present-but-null keys as "set a rank gate"
         // and deleted the roster. Renaming a comp class converted it into an
         // open class. Both ends are fixed; this is the read end.
-        rosterMembers: { select: { memberId: true } },
+        rosterMembers: { select: { memberId: true, member: { select: { name: true } } } },
         allowedTiers: { select: { tier: { select: { id: true, name: true, isActive: true } } } },
       },
       orderBy: { name: "asc" },
@@ -87,7 +88,7 @@ async function getClasses(tenantId: string): Promise<ClassRow[]> {
       startTime: s.startTime,
       endTime: s.endTime,
     })),
-    roster: c.rosterMembers.map((r) => ({ memberId: r.memberId })),
+    roster: c.rosterMembers.map((r) => ({ memberId: r.memberId, name: r.member?.name })),
     allowedTiers: (c.allowedTiers ?? []).map((t) => t.tier),
   }));
 }

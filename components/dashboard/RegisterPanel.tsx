@@ -28,6 +28,7 @@ import { useToast } from "@/components/ui/Toast";
 import { describeApiError } from "@/lib/api-field-errors";
 import { classifyCheckinResponse } from "@/lib/checkin-outcome";
 import { medicalNotesText } from "@/lib/medical-notes";
+import { NOT_ON_SQUAD_LABEL, SQUAD_ONLY_LABEL } from "@/lib/class-tier-gate";
 import { staleBillingWarning, billingSourceLabel } from "@/lib/billing-source";
 import type { TodaySession } from "@/components/dashboard/SessionPicker";
 import { isAdultAccount } from "@/lib/account-type";
@@ -59,10 +60,19 @@ type RegisterMember = {
   membershipTierName?: string | null;
   /** T6a: the class's memberships do not include this member's plan — the desk is asked. */
   tierNotIncluded?: boolean;
+  /** T6d: a squad class and this member is not on its roster. Informational. */
+  notOnRoster?: boolean;
 };
 
 type RegisterResponse = {
-  instance?: { name?: string; maxCapacity: number | null; isKids?: boolean; allowedTiers?: { id: string; name: string }[] };
+  instance?: {
+    name?: string;
+    maxCapacity: number | null;
+    isKids?: boolean;
+    allowedTiers?: { id: string; name: string }[];
+    /** T6d: a squad / comp class — the roster decides who attends. */
+    rosterOnly?: boolean;
+  };
   expected: RegisterMember[];
   waitlist: { memberId: string; name: string; position: number; status: string }[];
 };
@@ -441,7 +451,21 @@ export default function RegisterPanel({
         </div>
       )}
 
-      {register?.instance?.allowedTiers && register.instance.allowedTiers.length > 0 && (
+      {register?.instance?.rosterOnly && (
+        // T6d: a squad / comp class. The roster, not the membership list,
+        // decides who attends; the kiosk lists only the members on it.
+        <p className="flex items-center gap-2 text-xs text-tx-3" data-testid="register-squad-only">
+          <span
+            className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase"
+            style={{ background: tint("var(--hue-info)", 12), color: "var(--hue-info)" }}
+          >
+            {SQUAD_ONLY_LABEL}
+          </span>
+          Only members on the squad list can book or check themselves in.
+        </p>
+      )}
+
+      {!register?.instance?.rosterOnly && register?.instance?.allowedTiers && register.instance.allowedTiers.length > 0 && (
         // T6a: who the class is for, so the asks below are not a surprise.
         <p className="text-xs text-tx-3" data-testid="register-allowed-tiers">
           For: {register.instance.allowedTiers.map((t) => t.name).join(", ")}
@@ -520,6 +544,17 @@ export default function RegisterPanel({
                         data-testid="register-tier-not-included"
                       >
                         NOT ON {m.membershipTierName ? m.membershipTierName.toUpperCase() : "A PLAN"}
+                      </span>
+                    )}
+                    {m.notOnRoster && (
+                      // T6d: a squad class and this member is not on its roster.
+                      // Marking them is the desk's override, as before.
+                      <span
+                        className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase"
+                        style={{ background: tint("var(--hue-warning)", 14), color: "var(--hue-warning-ink)" }}
+                        data-testid="register-not-on-roster"
+                      >
+                        {NOT_ON_SQUAD_LABEL}
                       </span>
                     )}
                     {m.walkIn && (

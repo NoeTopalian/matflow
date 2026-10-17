@@ -68,3 +68,20 @@ export function tierAskSentence(memberName: string, className: string, tierName:
 
 /** The short label the member schedule shows on a class their plan does not include. */
 export const TIER_LOCKED_LABEL = "Not included in your membership";
+
+/**
+ * T6d: the badge a squad / comp class (one with a roster) carries on the
+ * kiosk class list, the staff session picker and the register.
+ */
+export const SQUAD_ONLY_LABEL = "Squad only";
+
+/** T6d: the register chip on a member who is not on a squad class's roster. */
+export const NOT_ON_SQUAD_LABEL = "Not on the squad list";
+
+/**
+ * T6d: what the kiosk says when a name search at a squad class finds no one
+ * on the roster. The search lists only rostered members, so a member who is
+ * not on it reads this rather than seeing their name and being refused.
+ */
+export const SQUAD_NO_MATCH_SENTENCE =
+  "No one on the squad list matches that name. Only members on the squad list can check in to this class — ask staff.";

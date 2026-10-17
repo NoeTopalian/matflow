@@ -49,6 +49,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
               membershipType: true,
               membershipTierId: true,
               membershipTier: { select: { name: true } },
+              // T6d: whether this member is on the class's roster (squad class).
+              classRosters: { where: { tenantId, classId: instance.class.id }, select: { id: true }, take: 1 },
               waiverAccepted: true, waiverAcceptedAt: true,
               ...(showMedical ? { medicalConditions: true } : {}),
               paymentStatus: true,
@@ -93,6 +95,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             membershipType: true,
             membershipTierId: true,
             membershipTier: { select: { name: true } },
+            classRosters: { where: { tenantId, classId: instance.class.id }, select: { id: true }, take: 1 },
             waiverAccepted: true, waiverAcceptedAt: true,
             ...(showMedical ? { medicalConditions: true } : {}),
             paymentStatus: true,
@@ -161,6 +164,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       isKids: instance.class.isKids,
       // T6a: [] = everyone. Shown so the desk knows who the class is for.
       allowedTiers,
+      // T6d: a squad / comp class (it has a roster). The register shows
+      // "Squad only"; the roster, not the membership list, decides who attends.
+      rosterOnly: hasRoster,
       date: instance.date.toISOString(),
       startTime: instance.startTime,
       endTime: instance.endTime,
@@ -181,6 +187,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         membershipTierId: b.member.membershipTierId,
         membershipTierName: b.member.membershipTier?.name ?? null,
         tierNotIncluded: !classTierCovers({ allowedTierIds, memberTierId: b.member.membershipTierId, hasRoster }),
+        // T6d: at a squad class, a row whose member is not on the roster is
+        // flagged so the desk can see it. Informational: staff marking is the
+        // override, exactly as before.
+        notOnRoster: hasRoster && !b.member.classRosters?.length,
         waiverAccepted: b.member.waiverAccepted,
         walkIn: b.walkIn,
         rank: rank ? {

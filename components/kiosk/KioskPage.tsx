@@ -13,6 +13,7 @@ import { readableOn } from "@/lib/color";
 import { isSafeFontFamily } from "@/lib/fonts";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { formatTimeRange } from "@/lib/class-time";
+import { SQUAD_ONLY_LABEL, SQUAD_NO_MATCH_SENTENCE } from "@/lib/class-tier-gate";
 
 // Branding arrives from the Tenant row and is edited by gym staff, so it is
 // untrusted input painted straight into inline `style` — `fontFamily` in
@@ -50,6 +51,11 @@ type ClassRow = {
   date: string;
   requiredRank: string | null;
   maxRank: string | null;
+  /**
+   * T6d: a squad / comp class (it has a roster). Badged "Squad only", and the
+   * name search lists only the members on it. Absent on an older server.
+   */
+  rosterOnly?: boolean;
 };
 
 type LinkedKid = {
@@ -191,15 +197,17 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
       setMatches([]);
       return;
     }
+    // T6d: the class is passed so a squad class lists only its roster.
+    const classParam = selectedClass ? `&classInstanceId=${encodeURIComponent(selectedClass.id)}` : "";
     const handle = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/kiosk/${encodeURIComponent(token)}/members?q=${encodeURIComponent(query.trim())}`);
+        const res = await fetch(`/api/kiosk/${encodeURIComponent(token)}/members?q=${encodeURIComponent(query.trim())}${classParam}`);
         const data = await res.json();
         if (res.ok) setMatches(data.members ?? []);
       } catch { /* ignore — show no matches */ }
     }, 200);
     return () => clearTimeout(handle);
-  }, [query, step, token]);
+  }, [query, step, token, selectedClass]);
 
   // Auto-fire on exactly-one-match after a small debounce.
   // F6: if the single match has linked kids, route to the picker instead of
@@ -484,7 +492,19 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
                 style={{ background: "rgba(255,255,255,0.03)" }}
               >
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-xl font-semibold">{cls.name}</span>
+                  <span className="text-xl font-semibold">
+                    {cls.name}
+                    {cls.rosterOnly && (
+                      // T6d: a squad class — only the members on its roster
+                      // are listed when it is tapped.
+                      <span
+                        data-testid="kiosk-squad-only"
+                        className="ml-2 align-middle rounded-full border border-white/25 px-2 py-0.5 text-xs font-medium uppercase tracking-wide opacity-80"
+                      >
+                        {SQUAD_ONLY_LABEL}
+                      </span>
+                    )}
+                  </span>
                   <span className="opacity-60 text-sm whitespace-nowrap">{formatTimeRange(cls.startTime, cls.endTime)}</span>
                 </div>
                 {(cls.requiredRank || cls.maxRank) && (
@@ -504,6 +524,9 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
             <div className="text-center">
               <p className="opacity-60 text-sm">Checking into</p>
               <h2 className="text-xl font-semibold">{selectedClass.name}</h2>
+              {selectedClass.rosterOnly && (
+                <p className="opacity-60 text-xs mt-1">{SQUAD_ONLY_LABEL} — members on the squad list only.</p>
+              )}
             </div>
             <input
               ref={inputRef}
@@ -520,7 +543,9 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
             />
 
             {query.trim().length >= 2 && matches.length === 0 && (
-              <p className="opacity-50 text-center text-sm">No match yet — keep typing.</p>
+              <p className="opacity-50 text-center text-sm">
+                {selectedClass.rosterOnly ? SQUAD_NO_MATCH_SENTENCE : "No match yet — keep typing."}
+              </p>
             )}
 
             {matches.length > 1 && (

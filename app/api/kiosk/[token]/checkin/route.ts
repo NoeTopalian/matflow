@@ -183,8 +183,11 @@ export async function POST(
       // fell through `default:` to a 500 and the tablet blamed itself. Same
       // sentence as the staff route, so the two surfaces agree about the same
       // state.
+      // T6d: the machine-readable reason, as the staff route sends. The kiosk
+      // search no longer offers a squad class to a member who is not on it,
+      // so this answer is now reached only by a direct POST.
       return NextResponse.json(
-        { error: "You're not on the roster for this class." },
+        { error: "You're not on the roster for this class.", reason: "roster_not_listed" },
         { status: 403 },
       );
     case "waiver_unsigned":

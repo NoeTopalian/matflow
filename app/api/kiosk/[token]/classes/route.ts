@@ -6,6 +6,7 @@
 // reveal whether the token is malformed vs not-found).
 //
 // Returns today's class instances for the tenant. NO member roster. NO PII.
+// A squad class carries `rosterOnly: true` (T6d) — a boolean, no member ids.
 
 import { NextResponse } from "next/server";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
@@ -85,6 +86,10 @@ export async function GET(
             name: true,
             requiredRank: { select: { name: true, color: true } },
             maxRank: { select: { name: true, color: true } },
+            // T6d: whether the class has a roster (a squad / comp class). A
+            // COUNT, never the rows: this door is unauthenticated, so it says
+            // only that a list exists, never who is on it.
+            _count: { select: { rosterMembers: true } },
           },
         },
       },
@@ -111,6 +116,9 @@ export async function GET(
       date: i.date.toISOString(),
       requiredRank: i.class.requiredRank?.name ?? null,
       maxRank: i.class.maxRank?.name ?? null,
+      // T6d: a squad class is badged "Squad only"; the name search that follows
+      // a tap lists only the members on its roster.
+      rosterOnly: (i.class._count?.rosterMembers ?? 0) > 0,
     })),
   });
 }

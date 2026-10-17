@@ -766,7 +766,9 @@ function ClassForm({
       let cursor: string | null = null;
       for (let page = 0; page < MAX_PAGES; page++) {
         const res: Response = await fetch(
-          `/api/members?take=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+          // T6d: training members only — a guardian account (or an import's
+          // guardian draft) is never offered as a squad member.
+          `/api/members?take=100&population=training${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data: { members?: Array<{ id: string; name: string; email: string }>; nextCursor?: string | null } =
@@ -1130,6 +1132,34 @@ function ClassForm({
                 );
               })}
           </div>
+          {!membersLoading && !membersError && availableMembers.length > 0 && (() => {
+            // T6d: the picker lists training members only. Someone already on
+            // the roster who is a guardian account (an import's guardian draft,
+            // say) is no longer in that list, so they are shown here, by name,
+            // where they can be unticked rather than kept invisibly.
+            const listed = new Set(availableMembers.map((m) => m.id));
+            const unlisted = rosterMemberIds.filter((id) => !listed.has(id));
+            if (unlisted.length === 0) return null;
+            const names = new Map((initial?.roster ?? []).map((r) => [r.memberId, r.name]));
+            return (
+              <div className="space-y-1" data-testid="roster-unlisted">
+                <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>
+                  Already on the roster but not in the list above (usually a parent or guardian account, which is not a training member):
+                </p>
+                {unlisted.map((id) => (
+                  <label key={id} className="flex items-center gap-2 text-xs cursor-pointer rounded px-2 py-1 hover:bg-sf-2" style={{ color: "var(--tx-2)" }}>
+                    <input
+                      type="checkbox"
+                      checked
+                      onChange={() => toggleRosterMember(id)}
+                      className="accent-[var(--color-primary)]"
+                    />
+                    <span>{names.get(id) ?? "Member not listed"}</span>
+                  </label>
+                ))}
+              </div>
+            );
+          })()}
           <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>{rosterMemberIds.length} selected</p>
         </div>
       )}

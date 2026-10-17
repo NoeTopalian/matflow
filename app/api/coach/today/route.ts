@@ -47,7 +47,11 @@ export async function GET() {
       },
       include: {
         class: {
-          select: { id: true, name: true, location: true, coachName: true, instructorId: true, coachUserId: true, maxCapacity: true, color: true },
+          select: {
+            id: true, name: true, location: true, coachName: true, instructorId: true, coachUserId: true, maxCapacity: true, color: true,
+            // T6d: a squad / comp class (it has a roster) shows "Squad only".
+            _count: { select: { rosterMembers: true } },
+          },
         },
         _count: { select: { attendances: true, waitlists: true } },
       },
@@ -108,6 +112,8 @@ export async function GET() {
       // The highlight: this staff member teaches it, by either column the
       // product has used for the coach.
       isMine: inst.class.coachUserId === userId || inst.class.instructorId === userId,
+      // T6d: the class has a roster, so the desk sees "Squad only".
+      rosterOnly: (inst.class._count?.rosterMembers ?? 0) > 0,
     })),
     { headers: { "Cache-Control": "private, no-store" } },
   );
