@@ -471,6 +471,90 @@ function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null }
  */
 const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month"];
 
+type ViewRow = Pick<MemberRow, "status" | "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt">;
+
+/**
+ * Whether a member belongs under a chip when nobody is searching. The single
+ * rule behind both the rows the list shows and the check made after an add
+ * (a new member the current view would hide moves the view to one that shows
+ * them).
+ */
+export function inStatusView(m: ViewRow, f: StatusFilter): boolean {
+  if (m.status === "cancelled" && !INCLUDES_CANCELLED.includes(f)) return false;
+  // Parent/guardian accounts are listed under their own chip only; every
+  // other view is training members, matching its count.
+  if (f === "guardians") return isAccountHolderOnly(m);
+  if (isAccountHolderOnly(m)) return false;
+  switch (f) {
+    case "all":
+      return true;
+    case "active":
+      // The shared predicate behind the Reports "Active members" tile.
+      return isActiveMember(m);
+    case "guardian-review":
+      // Renders the queue (GuardianReviewQueue), which loads its own rows.
+      return true;
+    case "attention":
+      return m.paymentStatus === "overdue" || isWaiverMissing(m) || m.status === "taster" || isQuiet(m);
+    case "overdue":
+      return m.paymentStatus === "overdue";
+    case "waiver-missing":
+      return isWaiverMissing(m);
+    case "missing-phone":
+      return !m.phone?.trim();
+    case "quiet":
+      return isQuiet(m);
+    case "kids":
+      // Source of truth: parentMemberId IS NOT NULL (the link, not accountType,
+      // since accountType could be junior/kids and not always reflect linkage).
+      return !!m.parentMemberId;
+    case "new-this-month":
+      return isThisCalendarMonth(m.joinedAt);
+    case "churned-this-month":
+      return m.status === "cancelled" && isThisCalendarMonth(m.cancelledAt);
+    case "on-hold":
+      return isOnHold(m);
+    default:
+      return m.status === f;
+  }
+}
+
+/**
+ * Where to send the desk after an add the current view would hide (the
+ * landing view is Active, so a new taster or inactive member would otherwise
+ * vanish and look like a failed save).
+ */
+export function viewShowingNewMember(m: ViewRow, f: StatusFilter): StatusFilter | null {
+  if (inStatusView(m, f)) return null;
+  if (isAccountHolderOnly(m)) return "guardians";
+  if (m.status === "taster") return "taster";
+  return "all";
+}
+
+/**
+ * The two Reports drill-through slices have no shared population: their
+ * header names the slice and counts its rows, so "1 cancelled this month"
+ * sits over the one row the churn tile counted.
+ */
+const SLICE_HEADLINE_COPY: Partial<Record<StatusFilter, { label: string; includes: string; excludes: string }>> = {
+  "churned-this-month": {
+    label: "Cancelled this month",
+    includes: "Training members whose cancellation date falls this month",
+    excludes: "Excludes guardians",
+  },
+  "new-this-month": {
+    label: "Joined this month",
+    includes: "Training members who joined this month, including tasters and any since cancelled",
+    excludes: "Excludes guardians",
+  },
+};
+
+const FILTER_LABELS: Partial<Record<StatusFilter, string>> = {
+  all: "All current",
+  taster: "Tasters",
+  guardians: "Parents & guardians",
+};
+
 export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null }: Props) {
   const supportEdit = supportScope === "edit";
   const { toast } = useToast();
@@ -512,51 +596,23 @@ export default function MembersList({ members: initial, primaryColor, role, guar
     return types.sort();
   }, [members]);
 
+  // D4: cancelled members are not current. They appear under the Cancelled
+  // (and the two Reports drill-through) filters, and under "All" only when
+  // the desk is searching — a returning member is still findable by name,
+  // with the Cancelled tag on the row. T1: the landing view is now Active, so
+  // a name typed on the untouched landing page still looks at everyone, as it
+  // did when All was the landing view. Active chosen on purpose (a chip click
+  // or the Reports drill-through's ?filter=active) keeps its narrowing, so
+  // the rows under the chip still match its count. A notice says when a
+  // search is looking at everyone.
+  const onUntouchedLanding = localStatusFilter === null && !FILTERS.includes(requestedFilter as StatusFilter);
+  const searchingAll =
+    query.trim() !== "" && (statusFilter === "all" || (statusFilter === "active" && onUntouchedLanding));
+
   const filtered = useMemo(() => {
-    // D4: cancelled members are not current. They appear under the Cancelled
-    // (and the two Reports drill-through) filters, and under "All" only when
-    // the desk is searching — a returning member is still findable by name,
-    // with the Cancelled tag on the row. T1: the landing view is now Active,
-    // so a name typed there still looks at everyone, exactly as it did when
-    // All was the landing view.
-    const searchingAll = (statusFilter === "all" || statusFilter === "active") && query.trim() !== "";
-    const includeCancelled = INCLUDES_CANCELLED.includes(statusFilter) || searchingAll;
-    let list = includeCancelled ? members : members.filter((m) => m.status !== "cancelled");
-    // Parent/guardian accounts are listed under their own chip and found by a
-    // search on All; every other view is training members, matching its count.
-    if (statusFilter === "guardians") list = list.filter(isAccountHolderOnly);
-    else if (!searchingAll) list = list.filter((m) => !isAccountHolderOnly(m));
-    if (searchingAll) {
-      // Everyone matching the search, whatever their standing.
-    } else if (statusFilter === "active") {
-      // The shared predicate behind the Reports "Active members" tile.
-      list = list.filter(isActiveMember);
-    } else if (statusFilter === "guardians" || statusFilter === "guardian-review") {
-      // guardians: already narrowed above. guardian-review renders the queue
-      // (GuardianReviewQueue), which loads its own rows from the server.
-    } else if (statusFilter === "attention") {
-      list = list.filter((m) => m.paymentStatus === "overdue" || isWaiverMissing(m) || m.status === "taster" || isQuiet(m));
-    } else if (statusFilter === "overdue") {
-      list = list.filter((m) => m.paymentStatus === "overdue");
-    } else if (statusFilter === "waiver-missing") {
-      list = list.filter(isWaiverMissing);
-    } else if (statusFilter === "missing-phone") {
-      list = list.filter((m) => !m.phone?.trim());
-    } else if (statusFilter === "quiet") {
-      list = list.filter((m) => isQuiet(m));
-    } else if (statusFilter === "kids") {
-      // Source of truth: parentMemberId IS NOT NULL (the link, not accountType,
-      // since accountType could be junior/kids and not always reflect linkage).
-      list = list.filter((m) => !!m.parentMemberId);
-    } else if (statusFilter === "new-this-month") {
-      list = list.filter((m) => isThisCalendarMonth(m.joinedAt));
-    } else if (statusFilter === "churned-this-month") {
-      list = list.filter((m) => m.status === "cancelled" && isThisCalendarMonth(m.cancelledAt));
-    } else if (statusFilter === "on-hold") {
-      list = list.filter(isOnHold);
-    } else if (statusFilter !== "all") {
-      list = list.filter((m) => m.status === statusFilter);
-    }
+    // Everyone matching the search, whatever their standing; otherwise the
+    // rows under a chip are exactly the ones its count counts.
+    let list = searchingAll ? members : members.filter((m) => inStatusView(m, statusFilter));
     if (membershipFilter !== "all") list = list.filter((m) => m.membershipType === membershipFilter);
     if (query.trim()) {
       const q = query.toLowerCase();
@@ -578,7 +634,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
       }
     });
     return list;
-  }, [members, query, statusFilter, membershipFilter, sortBy]);
+  }, [members, query, statusFilter, membershipFilter, sortBy, searchingAll]);
 
   // Auto-select: scroll single match into view
   useEffect(() => {
@@ -597,6 +653,15 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   function handleAdded(member: MemberRow, inviteUrl?: string | null, emailNote?: string | null) {
     setMembers((prev) => [...prev, member].sort((a, b) => a.name.localeCompare(b.name)));
     setShowAdd(false);
+    // A new taster or inactive member is not under the Active landing view;
+    // move to a view that lists them, and say so, so the add cannot look like
+    // a failed save (and be repeated as a duplicate).
+    const showIn = viewShowingNewMember(member, statusFilter);
+    if (showIn) {
+      selectFilter(showIn);
+      toast(`${member.name} is listed under ${FILTER_LABELS[showIn] ?? showIn}`, "info");
+    }
+    if (membershipFilter !== "all" && member.membershipType !== membershipFilter) setMembershipFilter("all");
     if (inviteUrl) setInviteShare({ name: member.name, url: inviteUrl, emailNote: emailNote ?? null });
     // F-5 (edit-access remediation): no invite link but a reason why - e.g. a
     // support session never mints one - must still be said, or the member is
@@ -649,8 +714,12 @@ export default function MembersList({ members: initial, primaryColor, role, guar
     onHold: counts.onHold,
     guardian: counts.guardians,
   };
-  const headlineCount = headlineCounts[headlineKey] ?? counts.all;
-  const headlineCopy = POPULATION_COPY[headlineKey];
+  // The Reports drill-through slices name themselves and count their own rows.
+  const sliceCopy = SLICE_HEADLINE_COPY[statusFilter];
+  const headlineCount = sliceCopy
+    ? members.filter((m) => inStatusView(m, statusFilter)).length
+    : headlineCounts[headlineKey] ?? counts.all;
+  const headlineCopy = sliceCopy ?? POPULATION_COPY[headlineKey];
   // Q4 A-1: members on hold stay inside the Active headline, marked as such.
   const holdNote = headlineKey === "active" && counts.activeOnHold > 0 ? `${counts.activeOnHold} on hold` : null;
 
@@ -720,8 +789,11 @@ export default function MembersList({ members: initial, primaryColor, role, guar
           // Follows the selected population (T1); on the landing view this is
           // Active, the Reports "Active members" number.
           { id: "headline", label: headlineCopy.label, value: headlineCount, sub: headlineCopy.excludes, note: holdNote ? `Includes ${holdNote}` : null, color: primaryColor, Icon: Users },
-          { id: "paid", label: "Paid", value: counts.paid, sub: "Membership current", color: "#22c55e", Icon: CheckCircle2 },
-          { id: "overdue", label: "Overdue", value: counts.overdue, sub: "Needs chasing", color: "#f97316", Icon: AlertTriangle },
+          // Paid and Overdue count all current members (active, inactive and
+          // tasters), not the headline population beside them; the sub-line
+          // says so, so Paid above Active is not read as a contradiction.
+          { id: "paid", label: "Paid", value: counts.paid, sub: "Of current members", color: "#22c55e", Icon: CheckCircle2 },
+          { id: "overdue", label: "Overdue", value: counts.overdue, sub: "Of current members; needs chasing", color: "#f97316", Icon: AlertTriangle },
           { id: "waivers", label: "Waivers Missing", value: counts.waiverMissing, sub: "Active & tasters", color: "#f59e0b", Icon: FileCheck2 },
           { id: "tasters", label: "Tasters", value: counts.taster, sub: "Convert soon", color: "#38bdf8", Icon: CalendarCheck },
         ] as { id: string; label: string; value: number; sub: string; note?: string | null; color: string; Icon: typeof Users }[]).map(({ id, label, value, sub, note, color, Icon }) => (
@@ -773,6 +845,11 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               </span>
             )}
           </div>
+          {searchingAll && (
+            <p role="status" data-testid="members-search-scope" className="text-xs text-tx-3">
+              Searching all members, including cancelled members and guardians.
+            </p>
+          )}
 
           {/* Pills scroll horizontally on phones but WRAP from `lg:` — a
               hidden-scrollbar strip at desktop widths buries filters the user

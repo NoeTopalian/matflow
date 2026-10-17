@@ -58,7 +58,7 @@ describe("Members page — guardian accounts are not training members", () => {
     render(<MembersList members={MEMBERS} primaryColor="#3b82f6" role="owner" />);
     // T1: the first tile is the landing population, Active members (Q4 A-1).
     expect(tile("Excludes inactive members, tasters, cancelled members and guardians")).toBe("2"); // Active members
-    expect(tile("Membership current")).toBe("2"); // Paid
+    expect(tile("Of current members")).toBe("2"); // Paid
     expect(tile("Active & tasters")).toBe("0"); // Waivers Missing
     expect(screen.getByRole("button", { name: "Active · 2" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "All current · 2" })).toBeTruthy();
