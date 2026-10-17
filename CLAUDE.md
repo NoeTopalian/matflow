@@ -4,7 +4,7 @@ Next.js 16 + TypeScript + Tailwind v4 (CSS-first) + Prisma 7 (`@prisma/adapter-p
 
 ## Runtime and commands
 
-- **Node 24** (`package.json` engines `>=24.18.1 <25`). The system `node` is 25; put Node 24 first on `Path`. Run builds from PowerShell (Turbopack fails under the Bash tool with 0xc0000142).
+- **Node 24** (`package.json` engines `>=24.18.1 <25`). The system `node` may be another version; Node 24's folder is in the user variable `MF_NODE24` — put it first on `Path` for npm commands. Run builds from PowerShell (Turbopack fails under the Bash tool with 0xc0000142).
 - **Work in a git worktree without `.env`** (`git worktree add …`, then a real `npm ci`). The main checkout's `.env` is **production** (Neon `ep-bold-wave`, live Stripe/Resend/auth secrets).
 - Lint `npm run lint` · all tests `npm test` · one file `npx vitest run <path>` · e2e `npx playwright test <spec>` (loads `.env.test`).
 - **Start:** never `npm run dev` or bare `next dev` in the main checkout — it loads production `.env`. Use the `matflow-verify-browser` skill's server (production build on the test branch).
@@ -17,7 +17,7 @@ Next.js 16 + TypeScript + Tailwind v4 (CSS-first) + Prisma 7 (`@prisma/adapter-p
 - Without `TEST_DATABASE_URL` the database test files skip. Skipped is not passed.
 - Synthetic data only (`example.test` addresses, fixture clubs created and torn down by the run). Never real clubs, members or production.
 
-## Verification workflow (user skills in `~/.claude/skills`)
+## Verification workflow (project skills in [`.claude/skills/`](.claude/skills/))
 
 1. `matflow-verify-local` — focused tests, lint, full suite, DB suites as both roles, production build, with the commit each ran on.
 2. `matflow-verify-browser` — real journey on the test branch: desktop and phone width, keyboard, forced failed saves, retries.
