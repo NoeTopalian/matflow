@@ -22,9 +22,12 @@ vi.mock("@/lib/audit-log", () => ({
 const mockPrisma = {
   class: { findFirst: vi.fn(), updateMany: vi.fn() },
   classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn() },
-  classSubscription: { findMany: vi.fn(), deleteMany: vi.fn() },
+  // T6b: the archive confirmation also counts bookings.
+  classSubscription: { findMany: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
   rankSystem: { findFirst: vi.fn() },
   attendanceRecord: { count: vi.fn() },
+  // T6a: the PATCH write transaction opens with a Class row lock.
+  $queryRaw: vi.fn().mockResolvedValue([{ id: "c1" }]),
 };
 
 beforeEach(() => {
@@ -73,30 +76,36 @@ describe("PATCH /api/classes/[id] mutual exclusion", () => {
   });
 });
 
-describe("DELETE /api/classes/[id] preconditions", () => {
-  it("returns 409 with counts when attendance or roster exists and ?force is not set", async () => {
+describe("DELETE /api/classes/[id] preconditions (T6b: archive with a counted confirmation)", () => {
+  it("?dryRun=1 returns the counts for the confirmation and changes nothing", async () => {
+    mockPrisma.class.findFirst.mockResolvedValue({ id: "c1", isActive: true, deletedAt: null, sourceImportJobId: null });
     mockPrisma.attendanceRecord.count.mockResolvedValue(5);
     mockPrisma.classRoster.count.mockResolvedValue(2);
+    mockPrisma.classSubscription.count.mockResolvedValue(3);
 
     const { DELETE } = await import("@/app/api/classes/[id]/route");
     const res = await DELETE(
-      new Request("http://test/api/classes/c1", { method: "DELETE" }),
+      new Request("http://test/api/classes/c1?dryRun=1", { method: "DELETE" }),
       { params: Promise.resolve({ id: "c1" }) },
     );
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.attendanceCount).toBe(5);
     expect(body.rosterCount).toBe(2);
+    expect(body.bookingCount).toBe(3);
+    expect(mockPrisma.class.updateMany).not.toHaveBeenCalled();
   });
 
-  it("succeeds with ?force=true even when attendance/roster exist", async () => {
+  it("archives even when attendance/roster exist (no force needed)", async () => {
+    mockPrisma.class.findFirst.mockResolvedValue({ id: "c1", isActive: true, deletedAt: null, sourceImportJobId: null });
     mockPrisma.attendanceRecord.count.mockResolvedValue(5);
     mockPrisma.classRoster.count.mockResolvedValue(2);
+    mockPrisma.classSubscription.count.mockResolvedValue(0);
     mockPrisma.class.updateMany.mockResolvedValue({ count: 1 });
 
     const { DELETE } = await import("@/app/api/classes/[id]/route");
     const res = await DELETE(
-      new Request("http://test/api/classes/c1?force=true", { method: "DELETE" }),
+      new Request("http://test/api/classes/c1", { method: "DELETE" }),
       { params: Promise.resolve({ id: "c1" }) },
     );
     expect(res.status).toBe(200);

@@ -22,6 +22,8 @@ import type { Prisma } from "@prisma/client";
 import { revalidateTag } from "next/cache";
 import { restorePackCreditsForAttendance } from "@/lib/checkin";
 import { CONFIRMED_BY } from "@/lib/guardianship";
+import { mintUpcomingSessions } from "@/lib/class-lifecycle";
+import { IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
 
 export type TxLike = Prisma.TransactionClient;
 
@@ -81,6 +83,14 @@ export const REASON = {
   importedRow: "This check-in is imported history. Undo the import with its own Rollback, or remove it on the register.",
   loginAddress: "A login address change can't be undone from here — change it again from the member's profile.",
   selfEdit: "The member made this change themselves — ask them to change it back from their profile.",
+  // T6b: true for every class.deleted row written before 17 Oct 2026 — the old
+  // route recorded counts but not the state the class was in — and Restore
+  // now exists, so the sentence can point at it. Conditional on purpose: the
+  // class may have been restored since, and `decide` sees only the row.
+  archivedNoSnapshot: "This class was archived before its previous state was recorded, so this can't be undone from here. If it is still archived, restore it from Paused and archived on the Timetable page.",
+  // T6b: an old pause row would otherwise put an archived class back as
+  // "active but archived" and mint sessions for it.
+  archivedSince: "This class has been archived since. Restore it from Paused and archived on the Timetable page.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -114,6 +124,10 @@ const RESTORABLE: Record<string, readonly string[]> = {
   Class: [
     "name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration",
     "maxCapacity", "isKids", "requiredRankId", "maxRankId", "color", "isActive",
+    // T6c: the class category (a key from lib/class-category.ts, or null).
+    "category",
+    // T6b: Resume / Restore clears it; undoing that puts the archive back.
+    "deletedAt",
   ],
   MembershipTier: ["name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "isKids", "isActive", "locationId"],
   RankSystem: ["discipline", "name", "order", "color", "stripes"],
@@ -121,7 +135,7 @@ const RESTORABLE: Record<string, readonly string[]> = {
 };
 
 /** DateTime columns: restored strings become Dates whatever the current value is. */
-const DATE_FIELDS = new Set(["dateOfBirth", "nextDueAt", "holdUntil", "joinedAt", "cancelledAt"]);
+const DATE_FIELDS = new Set(["dateOfBirth", "nextDueAt", "holdUntil", "joinedAt", "cancelledAt", "deletedAt"]);
 
 const MODEL_KEY: Record<string, keyof TxLike> = {
   Member: "member",
@@ -154,6 +168,8 @@ type SnapshotOptions = {
   guard?: (current: Record<string, unknown>, restore: Record<string, unknown>) => void;
   /** Extra data to write alongside the restore (e.g. a session bump). */
   extra?: (restore: Record<string, unknown>) => Record<string, unknown>;
+  /** Follow-up writes in the same transaction, after the restore (e.g. minting sessions). */
+  afterApply?: (tx: TxLike, row: AuditRowLike, restore: Record<string, unknown>) => Promise<void>;
 };
 
 /** What a snapshot row would restore, as field names, from metadata alone. */
@@ -223,6 +239,7 @@ function snapshotHandler(entityType: string, opts: SnapshotOptions = {}): UndoHa
         if (DATE_FIELDS.has(f) && typeof restore[f] === "string") restore[f] = new Date(restore[f] as string);
       }
       await d.update({ where: { id: row.entityId }, data: { ...restore, ...(opts.extra?.(restore) ?? {}) } });
+      await opts.afterApply?.(tx, row, restore);
       opts.after?.(row);
     },
   };
@@ -314,7 +331,65 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
     // addresses are not restorable here — see RESTORABLE.User.)
     extra: (restore) => ("role" in restore ? { sessionVersion: { increment: 1 } } : {}),
   }),
-  "class.updated": snapshotHandler("Class"),
+  "class.updated": snapshotHandler("Class", {
+    guard(current, restore) {
+      // T6b: an imported history class never goes on the timetable, not even
+      // by undoing an old row that recorded it as active.
+      if (restore.isActive === true && current.sourceImportJobId) throw new UndoStale(IMPORTED_CLASS_REACTIVATE_REFUSAL);
+      // T6b: undoing an old pause after the class was archived would set
+      // isActive back to true while deletedAt stays set — a class that is
+      // "active" but archived. Refuse; Restore is the way back.
+      if (restore.isActive === true && current.deletedAt != null && !("deletedAt" in restore)) {
+        throw new UndoStale(REASON.archivedSince);
+      }
+    },
+    async afterApply(tx, row, restore) {
+      // Undoing a pause or an archive brings the class back on the timetable:
+      // mint the sessions no generator made while it was off. Only when the
+      // class ends up live (the guard has refused active-but-archived).
+      const endsArchived = "deletedAt" in restore && restore.deletedAt != null;
+      if (restore.isActive === true && !endsArchived && row.tenantId) {
+        await mintUpcomingSessions(tx, row.tenantId, row.entityId);
+      }
+    },
+  }),
+  // T6b: archive = isActive false + deletedAt now. The row records the state
+  // before (`before.isActive`, `before.deletedAt`) and after (`after.deletedAt`).
+  // Undo puts back exactly the prior state — a class paused before it was
+  // archived returns to paused — and refuses if the class has been restored
+  // or re-archived since.
+  "class.deleted": {
+    decide(row) {
+      const before = asRecord(meta(row).before);
+      const after = asRecord(meta(row).after);
+      if (!before || typeof before.isActive !== "boolean" || !after || typeof after.deletedAt !== "string") {
+        return { ok: false, reason: REASON.archivedNoSnapshot };
+      }
+      return { ok: true };
+    },
+    async apply(tx, row) {
+      const m = meta(row);
+      const before = asRecord(m.before) ?? {};
+      const after = asRecord(m.after) ?? {};
+      const tenantId = row.tenantId ?? "";
+      const current = await tx.class.findFirst({
+        where: { id: row.entityId, tenantId },
+        select: { isActive: true, deletedAt: true, sourceImportJobId: true },
+      });
+      if (!current) throw new UndoStale("This class no longer exists.");
+      if (current.isActive || !sameValue(current.deletedAt, after.deletedAt)) {
+        throw new UndoStale("This class has been restored or archived again since, so this archive can't be undone from here.");
+      }
+      const toActive = before.isActive === true && !current.sourceImportJobId;
+      const priorDeletedAt = typeof before.deletedAt === "string" ? new Date(before.deletedAt) : null;
+      const r = await tx.class.updateMany({
+        where: { id: row.entityId, tenantId, isActive: false, deletedAt: current.deletedAt },
+        data: { isActive: toActive, deletedAt: priorDeletedAt },
+      });
+      if (r.count === 0) throw new UndoStale();
+      if (toActive && !priorDeletedAt) await mintUpcomingSessions(tx, tenantId, row.entityId);
+    },
+  },
   "membership.tier.update": snapshotHandler("MembershipTier", {
     guard(current, restore) {
       if (current.stripePriceId && ("pricePence" in restore || "currency" in restore || "billingCycle" in restore)) {

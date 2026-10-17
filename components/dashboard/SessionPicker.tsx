@@ -11,6 +11,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { useToast } from "@/components/ui/Toast";
 import { describeApiError } from "@/lib/api-field-errors";
+import { SQUAD_ONLY_LABEL } from "@/lib/class-tier-gate";
 
 /** One item of GET /api/coach/today. */
 export type TodaySession = {
@@ -36,6 +37,11 @@ export type TodaySession = {
   cancellationReason: string | null;
   /** This staff member teaches it — the highlight Noe asked for. */
   isMine: boolean;
+  /**
+   * T6d: a squad / comp class — it has a roster, so only the members on it
+   * may attend. Tagged "Squad only". Absent on an older server.
+   */
+  rosterOnly?: boolean;
 };
 
 /**
@@ -297,12 +303,14 @@ export default function SessionPicker({
                 </span>
                 {c.isCancelled ? <Tag>Cancelled</Tag> : badge && <Tag>{badge}</Tag>}
                 {c.isMine && <Tag>Yours</Tag>}
+                {c.rosterOnly && <Tag>{SQUAD_ONLY_LABEL}</Tag>}
               </Button>
               <span id={descriptionId} className="sr-only">
                 {c.isCancelled
                   ? `Cancelled${c.cancellationReason ? `: ${c.cancellationReason}` : ""}`
                   : DESCRIPTION[c.status]}
                 {c.isMine ? ", yours" : ""}
+                {c.rosterOnly ? `, ${SQUAD_ONLY_LABEL.toLowerCase()}` : ""}
               </span>
             </span>
           );

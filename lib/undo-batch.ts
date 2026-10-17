@@ -7,7 +7,9 @@
  */
 import type { AuditRowLike, TxLike, UndoDecision } from "@/lib/undo-registry";
 import { decideUndo, applyUndo, UndoStale } from "@/lib/undo-registry";
-import { UNDO_PREFIX } from "@/lib/audit-labels";
+import { UNDO_PREFIX, classLifecycleOf } from "@/lib/audit-labels";
+
+const lifecycleOf = (row: AuditRowLike) => (row.action === "class.updated" ? classLifecycleOf(row.metadata) : null);
 
 export type PlanItem = { row: AuditRowLike; decision: UndoDecision };
 
@@ -66,7 +68,13 @@ export async function executeUndo(
         action: `${UNDO_PREFIX}${row.action}`,
         entityType: row.entityType,
         entityId: row.entityId,
-        metadata: { undoneAuditId: row.id, undoneAction: row.action, undoneByUserId: row.userId },
+        metadata: {
+          undoneAuditId: row.id,
+          undoneAction: row.action,
+          undoneByUserId: row.userId,
+          // T6b: "Undid: Paused a class" rather than "Undid: Updated a class".
+          ...(lifecycleOf(row) ? { undoneLifecycle: lifecycleOf(row) } : {}),
+        },
         ipAddress: actor.ipAddress ?? null,
         userAgent: actor.userAgent ?? null,
       },

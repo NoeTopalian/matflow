@@ -330,6 +330,7 @@ async function walkTenant(
       await tx.classSchedule.deleteMany({ where: { classId: { in: classIds } } });
       await tx.classSubscription.deleteMany({ where: { classId: { in: classIds } } });
       await tx.classRoster.deleteMany({ where: { classId: { in: classIds } } });
+      await tx.classMembershipTier.deleteMany({ where: { classId: { in: classIds } } });
       await tx.class.deleteMany({ where: { id: { in: classIds }, tenantId } });
     });
   }

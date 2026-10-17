@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Bell, BellOff, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Bell, BellOff, Lock, X } from "lucide-react";
+import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
+import { bookingFailureMessage } from "@/lib/checkin-outcome";
+import { classCategoryTag } from "@/lib/class-category";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { useToast } from "@/components/ui/Toast";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -38,6 +41,8 @@ type ScheduleClass = {
   isKids?: boolean;
   /** A kids class and the viewer is an adult or parent: never badged "Next". */
   kidsClassForAdult?: boolean;
+  /** T6c: the category key (lib/class-category.ts); null = uncategorised. */
+  category?: string | null;
   color?: string | null;
   dow: number; // 1=Mon…7=Sun internal convention
   classInstanceId?: string | null;
@@ -45,7 +50,8 @@ type ScheduleClass = {
   // "rank_below" / "rank_above" → shown with lock badge + disabled subscribe.
   // "roster_ok" → "Comp team" tag. "ok" → normal. Roster-only classes the
   // member is NOT on are filtered out at the API layer (api/member/schedule).
-  eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok";
+  // "tier_not_included" (T6a) → "Not included in your membership", not bookable.
+  eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok" | "tier_not_included";
   requiredRankName?: string | null;
   maxRankName?: string | null;
   /** Today's session for this slot is cancelled (api/member/schedule). */
@@ -181,6 +187,16 @@ function EventSheet({
                 Kids
               </span>
             )}
+            {classCategoryTag(cls) && (
+              // T6c: what kind of class this is.
+              <span
+                data-testid="schedule-sheet-category"
+                className="rounded-full px-2 text-[10px] font-semibold tracking-wide leading-5"
+                style={{ color: "var(--member-text-muted)", border: "1px solid var(--member-border)" }}
+              >
+                {classCategoryTag(cls)}
+              </span>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -224,6 +240,20 @@ function EventSheet({
               🔒 {cls.maxRankName ? `${cls.maxRankName} and below only` : "Lower rank required"}.
             </div>
           )}
+          {cls.eligibility === "tier_not_included" && (
+            // T6a: the same sentence everywhere a member meets this class.
+            <div
+              className="rounded-xl px-3 py-2 text-xs flex items-center gap-2"
+              data-testid="schedule-tier-locked"
+              style={{
+                background: "color-mix(in srgb, var(--hue-warning) 10%, transparent)",
+                border: "1px solid color-mix(in srgb, var(--hue-warning) 25%, transparent)",
+                color: "var(--hue-warning)",
+              }}
+            >
+              <Lock className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> {TIER_LOCKED_LABEL} — ask your gym about a membership that includes it.
+            </div>
+          )}
           {cls.eligibility === "roster_ok" && (
             <div className="rounded-xl px-3 py-2 text-xs flex items-center gap-2"
               style={{ background: "rgba(168,85,247,0.10)", border: "1px solid rgba(168,85,247,0.25)", color: "#c084fc" }}>
@@ -233,7 +263,7 @@ function EventSheet({
 
           <button
             onClick={onToggle}
-            disabled={cls.eligibility === "rank_below" || cls.eligibility === "rank_above"}
+            disabled={cls.eligibility === "rank_below" || cls.eligibility === "rank_above" || cls.eligibility === "tier_not_included"}
             className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
               background: isSub ? hex(primaryColor, 0.12) : primaryColor,
@@ -300,7 +330,9 @@ function DayGrid({
   // The API keys today's instance by class + start time, so a class that meets
   // on several days carries today's flag on every day's entry; it only means
   // anything on today's grid.
-  const spans = dayClasses.map((c) => ({ ...spanMinutes(c.time, c.endTime), cancelled: showNow && c.cancelled === true, neverNext: c.kidsClassForAdult === true }));
+  const spans = dayClasses.map((c) => ({ ...spanMinutes(c.time, c.endTime), cancelled: showNow && c.cancelled === true, neverNext: c.kidsClassForAdult === true || c.eligibility === "tier_not_included" || c.eligibility === "rank_below" || c.eligibility === "rank_above" }));
+  // ^ the same classes Home's next class leaves out (pickNextClass in
+  //   lib/member-stats.ts): ones the door would refuse this member.
   const states = sessionStates(spans, nowMinutes, showNow);
   const packed = packLanes(spans, { maxLanes: 3 });
   const [expandedClusters, setExpandedClusters] = useState<Set<number>>(() => new Set());
@@ -546,6 +578,18 @@ function SessionBlock({
             Kids
           </span>
         )}
+        {cls.eligibility === "tier_not_included" && (
+          // T6a: locked, not hidden; the sheet says why.
+          <span
+            className="shrink-0 inline-flex items-center"
+            style={{ color: ink }}
+            title={TIER_LOCKED_LABEL}
+            aria-label={TIER_LOCKED_LABEL}
+            data-testid="schedule-cell-tier-locked"
+          >
+            <Lock className="w-3 h-3" aria-hidden="true" />
+          </span>
+        )}
         {state !== "upcoming" && (
           <span
             className="shrink-0 inline-flex items-center gap-1 rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide leading-4"
@@ -568,6 +612,8 @@ function SessionBlock({
       </div>
       {!short && (
         <p className="leading-tight truncate mt-0.5" style={{ color: muted, fontSize: 10 }}>
+          {/* T6c: the category leads the line when the class has one. */}
+          {classCategoryTag(cls) && <span data-testid="schedule-cell-category">{classCategoryTag(cls)} · </span>}
           {cls.time}–{cls.endTime} · {cls.coach}
         </p>
       )}
@@ -613,15 +659,23 @@ export default function MemberSchedulePage() {
   // previous hardcoded `PRIMARY` ignored tenant branding entirely.
   const [primaryColor, setPrimaryColor] = useState(PRIMARY);
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("gym-settings");
-      if (raw) {
-        const settings = JSON.parse(raw) as { primaryColor?: string };
-        if (settings.primaryColor && /^#[0-9a-f]{6}$/i.test(settings.primaryColor)) {
-          setPrimaryColor(settings.primaryColor);
+    let cancelled = false;
+    // Deferred to a microtask so the effect body does not set state
+    // synchronously (react-hooks/set-state-in-effect); same pattern as
+    // app/member/home/page.tsx.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      try {
+        const raw = localStorage.getItem("gym-settings");
+        if (raw) {
+          const settings = JSON.parse(raw) as { primaryColor?: string };
+          if (settings.primaryColor && /^#[0-9a-f]{6}$/i.test(settings.primaryColor)) {
+            setPrimaryColor(settings.primaryColor);
+          }
         }
-      }
-    } catch { /* localStorage unavailable in SSR / private mode — fall back to default */ }
+      } catch { /* localStorage unavailable in SSR / private mode — fall back to default */ }
+    });
+    return () => { cancelled = true; };
   }, []);
 
   // Active-hours window for the week (recomputed when the schedule loads)
@@ -766,7 +820,8 @@ export default function MemberSchedulePage() {
         coach: string; location: string; capacity: number | null; color?: string | null;
         isKids?: boolean;
         kidsClassForAdult?: boolean;
-        eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok";
+        category?: string | null;
+        eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok" | "tier_not_included";
         requiredRankName?: string | null; maxRankName?: string | null;
         dayOfWeek: number; classInstanceId?: string | null; cancelled?: boolean;
       }>) => {
@@ -790,6 +845,7 @@ export default function MemberSchedulePage() {
           capacity: c.capacity,
           isKids: c.isKids === true,
           kidsClassForAdult: c.kidsClassForAdult === true,
+          category: c.category ?? null,
           color: c.color ?? null,
           // API: 0=Sun…6=Sat (JS getDay). Internal: 1=Mon…7=Sun.
           dow: c.dayOfWeek === 0 ? 7 : c.dayOfWeek,
@@ -840,12 +896,21 @@ export default function MemberSchedulePage() {
       else n.add(id);
       return n;
     });
+    let failure: string | null = null;
     try {
       const res = await fetch(`/api/member/class-subscriptions/${id}`, {
         method: wasSubscribed ? "DELETE" : "POST",
       });
-      if (!res.ok) throw new Error(`status ${res.status}`);
+      if (!res.ok) {
+        // T6a/T6b: the refusal names the class and the plan (or says the
+        // class is paused) — show that, not a guess (the list may be stale).
+        const body = await res.json().catch(() => null);
+        failure = bookingFailureMessage(res.status, body, wasSubscribed);
+      }
     } catch {
+      failure = bookingFailureMessage(0, null, wasSubscribed);
+    }
+    if (failure) {
       // Audit D8: roll back AND tell the member — previously the button
       // flipped back with no feedback at all.
       setSubscribed((prev) => {
@@ -854,12 +919,7 @@ export default function MemberSchedulePage() {
         else n.delete(id);
         return n;
       });
-      toast(
-        wasSubscribed
-          ? "Couldn't unsubscribe — please try again."
-          : "Couldn't subscribe to this class — it may be invite-only.",
-        "error",
-      );
+      toast(failure, "error");
     }
   };
 

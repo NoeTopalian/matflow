@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireApiStaff } from "@/lib/api-authz";
 import { classStatus, todayWindow, usableTimezone, type ClassStatusVariant } from "@/lib/class-time";
 import { ensureTodayInstances } from "@/lib/today-sessions";
+import { liveClassWhere } from "@/lib/class-live";
 
 export async function GET() {
   const gate = await requireApiStaff();
@@ -33,7 +34,7 @@ export async function GET() {
         // Live classes only: a class an attendance-history import created to
         // hold past sessions is inactive and never part of today's running
         // order (3 Oct 2026).
-        class: { tenantId, isActive: true, deletedAt: null },
+        class: liveClassWhere(tenantId),
         // A session an attendance import created (history only, no end time) is not part of today's running order.
         sourceImportJobId: null,
         date: { gte: start, lt: end },
@@ -47,7 +48,11 @@ export async function GET() {
       },
       include: {
         class: {
-          select: { id: true, name: true, location: true, coachName: true, instructorId: true, coachUserId: true, maxCapacity: true, color: true },
+          select: {
+            id: true, name: true, location: true, coachName: true, instructorId: true, coachUserId: true, maxCapacity: true, color: true,
+            // T6d: a squad / comp class (it has a roster) shows "Squad only".
+            _count: { select: { rosterMembers: true } },
+          },
         },
         _count: { select: { attendances: true, waitlists: true } },
       },
@@ -108,6 +113,8 @@ export async function GET() {
       // The highlight: this staff member teaches it, by either column the
       // product has used for the coach.
       isMine: inst.class.coachUserId === userId || inst.class.instructorId === userId,
+      // T6d: the class has a roster, so the desk sees "Squad only".
+      rosterOnly: (inst.class._count?.rosterMembers ?? 0) > 0,
     })),
     { headers: { "Cache-Control": "private, no-store" } },
   );

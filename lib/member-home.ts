@@ -17,6 +17,15 @@ import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 import type { Prisma } from "@prisma/client";
 import { computeMemberStats } from "@/lib/member-stats";
 import { resolveCoachName } from "@/lib/class-coach";
+import { classTierCovers } from "@/lib/class-tier-gate";
+import { liveClassWhere } from "@/lib/class-live";
+
+/**
+ * Why a member can or cannot use a class, as the Schedule and Home read it.
+ * "tier_not_included" (T6a): the class's memberships do not include their
+ * plan; shown locked with "Not included in your membership", not bookable.
+ */
+export type ScheduleEligibility = "ok" | "rank_below" | "rank_above" | "roster_ok" | "tier_not_included";
 
 type TxClient = Prisma.TransactionClient;
 
@@ -285,7 +294,9 @@ export async function buildMemberSchedule(
     // RULES §5: same soft-delete filter as /api/member/schedule. These two
     // queries are the same read behind two routes; a filter added to one and
     // not the other is a hole with a fix in front of it.
-    where: { tenantId, isActive: true, deletedAt: null },
+    // T6b: the shared live-class predicate (paused, archived and imported
+    // history classes are not on the member's day).
+    where: liveClassWhere(tenantId),
     select: {
       id: true,
       name: true,
@@ -295,12 +306,16 @@ export async function buildMemberSchedule(
       location: true,
       maxCapacity: true,
       isKids: true,
+      // T6c: the category key, the same field /api/member/schedule returns.
+      category: true,
       requiredRank: { select: { id: true, name: true, discipline: true, order: true } },
       maxRank: { select: { id: true, name: true, discipline: true, order: true } },
       schedules: {
         where: { isActive: true },
         select: { id: true, dayOfWeek: true, startTime: true, endTime: true },
       },
+      // T6a: memberships that include the class ([] = everyone).
+      allowedTiers: { select: { tierId: true } },
     },
   });
 
@@ -334,6 +349,9 @@ export async function buildMemberSchedule(
       })
     : [];
   const rosterClassIds = new Set(rosterMembershipsRaw.map((r) => r.classId));
+  const self = memberId
+    ? await tx.member.findFirst({ where: { id: memberId, tenantId }, select: { membershipTierId: true } })
+    : null;
 
   const counts = await tx.classRoster.groupBy({
     by: ["classId"],
@@ -352,7 +370,7 @@ export async function buildMemberSchedule(
     // Roster-only class member is NOT on → server-side hide entirely.
     if (isRosterMode && !memberOnRoster) return [];
 
-    let eligibility: "ok" | "rank_below" | "rank_above" | "roster_ok" = "ok";
+    let eligibility: ScheduleEligibility = "ok";
     if (memberOnRoster) {
       eligibility = "roster_ok";
     } else if (cls.requiredRank) {
@@ -362,6 +380,17 @@ export async function buildMemberSchedule(
     if (eligibility === "ok" && cls.maxRank) {
       const r = memberRanks.find((mr) => mr.rankSystem.discipline === cls.maxRank!.discipline);
       if (r && r.rankSystem.order > cls.maxRank.order) eligibility = "rank_above";
+    }
+    // T6a: shown locked, never hidden — the member can see what to ask about.
+    if (
+      eligibility === "ok" &&
+      !classTierCovers({
+        allowedTierIds: cls.allowedTiers.map((t) => t.tierId),
+        memberTierId: self?.membershipTierId ?? null,
+        hasRoster: isRosterMode,
+      })
+    ) {
+      eligibility = "tier_not_included";
     }
 
     return cls.schedules.map((sched: Sched) => ({
@@ -376,6 +405,7 @@ export async function buildMemberSchedule(
       location: cls.location ?? "",
       capacity: cls.maxCapacity,
       isKids: cls.isKids,
+      category: cls.category ?? null,
       dayOfWeek: sched.dayOfWeek,
       classInstanceId: instanceMap.get(`${cls.id}-${sched.startTime}`) ?? null,
       eligibility,
@@ -486,10 +516,15 @@ export async function buildMemberChildren(
     return base.map((kid) => ({ ...kid, timetable: [] as KidTimetableEntry[] }));
   }
 
+  // T6b: a paused or archived class keeps its bookings and already-minted
+  // sessions, but it is off the parent's Home too. Cancelled sessions stay
+  // (the view flags them), so this is liveSessionWhere minus isCancelled.
   const instances = await tx.classInstance.findMany({
     where: {
       classId: { in: Array.from(allClassIds) },
       date: { gte: windowStart, lt: windowEnd },
+      sourceImportJobId: null,
+      class: liveClassWhere(tenantId),
     },
     select: {
       id: true,

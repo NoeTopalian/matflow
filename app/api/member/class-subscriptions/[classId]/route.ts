@@ -8,6 +8,10 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
+import { classTierCovers, tierRefusalSentence } from "@/lib/class-tier-gate";
+import { classNotLiveSentence } from "@/lib/class-live";
+import { doorLifecycle } from "@/lib/class-lifecycle";
+import { checkinRefusal } from "@/lib/checkin-refusal";
 
 export const runtime = "nodejs";
 
@@ -42,13 +46,70 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
       // and both insert. Locking the Class row makes the second booking wait
       // for the first to commit, then re-count and see the place gone. Both
       // statements run inside the one transaction `withTenantContext` opens.
-      const locked = await tx.$queryRaw<{ id: string; maxCapacity: number | null }[]>`
-        SELECT "id", "maxCapacity"
+      const locked = await tx.$queryRaw<{
+        id: string;
+        name: string;
+        maxCapacity: number | null;
+        isActive: boolean;
+        deletedAt: Date | null;
+        sourceImportJobId: string | null;
+      }[]>`
+        SELECT "id", "name", "maxCapacity", "isActive", "deletedAt", "sourceImportJobId"
           FROM "Class"
          WHERE "id" = ${classId} AND "tenantId" = ${r.tenantId}
            FOR UPDATE
       `;
-      if (locked.length === 0) return "no-class" as const;
+      // Imported history is not a class anyone books: it answers like a
+      // missing one (T6b / T4d acceptance 2).
+      if (locked.length === 0 || locked[0].sourceImportJobId) return "no-class" as const;
+
+      // T6b: a paused or archived class takes no new bookings. Read after the
+      // Class lock, so a pause that committed first is honoured. Existing
+      // bookings are kept (and hidden) by the pause itself.
+      // doorLifecycle reads a pre-T6b archive (no deletedAt) as archived.
+      const state = await doorLifecycle(tx, r.tenantId, locked[0]);
+      if (state !== "active") {
+        return { kind: "not_live" as const, className: locked[0].name, state };
+      }
+
+      // T6d composition: a class with a roster (a comp / squad class) is
+      // governed by its roster, here as at the member app's check-in. A
+      // member on it may book regardless of tier; a member who is not on it
+      // is refused with the check-in's own sentence, and the tier list is
+      // not consulted (classTierCovers relies on this gate for that case).
+      const rosterCount = await tx.classRoster.count({ where: { classId, tenantId: r.tenantId } });
+      if (rosterCount > 0) {
+        const onRoster = await tx.classRoster.findFirst({
+          where: { classId, memberId: r.memberId, tenantId: r.tenantId },
+          select: { id: true },
+        });
+        if (!onRoster) return "not-rostered" as const;
+      }
+
+      // T6a: the same membership gate as the member app's check-in, read
+      // after the same Class lock, so a booking and a check-in can never
+      // disagree about who a class is for. A class with no memberships
+      // selected, or with a roster, is not tier-gated.
+      const tierRows = rosterCount > 0
+        ? []
+        : await tx.classMembershipTier.findMany({
+            where: { classId, tenantId: r.tenantId },
+            select: { tierId: true },
+          });
+      if (tierRows.length > 0) {
+        const member = await tx.member.findFirst({
+          where: { id: r.memberId, tenantId: r.tenantId },
+          select: { membershipTierId: true, membershipTier: { select: { name: true } } },
+        });
+        const covered = classTierCovers({
+          allowedTierIds: tierRows.map((t) => t.tierId),
+          memberTierId: member?.membershipTierId ?? null,
+          hasRoster: false,
+        });
+        if (!covered) {
+          return { kind: "tier" as const, className: locked[0].name, tierName: member?.membershipTier?.name ?? null };
+        }
+      }
 
       const { maxCapacity } = locked[0];
       if (maxCapacity !== null) {
@@ -67,6 +128,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
       return "ok" as const;
     });
     if (created === "no-class") return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    if (created === "not-rostered") {
+      // The check-in's own roster refusal, so both doors read the same.
+      const refusal = checkinRefusal({ kind: "roster_not_listed" })!;
+      return NextResponse.json(refusal.body, { status: refusal.status });
+    }
+    if (typeof created === "object" && created.kind === "not_live") {
+      return NextResponse.json(
+        { error: classNotLiveSentence(created.className, created.state), reason: "class_paused" },
+        { status: 409 },
+      );
+    }
+    if (typeof created === "object" && created.kind === "tier") {
+      return NextResponse.json(
+        { error: tierRefusalSentence(created.className, created.tierName), reason: "tier_not_included" },
+        { status: 403 },
+      );
+    }
     if (created === "full") {
       return NextResponse.json(
         {

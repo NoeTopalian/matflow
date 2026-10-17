@@ -17,6 +17,8 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { verifyKioskMemberToken } from "@/lib/kiosk-token";
 import { performCheckin } from "@/lib/checkin";
 import { KIDS_CLASS_REFUSAL } from "@/lib/checkin-refusal";
+import { tierRefusalSentence } from "@/lib/class-tier-gate";
+import { classNotLiveSentence } from "@/lib/class-live";
 import { logAudit } from "@/lib/audit-log";
 import { normaliseIp, summariseUa } from "@/lib/login-fingerprint";
 import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
@@ -107,6 +109,12 @@ export async function POST(
     // The tablet is a member-decided path: a venue-bound tier does not open
     // a class at another venue (ADR-001 D2 slice 2).
     enforceVenueGate: true,
+    // T6a: a class whose memberships do not include the member's plan is
+    // refused at the tablet with the class and the plan named (Q3).
+    tierGate: "refuse",
+    // T6b: a paused or archived class is not offered at the tablet, and a
+    // session minted before the pause is refused by instance id too.
+    enforceClassStateGate: true,
   });
 
   switch (result.kind) {
@@ -138,6 +146,12 @@ export async function POST(
       return NextResponse.json({ error: "Class not found" }, { status: 404 });
     case "class_cancelled":
       return NextResponse.json({ error: "This class has been cancelled", reason: "class_cancelled" }, { status: 409 });
+    case "class_paused":
+      // T6b: the same sentence as the member app, naming the class.
+      return NextResponse.json(
+        { error: classNotLiveSentence(result.className, result.state), reason: "class_paused" },
+        { status: 409 },
+      );
     case "rank_below":
       return NextResponse.json(
         { error: "This class is for a higher belt — please ask staff." },
@@ -179,8 +193,11 @@ export async function POST(
       // fell through `default:` to a 500 and the tablet blamed itself. Same
       // sentence as the staff route, so the two surfaces agree about the same
       // state.
+      // T6d: the machine-readable reason, as the staff route sends. The kiosk
+      // search no longer offers a squad class to a member who is not on it,
+      // so this answer is now reached only by a direct POST.
       return NextResponse.json(
-        { error: "You're not on the roster for this class." },
+        { error: "You're not on the roster for this class.", reason: "roster_not_listed" },
         { status: 403 },
       );
     case "waiver_unsigned":
@@ -211,6 +228,11 @@ export async function POST(
     case "venue_not_covered":
       return NextResponse.json(
         { error: `Your membership covers ${result.tierVenue} — this class is at ${result.classVenue}. Ask staff.`, reason: "venue_not_covered" },
+        { status: 403 },
+      );
+    case "tier_not_included":
+      return NextResponse.json(
+        { error: tierRefusalSentence(result.className, result.tierName), reason: "tier_not_included" },
         { status: 403 },
       );
     case "no_coverage":

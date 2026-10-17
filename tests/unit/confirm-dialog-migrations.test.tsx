@@ -63,6 +63,10 @@ function installFetch() {
     if (typeof url === "string" && url.includes("/api/checkin/members")) {
       return Promise.resolve({ ok: true, json: async () => [] });
     }
+    // T6b: the archive confirmation's counts.
+    if (typeof url === "string" && url.endsWith("?dryRun=1")) {
+      return Promise.resolve({ ok: true, json: async () => ({ dryRun: true, attendanceCount: 0, rosterCount: 0, bookingCount: 0 }) });
+    }
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true }) });
   }) as unknown as typeof fetch;
 }
@@ -177,6 +181,12 @@ describe("RegisterPanel — removing a check-in still confirms", () => {
 // class alone". Note this action is deliberately NOT `destructive` — archiving
 // is reversible — so the copy, not the button variant, carries the weight.
 
+// T6b (17 Oct 2026): the archive now reads the class's counts first with a
+// DELETE `?dryRun=1` (it changes nothing) so the question can say what is
+// kept. Those dry runs are not mutations; the real DELETE still waits for the
+// answer.
+const realMutations = () => mutations().filter((c) => !c.endsWith("?dryRun=1"));
+
 describe("TimetableManager — archiving a class still confirms", () => {
   const CLASS: ClassRow = {
     id: "c1",
@@ -212,27 +222,29 @@ describe("TimetableManager — archiving a class still confirms", () => {
 
   it("does not archive until the question is answered", async () => {
     renderTimetable();
-    await click("Delete Fundamentals");
+    await click("Archive Fundamentals");
 
-    expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getByText(/stop appearing in the timetable/i)).toBeTruthy();
-    expect(mutations()).toEqual([]);
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    expect(screen.getByText(/comes off the timetable/i)).toBeTruthy();
+    expect(realMutations()).toEqual([]);
   });
 
   it("cancelling leaves the class alone", async () => {
     renderTimetable();
-    await click("Delete Fundamentals");
+    await click("Archive Fundamentals");
+    await screen.findByRole("dialog");
     await click("Cancel");
 
-    expect(mutations()).toEqual([]);
+    expect(realMutations()).toEqual([]);
   });
 
   it("confirming fires the DELETE it always did", async () => {
     renderTimetable();
-    await click("Delete Fundamentals");
+    await click("Archive Fundamentals");
+    await screen.findByRole("dialog");
     await click("Archive class");
 
-    expect(mutations()).toEqual(["DELETE /api/classes/c1"]);
+    expect(realMutations()).toEqual(["DELETE /api/classes/c1"]);
   });
 });
 

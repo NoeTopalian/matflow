@@ -6,7 +6,7 @@
  * refusal it is, in the server's words.
  */
 import { describe, it, expect } from "vitest";
-import { classifyCheckinResponse } from "@/lib/checkin-outcome";
+import { classifyCheckinResponse, bookingFailureMessage } from "@/lib/checkin-outcome";
 import { checkinRefusal } from "@/lib/checkin-refusal";
 
 describe("classifyCheckinResponse", () => {
@@ -81,5 +81,29 @@ describe("checkinRefusal", () => {
   it("duplicate maps to already_checked_in at 409; success and error are not refusals", () => {
     expect(checkinRefusal({ kind: "duplicate" })).toEqual({ status: 409, body: { error: "Already checked in", reason: "already_checked_in" } });
     expect(checkinRefusal({ kind: "error", error: new Error("x") })).toBeNull();
+  });
+});
+
+describe("bookingFailureMessage (member schedule)", () => {
+  it("shows the server's refusal sentence (tier, paused, roster, full)", () => {
+    const tier = "Advanced isn't included in your Beginners membership. Ask staff about a membership that includes it.";
+    expect(bookingFailureMessage(403, { error: tier, reason: "tier_not_included" }, false)).toBe(tier);
+    const paused = "No-Gi is paused at the moment, so check-in and booking are closed. Ask staff when it's back.";
+    expect(bookingFailureMessage(409, { error: paused, reason: "class_paused" }, false)).toBe(paused);
+  });
+
+  it("falls back for a network failure, a 5xx, or a body with no sentence", () => {
+    expect(bookingFailureMessage(0, null, false)).toBe("Couldn't book this class — please try again.");
+    expect(bookingFailureMessage(500, { error: "Failed to subscribe" }, false)).toBe("Couldn't book this class — please try again.");
+    expect(bookingFailureMessage(403, {}, false)).toBe("Couldn't book this class — please try again.");
+    expect(bookingFailureMessage(500, null, true)).toBe("Couldn't unsubscribe — please try again.");
+  });
+
+  it("never claims the class is invite-only", () => {
+    expect(bookingFailureMessage(500, null, false)).not.toMatch(/invite-only/);
+  });
+
+  it("says signed out on a 401", () => {
+    expect(bookingFailureMessage(401, { error: "Unauthorized" }, false)).toMatch(/signed out/);
   });
 });
