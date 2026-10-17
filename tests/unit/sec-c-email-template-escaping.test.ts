@@ -24,6 +24,9 @@ vi.mock("resend", () => ({
 vi.mock("@/lib/email-delivery", async (orig) => ({
   ...(await orig<object>()),
   isEmailDeliveryOn: () => true,
+  // Delivery forced on for every recipient (the production sending path), so
+  // every template reaches the mocked Resend client.
+  emailSendingPolicy: () => ({ kind: "open" }),
 }));
 vi.mock("@/lib/prisma-tenant", () => {
   const tx = new Proxy(

@@ -10,7 +10,7 @@
  *
  * Operator-clear path: delete / update the offending EmailLog row.
  */
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 const { findFirstMock, createMock, updateMock, resendSendMock } = vi.hoisted(() => ({
   findFirstMock: vi.fn(),
@@ -54,6 +54,8 @@ const ARGS = {
 };
 
 beforeEach(() => {
+  // Production sending path (17 Oct 2026): outside production only EMAIL_TEST_RECIPIENTS receive mail.
+  process.env.VERCEL_ENV = "production";
   findFirstMock.mockReset();
   createMock.mockReset();
   updateMock.mockReset();
@@ -147,4 +149,8 @@ describe("lib/email.ts — bounce-aware short-circuit", () => {
       data: expect.objectContaining({ status: "sent", resendId: "resend-id-1" }),
     });
   });
+});
+
+afterEach(() => {
+  delete process.env.VERCEL_ENV;
 });

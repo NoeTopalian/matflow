@@ -60,7 +60,7 @@ describe("env-guards — RESEND_API_KEY and EMAIL_DELIVERY", () => {
   it("names an unrecognised EMAIL_DELIVERY value and says it is treated as off", () => {
     vi.stubEnv("EMAIL_DELIVERY", "false");
     expect(() => runProductionEnvGuards()).not.toThrow();
-    expect(warn.mock.calls.some((c) => /not "on" or "off"/.test(String(c[0])))).toBe(true);
+    expect(warn.mock.calls.some((c) => /not "on", "off" or "test" — it is treated as OFF/.test(String(c[0])))).toBe(true);
   });
 
   it("does not warn about delivery when it is on and the key is set", () => {

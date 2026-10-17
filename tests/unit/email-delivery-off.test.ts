@@ -67,6 +67,8 @@ const VARS: Record<string, string> = {
 let logSeq = 0;
 
 beforeEach(() => {
+  // Production sending path (17 Oct 2026): outside production only EMAIL_TEST_RECIPIENTS receive mail.
+  process.env.VERCEL_ENV = "production";
   findFirstMock.mockReset();
   createMock.mockReset();
   createMock.mockImplementation(() => Promise.resolve({ id: `log-${++logSeq}` }));
@@ -218,4 +220,8 @@ describe("sendEmail with delivery on (control)", () => {
     expect(r.suppressed).toBeUndefined();
     expect(resendSendMock).toHaveBeenCalledTimes(1);
   });
+});
+
+afterEach(() => {
+  delete process.env.VERCEL_ENV;
 });

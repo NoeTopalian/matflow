@@ -1,9 +1,29 @@
 /**
- * Resend webhook — receives delivery / bounce / complaint events.
- * Signature verification via RESEND_WEBHOOK_SECRET (svix).
+ * Resend webhook — receives delivery / bounce / complaint events and moves the
+ * matching EmailLog row forward.
  *
- * Set up: see docs/EMAIL-SETUP-RUNBOOK.md Step 11. Endpoint URL on the
- * Resend dashboard side is `https://matflow.studio/api/webhooks/resend`.
+ * Set up: docs/readiness/RESEND-TEST-CONFIG-2026-10-17.md (test) and
+ * docs/EMAIL-SETUP-RUNBOOK.md Step 11 (production). Resend signs every request
+ * with Svix; a webhook is account-wide (it receives events for every email the
+ * Resend account sends), so this route only ever updates an EmailLog row that
+ * THIS database wrote, and only when the event names the same recipient.
+ *
+ * Contract (17 Oct 2026):
+ * - RESEND_WEBHOOK_SECRET is required in every environment: without it the
+ *   route answers 503 and processes nothing (no unsigned fallback).
+ * - The signature is verified on the raw request body before anything is
+ *   parsed. Missing, invalid or stale (Svix's 5-minute timestamp tolerance)
+ *   signatures → 401.
+ * - Duplicates are safe: Resend retries keep the same svix-id and the status
+ *   only moves forward, so a repeated event changes nothing ("duplicate").
+ * - Out of order is safe: each status has a rank and an event never lowers it;
+ *   the write is conditional on the status that was read, so two concurrent
+ *   events cannot let a lower one land last.
+ * - A database failure answers 500 so Resend retries (safe because of the two
+ *   rules above); unknown emails and other event types answer 200 and change
+ *   nothing.
+ * - Logs carry the svix-id, Resend email id, event type and outcome only —
+ *   never the secret, the body, a recipient address or a provider message.
  */
 import { Webhook } from "svix";
 import { withRlsBypass } from "@/lib/prisma-tenant";
@@ -16,141 +36,119 @@ type ResendEvent = {
   created_at?: string;
   data?: {
     email_id?: string;
-    to?: string[];
-    subject?: string;
+    to?: string[] | string;
     bounce?: { type?: string; subType?: string; message?: string };
-    complaint?: { type?: string; userAgent?: string };
   };
 };
 
-// Status precedence — out-of-order Resend events must never let a transient
-// status (delivery_delayed) overwrite a terminal one (bounced/complained), and
-// `failed` and `bounced` must not be interchangeable. Each status has a
-// distinct rank; a webhook event whose mapped rank is < the current rank is
-// rejected. (Security audit iteration 2 / H3, 2026-05-07.)
+// Status precedence. A webhook event whose rank is below the current status is
+// ignored, and an event at the same status is a duplicate. delivery_delayed is
+// transient: it can move a sent email on, but never a delivered or terminal one.
 const STATUS_RANK: Record<string, number> = {
   queued: 0,
   sent: 1,
+  delivery_delayed: 1.5,
   delivered: 2,
-  delivery_delayed: 2, // transient — same plane as delivered, won't overwrite terminals
   failed: 3,
   bounced: 4,          // terminal
   complained: 5,       // strongest — never overwritten by anything
 };
 
-export async function POST(req: Request) {
-  const secret = process.env.RESEND_WEBHOOK_SECRET;
-  const rawBody = await req.text();
+const EMAIL_ADDRESS = /[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+/g;
 
-  if (!secret) {
-    // Dev-only fallback: no secret configured, accept events but warn.
-    console.warn("[resend-webhook] RESEND_WEBHOOK_SECRET not set — accepting unsigned event in dev mode");
-    if (process.env.NODE_ENV === "production") {
-      return NextResponse.json({ error: "Webhook secret not configured" }, { status: 503 });
+/** Map an event to the EmailLog status it means, and a reason for the operator (no addresses). */
+function mapEvent(event: ResendEvent): { status: string; reason: string | null } | null {
+  switch (event.type) {
+    case "email.sent":
+      return { status: "sent", reason: null };
+    case "email.delivered":
+      return { status: "delivered", reason: null };
+    case "email.delivery_delayed":
+      return { status: "delivery_delayed", reason: "Resend reported delivery delayed" };
+    case "email.failed":
+      return { status: "failed", reason: "Resend reported failed" };
+    case "email.suppressed":
+      return { status: "failed", reason: "Resend suppressed the send (recipient on Resend's suppression list)" };
+    case "email.bounced": {
+      const b = event.data?.bounce;
+      const parts = [b?.type, b?.subType, b?.message].filter(Boolean).join(" — ").replace(EMAIL_ADDRESS, "[address]");
+      return { status: "bounced", reason: parts.slice(0, 500) || "bounced" };
     }
-  } else {
-    try {
-      const wh = new Webhook(secret);
-      const headers = {
-        "svix-id": req.headers.get("svix-id") ?? "",
-        "svix-timestamp": req.headers.get("svix-timestamp") ?? "",
-        "svix-signature": req.headers.get("svix-signature") ?? "",
-      };
-      wh.verify(rawBody, headers);
-    } catch (err) {
-      console.warn("[resend-webhook] signature verification failed", err);
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-    }
+    case "email.complained":
+      return { status: "complained", reason: "Recipient marked as spam" };
+    default:
+      // opened / clicked / received / scheduled / domain.* / contact.*: nothing to record.
+      return null;
+  }
+}
+
+function recipients(event: ResendEvent): string[] {
+  const to = event.data?.to;
+  return (Array.isArray(to) ? to : to ? [to] : []).map((a) => String(a).trim().toLowerCase());
+}
+
+export async function POST(req: Request) {
+  const svixId = req.headers.get("svix-id") ?? "";
+  const outcome = (o: string, extra = "", status = 200, body: Record<string, unknown> = {}) => {
+    console.info(`[resend-webhook] svix=${svixId.slice(0, 64) || "-"} ${extra}outcome=${o}`);
+    return NextResponse.json({ ok: status < 400, outcome: o, ...body }, { status });
+  };
+
+  const secret = process.env.RESEND_WEBHOOK_SECRET;
+  if (!secret) return outcome("not_configured", "", 503, { error: "Webhook secret not configured" });
+
+  const rawBody = await req.text();
+  try {
+    new Webhook(secret).verify(rawBody, {
+      "svix-id": svixId,
+      "svix-timestamp": req.headers.get("svix-timestamp") ?? "",
+      "svix-signature": req.headers.get("svix-signature") ?? "",
+    });
+  } catch {
+    return outcome("rejected_signature", "", 401, { error: "Invalid signature" });
   }
 
   let event: ResendEvent;
   try {
     event = JSON.parse(rawBody) as ResendEvent;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return outcome("bad_json", "", 400, { error: "Invalid JSON" });
   }
 
-  const resendId = event.data?.email_id;
-  if (!resendId) return NextResponse.json({ ok: true, ignored: "no email_id" });
-
-  // Map event type to the status enum + capture diagnostic message for
-  // bounces/complaints so the operator can see WHY in the EmailLog table.
-  let nextStatus: string | null = null;
-  let errorMessage: string | null = null;
-  switch (event.type) {
-    case "email.sent":
-      nextStatus = "sent";
-      break;
-    case "email.delivered":
-      nextStatus = "delivered";
-      break;
-    case "email.bounced": {
-      nextStatus = "bounced";
-      const b = event.data?.bounce;
-      if (b) {
-        const parts = [b.type, b.subType, b.message].filter(Boolean).join(" — ");
-        errorMessage = parts.slice(0, 500) || "bounced";
-      } else {
-        errorMessage = "bounced";
-      }
-      break;
-    }
-    case "email.complained":
-      nextStatus = "complained";
-      errorMessage = "Recipient marked as spam";
-      break;
-    case "email.delivery_delayed":
-      // Transient — must NOT clobber a later terminal `bounced`. Status rank
-      // 2 (same as delivered), so a subsequent bounce rank 4 will overwrite.
-      nextStatus = "delivery_delayed";
-      errorMessage = "Resend reported delivery delayed";
-      break;
-    case "email.failed":
-      nextStatus = "failed";
-      errorMessage = "Resend reported failed";
-      break;
-    case "email.opened":
-    case "email.clicked":
-      // Visibility-only events — ack but don't write (keeps EmailLog small)
-      return NextResponse.json({ ok: true, ignored: event.type });
-    default:
-      return NextResponse.json({ ok: true, ignored: event.type });
-  }
+  const resendId = typeof event.data?.email_id === "string" ? event.data.email_id : "";
+  const tag = `email=${resendId.slice(0, 64) || "-"} type=${String(event.type).slice(0, 40)} `;
+  const mapped = mapEvent(event);
+  if (!mapped) return outcome("ignored_type", tag);
+  if (!resendId) return outcome("ignored_no_email_id", tag);
 
   try {
-    // Webhook is cross-tenant by nature: Resend doesn't know which tenant
-    // an email_id belongs to, we look it up via the unique resendId. RLS
-    // bypass is intentional + correct.
-    const existing = await withRlsBypass((tx) =>
-      tx.emailLog.findUnique({ where: { resendId }, select: { id: true, status: true } }),
-    );
-    if (!existing) {
-      // Email was sent before the webhook was wired, or from a different
-      // environment. Ack so Resend doesn't retry.
-      return NextResponse.json({ ok: true, ignored: "email not found" });
-    }
+    // Cross-tenant by nature: Resend does not know which club an email
+    // belongs to; the unique resendId (written by sendEmail) does.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const existing = await withRlsBypass((tx) =>
+        tx.emailLog.findUnique({ where: { resendId }, select: { id: true, status: true, recipient: true } }),
+      );
+      if (!existing) return outcome("ignored_unknown_email", tag);
+      if (!recipients(event).includes(existing.recipient.trim().toLowerCase())) return outcome("ignored_recipient_mismatch", tag);
 
-    // Don't downgrade — once a message is complained/bounced, a later
-    // `delivered` event (out-of-order delivery) shouldn't overwrite.
-    const currentRank = STATUS_RANK[existing.status] ?? 0;
-    const nextRank = STATUS_RANK[nextStatus] ?? 0;
-    if (nextRank < currentRank) {
-      return NextResponse.json({ ok: true, ignored: "would downgrade status" });
-    }
+      const currentRank = STATUS_RANK[existing.status] ?? 0;
+      const nextRank = STATUS_RANK[mapped.status] ?? 0;
+      if (mapped.status === existing.status) return outcome("duplicate", tag);
+      if (nextRank < currentRank) return outcome("ignored_would_downgrade", tag);
 
-    await withRlsBypass((tx) =>
-      tx.emailLog.update({
-        where: { id: existing.id },
-        data: {
-          status: nextStatus,
-          ...(errorMessage ? { errorMessage } : {}),
-        },
-      }),
-    );
+      // Conditional on the status just read: if another delivery moved the row
+      // in between, re-read and decide again.
+      const res = await withRlsBypass((tx) =>
+        tx.emailLog.updateMany({
+          where: { id: existing.id, status: existing.status },
+          data: { status: mapped.status, ...(mapped.reason ? { errorMessage: mapped.reason } : {}) },
+        }),
+      );
+      if (res.count === 1) return outcome("applied", `${tag}from=${existing.status} to=${mapped.status} `);
+    }
+    return outcome("conflict_retry", tag, 500, { error: "Concurrent update; retry" });
   } catch (err) {
-    console.warn("[resend-webhook] DB update failed", err);
-    // Still 200 so Resend doesn't retry forever; failure is logged
+    console.error(`[resend-webhook] svix=${svixId.slice(0, 64) || "-"} ${tag}database error ${err instanceof Error ? err.name : "unknown"}`);
+    return outcome("db_error", tag, 500, { error: "Database error; Resend will retry" });
   }
-
-  return NextResponse.json({ ok: true });
 }

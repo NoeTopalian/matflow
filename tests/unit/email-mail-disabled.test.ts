@@ -13,7 +13,7 @@
  * key first would poison the cache, so this needs a fresh module with the key
  * unset from the start.
  */
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 const { findFirstMock, createMock, updateMock, resendSendMock } = vi.hoisted(() => ({
   findFirstMock: vi.fn(),
@@ -47,6 +47,8 @@ const ARGS = {
 };
 
 beforeEach(() => {
+  // Production sending path (17 Oct 2026): outside production only EMAIL_TEST_RECIPIENTS receive mail.
+  process.env.VERCEL_ENV = "production";
   findFirstMock.mockReset();
   createMock.mockReset();
   resendSendMock.mockReset();
@@ -74,4 +76,8 @@ describe("lib/email.ts — mail-disabled short-circuit (no RESEND_API_KEY)", () 
       }),
     });
   });
+});
+
+afterEach(() => {
+  delete process.env.VERCEL_ENV;
 });

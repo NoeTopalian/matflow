@@ -13,7 +13,7 @@
  *
  * Red on revert: remove the resolution in sendEmail and the first case fails.
  */
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 const { findFirstMock, createMock, updateMock, resendSendMock, tenantFindUnique, provisionalLookup } = vi.hoisted(() => ({
   provisionalLookup: vi.fn(),
@@ -57,6 +57,8 @@ function sentArgs(): { replyTo?: string } {
 }
 
 beforeEach(() => {
+  // Production sending path (17 Oct 2026): outside production only EMAIL_TEST_RECIPIENTS receive mail.
+  process.env.VERCEL_ENV = "production";
   findFirstMock.mockReset().mockResolvedValue(null);
   createMock.mockReset().mockResolvedValue({ id: "log-1" });
   updateMock.mockReset().mockResolvedValue({});
@@ -155,4 +157,8 @@ describe("sendEmail — club Reply-To", () => {
       ].sort(),
     );
   });
+});
+
+afterEach(() => {
+  delete process.env.VERCEL_ENV;
 });

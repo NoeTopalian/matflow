@@ -93,6 +93,8 @@ const emailLogRows = () =>
   h.calls.filter((c) => c.op === "emailLog.create").map((c) => (c.args as { data: Record<string, unknown> }).data);
 
 beforeEach(() => {
+  // Production sending path (17 Oct 2026): outside production only EMAIL_TEST_RECIPIENTS receive mail.
+  process.env.VERCEL_ENV = "production";
   h.calls.length = 0;
   for (const k of Object.keys(h.handlers)) delete h.handlers[k];
   h.resendCtor.mockClear();
@@ -201,4 +203,8 @@ describe("the login screen learns that email is off", () => {
     const on = await tenantLookup(new Request("http://localhost/api/tenant/maildark"), { params: Promise.resolve({ slug: "maildark" }) });
     expect((await on.json()).emailDelivery).toBe("on");
   });
+});
+
+afterEach(() => {
+  delete process.env.VERCEL_ENV;
 });

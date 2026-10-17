@@ -9,7 +9,7 @@
  */
 import { Resend } from "resend";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
-import { isEmailDeliveryOn, type SendEmailResult } from "@/lib/email-delivery";
+import { emailSendingPolicy, isRecipientAllowed, type SendEmailResult } from "@/lib/email-delivery";
 import { isLoginEmailProvisional } from "@/lib/login-email";
 
 export type { SendEmailResult } from "@/lib/email-delivery";
@@ -435,7 +435,8 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
   // no code path can reach Resend, whatever key is configured. One EmailLog
   // row records what would have gone out; `suppressed` lets the caller say
   // "email is turned off" instead of "the send failed".
-  if (!isEmailDeliveryOn()) {
+  const policy = emailSendingPolicy();
+  if (policy.kind === "off") {
     const log = await withTenantContext(args.tenantId, (tx) =>
       tx.emailLog.create({
         data: {
@@ -449,6 +450,27 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
       }),
     );
     return { ok: false, logId: log.id, suppressed: "delivery_off" };
+  }
+
+  // Test recipient allowlist (17 Oct 2026, lib/email-delivery.ts). In test mode
+  // — and anywhere that is not production — only EMAIL_TEST_RECIPIENTS receive
+  // mail; an empty list sends nothing. Checked here, at the only call into
+  // Resend, before any lookup or provider call. `to` is the only recipient this
+  // function ever passes to Resend (no cc/bcc), so this covers every send.
+  if (!isRecipientAllowed(policy, args.to)) {
+    const log = await withTenantContext(args.tenantId, (tx) =>
+      tx.emailLog.create({
+        data: {
+          tenantId: args.tenantId,
+          templateId: args.templateId,
+          recipient: args.to,
+          subject,
+          status: "suppressed",
+          errorMessage: "suppressed_not_allowlisted: email is in test mode and the recipient is not on EMAIL_TEST_RECIPIENTS — nothing was sent",
+        },
+      }),
+    );
+    return { ok: false, logId: log.id, suppressed: "recipient_not_allowlisted" };
   }
 
   // Mail-disabled short-circuit. With no Resend client (RESEND_API_KEY unset —

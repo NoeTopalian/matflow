@@ -106,7 +106,35 @@ export function appEnv({ isolated = true } = {}) {
     env.STRIPE_CLIENT_ID = "ca_invalid_local";
     env.RESEND_API_KEY = "re_invalid_local_never_sends";
   }
+  delete env.EMAIL_TEST_RECIPIENTS;
+  delete env.RESEND_WEBHOOK_SECRET;
+  Object.assign(env, extraEnv());
   return env;
+}
+
+/**
+ * Optional private email-test settings (MF_EXTRA_ENV = path to a KEY=value file outside git, e.g.
+ * %LOCALAPPDATA%/matflow-verify/email-test.env). Only these keys are accepted; EMAIL_DELIVERY may only be
+ * off or test; values are never printed. Without the file, mail stays OFF.
+ */
+const EXTRA_KEYS = new Set(["RESEND_API_KEY", "RESEND_WEBHOOK_SECRET", "RESEND_FROM", "EMAIL_DELIVERY", "EMAIL_TEST_RECIPIENTS"]);
+let extraLogged = false;
+export function extraEnv() {
+  const file = process.env.MF_EXTRA_ENV;
+  if (!file) return {};
+  const abs = fwd(path.resolve(file));
+  if (abs.toLowerCase().startsWith(`${APP.toLowerCase()}/`) || abs.toLowerCase().startsWith(`${REPO.toLowerCase()}/`)) throw new Error("refusing: MF_EXTRA_ENV must live outside the repository and worktrees");
+  if (!fs.existsSync(abs)) throw new Error(`BLOCKED: MF_EXTRA_ENV file not found: ${abs}`);
+  const out = {};
+  for (const line of fs.readFileSync(abs, "utf8").split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/);
+    if (!m) continue;
+    if (!EXTRA_KEYS.has(m[1])) throw new Error(`refusing: ${m[1]} is not an accepted key in MF_EXTRA_ENV (accepted: ${[...EXTRA_KEYS].join(", ")})`);
+    out[m[1]] = m[2].trim().replace(/^"|"$/g, "");
+  }
+  if (out.EMAIL_DELIVERY && !["off", "test"].includes(out.EMAIL_DELIVERY.toLowerCase())) throw new Error("refusing: EMAIL_DELIVERY in MF_EXTRA_ENV must be off or test");
+  if (!extraLogged) { console.log(`[matflow-verify] email test settings from ${path.basename(abs)}: ${Object.keys(out).join(", ") || "(none)"} (values not printed)`); extraLogged = true; }
+  return out;
 }
 
 /** Process env for next build: as above but with NO database variable at all, so nothing in the build can migrate. */

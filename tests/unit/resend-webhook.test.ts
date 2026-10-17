@@ -1,161 +1,192 @@
 /**
- * Resend webhook handler — unit guard.
- *
- * Asserts the signature verification + status-rank guard logic. Mocks Prisma
- * + the svix Webhook so the test runs without a DB and without spinning up
- * the actual Svix verifier.
+ * Resend webhook handler (17 Oct 2026). SIMULATED provider evidence: requests
+ * are signed with the real `svix` library and a throwaway test secret (the
+ * same scheme Resend uses), and EmailLog is an in-memory store with the same
+ * conditional-update semantics as the database. No network, no Resend.
  */
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { Webhook } from "svix";
+import { randomBytes } from "node:crypto";
 
-const { svixVerifyMock, findUniqueMock, updateMock } = vi.hoisted(() => ({
-  svixVerifyMock: vi.fn(),
-  findUniqueMock: vi.fn(),
-  updateMock: vi.fn().mockResolvedValue({}),
-}));
+type Row = { id: string; resendId: string; recipient: string; status: string; errorMessage: string | null };
+const store = vi.hoisted(() => ({ rows: new Map<string, Row>(), fail: false, writes: 0 }));
 
-// Mock svix.Webhook as a class whose instances expose svixVerifyMock as
-// `verify`. Defined as a real class (not vi.fn().mockImplementation) so the
-// `new Webhook(secret)` invocation in the route reliably gets a usable
-// instance regardless of vitest mock-reset behaviour.
-vi.mock("svix", () => ({
-  Webhook: class MockWebhook {
-    verify(...args: unknown[]) {
-      return svixVerifyMock(...args);
-    }
+vi.mock("@/lib/prisma-tenant", () => ({
+  withRlsBypass: async (fn: (tx: unknown) => unknown) => {
+    if (store.fail) throw new Error("connection terminated");
+    return fn({
+      emailLog: {
+        findUnique: async ({ where }: { where: { resendId: string } }) => {
+          const r = [...store.rows.values()].find((x) => x.resendId === where.resendId);
+          return r ? { id: r.id, status: r.status, recipient: r.recipient } : null;
+        },
+        // Unconditional update (the pre-17-Oct route used it); kept so the same
+        // tests can be run against older code as a red check.
+        update: async ({ where, data }: { where: { id: string }; data: Partial<Row> }) => {
+          const r = store.rows.get(where.id);
+          if (r) { Object.assign(r, data); store.writes++; }
+          return r;
+        },
+        updateMany: async ({ where, data }: { where: { id: string; status: string }; data: Partial<Row> }) => {
+          const r = store.rows.get(where.id);
+          if (!r || r.status !== where.status) return { count: 0 };
+          Object.assign(r, data);
+          store.writes++;
+          return { count: 1 };
+        },
+      },
+    });
   },
 }));
 
-vi.mock("@/lib/prisma-tenant", () => ({
-  withRlsBypass: (fn: (tx: unknown) => unknown) =>
-    Promise.resolve(fn({
-      emailLog: {
-        findUnique: findUniqueMock,
-        update: updateMock,
-      },
-    })),
-}));
+const SECRET = `whsec_${randomBytes(24).toString("base64")}`;
+const signer = new Webhook(SECRET);
+let seq = 0;
 
-beforeEach(() => {
-  // mockReset (not just clearAllMocks) flushes the .mockResolvedValueOnce
-  // queue too — otherwise unused queued values from one test bleed into the
-  // next when an early-return path skips findUnique.
-  findUniqueMock.mockReset();
-  updateMock.mockReset();
-  updateMock.mockResolvedValue({});
-  svixVerifyMock.mockReset();
-  process.env.RESEND_WEBHOOK_SECRET = "whsec_test";
-  // NODE_ENV is typed read-only by @types/node; cast to widen so we can flip
-  // it for the "503 in production when secret unset" assertion.
-  (process.env as Record<string, string>).NODE_ENV = "production";
-});
-
-function makeReq(body: unknown, headers: Record<string, string> = {}): Request {
+function signed(body: unknown, opts: { id?: string; at?: Date; secret?: string; raw?: string } = {}): Request {
+  const payload = opts.raw ?? JSON.stringify(body);
+  const id = opts.id ?? `msg_${++seq}`;
+  const at = opts.at ?? new Date();
+  const signature = (opts.secret ? new Webhook(opts.secret) : signer).sign(id, at, payload);
   return new Request("http://localhost/api/webhooks/resend", {
     method: "POST",
-    headers: {
-      "svix-id": "msg_test_1",
-      "svix-timestamp": String(Math.floor(Date.now() / 1000)),
-      "svix-signature": "v1,test-signature",
-      "content-type": "application/json",
-      ...headers,
-    },
-    body: JSON.stringify(body),
+    headers: { "svix-id": id, "svix-timestamp": String(Math.floor(at.getTime() / 1000)), "svix-signature": signature, "content-type": "application/json" },
+    body: payload,
   });
 }
+const ev = (type: string, emailId = "re_1", extra: Record<string, unknown> = {}) => ({ type, created_at: new Date().toISOString(), data: { email_id: emailId, to: ["tester@example.test"], ...extra } });
+const row = () => store.rows.get("log-1")!;
 
-describe("POST /api/webhooks/resend — signature verification", () => {
-  it("returns 401 when svix.verify throws", async () => {
-    svixVerifyMock.mockImplementationOnce(() => { throw new Error("bad sig"); });
-    const { POST } = await import("@/app/api/webhooks/resend/route");
-    const res = await POST(makeReq({ type: "email.delivered", data: { email_id: "x" } }));
-    expect(res.status).toBe(401);
-    expect(updateMock).not.toHaveBeenCalled();
+async function post(req: Request) {
+  const { POST } = await import("@/app/api/webhooks/resend/route");
+  const res = await POST(req);
+  return { status: res.status, body: (await res.json()) as { outcome: string } };
+}
+
+beforeEach(() => {
+  process.env.RESEND_WEBHOOK_SECRET = SECRET;
+  store.fail = false;
+  store.writes = 0;
+  store.rows = new Map([["log-1", { id: "log-1", resendId: "re_1", recipient: "Tester@Example.test", status: "sent", errorMessage: null }]]);
+});
+
+describe("signature (svix, raw body)", () => {
+  it("a valid signature is processed", async () => {
+    const r = await post(signed(ev("email.delivered")));
+    expect(r).toEqual({ status: 200, body: expect.objectContaining({ outcome: "applied" }) });
+    expect(row().status).toBe("delivered");
   });
 
-  it("returns 503 in production when RESEND_WEBHOOK_SECRET is unset", async () => {
+  it("a signature made with another secret is rejected and nothing is read or written", async () => {
+    const r = await post(signed(ev("email.delivered"), { secret: `whsec_${randomBytes(24).toString("base64")}` }));
+    expect(r.status).toBe(401);
+    expect(row().status).toBe("sent");
+  });
+
+  it("missing signature headers are rejected", async () => {
+    const res = await (await import("@/app/api/webhooks/resend/route")).POST(
+      new Request("http://localhost/api/webhooks/resend", { method: "POST", body: JSON.stringify(ev("email.delivered")) }),
+    );
+    expect(res.status).toBe(401);
+    expect(store.writes).toBe(0);
+  });
+
+  it("a stale signature (older than Svix's 5-minute tolerance) is rejected", async () => {
+    const r = await post(signed(ev("email.delivered"), { at: new Date(Date.now() - 10 * 60 * 1000) }));
+    expect(r.status).toBe(401);
+    expect(store.writes).toBe(0);
+  });
+
+  it("a body changed after signing is rejected (verification is on the raw body)", async () => {
+    const good = signed(ev("email.delivered"));
+    const tampered = new Request(good.url, { method: "POST", headers: good.headers, body: JSON.stringify(ev("email.complained")) });
+    expect((await post(tampered)).status).toBe(401);
+    expect(row().status).toBe("sent");
+  });
+
+  it("no RESEND_WEBHOOK_SECRET → 503 in every environment, nothing processed", async () => {
     delete process.env.RESEND_WEBHOOK_SECRET;
-    const { POST } = await import("@/app/api/webhooks/resend/route");
-    const res = await POST(makeReq({ type: "email.delivered", data: { email_id: "x" } }));
-    expect(res.status).toBe(503);
+    for (const env of ["development", "test", "production"]) {
+      (process.env as Record<string, string>).NODE_ENV = env;
+      const r = await post(signed(ev("email.delivered")));
+      expect(r.status).toBe(503);
+    }
+    (process.env as Record<string, string>).NODE_ENV = "test";
+    expect(store.writes).toBe(0);
   });
 });
 
-describe("POST /api/webhooks/resend — event mapping", () => {
-  beforeEach(() => {
-    svixVerifyMock.mockReturnValue(undefined); // pass verification
+describe("duplicates, ordering and association", () => {
+  it("the same delivery twice (Resend retry, same svix-id) writes once", async () => {
+    const body = ev("email.delivered");
+    expect((await post(signed(body, { id: "msg_dup" }))).body.outcome).toBe("applied");
+    expect((await post(signed(body, { id: "msg_dup" }))).body.outcome).toBe("duplicate");
+    expect(store.writes).toBe(1);
   });
 
-  it("updates EmailLog status=delivered for email.delivered", async () => {
-    findUniqueMock.mockResolvedValueOnce({ id: "log-1", status: "sent" });
-    const { POST } = await import("@/app/api/webhooks/resend/route");
-    const res = await POST(makeReq({ type: "email.delivered", data: { email_id: "resend-abc" } }));
-    expect(res.status).toBe(200);
-    expect(updateMock).toHaveBeenCalledWith({
-      where: { id: "log-1" },
-      data: { status: "delivered" },
-    });
+  it("delivery_delayed arriving after delivered does not overwrite it", async () => {
+    await post(signed(ev("email.delivered")));
+    const r = await post(signed(ev("email.delivery_delayed")));
+    expect(r.body.outcome).toBe("ignored_would_downgrade");
+    expect(row().status).toBe("delivered");
   });
 
-  it("updates EmailLog status=bounced + captures bounce reason", async () => {
-    findUniqueMock.mockResolvedValueOnce({ id: "log-2", status: "sent" });
-    const { POST } = await import("@/app/api/webhooks/resend/route");
-    const res = await POST(makeReq({
-      type: "email.bounced",
-      data: {
-        email_id: "resend-xyz",
-        bounce: { type: "Permanent", subType: "MailboxDoesNotExist", message: "550 5.1.1" },
-      },
-    }));
-    expect(res.status).toBe(200);
-    expect(updateMock).toHaveBeenCalledWith({
-      where: { id: "log-2" },
-      data: {
-        status: "bounced",
-        errorMessage: "Permanent — MailboxDoesNotExist — 550 5.1.1",
-      },
-    });
+  it("delivered arriving after bounced does not overwrite the bounce", async () => {
+    await post(signed(ev("email.bounced", "re_1", { bounce: { type: "Permanent", subType: "General", message: "550 user unknown <tester@example.test>" } })));
+    await post(signed(ev("email.delivered")));
+    expect(row().status).toBe("bounced");
+    expect(row().errorMessage).toBe("Permanent — General — 550 user unknown <[address]>");
   });
 
-  it("updates EmailLog status=complained for email.complained", async () => {
-    findUniqueMock.mockResolvedValueOnce({ id: "log-3", status: "delivered" });
-    const { POST } = await import("@/app/api/webhooks/resend/route");
-    const res = await POST(makeReq({ type: "email.complained", data: { email_id: "resend-c" } }));
-    expect(res.status).toBe(200);
-    expect(updateMock).toHaveBeenCalledWith({
-      where: { id: "log-3" },
-      data: { status: "complained", errorMessage: "Recipient marked as spam" },
-    });
+  it("delivery_delayed can move a sent email on, and delivered then supersedes it", async () => {
+    await post(signed(ev("email.delivery_delayed")));
+    expect(row().status).toBe("delivery_delayed");
+    await post(signed(ev("email.delivered")));
+    expect(row().status).toBe("delivered");
   });
 
-  it("does NOT downgrade complained → delivered (out-of-order events)", async () => {
-    findUniqueMock.mockResolvedValueOnce({ id: "log-4", status: "complained" });
-    const { POST } = await import("@/app/api/webhooks/resend/route");
-    const res = await POST(makeReq({ type: "email.delivered", data: { email_id: "resend-d" } }));
-    expect(res.status).toBe(200);
-    expect(updateMock).not.toHaveBeenCalled();
+  it("email.suppressed is recorded as failed with the reason", async () => {
+    await post(signed(ev("email.suppressed")));
+    expect(row()).toMatchObject({ status: "failed", errorMessage: expect.stringContaining("suppression list") });
   });
 
-  it("ignores email.opened (visibility-only, not stored)", async () => {
-    findUniqueMock.mockResolvedValueOnce({ id: "log-5", status: "delivered" });
-    const { POST } = await import("@/app/api/webhooks/resend/route");
-    const res = await POST(makeReq({ type: "email.opened", data: { email_id: "resend-o" } }));
-    expect(res.status).toBe(200);
-    expect(updateMock).not.toHaveBeenCalled();
+  it("an event for an email this database never sent changes nothing", async () => {
+    const r = await post(signed(ev("email.delivered", "re_from_another_environment")));
+    expect(r).toEqual({ status: 200, body: expect.objectContaining({ outcome: "ignored_unknown_email" }) });
+    expect(store.writes).toBe(0);
   });
 
-  it("acks gracefully when email_id is missing", async () => {
-    const { POST } = await import("@/app/api/webhooks/resend/route");
-    const res = await POST(makeReq({ type: "email.delivered", data: {} }));
-    expect(res.status).toBe(200);
-    expect(findUniqueMock).not.toHaveBeenCalled();
-    expect(updateMock).not.toHaveBeenCalled();
+  it("an event naming a different recipient does not update the row", async () => {
+    const r = await post(signed(ev("email.delivered", "re_1", { to: ["someone-else@example.test"] })));
+    expect(r.body.outcome).toBe("ignored_recipient_mismatch");
+    expect(row().status).toBe("sent");
   });
 
-  it("acks gracefully when EmailLog row not found", async () => {
-    findUniqueMock.mockResolvedValueOnce(null);
-    const { POST } = await import("@/app/api/webhooks/resend/route");
-    const res = await POST(makeReq({ type: "email.delivered", data: { email_id: "unknown" } }));
-    expect(res.status).toBe(200);
-    expect(updateMock).not.toHaveBeenCalled();
+  it("opened / clicked / received events are acknowledged and ignored", async () => {
+    for (const t of ["email.opened", "email.clicked", "email.received", "domain.updated"]) {
+      expect((await post(signed(ev(t)))).body.outcome).toBe("ignored_type");
+    }
+    expect(store.writes).toBe(0);
+  });
+
+  it("a database failure answers 500 so Resend retries; the retry then applies once", async () => {
+    store.fail = true;
+    const body = ev("email.delivered");
+    expect((await post(signed(body, { id: "msg_retry" }))).status).toBe(500);
+    store.fail = false;
+    expect((await post(signed(body, { id: "msg_retry" }))).body.outcome).toBe("applied");
+    expect(store.writes).toBe(1);
+  });
+
+  it("logs never contain the recipient address, the secret or the body", async () => {
+    const spy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await post(signed(ev("email.bounced", "re_1", { bounce: { message: "550 tester@example.test unknown" } })));
+    store.fail = true;
+    await post(signed(ev("email.complained")));
+    const logged = [...spy.mock.calls, ...err.mock.calls].flat().join("\n");
+    expect(logged).not.toMatch(/tester@example\.test|whsec_|550/i);
+    spy.mockRestore();
+    err.mockRestore();
   });
 });

@@ -15,7 +15,7 @@
  * dev loop friction-free.
  */
 
-import { emailDeliveryMisconfigured, isEmailDeliveryOn } from "@/lib/email-delivery";
+import { emailDeliveryMisconfigured, emailSendingPolicy, isEmailDeliveryOn } from "@/lib/email-delivery";
 
 type Severity = "error" | "warn";
 
@@ -87,7 +87,15 @@ export function runProductionEnvGuards(): void {
   const deliveryOff = !isEmailDeliveryOn();
   if (emailDeliveryMisconfigured()) {
     console.warn(
-      `[env-guards] EMAIL_DELIVERY is set to a value that is not "on" or "off" — it is treated as OFF. Set it to "on" or "off".`,
+      `[env-guards] EMAIL_DELIVERY is set to a value that is not "on", "off" or "test" — it is treated as OFF.`,
+    );
+  }
+  const policy = emailSendingPolicy();
+  if (policy.kind === "allowlist") {
+    console.warn(
+      policy.recipients.size === 0
+        ? "[env-guards] Email is in TEST mode with no EMAIL_TEST_RECIPIENTS — nothing will be sent to anyone."
+        : `[env-guards] Email is in TEST mode — only the ${policy.recipients.size} address(es) in EMAIL_TEST_RECIPIENTS receive mail.`,
     );
   }
   if (deliveryOff) {
