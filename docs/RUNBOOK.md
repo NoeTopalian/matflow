@@ -24,7 +24,7 @@
 ## Incident response — first 5 minutes
 
 1. **Triage.** Hit `/api/health` first. If it returns `{status:"degraded"}`, DB is down. Otherwise app is up — narrow to a specific surface.
-2. **Check Vercel deploys.** Did a deploy land in the last hour? If yes, that's your suspect — rollback (see below) before deeper investigation.
+2. **Check Vercel deploys.** Did a deploy land in the last hour? If yes, that's your suspect — recover by fixing forward (see "Deploy / rollback" below; never Promote an old deployment) before deeper investigation.
 3. **Check Sentry.** What's the most recent error event? What route + user-agent + tenant? Use the `x-request-id` from response headers to correlate logs.
 4. **Check Vercel logs.** Filter by route and look for `[rate-limit]`, `[env-guards]`, or `[auth]` warnings.
 5. **Confirm scope.** Is it one tenant, all tenants, or just one user? Different scope = different fix.
@@ -36,7 +36,7 @@
 ### "Site is down — Vercel returns 500/503 from every route"
 
 Likely causes (in order):
-- **Recent deploy broke something.** Roll back: Vercel dashboard → Deployments → find last good deploy → ⋮ menu → Promote to Production.
+- **Recent deploy broke something.** Fix forward with `git revert` (see "Deploy / rollback" below). Never Promote or Instant Rollback an old deployment; if a revert build is too slow, use Vercel deployment protection or maintenance mode instead.
 - **DB is unreachable.** `/api/health` returns 503. Check Neon dashboard for incidents.
 - **Required env var missing.** `instrumentation.ts` runs `runProductionEnvGuards()` at boot which throws if `RESEND_API_KEY` / `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `STRIPE_CLIENT_ID` / `MATFLOW_ADMIN_SECRET` is missing in production. Set the missing var in Vercel → Settings → Environment Variables → Save → no redeploy needed.
 
@@ -72,15 +72,13 @@ This is the worst-case for a multi-tenant SaaS. Stop, don't poke around — pres
 
 ## Deploy / rollback
 
-### Roll back to last known-good
-Vercel dashboard → Deployments → last good deploy → ⋮ → Promote to Production. Takes ~30s.
+### Roll back = fix forward (never Promote)
+Never use Vercel Instant Rollback or "Promote to Production" on an old deployment: it brings back that build's old environment (retired secrets, old flags) as well as its code. Rule adopted in the hub release (PR #27, 12 Oct 2026); full procedure in [`docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md`](security/INCIDENT-AND-RESTORE-RUNBOOK.md) §4.
 
-### Roll forward (fix-forward)
 ```bash
-git revert <bad-sha>
-git push origin main
+git revert <bad-sha>      # on a branch; run the gates; merge with Noe's approval
 ```
-Vercel auto-deploys the revert commit. Faster than rollback if you're already mid-fix.
+Vercel builds the revert fresh with the current environment (a push to `main` also runs `prisma migrate deploy` against production). If older code must run, rebuild that commit fresh — never promote its old deployment — under the conditions in [`docs/readiness/OPERATOR-REMEDIATION-DEPLOY-PACKAGE.md`](readiness/OPERATOR-REMEDIATION-DEPLOY-PACKAGE.md) §6 (what reopens while old code runs). Only if production is down and a revert build is too slow: deployment protection or maintenance mode.
 
 ### Maintenance mode (planned downtime)
 Vercel → Settings → Environment Variables → add `MAINTENANCE_MODE=true` → Save. Propagates within ~30s without redeploy. To exit, set it to `false` (or delete the var).
@@ -282,13 +280,10 @@ Each entry: when to rotate, blast radius, exact procedure.
 Schema migrations live in `prisma/migrations/`. Each has a forward `migration.sql`. Rollback is **not** automatic — Prisma doesn't generate down-migrations. If a migration goes bad:
 
 1. **First, don't panic.** Application-layer code expecting the new schema may fail, but the DB itself is consistent.
-2. **Revert the Prisma client schema:**
-   - `git revert <bad-migration-sha>` and push. Vercel auto-deploys the previous schema.
-3. **Reverse the SQL by hand** if the change is destructive (e.g. dropped a column):
-   - Restore from the most recent backup (Sundays 03:00 UTC), OR
-   - Hand-write the inverse SQL: `ALTER TABLE ... ADD COLUMN ...`, etc.
-4. **Mark the failed migration applied** so Prisma doesn't re-run it on the next deploy:
-   - `INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name, ...) VALUES (...);` — copy the format from an adjacent successful row.
+2. **Fix forward — do not revert the migration file:**
+   - Reverting a migration's commit does not change the database. Write a new forward migration that undoes the change, on a branch; run the gates; merge only with Noe's approval (a push to `main` runs `prisma migrate deploy` against production). Never `migrate reset`, never restore the database to undo code (`docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md` §4 step 3).
+3. **If data was lost** (a destructive change ran, e.g. a dropped column): the forward migration restores the structure; recover rows by restoring into an isolated branch, never onto production (`docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md` §2.2; the weekly dump is not a reliable source, §2.6), and Noe decides any cut-over (§2.5).
+4. **If a migration failed part-way** (`_prisma_migrations.finished_at IS NULL`): Noe follows `docs/runbooks/DEPLOY-2026-10.md` §5 — inverse SQL for only what it applied, then `npx prisma migrate resolve --rolled-back <migration_name>` against production — rather than editing `_prisma_migrations` by hand.
 
 ### Specific rollback recipes
 
