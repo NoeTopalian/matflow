@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { scheduleSchema, allowedTierIdsSchema } from "@/lib/schemas/class";
+import { classCategorySchema } from "@/lib/class-category";
 import { classTierCovers } from "@/lib/class-tier-gate";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
@@ -40,6 +41,9 @@ const updateSchema = z.object({
   isActive: z.boolean().optional(),
   // A kids class refuses adults at self and kiosk check-in (lib/checkin.ts).
   isKids: z.boolean().optional(),
+  // T6c: omitted = unchanged; null = uncategorised; a key outside
+  // lib/class-category.ts is a 400 and nothing is written.
+  category: classCategorySchema.optional(),
   // Task 5: optional roster array; mutually exclusive with rank fields at the API layer.
   roster: z.array(rosterEntrySchema).optional(),
   // Task 3c. TimetableManager has been sending this since it was written and
@@ -627,6 +631,7 @@ export async function PATCH(req: Request, { params }: Params) {
         // archived class archived.
         deletedAt: parsed.data.isActive === true ? null : undefined,
         isKids: parsed.data.isKids,
+        category: parsed.data.category,
         locationId: parsed.data.locationId,
       };
       // locationId, requiredRankId, maxRankId and coachUserId were proved to be
@@ -692,7 +697,7 @@ export async function PATCH(req: Request, { params }: Params) {
           const { before: b, after: a, changed } = snapshotDiff(
             updated.before as unknown as Record<string, unknown> | null,
             updated.cls as unknown as Record<string, unknown>,
-            ["name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration", "maxCapacity", "isKids", "requiredRankId", "maxRankId", "color", "isActive", "deletedAt"],
+            ["name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration", "maxCapacity", "isKids", "category", "requiredRankId", "maxRankId", "color", "isActive", "deletedAt"],
           );
           return changed.length > 0 ? { before: b, after: a } : {};
         })(),

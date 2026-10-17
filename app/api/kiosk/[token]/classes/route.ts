@@ -7,6 +7,7 @@
 //
 // Returns today's class instances for the tenant. NO member roster. NO PII.
 // A squad class carries `rosterOnly: true` (T6d) — a boolean, no member ids.
+// Each class carries its `category` key (T6c), a timetable label, not PII.
 
 import { NextResponse } from "next/server";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
@@ -85,6 +86,10 @@ export async function GET(
           select: {
             id: true,
             name: true,
+            // T6c: the category key, shown as a label on the class list. A
+            // label the club chose for the timetable, so safe on this
+            // unauthenticated door.
+            category: true,
             requiredRank: { select: { name: true, color: true } },
             maxRank: { select: { name: true, color: true } },
             // T6d: whether the class has a roster (a squad / comp class). A
@@ -117,6 +122,9 @@ export async function GET(
       date: i.date.toISOString(),
       requiredRank: i.class.requiredRank?.name ?? null,
       maxRank: i.class.maxRank?.name ?? null,
+      // T6c: the category key (lib/class-category.ts), or null when
+      // uncategorised. The kiosk shows its label.
+      category: i.class.category ?? null,
       // T6d: a squad class is badged "Squad only"; the name search that follows
       // a tap lists only the members on its roster.
       rosterOnly: (i.class._count?.rosterMembers ?? 0) > 0,

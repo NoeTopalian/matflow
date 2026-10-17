@@ -115,8 +115,9 @@ describe("GET /api/kiosk/[token]/classes — the squad badge", () => {
     const body = await (await classesGET(new Request("https://x/api/kiosk/t/classes"), { params })).json();
     const text = JSON.stringify(body.classes);
     expect(text).not.toMatch(/memberId|rosterMembers|_count/);
+    // T6c adds `category`: a timetable label key, not member data.
     expect(Object.keys(body.classes[0]).sort()).toEqual(
-      ["date", "endTime", "id", "maxRank", "name", "requiredRank", "rosterOnly", "startTime"].sort(),
+      ["category", "date", "endTime", "id", "maxRank", "name", "requiredRank", "rosterOnly", "startTime"].sort(),
     );
   });
 });

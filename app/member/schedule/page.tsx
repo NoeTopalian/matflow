@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Bell, BellOff, Lock, X } from "lucide-react";
 import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
+import { classCategoryTag } from "@/lib/class-category";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { useToast } from "@/components/ui/Toast";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -39,6 +40,8 @@ type ScheduleClass = {
   isKids?: boolean;
   /** A kids class and the viewer is an adult or parent: never badged "Next". */
   kidsClassForAdult?: boolean;
+  /** T6c: the category key (lib/class-category.ts); null = uncategorised. */
+  category?: string | null;
   color?: string | null;
   dow: number; // 1=Mon…7=Sun internal convention
   classInstanceId?: string | null;
@@ -181,6 +184,16 @@ function EventSheet({
                 style={{ color: "var(--member-text-muted)", border: "1px solid var(--member-border)" }}
               >
                 Kids
+              </span>
+            )}
+            {classCategoryTag(cls) && (
+              // T6c: what kind of class this is.
+              <span
+                data-testid="schedule-sheet-category"
+                className="rounded-full px-2 text-[10px] font-semibold tracking-wide leading-5"
+                style={{ color: "var(--member-text-muted)", border: "1px solid var(--member-border)" }}
+              >
+                {classCategoryTag(cls)}
               </span>
             )}
           </div>
@@ -596,6 +609,8 @@ function SessionBlock({
       </div>
       {!short && (
         <p className="leading-tight truncate mt-0.5" style={{ color: muted, fontSize: 10 }}>
+          {/* T6c: the category leads the line when the class has one. */}
+          {classCategoryTag(cls) && <span data-testid="schedule-cell-category">{classCategoryTag(cls)} · </span>}
           {cls.time}–{cls.endTime} · {cls.coach}
         </p>
       )}
@@ -794,6 +809,7 @@ export default function MemberSchedulePage() {
         coach: string; location: string; capacity: number | null; color?: string | null;
         isKids?: boolean;
         kidsClassForAdult?: boolean;
+        category?: string | null;
         eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok" | "tier_not_included";
         requiredRankName?: string | null; maxRankName?: string | null;
         dayOfWeek: number; classInstanceId?: string | null; cancelled?: boolean;
@@ -818,6 +834,7 @@ export default function MemberSchedulePage() {
           capacity: c.capacity,
           isKids: c.isKids === true,
           kidsClassForAdult: c.kidsClassForAdult === true,
+          category: c.category ?? null,
           color: c.color ?? null,
           // API: 0=Sun…6=Sat (JS getDay). Internal: 1=Mon…7=Sun.
           dow: c.dayOfWeek === 0 ? 7 : c.dayOfWeek,

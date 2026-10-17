@@ -565,6 +565,11 @@ model Class {
   // coach via the dashboard.
   coachUser      User?       @relation("ClassCoach", fields: [coachUserId], references: [id], onDelete: SetNull)
   color          String?
+  // T6c (Sean note 7): what kind of class this is, a lowercase key from
+  // lib/class-category.ts CLASS_CATEGORIES. NULL = uncategorised (every class
+  // before the column; never inferred). The DB enforces the list with
+  // Class_category_check (migration 20261017035912_class_category).
+  category       String?
   isActive       Boolean     @default(true)
   // T6b lifecycle (Sean note 7): isActive=false + deletedAt null = PAUSED (off the
   // timetable, booking and kiosk; reversible). deletedAt set = ARCHIVED (removed

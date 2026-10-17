@@ -79,6 +79,8 @@ export async function GET(req: Request) {
             location: true,
             maxCapacity: true,
             isKids: true,
+            // T6c: the category key, shown as a label on the member timetable.
+            category: true,
             requiredRank: { select: { id: true, name: true, discipline: true, order: true } },
             maxRank: { select: { id: true, name: true, discipline: true, order: true } },
             schedules: {
@@ -202,6 +204,8 @@ export async function GET(req: Request) {
           // Shown as a small "Kids" tag on the member's timetable.
           isKids: cls.isKids,
           kidsClassForAdult: viewerIsAdult && cls.isKids === true,
+          // T6c: a key from lib/class-category.ts, or null (uncategorised).
+          category: cls.category ?? null,
           dayOfWeek: sched.dayOfWeek,
           classInstanceId: instanceMap.get(`${cls.id}-${sched.startTime}`) ?? null,
           cancelled: cancelledSlots.has(`${cls.id}-${sched.startTime}`),

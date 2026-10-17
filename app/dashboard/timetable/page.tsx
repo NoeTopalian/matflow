@@ -17,6 +17,8 @@ export type ClassRow = {
   maxCapacity: number | null;
   /** A kids class: adults are refused at self/kiosk check-in and asked about on the register. */
   isKids?: boolean;
+  /** T6c: a key from lib/class-category.ts; null/absent = uncategorised. */
+  category?: string | null;
   color: string | null;
   description: string | null;
   requiredRankId: string | null;
@@ -89,6 +91,7 @@ async function getClasses(tenantId: string, which: "live" | "inactive" = "live")
     duration: c.duration,
     maxCapacity: c.maxCapacity,
     isKids: c.isKids,
+    category: c.category,
     color: c.color,
     description: c.description,
     requiredRankId: c.requiredRankId,

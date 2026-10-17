@@ -18,6 +18,7 @@ import { describeApiError } from "@/lib/api-field-errors";
 import { sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
 import type { ClassRow, CoachUserOption, TierOption } from "@/app/dashboard/timetable/page";
 import { Checkbox } from "@/components/ui/checkbox";
+import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, classCategoryLabel, classCategoryTag } from "@/lib/class-category";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -100,6 +101,9 @@ const CLASS_COLORS = [
 
 // UI-RULES §2: the inline hex()/alpha-maths copy that lived here is gone —
 // lib/color.ts is the single source (imported above).
+
+/** Value of the timetable category filter that selects uncategorised classes. */
+const UNCATEGORISED = "__uncategorised";
 
 /**
  * One class as it appears inside a day — used by BOTH the desktop week grid and
@@ -189,6 +193,15 @@ function ClassChip({
               style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
             >
               Kids
+            </span>
+          )}
+          {classCategoryTag(cls) && (
+            <span
+              data-testid="class-chip-category"
+              className="inline-flex items-center rounded-full px-1.5 font-semibold tracking-wide leading-4 text-[9px]"
+              style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
+            >
+              {classCategoryTag(cls)}
             </span>
           )}
           {showState && (
@@ -409,6 +422,16 @@ function ClassCard({
             style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
           >
             Kids
+          </span>
+        )}
+        {classCategoryTag(cls) && (
+          // T6c: what kind of class this is. Absent = uncategorised.
+          <span
+            className="flex items-center text-xs px-2 py-0.5 rounded-full font-medium"
+            style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
+            data-testid="class-card-category"
+          >
+            {classCategoryTag(cls)}
           </span>
         )}
         {cls.allowedTiers && cls.allowedTiers.length > 0 && (
@@ -779,6 +802,9 @@ function ClassForm({
   const [duration, setDuration] = useState(String(initial?.duration ?? 60));
   const [maxCapacity, setMaxCapacity] = useState(String(initial?.maxCapacity ?? ""));
   const [isKids, setIsKids] = useState<boolean>(initial?.isKids ?? false);
+  // T6c: "" = uncategorised (sent as null).
+  const initialCategory = initial?.category ?? "";
+  const [category, setCategory] = useState<string>(initialCategory);
   const [description, setDescription] = useState(initial?.description ?? "");
   const [requiredRankId, setRequiredRankId] = useState(initial?.requiredRankId ?? "");
   const [maxRankId, setMaxRankId] = useState(initial?.maxRankId ?? "");
@@ -873,6 +899,9 @@ function ClassForm({
       duration: durationNum,
       maxCapacity: maxCapacity ? parseInt(maxCapacity) : null,
       isKids,
+      // T6c: sent on create, and on edit only when changed, so an unrelated
+      // edit never rewrites it. "" (Uncategorised) clears it to null.
+      ...(!initial?.id || category !== initialCategory ? { category: category || null } : {}),
       description: description.trim() || null,
       requiredRankId: useRoster ? null : (requiredRankId || null),
       maxRankId: useRoster ? null : (maxRankId || null),
@@ -985,6 +1014,28 @@ function ClassForm({
           onChange={(e) => setName(e.target.value)}
           {...focusHandlers}
         />
+      </div>
+
+      {/* T6c: Category */}
+      <div>
+        <label htmlFor="class-category" className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Category</label>
+        <Select
+          id="class-category"
+          aria-label="Category"
+          aria-describedby="class-category-hint"
+          className="w-full"
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          data-testid="class-category-select"
+        >
+          <option value="">Uncategorised</option>
+          {CLASS_CATEGORIES.map((key) => (
+            <option key={key} value={key}>{CLASS_CATEGORY_LABELS[key]}</option>
+          ))}
+        </Select>
+        <p id="class-category-hint" className="text-[11px] mt-1" style={{ color: "var(--tx-3)" }}>
+          Shown on the timetable, the members&rsquo; schedule and the kiosk. It does not change who can attend.
+        </p>
       </div>
 
       {/* Coach + Location */}
@@ -1453,6 +1504,10 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   // ADR-001 D2: venue filter. Shown only when the club has more than one
   // venue; a class with no venue belongs to every venue and stays visible.
   const [venueFilter, setVenueFilter] = useState("");
+  // T6c: category filter. "" = every category; UNCATEGORISED = no category.
+  // Offered only once at least one class has a category.
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const showCategoryFilter = classes.some((c) => classCategoryLabel(c.category) !== null);
   const [venueList, setVenueList] = useState<{ id: string; name: string; isDefault: boolean }[]>([]);
   useEffect(() => {
     let alive = true;
@@ -1494,7 +1549,15 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
     myClassesOnly && showMyToggle
       ? classes.filter((c) => c.coachUserId === currentUserId)
       : classes
-  ).filter((c) => !venueFilter || c.locationId === null || c.locationId === venueFilter);
+  )
+    .filter((c) => !venueFilter || c.locationId === null || c.locationId === venueFilter)
+    .filter((c) =>
+      !categoryFilter || !showCategoryFilter
+        ? true
+        : categoryFilter === UNCATEGORISED
+          ? classCategoryLabel(c.category) === null
+          : c.category === categoryFilter,
+    );
 
   // Group by day — driven by `visibleClasses` so the weekly grid filters too
   const byDay = Array.from({ length: 7 }, (_, i) =>
@@ -1841,6 +1904,26 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
           {venueFilter && (
             <span className="text-xs" style={{ color: "var(--tx-4)" }}>
               {visibleClasses.length} of {classes.length} classes · classes with no venue show everywhere
+            </span>
+          )}
+        </div>
+      )}
+
+      {showCategoryFilter && (
+        <div className="mb-4 flex items-center gap-2 flex-wrap">
+          <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
+            Category
+            <Select aria-label="Filter by category" className="w-[200px]" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} data-testid="timetable-category-filter">
+              <option value="">Every category</option>
+              {CLASS_CATEGORIES.map((key) => (
+                <option key={key} value={key}>{CLASS_CATEGORY_LABELS[key]}</option>
+              ))}
+              <option value={UNCATEGORISED}>Uncategorised</option>
+            </Select>
+          </label>
+          {categoryFilter && (
+            <span className="text-xs" style={{ color: "var(--tx-4)" }} data-testid="timetable-category-count">
+              Showing {visibleClasses.length} of {classes.length} classes
             </span>
           )}
         </div>

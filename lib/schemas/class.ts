@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { classCategorySchema } from "@/lib/class-category";
 
 /**
  * One recurring slot. Exported so PATCH /api/classes/[id] validates schedule
@@ -57,6 +58,9 @@ export const classCreateSchema = z.object({
   // A kids class refuses adults at self and kiosk check-in (lib/checkin.ts)
   // and asks the desk first on the register. Omitted = not a kids class.
   isKids: z.boolean().optional(),
+  // T6c: the class category (lib/class-category.ts). Omitted or null =
+  // uncategorised; a key outside the list is a 400.
+  category: classCategorySchema.optional(),
   // Required, and at least one: a class with no day never appears on the
   // weekly timetable, and Noe's ruling (18 Sep) is that the minimum — name,
   // duration, one day — is enforced, not hinted. The PATCH schema keeps

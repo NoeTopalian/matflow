@@ -120,6 +120,8 @@ const RESTORABLE: Record<string, readonly string[]> = {
   Class: [
     "name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration",
     "maxCapacity", "isKids", "requiredRankId", "maxRankId", "color", "isActive",
+    // T6c: the class category (a key from lib/class-category.ts, or null).
+    "category",
     // T6b: Resume / Restore clears it; undoing that puts the archive back.
     "deletedAt",
   ],
