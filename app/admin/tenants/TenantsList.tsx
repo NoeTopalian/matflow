@@ -17,22 +17,14 @@ type StatusFilter = "all" | "active" | "trial" | "suspended" | "cancelled";
 type StripeFilter = "all" | "connected" | "broken" | "not_connected";
 type SortKey = "recent" | "members_desc" | "name_asc" | "status";
 
-function initialQuery() {
-  if (typeof window === "undefined") return "";
-  return new URL(window.location.href).searchParams.get("q") ?? "";
-}
-
-function initialStatus(): StatusFilter {
-  if (typeof window === "undefined") return "all";
-  const status = new URL(window.location.href).searchParams.get("status");
+// Initial filters come from the URL, read on the server and passed in.
+function toStatus(status: string | undefined): StatusFilter {
   return status && ["active", "trial", "suspended", "cancelled"].includes(status)
     ? status as StatusFilter
     : "all";
 }
 
-function initialStripe(): StripeFilter {
-  if (typeof window === "undefined") return "all";
-  const stripe = new URL(window.location.href).searchParams.get("stripe");
+function toStripe(stripe: string | undefined): StripeFilter {
   return stripe && ["connected", "broken", "not_connected"].includes(stripe)
     ? stripe as StripeFilter
     : "all";
@@ -43,17 +35,23 @@ export default function TenantsList({
   view = "open",
   openCount = view === "open" ? tenants.length : 0,
   closedCount = view === "closed" ? tenants.length : 0,
+  initialQuery = "",
+  initialStatus,
+  initialStripe,
 }: {
   tenants: TenantRow[];
   view?: TenantView;
   openCount?: number;
   closedCount?: number;
+  initialQuery?: string;
+  initialStatus?: string;
+  initialStripe?: string;
 }) {
   const router = useRouter();
   const closedView = view === "closed";
   const [query, setQuery] = useState(initialQuery);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialStatus);
-  const [stripeFilter, setStripeFilter] = useState<StripeFilter>(initialStripe);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => toStatus(initialStatus));
+  const [stripeFilter, setStripeFilter] = useState<StripeFilter>(() => toStripe(initialStripe));
   const [sort, setSort] = useState<SortKey>("recent");
 
   useEffect(() => {
@@ -168,7 +166,7 @@ export default function TenantsList({
         {closedView && (
           <p style={closedNote}>
             Closed clubs were soft-deleted from their club page&apos;s Danger zone. Their owners, staff and members cannot
-            sign in. Opening a club only shows its details; restoring it is a separate action on that page.
+            sign in. Opening a club only shows its details. Restoring, where the club page still offers it, is a separate action there.
           </p>
         )}
 
@@ -255,7 +253,7 @@ export default function TenantsList({
                     <td style={td}>{t.memberCount}</td>
                     <td style={td}>{statusBadge(t.status)}</td>
                     <td style={td}>{stripeBadge(t)}</td>
-                    <td style={td}>{new Date(t.createdAt).toLocaleDateString()}</td>
+                    <td style={td}>{formatDate(t.createdAt)}</td>
                     {closedView && <td style={td}>{t.deletedAt ? formatDate(t.deletedAt) : "-"}</td>}
                     <td style={td}>
                       <Link href={`/admin/tenants/${t.id}`} style={rowAction} aria-label={`View ${t.name}`}>View</Link>
@@ -387,7 +385,11 @@ const th: React.CSSProperties = { textAlign: "left", padding: "12px 16px", fontS
 const td: React.CSSProperties = { padding: "14px 16px", verticalAlign: "top" };
 const mutedSmall: React.CSSProperties = { fontSize: 12, color: adminPalette.muted, marginTop: 2 };
 const rowAction: React.CSSProperties = {
-  padding: "6px 12px",
+  display: "inline-flex",
+  alignItems: "center",
+  minHeight: 44,
+  boxSizing: "border-box",
+  padding: "6px 14px",
   borderRadius: 8,
   background: adminPalette.cardSoft,
   border: `1px solid ${adminPalette.borderSoft}`,

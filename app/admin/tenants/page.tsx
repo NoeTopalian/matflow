@@ -85,10 +85,29 @@ async function getTenants(view: TenantView) {
   });
 }
 
-export default async function AdminTenantsPage({ searchParams }: { searchParams?: Promise<{ view?: string | string[] }> }) {
+type Params = { view?: string | string[]; q?: string | string[]; status?: string | string[]; stripe?: string | string[] };
+const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
+
+export default async function AdminTenantsPage({ searchParams }: { searchParams?: Promise<Params> }) {
   if (!(await isAdminPageAuthed())) redirect("/admin/login");
 
-  const view: TenantView = (await searchParams)?.view === "closed" ? "closed" : "open";
+  const sp = (await searchParams) ?? {};
+  const view: TenantView = first(sp.view) === "closed" ? "closed" : "open";
+  const q = first(sp.q), status = first(sp.status), stripe = first(sp.stripe);
   const { rows, openCount, closedCount } = await getTenants(view);
-  return <TenantsList tenants={rows} view={view} openCount={openCount} closedCount={closedCount} />;
+  // Keyed on the URL's view and filters: Back/Forward or a nav link to another
+  // URL remounts the list with that URL's state, so the address bar and the
+  // visible filters cannot disagree. Typing only rewrites the URL in place.
+  return (
+    <TenantsList
+      key={`${view}|${q}|${status}|${stripe}`}
+      tenants={rows}
+      view={view}
+      openCount={openCount}
+      closedCount={closedCount}
+      initialQuery={q}
+      initialStatus={status}
+      initialStripe={stripe}
+    />
+  );
 }
