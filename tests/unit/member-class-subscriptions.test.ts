@@ -28,6 +28,10 @@ vi.mock("@/lib/prisma", () => ({
     $queryRaw: vi.fn(),
     class: { findFirst: vi.fn() },
     classSubscription: { findMany: vi.fn(), create: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
+    // T6a: no memberships selected on the class = open to everyone.
+    classMembershipTier: { findMany: vi.fn().mockResolvedValue([]) },
+    classRoster: { count: vi.fn().mockResolvedValue(0) },
+    member: { findFirst: vi.fn().mockResolvedValue(null) },
   },
 }));
 

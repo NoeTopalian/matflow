@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Bell, BellOff, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Bell, BellOff, Lock, X } from "lucide-react";
+import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { useToast } from "@/components/ui/Toast";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -45,7 +46,8 @@ type ScheduleClass = {
   // "rank_below" / "rank_above" → shown with lock badge + disabled subscribe.
   // "roster_ok" → "Comp team" tag. "ok" → normal. Roster-only classes the
   // member is NOT on are filtered out at the API layer (api/member/schedule).
-  eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok";
+  // "tier_not_included" (T6a) → "Not included in your membership", not bookable.
+  eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok" | "tier_not_included";
   requiredRankName?: string | null;
   maxRankName?: string | null;
   /** Today's session for this slot is cancelled (api/member/schedule). */
@@ -224,6 +226,20 @@ function EventSheet({
               🔒 {cls.maxRankName ? `${cls.maxRankName} and below only` : "Lower rank required"}.
             </div>
           )}
+          {cls.eligibility === "tier_not_included" && (
+            // T6a: the same sentence everywhere a member meets this class.
+            <div
+              className="rounded-xl px-3 py-2 text-xs flex items-center gap-2"
+              data-testid="schedule-tier-locked"
+              style={{
+                background: "color-mix(in srgb, var(--hue-warning) 10%, transparent)",
+                border: "1px solid color-mix(in srgb, var(--hue-warning) 25%, transparent)",
+                color: "var(--hue-warning)",
+              }}
+            >
+              <Lock className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> {TIER_LOCKED_LABEL} — ask your gym about a membership that includes it.
+            </div>
+          )}
           {cls.eligibility === "roster_ok" && (
             <div className="rounded-xl px-3 py-2 text-xs flex items-center gap-2"
               style={{ background: "rgba(168,85,247,0.10)", border: "1px solid rgba(168,85,247,0.25)", color: "#c084fc" }}>
@@ -233,7 +249,7 @@ function EventSheet({
 
           <button
             onClick={onToggle}
-            disabled={cls.eligibility === "rank_below" || cls.eligibility === "rank_above"}
+            disabled={cls.eligibility === "rank_below" || cls.eligibility === "rank_above" || cls.eligibility === "tier_not_included"}
             className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
               background: isSub ? hex(primaryColor, 0.12) : primaryColor,
@@ -546,6 +562,18 @@ function SessionBlock({
             Kids
           </span>
         )}
+        {cls.eligibility === "tier_not_included" && (
+          // T6a: locked, not hidden; the sheet says why.
+          <span
+            className="shrink-0 inline-flex items-center"
+            style={{ color: ink }}
+            title={TIER_LOCKED_LABEL}
+            aria-label={TIER_LOCKED_LABEL}
+            data-testid="schedule-cell-tier-locked"
+          >
+            <Lock className="w-3 h-3" aria-hidden="true" />
+          </span>
+        )}
         {state !== "upcoming" && (
           <span
             className="shrink-0 inline-flex items-center gap-1 rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide leading-4"
@@ -766,7 +794,7 @@ export default function MemberSchedulePage() {
         coach: string; location: string; capacity: number | null; color?: string | null;
         isKids?: boolean;
         kidsClassForAdult?: boolean;
-        eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok";
+        eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok" | "tier_not_included";
         requiredRankName?: string | null; maxRankName?: string | null;
         dayOfWeek: number; classInstanceId?: string | null; cancelled?: boolean;
       }>) => {

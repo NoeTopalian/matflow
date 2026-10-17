@@ -16,7 +16,8 @@ import { Switch } from "@/components/ui/switch";
 import { hex } from "@/lib/color";
 import { describeApiError } from "@/lib/api-field-errors";
 import { sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
-import type { ClassRow, CoachUserOption } from "@/app/dashboard/timetable/page";
+import type { ClassRow, CoachUserOption, TierOption } from "@/app/dashboard/timetable/page";
+import { Checkbox } from "@/components/ui/checkbox";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,8 @@ interface Props {
   initialClasses: ClassRow[];
   rankSystems: RankOption[];
   coachUsers: CoachUserOption[];
+  /** T6a: every membership tier of the club, for "Who can attend". */
+  membershipTiers?: TierOption[];
   primaryColor: string;
   role: string;
   // Session F: drives the "My classes" filter. When null (e.g. no
@@ -389,6 +392,17 @@ function ClassCard({
             Kids
           </span>
         )}
+        {cls.allowedTiers && cls.allowedTiers.length > 0 && (
+          // T6a: who the class is for. Absent = everyone.
+          <span
+            className="flex items-center text-xs px-2 py-0.5 rounded-full"
+            style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
+            data-testid="class-card-tiers"
+            title="Memberships that include this class"
+          >
+            For: {cls.allowedTiers.map((t) => t.name).join(", ")}
+          </span>
+        )}
         {cls.requiredRank && (
           <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full" style={{ background: hex(cls.requiredRank.color ?? primaryColor, 0.15), color: cls.requiredRank.color ?? primaryColor }}>
             <Tag className="w-2.5 h-2.5" />
@@ -577,10 +591,16 @@ function ScheduleRow({
 
 // ─── Class form (add / edit) ──────────────────────────────────────────────────
 
+/** Same set of tier ids, order ignored. */
+function sameTierSet(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((x) => b.includes(x));
+}
+
 function ClassForm({
   initial,
   rankSystems,
   coachUsers,
+  membershipTiers = [],
   primaryColor,
   onSave,
   onCancel,
@@ -589,6 +609,7 @@ function ClassForm({
   initial: Partial<ClassRow> | null;
   rankSystems: RankOption[];
   coachUsers: CoachUserOption[];
+  membershipTiers?: TierOption[];
   primaryColor: string;
   onSave: (data: Record<string, unknown>) => void;
   onCancel: () => void;
@@ -640,6 +661,22 @@ function ClassForm({
   // reads as a gym with no members and invites the operator to re-add them.
   const [membersError, setMembersError] = useState(false);
   const [memberSearch, setMemberSearch] = useState("");
+  // T6a "Who can attend": none ticked = everyone (the class stays open).
+  const [allowedTierIds, setAllowedTierIds] = useState<string[]>(
+    initial?.allowedTiers?.map((t) => t.id) ?? [],
+  );
+  const initialTierIds = (initial?.allowedTiers ?? []).map((t) => t.id);
+  // A deactivated tier still attached is shown read-only (it still admits its
+  // members); one that is not attached is not offered.
+  const tierChoices = [
+    ...membershipTiers.filter((t) => t.isActive),
+    ...membershipTiers.filter((t) => !t.isActive && initialTierIds.includes(t.id)),
+    // An attached tier the club list did not return (should not happen) is kept visible.
+    ...(initial?.allowedTiers ?? []).filter((t) => !membershipTiers.some((m) => m.id === t.id)),
+  ];
+  function toggleTier(id: string) {
+    setAllowedTierIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
   const [color, setColor] = useState(initial?.color ?? CLASS_COLORS[0]);
   const [schedules, setSchedules] = useState<ScheduleInput[]>(
     initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? []
@@ -705,6 +742,10 @@ function ClassForm({
       // Task 12: roster array is sent when in comp-class mode. Server clears
       // requiredRankId/maxRankId on the row to enforce mutual exclusion.
       roster: useRoster ? rosterMemberIds.map((id) => ({ memberId: id })) : undefined,
+      // T6a: [] = everyone. Sent on create, and on edit only when changed, so
+      // an unrelated edit never rewrites the list; clearing every tick sends
+      // [] and reopens the class.
+      ...(!initial?.id || !sameTierSet(allowedTierIds, initialTierIds) ? { allowedTierIds } : {}),
       color,
       schedules,
     });
@@ -920,6 +961,46 @@ function ClassForm({
           aria-describedby="class-is-kids-hint"
         />
       </div>
+
+      {/* T6a: Who can attend — the memberships that include this class. */}
+      <fieldset className="space-y-2" aria-describedby="class-tiers-hint">
+        <legend className="text-xs font-medium" style={{ color: "var(--tx-2)" }}>Who can attend</legend>
+        <p id="class-tiers-hint" className="text-[11px]" style={{ color: "var(--tx-3)" }}>
+          {useRoster
+            ? "This class has a roster, so the roster decides who can attend. Memberships ticked here apply only if the roster is removed."
+            : allowedTierIds.length === 0
+              ? "Everyone — any member can book and check in. Tick memberships to limit this class to them."
+              : "Only members on the ticked memberships can book or check themselves in. The register and card scanner ask before admitting anyone else."}
+        </p>
+        {tierChoices.length === 0 ? (
+          <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+            No memberships set up yet — the class is open to everyone. Add memberships under Memberships to limit who can attend.
+          </p>
+        ) : (
+          <div className="space-y-1" role="group" aria-label="Memberships that include this class">
+            {tierChoices.map((t) => {
+              const checked = allowedTierIds.includes(t.id);
+              const readOnly = !t.isActive;
+              const id = `class-tier-${t.id}`;
+              return (
+                <div key={t.id} className="flex items-center gap-2 rounded px-2 py-1.5">
+                  <Checkbox
+                    id={id}
+                    checked={checked}
+                    disabled={readOnly}
+                    onCheckedChange={() => toggleTier(t.id)}
+                    aria-label={t.name}
+                  />
+                  <label htmlFor={id} className="text-xs" style={{ color: readOnly ? "var(--tx-3)" : "var(--tx-2)" }}>
+                    {t.name}
+                    {readOnly && " (deactivated — still admits its members)"}
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </fieldset>
 
       {/* Description */}
       <div>
@@ -1144,7 +1225,7 @@ function ClassForm({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function TimetableManager({ initialClasses, rankSystems, coachUsers, primaryColor, role, currentUserId }: Props) {
+export default function TimetableManager({ initialClasses, rankSystems, coachUsers, membershipTiers = [], primaryColor, role, currentUserId }: Props) {
   const searchParams = useSearchParams();
   const openedFromQuery = useRef(false);
   const [classes, setClasses] = useState<ClassRow[]>(initialClasses);
@@ -1278,6 +1359,31 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
     setSaving(true);
     try {
       if (editTarget) {
+        // T6a: narrowing the memberships removes the bookings of members it
+        // no longer includes. Preview first and ask, rather than surprise.
+        const before = (editTarget.allowedTiers ?? []).map((t) => t.id).sort().join(",");
+        const after = Array.isArray(data.allowedTierIds) ? [...(data.allowedTierIds as string[])].sort().join(",") : before;
+        if (after !== before && after !== "") {
+          const preview = await fetch(`/api/classes/${editTarget.id}?dryRun=1`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data),
+          });
+          if (!preview.ok) {
+            const body = await preview.json().catch(() => null);
+            throw new Error(describeApiError(body));
+          }
+          const { tierAffectedMemberIds } = (await preview.json()) as { tierAffectedMemberIds?: string[] };
+          const n = tierAffectedMemberIds?.length ?? 0;
+          if (n > 0) {
+            const ok = await ask({
+              title: "Remove bookings outside these memberships?",
+              body: `${n} ${n === 1 ? "member is" : "members are"} booked on this class but not on the memberships you ticked. Saving removes ${n === 1 ? "that booking" : "those bookings"}; past check-ins are kept.`,
+              confirmLabel: "Save and remove bookings",
+            });
+            if (!ok) return;
+          }
+        }
         const res = await fetch(`/api/classes/${editTarget.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -1702,6 +1808,7 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           initial={editTarget}
           rankSystems={rankSystems}
           coachUsers={coachUsers}
+          membershipTiers={membershipTiers}
           primaryColor={primaryColor}
           onSave={handleSave}
           onCancel={() => setDrawerOpen(false)}

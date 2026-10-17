@@ -28,7 +28,12 @@ export type ClassRow = {
     endTime: string;
   }[];
   roster?: { memberId: string }[];
+  /** T6a: memberships that include the class. [] = everyone. */
+  allowedTiers?: { id: string; name: string; isActive: boolean }[];
 };
+
+/** T6a: a membership the class form can offer under "Who can attend". */
+export type TierOption = { id: string; name: string; isActive: boolean };
 
 export type CoachUserOption = { id: string; name: string; role: string };
 
@@ -49,6 +54,7 @@ async function getClasses(tenantId: string): Promise<ClassRow[]> {
         // and deleted the roster. Renaming a comp class converted it into an
         // open class. Both ends are fixed; this is the read end.
         rosterMembers: { select: { memberId: true } },
+        allowedTiers: { select: { tier: { select: { id: true, name: true, isActive: true } } } },
       },
       orderBy: { name: "asc" },
     }),
@@ -82,7 +88,18 @@ async function getClasses(tenantId: string): Promise<ClassRow[]> {
       endTime: s.endTime,
     })),
     roster: c.rosterMembers.map((r) => ({ memberId: r.memberId })),
+    allowedTiers: (c.allowedTiers ?? []).map((t) => t.tier),
   }));
+}
+
+async function getTiers(tenantId: string): Promise<TierOption[]> {
+  return withTenantContext(tenantId, (tx) =>
+    tx.membershipTier.findMany({
+      where: { tenantId },
+      select: { id: true, name: true, isActive: true },
+      orderBy: [{ isActive: "desc" }, { name: "asc" }],
+    }),
+  );
 }
 
 async function getRankSystems(tenantId: string) {
@@ -110,10 +127,11 @@ export default async function TimetablePage() {
   // UI-RULES §7: unguarded. An empty timetable used to be the failure mode as
   // well as the genuine state, so an outage looked like a gym that runs no
   // classes — and invited someone to rebuild a schedule that already exists.
-  const [classes, rankSystems, coachUsers] = await Promise.all([
+  const [classes, rankSystems, coachUsers, membershipTiers] = await Promise.all([
     getClasses(session!.user.tenantId),
     getRankSystems(session!.user.tenantId),
     getCoachUsers(session!.user.tenantId),
+    getTiers(session!.user.tenantId),
   ]);
 
   return (
@@ -126,6 +144,7 @@ export default async function TimetablePage() {
         discipline: r.discipline,
       }))}
       coachUsers={coachUsers}
+      membershipTiers={membershipTiers}
       primaryColor={session!.user.primaryColor}
       role={session!.user.role}
       currentUserId={session!.user.id}

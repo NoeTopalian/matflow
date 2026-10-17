@@ -22,6 +22,15 @@ export const scheduleSchema = z.object({
   endDate:   z.string().optional().nullable(),
 });
 
+/**
+ * T6a: the membership tiers that include a class. Shared by POST and PATCH so
+ * the two cannot drift. Duplicates are removed rather than refused.
+ */
+export const allowedTierIdsSchema = z
+  .array(z.string().min(1).max(64))
+  .max(50)
+  .transform((ids) => [...new Set(ids)]);
+
 /** One ticked member on a comp-class allow-list. Mirrors the PATCH route's shape. */
 export const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
 
@@ -58,6 +67,10 @@ export const classCreateSchema = z.object({
   // while PATCH has accepted the same array since Task 5. Optional: omitted
   // means "no allow-list", `[]` means the same.
   roster: z.array(rosterEntrySchema).max(500).optional(),
+  // T6a "Who can attend": the memberships that include this class. Omitted or
+  // [] = everyone (the class is open, exactly as before). Each id must be one
+  // of this club's tiers (classRefError) or the create is refused.
+  allowedTierIds: allowedTierIdsSchema.optional(),
 });
 
 export type ClassCreateInput = z.infer<typeof classCreateSchema>;

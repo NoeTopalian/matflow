@@ -5,11 +5,15 @@ import { snapshotDiff } from "@/lib/audit-snapshot";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
-import { scheduleSchema } from "@/lib/schemas/class";
+import { scheduleSchema, allowedTierIdsSchema } from "@/lib/schemas/class";
+import { classTierCovers } from "@/lib/class-tier-gate";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { dayMarkerUtc, usableTimezone } from "@/lib/class-time";
-import { classRefError } from "@/lib/class-refs";
+import { classRefError, CLASS_REF_ERRORS } from "@/lib/class-refs";
+
+/** A tier vanished between the pre-flight and the write: roll the edit back. */
+class TierRefError extends Error {}
 
 const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
 
@@ -38,11 +42,62 @@ const updateSchema = z.object({
   // no PUT/PATCH for ClassSchedule anywhere: a class's day or time could only
   // ever be set at creation time.
   schedules: z.array(scheduleSchema).max(50).optional(),
+  // T6a "Who can attend": omitted = unchanged; [] = everyone. Every id must be
+  // one of this club's tiers (classRefError) or the whole edit is refused.
+  allowedTierIds: allowedTierIdsSchema.optional(),
 });
 
 type Params = { params: Promise<{ id: string }> };
 
 type ScheduleInput = z.infer<typeof scheduleSchema>;
+
+type Tx = Parameters<Parameters<typeof withTenantContext>[1]>[0];
+
+/**
+ * T6a narrowing cascade: members booked on the class (ClassSubscription) whose
+ * plan the NEW membership list does not include. Owner decision 17 Oct 2026:
+ * a class with a roster is governed by its roster, so no one loses a booking
+ * on tier grounds there; an empty list is open, so no one loses one either.
+ * Run in the pre-flight for the dry-run preview, and again INSIDE the write
+ * transaction after the Class lock, which is the set actually removed.
+ */
+async function tierLosers(
+  tx: Tx,
+  tenantId: string,
+  classId: string,
+  allowedTierIds: readonly string[],
+  hasRosterAfter: boolean,
+): Promise<string[]> {
+  if (allowedTierIds.length === 0 || hasRosterAfter) return [];
+  const subs = await tx.classSubscription.findMany({
+    where: { classId, member: { tenantId } },
+    select: { memberId: true, member: { select: { membershipTierId: true } } },
+  });
+  return subs
+    .filter((s) => !classTierCovers({ allowedTierIds, memberTierId: s.member.membershipTierId, hasRoster: false }))
+    .map((s) => s.memberId);
+}
+
+/** Same set of ids, order ignored. */
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const s = new Set(a);
+  return b.every((x) => s.has(x));
+}
+
+/** The class's roster after this edit: a roster body replaces it, a rank gate clears it. */
+async function rosterAfterEdit(
+  tx: Tx,
+  tenantId: string,
+  classId: string,
+  wantsRoster: boolean,
+  wantsRankGate: boolean,
+  rosterIds: string[],
+): Promise<boolean> {
+  if (wantsRoster) return rosterIds.length > 0;
+  if (wantsRankGate) return false;
+  return (await tx.classRoster.count({ where: { classId, tenantId } })) > 0;
+}
 
 /**
  * What a schedule edit did, so the operator can be told rather than guess.
@@ -263,11 +318,13 @@ export async function GET(_req: Request, { params }: Params) {
           requiredRank: true,
           maxRank: true,
           coachUser: { select: { id: true, name: true } },
+          allowedTiers: { select: { tier: { select: { id: true, name: true, isActive: true } } } },
         },
       }),
     );
     if (!cls) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json(cls);
+    const { allowedTiers, ...rest } = cls;
+    return NextResponse.json({ ...rest, allowedTiers: allowedTiers.map((t) => t.tier) });
   } catch {
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
@@ -308,6 +365,8 @@ export async function PATCH(req: Request, { params }: Params) {
   const wantsRankGate = Boolean(parsed.data.requiredRankId) || Boolean(parsed.data.maxRankId);
   const wantsRoster = Array.isArray(parsed.data.roster);
   const wantsSchedules = Array.isArray(parsed.data.schedules);
+  const wantsTiers = Array.isArray(parsed.data.allowedTierIds);
+  const nextTierIds = parsed.data.allowedTierIds ?? [];
   const dryRun = new URL(req.url).searchParams.get("dryRun") === "1";
 
   try {
@@ -397,15 +456,28 @@ export async function PATCH(req: Request, { params }: Params) {
         });
         losers = [...losers, ...subs.map((s) => s.memberId)];
       }
-      return { kind: "ok" as const, affected: Array.from(new Set(losers)), rosterIds };
+      // T6a preview only: the authoritative set is recomputed after the lock.
+      let tierPreview: string[] = [];
+      const currentTiers = wantsTiers
+        ? (await tx.classMembershipTier.findMany({ where: { classId: id, tenantId }, select: { tierId: true } })).map((t) => t.tierId)
+        : [];
+      if (wantsTiers && !sameIds(currentTiers, nextTierIds)) {
+        const hasRosterAfter = await rosterAfterEdit(tx, tenantId, id, wantsRoster, wantsRankGate, rosterIds);
+        tierPreview = await tierLosers(tx, tenantId, id, nextTierIds, hasRosterAfter);
+      }
+      return { kind: "ok" as const, affected: Array.from(new Set(losers)), rosterIds, tierPreview };
     });
 
     if (pre.kind === "not_found") return NextResponse.json({ error: "Not found" }, { status: 404 });
     if (pre.kind === "bad_ref") return NextResponse.json({ error: pre.error }, { status: 400 });
-    const { affected, rosterIds } = pre;
+    const { affected, rosterIds, tierPreview } = pre;
 
     if (dryRun) {
-      return NextResponse.json({ dryRun: true, affectedMemberIds: affected });
+      return NextResponse.json({
+        dryRun: true,
+        affectedMemberIds: Array.from(new Set([...affected, ...tierPreview])),
+        tierAffectedMemberIds: tierPreview,
+      });
     }
 
     const updated = await withTenantContext(tenantId, async (tx) => {
@@ -421,11 +493,50 @@ export async function PATCH(req: Request, { params }: Params) {
       // Checking here means no write has occurred when we bail. (The pre-flight
       // above checks it too; this one stays as the lock inside the transaction
       // that actually writes.)
-      const owned = await tx.class.findFirst({
-        where: { id, tenantId },
-        select: { id: true },
-      });
-      if (!owned) return null;
+      //
+      // T6a: the ownership read is also the Class row LOCK, taken before any
+      // roster, tier or booking write. A check-in takes the same lock before it
+      // reads the tier list (lib/checkin.ts), so it is judged against whichever
+      // list committed first, never a half-written one.
+      const owned = await tx.$queryRaw<{ id: string }[]>`
+        SELECT "id" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
+      `;
+      if (owned.length === 0) return null;
+
+      // T6a: replace the membership list inside the lock. The ids were proved
+      // to be this club's in the pre-flight; re-read here so a tier deleted in
+      // between is not written, and so the before/after pair is exact.
+      const tiersBefore = wantsTiers
+        ? (await tx.classMembershipTier.findMany({ where: { classId: id, tenantId }, select: { tierId: true } }))
+            .map((t) => t.tierId).sort()
+        : [];
+      let tiersAfter = tiersBefore;
+      if (wantsTiers) {
+        const ours = nextTierIds.length > 0
+          ? await tx.membershipTier.findMany({ where: { id: { in: nextTierIds }, tenantId }, select: { id: true } })
+          : [];
+        if (ours.length !== nextTierIds.length) throw new TierRefError();
+        tiersAfter = ours.map((t) => t.id).sort();
+        // An unchanged list (the form sends it on every save) is not rewritten
+        // and cascades nothing.
+        if (!sameIds(tiersBefore, tiersAfter)) {
+          await tx.classMembershipTier.deleteMany({ where: { classId: id, tenantId } });
+          if (ours.length > 0) {
+            await tx.classMembershipTier.createMany({
+              data: ours.map((t) => ({ tenantId, classId: id, tierId: t.id, createdByUserId: session.user.id })),
+              skipDuplicates: true,
+            });
+          }
+        }
+      }
+      // The narrowing cascade's members, computed after the lock, and only
+      // when the list actually changed.
+      const tierAffected = wantsTiers && !sameIds(tiersBefore, tiersAfter)
+        ? await tierLosers(
+            tx, tenantId, id, tiersAfter,
+            await rosterAfterEdit(tx, tenantId, id, wantsRoster, wantsRankGate, rosterIds),
+          )
+        : [];
 
       // Mutual exclusion: setting rank fields clears roster; setting roster clears rank fields.
       if (wantsRankGate) {
@@ -444,11 +555,12 @@ export async function PATCH(req: Request, { params }: Params) {
         }
       }
       // Cascade-cancel ClassSubscription rows for members losing access.
-      if (affected.length > 0) {
+      const allAffected = Array.from(new Set([...affected, ...tierAffected]));
+      if (allAffected.length > 0) {
         await tx.classSubscription.deleteMany({
           // ClassSubscription carries no tenantId column, so it scopes through
           // the member relation.
-          where: { classId: id, memberId: { in: affected }, member: { tenantId } },
+          where: { classId: id, memberId: { in: allAffected }, member: { tenantId } },
         });
       }
       // Task 3c: reconcile the recurring slots, then the instances they
@@ -505,11 +617,17 @@ export async function PATCH(req: Request, { params }: Params) {
         data: classFields,
       });
       if (r.count === 0) return null;
-      const cls = await tx.class.findFirst({
+      const found = await tx.class.findFirst({
         where: { id, tenantId },
-        include: { schedules: { where: { isActive: true } }, requiredRank: true, maxRank: true, coachUser: { select: { id: true, name: true } } },
+        include: {
+          schedules: { where: { isActive: true } }, requiredRank: true, maxRank: true, coachUser: { select: { id: true, name: true } },
+          allowedTiers: { select: { tier: { select: { id: true, name: true, isActive: true } } } },
+        },
       });
-      return cls ? { cls, scheduleChange, before } : null;
+      if (!found) return null;
+      const { allowedTiers, ...rest } = found;
+      const cls = { ...rest, allowedTiers: (allowedTiers ?? []).map((t) => t.tier) };
+      return { cls, scheduleChange, before, tiersBefore, tiersAfter, tierAffected, allAffected };
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -521,13 +639,22 @@ export async function PATCH(req: Request, { params }: Params) {
       entityId: id,
       metadata: {
         fields: Object.keys(parsed.data),
-        cascadeCancelledSubscriptions: affected.length,
+        cascadeCancelledSubscriptions: updated.allAffected.length,
         // The member IDS, not just the count. This cascade hard-deletes
         // ClassSubscription rows and there is no undo; recording only a number
         // meant a mis-save could not be reversed even once noticed. The common
         // path is a staff member enabling roster mode, ticking nobody, and
         // saving — `roster: []` makes every existing subscriber a "loser".
-        cascadeCancelledMemberIds: affected,
+        cascadeCancelledMemberIds: updated.allAffected,
+        // T6a: the membership list before and after, and the members whose
+        // booking the narrowing removed (computed inside the write lock). The
+        // class.updated undo stays scalar: tier ids are recorded, not undone.
+        ...(wantsTiers
+          ? {
+              allowedTierIds: { before: updated.tiersBefore, after: updated.tiersAfter },
+              tierCascadeMemberIds: updated.tierAffected,
+            }
+          : {}),
         // Same rule for the timetable cascade: the ids of every upcoming
         // session the schedule edit deleted, not just how many (RULES §5 — a
         // count cannot restore anything).
@@ -547,7 +674,12 @@ export async function PATCH(req: Request, { params }: Params) {
     // `scheduleChange` rides alongside the class so the client can say what
     // actually happened instead of an unconditional "Class updated".
     return NextResponse.json({ ...updated.cls, scheduleChange: updated.scheduleChange });
-  } catch {
+  } catch (e) {
+    // Thrown, not returned, so the transaction rolls back: no roster, tier or
+    // booking change survives a refused tier list.
+    if (e instanceof TierRefError) {
+      return NextResponse.json({ error: CLASS_REF_ERRORS.tier }, { status: 400 });
+    }
     return NextResponse.json({ error: "Failed to update class" }, { status: 500 });
   }
 }

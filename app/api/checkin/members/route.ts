@@ -9,6 +9,7 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
+import { classTierCovers } from "@/lib/class-tier-gate";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -33,12 +34,25 @@ export async function GET(req: Request) {
   const data = await withTenantContext(session.user.tenantId, async (tx) => {
     const instance = await tx.classInstance.findFirst({
       where: { id: instanceId, class: { tenantId: session.user.tenantId } },
+      // T6a: the class's memberships and whether it has a roster, so the
+      // register can ask before marking someone the class is not for.
+      include: {
+        class: {
+          select: {
+            allowedTiers: { select: { tierId: true } },
+            _count: { select: { rosterMembers: true } },
+          },
+        },
+      },
     });
     if (!instance) return null;
     const [members, attendances] = await Promise.all([
       tx.member.findMany({
         where: { tenantId: session.user.tenantId, status: { in: statuses } },
-        select: { id: true, name: true, status: true, membershipType: true, waiverAccepted: true, paymentStatus: true, holdUntil: true, accountType: true },
+        select: {
+          id: true, name: true, status: true, membershipType: true, waiverAccepted: true, paymentStatus: true, holdUntil: true, accountType: true,
+          membershipTierId: true, membershipTier: { select: { name: true } },
+        },
         orderBy: { name: "asc" },
         take,
         cursor: cursor ? { id: cursor } : undefined,
@@ -57,10 +71,14 @@ export async function GET(req: Request) {
           include: { rankSystem: true },
         })
       : [];
-    return { members, attendances, rankRows };
+    return {
+      members, attendances, rankRows,
+      allowedTierIds: instance.class.allowedTiers.map((t) => t.tierId),
+      hasRoster: instance.class._count.rosterMembers > 0,
+    };
   });
   if (!data) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const { members, attendances, rankRows } = data;
+  const { members, attendances, rankRows, allowedTierIds, hasRoster } = data;
   const ranksByMember = new Map<string, typeof rankRows[number]>();
   for (const r of rankRows) {
     if (!ranksByMember.has(r.memberId)) ranksByMember.set(r.memberId, r);
@@ -83,6 +101,11 @@ export async function GET(req: Request) {
       holdUntil: m.holdUntil,
       // The register asks before marking an adult into a kids class.
       accountType: m.accountType,
+      // T6a: the register asks before marking someone whose membership the
+      // class does not include, and names the plan in the question.
+      membershipTierId: m.membershipTierId,
+      membershipTierName: m.membershipTier?.name ?? null,
+      tierNotIncluded: !classTierCovers({ allowedTierIds, memberTierId: m.membershipTierId, hasRoster }),
       ...(includeCancelled ? { cancelled: m.status === "cancelled" } : {}),
     };
   });

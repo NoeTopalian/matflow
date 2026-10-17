@@ -16,6 +16,13 @@
 //   (an adult into a `Class.isKids` class) follows the same line.
 //   qr       false            false              false              false            false            false  (a coach scanning a card IS the staff override)
 //
+// TIER (T6a, Sean note 1): a class with memberships selected
+// (ClassMembershipTier) admits members on those memberships. `tierGate`:
+// self and kiosk "refuse"; the register (admin) and the card scanner (qr)
+// "ask" - refused with an askable answer until staff confirm, then admitted
+// with `overrides: ["tier_not_included"]` for the route to record. A class
+// with no memberships selected, or with a roster, is not tier-gated.
+//
 // CAPACITY, added round 3. `Class.maxCapacity` was enforced at BOOKING only
 // (`/api/member/class-subscriptions/[classId]`, round 1 defect L-F 1) and
 // nowhere at check-in, so a class that seats twelve took a fourteenth person
@@ -61,6 +68,7 @@ import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
 import { isOnHold } from "@/lib/member-hold";
 import { isOverdue } from "@/lib/overdue";
 import { isAdultAccount } from "@/lib/account-type";
+import { classTierCovers, TIER_OVERRIDE_REASON, type TierGateMode } from "@/lib/class-tier-gate";
 
 
 /**
@@ -125,6 +133,18 @@ export type PerformCheckinArgs = {
    * instead (components/dashboard/RegisterPanel.tsx) and a staff mark admits.
    */
   enforceKidsGate?: boolean;
+  /**
+   * T6a: the class's membership list (ClassMembershipTier). "refuse" for the
+   * member-decided doors (self, parent, kiosk); "ask" for the staff doors
+   * (register, card scanner), which are refused with an askable answer unless
+   * `tierOverrideConfirmed` says staff confirmed, and then admitted with the
+   * override reported in `overrides`. Omitted = "off" (system paths, tests).
+   * Checked inside the write transaction, after the Class row lock, so an
+   * admission honours the list committed before its lock was granted.
+   */
+  tierGate?: TierGateMode;
+  /** Staff saw the "not included in their membership" question and admitted anyway. */
+  tierOverrideConfirmed?: boolean;
   // Staff user id when method=admin (the person clicking "check in" in the
   // dashboard). Null/undefined for self / kiosk / auto / system.
   checkedInByUserId?: string | null;
@@ -141,6 +161,8 @@ export type PerformCheckinResult =
        * let the room quietly fill past what the coach planned for.
        */
       overCapacity?: { taken: number; maxCapacity: number };
+      /** Gates staff admitted past (T6a: "tier_not_included"). Recorded by the route. */
+      overrides?: Array<typeof TIER_OVERRIDE_REASON>;
     }
   | { kind: "class_not_found" }
   | { kind: "class_full"; taken: number; maxCapacity: number }
@@ -153,6 +175,14 @@ export type PerformCheckinResult =
   | { kind: "on_hold"; holdUntil: Date | null }
   | { kind: "kids_class" }
   | { kind: "venue_not_covered"; classVenue: string; tierVenue: string }
+  | {
+      /** T6a: the member's plan is not among the class's memberships. */
+      kind: "tier_not_included";
+      className: string;
+      tierName: string | null;
+      /** True on a staff door: staff may admit after confirming. */
+      askable: boolean;
+    }
   | {
       kind: "outside_window";
       when: "before" | "after";
@@ -258,6 +288,51 @@ async function capacityState(
     where: { classInstanceId, memberId: { not: memberId } },
   });
   return { taken, maxCapacity };
+}
+
+type TierGateState =
+  | { kind: "open"; overridden: boolean }
+  | { kind: "tier_not_included"; className: string; tierName: string | null; askable: boolean };
+
+/**
+ * T6a tier gate, run INSIDE the write transaction and AFTER capacityState has
+ * taken the Class row lock. The class PATCH takes the same lock before it
+ * replaces the tier rows, so a check-in waiting on the lock is judged against
+ * the list that committed first. The member's tier is re-read here too, so the
+ * admission honours the tier as it stands at write time.
+ */
+async function tierGateState(
+  tx: Prisma.TransactionClient,
+  args: Pick<PerformCheckinArgs, "tenantId" | "memberId" | "tierGate" | "tierOverrideConfirmed">,
+  classId: string,
+  className: string,
+): Promise<TierGateState> {
+  const mode = args.tierGate ?? "off";
+  if (mode === "off") return { kind: "open", overridden: false };
+  const rows = await tx.classMembershipTier.findMany({
+    where: { tenantId: args.tenantId, classId },
+    select: { tierId: true },
+  });
+  if (rows.length === 0) return { kind: "open", overridden: false };
+  // A comp / squad class is governed by its roster (owner decision 17 Oct 2026).
+  const rosterCount = await tx.classRoster.count({ where: { tenantId: args.tenantId, classId } });
+  const member = await tx.member.findFirst({
+    where: { id: args.memberId, tenantId: args.tenantId },
+    select: { membershipTierId: true, membershipTier: { select: { name: true } } },
+  });
+  const covered = classTierCovers({
+    allowedTierIds: rows.map((r) => r.tierId),
+    memberTierId: member?.membershipTierId ?? null,
+    hasRoster: rosterCount > 0,
+  });
+  if (covered) return { kind: "open", overridden: false };
+  if (mode === "ask" && args.tierOverrideConfirmed === true) return { kind: "open", overridden: true };
+  return {
+    kind: "tier_not_included",
+    className,
+    tierName: member?.membershipTier?.name ?? null,
+    askable: mode === "ask",
+  };
 }
 
 /**
@@ -449,6 +524,9 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         // Refusing after the decrement would cost the member a class they
         // never attended.
         const cap = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
+        // Tier gate after the lock and before a credit is spent.
+        const tier = await tierGateState(tx, args, instance.classId, instance.class.name);
+        if (tier.kind === "tier_not_included") return tier;
         if (cap && args.enforceCapacity && cap.taken >= cap.maxCapacity) {
           return { kind: "class_full" as const, ...cap };
         }
@@ -501,9 +579,11 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
           record,
           creditsRemaining: refreshed?.creditsRemaining ?? 0,
           overCapacity: cap && cap.taken >= cap.maxCapacity ? cap : undefined,
+          tierOverridden: tier.overridden,
         };
       });
 
+      if (result.kind === "tier_not_included") return result;
       if (result.kind === "class_full") {
         return { kind: "class_full", taken: result.taken, maxCapacity: result.maxCapacity };
       }
@@ -516,6 +596,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         record: result.record,
         coverage: { kind: "pack", creditsRemaining: result.creditsRemaining },
         ...(result.overCapacity ? { overCapacity: result.overCapacity } : {}),
+        ...(result.tierOverridden ? { overrides: [TIER_OVERRIDE_REASON] } : {}),
       };
     }
 
@@ -523,6 +604,8 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     // is on file — record straight.
     const straight = await withTenantContext(tenantId, async (tx) => {
       const cap = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
+      const tier = await tierGateState(tx, args, instance.classId, instance.class.name);
+      if (tier.kind === "tier_not_included") return tier;
       if (cap && args.enforceCapacity && cap.taken >= cap.maxCapacity) {
         return { kind: "class_full" as const, ...cap };
       }
@@ -541,13 +624,16 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         // A staff override that took the room past its ceiling. The check-in
         // stands; the caller says so.
         overCapacity: cap && cap.taken >= cap.maxCapacity ? cap : undefined,
+        tierOverridden: tier.overridden,
       };
     });
+    if (straight.kind === "tier_not_included") return straight;
     if (straight.kind === "class_full") {
       return { kind: "class_full", taken: straight.taken, maxCapacity: straight.maxCapacity };
     }
     const record = straight.record;
     const overCapacity = straight.overCapacity;
+    const overrides = straight.tierOverridden ? { overrides: [TIER_OVERRIDE_REASON] } : {};
 
     // Pack-redeem opportunistically for kiosk path so credits don't pile up
     // when a member already has a pack but no subscription.
@@ -589,6 +675,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
           record,
           coverage: { kind: "pack", creditsRemaining: packResult.creditsRemaining },
           ...(overCapacity ? { overCapacity } : {}),
+          ...overrides,
         };
       }
       return {
@@ -596,6 +683,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         record,
         coverage: { kind: "uncovered_kiosk" },
         ...(overCapacity ? { overCapacity } : {}),
+        ...overrides,
       };
     }
 
@@ -604,6 +692,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       record,
       coverage: { kind: hasActiveSubscription ? "subscription" : "manual" },
       ...(overCapacity ? { overCapacity } : {}),
+      ...overrides,
     };
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") return { kind: "duplicate" };

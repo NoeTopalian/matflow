@@ -25,6 +25,8 @@ const mockPrisma = {
   classSubscription: { findMany: vi.fn(), deleteMany: vi.fn() },
   rankSystem: { findFirst: vi.fn() },
   attendanceRecord: { count: vi.fn() },
+  // T6a: the PATCH write transaction opens with a Class row lock.
+  $queryRaw: vi.fn().mockResolvedValue([{ id: "c1" }]),
 };
 
 beforeEach(() => {

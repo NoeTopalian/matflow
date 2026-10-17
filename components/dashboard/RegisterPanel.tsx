@@ -31,6 +31,7 @@ import { medicalNotesText } from "@/lib/medical-notes";
 import { staleBillingWarning, billingSourceLabel } from "@/lib/billing-source";
 import type { TodaySession } from "@/components/dashboard/SessionPicker";
 import { isAdultAccount } from "@/lib/account-type";
+import { tierAskSentence } from "@/lib/class-tier-gate";
 
 type RegisterMember = {
   memberId: string;
@@ -54,10 +55,14 @@ type RegisterMember = {
   billingStatusAsOf?: string | null;
   /** This session's check-in spent a class-pack credit — the undo gives it back. */
   usedPackCredit?: boolean;
+  /** T6a: the member's plan name (null = none set). */
+  membershipTierName?: string | null;
+  /** T6a: the class's memberships do not include this member's plan — the desk is asked. */
+  tierNotIncluded?: boolean;
 };
 
 type RegisterResponse = {
-  instance?: { maxCapacity: number | null; isKids?: boolean };
+  instance?: { name?: string; maxCapacity: number | null; isKids?: boolean; allowedTiers?: { id: string; name: string }[] };
   expected: RegisterMember[];
   waitlist: { memberId: string; name: string; position: number; status: string }[];
 };
@@ -72,10 +77,13 @@ type Candidate = {
   cancelled?: boolean;
   /** adult | parent | junior | kids — an adult into a kids class is asked about. */
   accountType?: string | null;
+  /** T6a: see RegisterMember. */
+  membershipTierName?: string | null;
+  tierNotIncluded?: boolean;
 };
 
 /** What the person marking was asked about and admitted anyway — recorded on the audit row. */
-type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class";
+type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class" | "tier_not_included";
 
 /** Token-safe tint (UI-RULES §2). */
 function tint(color: string, percent: number) {
@@ -166,6 +174,8 @@ export default function RegisterPanel({
           waiverAccepted: m.waiverRequired !== true,
           cancelled: m.cancelled === true,
           accountType: typeof m.accountType === "string" ? m.accountType : null,
+          membershipTierName: typeof m.membershipTierName === "string" ? m.membershipTierName : null,
+          tierNotIncluded: m.tierNotIncluded === true,
         })));
         const next = data && typeof data === "object" ? (data as { nextCursor?: unknown }).nextCursor : null;
         cursor = typeof next === "string" && next ? next : null;
@@ -223,12 +233,19 @@ export default function RegisterPanel({
   /** Resolves true only when a check-in was recorded (or already existed). */
   async function mark(
     memberId: string,
-    who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & { waiverAccepted?: boolean; cancelled?: boolean; accountType?: string | null },
+    who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & {
+      waiverAccepted?: boolean; cancelled?: boolean; accountType?: string | null;
+      membershipTierName?: string | null; tierNotIncluded?: boolean;
+    },
+    /** Answers already given this attempt (the server asked after a stale list). */
+    alreadyAcknowledged: Acknowledged[] = [],
   ): Promise<boolean> {
-    const acknowledged: Acknowledged[] = [];
+    const acknowledged: Acknowledged[] = [...alreadyAcknowledged];
+    const asked = (reason: Acknowledged) => alreadyAcknowledged.includes(reason);
+    const className = register?.instance?.name ?? instance.name;
     if (who?.cancelled) return false;
     // F-8: an on-hold member can be admitted by staff, but not by accident.
-    if (who?.onHold) {
+    if (who?.onHold && !asked("on_hold")) {
       const until = who.holdUntil ? new Date(who.holdUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
       const confirmed = await ask({
         title: "This membership is on hold",
@@ -241,7 +258,7 @@ export default function RegisterPanel({
     // The member app and kiosk refuse an unsigned waiver; the desk may admit
     // (someone who has just signed on paper), but is asked first — the same
     // way as a hold. A child answers for their own waiver flag.
-    if (who && who.waiverAccepted === false) {
+    if (who && who.waiverAccepted === false && !asked("waiver_unsigned")) {
       const confirmed = await ask({
         title: "No signed waiver",
         body: `${who.name} hasn't signed the waiver. Admit anyway?`,
@@ -252,7 +269,7 @@ export default function RegisterPanel({
     }
     // Self and kiosk check-in refuse an adult into a kids class; the desk may
     // admit (a parent helping on the mat), but is asked first.
-    if (who && register?.instance?.isKids && isAdultAccount(who.accountType)) {
+    if (who && register?.instance?.isKids && isAdultAccount(who.accountType) && !asked("kids_class")) {
       const confirmed = await ask({
         title: "This is a kids class",
         body: `${who.name} is an adult — this is a kids class. Admit anyway?`,
@@ -260,6 +277,18 @@ export default function RegisterPanel({
       });
       if (!confirmed) return false;
       acknowledged.push("kids_class");
+    }
+    // T6a (Q3): the member app and kiosk refuse a class outside the member's
+    // membership; the desk may admit, but is asked first, and the admission is
+    // recorded as an override on the audit row.
+    if (who?.tierNotIncluded && !asked("tier_not_included")) {
+      const confirmed = await ask({
+        title: "Not included in their membership",
+        body: tierAskSentence(who.name, className, who.membershipTierName),
+        confirmLabel: "Admit anyway",
+      });
+      if (!confirmed) return false;
+      acknowledged.push("tier_not_included");
     }
     setMarking(memberId);
     setError(null);
@@ -276,6 +305,23 @@ export default function RegisterPanel({
       });
       const body = await res.json().catch(() => null);
       const outcome = classifyCheckinResponse(res.status, body);
+      // T6a: the class's memberships changed since this list loaded, so the
+      // server asked instead. Put the same question and resend once.
+      if (
+        outcome.kind === "refused" &&
+        outcome.reason === "tier_not_included" &&
+        (body as { askable?: unknown } | null)?.askable === true &&
+        !acknowledged.includes("tier_not_included")
+      ) {
+        setMarking(null);
+        const confirmed = await ask({
+          title: "Not included in their membership",
+          body: tierAskSentence(who?.name ?? "This member", className, who?.membershipTierName),
+          confirmLabel: "Admit anyway",
+        });
+        if (!confirmed) return false;
+        return mark(memberId, who, [...acknowledged, "tier_not_included"]);
+      }
       // "Already checked in" is the truth, not a failure: the reload shows it.
       // Any other 409 (cancelled class, closed window) is the refusal it is.
       if (outcome.kind === "refused" || outcome.kind === "signed_out") {
@@ -362,6 +408,7 @@ export default function RegisterPanel({
   }
 
   const expected = register?.expected ?? [];
+  const className = () => register?.instance?.name ?? instance.name;
 
   return (
     <div className="space-y-3">
@@ -392,6 +439,13 @@ export default function RegisterPanel({
             </Button>
           )}
         </div>
+      )}
+
+      {register?.instance?.allowedTiers && register.instance.allowedTiers.length > 0 && (
+        // T6a: who the class is for, so the asks below are not a surprise.
+        <p className="text-xs text-tx-3" data-testid="register-allowed-tiers">
+          For: {register.instance.allowedTiers.map((t) => t.name).join(", ")}
+        </p>
       )}
 
       {register && expected.length === 0 ? (
@@ -454,6 +508,18 @@ export default function RegisterPanel({
                       // silent "walk-in".
                       <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: tint("var(--hue-warning)", 14), color: "var(--hue-warning-ink)" }} title="TeamUp bills this member but MatFlow holds no plan for them yet — set it on the profile. Admit at the desk meanwhile.">
                         PLAN UNDECIDED · STAFF DECIDE
+                      </span>
+                    )}
+                    {m.tierNotIncluded && (
+                      // T6a: the class's memberships do not include this plan.
+                      // Ticking still works; the desk is asked first.
+                      <span
+                        className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold"
+                        style={{ background: tint("var(--hue-warning)", 14), color: "var(--hue-warning-ink)" }}
+                        title={m.membershipTierName ? `${className()} isn't included in ${m.membershipTierName}.` : "No membership plan set."}
+                        data-testid="register-tier-not-included"
+                      >
+                        NOT ON {m.membershipTierName ? m.membershipTierName.toUpperCase() : "A PLAN"}
                       </span>
                     )}
                     {m.walkIn && (

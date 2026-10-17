@@ -13,6 +13,7 @@ import { calculateStreak, getWeekKey } from "@/lib/streak";
 import { resolveCoachName } from "@/lib/class-coach";
 import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
 import { isAdultAccount } from "@/lib/account-type";
+import { classTierCovers } from "@/lib/class-tier-gate";
 
 export type AttendanceByClass = { id: string; name: string; count: number };
 
@@ -124,6 +125,8 @@ export type NextClassCandidate = {
     maxRank: { discipline: string; order: number } | null;
     /** This member's roster rows for the class (0 or 1). */
     rosterMembers: { id: string }[];
+    /** T6a: memberships that include the class. Absent or [] = everyone. */
+    allowedTiers?: { tierId: string }[];
     _count: { rosterMembers: number };
     tenant: { timezone: string | null } | null;
   };
@@ -148,8 +151,12 @@ export function pickNextClass(
   candidates: NextClassCandidate[],
   memberRanks: { rankSystem: { discipline: string; order: number } }[],
   now: Date,
-  opts: { accountType?: string | null } = {},
+  // memberTierId: T6a. A class whose memberships do not include the member's
+  // plan is refused at check-in, so it is never offered as their next class.
+  // Omitted = not checked (callers that predate the tier gate).
+  opts: { accountType?: string | null; memberTierId?: string | null } = {},
 ): NextClassCandidate | null {
+  const checkTier = opts.memberTierId !== undefined;
   const adult = isAdultAccount(opts.accountType);
   const eligible = candidates
     .map((c) => ({ c, startsAt: parseTime(c.startTime, c.date, c.class.tenant?.timezone || DEFAULT_TIMEZONE) }))
@@ -160,6 +167,16 @@ export function pickNextClass(
       // A roster-only class the member is not on is hidden from their schedule.
       if (c.class._count.rosterMembers > 0 && !onRoster) return false;
       if (onRoster) return true;
+      if (
+        checkTier &&
+        !classTierCovers({
+          allowedTierIds: (c.class.allowedTiers ?? []).map((t) => t.tierId),
+          memberTierId: opts.memberTierId,
+          hasRoster: c.class._count.rosterMembers > 0,
+        })
+      ) {
+        return false;
+      }
       const req = c.class.requiredRank;
       if (req) {
         const r = memberRanks.find((mr) => mr.rankSystem.discipline === req.discipline);
@@ -218,7 +235,7 @@ export async function computeMemberStats(
   // than fetched separately. Widening the old 90-day query in place would have
   // been the smaller diff but it would have silently falsified the UI's
   // "Most attended (90 days)" label.
-  const [thisWeek, thisMonth, thisYear, attendanceRows, last8w, upcoming, memberRanks] = await Promise.all([
+  const [thisWeek, thisMonth, thisYear, attendanceRows, last8w, upcoming, memberRanks, self] = await Promise.all([
     tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfWeek } } }),
     tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfMonth } } }),
     tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfYear } } }),
@@ -256,6 +273,7 @@ export async function computeMemberStats(
             maxRank: { select: { discipline: true, order: true } },
             rosterMembers: { where: { memberId }, select: { id: true } },
             _count: { select: { rosterMembers: true } },
+            allowedTiers: { select: { tierId: true } },
             tenant: { select: { timezone: true } },
           },
         },
@@ -265,9 +283,14 @@ export async function computeMemberStats(
       where: { memberId },
       select: { rankSystem: { select: { discipline: true, order: true } } },
     }),
+    // T6a: the member's plan, so a class it does not include is not "next".
+    tx.member.findFirst({ where: { id: memberId, tenantId }, select: { membershipTierId: true } }),
   ]);
 
-  const nextInstance = pickNextClass(upcoming as NextClassCandidate[], memberRanks, now, { accountType: args.accountType });
+  const nextInstance = pickNextClass(upcoming as NextClassCandidate[], memberRanks, now, {
+    accountType: args.accountType,
+    memberTierId: self?.membershipTierId ?? null,
+  });
 
   // Top 3 classes by attendance count over the last 90 days. Sliced in memory
   // from the full history — the window here is what keeps the UI's

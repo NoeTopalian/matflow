@@ -34,6 +34,10 @@ const mockPrisma = {
   rankSystem: { findFirst: vi.fn(), findMany: vi.fn() },
   user: { findMany: vi.fn() },
   member: { findMany: vi.fn() },
+  // T6a: the PATCH write transaction opens with a Class row lock; the page reads tiers.
+  $queryRaw: vi.fn().mockResolvedValue([{ id: "c1" }]),
+  classMembershipTier: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn(), createMany: vi.fn() },
+  membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({

@@ -111,6 +111,7 @@ model Tenant {
   announcements     Announcement[]
   membershipTiers   MembershipTier[]
   classRosters      ClassRoster[]
+  classMembershipTiers ClassMembershipTier[]
   tasks             Task[]
   memberPhotos      MemberPhoto[]
   pushSubscriptions PushSubscription[]
@@ -162,6 +163,7 @@ model User {
   loginEvents        LoginEvent[]
   attendanceCheckIns AttendanceRecord[] @relation("AttendanceCheckedInBy")
   classRosterAdds    ClassRoster[]      @relation("ClassRosterAddedBy")
+  classTierAdds      ClassMembershipTier[] @relation("ClassMembershipTierAddedBy")
   pushSubscriptions  PushSubscription[]
   tasksCreated       Task[]             @relation("TaskCreatedBy")
   tasksAssigned      Task[]             @relation("TaskAssignedTo")
@@ -571,6 +573,9 @@ model Class {
   instances     ClassInstance[]
   subscriptions ClassSubscription[]
   rosterMembers ClassRoster[]
+  // T6a: the memberships that include this class. No rows = open to every
+  // member, exactly as before the table existed.
+  allowedTiers  ClassMembershipTier[]
 
   @@index([tenantId, deletedAt])
   @@index([sourceImportJobId])
@@ -689,6 +694,28 @@ model ClassRoster {
   @@unique([classId, memberId])
   @@index([tenantId, classId])
   @@index([tenantId, memberId])
+}
+
+// T6a (Sean note 1): which memberships include a class. A class with NO rows
+// is open to every member, exactly as before this table existed; a class with
+// rows admits members whose membershipTierId is listed. Rows carry the class's
+// tenantId; the API re-reads every tier id against the tenant before writing.
+// RLS: ENABLE + FORCE + tenant_isolation (migration 20261017020102_class_membership_tier).
+model ClassMembershipTier {
+  id              String         @id @default(cuid())
+  tenantId        String
+  tenant          Tenant         @relation(fields: [tenantId], references: [id])
+  classId         String
+  class           Class          @relation(fields: [classId], references: [id], onDelete: Cascade)
+  tierId          String
+  tier            MembershipTier @relation(fields: [tierId], references: [id], onDelete: Cascade)
+  createdAt       DateTime       @default(now())
+  createdByUserId String?
+  createdByUser   User?          @relation("ClassMembershipTierAddedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([classId, tierId])
+  @@index([tenantId, classId])
+  @@index([tenantId, tierId])
 }
 
 model ClassWaitlist {
@@ -1338,6 +1365,8 @@ model MembershipTier {
   // C1: back-relation for Member.membershipTierId. SetNull on the member side,
   // so deactivating or deleting a tier never deletes members.
   members           Member[]
+  // T6a: classes this membership includes (ClassMembershipTier).
+  classes           ClassMembershipTier[]
 
   @@index([tenantId, isActive])
 }

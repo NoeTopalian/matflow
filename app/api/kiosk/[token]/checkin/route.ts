@@ -17,6 +17,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { verifyKioskMemberToken } from "@/lib/kiosk-token";
 import { performCheckin } from "@/lib/checkin";
 import { KIDS_CLASS_REFUSAL } from "@/lib/checkin-refusal";
+import { tierRefusalSentence } from "@/lib/class-tier-gate";
 import { logAudit } from "@/lib/audit-log";
 import { normaliseIp, summariseUa } from "@/lib/login-fingerprint";
 import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
@@ -107,6 +108,9 @@ export async function POST(
     // The tablet is a member-decided path: a venue-bound tier does not open
     // a class at another venue (ADR-001 D2 slice 2).
     enforceVenueGate: true,
+    // T6a: a class whose memberships do not include the member's plan is
+    // refused at the tablet with the class and the plan named (Q3).
+    tierGate: "refuse",
   });
 
   switch (result.kind) {
@@ -211,6 +215,11 @@ export async function POST(
     case "venue_not_covered":
       return NextResponse.json(
         { error: `Your membership covers ${result.tierVenue} — this class is at ${result.classVenue}. Ask staff.`, reason: "venue_not_covered" },
+        { status: 403 },
+      );
+    case "tier_not_included":
+      return NextResponse.json(
+        { error: tierRefusalSentence(result.className, result.tierName), reason: "tier_not_included" },
         { status: 403 },
       );
     case "no_coverage":

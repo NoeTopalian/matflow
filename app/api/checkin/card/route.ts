@@ -34,6 +34,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { verifyCardToken } from "@/lib/card-token";
 import { performCheckin } from "@/lib/checkin";
 import { logAudit } from "@/lib/audit-log";
+import { tierAskSentence } from "@/lib/class-tier-gate";
 
 /**
  * One request per card is what the client actually sends, so a dropped
@@ -59,6 +60,10 @@ const SCAN_RATE_WINDOW_MS = 5 * 60 * 1000;
 const schema = z.object({
   classInstanceId: z.string().min(1),
   tokens: z.array(z.string().min(1).max(4096)).min(1).max(MAX_TOKENS_PER_REQUEST),
+  // T6a (Q3): the scanner ASKS about a class outside the member's membership.
+  // The coach's "Admit anyway" resends that one card with this confirmation;
+  // the admission is recorded on the card_scan audit row as an override.
+  acknowledged: z.array(z.enum(["tier_not_included"])).max(1).optional(),
 });
 
 /**
@@ -75,6 +80,9 @@ type ScanStatus =
   | "member_not_found"
   | "class_not_found"
   | "class_cancelled"
+  // T6a: the class's memberships do not include this member's plan. Nothing
+  // was recorded; the coach is asked and may resend with `acknowledged`.
+  | "needs_confirmation"
   | "error";
 
 type ScanResult = {
@@ -84,6 +92,9 @@ type ScanResult = {
   status: ScanStatus;
   memberId?: string;
   memberName?: string;
+  /** needs_confirmation only: the machine reason and the question to put to the coach. */
+  reason?: "tier_not_included";
+  question?: string;
 };
 
 
@@ -105,7 +116,8 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data" }, { status: 400 });
   }
-  const { classInstanceId, tokens } = parsed.data;
+  const { classInstanceId, tokens, acknowledged } = parsed.data;
+  const tierConfirmed = !!acknowledged?.includes("tier_not_included");
 
   let rl;
   try {
@@ -192,6 +204,7 @@ export async function POST(req: Request) {
   const memberById = new Map(members.map((m) => [m.id, m]));
 
   let recorded = 0;
+  const overrides: { memberId: string; reasons: string[] }[] = [];
   for (const v of verified) {
     const member = memberById.get(v.memberId);
     if (!member) {
@@ -227,6 +240,10 @@ export async function POST(req: Request) {
       // card and looking at the person. A waiver missing from the system is a
       // conversation at the desk, not a scanner that stops mid-register.
       enforceWaiverGate: false,
+      // T6a (Q3): the scanner asks rather than admits silently; the coach
+      // confirms and the card is resent with the acknowledgement.
+      tierGate: "ask",
+      tierOverrideConfirmed: tierConfirmed,
       checkedInByUserId: userId,
     });
 
@@ -235,6 +252,17 @@ export async function POST(req: Request) {
       case "success":
         recorded += 1;
         results[v.index] = { ...base, status: "success" };
+        if (outcome.overrides && outcome.overrides.length > 0) {
+          overrides.push({ memberId: member.id, reasons: outcome.overrides });
+        }
+        break;
+      case "tier_not_included":
+        results[v.index] = {
+          ...base,
+          status: "needs_confirmation",
+          reason: "tier_not_included",
+          question: tierAskSentence(member.name, outcome.className, outcome.tierName),
+        };
         break;
       case "duplicate":
         results[v.index] = { ...base, status: "duplicate" };
@@ -271,6 +299,8 @@ export async function POST(req: Request) {
         scanned: tokens.length,
         recorded,
         memberIds: results.filter((r) => r.status === "success").map((r) => r.memberId),
+        // Members admitted past a gate on the coach's confirmation (T6a).
+        ...(overrides.length > 0 ? { overrides } : {}),
       },
       req,
     });

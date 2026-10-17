@@ -8,6 +8,8 @@
  *   - "rank_below": class.requiredRank set and member's rank order < threshold
  *   - "rank_above": class.maxRank set and member's rank order > threshold
  *   - "roster_ok": member is on the class's roster (overrides rank for display)
+ *   - "tier_not_included": the class's memberships (ClassMembershipTier) do
+ *     not include the member's plan (T6a) — shown locked, not bookable
  *
  * `kidsClassForAdult` is true on a kids class when the viewer is an adult or
  * parent: check-in refuses them, so the timetable never badges it "Next" for
@@ -21,6 +23,8 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { resolveCoachName } from "@/lib/class-coach";
 import { isAdultAccount } from "@/lib/account-type";
+import { classTierCovers } from "@/lib/class-tier-gate";
+import type { ScheduleEligibility } from "@/lib/member-home";
 
 const DEMO_CLASSES = [
   { id: "m1",  name: "Fundamentals BJJ", startTime: "09:30", endTime: "10:30", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 1, color: "#3b82f6" },
@@ -54,7 +58,7 @@ export async function GET(req: Request) {
   const memberId = session.user.memberId;
 
   try {
-    const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts, viewerIsAdult } = await withTenantContext(
+    const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts, viewerIsAdult, viewerTierId } = await withTenantContext(
       session.user.tenantId,
       async (tx) => {
         const cls = await tx.class.findMany({
@@ -78,6 +82,8 @@ export async function GET(req: Request) {
               where: { isActive: true },
               select: { id: true, dayOfWeek: true, startTime: true, endTime: true },
             },
+            // T6a: memberships that include the class ([] = everyone).
+            allowedTiers: { select: { tierId: true } },
           },
         });
 
@@ -119,7 +125,7 @@ export async function GET(req: Request) {
           : [];
         const rosterIds = new Set(rosterMembershipsRaw.map((r) => r.classId));
         const me = memberId
-          ? await tx.member.findFirst({ where: { id: memberId, tenantId: session.user.tenantId }, select: { accountType: true } })
+          ? await tx.member.findFirst({ where: { id: memberId, tenantId: session.user.tenantId }, select: { accountType: true, membershipTierId: true } })
           : null;
 
         // For each class, count whether it has ANY roster (i.e., is roster-only mode).
@@ -138,6 +144,7 @@ export async function GET(req: Request) {
           rosterClassIds: rosterIds,
           rosterCounts: countMap,
           viewerIsAdult: isAdultAccount(me?.accountType),
+          viewerTierId: me?.membershipTierId ?? null,
         };
       },
     );
@@ -154,7 +161,7 @@ export async function GET(req: Request) {
         if (isRosterMode && !memberOnRoster) return [];
 
         // Compute eligibility per class (constant across schedule entries).
-        let eligibility: "ok" | "rank_below" | "rank_above" | "roster_ok" = "ok";
+        let eligibility: ScheduleEligibility = "ok";
         if (memberOnRoster) {
           eligibility = "roster_ok";
         } else if (cls.requiredRank) {
@@ -164,6 +171,18 @@ export async function GET(req: Request) {
         if (eligibility === "ok" && cls.maxRank) {
           const r = memberRanks.find((mr) => mr.rankSystem.discipline === cls.maxRank!.discipline);
           if (r && r.rankSystem.order > cls.maxRank.order) eligibility = "rank_above";
+        }
+        // T6a: the same rule the check-in engine and booking apply. Locked,
+        // not hidden: the member sees the class and what to ask about.
+        if (
+          eligibility === "ok" &&
+          !classTierCovers({
+            allowedTierIds: cls.allowedTiers.map((t) => t.tierId),
+            memberTierId: viewerTierId,
+            hasRoster: isRosterMode,
+          })
+        ) {
+          eligibility = "tier_not_included";
         }
 
         return cls.schedules.map((sched: Sched) => ({

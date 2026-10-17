@@ -33,6 +33,9 @@ const mockPrisma = {
   memberRank: { findMany: vi.fn() },
   rankSystem: { findMany: vi.fn() },
   user: { findMany: vi.fn() },
+  // T6a: the timetable page reads the club's tiers; the schedule reads the member's plan.
+  membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
+  member: { findFirst: vi.fn().mockResolvedValue(null) },
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({

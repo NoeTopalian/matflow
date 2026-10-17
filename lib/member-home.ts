@@ -17,6 +17,14 @@ import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 import type { Prisma } from "@prisma/client";
 import { computeMemberStats } from "@/lib/member-stats";
 import { resolveCoachName } from "@/lib/class-coach";
+import { classTierCovers } from "@/lib/class-tier-gate";
+
+/**
+ * Why a member can or cannot use a class, as the Schedule and Home read it.
+ * "tier_not_included" (T6a): the class's memberships do not include their
+ * plan; shown locked with "Not included in your membership", not bookable.
+ */
+export type ScheduleEligibility = "ok" | "rank_below" | "rank_above" | "roster_ok" | "tier_not_included";
 
 type TxClient = Prisma.TransactionClient;
 
@@ -301,6 +309,8 @@ export async function buildMemberSchedule(
         where: { isActive: true },
         select: { id: true, dayOfWeek: true, startTime: true, endTime: true },
       },
+      // T6a: memberships that include the class ([] = everyone).
+      allowedTiers: { select: { tierId: true } },
     },
   });
 
@@ -334,6 +344,9 @@ export async function buildMemberSchedule(
       })
     : [];
   const rosterClassIds = new Set(rosterMembershipsRaw.map((r) => r.classId));
+  const self = memberId
+    ? await tx.member.findFirst({ where: { id: memberId, tenantId }, select: { membershipTierId: true } })
+    : null;
 
   const counts = await tx.classRoster.groupBy({
     by: ["classId"],
@@ -352,7 +365,7 @@ export async function buildMemberSchedule(
     // Roster-only class member is NOT on → server-side hide entirely.
     if (isRosterMode && !memberOnRoster) return [];
 
-    let eligibility: "ok" | "rank_below" | "rank_above" | "roster_ok" = "ok";
+    let eligibility: ScheduleEligibility = "ok";
     if (memberOnRoster) {
       eligibility = "roster_ok";
     } else if (cls.requiredRank) {
@@ -362,6 +375,17 @@ export async function buildMemberSchedule(
     if (eligibility === "ok" && cls.maxRank) {
       const r = memberRanks.find((mr) => mr.rankSystem.discipline === cls.maxRank!.discipline);
       if (r && r.rankSystem.order > cls.maxRank.order) eligibility = "rank_above";
+    }
+    // T6a: shown locked, never hidden — the member can see what to ask about.
+    if (
+      eligibility === "ok" &&
+      !classTierCovers({
+        allowedTierIds: cls.allowedTiers.map((t) => t.tierId),
+        memberTierId: self?.membershipTierId ?? null,
+        hasRoster: isRosterMode,
+      })
+    ) {
+      eligibility = "tier_not_included";
     }
 
     return cls.schedules.map((sched: Sched) => ({

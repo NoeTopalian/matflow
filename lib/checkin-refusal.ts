@@ -8,6 +8,7 @@
  * Pure: no I/O, no Next imports, unit-tested in tests/unit/checkin-refusal.test.ts.
  */
 import type { PerformCheckinResult as CheckinResult } from "@/lib/checkin";
+import { tierRefusalSentence } from "@/lib/class-tier-gate";
 
 export type CheckinRefusalReason =
   | "class_not_found"
@@ -23,11 +24,12 @@ export type CheckinRefusalReason =
   | "on_hold"
   | "kids_class"
   | "venue_not_covered"
+  | "tier_not_included"
   | "member_not_found";
 
 export type CheckinRefusal = {
   status: 402 | 403 | 404 | 409;
-  body: { error: string; reason: CheckinRefusalReason };
+  body: { error: string; reason: CheckinRefusalReason; askable?: boolean };
 };
 
 function ukDate(d: Date): string {
@@ -132,6 +134,17 @@ export function checkinRefusal(
         body: {
           error: `Your membership covers ${result.tierVenue}; this class is at ${result.classVenue}. Ask your gym about training there.`,
           reason: "venue_not_covered",
+        },
+      };
+    case "tier_not_included":
+      // T6a: names the class and the plan. On a staff door the answer is
+      // askable: the register / scanner may confirm and admit anyway.
+      return {
+        status: 403,
+        body: {
+          error: tierRefusalSentence(result.className, result.tierName),
+          reason: "tier_not_included",
+          ...(result.askable ? { askable: true } : {}),
         },
       };
     case "member_not_found":

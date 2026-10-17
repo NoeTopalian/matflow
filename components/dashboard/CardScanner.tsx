@@ -126,6 +126,9 @@ type ScanStatus =
   | "member_not_found"
   | "class_not_found"
   | "class_cancelled"
+  // T6a: the class's memberships do not include this member's plan. Nothing
+  // recorded; the row offers "Admit anyway", which resends the card confirmed.
+  | "needs_confirmation"
   | "error"
   | "request_failed"
   | "network"
@@ -143,6 +146,8 @@ type ScanRow = {
   token: string;
   status: ScanStatus;
   memberName?: string;
+  /** needs_confirmation only: the question the server put (names the class and plan). */
+  question?: string;
   at: number;
 };
 
@@ -168,6 +173,7 @@ const STATUS_COPY: Record<ScanStatus, { label: string; hint?: string; tone: "ok"
   member_not_found: { label: "Member not found", hint: "They may have been removed.", tone: "bad" },
   class_not_found: { label: "Class not found", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
   class_cancelled: { label: "Class was cancelled", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
+  needs_confirmation: { label: "Not on their plan", tone: "warn" },
   error: { label: "Didn't record", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
   request_failed: { label: "Didn't record", hint: "Hold the card again once — if it fails twice, use the register.", tone: "bad" },
   network: { label: "Didn't reach MatFlow", hint: "Check signal and hold the card again once — if it fails twice, use the register.", tone: "bad" },
@@ -199,6 +205,7 @@ const NO_NAME: Record<ScanStatus, string> = {
   member_not_found: "Card not on file",
   class_not_found: "Card not sent",
   class_cancelled: "Card not sent",
+  needs_confirmation: "Card not recorded",
   error: "Card not sent",
   request_failed: "Card not sent",
   network: "Card not sent",
@@ -227,7 +234,7 @@ const RETRYABLE_BY_HOLDING: ReadonlySet<ScanStatus> = new Set(["request_failed",
  */
 const SERVER_STATUSES: ReadonlySet<string> = new Set([
   "success", "duplicate", "revoked", "invalid", "expired", "wrong_tenant",
-  "member_not_found", "class_not_found", "class_cancelled", "error",
+  "member_not_found", "class_not_found", "class_cancelled", "needs_confirmation", "error",
 ]);
 
 /** A member is in the register after these — recorded now, or already there. */
@@ -258,6 +265,7 @@ const ANNOUNCE: Record<ScanStatus, (name?: string) => string> = {
   member_not_found: () => "Member not found.",
   class_not_found: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
   class_cancelled: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
+  needs_confirmation: (n) => `${n ?? "That card"}, not included in their membership. Admit anyway, or leave them out.`,
   error: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
   request_failed: () => "That card didn't record. Hold the card again once.",
   network: () => "That card didn't send. Check signal and hold the card again once.",
@@ -320,31 +328,40 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
     selectedRef.current = instance.id;
   }, [instance.id]);
 
-  const submitToken = useCallback(async (token: string) => {
+  /**
+   * `confirm` resends a card the server asked about (T6a "Admit anyway"): the
+   * existing row goes back to pending and settles in place, rather than a new
+   * row appearing for the same card.
+   */
+  const submitToken = useCallback(async (token: string, confirm?: { at: number }) => {
     const classInstanceId = selectedRef.current;
     if (!classInstanceId) return;
     // Captured now: a late response must un-see from the Set this token was
     // added to, never from a later session's fresh one.
     const seen = seenRef.current;
     const retried = retriedRef.current;
-    const at = Date.now();
+    const at = confirm?.at ?? Date.now();
 
     // The row exists from the moment the card is read, so a scan in flight is
     // visibly different from a card that never decoded — and the list is in
     // scan order, not response order.
-    setRows((prev) => [{ token, status: "pending", at }, ...prev]);
+    if (confirm) {
+      setRows((prev) => prev.map((r) => (r.token === token && r.at === at ? { ...r, status: "pending", question: undefined } : r)));
+    } else {
+      setRows((prev) => [{ token, status: "pending", at }, ...prev]);
+    }
 
     // The pending row becomes the outcome, in place.
-    const settle = (status: ScanStatus, memberName?: string) => {
+    const settle = (status: ScanStatus, memberName?: string, question?: string) => {
       setRows((prev) => {
         const i = prev.findIndex((r) => r.token === token && r.at === at);
         // No row: a session switch cleared the list while this was in flight.
         // The scan still recorded, into the class it was sent to — Stop cannot
         // recall a request already on the wire — so the outcome is shown,
         // never dropped. Labelling the row with its own session is later work.
-        if (i === -1) return [{ token, status, memberName, at }, ...prev];
+        if (i === -1) return [{ token, status, memberName, question, at }, ...prev];
         const next = prev.slice();
-        next[i] = { ...prev[i], status, memberName };
+        next[i] = { ...prev[i], status, memberName, question };
         return next;
       });
       setLastSettled({ status, memberName });
@@ -362,7 +379,11 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
       const res = await fetch("/api/checkin/card", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ classInstanceId, tokens: [token] }),
+        body: JSON.stringify({
+          classInstanceId,
+          tokens: [token],
+          ...(confirm ? { acknowledged: ["tier_not_included"] } : {}),
+        }),
         // Never follow a redirect: the proxy answers an expired session with a
         // 307 to /login, and following it hands back the login PAGE as a 200,
         // which used to read as "check your signal".
@@ -405,7 +426,11 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
         settle("request_failed");
         return;
       }
-      settle(result.status as ScanStatus, result.memberName);
+      settle(
+        result.status as ScanStatus,
+        result.memberName,
+        typeof result.question === "string" ? result.question : undefined,
+      );
     } catch {
       settle("network");
     }
@@ -723,6 +748,19 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-tx-1">{r.memberName ?? NO_NAME[r.status]}</p>
                     {copy.hint && <p className="text-sm text-tx-3">{copy.hint}</p>}
+                    {r.status === "needs_confirmation" && (
+                      <>
+                        <p className="text-sm text-tx-3">{r.question ?? "This class isn't included in their membership. Admit anyway?"}</p>
+                        <Button
+                          className="mt-2"
+                          variant="secondary"
+                          size="compact"
+                          onClick={() => void submitToken(r.token, { at: r.at })}
+                        >
+                          Admit anyway
+                        </Button>
+                      </>
+                    )}
                   </div>
                   <span className="shrink-0 text-sm font-medium" style={{ color: ink }}>
                     {copy.label}

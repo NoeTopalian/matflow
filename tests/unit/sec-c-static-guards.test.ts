@@ -45,6 +45,7 @@ describe("SEC-033 raw SQL is parameterised", () => {
   it("the reviewed raw-SQL call sites are exactly these (values interpolated as bind parameters only)", () => {
     expect(hits(/\$(queryRaw|executeRaw)\s*(<[^`]*>)?\s*`/).sort()).toEqual([
       "app/api/admin/dsar/erase/route.ts", // lane D3: SELECT … FOR UPDATE re-read of the subject inside the erase transaction; ids are bind parameters
+      "app/api/classes/[id]/route.ts", // T6a: Class row lock (SELECT … FOR UPDATE) opening the edit transaction; id and tenantId are bind parameters
       "app/api/health/route.ts",
       "app/api/member/children/[id]/route.ts", // lane D3: locked read of the child row inside the deletion transaction; ids are bind parameters
       "app/api/member/class-subscriptions/[classId]/route.ts",

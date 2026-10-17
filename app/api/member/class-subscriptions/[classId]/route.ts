@@ -8,6 +8,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
+import { classTierCovers, tierRefusalSentence } from "@/lib/class-tier-gate";
 
 export const runtime = "nodejs";
 
@@ -42,13 +43,39 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
       // and both insert. Locking the Class row makes the second booking wait
       // for the first to commit, then re-count and see the place gone. Both
       // statements run inside the one transaction `withTenantContext` opens.
-      const locked = await tx.$queryRaw<{ id: string; maxCapacity: number | null }[]>`
-        SELECT "id", "maxCapacity"
+      const locked = await tx.$queryRaw<{ id: string; name: string; maxCapacity: number | null }[]>`
+        SELECT "id", "name", "maxCapacity"
           FROM "Class"
          WHERE "id" = ${classId} AND "tenantId" = ${r.tenantId}
            FOR UPDATE
       `;
       if (locked.length === 0) return "no-class" as const;
+
+      // T6a: the same membership gate as the member app's check-in, read
+      // after the same Class lock, so a booking and a check-in can never
+      // disagree about who a class is for. A class with no memberships
+      // selected, or with a roster, is not tier-gated.
+      const tierRows = await tx.classMembershipTier.findMany({
+        where: { classId, tenantId: r.tenantId },
+        select: { tierId: true },
+      });
+      if (tierRows.length > 0) {
+        const [rosterCount, member] = await Promise.all([
+          tx.classRoster.count({ where: { classId, tenantId: r.tenantId } }),
+          tx.member.findFirst({
+            where: { id: r.memberId, tenantId: r.tenantId },
+            select: { membershipTierId: true, membershipTier: { select: { name: true } } },
+          }),
+        ]);
+        const covered = classTierCovers({
+          allowedTierIds: tierRows.map((t) => t.tierId),
+          memberTierId: member?.membershipTierId ?? null,
+          hasRoster: rosterCount > 0,
+        });
+        if (!covered) {
+          return { kind: "tier" as const, className: locked[0].name, tierName: member?.membershipTier?.name ?? null };
+        }
+      }
 
       const { maxCapacity } = locked[0];
       if (maxCapacity !== null) {
@@ -67,6 +94,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
       return "ok" as const;
     });
     if (created === "no-class") return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    if (typeof created === "object" && created.kind === "tier") {
+      return NextResponse.json(
+        { error: tierRefusalSentence(created.className, created.tierName), reason: "tier_not_included" },
+        { status: 403 },
+      );
+    }
     if (created === "full") {
       return NextResponse.json(
         {

@@ -47,6 +47,7 @@ const MOCK_CLASSES = [
     location: "Mat 1",
     maxCapacity: 20,
     schedules: [{ id: "sched-1", dayOfWeek: 1, startTime: "18:00", endTime: "19:00" }], // Monday
+    allowedTiers: [], // T6a: open to everyone
   },
   {
     id: "class-2",
@@ -55,6 +56,7 @@ const MOCK_CLASSES = [
     location: "Mat 2",
     maxCapacity: 12,
     schedules: [{ id: "sched-2", dayOfWeek: 0, startTime: "10:00", endTime: "11:00" }], // Sunday
+    allowedTiers: [], // T6a: open to everyone
   },
 ];
 

@@ -25,6 +25,10 @@ const db = vi.hoisted(() => ({
   user: { findFirst: vi.fn() },
   location: { findFirst: vi.fn() },
   tenant: { findUnique: vi.fn(), findFirst: vi.fn() },
+  // T6a: the PATCH write transaction opens with a Class row lock.
+  $queryRaw: vi.fn().mockResolvedValue([{ id: "c1" }]),
+  classMembershipTier: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn(), createMany: vi.fn() },
+  membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
 }));
 const mockAuth = vi.hoisted(() => vi.fn());
 
