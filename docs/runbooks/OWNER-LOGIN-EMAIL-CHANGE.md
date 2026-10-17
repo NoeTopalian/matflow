@@ -236,8 +236,10 @@ On a TEST server only (`--target test`, loopback URL): `--legacy-credential-file
 `node scripts/readiness/release-verify.mjs mail-interceptor --port 4599`, and pass
 `--mail-counter-url http://127.0.0.1:4599 --mail-trigger-file <private file with a non-provisional synthetic address>`:
 after a forgot-password request the interceptor count must be 0 and no `EmailLog` row may be queued/sent since.
-Run a positive control first (the same request with `EMAIL_DELIVERY=on` must raise the count to 1) to show the
-interceptor is wired; a count of 0 without that control proves nothing. Not yet run on a server (9 Oct 2026).
+Run a positive control first (the same request with `EMAIL_DELIVERY=test` and the trigger address in
+`EMAIL_TEST_RECIPIENTS` must raise the count to 1 — since 17 Oct 2026 `on` outside the Vercel production deployment
+sends only to that list, so `on` with no list sends nothing) to show the interceptor is wired; a count of 0 without
+that control proves nothing. Not yet run on a server (9 Oct 2026).
 
 ## When email delivery is switched on (future work — not built)
 

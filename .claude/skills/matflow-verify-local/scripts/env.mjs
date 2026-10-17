@@ -108,6 +108,7 @@ export function appEnv({ isolated = true } = {}) {
   }
   delete env.EMAIL_TEST_RECIPIENTS;
   delete env.RESEND_WEBHOOK_SECRET;
+  delete env.RESEND_BASE_URL; // only from MF_EXTRA_ENV (loopback), never inherited from the shell
   Object.assign(env, extraEnv());
   return env;
 }
@@ -124,11 +125,18 @@ export function extraEnv() {
   if (!file) return {};
   const abs = fwd(path.resolve(file));
   if (abs.toLowerCase().startsWith(`${APP.toLowerCase()}/`) || abs.toLowerCase().startsWith(`${REPO.toLowerCase()}/`)) throw new Error("refusing: MF_EXTRA_ENV must live outside the repository and worktrees");
+  // Any git checkout at all (a sibling worktree, another repository): a secret there is one `git add` away from a commit.
+  for (let d = path.dirname(abs); d !== path.dirname(d); d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, ".git"))) throw new Error("refusing: MF_EXTRA_ENV must live outside every git checkout");
+  }
   if (!fs.existsSync(abs)) throw new Error(`BLOCKED: MF_EXTRA_ENV file not found: ${abs}`);
   const out = {};
   for (const line of fs.readFileSync(abs, "utf8").split(/\r?\n/)) {
+    if (/^\s*(#|$)/.test(line)) continue;
     const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/);
-    if (!m) continue;
+    // A line that is not exactly KEY=value (lower-case key, "export KEY=…", a typo) is refused, not skipped:
+    // a silently dropped EMAIL_DELIVERY or EMAIL_TEST_RECIPIENTS would change what the test server sends.
+    if (!m) throw new Error("refusing: MF_EXTRA_ENV has a line that is not KEY=value with an upper-case key (no 'export'); the line is not printed");
     if (!EXTRA_KEYS.has(m[1])) throw new Error(`refusing: ${m[1]} is not an accepted key in MF_EXTRA_ENV (accepted: ${[...EXTRA_KEYS].join(", ")})`);
     out[m[1]] = m[2].trim().replace(/^"|"$/g, "");
   }

@@ -359,10 +359,21 @@ export type SendEmailArgs = {
   /**
    * Optional extra headers passed straight to Resend. Used for transactional-
    * mail-classification hints like List-Unsubscribe / List-Unsubscribe-Post.
-   * Keep keys safe — Resend will reject some standard headers.
+   * Keep keys safe — Resend will reject some standard headers. To / Cc / Bcc
+   * are dropped in sendEmail: the one recipient is `to`, checked against the
+   * test list, and a header must not add another.
    */
   headers?: Record<string, string>;
 };
+
+const RECIPIENT_HEADERS = new Set(["to", "cc", "bcc"]);
+
+/** Extra headers without any that could address the email to someone else. */
+function safeHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  const kept = Object.fromEntries(Object.entries(headers).filter(([k]) => !RECIPIENT_HEADERS.has(k.trim().toLowerCase())));
+  return Object.keys(kept).length ? kept : undefined;
+}
 
 /**
  * Templates MatFlow sends ON THE CLUB'S BEHALF to a member (1 Oct 2026). All
@@ -597,6 +608,8 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
   const replyTo =
     args.replyTo ?? (CLUB_VOICED_TEMPLATES.has(args.templateId) ? await resolveClubReplyTo(args.tenantId) : undefined);
 
+  const headers = safeHeaders(args.headers);
+
   try {
     const result = await client.emails.send({
       from: fromAddress,
@@ -605,7 +618,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
       html,
       text,
       ...(replyTo ? { replyTo } : {}),
-      ...(args.headers ? { headers: args.headers } : {}),
+      ...(headers ? { headers } : {}),
     });
     if (result.error) {
       await withTenantContext(args.tenantId, (tx) =>

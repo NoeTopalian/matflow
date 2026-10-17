@@ -84,13 +84,34 @@ describe("policy", () => {
     }
   });
 
-  it("production on is unchanged: open (Vercel production or the production database)", () => {
+  it("production on is unchanged: open, on the Vercel production deployment only", () => {
     process.env.EMAIL_DELIVERY = "on";
     process.env.VERCEL_ENV = "production";
     expect(emailSendingPolicy().kind).toBe("open");
-    delete process.env.VERCEL_ENV;
-    process.env.DATABASE_URL = "postgresql://u:p@ep-bold-wave-abt39t7x-pooler.example/db";
+    delete process.env.EMAIL_DELIVERY;
     expect(emailSendingPolicy().kind).toBe("open");
+  });
+
+  it("the production database alone is NOT production: local dev or a preview on it mails the list only", () => {
+    process.env.EMAIL_DELIVERY = "on";
+    process.env.DATABASE_URL = "postgresql://u:p@ep-bold-wave-abt39t7x-pooler.example/db";
+    for (const vercel of [undefined, "preview", "development"]) {
+      if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
+      expect(emailSendingPolicy().kind).toBe("allowlist");
+    }
+  });
+
+  it("screens show off when test mode has an empty list (nothing can be sent)", () => {
+    process.env.EMAIL_DELIVERY = "test";
+    for (const list of [undefined, "", "not-an-address"]) {
+      if (list === undefined) delete process.env.EMAIL_TEST_RECIPIENTS; else process.env.EMAIL_TEST_RECIPIENTS = list;
+      expect(emailDeliveryMode()).toBe("off");
+    }
+    process.env.EMAIL_DELIVERY = "on"; // outside production → test mode, no list
+    delete process.env.EMAIL_TEST_RECIPIENTS;
+    expect(emailDeliveryMode()).toBe("off");
+    process.env.EMAIL_TEST_RECIPIENTS = "noe.test@example.test";
+    expect(emailDeliveryMode()).toBe("on");
   });
 
   it("off and unknown values stay off", () => {
@@ -144,23 +165,46 @@ describe("sendEmail enforcement (before the provider)", () => {
     expect(args).not.toHaveProperty("cc");
     expect(args).not.toHaveProperty("bcc");
   });
+
+  it("To / Cc / Bcc passed as extra headers are dropped; other headers are kept", async () => {
+    process.env.EMAIL_DELIVERY = "test";
+    process.env.EMAIL_TEST_RECIPIENTS = "noe.test@example.test";
+    await sendEmail({
+      tenantId: "t1", templateId: "test", to: "noe.test@example.test", vars: {},
+      headers: { Bcc: "sean@example.test", " cc ": "x@example.test", TO: "y@example.test", "List-Unsubscribe": "<mailto:u@example.test>" },
+    });
+    const args = resendSendMock.mock.calls[0][0] as { headers?: Record<string, string> };
+    expect(args.headers).toEqual({ "List-Unsubscribe": "<mailto:u@example.test>" });
+  });
+});
+
+describe("callers say why nothing was sent", () => {
+  it("the kiosk waiver request names a suppressed send before the generic 'couldn't send' message", () => {
+    const s = fs.readFileSync(path.resolve(__dirname, "../../app/api/waiver/kiosk-request/route.ts"), "utf8");
+    const named = s.indexOf("suppressedMessage(sent)");
+    expect(named).toBeGreaterThan(-1);
+    expect(named).toBeLessThan(s.indexOf("We couldn't send the waiver link"));
+  });
 });
 
 describe("static guard: one sending boundary", () => {
   it("only lib/email.ts calls Resend, and no code passes cc / bcc / batch sends", () => {
     const root = path.resolve(__dirname, "../..");
     const files: string[] = [];
+    const CODE = /\.(ts|tsx|mts|cts|mjs|cjs|js)$/;
     const walk = (d: string) => {
       for (const e of fs.readdirSync(path.join(root, d), { withFileTypes: true })) {
         const rel = `${d}/${e.name}`;
         if (e.isDirectory()) walk(rel);
-        else if (/\.(ts|tsx|mjs|js)$/.test(e.name)) files.push(rel);
+        else if (CODE.test(e.name)) files.push(rel);
       }
     };
     for (const d of ["app", "lib", "components", "scripts"]) walk(d);
+    // Root-level code too (proxy.ts, auth.ts, instrumentation, config files).
+    for (const e of fs.readdirSync(root, { withFileTypes: true })) if (e.isFile() && CODE.test(e.name)) files.push(e.name);
     const offenders = files.filter((f) => {
       const src = fs.readFileSync(path.join(root, f), "utf8");
-      if (/\bemails\.send\s*\(|\bbatch\.send\s*\(|new Resend\s*\(/.test(src) && f !== "lib/email.ts") return true;
+      if (/\bemails\.(send|create)\s*\(|\bbatch\.(send|create)\s*\(|new Resend\s*\(/.test(src) && f !== "lib/email.ts") return true;
       return f === "lib/email.ts" && /\b(cc|bcc)\s*:/.test(src);
     });
     expect(offenders).toEqual([]);

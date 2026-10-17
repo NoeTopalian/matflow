@@ -9,8 +9,9 @@
  * THIS database wrote, and only when the event names the same recipient.
  *
  * Contract (17 Oct 2026):
- * - RESEND_WEBHOOK_SECRET is required in every environment: without it the
- *   route answers 503 and processes nothing (no unsigned fallback).
+ * - RESEND_WEBHOOK_SECRET is required in every environment: without it, or
+ *   with a value that is not a Svix secret, the route answers 503 and
+ *   processes nothing (no unsigned fallback).
  * - The signature is verified on the raw request body before anything is
  *   parsed. Missing, invalid or stale (Svix's 5-minute timestamp tolerance)
  *   signatures → 401.
@@ -24,6 +25,10 @@
  *   nothing.
  * - Logs carry the svix-id, Resend email id, event type and outcome only —
  *   never the secret, the body, a recipient address or a provider message.
+ *   The ids and type come from the request, so they are cut to a safe
+ *   character set before they are logged.
+ * - email.suppressed is recorded as bounced: Resend refused the address, so
+ *   sendEmail's bounce short-circuit stops later sends to it too.
  */
 import { Webhook } from "svix";
 import { withRlsBypass } from "@/lib/prisma-tenant";
@@ -68,7 +73,7 @@ function mapEvent(event: ResendEvent): { status: string; reason: string | null }
     case "email.failed":
       return { status: "failed", reason: "Resend reported failed" };
     case "email.suppressed":
-      return { status: "failed", reason: "Resend suppressed the send (recipient on Resend's suppression list)" };
+      return { status: "bounced", reason: "Resend suppressed the send (recipient on Resend's suppression list)" };
     case "email.bounced": {
       const b = event.data?.bounce;
       const parts = [b?.type, b?.subType, b?.message].filter(Boolean).join(" — ").replace(EMAIL_ADDRESS, "[address]");
@@ -82,6 +87,11 @@ function mapEvent(event: ResendEvent): { status: string; reason: string | null }
   }
 }
 
+/** A request-supplied id or type, reduced to characters that cannot forge a log line. */
+function safe(v: unknown, max = 64): string {
+  return String(v ?? "").replace(/[^A-Za-z0-9_.:-]/g, "").slice(0, max) || "-";
+}
+
 function recipients(event: ResendEvent): string[] {
   const to = event.data?.to;
   return (Array.isArray(to) ? to : to ? [to] : []).map((a) => String(a).trim().toLowerCase());
@@ -90,16 +100,25 @@ function recipients(event: ResendEvent): string[] {
 export async function POST(req: Request) {
   const svixId = req.headers.get("svix-id") ?? "";
   const outcome = (o: string, extra = "", status = 200, body: Record<string, unknown> = {}) => {
-    console.info(`[resend-webhook] svix=${svixId.slice(0, 64) || "-"} ${extra}outcome=${o}`);
+    console.info(`[resend-webhook] svix=${safe(svixId)} ${extra}outcome=${o}`);
     return NextResponse.json({ ok: status < 400, outcome: o, ...body }, { status });
   };
 
   const secret = process.env.RESEND_WEBHOOK_SECRET;
   if (!secret) return outcome("not_configured", "", 503, { error: "Webhook secret not configured" });
 
+  let webhook: Webhook;
+  try {
+    webhook = new Webhook(secret);
+  } catch {
+    // Not a Svix secret (it must be the whsec_… value Resend shows): a set-up
+    // fault, not a bad request — 503 so it is not mistaken for forged traffic.
+    return outcome("misconfigured_secret", "", 503, { error: "Webhook secret is not valid" });
+  }
+
   const rawBody = await req.text();
   try {
-    new Webhook(secret).verify(rawBody, {
+    webhook.verify(rawBody, {
       "svix-id": svixId,
       "svix-timestamp": req.headers.get("svix-timestamp") ?? "",
       "svix-signature": req.headers.get("svix-signature") ?? "",
@@ -116,7 +135,7 @@ export async function POST(req: Request) {
   }
 
   const resendId = typeof event.data?.email_id === "string" ? event.data.email_id : "";
-  const tag = `email=${resendId.slice(0, 64) || "-"} type=${String(event.type).slice(0, 40)} `;
+  const tag = `email=${safe(resendId)} type=${safe(event.type, 40)} `;
   const mapped = mapEvent(event);
   if (!mapped) return outcome("ignored_type", tag);
   if (!resendId) return outcome("ignored_no_email_id", tag);
@@ -141,14 +160,15 @@ export async function POST(req: Request) {
       const res = await withRlsBypass((tx) =>
         tx.emailLog.updateMany({
           where: { id: existing.id, status: existing.status },
-          data: { status: mapped.status, ...(mapped.reason ? { errorMessage: mapped.reason } : {}) },
+          // The reason belongs to the new status: delivered clears a delay note.
+          data: { status: mapped.status, errorMessage: mapped.reason },
         }),
       );
       if (res.count === 1) return outcome("applied", `${tag}from=${existing.status} to=${mapped.status} `);
     }
     return outcome("conflict_retry", tag, 500, { error: "Concurrent update; retry" });
   } catch (err) {
-    console.error(`[resend-webhook] svix=${svixId.slice(0, 64) || "-"} ${tag}database error ${err instanceof Error ? err.name : "unknown"}`);
+    console.error(`[resend-webhook] svix=${safe(svixId)} ${tag}database error ${err instanceof Error ? err.name : "unknown"}`);
     return outcome("db_error", tag, 500, { error: "Database error; Resend will retry" });
   }
 }

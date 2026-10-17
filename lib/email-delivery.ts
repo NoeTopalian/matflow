@@ -12,14 +12,15 @@
  *                                     EMAIL_TEST_RECIPIENTS (comma-separated,
  *                                     exact, case-insensitive). An empty or
  *                                     missing list sends nothing (fail closed).
- *   EMAIL_DELIVERY=on   (or unset)  — in production: sends go to Resend for
- *                                     any recipient. ANYWHERE ELSE (local, the
- *                                     test suite, preview, a test deployment —
- *                                     anything that is neither VERCEL_ENV=
- *                                     production nor the production database)
- *                                     `on` means `test`: only the listed
- *                                     addresses receive mail, and with no list
- *                                     nothing is sent.
+ *   EMAIL_DELIVERY=on   (or unset)  — on the Vercel production deployment
+ *                                     (VERCEL_ENV=production, exposed at run
+ *                                     time on this project): sends go to Resend
+ *                                     for any recipient. ANYWHERE ELSE — local
+ *                                     dev (even with the production .env),
+ *                                     the test suite, a preview, a test
+ *                                     deployment — `on` means `test`: only the
+ *                                     listed addresses receive mail, and with
+ *                                     no list nothing is sent.
  *
  * Any other value (a typo, "false", "0") is treated as OFF: when someone has
  * tried to configure the switch and got it wrong, the safe reading is "do not
@@ -31,13 +32,10 @@
  * replace lib/email.ts with a `sendEmail`-only mock keep working.
  */
 /**
- * The production Neon endpoint — the same constant lib/testing-mode.ts,
- * tests/setup-test-db.ts and scripts/maybe-migrate.mjs use. Inlined rather than
- * imported so the many route tests that mock lib/testing-mode keep working.
+ * What screens show. Test mode with at least one listed address counts as on
+ * (mail can go out, to the list only); test mode with an empty list is off,
+ * because nothing can be sent.
  */
-const PROD_NEON_ENDPOINT = "ep-bold-wave-abt39t7x";
-
-/** What screens show: `test` counts as on (mail can go out, to the test list only). */
 export type EmailDeliveryMode = "on" | "off";
 
 /** Why a send was deliberately not attempted (as opposed to failing). */
@@ -65,9 +63,13 @@ function rawMode(): string | undefined {
   return process.env.EMAIL_DELIVERY?.trim().toLowerCase();
 }
 
-/** True for the real production runtime: Vercel production or the production database. */
+/**
+ * True only on the Vercel production deployment. The production database alone
+ * does not count: a local `next dev` that loads the production .env, or a
+ * preview pointed at production, must still mail the test list only.
+ */
 function isProductionRuntime(): boolean {
-  return process.env.VERCEL_ENV === "production" || (process.env.DATABASE_URL ?? "").includes(PROD_NEON_ENDPOINT);
+  return process.env.VERCEL_ENV === "production";
 }
 
 /** The EMAIL_TEST_RECIPIENTS list, normalised; entries that are not an address are dropped. */
@@ -97,7 +99,10 @@ export function isRecipientAllowed(policy: EmailSendingPolicy, to: string): bool
 }
 
 export function emailDeliveryMode(): EmailDeliveryMode {
-  return emailSendingPolicy().kind === "off" ? "off" : "on";
+  const policy = emailSendingPolicy();
+  if (policy.kind === "off") return "off";
+  if (policy.kind === "allowlist" && policy.recipients.size === 0) return "off";
+  return "on";
 }
 
 export function isEmailDeliveryOn(): boolean {

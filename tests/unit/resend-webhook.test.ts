@@ -9,7 +9,13 @@ import { Webhook } from "svix";
 import { randomBytes } from "node:crypto";
 
 type Row = { id: string; resendId: string; recipient: string; status: string; errorMessage: string | null };
-const store = vi.hoisted(() => ({ rows: new Map<string, Row>(), fail: false, writes: 0 }));
+const store = vi.hoisted(() => ({
+  rows: new Map<string, Row>(),
+  fail: false,
+  writes: 0,
+  /** Runs once just before the next conditional update: simulates another delivery landing between read and write. */
+  interleave: null as null | (() => void),
+}));
 
 vi.mock("@/lib/prisma-tenant", () => ({
   withRlsBypass: async (fn: (tx: unknown) => unknown) => {
@@ -28,6 +34,9 @@ vi.mock("@/lib/prisma-tenant", () => ({
           return r;
         },
         updateMany: async ({ where, data }: { where: { id: string; status: string }; data: Partial<Row> }) => {
+          const between = store.interleave;
+          store.interleave = null;
+          between?.();
           const r = store.rows.get(where.id);
           if (!r || r.status !== where.status) return { count: 0 };
           Object.assign(r, data);
@@ -67,6 +76,7 @@ beforeEach(() => {
   process.env.RESEND_WEBHOOK_SECRET = SECRET;
   store.fail = false;
   store.writes = 0;
+  store.interleave = null;
   store.rows = new Map([["log-1", { id: "log-1", resendId: "re_1", recipient: "Tester@Example.test", status: "sent", errorMessage: null }]]);
 });
 
@@ -114,6 +124,13 @@ describe("signature (svix, raw body)", () => {
     (process.env as Record<string, string>).NODE_ENV = "test";
     expect(store.writes).toBe(0);
   });
+
+  it("a secret that is not a Svix secret → 503 (set-up fault), not 401, nothing processed", async () => {
+    process.env.RESEND_WEBHOOK_SECRET = "whsec_%%%not-base64%%%";
+    const r = await post(signed(ev("email.delivered")));
+    expect(r).toEqual({ status: 503, body: expect.objectContaining({ outcome: "misconfigured_secret" }) });
+    expect(store.writes).toBe(0);
+  });
 });
 
 describe("duplicates, ordering and association", () => {
@@ -145,9 +162,31 @@ describe("duplicates, ordering and association", () => {
     expect(row().status).toBe("delivered");
   });
 
-  it("email.suppressed is recorded as failed with the reason", async () => {
+  it("email.suppressed is recorded as bounced (so later sends short-circuit) with the reason", async () => {
     await post(signed(ev("email.suppressed")));
-    expect(row()).toMatchObject({ status: "failed", errorMessage: expect.stringContaining("suppression list") });
+    expect(row()).toMatchObject({ status: "bounced", errorMessage: expect.stringContaining("suppression list") });
+  });
+
+  it("delivered clears the delay note left by delivery_delayed", async () => {
+    await post(signed(ev("email.delivery_delayed")));
+    expect(row().errorMessage).toMatch(/delayed/);
+    await post(signed(ev("email.delivered")));
+    expect(row()).toMatchObject({ status: "delivered", errorMessage: null });
+  });
+
+  it("a bounce landing between this event's read and write wins: delivered re-reads and does not overwrite it", async () => {
+    store.interleave = () => { Object.assign(row(), { status: "bounced", errorMessage: "bounced" }); };
+    const r = await post(signed(ev("email.delivered")));
+    expect(r.body.outcome).toBe("ignored_would_downgrade");
+    expect(row().status).toBe("bounced");
+  });
+
+  it("a delay landing between read and write: delivered re-reads and still applies once", async () => {
+    store.interleave = () => { row().status = "delivery_delayed"; };
+    const r = await post(signed(ev("email.delivered")));
+    expect(r.body.outcome).toBe("applied");
+    expect(row().status).toBe("delivered");
+    expect(store.writes).toBe(1);
   });
 
   it("an event for an email this database never sent changes nothing", async () => {
@@ -184,8 +223,12 @@ describe("duplicates, ordering and association", () => {
     await post(signed(ev("email.bounced", "re_1", { bounce: { message: "550 tester@example.test unknown" } })));
     store.fail = true;
     await post(signed(ev("email.complained")));
+    store.fail = false;
+    // Headers cannot carry a newline, but spaces and "=" could forge fields on the line.
+    await post(signed(ev("email.delivered"), { id: "msg_x outcome=applied email=forged" }));
     const logged = [...spy.mock.calls, ...err.mock.calls].flat().join("\n");
     expect(logged).not.toMatch(/tester@example\.test|whsec_|550/i);
+    expect(logged, "a request-supplied id cannot add fields to the log line").not.toMatch(/email=forged/);
     spy.mockRestore();
     err.mockRestore();
   });

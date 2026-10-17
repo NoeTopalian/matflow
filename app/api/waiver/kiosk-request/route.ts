@@ -6,7 +6,7 @@ import { hashToken } from "@/lib/token-hash";
 import { verifyKioskMemberToken } from "@/lib/kiosk-token";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
-import { isEmailDeliveryOn } from "@/lib/email-delivery";
+import { isEmailDeliveryOn, suppressedMessage } from "@/lib/email-delivery";
 import { getBaseUrl } from "@/lib/env-url";
 
 export const runtime = "nodejs";
@@ -135,6 +135,15 @@ export async function POST(req: Request) {
     },
   });
 
+  // Nothing sent on purpose (test list, provisional address): say why, rather
+  // than suggesting the address is wrong.
+  const suppressed = suppressedMessage(sent);
+  if (suppressed) {
+    return NextResponse.json(
+      { error: `${suppressed} Ask a coach to open your waiver on a staff device.`, reason: `email_${sent.suppressed}` },
+      { status: 503 },
+    );
+  }
   if (!sent.ok) {
     return NextResponse.json(
       {

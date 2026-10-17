@@ -558,22 +558,23 @@ test.describe("J42 · membership tiers, per role", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 test.describe("J43 · chase and export", () => {
-  test("a chase with no mail key answers non-2xx AND leaves an EmailLog row", async ({ browser, baseURL }) => {
+  test("a chase in a test environment answers non-2xx AND leaves an EmailLog row", async ({ browser, baseURL }) => {
     const rc = await reqAs(browser, baseURL!, OWNER_EMAIL);
     const subject = await createMember({ name: `${RUN_STAMP} Chase me`, paymentStatus: "overdue" });
     await setTier(subject.id, tierId);
     await setDue(subject.id, "2026-01-01T00:00:00.000Z");
 
     const res = await post(rc, "/api/payments/chase", ORIGIN, { memberId: subject.id });
-    // `.env.test` has no mail key: the send fails and the row is the proof the
-    // route ran. Delivery is UNCOVERED — it needs a live service (Resend).
+    // Outside Vercel production with no EMAIL_TEST_RECIPIENTS nothing may be sent
+    // (17 Oct 2026): the send is suppressed and the row is the proof the route ran.
+    // Delivery is UNCOVERED — it needs a live service (Resend).
     // Only a MISSING row is an error.
     const rows = await sql<{ id: string; status: string; templateId: string | null }>(
       'SELECT id, status, "templateId" FROM "EmailLog" WHERE "tenantId" = $1 AND recipient = (SELECT email FROM "Member" WHERE id = $2) ORDER BY "createdAt" DESC',
       [tenantId, subject.id],
     );
     expect(rows.length, `chase answered ${res.status()} and logged nothing`).toBeGreaterThan(0);
-    expect(rows[0].status).toBe("failed");
+    expect(rows[0].status).toBe("suppressed");
     await resetBucketsLike(`payment-chase:${tenantId}:${subject.id}`);
   });
 

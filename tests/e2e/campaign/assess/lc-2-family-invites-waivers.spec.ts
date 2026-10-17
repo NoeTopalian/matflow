@@ -269,22 +269,18 @@ test.describe("J25 — bulk invite and accepting one", () => {
       "…and mails nothing",
     ).toBe(0);
 
-    // The owner is admitted, and the invite is real.
+    // The owner is admitted past authorisation. Outside Vercel production with no
+    // EMAIL_TEST_RECIPIENTS nothing can be sent (17 Oct 2026), so the route refuses
+    // on purpose before minting a token nobody would be told about. Delivery and
+    // the minted invite are UNCOVERED here — they need the isolated mail test.
     const own = await sessionFor(browser, baseURL!, { email: OWNER_A });
     const res = await apiCall(own.request, "post", "/api/members/bulk-invite", ORIGIN, {
       memberIds: [target.id],
     });
-    expect(res.status, `the owner may invite: ${res.text.slice(0, 160)}`).toBe(200);
-
-    // The row that proves the route ran even though no mail key exists.
-    await expect.poll(async () =>
-      (await sql('SELECT id FROM "EmailLog" WHERE recipient = $1', [target.email])).length,
-      { timeout: 10_000, message: "EmailLog is synchronous; a missing row is the ERROR" },
-    ).toBeGreaterThan(0);
-    const log = await sql<{ status: string }>('SELECT status FROM "EmailLog" WHERE recipient = $1', [target.email]);
-    expect(log[0].status, "no Resend key in .env.test — delivery is UNCOVERED, the row is not").toBe("failed");
+    expect(res.status, `the owner is admitted; mail is off here: ${res.text.slice(0, 160)}`).toBe(409);
+    expect(res.text, "the refusal names mail being off").toContain("email_delivery_off");
     const token = await sql<{ purpose: string }>('SELECT purpose FROM "MagicLinkToken" WHERE email = $1', [target.email]);
-    expect(token.map((t) => t.purpose), "an invite mints a first_time_signup token").toContain("first_time_signup");
+    expect(token.length, "no token is minted while nothing can be sent").toBe(0);
 
     // A member and an anonymous caller.
     const memberCtx = await sessionFor(browser, baseURL!, { email: MEMBER_A, viewport: { width: 390, height: 844 }, isMobile: true });

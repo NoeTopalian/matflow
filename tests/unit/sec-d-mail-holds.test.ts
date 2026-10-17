@@ -53,13 +53,18 @@ beforeAll(async () => {
   }
   throw new Error("interceptor did not start");
 }, 15_000);
-afterAll(() => { child?.kill(); });
+afterAll(() => { child?.kill(); delete process.env.EMAIL_TEST_RECIPIENTS; });
 
 beforeEach(() => {
   db.logs = []; db.provisional = false; db.lookupThrows = false; db.bounced = false;
   process.env.RESEND_BASE_URL = `http://127.0.0.1:${PORT}`;
   process.env.RESEND_API_KEY = "re_secd_dummy_key_interceptor_only";
-  process.env.EMAIL_DELIVERY = "on";
+  // Test mode with the synthetic recipient listed (17 Oct 2026): outside the Vercel
+  // production deployment only EMAIL_TEST_RECIPIENTS receive mail. Every hold below
+  // therefore runs with the recipient on the list, so it is the hold that stops it.
+  delete process.env.VERCEL_ENV;
+  process.env.EMAIL_DELIVERY = "test";
+  process.env.EMAIL_TEST_RECIPIENTS = "secd-recipient@example.test";
   vi.resetModules();
 });
 
@@ -69,7 +74,7 @@ async function send() {
 }
 
 describe("SEC-091 every send boundary hold, with an interceptor positive control", () => {
-  it("POSITIVE CONTROL: EMAIL_DELIVERY=on with a key → the send reaches the transport (interceptor count +1)", async () => {
+  it("POSITIVE CONTROL: EMAIL_DELIVERY=test, recipient listed, with a key → the send reaches the transport (interceptor count +1)", async () => {
     const before = await count();
     const r = await send();
     expect(await count()).toBe(before + 1);
@@ -80,6 +85,9 @@ describe("SEC-091 every send boundary hold, with an interceptor positive control
   const holds: Array<[string, () => void, string]> = [
     ["EMAIL_DELIVERY=off", () => { process.env.EMAIL_DELIVERY = "off"; }, "suppressed"],
     ["EMAIL_DELIVERY misconfigured ('false')", () => { process.env.EMAIL_DELIVERY = "false"; }, "suppressed"],
+    ["test mode, recipient not on EMAIL_TEST_RECIPIENTS", () => { process.env.EMAIL_TEST_RECIPIENTS = "someone-else@example.test"; }, "suppressed"],
+    ["test mode, EMAIL_TEST_RECIPIENTS empty (fail closed)", () => { delete process.env.EMAIL_TEST_RECIPIENTS; }, "suppressed"],
+    ["delivery 'on' outside Vercel production, recipient not listed", () => { process.env.EMAIL_DELIVERY = "on"; process.env.EMAIL_TEST_RECIPIENTS = "someone-else@example.test"; }, "suppressed"],
     ["recipient is a provisional login address", () => { db.provisional = true; }, "suppressed"],
     ["recipient lookup fails (DB error) → fail closed", () => { db.lookupThrows = true; }, "failed"],
     ["recipient bounced recently", () => { db.bounced = true; }, "failed"],

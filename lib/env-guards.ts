@@ -77,6 +77,10 @@ const REQUIRED: { name: string; severity: Severity; reason: string }[] = [
 // unusable on a deploy that has no Resend account yet.
 const DELIVERY_ONLY = new Set(["RESEND_API_KEY", "RESEND_WEBHOOK_SECRET"]);
 
+// The production Neon endpoint (same constant as lib/testing-mode.ts), inlined so
+// tests that mock lib/testing-mode keep working.
+const PROD_NEON_ENDPOINT = "ep-bold-wave-abt39t7x";
+
 export function runProductionEnvGuards(): void {
   if (process.env.NODE_ENV !== "production") return;
   if (process.env.NEXT_PHASE === "phase-production-build") return;
@@ -91,6 +95,12 @@ export function runProductionEnvGuards(): void {
     );
   }
   const policy = emailSendingPolicy();
+  if (process.env.VERCEL_ENV !== "production" && (process.env.DATABASE_URL ?? "").includes(PROD_NEON_ENDPOINT)) {
+    console.warn(
+      "[env-guards] This server is on the PRODUCTION database but is not the Vercel production deployment — " +
+        "email goes only to EMAIL_TEST_RECIPIENTS (none if the list is empty).",
+    );
+  }
   if (policy.kind === "allowlist") {
     console.warn(
       policy.recipients.size === 0
@@ -98,7 +108,7 @@ export function runProductionEnvGuards(): void {
         : `[env-guards] Email is in TEST mode — only the ${policy.recipients.size} address(es) in EMAIL_TEST_RECIPIENTS receive mail.`,
     );
   }
-  if (deliveryOff) {
+  if (policy.kind === "off") {
     console.warn(
       "[env-guards] EMAIL_DELIVERY=off — NO email will be sent: member and staff invites, password reset codes, " +
         "sign-in links, receipts, refund notices, owner alerts (payment failed, chargeback, Stripe disconnected) " +

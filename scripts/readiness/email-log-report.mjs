@@ -39,7 +39,7 @@ try {
   const byStatus = (await c.query(`select status, count(*)::int n from "EmailLog" l where ${w} group by status order by n desc`, params)).rows;
   const byTemplate = (await c.query(`select "templateId", status, count(*)::int n from "EmailLog" l where ${w} group by 1, 2 order by 1, 2`, params)).rows;
   const reasons = (await c.query(`select coalesce("errorMessage", '') reason, status, count(*)::int n from "EmailLog" l where ${w} and status <> 'sent' and status <> 'delivered' group by 1, 2 order by n desc limit 20`, params)).rows;
-  const recent = (await c.query(`select l."createdAt", t.slug, l."templateId", l.recipient, l.status, l."errorMessage" from "EmailLog" l join "Tenant" t on t.id = l."tenantId" where ${w} and l.status in ('failed','bounced','complained','suppressed') order by l."createdAt" desc limit 15`, params)).rows;
+  const recent = (await c.query(`select l."createdAt", coalesce(t.slug, l."tenantId") slug, l."templateId", l.recipient, l.status, l."errorMessage" from "EmailLog" l left join "Tenant" t on t.id = l."tenantId" where ${w} and l.status in ('failed','bounced','complained','suppressed') order by l."createdAt" desc limit 15`, params)).rows;
   await c.query("commit");
   console.log(`EmailLog on ${host}, last ${days} day(s)${tenantSlug ? `, club ${tenantSlug}` : ""} — read at ${new Date().toISOString()}`);
   console.log("\nBy status:");

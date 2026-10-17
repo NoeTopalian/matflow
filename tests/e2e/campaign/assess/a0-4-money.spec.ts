@@ -319,8 +319,9 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
     const owner = await sessionFor(browser, o, { slug, email: ownerEmail, password: PW });
     const before = await countOf("EmailLog", '"tenantId" = $1', [tenantId]);
     const res = await owner.request.post("/api/payments/chase", { headers: { Origin: o }, data: { memberId } });
-    // app/api/payments/chase/route.ts:100 — non-2xx without a mail key, by design.
-    expect(res.status(), "chase with no mail key").toBe(502);
+    // Outside Vercel production with no EMAIL_TEST_RECIPIENTS (17 Oct 2026) nothing
+    // may be sent: the chase is suppressed on purpose and says so (409), not "try again".
+    expect(res.status(), "chase in a test environment with no test list").toBe(409);
     await expect
       .poll(() => countOf("EmailLog", '"tenantId" = $1', [tenantId]), { timeout: 10_000, message: "an EmailLog row for the chase" })
       .toBeGreaterThan(before);
@@ -328,7 +329,7 @@ test.describe("A0.15 ★ — tiers and cash at the desk", () => {
       'SELECT status FROM "EmailLog" WHERE "tenantId" = $1 ORDER BY "createdAt" DESC LIMIT 1',
       [tenantId],
     );
-    expect(row[0].status, "the send is logged as failed, not silently dropped").toBe("failed");
+    expect(row[0].status, "the send is logged as suppressed, not silently dropped").toBe("suppressed");
     // Delivery itself is UNCOVERED — needs a live service (Resend).
   });
 
