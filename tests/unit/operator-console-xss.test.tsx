@@ -143,6 +143,7 @@ describe("tenants list", () => {
             stripeChargesEnabled: null,
             onboardingCompleted: true,
             createdAt: new Date("2026-10-01").toISOString(),
+            deletedAt: null,
           },
         ]}
       />,
