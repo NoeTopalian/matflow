@@ -13,7 +13,7 @@ import { classTierCovers, tierRefusalSentence } from "@/lib/class-tier-gate";
 import { classNotLiveSentence } from "@/lib/class-live";
 import { doorLifecycle } from "@/lib/class-lifecycle";
 import { checkinRefusal } from "@/lib/checkin-refusal";
-import { allowanceVerdict, allowanceRefusalSentence, nowMinute, slotMinute } from "@/lib/class-allowance";
+import { allowanceVerdict, allowanceBookingSentence, nowMinute, slotMinute } from "@/lib/class-allowance";
 import { readAllowanceSnapshot } from "@/lib/class-allowance-count";
 import { usableTimezone } from "@/lib/class-time";
 
@@ -120,6 +120,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
       // the class's next session (or now, when none is scheduled yet): a
       // member whose allowance is used up for that session is told the count
       // and when the next class frees up, and can book from then.
+      // A member who already holds this booking (a re-tap, a client retry)
+      // keeps the idempotent success: the allowance is not re-judged for a
+      // place they already have.
+      const already = await tx.classSubscription.findFirst({
+        where: { classId, memberId: r.memberId },
+        select: { id: true },
+      });
+      if (already) return "ok" as const;
       const allowance = await bookingAllowance(tx, r.tenantId, r.memberId, classId);
       if (allowance) return { kind: "allowance" as const, ...allowance };
 
@@ -159,7 +167,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
     }
     if (typeof created === "object" && created.kind === "allowance") {
       return NextResponse.json(
-        { error: allowanceRefusalSentence(created), reason: "allowance_reached" },
+        { error: allowanceBookingSentence(created), reason: "allowance_reached" },
         { status: 403 },
       );
     }
@@ -216,7 +224,9 @@ async function bookingAllowance(
   });
   if (!snap?.allowance) return null;
   const v = allowanceVerdict(snap.allowance, next ? slotMinute(next) : nowAt, snap.visits);
-  return v.exhausted ? { used: v.used, limit: v.limit, weeks: v.weeks, nextFree: v.nextFree } : null;
+  return v.exhausted
+    ? { used: v.used, limit: v.limit, weeks: v.weeks, nextFree: v.nextFree, ...(v.around ? { around: true as const } : {}) }
+    : null;
 }
 
 export async function DELETE(req: Request, ctx: { params: Promise<{ classId: string }> }) {

@@ -148,11 +148,22 @@ export default function MemberProfilePage() {
       })
       .catch(() => setLoadError("Couldn't load your gym's details — tap retry."));
 
+    // T7: the plan card's allowance line, from the same uncached endpoint the
+    // schedule reads, so it moves with a check-in (the profile payload below
+    // is browser-cached). Its failure is said on the card, never a blank.
+    void fetch("/api/member/me/allowance", { cache: "no-store" })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((d: { allowance?: { text?: unknown } | null }) => {
+        setAllowanceText(typeof d?.allowance?.text === "string" ? d.allowance.text : null);
+        setAllowanceUnavailable(false);
+      })
+      .catch(() => setAllowanceUnavailable(true));
+
     // Fetch member profile — non-ok throws (error ≠ empty, UI-RULES §7); raw
     // exception text never reaches the member.
     void fetch("/api/member/me")
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; classAllowance?: { text?: string } | null; classAllowanceUnavailable?: boolean; joinedAt?: string; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null; waiverAccepted?: boolean; emergencyContactName?: string | null; emergencyContactPhone?: string | null; emergencyContactRelation?: string | null } | null) => {
+      .then((data: { id?: string; name?: string; email?: string; phone?: string | null; belt?: { name: string; color: string; stripes: number } | null; membershipType?: string | null; joinedAt?: string; totpEnabled?: boolean; hasPassword?: boolean; profilePictureUrl?: string | null; waiverAccepted?: boolean; emergencyContactName?: string | null; emergencyContactPhone?: string | null; emergencyContactRelation?: string | null } | null) => {
         if (data?.id) setMemberId(data.id);
         if (data?.name)  setMemberName(data.name);
         setEmergencyContact({
@@ -166,8 +177,6 @@ export default function MemberProfilePage() {
         if (data && "profilePictureUrl" in data) setProfilePictureUrl(data.profilePictureUrl ?? null);
         if (data?.belt) setBelt({ name: data.belt.name, color: data.belt.color, stripes: data.belt.stripes });
         if (data?.membershipType) setMembershipType(data.membershipType);
-        if (typeof data?.classAllowance?.text === "string") setAllowanceText(data.classAllowance.text);
-        if (data?.classAllowanceUnavailable === true) setAllowanceUnavailable(true);
         if (data?.joinedAt) setMemberSince(new Date(data.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" }));
         // 2FA-optional spec
         setHasPassword(data?.hasPassword ?? false);

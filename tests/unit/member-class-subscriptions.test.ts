@@ -27,7 +27,7 @@ vi.mock("@/lib/prisma", () => ({
     // rather than `findFirst`, so the place-count and the insert cannot race.
     $queryRaw: vi.fn(),
     class: { findFirst: vi.fn() },
-    classSubscription: { findMany: vi.fn(), create: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
+    classSubscription: { findMany: vi.fn(), create: vi.fn(), deleteMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
     // T6a: no memberships selected on the class = open to everyone.
     classMembershipTier: { findMany: vi.fn().mockResolvedValue([]) },
     classRoster: { count: vi.fn().mockResolvedValue(0) },

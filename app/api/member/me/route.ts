@@ -11,7 +11,6 @@ import { NextResponse } from "next/server";
 import { stripTotpFields } from "@/lib/totp-immutable";
 import { computeMemberStats } from "@/lib/member-stats";
 import { buildRankTimeline } from "@/lib/member-home";
-import { memberAllowanceUsage } from "@/lib/class-allowance-count";
 import { memberSelfUpdateSchema } from "@/lib/schemas/member";
 import { demoBadges } from "@/lib/demo-member";
 import { LoginIdentityTaken, claimLoginIdentity, emailDigest, retireEmailBoundTokens } from "@/lib/login-email";
@@ -209,20 +208,6 @@ export async function GET(request?: Request) {
     if (!result) return NextResponse.json({ error: "Member not found" }, { status: 404 });
 
     const { member, stats: computedStats, nextClass, promotedBy, rankTimeline } = result;
-
-    // T7: the plan card's "2 of 4 classes used in the last 4 weeks", by the
-    // same rows the check-in counts; null for an Unlimited plan. Its own
-    // transaction, so a failure here cannot abort the profile read: the card
-    // then says the count could not be loaded (never a silent blank).
-    let classAllowance: Awaited<ReturnType<typeof memberAllowanceUsage>> = null;
-    let classAllowanceUnavailable = false;
-    try {
-      classAllowance = await withTenantContext(session.user.tenantId, (tx) =>
-        memberAllowanceUsage(tx, { tenantId: session.user.tenantId, memberId }),
-      );
-    } catch {
-      classAllowanceUnavailable = true;
-    }
     const currentRank = member.memberRanks[0];
 
     // Audit iter-1-member-surface A5H-8: cache the response so the
@@ -265,8 +250,6 @@ export async function GET(request?: Request) {
           }
         : null,
       rankTimeline,
-      classAllowance,
-      classAllowanceUnavailable,
       stats: computedStats,
       nextClass,
       // feat/member-profile-pictures Track A: surface the current profile

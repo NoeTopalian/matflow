@@ -92,6 +92,19 @@ describe("POST /api/checkin", () => {
     expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ memberId: "kid-1", method: "self", allowanceGate: "refuse" });
   });
 
+  it("the parent's refusal names the child whose allowance is used up", async () => {
+    h.auth.mockResolvedValue({ user: { id: "u-p", role: "member", tenantId: "t1", memberId: "parent-1", email: "p@x" } });
+    h.memberFindFirst.mockResolvedValue({ id: "kid-1", name: "Sam" });
+    h.performCheckin.mockResolvedValue(REFUSED(false));
+    const { POST } = await import("@/app/api/checkin/route");
+    const res = await POST(req("http://test/api/checkin", { classInstanceId: "inst-1", onBehalfOfMemberId: "kid-1" }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({
+      reason: "allowance_reached",
+      error: "Sam: 4 of 4 classes used in the last 4 weeks; next free on Monday 2 November from 18:00. Ask staff if Sam needs to train before then.",
+    });
+  });
+
   it("a member cannot smuggle a confirmation through acknowledged", async () => {
     h.auth.mockResolvedValue(member);
     h.performCheckin.mockResolvedValue(REFUSED(false));

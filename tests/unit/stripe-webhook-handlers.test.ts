@@ -832,6 +832,27 @@ describe("Stripe webhook: charge.dispute.* sync", () => {
       metadata: expect.objectContaining({ stripeDisputeId: "di_x", status: "lost" }),
     }));
   });
+
+  it("T7 lock order: a lost dispute writes the Member row BEFORE it voids the pack (Member, then pack, as the check-in)", async () => {
+    constructEventMock.mockReturnValue(
+      disputeEvent({ charge: "ch_x", customer: "cus_x", status: "lost", payment_intent: "pi_x" }),
+    );
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-1", tenantId: "tenant-A", memberId: "mem-1", stripePaymentIntentId: "pi_x" } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({
+      id: "pack-d", tenantId: "tenant-A", status: "active", creditsRemaining: 3, memberId: "mem-1",
+    } as never);
+    const memberUpdate = vi.mocked(prisma.member.update);
+    const packUpdate = vi.mocked(prisma.memberClassPack.update);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(memberUpdate).toHaveBeenCalledWith({ where: { id: "mem-1" }, data: { paymentStatus: "overdue" } });
+    expect(packUpdate).toHaveBeenCalledWith({ where: { id: "pack-d" }, data: { status: "refunded", creditsRemaining: 0 } });
+    const memberAt = memberUpdate.mock.invocationCallOrder[memberUpdate.mock.calls.length - 1];
+    const packAt = packUpdate.mock.invocationCallOrder[0];
+    expect(memberAt).toBeLessThan(packAt);
+  });
 });
 
 // ── Audit keying + tenant-scoping (Batch 3a) ─────────────────────────────────

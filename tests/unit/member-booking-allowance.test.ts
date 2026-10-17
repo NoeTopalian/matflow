@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   queryRaw: vi.fn(),
   instanceFindMany: vi.fn(),
   subCreate: vi.fn(),
+  subFindFirst: vi.fn(),
   cRow: null as unknown,
   cValues: [] as unknown[],
 }));
@@ -23,7 +24,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
       classMembershipTier: { findMany: vi.fn(async () => []) },
       classRoster: { count: vi.fn(async () => 0), findFirst: vi.fn() },
       member: { findFirst: vi.fn() },
-      classSubscription: { create: h.subCreate, count: vi.fn(async () => 0), deleteMany: vi.fn() },
+      classSubscription: { create: h.subCreate, count: vi.fn(async () => 0), deleteMany: vi.fn(), findFirst: h.subFindFirst },
       tenant: { findUnique: vi.fn(async () => ({ timezone: "Europe/London" })) },
       classInstance: { findMany: h.instanceFindMany },
     }),
@@ -61,6 +62,8 @@ beforeEach(() => {
     { id: "ci-next", date: new Date("2026-10-19T00:00:00.000Z"), startTime: "18:00" },
   ]);
   h.subCreate.mockResolvedValue({});
+  h.subFindFirst.mockResolvedValue(null);
+  h.cValues = [];
 });
 afterEach(() => vi.useRealTimers());
 
@@ -69,7 +72,7 @@ describe("booking - plan allowance", () => {
     const res = await book();
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({
-      error: "4 of 4 classes used in the last 4 weeks; next free on Monday 2 November from 18:00. Ask staff if you need to train before then.",
+      error: "4 of 4 classes used in the last 4 weeks; you can book a session starting on or after Monday 2 November at 18:00.",
       reason: "allowance_reached",
     });
     expect(h.subCreate).not.toHaveBeenCalled();
@@ -90,6 +93,23 @@ describe("booking - plan allowance", () => {
   it("an Unlimited plan books as before", async () => {
     h.cRow = { classLimit: null, classLimitWeeks: null, maxClassesPerWeek: null, alreadyIn: false, visits: FOUR_VISITS };
     expect((await book()).status).toBe(201);
+  });
+
+  it("a member who already holds the booking keeps the idempotent success (a re-tap is not re-judged)", async () => {
+    h.subFindFirst.mockResolvedValue({ id: "sub-1" });
+    const res = await book();
+    expect(res.status).toBe(201);
+    expect(h.subCreate).not.toHaveBeenCalled();
+    expect(h.cValues).toEqual([]);
+  });
+
+  it("past the allowance (a lowered limit) the sentence never reads 6 of 4", async () => {
+    h.cRow = {
+      classLimit: 4, classLimitWeeks: 4, maxClassesPerWeek: null, alreadyIn: false,
+      visits: [...FOUR_VISITS, { d: DAY("2026-10-15"), s: "18:00" }, { d: DAY("2026-10-16"), s: "18:00" }],
+    };
+    const body = (await (await book()).json()) as { error: string };
+    expect(body.error).toMatch(/^4 of 4 classes used in the last 4 weeks \(6 recorded\); you can book/);
   });
 
   it("with no session scheduled, it is judged at now", async () => {

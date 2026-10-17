@@ -5,6 +5,8 @@
 import { describe, it, expect } from "vitest";
 import {
   allowanceAskSentence,
+  allowanceBookingSentence,
+  allowanceUsageText,
   allowanceRefusalSentence,
   allowanceVerdict,
   minuteToLocal,
@@ -129,5 +131,68 @@ describe("the copy", () => {
     expect(allowanceAskSentence("Ava Green", facts)).toBe(
       "Ava Green has used 4 of 4 classes in the last 4 weeks (next free on Monday 2 November from 18:00). Admit anyway?",
     );
+  });
+});
+
+describe("review fixes (17 Oct 2026): the window copy and the portal count", () => {
+  const one = { limit: 1, weeks: 1 };
+
+  it("an out-of-order judgement is flagged around, and worded within W weeks of this class, not in the last W weeks", () => {
+    const v = allowanceVerdict(one, at("2026-10-19", "07:00"), [at("2026-10-19", "18:00")]);
+    expect(v.around).toBe(true);
+    expect(allowanceRefusalSentence(v)).toBe(
+      "1 of 1 class used within 1 week of this class; next free on Monday 26 October from 18:00. Ask staff if you need to train before then.",
+    );
+    expect(allowanceAskSentence("Ava Green", v)).toBe(
+      "Ava Green has used 1 of 1 class within 1 week of this class (next free on Monday 26 October from 18:00). Admit anyway?",
+    );
+  });
+
+  it("an in-order judgement is not flagged around", () => {
+    const v = allowanceVerdict(one, at("2026-10-19", "18:00"), [at("2026-10-19", "07:00")]);
+    expect(v.exhausted).toBe(true);
+    expect(v.around).toBeUndefined();
+  });
+
+  it("past the allowance the copy never reads 6 of 4", () => {
+    const facts = { used: 6, limit: 4, weeks: 4, nextFree: null };
+    expect(allowanceUsageText(6, { limit: 4, weeks: 4 })).toBe("4 of 4 classes used in the last 4 weeks (6 recorded)");
+    expect(allowanceRefusalSentence(facts)).toBe("4 of 4 classes used in the last 4 weeks (6 recorded). Ask staff if you need to train.");
+    expect(allowanceAskSentence("Ava Green", facts)).toBe("Ava Green has used all 4 classes in the last 4 weeks (6 recorded). Admit anyway?");
+    expect(allowanceAskSentence("Ava Green", { used: 3, limit: 1, weeks: 1, nextFree: { date: "2026-11-02", time: "18:00" } })).toBe(
+      "Ava Green has used their 1 class in the last week (3 recorded; next free on Monday 2 November from 18:00). Admit anyway?",
+    );
+  });
+
+  it("a parent checking in a child is told whose allowance it is", () => {
+    expect(allowanceRefusalSentence({ used: 4, limit: 4, weeks: 4, nextFree: { date: "2026-11-02", time: "18:00" } }, "Sam")).toBe(
+      "Sam: 4 of 4 classes used in the last 4 weeks; next free on Monday 2 November from 18:00. Ask staff if Sam needs to train before then.",
+    );
+  });
+
+  it("booking has its own tail", () => {
+    expect(allowanceBookingSentence({ used: 4, limit: 4, weeks: 4, nextFree: { date: "2026-11-02", time: "18:00" } })).toBe(
+      "4 of 4 classes used in the last 4 weeks; you can book a session starting on or after Monday 2 November at 18:00.",
+    );
+    expect(allowanceBookingSentence({ used: 1, limit: 1, weeks: 1, nextFree: null })).toBe(
+      "1 of 1 class used in the last week. Ask staff before booking more classes.",
+    );
+  });
+
+  it("the portal counts a class checked into before it starts (17:35 for the 18:00 class)", () => {
+    const visits = [at("2026-10-05", "18:00"), at("2026-10-14", "18:00"), at("2026-10-17", "18:00")];
+    expect(usedInLastWeeks(FOUR_IN_FOUR, at("2026-10-17", "17:35"), visits)).toBe(3);
+  });
+
+  it("the portal moves its window end to that visit, as the next check-in will (an old visit drops out)", () => {
+    // 19 Sep 17:50 is inside the 4 weeks before now (17 Oct 17:35) but not
+    // inside the 4 weeks before tonight's 18:00 class.
+    const visits = [at("2026-09-19", "17:50"), at("2026-10-17", "18:00")];
+    expect(usedInLastWeeks(FOUR_IN_FOUR, at("2026-10-17", "17:35"), visits)).toBe(1);
+  });
+
+  it("the portal still ignores sessions on later days", () => {
+    const visits = [at("2026-10-14", "18:00"), at("2026-10-18", "10:00")];
+    expect(usedInLastWeeks(FOUR_IN_FOUR, at("2026-10-17", "17:35"), visits)).toBe(1);
   });
 });

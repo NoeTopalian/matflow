@@ -76,6 +76,8 @@ export async function POST(req: Request) {
   // The member who pressed the button on a member-side check-in: the member
   // themselves, or the parent checking in a child. Null on the staff path.
   let actorMemberId: string | null = null;
+  // T7: a parent checking in a child is told whose allowance is used up.
+  let childName: string | null = null;
 
   if (memberId) {
     // Admin checking in a specific member — validate member belongs to this tenant
@@ -126,11 +128,12 @@ export async function POST(req: Request) {
     const kid = await withTenantContext(tenantId, (tx) =>
       tx.member.findFirst({
         where: { id: onBehalfOfMemberId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
-        select: { id: true },
+        select: { id: true, name: true },
       }),
     );
     if (!kid) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = kid.id;
+    childName = kid.name ?? null;
     actorMemberId = parentMemberId;
     // Parent-of-kid path inherits the self profile: rank gate, roster gate,
     // time window, and coverage all apply. The parent isn't bypassing
@@ -274,7 +277,7 @@ export async function POST(req: Request) {
           paymentRail = null;
         }
       }
-      const refusal = checkinRefusal(result, { paymentRail });
+      const refusal = checkinRefusal(result, { paymentRail, memberName: childName });
       if (refusal) return NextResponse.json(refusal.body, { status: refusal.status });
       return NextResponse.json({ error: "Unknown check-in result" }, { status: 500 });
     }

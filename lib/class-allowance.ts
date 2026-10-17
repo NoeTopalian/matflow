@@ -92,14 +92,34 @@ export function classLimitSortValue(a: ClassAllowance | null): number {
  * The member portal's line for the plan card and the schedule:
  * "2 of 4 classes used in the last 4 weeks", "1 of 1 class used in the last
  * week". Null for an Unlimited plan (nothing to count against). `used` is the
- * number the check-in engine counts (T7); this helper only words it.
+ * number the check-in engine counts (T7); this helper only words it. Past the
+ * allowance (a lowered limit, or desk overrides) it never reads "6 of 4":
+ * "4 of 4 classes used in the last 4 weeks (6 recorded)".
  */
 export function allowanceUsageText(used: number, a: ClassAllowance | null): string | null {
   if (!a) return null;
-  const n = Math.max(0, Math.floor(used));
-  const noun = a.limit === 1 ? "class" : "classes";
-  const span = a.weeks === 1 ? "week" : `${a.weeks} weeks`;
-  return `${n} of ${a.limit} ${noun} used in the last ${span}`;
+  return allowanceCountPhrase({ used, limit: a.limit, weeks: a.weeks });
+}
+
+/**
+ * The count, worded once for the portal, the doors and the questions:
+ *  - "2 of 4 classes used in the last 4 weeks" (the window ending at the class);
+ *  - "4 of 4 classes used within 4 weeks of this class" when the busiest window
+ *    is not the one ending at the class (a later visit was recorded first, see
+ *    windowUsage below), so "in the last 4 weeks" would not be literally true;
+ *  - "4 of 4 classes used in the last 4 weeks (6 recorded)" past the allowance.
+ */
+export function allowanceCountPhrase(v: { used: number; limit: number; weeks: number; around?: boolean }): string {
+  const n = Math.max(0, Math.floor(v.used));
+  const noun = v.limit === 1 ? "class" : "classes";
+  const where = allowanceWhere(v);
+  if (n > v.limit) return `${v.limit} of ${v.limit} ${noun} used ${where} (${n} recorded)`;
+  return `${n} of ${v.limit} ${noun} used ${where}`;
+}
+
+function allowanceWhere(v: { weeks: number; around?: boolean }): string {
+  if (v.around) return `within ${weeksText(v.weeks)} of this class`;
+  return v.weeks === 1 ? "in the last week" : `in the last ${v.weeks} weeks`;
 }
 
 // ── The rolling window (T7) ──────────────────────────────────────────────────
@@ -182,15 +202,30 @@ function countInWindow(visits: readonly number[], end: number, span: number): nu
  * The busiest window of length M weeks that contains S, counting only the
  * other visits (the session being judged is not among them). Windows ending
  * at S and at each recorded visit in [S, S + span) are enough: the count only
- * rises at a visit.
+ * rises at a visit. `around` is true when that busiest window ends AFTER S
+ * (it holds a visit recorded for a later session), so the copy says "within
+ * W weeks of this class" rather than "in the last W weeks".
+ *
+ * Deviation from the owner's wording (17 Oct 2026), kept on purpose and noted
+ * in the T7 PR: the owner decision names only the window ending at S. Judging
+ * by that window alone lets an out-of-order pair (a desk mark for tonight,
+ * then a check-in to this morning's class) exceed N inside one window, which
+ * no serial order of check-ins would allow. In the usual case, nothing
+ * recorded after S, the two rules are the same.
  */
-export function windowUsed(a: ClassAllowance, session: number, visits: readonly number[]): number {
+export function windowUsage(a: ClassAllowance, session: number, visits: readonly number[]): { used: number; around: boolean } {
   const span = spanMinutes(a.weeks);
-  let used = countInWindow(visits, session, span);
+  const before = countInWindow(visits, session, span);
+  let used = before;
   for (const v of visits) {
     if (v >= session && v < session + span) used = Math.max(used, countInWindow(visits, v, span));
   }
-  return used;
+  return { used, around: used > before };
+}
+
+/** The busiest-window count alone (see windowUsage). */
+export function windowUsed(a: ClassAllowance, session: number, visits: readonly number[]): number {
+  return windowUsage(a, session, visits).used;
 }
 
 export type AllowanceVerdict = {
@@ -201,6 +236,8 @@ export type AllowanceVerdict = {
   exhausted: boolean;
   /** When exhausted: the first session time from which a class is free again. */
   nextFree: LocalSlot | null;
+  /** Present (true) when the busiest window ends after the session (windowUsage). */
+  around?: true;
 };
 
 /**
@@ -210,7 +247,7 @@ export type AllowanceVerdict = {
  * busiest window is below N again, assuming nothing else is recorded.
  */
 export function allowanceVerdict(a: ClassAllowance, session: number, visits: readonly number[]): AllowanceVerdict {
-  const used = windowUsed(a, session, visits);
+  const { used, around } = windowUsage(a, session, visits);
   const exhausted = used >= a.limit;
   let nextFree: LocalSlot | null = null;
   if (exhausted) {
@@ -223,12 +260,21 @@ export function allowanceVerdict(a: ClassAllowance, session: number, visits: rea
       }
     }
   }
-  return { used, limit: a.limit, weeks: a.weeks, exhausted, nextFree };
+  return { used, limit: a.limit, weeks: a.weeks, exhausted, nextFree, ...(around ? { around: true as const } : {}) };
 }
 
-/** What the member portal shows: classes counted in the window ending now. */
+/**
+ * What the member portal shows: classes counted in the window ending now, or
+ * ending at the latest visit already recorded for a session later TODAY, so
+ * a member who checks in at 17:35 for the 18:00 class (or whom the desk marks
+ * for tonight) sees that class counted straight away, exactly as their next
+ * check-in will count it.
+ */
 export function usedInLastWeeks(a: ClassAllowance, now: number, visits: readonly number[]): number {
-  return countInWindow(visits, now, spanMinutes(a.weeks));
+  const endOfToday = Math.floor(now / MINUTES_PER_DAY) * MINUTES_PER_DAY + MINUTES_PER_DAY - 1;
+  let end = now;
+  for (const v of visits) if (v > end && v <= endOfToday) end = v;
+  return countInWindow(visits, end, spanMinutes(a.weeks));
 }
 
 /**
@@ -243,8 +289,8 @@ export type AllowanceGateMode = "refuse" | "ask" | "off";
 /** The override reason recorded when staff admit someone past their allowance. */
 export const ALLOWANCE_OVERRIDE_REASON = "allowance_reached" as const;
 
-/** "Monday 3 November from 18:00". */
-export function nextFreeText(slot: LocalSlot): string {
+/** "Monday 3 November from 18:00" (or "... at 18:00" with joiner "at"). */
+export function nextFreeText(slot: LocalSlot, joiner: "from" | "at" = "from"): string {
   const [y, m, d] = slot.date.split("-").map(Number);
   const day = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", {
     weekday: "long",
@@ -252,29 +298,52 @@ export function nextFreeText(slot: LocalSlot): string {
     month: "long",
     timeZone: "UTC",
   });
-  return `${day} from ${slot.time}`;
+  return `${day} ${joiner} ${slot.time}`;
 }
 
-type VerdictCopy = Pick<AllowanceVerdict, "used" | "limit" | "weeks" | "nextFree">;
+type VerdictCopy = Pick<AllowanceVerdict, "used" | "limit" | "weeks" | "nextFree"> & { around?: boolean };
 
 /**
- * What the member app, the kiosk and booking say: "4 of 4 classes used in the
- * last 4 weeks; next free on Monday 3 November from 18:00. Ask staff if you
- * need to train before then."
+ * What the member app, the kiosk and the parent's check-in say: "4 of 4
+ * classes used in the last 4 weeks; next free on Monday 3 November from
+ * 18:00. Ask staff if you need to train before then." A parent checking in a
+ * child passes the child's name: "Sam: 4 of 4 classes ... Ask staff if Sam
+ * needs to train before then."
  */
-export function allowanceRefusalSentence(v: VerdictCopy): string {
-  const usage = allowanceUsageText(v.used, { limit: v.limit, weeks: v.weeks }) ?? "";
+export function allowanceRefusalSentence(v: VerdictCopy, who?: string | null): string {
+  const usage = allowanceCountPhrase(v);
+  const lead = who ? `${who}: ${usage}` : usage;
+  const subject = who ? `${who} needs` : "you need";
   return v.nextFree
-    ? `${usage}; next free on ${nextFreeText(v.nextFree)}. Ask staff if you need to train before then.`
-    : `${usage}. Ask staff if you need to train.`;
+    ? `${lead}; next free on ${nextFreeText(v.nextFree)}. Ask staff if ${subject} to train before then.`
+    : `${lead}. Ask staff if ${subject} to train.`;
+}
+
+/**
+ * What booking says. A booking is a standing place, not a check-in, so the
+ * tail is about booking: "4 of 4 classes used in the last 4 weeks; you can
+ * book a session starting on or after Monday 3 November at 18:00."
+ */
+export function allowanceBookingSentence(v: VerdictCopy): string {
+  const usage = allowanceCountPhrase(v);
+  return v.nextFree
+    ? `${usage}; you can book a session starting on or after ${nextFreeText(v.nextFree, "at")}.`
+    : `${usage}. Ask staff before booking more classes.`;
 }
 
 /** The question the register, the card scanner and the coach tick put to staff. */
 export function allowanceAskSentence(memberName: string, v: VerdictCopy): string {
+  const n = Math.max(0, Math.floor(v.used));
   const noun = v.limit === 1 ? "class" : "classes";
-  const span = v.weeks === 1 ? "week" : `${v.weeks} weeks`;
-  const next = v.nextFree ? ` (next free on ${nextFreeText(v.nextFree)})` : "";
-  return `${memberName} has used ${v.used} of ${v.limit} ${noun} in the last ${span}${next}. Admit anyway?`;
+  const where = allowanceWhere(v);
+  const over = n > v.limit;
+  const count = over
+    ? `${v.limit === 1 ? "their 1 class" : `all ${v.limit} classes`} ${where}`
+    : `${n} of ${v.limit} ${noun} ${where}`;
+  const extras = [over ? `${n} recorded` : null, v.nextFree ? `next free on ${nextFreeText(v.nextFree)}` : null].filter(
+    (x): x is string => x !== null,
+  );
+  return `${memberName} has used ${count}${extras.length > 0 ? ` (${extras.join("; ")})` : ""}. Admit anyway?`;
 }
 
 // ── Write side (both membership routes) ──────────────────────────────────────

@@ -2,8 +2,12 @@
 BEGIN;
 
 -- T7c (Sean note 5): a membership tier's class allowance, "N classes every M
--- weeks" (rolling window; owner decision 17 Oct 2026). Configuration only: no
--- check-in path reads these columns in this release.
+-- weeks" (rolling window; owner decision 17 Oct 2026). The columns are added
+-- here; T7 (lib/checkin.ts, same release) enforces them at every door from the
+-- moment a plan has a limit. Through the reader rule it also enforces any tier
+-- whose existing "maxClassesPerWeek" is non-null from deploy (as N every 1
+-- week), not only once an owner next edits the plan: list those tiers before
+-- deploying (read-only query in the T7 PR rollout notes).
 --
 -- Expand-only. Both columns are nullable with no default and there is NO
 -- backfill: every existing tier keeps classLimit/classLimitWeeks NULL, and a

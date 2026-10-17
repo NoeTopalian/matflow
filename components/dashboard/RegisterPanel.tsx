@@ -97,12 +97,12 @@ type Candidate = {
 type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class" | "tier_not_included" | "allowance_reached";
 
 /** T7: the count the server sends with an askable allowance refusal. */
-type AllowanceBody = { used: number; limit: number; weeks: number; nextFree: LocalSlot | null };
+type AllowanceBody = { used: number; limit: number; weeks: number; nextFree: LocalSlot | null; around?: boolean };
 
 function allowanceFrom(body: unknown): AllowanceBody | null {
   const a = (body as { allowance?: unknown } | null)?.allowance as Partial<AllowanceBody> | undefined;
   if (!a || typeof a.used !== "number" || typeof a.limit !== "number" || typeof a.weeks !== "number") return null;
-  return { used: a.used, limit: a.limit, weeks: a.weeks, nextFree: a.nextFree ?? null };
+  return { used: a.used, limit: a.limit, weeks: a.weeks, nextFree: a.nextFree ?? null, ...(a.around === true ? { around: true } : {}) };
 }
 
 /** Token-safe tint (UI-RULES §2). */

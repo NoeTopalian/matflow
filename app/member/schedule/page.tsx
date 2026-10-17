@@ -872,7 +872,7 @@ export default function MemberSchedulePage() {
       });
 
     // T7: the plan allowance line. Not part of the grid's all-or-nothing load.
-    fetch("/api/member/me/allowance")
+    fetch("/api/member/me/allowance", { cache: "no-store" })
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((d: { allowance?: { text?: unknown } | null }) => {
         setAllowance({ kind: "ready", text: typeof d.allowance?.text === "string" ? d.allowance.text : null });

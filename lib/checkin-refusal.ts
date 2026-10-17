@@ -68,7 +68,7 @@ export const TEAMUP_NO_PLAN_REFUSAL = "Your membership is with TeamUp and no pla
  */
 export function checkinRefusal(
   result: CheckinResult,
-  club: { paymentRail?: string | null } = {},
+  club: { paymentRail?: string | null; /** A parent checking in a child: the child's name, for the allowance refusal. */ memberName?: string | null } = {},
 ): CheckinRefusal | null {
   switch (result.kind) {
     case "class_not_found":
@@ -167,10 +167,13 @@ export function checkinRefusal(
       return {
         status: 403,
         body: {
-          error: allowanceRefusalSentence(result),
+          error: allowanceRefusalSentence(result, club.memberName ?? null),
           reason: "allowance_reached",
           ...(result.askable ? { askable: true } : {}),
-          allowance: { used: result.used, limit: result.limit, weeks: result.weeks, nextFree: result.nextFree },
+          allowance: {
+            used: result.used, limit: result.limit, weeks: result.weeks, nextFree: result.nextFree,
+            ...(result.around ? { around: true } : {}),
+          },
         },
       };
     case "member_not_found":

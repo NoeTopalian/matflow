@@ -29,6 +29,7 @@ const h = vi.hoisted(() => ({
   instanceFindFirst: vi.fn(),
   packFindFirst: vi.fn(),
   packUpdateMany: vi.fn(),
+  redemptionCreate: vi.fn(),
   queryRaw: vi.fn(),
   order: [] as string[],
   sql: [] as string[],
@@ -46,7 +47,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
       classInstance: { findFirst: h.instanceFindFirst },
       attendanceRecord: { create: h.recordCreate, count: vi.fn().mockResolvedValue(0) },
       memberClassPack: { findFirst: h.packFindFirst, updateMany: h.packUpdateMany, findUnique: vi.fn().mockResolvedValue({ creditsRemaining: 4 }) },
-      classPackRedemption: { create: vi.fn() },
+      classPackRedemption: { create: h.redemptionCreate },
       $queryRaw: h.queryRaw,
     }),
   ),
@@ -124,7 +125,8 @@ beforeEach(() => {
     h.order.push("insert");
     return { id: "ar-1", tenantId: "t-1", memberId: "m-1", classInstanceId: "ci-1", checkInMethod: data.checkInMethod };
   });
-  h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+  // No usable pack unless a test gives the member one.
+  h.packFindFirst.mockResolvedValue(null);
   h.packUpdateMany.mockImplementation(async () => { h.order.push("pack-decrement"); return { count: 1 }; });
 });
 
@@ -254,9 +256,148 @@ describe("lock order and the single read", () => {
 describe("class packs", () => {
   it("a check-in a pack pays for takes the Member lock but is neither counted nor gated", async () => {
     h.memberFindUnique.mockResolvedValue(memberRow(false));
+    h.packFindFirst.mockResolvedValue({ id: "pack-1" });
     const r = await performCheckin(SELF);
     expect(r.kind).toBe("success");
     if (r.kind === "success") expect(r.coverage.kind).toBe("pack");
     expect(h.order).toEqual(["class-lock", "member-lock", "pack-decrement", "insert"]);
+  });
+});
+
+/** A member on a desk plan: a tier, paid at the desk, no Stripe subscription. */
+function deskRow() {
+  return { ...memberRow(true), stripeSubscriptionId: null };
+}
+
+describe("class packs and the allowance decide together (review, 17 Oct 2026)", () => {
+  it("a covered member whose allowance is used up checks in on a pack at the member app instead of being refused", async () => {
+    h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+    const r = await performCheckin(SELF);
+    expect(r.kind).toBe("success");
+    if (r.kind !== "success") return;
+    expect(r.coverage).toEqual({ kind: "pack", creditsRemaining: 4 });
+    expect(r.overrides).toBeUndefined();
+    // Counted, found used up, then the pack pays in the SAME transaction.
+    expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "pack-decrement", "insert"]);
+    expect(h.redemptionCreate).toHaveBeenCalledWith({ data: { memberPackId: "pack-1", attendanceRecordId: "ar-1" } });
+  });
+
+  it("the kiosk does the same for a covered member", async () => {
+    h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+    const r = await performCheckin(KIOSK);
+    expect(r.kind === "success" && r.coverage.kind).toBe("pack");
+  });
+
+  it("a staff door never spends a pack: it asks", async () => {
+    h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+    const r = await performCheckin(DESK);
+    expect(r).toMatchObject({ kind: "allowance_reached", askable: true });
+    expect(h.packUpdateMany).not.toHaveBeenCalled();
+    expect(h.recordCreate).not.toHaveBeenCalled();
+  });
+
+  it("within the allowance a covered member is counted and the pack is left alone", async () => {
+    h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+    h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: FOUR_VISITS.slice(1) });
+    const r = await performCheckin(SELF);
+    expect(r.kind === "success" && r.coverage.kind).toBe("subscription");
+    expect(h.packUpdateMany).not.toHaveBeenCalled();
+  });
+
+  describe("door parity: the member app and the kiosk give the same answer", () => {
+    it("overdue with a pack: both doors pay with the pack, neither counts nor gates", async () => {
+      h.memberFindUnique.mockResolvedValue(memberRow(false));
+      h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+      for (const door of [SELF, KIOSK]) {
+        h.order.length = 0;
+        const r = await performCheckin(door);
+        expect(r.kind === "success" && r.coverage.kind).toBe("pack");
+        expect(h.order).toEqual(["class-lock", "member-lock", "pack-decrement", "insert"]);
+      }
+    });
+
+    it("desk plan with a pack, allowance used: both doors pay with the pack after counting", async () => {
+      h.memberFindUnique.mockResolvedValue(deskRow());
+      h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+      for (const door of [SELF, KIOSK]) {
+        h.order.length = 0;
+        const r = await performCheckin(door);
+        expect(r.kind === "success" && r.coverage.kind).toBe("pack");
+        expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "pack-decrement", "insert"]);
+      }
+    });
+
+    it("desk plan with a pack, within the allowance: both doors count the visit and leave the pack (the kiosk no longer drains it)", async () => {
+      h.memberFindUnique.mockResolvedValue(deskRow());
+      h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+      h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: FOUR_VISITS.slice(1) });
+      for (const door of [SELF, KIOSK]) {
+        h.order.length = 0;
+        const r = await performCheckin(door);
+        expect(r.kind).toBe("success");
+        expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "insert"]);
+      }
+      expect(h.packUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("desk plan, allowance used, no pack: both doors refuse with the same sentence", async () => {
+      h.memberFindUnique.mockResolvedValue(deskRow());
+      const [a, b] = [await performCheckin(SELF), await performCheckin(KIOSK)];
+      expect(a).toEqual(b);
+      expect(a.kind).toBe("allowance_reached");
+    });
+  });
+});
+
+describe("coverage is re-checked under the Member lock (R-ALLOW rule 2)", () => {
+  /** The lock row as Postgres returns it for the member the pre-read saw. */
+  function lockRow(over: Record<string, unknown> = {}) {
+    return {
+      id: "m-1", membershipTierId: "tier-1", paymentStatus: "paid", stripeSubscriptionId: "sub_1",
+      nextDueAtMs: null, holdUntilMs: null, waiverAccepted: true, accountType: "adult", ...over,
+    };
+  }
+
+  it("the lock re-reads the columns the gates used, dates as epoch milliseconds", async () => {
+    h.memberRows = [lockRow()];
+    h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: [] });
+    expect((await performCheckin(SELF)).kind).toBe("success");
+    const lock = h.sql.find((t) => t.includes('FROM "Member" WHERE'))!;
+    for (const col of ['"membershipTierId"', '"paymentStatus"', '"stripeSubscriptionId"', '"waiverAccepted"', '"accountType"']) {
+      expect(lock).toContain(col);
+    }
+    expect(lock).toMatch(/EXTRACT\(EPOCH FROM "nextDueAt"\)/);
+    expect(lock).toMatch(/EXTRACT\(EPOCH FROM "holdUntil"\)/);
+  });
+
+  it("a plan removed between the pre-read and the lock restarts the check-in, which is then judged on the new row", async () => {
+    // Pre-read 1: a covered subscriber. Lock 1: the subscription is gone and
+    // the plan removed. The restart pre-reads the new row: not covered, no
+    // pack, so the member app refuses - instead of admitting on the old plan.
+    h.memberFindUnique
+      .mockResolvedValueOnce(memberRow(true))
+      .mockResolvedValue({ ...memberRow(false), membershipTierId: null });
+    h.memberRows = [lockRow({ membershipTierId: null, paymentStatus: "overdue", stripeSubscriptionId: null })];
+    const r = await performCheckin(SELF);
+    expect(r).toMatchObject({ kind: "no_coverage" });
+    expect(h.memberFindUnique).toHaveBeenCalledTimes(2);
+    expect(h.recordCreate).not.toHaveBeenCalled();
+  });
+
+  it("a row that keeps moving answers error after the restarts, and writes nothing", async () => {
+    h.memberRows = [lockRow({ paymentStatus: "overdue" })];
+    const r = await performCheckin(SELF);
+    expect(r.kind).toBe("error");
+    expect(h.memberFindUnique).toHaveBeenCalledTimes(3);
+    expect(h.recordCreate).not.toHaveBeenCalled();
+  });
+
+  it("an unchanged row with dates set does not restart", async () => {
+    const due = new Date("2026-11-01T00:00:00.000Z");
+    h.memberFindUnique.mockResolvedValue({ ...memberRow(true), nextDueAt: due });
+    h.memberRows = [lockRow({ nextDueAtMs: due.getTime() })];
+    h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: [] });
+    expect((await performCheckin(SELF)).kind).toBe("success");
+    expect(h.memberFindUnique).toHaveBeenCalledTimes(1);
   });
 });

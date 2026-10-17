@@ -21,7 +21,6 @@ import {
   CLASS_LIMIT_MAX,
   CLASS_LIMIT_MIN,
   CLASS_LIMIT_WEEK_OPTIONS,
-  classLimitLongText,
   classLimitSortValue,
   classLimitText,
   tierAllowance,
@@ -84,7 +83,8 @@ export function allowanceNote(rawLimit: string, rawWeeks: string): string {
   return (
     `Counted over the ${span} before each class, so several classes in one week are fine while the total stays within the allowance. ` +
     "It is enforced as soon as you save: the member app, the kiosk and booking refuse once it is used up, and the desk and the card scanner ask before admitting. " +
-    "A lower allowance applies from the next check-in; nothing already recorded changes. Class-pack check-ins do not count."
+    "A lower allowance applies from the next check-in; nothing already recorded changes. " +
+    "Class-pack check-ins do not count: once the allowance is used up, a member with a class pack can still check in with a pack credit."
   );
 }
 
@@ -483,8 +483,12 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                 )}
                 <p className="truncate text-xs text-tx-4">
                   {tierPriceText(t)} · {tierCycleText(t)}
-                  {tierAllowance(t) && ` · ${classLimitLongText(tierAllowance(t))}`}
                   {` · ${t.activeMembers} active ${t.activeMembers === 1 ? "member" : "members"}`}
+                </p>
+                {/* T7c: the allowance on its own line, so a phone card never
+                    truncates it away; Unlimited is shown too, as in the table. */}
+                <p className="text-xs text-tx-3" data-testid="tier-card-allowance">
+                  Classes: {classLimitText(tierAllowance(t))}
                 </p>
                 {t.isKids && (
                   <span className="mt-1 inline-flex">
@@ -632,11 +636,15 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
               </div>
               <div>
                 <label htmlFor="tier-class-limit-weeks" className="mb-1 block text-[11px] text-tx-3">every</label>
+                {/* Disabled while "Classes allowed" is blank: a period on its
+                    own saves as Unlimited, so it must not look chosen. */}
                 <Select
                   id="tier-class-limit-weeks"
                   aria-label="every (weeks)"
                   value={form.classLimitWeeks}
                   onChange={(e) => setForm((f) => ({ ...f, classLimitWeeks: e.target.value }))}
+                  disabled={form.classLimit.trim() === ""}
+                  title={form.classLimit.trim() === "" ? "Enter how many classes first; blank is Unlimited." : undefined}
                   className="w-32"
                 >
                   {CLASS_LIMIT_WEEK_OPTIONS.map((w) => (

@@ -168,7 +168,7 @@ describe("allowanceNote", () => {
     expect(four).toContain("It is enforced as soon as you save");
     expect(four).toContain("the member app, the kiosk and booking refuse once it is used up");
     expect(four).toContain("the desk and the card scanner ask before admitting");
-    expect(four).toContain("Class-pack check-ins do not count.");
+    expect(four).toContain("Class-pack check-ins do not count: once the allowance is used up, a member with a class pack can still check in with a pack credit.");
     expect(four).not.toContain("do not enforce");
     expect(allowanceNote("3", "1")).toContain("the 7 days before each class");
   });
@@ -207,6 +207,28 @@ describe("the class allowance in the tier editor", () => {
     expect(tableText("4 every 4 weeks")).toBeTruthy();
     expect(tableText("3 every week")).toBeTruthy();
     expect(tableText("Unlimited")).toBeTruthy();
+  });
+
+  it("the phone card puts the allowance on its own line, Unlimited included (review, 17 Oct 2026)", () => {
+    renderWith([
+      allowanceTier(4, 4, { id: "a", name: "Four weekly" }),
+      tier({ id: "c", name: "Open", maxClassesPerWeek: null }),
+    ]);
+    const lines = screen.getAllByTestId("tier-card-allowance").map((el) => el.textContent);
+    expect(lines).toEqual(["Classes: 4 every 4 weeks", "Classes: Unlimited"]);
+    // Its own line, not inside the truncated price / cycle / members line.
+    for (const el of screen.getAllByTestId("tier-card-allowance")) expect(el.className).not.toContain("truncate");
+  });
+
+  it("the weeks select is disabled while Classes allowed is blank, so a period alone never looks chosen", () => {
+    renderWith([tier({ maxClassesPerWeek: null })]);
+    openEdit("Plan A");
+    expect(limitInput().value).toBe("");
+    expect(weeksSelect().disabled).toBe(true);
+    setLimit("4");
+    expect(weeksSelect().disabled).toBe(false);
+    setLimit("  ");
+    expect(weeksSelect().disabled).toBe(true);
   });
 
   it("setting 4 every 4 weeks sends the pair, and the row then reads it", async () => {
