@@ -203,9 +203,20 @@ describe.skipIf(!HAS_DB)("T8c: movement and headcount on a real database", () =>
     const bReport = await withTenantContext(b.tenantId, (tx) => loadMembershipReport(tx, b.tenantId, { now, months: MONTHS }));
     expect(bReport.headcountByMonth.at(-1)!.headcount).toBe(1);
     expect(bReport.totals.new).toBe(1);
-    const crossed = await withTenantContext(a.tenantId, (tx) => loadMembershipReport(tx, b.tenantId, { now, months: MONTHS }));
-    // Nothing readable: every month has no data (never a fabricated zero).
-    expect(crossed.headcountByMonth.every((h) => h.basis === "none" && h.headcount === null)).toBe(true);
-    expect(crossed.totals.new).toBe(0);
+    // Club A's figures never include bea (the application filter on tenantId).
+    expect(backfillReport.headcountByMonth.at(-1)!.headcount).toBe(2);
+    // RLS can only hide club B from club A's context on a connection that does
+    // not bypass RLS (CI's default role is the owner and does): assert it only
+    // there, as the other RLS-dependent integration suites do.
+    const { prisma } = await import("@/lib/prisma");
+    const [{ bypass }] = await prisma.$queryRawUnsafe<{ bypass: boolean }[]>(
+      `SELECT (rolbypassrls OR rolsuper) AS bypass FROM pg_roles WHERE rolname = current_user`,
+    );
+    if (!bypass) {
+      const crossed = await withTenantContext(a.tenantId, (tx) => loadMembershipReport(tx, b.tenantId, { now, months: MONTHS }));
+      // Nothing readable: every month has no data (never a fabricated zero).
+      expect(crossed.headcountByMonth.every((h) => h.basis === "none" && h.headcount === null)).toBe(true);
+      expect(crossed.totals.new).toBe(0);
+    }
   });
 });
