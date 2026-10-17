@@ -25,7 +25,7 @@ Each runbook: detect → contain → escalate → recover → verify. Support ho
 
 ## 4. Failed deploy or bad release
 - **Detect:** Vercel build fails, `/api/health` is not `db:ok`, or the post-deploy smoke fails.
-- **Contain:** fix forward — `git revert` built fresh, or rebuild the previous commit fresh; while it builds, deployment protection or maintenance mode. Never Vercel Instant Rollback / Promote of the previous deployment (it restores retired secrets; rule adopted in PR #27, procedure in `docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md` §4). Migrations are additive by convention, so older code works on the migrated schema; a non-additive migration is itself the finding.
+- **Contain:** fix forward — `git revert` on a branch, gates, built fresh with the current environment (`docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md` §4). If older code must run, rebuild that commit fresh under the conditions in `docs/readiness/OPERATOR-REMEDIATION-DEPLOY-PACKAGE.md` §6. Only if production is down and a revert build is too slow: deployment protection or maintenance mode. Never Vercel Instant Rollback / Promote of the previous deployment (it restores retired secrets; rule adopted in PR #27). Migrations are additive by convention, so older code works on the migrated schema; a non-additive migration is itself the finding.
 - **Escalate:** P1 if any club cannot check in or take money.
 - **Recover:** fix forward on a branch; full gates; redeploy.
 - **Verify:** the smoke set (health, login page, a club's short URL, dashboard redirect, leaderboard token 200 and a bad token 404).

@@ -8,7 +8,7 @@ Next.js 16 + TypeScript + Tailwind v4 (CSS-first) + Prisma 7 (`@prisma/adapter-p
 - **Work in a git worktree without `.env`** (`git worktree add …`, then a real `npm ci`). The main checkout's `.env` is **production** (Neon `ep-bold-wave`, live Stripe/Resend/auth secrets).
 - Lint `npm run lint` · all tests `npm test` · one file `npx vitest run <path>` · e2e `npx playwright test <spec>` (loads `.env.test`).
 - **Start:** never `npm run dev` or bare `next dev` in the main checkout — it loads production `.env`. Use the `matflow-verify-browser` skill's server (production build on the test branch).
-- **Build:** `npm run build` runs `scripts/maybe-migrate.mjs` first, which migrates whatever `DATABASE_URL`/`MIGRATION_DATABASE_URL` is in the shell. Locally use the `matflow-verify-local` skill's build, which never migrates.
+- **Build:** `npm run build` runs `scripts/maybe-migrate.mjs` first: `prisma migrate deploy` against the `DATABASE_URL`/`MIGRATION_DATABASE_URL` in the shell (it refuses production outside a Vercel production deploy, but migrates any other database, including the shared test branch). Locally use the `matflow-verify-local` skill's build, which has no database URL and cannot migrate.
 
 ## Test environment
 
@@ -33,7 +33,7 @@ Next.js 16 + TypeScript + Tailwind v4 (CSS-first) + Prisma 7 (`@prisma/adapter-p
 
 ## Database
 
-Production uses Neon's `-pooler` host; pool size is capped in `lib/prisma.ts`. Schema changes: `npx prisma migrate dev --name <change>` against the test branch, never `db push`, never against production from local. Raw SQL only in a script under `scripts/`, never psql against production.
+Production uses Neon's `-pooler` host; pool size is capped in `lib/prisma.ts`. Schema changes: the `matflow-verify-local` skill's `migrate-test.mjs dev <name>` (worktree migrations, test branch only), never `db push`, never against production from local. Raw SQL only in a script under `scripts/`, never psql against production.
 
 ## Approval boundaries — Noe approves each action; approval for one does not cover the next
 

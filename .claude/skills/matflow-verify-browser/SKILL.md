@@ -5,12 +5,12 @@ description: Use when a MatFlow change affects anything a person sees or does �
 
 # MatFlow — browser verification
 
-Production build of your worktree, served over HTTPS on localhost, against the Neon **test** branch, with Stripe, Resend, blob and push keys disabled and `EMAIL_DELIVERY=off`. Synthetic data only (`mfv-…` club on `example.test`). Never production, never a real club or person. Run from the worktree root, in PowerShell, with the prerequisites in `matflow-verify-local`. Server scripts: `.claude/skills/matflow-verify-local/scripts` (`$L`); journey scripts: `.claude/skills/matflow-verify-browser/scripts` (`$B`). `MF_PORT` (default 3991, proxy +2) must be private to this session — never 3847.
+Production build of your worktree, served over HTTPS on localhost, against the Neon **test** branch, with Stripe, Resend, blob and push keys disabled and `EMAIL_DELIVERY=off`. Synthetic data only (`mfv-…` club on `example.test`). Never production, never a real club or person. Run from the worktree root, in PowerShell, with the prerequisites in `matflow-verify-local`. Set `$L = ".claude/skills/matflow-verify-local/scripts"` (server) and `$B = ".claude/skills/matflow-verify-browser/scripts"` (journeys). `MF_PORT` (default 3991, proxy +2) must be private to this session — never 3847. Every script runs on Node 24 and prints the executable it used.
 
 ## Steps
 
 1. Build: `node $L/server.mjs build` (skip if the build is of the current commit).
-2. Start: `node $L/server.mjs start`, then `node $L/server.mjs status` until `health 200`. The first start makes a localhost certificate with openssl.
+2. Start: `node $L/server.mjs start` — refuses a port already in use, waits for `health 200` and prints the worktree and commit it serves. `node $L/server.mjs status` shows the same at any time. The first start makes a localhost certificate with openssl.
 3. Fixture: `node $B/fixture.mjs create` (add `--onboarding` for a club still in first setup). Owner has password and authenticator enrolled; its credentials stay in the output folder's `fixture-state.json`, never in git.
 4. Journey: copy `$B/smoke.mjs` to `$B/<feature>.mjs` (it imports `./lib.mjs`; commit it only if the journey is worth keeping) and replace its journey with the feature under test. Keep these checks wherever they apply:
    - **the real path** a user takes, starting from sign-in, asserting what is on screen *and* what is in the database;

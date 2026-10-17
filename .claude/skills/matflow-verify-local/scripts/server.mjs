@@ -6,6 +6,7 @@
 //   node server.mjs status    HTTP status of /api/health through the proxy
 // On Windows run builds from PowerShell: Turbopack under the Bash tool fails with 0xc0000142.
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { X509Certificate } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
@@ -16,6 +17,15 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const PIDS = `${OUT}/pids-${PORT}.json`;
 const TLS = `${DATA}/tls`;
 const git = (...args) => spawnSync("git", args, { cwd: APP, encoding: "utf8" }).stdout.trim();
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const listening = (port) => new Promise((resolve) => {
+  const s = net.connect({ host: "127.0.0.1", port }, () => { s.destroy(); resolve(true); });
+  s.on("error", () => resolve(false));
+});
+async function health() {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  return fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(10000) }).then((x) => x.status, (e) => `down (${e.cause?.code ?? e.name})`);
+}
 
 /** A self-signed localhost certificate, made once per machine with openssl (Git for Windows ships one). */
 function ensureCert() {
@@ -50,10 +60,16 @@ if (cmd === "build") {
     child.unref();
     return child.pid;
   };
+  for (const p of [PORT, PUB]) if (await listening(p)) throw new Error(`refusing: port ${p} is already in use — stop that server or set MF_PORT`);
   const server = launch(["node_modules/next/dist/bin/next", "start", "-H", "127.0.0.1", "-p", String(PORT)], APP, `server-${PORT}.log`, env);
   const proxy = launch([`${HERE}/tls-proxy.mjs`, String(PORT), String(PUB), TLS], HERE, `proxy-${PORT}.log`, { ...process.env });
-  fs.writeFileSync(PIDS, JSON.stringify({ server, proxy, app: APP }));
-  console.log(`started server pid ${server} (127.0.0.1:${PORT}) and proxy pid ${proxy} (${BASE}); logs in ${OUT}`);
+  fs.writeFileSync(PIDS, JSON.stringify({ server, proxy, app: APP, commit: git("rev-parse", "HEAD") }));
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    for (const [name, pid] of [["server", server], ["proxy", proxy]]) if (!alive(pid)) throw new Error(`${name} exited — see ${OUT}/${name}-${PORT}.log`);
+    if ((await health()) === 200) { console.log(`started ${APP} at ${git("rev-parse", "--short", "HEAD")}: server pid ${server} (127.0.0.1:${PORT}), proxy pid ${proxy} (${BASE}); health 200; logs in ${OUT}`); process.exit(0); }
+  }
+  throw new Error(`no health 200 after 120 s — see ${OUT}/server-${PORT}.log`);
 } else if (cmd === "stop") {
   const p = fs.existsSync(PIDS) ? JSON.parse(fs.readFileSync(PIDS, "utf8")) : {};
   for (const pid of [p.server, p.proxy].filter(Boolean)) {
@@ -63,9 +79,9 @@ if (cmd === "build") {
   fs.rmSync(PIDS, { force: true });
   console.log("stopped");
 } else if (cmd === "status") {
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-  const r = await fetch(`${BASE}/api/health`).then((x) => x.status, (e) => `down (${e.cause?.code ?? e.message})`);
-  console.log(`health ${r}`);
+  const p = fs.existsSync(PIDS) ? JSON.parse(fs.readFileSync(PIDS, "utf8")) : null;
+  const who = p ? `${p.app} at ${String(p.commit).slice(0, 8)} (server ${alive(p.server) ? "running" : "gone"}, proxy ${alive(p.proxy) ? "running" : "gone"})` : "not started by this skill on this port";
+  console.log(`health ${await health()} — ${who}`);
 } else {
   console.log("usage: node server.mjs build | start | stop | status");
   process.exit(2);

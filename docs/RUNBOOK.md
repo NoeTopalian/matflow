@@ -78,7 +78,7 @@ Never use Vercel Instant Rollback or "Promote to Production" on an old deploymen
 ```bash
 git revert <bad-sha>      # on a branch; run the gates; merge with Noe's approval
 ```
-Vercel builds the revert fresh with the current environment (a push to `main` also runs `prisma migrate deploy` against production). If older code must run, rebuild that commit fresh — never promote its old deployment. Emergency stop while a revert builds: deployment protection or maintenance mode.
+Vercel builds the revert fresh with the current environment (a push to `main` also runs `prisma migrate deploy` against production). If older code must run, rebuild that commit fresh — never promote its old deployment — under the conditions in [`docs/readiness/OPERATOR-REMEDIATION-DEPLOY-PACKAGE.md`](readiness/OPERATOR-REMEDIATION-DEPLOY-PACKAGE.md) §6 (what reopens while old code runs). Only if production is down and a revert build is too slow: deployment protection or maintenance mode.
 
 ### Maintenance mode (planned downtime)
 Vercel → Settings → Environment Variables → add `MAINTENANCE_MODE=true` → Save. Propagates within ~30s without redeploy. To exit, set it to `false` (or delete the var).
@@ -280,8 +280,8 @@ Each entry: when to rotate, blast radius, exact procedure.
 Schema migrations live in `prisma/migrations/`. Each has a forward `migration.sql`. Rollback is **not** automatic — Prisma doesn't generate down-migrations. If a migration goes bad:
 
 1. **First, don't panic.** Application-layer code expecting the new schema may fail, but the DB itself is consistent.
-2. **Revert the Prisma client schema:**
-   - `git revert <bad-migration-sha>` and push. Vercel auto-deploys the previous schema.
+2. **Fix forward — do not revert the migration file:**
+   - Reverting a migration's commit does not change the database. Write a new forward migration that undoes the change, on a branch; run the gates; merge only with Noe's approval (a push to `main` runs `prisma migrate deploy` against production). Never `migrate reset`, never restore the database to undo code (`docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md` §4 step 3).
 3. **Reverse the SQL by hand** if the change is destructive (e.g. dropped a column):
    - Restore from the most recent backup (Sundays 03:00 UTC), OR
    - Hand-write the inverse SQL: `ALTER TABLE ... ADD COLUMN ...`, etc.
