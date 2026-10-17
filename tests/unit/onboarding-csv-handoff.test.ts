@@ -88,7 +88,7 @@ beforeEach(() => {
   auditFindFirstMock.mockResolvedValue(null);
 });
 
-const DEFAULT_CSV = "name,email\nAlice,alice@x.com";
+const DEFAULT_CSV = "name,email\nAlice,alice@example.test";
 const DEFAULT_HASH = createHash("sha256").update(DEFAULT_CSV).digest("hex");
 
 function makeReq(opts?: { file?: File | null; notes?: string; clientRef?: string }) {
