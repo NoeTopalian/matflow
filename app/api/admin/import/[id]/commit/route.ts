@@ -22,6 +22,7 @@ import { parseTeamUp } from "@/lib/importers/teamup";
 import {
   changedFields,
   planRefresh,
+  refreshEventOccurredAt,
   refreshWrite,
   REFRESH_MEMBER_SELECT,
   standingOf,
@@ -376,6 +377,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 toStatus: m.status,
                 reason: "import" as const,
                 changedById: null,
+                // T8d: the job that created this member, so its first event can
+                // be traced to the upload that wrote it. Every create import
+                // (TeamUp or generic) stamps it: the job id is true either way,
+                // and the T8d provenance back-fill does the same from
+                // Member.importJobId.
+                sourceJobId: jobId,
+                sourceAction: "import_create" as const,
               })),
             );
           }
@@ -460,7 +468,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             });
             await recordStatusEventsBulk(
               tx,
-              createdRows.map((m) => ({ tenantId, memberId: m.id, fromStatus: null, toStatus: m.status, reason: "import" as const, changedById: null })),
+              createdRows.map((m) => ({ tenantId, memberId: m.id, fromStatus: null, toStatus: m.status, reason: "import" as const, changedById: null, sourceJobId: jobId, sourceAction: "import_create" as const })),
             );
           }
           return { inserted: result.count, refused };
@@ -797,9 +805,16 @@ async function commitRefresh({
         await tx.member.updateMany({ where: { id: c.memberId, tenantId, billedBy: "teamup" }, data: refreshWrite(c.after) });
         applied.push(change);
       }
+      // T8a (Q6 D-7): each change is dated by the TeamUp source — the file's
+      // cancellation date for a move into cancelled, else the export time —
+      // and the writer clamps it to the member's latest event and to now.
       await recordStatusEventsBulk(
         tx,
-        applied.map((c) => ({ tenantId, memberId: c.memberId, fromStatus: c.before.status, toStatus: c.after.status, reason: "import" as const, changedById: null })),
+        applied.map((c) => {
+          const occurredAt = refreshEventOccurredAt(c, job.sourceExportedAt);
+          // T8d: provenance — this refresh job, doing a refresh.
+          return { tenantId, memberId: c.memberId, fromStatus: c.before.status, toStatus: c.after.status, reason: "import" as const, changedById: null, sourceJobId: job.id, sourceAction: "import_refresh" as const, ...(occurredAt ? { occurredAt } : {}) };
+        }),
       );
       const cur = await tx.importJob.findUnique({ where: { id: job.id }, select: { manifest: true } });
       const man = (cur?.manifest ?? {}) as Record<string, unknown>;

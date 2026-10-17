@@ -137,6 +137,16 @@ describe.skipIf(!HAS_DB)("Parent/kid lifecycle", () => {
     expect(persisted?.parentMemberId).toBe(parentAId);
     expect(persisted?.accountType).toBe("kids");
     expect(persisted?.passwordHash).toBeNull();
+
+    // T8a: the child's first status event committed with the child row —
+    // exactly one, none -> active, self_signup, no staff actor.
+    const events = await withRlsBypass((tx) =>
+      tx.memberStatusEvent.findMany({
+        where: { tenantId: tenantAId, memberId: body.id },
+        select: { fromStatus: true, toStatus: true, reason: true, changedById: true },
+      }),
+    );
+    expect(events).toEqual([{ fromStatus: null, toStatus: "active", reason: "self_signup", changedById: null }]);
   });
 
   it("rejects nested sub-accounts (kid trying to adopt grand-kid)", async () => {
