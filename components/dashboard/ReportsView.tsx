@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 // file carried quoted delimiters but did not neutralise a leading =/+/-/@, so a
 // member named "=cmd()" exported as a live formula. See lib/csv.ts.
 import { csvDocument } from "@/lib/csv";
+import { formatDateTime, formatTime } from "@/lib/date";
 import { paymentHealthLine } from "@/lib/billing";
 import {
   BarChart,
@@ -206,9 +207,39 @@ function funnelCsvRows(attribution: AttributionData): (string | number | null)[]
   ];
 }
 
+function validGeneratedAt(generatedAt: string): Date | null {
+  const d = new Date(generatedAt);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * "As of 14:05" on screen and the CSV's "Generated at" row read the same
+ * instant through the same en-GB formatter, in the browser's zone, so the
+ * file states the time the owner saw (T2c).
+ */
+export function generatedAtTime(generatedAt: string): string {
+  const d = validGeneratedAt(generatedAt);
+  return d ? formatTime(d) : "—";
+}
+
+/**
+ * The CSV file name, dated from `generatedAt` (the moment the figures were
+ * computed) — not the browser's "now", which could be a different day for a
+ * page left open overnight. Local calendar date, matching the "Generated at"
+ * row inside the file.
+ */
+export function reportsCsvFilename(generatedAt: string): string {
+  const d = validGeneratedAt(generatedAt) ?? new Date();
+  const ymd = [d.getFullYear(), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0")].join("-");
+  return `matflow-reports-${ymd}.csv`;
+}
+
 /**
  * The Reports CSV as text: BOM, CRLF, every cell through csvCell
  * (lib/csv.ts csvDocument). Pure, so the export is testable without a browser.
+ * The first data row states when the figures were computed (T2c): the CSV is
+ * built from the page's cached data, so without it a file could not say how
+ * old its numbers are.
  */
 export function reportsCsv(data: ReportsData, attribution: AttributionData): string {
   const windowLabel = `Last ${data.weeksBack} weeks`;
@@ -226,6 +257,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
   const shares = derivedShares(data);
   const rows: (string | number | null)[][] = [
     ["Section", "Metric", "Value", "Detail"],
+    ["Report", "Generated at", validGeneratedAt(data.generatedAt) ? formatDateTime(data.generatedAt) : "—", "Figures cached for up to 60 seconds"],
     ["Summary", "Total members", data.summary.totalMembers, "Every training member on record, including those who have left"],
     ["Summary", "Current members", data.summary.currentMembers, "Active and inactive members and tasters"],
     ["Summary", "Active members", data.summary.activeMembers, ""],
@@ -278,7 +310,7 @@ function exportCsv(data: ReportsData, attribution: AttributionData) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `matflow-reports-${new Date().toISOString().slice(0, 10)}.csv`;
+  anchor.download = reportsCsvFilename(data.generatedAt);
   anchor.click();
   URL.revokeObjectURL(url);
 }
@@ -781,7 +813,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               suppressHydrationWarning
               title="Figures are recomputed at most once a minute per club"
             >
-              As of {new Date(data.generatedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+              As of {generatedAtTime(data.generatedAt)}
             </span>
           </div>
 

@@ -88,6 +88,9 @@ describe("member population counts", () => {
     { file: "app/dashboard/analysis/page.tsx", minQueries: 4 },
     { file: "app/api/revenue/summary/route.ts", minQueries: 2 },
     { file: "app/api/dashboard/stats/route.ts", minQueries: 3 },
+    // T2c: the AI monthly report's five people counts (total, active, new
+    // this period, new last period, cancelled).
+    { file: "lib/ai-causal-report.ts", minQueries: 5 },
   ];
   for (const { file, minQueries } of SWITCHED) {
     it(`${file}: every Member query carries a named population and an explicit tenantId`, () => {
@@ -114,6 +117,23 @@ describe("member population counts", () => {
   it("Analysis measures engagement over active training members: the attendee numerator is filtered to ACTIVE_MEMBER", () => {
     const src = readFileSync("app/dashboard/analysis/page.tsx", "utf8");
     expect(src).toMatch(/by: \["memberId"\],[\s\S]*?member: \{ \.\.\.ACTIVE_MEMBER \}/);
+  });
+
+  it("the AI monthly report counts active as ACTIVE_MEMBER and cancelled as LEFT_MEMBER, never a bare status", () => {
+    const src = readFileSync("lib/ai-causal-report.ts", "utf8");
+    expect(src).toContain("tx.member.count({ where: { tenantId, ...TRAINING_MEMBER } })");
+    expect(src).toContain("tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } })");
+    expect(src).toContain("tx.member.count({ where: { tenantId, ...LEFT_MEMBER } })");
+    expect((src.match(/joinedAt: \{[^}]*\}, \.\.\.TRAINING_MEMBER/g) ?? []).length).toBe(2);
+    expect(src).not.toMatch(/status: "(active|cancelled)"/);
+  });
+
+  it("Analysis closes last month half-open (lt startOfMonth), never lte a midnight", () => {
+    const src = readFileSync("app/dashboard/analysis/page.tsx", "utf8");
+    expect(src).not.toContain("endOfLastMonth");
+    expect(src).not.toMatch(/lte:/);
+    expect((src.match(/gte: startOfLastMonth, lt: startOfMonth/g) ?? []).length).toBe(2);
+    expect(src).toContain("monthWindows(now)");
   });
 
   it("Memberships counts each tier's active training members", () => {

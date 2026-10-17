@@ -131,6 +131,8 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
         { status: "inactive", label: "Inactive", count: 1, percentage: 11 },
       ],
       checkInMethods: [],
+      // T2c: the CSV states when its figures were computed.
+      generatedAt: new Date(2026, 9, 17, 14, 5).toISOString(),
     };
     const attribution = {
       rows: [{ name: "Zoé \"Coach\" 🥋", trialsRun: 2, conversions: 1, conversionRate: null, retained: 1, retentionRate: null, lost: 0, undecided: 1 }],
@@ -143,6 +145,9 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
     expect(csv.charCodeAt(0)).toBe(0xfeff);
     const rows = parseCsv(stripBom(csv));
     expect(rows[0]).toEqual(["Section", "Metric", "Value", "Detail"]);
+    // T2c: the first data row is the as-of stamp, in the same en-GB
+    // date-time the screen uses ("As of 14:05").
+    expect(rows[1]).toEqual(["Report", "Generated at", "17 Oct 2026, 14:05", "Figures cached for up to 60 seconds"]);
     // Every row has the same four columns — no cell split a row.
     expect(rows.every((r) => r.length === 4)).toBe(true);
     const topClass = rows.find((r) => r[0] === "Top classes");
@@ -169,5 +174,36 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
     expect(coach?.[1]).toBe("Zoé \"Coach\" 🥋");
     // No cell in the file starts with a live formula character.
     for (const r of rows) for (const c of r) expect(/^[=+\-@]/.test(c)).toBe(false);
+  });
+
+  // T2c acceptance 3: the as-of row states the time shown on screen, and the
+  // file name carries the same date — both from generatedAt, not "now".
+  it("the Generated at row and the file name come from generatedAt, and agree with the on-screen 'As of' time", async () => {
+    const { reportsCsv, reportsCsvFilename, generatedAtTime } = await import("@/components/dashboard/ReportsView");
+    // 23:40 local: late enough that a UTC-derived date could be the next day
+    // in a zone east of UTC, or the wrong day when the page is left open.
+    const generatedAt = new Date(2026, 9, 17, 23, 40).toISOString();
+    const minimal = {
+      weeksBack: 4,
+      filters: { classId: null, className: null, ageGroup: null },
+      summary: { totalMembers: 0, currentMembers: 0, activeMembers: 0, cancelledMembers: 0, totalCheckIns: 0, totalActiveClasses: 0, attendanceThisWeek: 0, attendanceLastWeek: 0, newMembersThisMonth: 0, newMembersLastMonth: 0 },
+      attendanceRate: { mode: "checkins-per-member", label: "Rate", value: null, formula: "a / b", numerator: 0, denominator: 0 },
+      retention: { ratePct: null, survived: 0, cohort: 0 },
+      churn: { ratePct: null, cancelled: 0, base: 0, joined: 0, net: 0 },
+      paymentHealth: { recovery: { ratePct: null, recovered: 0, failedMembers: 0 } },
+      weeklyAttendance: [], monthlySignups: [], topClasses: [], currentMembersByStatus: [], checkInMethods: [],
+      generatedAt,
+    };
+    const attribution = { rows: [], overall: { trials: 0, lost: 0, undecided: 0, converted: 0, conversionRate: null, churned: 0, retained: 0, retentionRate: null }, epochStart: null, minTrials: 5 };
+    const rows = parseCsv(stripBom(reportsCsv(minimal as never, attribution as never)));
+    expect(rows[1]).toEqual(["Report", "Generated at", "17 Oct 2026, 23:40", "Figures cached for up to 60 seconds"]);
+    expect(generatedAtTime(generatedAt)).toBe("23:40");
+    expect(rows[1][2]).toContain(generatedAtTime(generatedAt));
+    expect(reportsCsvFilename(generatedAt)).toBe("matflow-reports-2026-10-17.csv");
+  });
+
+  it("an unreadable generatedAt prints a dash, never 'Invalid Date'", async () => {
+    const { generatedAtTime } = await import("@/components/dashboard/ReportsView");
+    expect(generatedAtTime("not a date")).toBe("—");
   });
 });

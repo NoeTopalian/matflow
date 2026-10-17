@@ -2,7 +2,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
-import { revalidateTag } from "next/cache";
+import { revalidateTagLogged } from "@/lib/revalidate-tag-logged";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 import { updateMetadata } from "@/lib/audit-snapshot";
@@ -232,10 +232,8 @@ export async function PATCH(req: Request) {
     // Bust the 60s branding cache so a save shows up on the next member-app
     // open immediately (see app/api/me/gym/route.ts). Best-effort: outside a
     // Next request store (unit tests) revalidateTag throws — the cache then
-    // simply expires on its own 60s clock.
-    try {
-      revalidateTag(`gym-branding-${session.user.tenantId}`, { expire: 0 });
-    } catch {}
+    // simply expires on its own 60s clock. A failure is logged, never thrown.
+    revalidateTagLogged(`gym-branding-${session.user.tenantId}`, session.user.tenantId);
     await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,

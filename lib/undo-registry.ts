@@ -19,7 +19,7 @@
  * refused rather than forced.
  */
 import type { Prisma } from "@prisma/client";
-import { revalidateTag } from "next/cache";
+import { revalidateTagLogged } from "@/lib/revalidate-tag-logged";
 import { restorePackCreditsForAttendance } from "@/lib/checkin";
 import { CONFIRMED_BY } from "@/lib/guardianship";
 
@@ -300,12 +300,10 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
   },
   "tenant.settings.update": snapshotHandler("Tenant", {
     after(row) {
-      try {
-        revalidateTag(`gym-branding-${row.tenantId}`, { expire: 0 });
-      } catch {
-        // Outside a Next request store (unit tests) revalidateTag throws; the
-        // 60 s cache then expires on its own clock — same as the settings PATCH.
-      }
+      // Outside a Next request store (unit tests) revalidateTag throws; the
+      // 60 s cache then expires on its own clock — same as the settings PATCH.
+      // The failure is logged, never thrown, so the undo still succeeds.
+      if (row.tenantId) revalidateTagLogged(`gym-branding-${row.tenantId}`, row.tenantId);
     },
   }),
   "staff.update": snapshotHandler("User", {

@@ -2,6 +2,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import AnalysisView from "@/components/dashboard/AnalysisView";
 import { requireRole } from "@/lib/authz";
 import { ACTIVE_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
+import { monthWindows } from "@/lib/month-windows";
 
 export const metadata = { title: "Analysis | MatFlow" };
 
@@ -11,11 +12,10 @@ export default async function AnalysisPage() {
 
   const tenantId = session.user.tenantId;
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
-
-  const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+  // Half-open months (T2c): last month is [startOfLastMonth, startOfMonth),
+  // so the whole of its last day counts — `lte` 00:00 on that day dropped
+  // every join and check-in after midnight.
+  const { startOfMonth, startOfLastMonth, sixMonthsAgo } = monthWindows(now);
 
   const [
     totalMembers,
@@ -36,9 +36,9 @@ export default async function AnalysisPage() {
       // they are neither "active members" nor "new this month".
       tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
       tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth }, ...TRAINING_MEMBER } }),
-      tx.member.count({ where: { tenantId, joinedAt: { gte: startOfLastMonth, lte: endOfLastMonth }, ...TRAINING_MEMBER } }),
+      tx.member.count({ where: { tenantId, joinedAt: { gte: startOfLastMonth, lt: startOfMonth }, ...TRAINING_MEMBER } }),
       tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: startOfMonth } } }),
-      tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: startOfLastMonth, lte: endOfLastMonth } } }),
+      tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: startOfLastMonth, lt: startOfMonth } } }),
       tx.class.count({ where: { tenantId, isActive: true } }),
       tx.member.groupBy({ by: ["status"], where: { tenantId, ...TRAINING_MEMBER }, _count: true }),
       tx.attendanceRecord.findMany({

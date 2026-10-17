@@ -842,6 +842,16 @@ export async function getReportsData(
 }
 
 /**
+ * Cache version token — the second element of every reports cache key. Bump
+ * it with EVERY change to the `ReportsData` shape, so a 60-second entry
+ * written by the previous deployment is never served to code that expects
+ * the new fields (and vice versa); old and new deployments never share an
+ * entry. "v2" = T2b counts (churn, retention, recovery, rate
+ * numerator/denominator, current status shares). T2c added no field.
+ */
+export const REPORTS_CACHE_VERSION = "v2";
+
+/**
  * The cached read the reports page and API use. Under 25 concurrent staff
  * sessions the uncached report was the slowest path in the product (p95 5 s
  * in the 2026-09-24 pilot load run — docs/readiness/CAPACITY-PILOT): every
@@ -850,26 +860,22 @@ export async function getReportsData(
  * different windows never share a result and one club never sees another's.
  * The 60 seconds are disclosed on the page via `generatedAt`. Tag
  * `reports-<tenantId>` lets a write path bust it early; none does today —
- * a minute's staleness on aggregates is the documented trade.
+ * a minute's staleness on aggregates is the documented trade (write-path
+ * invalidation is deferred, A-7). A future call should go through
+ * `revalidateTagLogged` (lib/revalidate-tag-logged.ts) so a failure is logged.
  *
- * The CSV export keeps calling `getReportsData` directly: an explicit export
- * should be computed for the moment it was asked for.
+ * The CSV export does NOT recompute: it is built in the browser
+ * (ReportsView `reportsCsv`) from the same cached `ReportsData` the page
+ * received, so it carries exactly the on-screen figures — and its first data
+ * row states their `generatedAt`, so the file says when they were computed.
  */
-/**
- * Cache version token. Bump it whenever the `ReportsData` shape changes, so a
- * 60-second entry written by the previous deployment is never served to code
- * that expects the new fields (and vice versa). "v2" = T2b counts (churn,
- * retention, recovery, rate numerator/denominator, current status shares).
- */
-export const REPORTS_DATA_SHAPE = "v2";
-
 export function getReportsDataCached(
   tenantId: string,
   options: Parameters<typeof getReportsData>[1] = {},
 ): Promise<ReportsData> {
   const key = [
     "reports",
-    REPORTS_DATA_SHAPE,
+    REPORTS_CACHE_VERSION,
     tenantId,
     String(clampWeeks(options.weeksBack)),
     options.classId?.trim() || "-",
