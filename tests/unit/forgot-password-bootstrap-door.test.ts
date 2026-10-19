@@ -189,6 +189,27 @@ describe("forgot-password — outside production (local and preview)", () => {
       delete process.env.EMAIL_TEST_RECIPIENTS;
     }
   });
+
+  it("test mode, address NOT listed: the earlier code is not retired, no code is minted, nothing is sent; same 200", async () => {
+    for (const vercel of [undefined, "production"]) {
+      if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
+      process.env.EMAIL_DELIVERY = "test";
+      process.env.EMAIL_TEST_RECIPIENTS = "someone-else@club.example";
+      try {
+        mockPrtCreate.mockClear(); mockPrtUpdateMany.mockClear(); mockSendEmail.mockClear();
+        mockUserFindFirst.mockResolvedValue(null as never);
+        mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+        const res = await forgotReq("member@club.example");
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ ok: true });
+        expect(mockPrtUpdateMany).not.toHaveBeenCalled();
+        expect(mockPrtCreate).not.toHaveBeenCalled();
+        expect(mockSendEmail).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.EMAIL_TEST_RECIPIENTS;
+      }
+    }
+  });
 });
 
 describe("reset-password — a code cannot reset a temporary-password account", () => {

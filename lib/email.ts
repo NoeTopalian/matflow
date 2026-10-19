@@ -611,15 +611,22 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
   const headers = safeHeaders(args.headers);
 
   try {
-    const result = await client.emails.send({
-      from: fromAddress,
-      to: args.to,
-      subject,
-      html,
-      text,
-      ...(replyTo ? { replyTo } : {}),
-      ...(headers ? { headers } : {}),
-    });
+    // One EmailLog row = one provider send: the row id is the Idempotency-Key,
+    // so a repeat of this exact request within Resend's 24-hour window returns
+    // the first answer instead of sending again. (The SDK itself never retries;
+    // a person asking again is a new row and a new email, by design.)
+    const result = await client.emails.send(
+      {
+        from: fromAddress,
+        to: args.to,
+        subject,
+        html,
+        text,
+        ...(replyTo ? { replyTo } : {}),
+        ...(headers ? { headers } : {}),
+      },
+      { idempotencyKey: `matflow-emaillog/${log.id}` },
+    );
     if (result.error) {
       await withTenantContext(args.tenantId, (tx) =>
         tx.emailLog.update({

@@ -191,6 +191,53 @@ describe("EMAIL_DELIVERY=off — routes that send surface 'not sent', never succ
   });
 });
 
+describe("EMAIL_DELIVERY=test, address NOT on the list — nothing is retired or minted (17 Oct 2026)", () => {
+  beforeEach(() => {
+    process.env.EMAIL_DELIVERY = "test";
+    process.env.EMAIL_TEST_RECIPIENTS = "someone-else@example.test";
+  });
+  afterEach(() => { delete process.env.EMAIL_TEST_RECIPIENTS; });
+
+  it("bulk invite: the unlisted member is reported, their existing invite link is not retired, no new one is minted", async () => {
+    h.handlers["member.findMany"] = () => [{ id: "m-1", name: "Jordan", email: "jordan@example.com" }];
+    const res = await bulkInvite(post("http://localhost/api/members/bulk-invite", {}));
+    const body = await res.json();
+    expect(body.invited).toBe(0);
+    expect(body.failed).toEqual([{ id: "m-1", error: expect.stringMatching(/test mode/) }]);
+    expect(ops().filter((o) => o.startsWith("magicLinkToken."))).toEqual([]);
+  });
+
+  it("kiosk waiver link: refused before the member's existing link is retired or a new one minted", async () => {
+    h.handlers["tenant.findFirst"] = () => ({ id: "t-md", name: "Mail Dark Gym" });
+    h.handlers["member.findFirst"] = () => ({ id: "m-md", email: "jordan@example.com" });
+    const res = await kioskRequest(post("http://localhost/api/waiver/kiosk-request", {
+      kioskDeviceToken: "d".repeat(32),
+      kioskMemberToken: "m".repeat(16),
+    }));
+    const body = await res.json();
+    expect(res.status).toBe(503);
+    expect(body.reason).toBe("email_recipient_not_allowlisted");
+    expect(ops().filter((o) => o.startsWith("magicLinkToken."))).toEqual([]);
+  });
+
+  it("operator approval: no activation token for an owner the list would refuse", async () => {
+    h.handlers["gymApplication.findUnique"] = () => ({
+      id: "app-md", status: "pending", gymName: "Mail Dark Gym", email: "Applicant@Example.com", contactName: "Ann",
+    });
+    h.handlers["tenant.create"] = () => ({ id: "t-new", users: [{ id: "u-new" }] });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await approve(
+      new Request("http://localhost/api/admin/applications/app-md/approve", { method: "POST" }),
+      { params: Promise.resolve({ id: "app-md" }) },
+    );
+    warn.mockRestore();
+    const body = await res.json();
+    expect(res.status).toBe(201);
+    expect(body.activationLinkCreated).toBe(false);
+    expect(h.calls.filter((c) => c.op === "magicLinkToken.create")).toEqual([]);
+  });
+});
+
 describe("the login screen learns that email is off", () => {
   it("GET /api/tenant/[slug] carries emailDelivery: off when off or unset, on only when explicitly on (production)", async () => {
     h.handlers["tenant.findUnique"] = () => ({

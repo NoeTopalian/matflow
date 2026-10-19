@@ -24,7 +24,7 @@ const { createMock, updateMock, findFirstMock, resendSendMock, resendCtorMock, u
 vi.mock("resend", () => ({
   Resend: class MockResend {
     constructor(key: string) { resendCtorMock(key); }
-    emails = { send: (args: unknown) => resendSendMock(args) };
+    emails = { send: (args: unknown, opts?: unknown) => resendSendMock(args, opts) };
   },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
@@ -205,6 +205,8 @@ describe("sendEmail enforcement (before the provider)", () => {
     expect(args.to).toBe("Noe.Test@example.test");
     expect(args).not.toHaveProperty("cc");
     expect(args).not.toHaveProperty("bcc");
+    // The EmailLog row id is the Idempotency-Key: one row, at most one provider send.
+    expect(resendSendMock.mock.calls[0][1]).toEqual({ idempotencyKey: `matflow-emaillog/${r.logId}` });
   });
 
   it("To / Cc / Bcc passed as extra headers are dropped; other headers are kept", async () => {

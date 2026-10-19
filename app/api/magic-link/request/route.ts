@@ -7,7 +7,7 @@ import { hashToken } from "@/lib/token-hash";
 import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
 import { getBaseUrl } from "@/lib/env-url";
 import { isLoginEmailProvisional } from "@/lib/login-email";
-import { isEmailDeliveryOn } from "@/lib/email-delivery";
+import { canEmail, isEmailDeliveryOn } from "@/lib/email-delivery";
 import { z } from "zod";
 
 const schema = z.object({
@@ -113,6 +113,9 @@ export async function POST(req: Request) {
   // (minting here only left orphan tokens behind a suppressed send). Same
   // opaque 200 as every other exit.
   if (!isEmailDeliveryOn()) return NextResponse.json({ ok: true });
+  // Test mode (17 Oct 2026): an address the allowlist will refuse keeps its
+  // earlier link and gets no new one — same opaque 200.
+  if (!canEmail(normEmail)) return NextResponse.json({ ok: true });
 
   // Issue new token (B-3: 32 random bytes as hex = 64-char string).
   // Fix 1: persist HMAC of the token, not the raw value — see lib/token-hash.ts.

@@ -44,6 +44,14 @@ describe("env-guards — RESEND_API_KEY and EMAIL_DELIVERY", () => {
     expect(warn.mock.calls.some((c) => /EMAIL_DELIVERY=off \(unset counts as off\) — NO email/.test(String(c[0])))).toBe(true);
   });
 
+  it("conflicting settings: on (production) with a test list says the list is ignored and how to restrict", () => {
+    vi.stubEnv("EMAIL_DELIVERY", "on");
+    vi.stubEnv("RESEND_API_KEY", "re_x");
+    vi.stubEnv("EMAIL_TEST_RECIPIENTS", "noe.test@example.test");
+    expect(() => runProductionEnvGuards()).not.toThrow();
+    expect(warn.mock.calls.some((c) => /EMAIL_TEST_RECIPIENTS is ignored\. Set EMAIL_DELIVERY=test/.test(String(c[0])))).toBe(true);
+  });
+
   it("a test list with a bad entry is named and ignored", () => {
     vi.stubEnv("EMAIL_DELIVERY", "test");
     vi.stubEnv("EMAIL_TEST_RECIPIENTS", "noe.test@example.test, Sean <sean@example.test>");

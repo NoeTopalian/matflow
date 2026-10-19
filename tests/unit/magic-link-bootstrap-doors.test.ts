@@ -195,6 +195,26 @@ describe("magic-link request — outside production (local and preview)", () => 
       }
     }
   });
+
+  it("test mode, address NOT listed (production too): the earlier link is not retired and no new one is minted", async () => {
+    for (const vercel of [undefined, "production"]) {
+      if (vercel) process.env.VERCEL_ENV = vercel; else delete process.env.VERCEL_ENV;
+      process.env.EMAIL_DELIVERY = "test";
+      process.env.EMAIL_TEST_RECIPIENTS = "someone-else@club.example";
+      try {
+        mockTokenCreate.mockClear(); mockTokenUpdateMany.mockClear(); mockSendEmail.mockClear();
+        staffSubject(null);
+        mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+        const res = await requestLink("member@club.example");
+        expect(res.status).toBe(200);
+        expect(mockTokenUpdateMany).not.toHaveBeenCalled();
+        expect(mockTokenCreate).not.toHaveBeenCalled();
+        expect(mockSendEmail).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.EMAIL_TEST_RECIPIENTS;
+      }
+    }
+  });
 });
 
 function primeToken() {

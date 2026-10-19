@@ -7,7 +7,7 @@ import { sendEmail } from "@/lib/email";
 import { hashSubjectBoundResetCode } from "@/lib/auth-token-binding";
 import { logAudit } from "@/lib/audit-log";
 import { isLoginEmailProvisional } from "@/lib/login-email";
-import { isEmailDeliveryOn } from "@/lib/email-delivery";
+import { canEmail, isEmailDeliveryOn } from "@/lib/email-delivery";
 
 const RATE_LIMIT_MAX = 3;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
@@ -111,6 +111,9 @@ export async function POST(req: Request) {
   // minting here only left orphan codes behind a suppressed send. Same opaque
   // 200 as every other exit.
   if (!isEmailDeliveryOn()) return NextResponse.json({ ok: true });
+  // Test mode (17 Oct 2026): an address the allowlist will refuse gets nothing
+  // minted and keeps any earlier code — same opaque 200.
+  if (!canEmail(normEmail)) return NextResponse.json({ ok: true });
 
   // Generate 6-digit OTP
   const token = String(randomInt(100000, 999999));

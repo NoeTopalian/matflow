@@ -22,7 +22,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { getBaseUrl } from "@/lib/env-url";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
-import { EMAIL_OFF_MESSAGE, isEmailDeliveryOn, suppressedMessage } from "@/lib/email-delivery";
+import { EMAIL_NOT_ALLOWLISTED_MESSAGE, EMAIL_OFF_MESSAGE, canEmail, isEmailDeliveryOn, suppressedMessage } from "@/lib/email-delivery";
 import { NOT_SYNTHESISED_EMAIL, isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
 
@@ -118,6 +118,12 @@ export async function POST(req: Request) {
     // line that has to hold if anyone ever loosens it.
     if (isSynthesisedEmail(email)) {
       failed.push({ id: member.id, error: "No email address on file" });
+      continue;
+    }
+    // Test mode (17 Oct 2026): an address the allowlist will refuse keeps any
+    // invite link staff already handed over, and gets no undeliverable new one.
+    if (!canEmail(email)) {
+      failed.push({ id: member.id, error: EMAIL_NOT_ALLOWLISTED_MESSAGE });
       continue;
     }
     try {

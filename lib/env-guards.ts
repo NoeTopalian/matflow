@@ -101,6 +101,12 @@ export function runProductionEnvGuards(): void {
         "email goes only to EMAIL_TEST_RECIPIENTS (none if the list is empty).",
     );
   }
+  if (policy.kind === "open" && (process.env.EMAIL_TEST_RECIPIENTS ?? "").trim()) {
+    console.warn(
+      "[env-guards] EMAIL_DELIVERY=on on the production deployment: email goes to ANY recipient and EMAIL_TEST_RECIPIENTS is " +
+        "ignored. Set EMAIL_DELIVERY=test to restrict sending to that list.",
+    );
+  }
   if (policy.kind === "allowlist" && testRecipientsInvalid()) {
     console.warn(
       "[env-guards] EMAIL_TEST_RECIPIENTS has an entry that is not a plain address — the whole list is ignored and nothing will be sent.",

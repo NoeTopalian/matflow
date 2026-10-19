@@ -6,7 +6,7 @@ import { hashToken } from "@/lib/token-hash";
 import { verifyKioskMemberToken } from "@/lib/kiosk-token";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
-import { isEmailDeliveryOn, suppressedMessage } from "@/lib/email-delivery";
+import { EMAIL_NOT_ALLOWLISTED_MESSAGE, canEmail, isEmailDeliveryOn, suppressedMessage } from "@/lib/email-delivery";
 import { getBaseUrl } from "@/lib/env-url";
 
 export const runtime = "nodejs";
@@ -88,6 +88,14 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { error: "This member has no email for a waiver link. A parent signs for a child from their own MatFlow app, or sign on the desk screen." },
       { status: 422 },
+    );
+  }
+  // Test mode (17 Oct 2026): an address the allowlist will refuse keeps the
+  // waiver link it may already hold, and no undeliverable one is minted.
+  if (!canEmail(member.email)) {
+    return NextResponse.json(
+      { error: `${EMAIL_NOT_ALLOWLISTED_MESSAGE} Ask a coach to open your waiver on a staff device.`, reason: "email_recipient_not_allowlisted" },
+      { status: 503 },
     );
   }
 

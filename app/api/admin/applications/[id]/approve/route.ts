@@ -16,7 +16,7 @@ import bcrypt from "bcryptjs";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
-import { isEmailDeliveryOn } from "@/lib/email-delivery";
+import { canEmail, isEmailDeliveryOn } from "@/lib/email-delivery";
 import { hashToken } from "@/lib/token-hash";
 import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
 import { getBaseUrl } from "@/lib/env-url";
@@ -139,7 +139,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // EMAIL_DELIVERY=off nobody can receive it, so minting it would only leave a
   // live sign-in credential lying in the database. The response says plainly
   // that no link exists; the operator gives the owner access another way.
-  const deliveryOn = isEmailDeliveryOn();
+  // Test mode (17 Oct 2026): an address the allowlist will refuse is treated as
+  // email off for this owner — no link nobody can receive.
+  const deliveryOn = isEmailDeliveryOn() && canEmail(application.email.toLowerCase().trim());
   let token: string | null = null;
   if (deliveryOn) {
     // Bound to THIS owner (AH-D2, lib/auth-token-binding.ts).
@@ -195,7 +197,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // unless sendEmail says so, and with email off it is told no link exists.
   let activationEmailSent = false;
   if (!link) {
-    console.warn(`[admin/applications/${id}/approve] email is turned off (EMAIL_DELIVERY=off) — no activation link was created or sent`);
+    console.warn(`[admin/applications/${id}/approve] email cannot reach this owner (EMAIL_DELIVERY=off, or test mode and the address is not listed) — no activation link was created or sent`);
   } else if (process.env.RESEND_API_KEY) {
     try {
       const sent = await sendEmail({

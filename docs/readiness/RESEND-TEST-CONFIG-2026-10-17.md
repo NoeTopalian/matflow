@@ -39,6 +39,8 @@ Branch `feat/email-test-isolation`. Production is unchanged. Secrets are reporte
 | Club | Synthetic `mfv-…` club from `fixture.mjs`; member 2 temporarily holds Noe's address | `email-real-test.mjs teardown` removes the club and reports any row still holding the address (must be 0) |
 | Inbound | `webhook-gate.mjs` on 127.0.0.1:3995 forwards **only** `POST /api/webhooks/resend`, bounded at 256 KB while reading, Svix headers only; the tunnel points at the gate, never the app | `tests/unit/webhook-gate.test.ts` (runs the real script) |
 | Recipients | `EMAIL_TEST_RECIPIENTS` = exactly one address (Noe's); the preflight refuses more than one, `resend.dev`, Sean/Total BJJ, placeholders | `email-real-test.mjs preflight`; `blocked` proves an unlisted address is refused before Resend with the real key loaded |
+| Provider requests | `resend-relay.mjs` on 127.0.0.1:4598 between the app and Resend. It counts every request, forwards only `POST /emails` to the one listed address with no cc or bcc, and forwards at most one | `tests/unit/resend-relay.test.ts`; `blocked` (0 requests) and `verify` (exactly 1) read its counter |
+| Duplicate sends | The EmailLog row id is sent as Resend's `Idempotency-Key` (Resend: the same key within 24 hours returns the first response and does not send again); the SDK never retries by itself | `tests/unit/email-test-allowlist.test.ts` |
 
 ## Steps (one at a time; never paste a key, secret or address into chat)
 1. **Test team and sender.** In Resend, create a separate team for testing (free; do not upgrade). Check that its Domains page has no domain: the sender is then Resend's testing sender, and the only possible recipient is the address you sign in with. Read the team's sending limits on its Usage page.
@@ -49,9 +51,11 @@ Branch `feat/email-test-isolation`. Production is unchanged. Secrets are reporte
    EMAIL_TEST_RECIPIENTS=<the address you sign in to Resend with>
    RESEND_API_KEY=<the key from step 2>
    RESEND_FROM=MatFlow Test <onboarding@resend.dev>
+   RESEND_BASE_URL=http://127.0.0.1:4598
    ```
+   The last line routes every provider request through the local counting relay (`resend-relay.mjs`). It forwards only `POST /emails`, only to the one listed address with no cc or bcc, and only once.
    (The webhook secret line is added in step 6.) Say "file ready". I run `email-real-test.mjs preflight --before-webhook` and report each check by label.
-4. **Local app and gate.** I build and start this branch on the test branch with your file, create the synthetic club, and start the gate. I then run `blocked`, which proves an unlisted address is refused before Resend with your key loaded.
+4. **Local app, relay and gate.** I start the relay (upstream `https://api.resend.com`), create the synthetic club, start this branch's build on the test branch with your file, and start the gate. I then run `blocked`. With your key loaded, an unlisted address must make **zero** provider requests (the relay counter is unchanged) and must not retire or mint any code.
 5. **Tunnel.** Approve installing `cloudflared` (`winget install Cloudflare.cloudflared`). Then run `cloudflared tunnel --url http://127.0.0.1:3995` and keep the window open. **Use port 3995 (the gate), never 3991 (the app).**
 6. **Webhook.** In the test team, add a webhook with the URL `https://<the trycloudflare address>/api/webhooks/resend` and the seven `email.*` events above. Copy its signing secret into the file's last line, then say "secret added". I restart the app with it and rerun the preflight in full.
 7. **Your authorisation and the one email.** I show the masked recipient and the final preflight. You confirm the address and say "send". You then open `https://localhost:3993/login?club=<slug>` (the local certificate is self-signed; your browser will warn), choose "Forgot password", enter your address **once** and enter the code within 2 minutes with a new password.
@@ -68,8 +72,10 @@ Branch `feat/email-test-isolation`. Production is unchanged. Secrets are reporte
 - cleanup leaves the tunnel and gate stopped, the webhook disabled, and no row holding your address.
 
 ## Kept unresolved: production test mode
-Production is never put into `test` mode by this work. Before it ever is, three gaps from the 17 Oct review must be closed:
-- **M-1:** routes still retire or mint sign-in, invite and waiver links for an address the test list will then block.
+Production is never put into `test` mode by this work.
+- **M-1 is closed (19 Oct).** forgot-password, magic-link request, bulk invite, kiosk waiver and owner approval now ask `canEmail(to)` before retiring or minting anything. A blocked address keeps the code or link it already holds and gets nothing new.
+
+Before production is ever put into test mode, two gaps from the 17 Oct review must still be closed:
 - **L-4:** the login page still offers email to everyone.
 - **L-6:** with a list but no key, the production boot check refuses to start.
 

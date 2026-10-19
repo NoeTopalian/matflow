@@ -1,15 +1,16 @@
-// The first isolated REAL email test (17 Oct 2026): exactly ONE password-reset email, through a SEPARATE Resend test
-// account, to ONE address Noe owns, from a local production build on the Neon TEST branch, with a synthetic club.
-// Noe triggers the one send himself from the isolated app's own "Forgot password" screen; this script never sends.
+// The first isolated REAL email test: exactly ONE password-reset email, through a SEPARATE Resend testing team, to ONE
+// address Noe owns, from a local production build on the Neon TEST branch, with a synthetic club. Noe triggers the one
+// send himself from the isolated app's own "Forgot password" screen; this script never sends.
+// Every provider request goes through resend-relay.mjs (RESEND_BASE_URL=http://127.0.0.1:4598), which counts it,
+// forwards only POST /emails to the one listed address, and forwards at most one.
 // Credentials stay in the private file named by MF_EXTRA_ENV (outside git); no key, secret or full address is printed.
 //
 //   node email-real-test.mjs preflight [--before-webhook]   checks the private file and the key (no email is sent)
-//   node email-real-test.mjs setup        synthetic club; member 2 becomes the listed address, with a password
-//   node email-real-test.mjs blocked      an unlisted address (the club owner) is refused before Resend
-//   node email-real-test.mjs verify       after Noe's reset: one provider send, signed webhook, reset used, no others
+//   node email-real-test.mjs setup        synthetic club; member 2 becomes the listed address (relay must be running)
+//   node email-real-test.mjs blocked      an unlisted address (the club owner): zero provider requests, nothing minted
+//   node email-real-test.mjs verify       after Noe's reset: one provider send, signed webhook, code used, no others
 //   node email-real-test.mjs teardown     removes the club and checks no row anywhere still holds the address
-// Ledger rows are labelled REAL, or SIMULATED when the private file points RESEND_BASE_URL at a local stand-in (a dry
-// run); evidence goes to the output folder (outside git).
+// Ledger rows are labelled REAL when the relay's upstream is Resend, SIMULATED when it is a local stand-in (dry run).
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -20,18 +21,22 @@ import { node24, extraEnv, REPO } from "../../matflow-verify-local/scripts/env.m
 const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const APP_PORT = Number(process.env.MF_PORT ?? 3991);
 const GATE_PORT = Number(process.env.WEBHOOK_GATE_PORT ?? 3995);
+const RELAY = `http://127.0.0.1:${Number(process.env.RESEND_RELAY_PORT ?? 4598)}`;
 const ADDRESS = /^[\x21-\x7e]+@[\x21-\x7e]+\.[\x21-\x7e]+$/;
 const WEBHOOK_SECRET = /^whsec_[A-Za-z0-9+/]{32,}={0,2}$/; // the route's own rule
 const mask = (a) => { const [u, d] = String(a).split("@"); return d ? `${u.slice(0, 1)}…@${d}` : "…"; };
 const fp = (v) => createHash("sha256").update(String(v)).digest("hex");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-/** REAL only when the run talks to Resend itself; a loopback RESEND_BASE_URL (dry run) makes every row SIMULATED. */
-const label = () => (settings().RESEND_BASE_URL ? "SIMULATED" : "REAL");
 
 /** The private settings, validated by the same parser the server uses (refuses keys, files inside git, bad lines). */
 function settings() {
   if (!process.env.MF_EXTRA_ENV) throw new Error("BLOCKED: set MF_EXTRA_ENV to the private email-test.env");
   return extraEnv();
+}
+
+/** The relay's counters; its `mode` (REAL / SIMULATED) labels every ledger row. */
+async function relay() {
+  try { return await (await fetch(`${RELAY}/__relay`)).json(); } catch { throw new Error(`BLOCKED: the Resend relay is not running on ${RELAY} (start resend-relay.mjs first)`); }
 }
 
 /** The single recipient, or a reason it is not acceptable. */
@@ -52,7 +57,7 @@ function knownKeys() {
   for (const f of [path.join(REPO, ".env"), path.join(REPO, ".env.test"), path.join(APP, ".env"), path.join(APP, ".env.test")]) {
     if (!fs.existsSync(f)) continue;
     const m = fs.readFileSync(f, "utf8").match(/^RESEND_API_KEY\s*=\s*"?([^"\r\n]+)"?/m);
-    if (m) out.push({ file: path.basename(f), where: f.startsWith(APP) ? "worktree" : "main checkout", fp: fp(m[1].trim()) });
+    if (m) out.push(fp(m[1].trim()));
   }
   return out;
 }
@@ -61,21 +66,20 @@ async function preflight() {
   const s = settings();
   const r = recipient(s);
   const key = s.RESEND_API_KEY ?? "";
-  const from = s.RESEND_FROM ?? "";
   const known = knownKeys();
   const checks = [
     ["EMAIL_DELIVERY is test", (s.EMAIL_DELIVERY ?? "").toLowerCase() === "test"],
     [r.error ?? `exactly one recipient: ${mask(r.address)}`, !r.error],
     ["RESEND_API_KEY present (re_…)", /^re_[A-Za-z0-9_]{16,}$/.test(key)],
-    [`RESEND_API_KEY is not any key already in a local .env file (${known.length} compared by fingerprint; the 440 historical sends used an unknown account)`, key !== "" && !known.some((k) => k.fp === fp(key))],
-    ["RESEND_FROM is Resend's testing sender (…@resend.dev): the test account has no domain", /@resend\.dev>?\s*$/i.test(from)],
+    [`RESEND_API_KEY differs from every RESEND_API_KEY in a local .env file (${known.length} compared by fingerprint; the 440 historical sends used an account that is unknown)`, key !== "" && !known.includes(fp(key))],
+    ["RESEND_FROM is Resend's testing sender (…@resend.dev): the testing team has no domain", /@resend\.dev>?\s*$/i.test(s.RESEND_FROM ?? "")],
     process.argv.includes("--before-webhook")
       ? ["RESEND_WEBHOOK_SECRET not checked yet (--before-webhook)", true]
       : ["RESEND_WEBHOOK_SECRET is a full whsec_ signing secret", WEBHOOK_SECRET.test(s.RESEND_WEBHOOK_SECRET ?? "")],
-    ["no RESEND_BASE_URL (this run talks to Resend itself)", !s.RESEND_BASE_URL],
+    [`RESEND_BASE_URL is the counting relay (${RELAY}), so every provider request is seen`, s.RESEND_BASE_URL === RELAY],
   ];
-  // One read-only call to Resend (no email): a Sending-access key is refused on any endpoint but sending, with
-  // `restricted_api_key`; an unknown key gets `validation_error`; a Full-access key would answer 200.
+  // One read-only call straight to Resend (no email): a Sending-access key is refused on every endpoint except sending,
+  // with `restricted_api_key`; an unknown key gets `validation_error`; a Full-access key would answer 200.
   let keyCheck = "not run";
   if (/^re_/.test(key)) {
     try {
@@ -84,15 +88,16 @@ async function preflight() {
       keyCheck = res.status === 401 && body?.name === "restricted_api_key" ? "PASS" : res.status === 200 ? "FULL_ACCESS" : `INVALID (${res.status} ${String(body?.name ?? "").slice(0, 40)})`;
     } catch (e) { keyCheck = `BLOCKED (network: ${e instanceof Error ? e.name : "error"})`; }
   }
-  checks.push([`Resend accepts the key as Sending access only (read-only check, no email): ${keyCheck}`, keyCheck === "PASS"]);
+  checks.push([`Resend accepts the key and it is Sending access only (read-only check, no email): ${keyCheck}`, keyCheck === "PASS"]);
   for (const [label, ok] of checks) console.log(`${ok ? "PASS" : "FAIL"}  ${label}`);
-  console.log("Account ownership is confirmed by you in the test account's dashboard (the key and the webhook were created there); it cannot be read with a Sending-access key.");
+  console.log("Which TEAM owns the key cannot be read with a Sending-access key. It is proven after the one send: the signed event must arrive through the webhook registered only in the testing team (V2), and the email must appear on that team's Emails page.");
   if (checks.some(([, ok]) => !ok)) process.exit(1);
 }
 
 async function setup() {
   const r = recipient(settings());
   if (r.error) throw new Error(`refusing: ${r.error}`);
+  const rel = await relay();
   if (!state.club) {
     const res = spawnSync(node24(), [path.join(HERE, "fixture.mjs"), "create"], { cwd: APP, encoding: "utf8", env: { ...process.env, MF_APP: APP } });
     if (res.status !== 0) throw new Error(`fixture create failed: ${res.stdout.slice(-300)}`);
@@ -103,26 +108,32 @@ async function setup() {
   const hash = await bcrypt.hash(randomBytes(12).toString("hex"), 10);
   const rows = await q(`update "Member" set email = $1, "passwordHash" = $2 where "tenantId" = $3 and email = $4 returning id`, [r.address, hash, c.tenantId, m2]);
   if (rows.length !== 1) throw new Error("member 2 not found");
-  state.real = { memberId: rows[0].id, addressFp: fp(r.address), hashFp: fp(hash), mode: label() };
+  state.real = { memberId: rows[0].id, addressFp: fp(r.address), hashFp: fp(hash), mode: rel.mode };
   saveState();
-  console.log(`setup done: club ${c.slug}; member 2 is ${mask(r.address)} with a password.`);
+  console.log(`setup done (${rel.mode}): club ${c.slug}; member 2 is ${mask(r.address)} with a password.`);
   console.log(`Isolated app reset screen: ${BASE}/login?club=${c.slug}  ->  "Forgot password"`);
 }
 
 const providerRows = (tenantId) => q(`select id, recipient, status, "resendId", "errorMessage" from "EmailLog" where "tenantId" = $1 and "resendId" is not null`, [tenantId]);
+const resetTokens = (tenantId, email) => q(`select id, used from "PasswordResetToken" where "tenantId" = $1 and lower(email) = lower($2)`, [tenantId, email]);
 
 async function blocked() {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
   const c = state.club;
   if (!c || !state.real) throw new Error("run setup first");
-  if (label() !== state.real.mode) throw new Error(`refusing: setup ran ${state.real.mode} but the private file now says ${label()}`);
+  const r0 = await relay();
+  if (r0.mode !== state.real.mode) throw new Error(`refusing: setup ran ${state.real.mode} but the relay now says ${r0.mode}`);
   const L = ledger("email-real-blocked");
-  const before = await providerRows(c.tenantId);
+  // A live code for the owner, as if requested earlier: a blocked request must not retire it.
+  await q(`insert into "PasswordResetToken" (id, email, "tenantId", "tokenHash", "expiresAt", used) values ($1, lower($2), $3, $4, now() + interval '10 minutes', false)`, [`b1-${randomBytes(6).toString("hex")}`, c.owner.email, c.tenantId, `b1-${randomBytes(16).toString("hex")}`]);
+  const tokensBefore = await resetTokens(c.tenantId, c.owner.email);
   const res = await fetch(`${BASE}/api/auth/forgot-password`, { method: "POST", headers: { "content-type": "application/json", origin: BASE, "x-lane-ip": "10.93.2.1" }, body: JSON.stringify({ email: c.owner.email, tenantSlug: c.slug }) });
   await sleep(1500);
-  const row = (await q(`select status, "errorMessage", "resendId" from "EmailLog" where "tenantId" = $1 and lower(recipient) = lower($2) order by "createdAt" desc limit 1`, [c.tenantId, c.owner.email]))[0];
-  const after = await providerRows(c.tenantId);
-  L.check("allowlist", `B1 [${label()}] server with the key loaded: the unlisted club owner is refused before Resend (suppressed_not_allowlisted, no provider id, no provider send)`, res.status === 200 && row?.status === "suppressed" && /^suppressed_not_allowlisted/.test(row?.errorMessage ?? "") && !row?.resendId && after.length === before.length && before.length === 0, { http: res.status, status: row?.status, providerSendsBefore: before.length, providerSendsAfter: after.length });
+  const r1 = await relay();
+  const tokensAfter = await resetTokens(c.tenantId, c.owner.email);
+  const logRows = await q(`select count(*)::int n from "EmailLog" where "tenantId" = $1 and lower(recipient) = lower($2)`, [c.tenantId, c.owner.email]);
+  L.check("allowlist", `B1 [${r1.mode}] an unlisted address with the real key loaded: ZERO provider requests (relay counter unchanged), same opaque 200`, res.status === 200 && r1.received === r0.received, { http: res.status, relayRequestsBefore: r0.received, relayRequestsAfter: r1.received });
+  L.check("side-effects", `B2 [${r1.mode}] the blocked request retired no earlier code, minted none, and wrote no email row`, tokensAfter.length === tokensBefore.length && tokensAfter.every((t) => t.used === false) && logRows[0].n === 0, { codesBefore: tokensBefore.length, codesAfter: tokensAfter.length, stillLive: tokensAfter.filter((t) => !t.used).length, emailRows: logRows[0].n });
   console.log(`\n${L.summary()} — ledger ${L.path}`);
   process.exit(L.rows.some((x) => x.result === "FAIL") ? 1 : 0);
 }
@@ -132,30 +143,32 @@ async function verify() {
   if (!c || !real) throw new Error("run setup first");
   const r = recipient(settings());
   if (r.error || fp(r.address) !== real.addressFp) throw new Error("refusing: the private file's recipient changed since setup");
-  if (label() !== real.mode) throw new Error(`refusing: setup ran ${real.mode} but the private file now says ${label()} — evidence would be mislabelled`);
+  const rel = await relay();
+  if (rel.mode !== real.mode) throw new Error(`refusing: setup ran ${real.mode} but the relay now says ${rel.mode} — evidence would be mislabelled`);
+  const M = rel.mode;
   const L = ledger("email-real-verify");
   let sends = await providerRows(c.tenantId);
-  // V1 — exactly one email reached Resend, to the confirmed address.
-  L.check("send", `V1 exactly one provider send in this club, to the confirmed address [${label()}]`, sends.length === 1 && sends[0].recipient.toLowerCase() === r.address, { providerSends: sends.length, to: sends.map((s) => mask(s.recipient)) });
-  // V2 — a genuine signed Resend event moved that row (allow time for delivery).
+  // V1 — exactly one request reached the provider, and it was the one email to the confirmed address.
+  L.check("send", `V1 [${M}] exactly one provider request (relay) and one accepted email, to the confirmed address`, rel.received === 1 && rel.forwarded === 1 && rel.refused === 0 && sends.length === 1 && sends[0].recipient.toLowerCase() === r.address, { relay: rel, acceptedEmails: sends.length, to: sends.map((s) => mask(s.recipient)) });
+  // V2 — a genuine signed event moved that row; it can only come from the webhook registered in the testing team.
   for (let i = 0; i < 36 && sends[0] && !["delivered", "bounced", "complained"].includes(sends[0].status); i++) { await sleep(5000); sends = await providerRows(c.tenantId); }
   const id = sends[0]?.resendId ?? "-";
   const lines = fs.readFileSync(path.join(OUT, `server-${APP_PORT}.log`), "utf8").split(/\r?\n/).filter((l) => l.includes("[resend-webhook]") && l.includes(`email=${id}`));
-  L.check("webhook", `V2 a signed Resend webhook updated that row to delivered [${label()}]`, sends[0]?.status === "delivered" && lines.some((l) => /type=email\.delivered .*outcome=applied/.test(l)), {
+  L.check("webhook", `V2 [${M}] a signed webhook (testing team's secret, through the gate) moved that row to delivered`, sends[0]?.status === "delivered" && lines.some((l) => /type=email\.delivered .*outcome=applied/.test(l)), {
     status: sends[0]?.status, resendId: id,
     events: lines.map((l) => { const m = l.match(/svix=(\S+) .*type=(\S+) .*outcome=(\S+)/); return m ? `${m[2]}:${m[3]} (${m[1]})` : null; }).filter(Boolean),
   });
-  // V3 — the code worked against the isolated app: the token is spent and the synthetic member's password changed.
+  // V3 — the code worked once against the isolated app: the token is spent and the synthetic member's password changed.
   const tok = await q(`select used from "PasswordResetToken" where "tenantId" = $1 and lower(email) = $2 order by "createdAt" desc limit 1`, [c.tenantId, r.address]);
   const mem = await q(`select "passwordHash" from "Member" where id = $1`, [real.memberId]);
-  L.check("reset", `V3 the emailed code reset the password on the isolated app (token used, password changed) [${label()}]`, tok[0]?.used === true && mem[0] && fp(mem[0].passwordHash) !== real.hashFp, { tokenUsed: tok[0]?.used ?? null, passwordChanged: mem[0] ? fp(mem[0].passwordHash) !== real.hashFp : null });
-  // V4 — the gate forwarded webhook traffic and nothing else reached the app through it.
+  L.check("reset", `V3 [${M}] the emailed code reset the password on the isolated app (token used, password changed)`, tok[0]?.used === true && mem[0] && fp(mem[0].passwordHash) !== real.hashFp, { tokenUsed: tok[0]?.used ?? null, passwordChanged: mem[0] ? fp(mem[0].passwordHash) !== real.hashFp : null });
+  // V4 — webhook traffic came through the gate.
   let gate = null;
   try { gate = await (await fetch(`http://127.0.0.1:${GATE_PORT}/__gate`)).json(); } catch { /* gate stopped */ }
-  L.check("gate", `V4 webhook traffic came through the gate; everything else was refused there [${label()}]`, (gate?.forwarded ?? 0) >= 1, gate ?? { gate: "not reachable" });
-  // V5 — the unlisted owner never reached Resend.
+  L.check("gate", `V4 [${M}] webhook traffic came through the gate (anything else was refused there)`, (gate?.forwarded ?? 0) >= 1, gate ?? { gate: "not reachable" });
+  // V5 — the unlisted owner never reached the provider.
   const owner = await q(`select count(*)::int n from "EmailLog" where "tenantId" = $1 and lower(recipient) = lower($2) and "resendId" is not null`, [c.tenantId, c.owner.email]);
-  L.check("allowlist", `V5 no provider send to anyone but the confirmed address [${label()}]`, owner[0].n === 0 && sends.every((s) => s.recipient.toLowerCase() === r.address), { ownerProviderSends: owner[0].n });
+  L.check("allowlist", `V5 [${M}] no provider send to anyone but the confirmed address`, owner[0].n === 0 && sends.every((s) => s.recipient.toLowerCase() === r.address), { ownerProviderSends: owner[0].n });
   console.log(`\n${L.summary()} — ledger ${L.path}`);
   process.exit(L.rows.some((x) => x.result === "FAIL") ? 1 : 0);
 }
