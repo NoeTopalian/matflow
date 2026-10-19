@@ -108,7 +108,7 @@ async function setup() {
   const hash = await bcrypt.hash(randomBytes(12).toString("hex"), 10);
   const rows = await q(`update "Member" set email = $1, "passwordHash" = $2 where "tenantId" = $3 and email = $4 returning id`, [r.address, hash, c.tenantId, m2]);
   if (rows.length !== 1) throw new Error("member 2 not found");
-  state.real = { memberId: rows[0].id, addressFp: fp(r.address), hashFp: fp(hash), mode: rel.mode };
+  state.real = { memberId: rows[0].id, addressFp: fp(r.address), hashFp: fp(hash), mode: rel.mode, relayInstance: rel.instance };
   saveState();
   console.log(`setup done (${rel.mode}): club ${c.slug}; member 2 is ${mask(r.address)} with a password.`);
   console.log(`Isolated app reset screen: ${BASE}/login?club=${c.slug}  ->  "Forgot password"`);
@@ -117,25 +117,58 @@ async function setup() {
 const providerRows = (tenantId) => q(`select id, recipient, status, "resendId", "errorMessage" from "EmailLog" where "tenantId" = $1 and "resendId" is not null`, [tenantId]);
 const resetTokens = (tenantId, email) => q(`select id, used from "PasswordResetToken" where "tenantId" = $1 and lower(email) = lower($2)`, [tenantId, email]);
 
+/** The relay this run started with — never counters from another relay instance. */
+async function sameRelay(real) {
+  const rel = await relay();
+  if (rel.instance !== real.relayInstance) throw new Error("refusing: the relay was restarted since setup — its counters no longer cover this run (run teardown and start again)");
+  if (rel.mode !== real.mode) throw new Error(`refusing: setup ran ${real.mode} but the relay now says ${rel.mode}`);
+  return rel;
+}
+
+const forgot = (c, email, lane) => fetch(`${BASE}/api/auth/forgot-password`, { method: "POST", headers: { "content-type": "application/json", origin: BASE, "x-lane-ip": lane }, body: JSON.stringify({ email, tenantSlug: c.slug }) });
+
 async function blocked() {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-  const c = state.club;
-  if (!c || !state.real) throw new Error("run setup first");
-  const r0 = await relay();
-  if (r0.mode !== state.real.mode) throw new Error(`refusing: setup ran ${state.real.mode} but the relay now says ${r0.mode}`);
+  const c = state.club, real = state.real;
+  if (!c || !real) throw new Error("run setup first");
+  const r = recipient(settings());
+  if (r.error || fp(r.address) !== real.addressFp) throw new Error("refusing: the private file's recipient changed since setup");
+  const r0 = await sameRelay(real);
+  if (r0.armed) throw new Error("refusing: the relay is already armed — start a fresh relay so the control request cannot reach Resend");
   const L = ledger("email-real-blocked");
-  // A live code for the owner, as if requested earlier: a blocked request must not retire it.
+
+  // B0 — positive control. The LISTED address, with the relay DISARMED: the request must reach the relay (proving the
+  // server runs in test mode, with a key, through the relay) and be refused there, so nothing reaches Resend.
+  const c0 = await forgot(c, r.address, "10.93.2.1");
+  await sleep(1500);
+  const r1 = await sameRelay(real);
+  const control = (await q(`select id, status, "resendId" from "EmailLog" where "tenantId" = $1 and lower(recipient) = $2 order by "createdAt" desc limit 1`, [c.tenantId, r.address]))[0];
+  L.check("control", `B0 [${r1.mode}] control: the listed address reaches the relay (+1 request), which refuses it while disarmed — nothing forwarded`, c0.status === 200 && r1.received === r0.received + 1 && r1.forwarded === 0 && control && !control.resendId, { http: c0.status, relayBefore: r0.received, relayAfter: r1.received, forwarded: r1.forwarded, controlRow: control?.status });
+  real.controlLogId = control?.id ?? null;
+
+  // B1/B2 — an UNLISTED address (the club owner), holding a live code from earlier: zero provider requests, the earlier
+  // code survives, nothing new is minted, no email row is written.
   await q(`insert into "PasswordResetToken" (id, email, "tenantId", "tokenHash", "expiresAt", used) values ($1, lower($2), $3, $4, now() + interval '10 minutes', false)`, [`b1-${randomBytes(6).toString("hex")}`, c.owner.email, c.tenantId, `b1-${randomBytes(16).toString("hex")}`]);
   const tokensBefore = await resetTokens(c.tenantId, c.owner.email);
-  const res = await fetch(`${BASE}/api/auth/forgot-password`, { method: "POST", headers: { "content-type": "application/json", origin: BASE, "x-lane-ip": "10.93.2.1" }, body: JSON.stringify({ email: c.owner.email, tenantSlug: c.slug }) });
+  const ownerRows = () => q(`select count(*)::int n from "EmailLog" where "tenantId" = $1 and lower(recipient) = lower($2)`, [c.tenantId, c.owner.email]);
+  const rowsBefore = (await ownerRows())[0].n;
+  const b1 = await forgot(c, c.owner.email, "10.93.2.2");
   await sleep(1500);
-  const r1 = await relay();
+  const r2 = await sameRelay(real);
   const tokensAfter = await resetTokens(c.tenantId, c.owner.email);
-  const logRows = await q(`select count(*)::int n from "EmailLog" where "tenantId" = $1 and lower(recipient) = lower($2)`, [c.tenantId, c.owner.email]);
-  L.check("allowlist", `B1 [${r1.mode}] an unlisted address with the real key loaded: ZERO provider requests (relay counter unchanged), same opaque 200`, res.status === 200 && r1.received === r0.received, { http: res.status, relayRequestsBefore: r0.received, relayRequestsAfter: r1.received });
-  L.check("side-effects", `B2 [${r1.mode}] the blocked request retired no earlier code, minted none, and wrote no email row`, tokensAfter.length === tokensBefore.length && tokensAfter.every((t) => t.used === false) && logRows[0].n === 0, { codesBefore: tokensBefore.length, codesAfter: tokensAfter.length, stillLive: tokensAfter.filter((t) => !t.used).length, emailRows: logRows[0].n });
+  const rowsAfter = (await ownerRows())[0].n;
+  L.check("allowlist", `B1 [${r2.mode}] an unlisted address, same server and relay as the control: ZERO provider requests (relay counter unchanged), same opaque 200`, b1.status === 200 && r2.received === r1.received, { http: b1.status, relayBefore: r1.received, relayAfter: r2.received });
+  L.check("side-effects", `B2 [${r2.mode}] the blocked request retired no earlier code, minted none, and wrote no email row`, tokensAfter.length === tokensBefore.length && tokensAfter.every((t) => t.used === false) && rowsAfter === rowsBefore, { codesBefore: tokensBefore.length, codesAfter: tokensAfter.length, stillLive: tokensAfter.filter((t) => !t.used).length, emailRowsAdded: rowsAfter - rowsBefore });
+
+  const passed = !L.rows.some((x) => x.result === "FAIL");
+  if (passed) {
+    const armed = await (await fetch(`${RELAY}/__arm`, { method: "POST" })).json();
+    real.armedAtReceived = armed.receivedAtArm;
+    console.log(`relay ARMED (instance ${armed.instance}): it will now forward exactly one email to ${mask(r.address)}.`);
+  }
+  saveState();
   console.log(`\n${L.summary()} — ledger ${L.path}`);
-  process.exit(L.rows.some((x) => x.result === "FAIL") ? 1 : 0);
+  process.exit(passed ? 0 : 1);
 }
 
 async function verify() {
@@ -143,13 +176,16 @@ async function verify() {
   if (!c || !real) throw new Error("run setup first");
   const r = recipient(settings());
   if (r.error || fp(r.address) !== real.addressFp) throw new Error("refusing: the private file's recipient changed since setup");
-  const rel = await relay();
-  if (rel.mode !== real.mode) throw new Error(`refusing: setup ran ${real.mode} but the relay now says ${rel.mode} — evidence would be mislabelled`);
+  const rel = await sameRelay(real);
+  if (!rel.armed || real.armedAtReceived == null) throw new Error("refusing: the relay was never armed by `blocked` — run blocked first");
   const M = rel.mode;
   const L = ledger("email-real-verify");
   let sends = await providerRows(c.tenantId);
-  // V1 — exactly one request reached the provider, and it was the one email to the confirmed address.
-  L.check("send", `V1 [${M}] exactly one provider request (relay) and one accepted email, to the confirmed address`, rel.received === 1 && rel.forwarded === 1 && rel.refused === 0 && sends.length === 1 && sends[0].recipient.toLowerCase() === r.address, { relay: rel, acceptedEmails: sends.length, to: sends.map((s) => mask(s.recipient)) });
+  // Every email row this club wrote since setup that was not suppressed by the app, except blocked's control row.
+  const attempted = await q(`select id, recipient, status, "resendId" from "EmailLog" where "tenantId" = $1 and status <> 'suppressed' and id <> $2`, [c.tenantId, real.controlLogId ?? ""]);
+  // V1 — after arming, exactly one request reached the relay, it was forwarded, and it is the one accepted email.
+  const sinceArm = rel.received - real.armedAtReceived;
+  L.check("send", `V1 [${M}] after arming: exactly one provider request (same relay instance), forwarded once, and one email attempt — to the confirmed address`, sinceArm === 1 && rel.forwarded === 1 && attempted.length === 1 && sends.length === 1 && sends[0].recipient.toLowerCase() === r.address && attempted[0].id === sends[0].id, { relayRequestsSinceArm: sinceArm, forwarded: rel.forwarded, emailAttempts: attempted.length, acceptedEmails: sends.length, to: sends.map((s) => mask(s.recipient)) });
   // V2 — a genuine signed event moved that row; it can only come from the webhook registered in the testing team.
   for (let i = 0; i < 36 && sends[0] && !["delivered", "bounced", "complained"].includes(sends[0].status); i++) { await sleep(5000); sends = await providerRows(c.tenantId); }
   const id = sends[0]?.resendId ?? "-";

@@ -70,8 +70,22 @@ afterAll(async () => {
 const email = (to: unknown, extra: Record<string, unknown> = {}) => ({ from: "MatFlow Test <onboarding@resend.dev>", to, subject: "s", text: "t", ...extra });
 
 describe("Resend relay — counts everything, forwards only one email to the listed address", () => {
-  it("reports SIMULATED for a loopback upstream", async () => {
-    expect((await counters()).mode).toBe("SIMULATED");
+  it("reports SIMULATED for a loopback upstream, an instance id, and starts DISARMED", async () => {
+    const c = await counters() as unknown as { mode: string; instance: string; armed: boolean };
+    expect(c.mode).toBe("SIMULATED");
+    expect(c.instance).toMatch(/^[0-9a-f]{12}$/);
+    expect(c.armed).toBe(false);
+  });
+
+  it("while disarmed, even the listed address is counted and refused (control request) — nothing reaches the upstream", async () => {
+    const before = await counters();
+    const r = await call("POST", "/emails", email(LISTED));
+    expect(r.status).toBe(503);
+    expect(r.body).toMatchObject({ name: "relay_disarmed" });
+    const after = await counters();
+    expect(after.received - before.received).toBe(1);
+    expect(after.forwarded).toBe(0);
+    expect(upstreamSeen).toHaveLength(0);
   });
 
   it("refuses other paths and methods, other recipients, several recipients, cc and bcc — none reach the upstream", async () => {
@@ -83,14 +97,21 @@ describe("Resend relay — counts everything, forwards only one email to the lis
     expect((await call("POST", "/emails", email([LISTED, "member@example.org"]))).status).toBe(403);
     expect((await call("POST", "/emails", email(LISTED, { cc: "member@example.org" }))).status).toBe(403);
     expect((await call("POST", "/emails", email(LISTED, { bcc: ["member@example.org"] }))).status).toBe(403);
+    expect((await call("POST", "/emails", email(LISTED, { headers: { " Bcc ": "member@example.org" } }))).status).toBe(403);
+    expect((await call("POST", "/emails", email("NOE.TEST@example.org"))).status).toBe(503); // the listed address in another case passes the check (refused only because disarmed)
+    expect((await call("POST", "/emails", email("noe.teſt@example.org"))).status).toBe(403); // a non-ASCII look-alike never matches
+    expect((await call("POST", "/emails", null)).status).toBe(400);
     const after = await counters();
-    expect(after.received - before.received).toBe(7);
-    expect(after.refused - before.refused).toBe(7);
+    expect(after.received - before.received).toBe(11);
+    expect(after.refused - before.refused).toBe(11);
     expect(after.forwarded).toBe(0);
     expect(upstreamSeen).toHaveLength(0);
   });
 
-  it("forwards exactly one email to the listed address (with its key and idempotency key) and refuses a second", async () => {
+  it("once armed, forwards exactly one email to the listed address (with its key and idempotency key) and refuses a second", async () => {
+    const armed = await (await fetch(`http://127.0.0.1:${relayPort}/__arm`, { method: "POST" })).json() as { armed: boolean; receivedAtArm: number };
+    expect(armed.armed).toBe(true);
+    expect(typeof armed.receivedAtArm).toBe("number");
     const first = await call("POST", "/emails", email(" Noe.Test@example.org "), { authorization: "Bearer re_x", "idempotency-key": "matflow-emaillog/log-1", cookie: "x=y" });
     expect(first.status).toBe(200);
     expect(upstreamSeen).toHaveLength(1);

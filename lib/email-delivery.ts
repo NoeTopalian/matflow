@@ -132,8 +132,10 @@ export function isEmailDeliveryOn(): boolean {
 }
 
 /**
- * Whether an email to `to` could actually be sent right now — the same rule
- * `sendEmail` enforces. Routes that retire or mint a credential (reset code,
+ * Whether the sending policy allows an email to `to` right now — the delivery
+ * switch and the test allowlist, the same first two gates `sendEmail` applies.
+ * It does not cover sendEmail's later checks (provisional login address,
+ * recent bounce, missing key). Routes that retire or mint a credential (reset code,
  * sign-in link, invite, waiver link) ask this BEFORE touching tokens, so a send
  * the allowlist will block never kills a code or link the person already holds
  * and never leaves an undeliverable one behind.
