@@ -108,12 +108,12 @@ describe("RegisterPanel — squad classes", () => {
     lastVisitAt: null, medicalConditions: null, notOnRoster,
   });
 
-  it("acceptance 3: shows Squad only, and the membership line is not shown (the roster governs)", async () => {
+  it("acceptance 3: shows Squad only AND the membership line (both must hold, 20 Oct 2026)", async () => {
     mockRegister(true, [row("on", "On Squad", false), row("off", "Off Squad", true)]);
     render(<RegisterPanel instance={SESSION} primaryColor="#38f" onCountChange={() => {}} />);
     await act(async () => {});
     expect(screen.getByTestId("register-squad-only").textContent).toContain(SQUAD_ONLY_LABEL);
-    expect(screen.queryByTestId("register-allowed-tiers")).toBeNull();
+    expect(screen.getByTestId("register-allowed-tiers").textContent).toBe("For: Advanced");
     const chips = screen.getAllByTestId("register-not-on-roster");
     expect(chips).toHaveLength(1);
     expect(chips[0].textContent).toBe(NOT_ON_SQUAD_LABEL);
