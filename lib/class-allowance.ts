@@ -68,9 +68,18 @@ export type BillingPeriodAnchor = {
    * 00:00 on the next). Every other boundary is counted from this one.
    */
   anchor: IsoDate;
-  /** The recurrence between boundaries: whole days, or calendar months (day-of-month clamped). Exactly one is set. */
+  /**
+   * For month steps: the day of the month the boundaries fall on (1–31,
+   * clamped to each month's last day). Carried separately because the anchor
+   * date itself may be a clamped month end (28 Feb for a plan on the 31st),
+   * which would otherwise lose the true day (review round 4, M-1).
+   */
+  anchorDay?: number;
+  /** The recurrence between boundaries: whole days, or calendar months. Exactly one is set. */
   stepDays?: number;
   stepMonths?: number;
+  /** A period MatFlow was told outright (Stripe's paid period): returned verbatim for a session inside it. */
+  known?: Period;
 };
 
 export type ClassAllowance =
@@ -211,6 +220,14 @@ export function dateMinute(iso: IsoDate): number {
 /** A period on the wall-clock minute scale: half-open [start, end). */
 export type Period = { start: number; end: number };
 
+/** Thrown by periodContaining when a member's billing period cannot place the session; readers answer "period unknown". */
+export class BillingPeriodUnknown extends Error {
+  constructor() {
+    super("the member's billing period cannot place this session");
+    this.name = "BillingPeriodUnknown";
+  }
+}
+
 /**
  * The period that contains `minute` under allowance `a`.
  *  - week: Monday 00:00 to the next Monday 00:00;
@@ -234,7 +251,9 @@ export function periodContaining(a: ClassAllowance, minute: number): Period {
   }
   if (a.basis === "billing") {
     if (!a.member) throw new Error("a billing-period allowance needs the member's period (withMemberBillingPeriod)");
-    return billingPeriodContaining(a.member, minute);
+    const p = billingPeriodContaining(a.member, minute);
+    if (!p) throw new BillingPeriodUnknown();
+    return p;
   }
   const span = a.weeks * 7 * MINUTES_PER_DAY;
   const anchor = dateMinute(a.anchor);
@@ -245,11 +264,11 @@ export function periodContaining(a: ClassAllowance, minute: number): Period {
 
 /**
  * Boundary k of a member's periods: the anchor date shifted by k steps.
- * Months are clamped to the day the anchor carries (an anchor on the 31st
- * gives the 28th/29th in February and the 31st again in March), so the k-th
- * boundary is a function of the anchor alone and consecutive boundaries are
- * contiguous by construction — never one period's start computed separately
- * from the previous period's end.
+ * Months land on `anchorDay` clamped to each month's last day (a plan on the
+ * 31st renews on 28/29 Feb and on 31 Mar again), so the k-th boundary is a
+ * function of the anchor alone and consecutive boundaries are contiguous by
+ * construction — never one period's start computed separately from the
+ * previous period's end.
  */
 export function billingBoundary(anchor: BillingPeriodAnchor, k: number): number {
   const [y, m, d] = anchor.anchor.split("-").map(Number);
@@ -258,7 +277,7 @@ export function billingBoundary(anchor: BillingPeriodAnchor, k: number): number 
     const yy = y + Math.floor(months / 12);
     const mm = ((months % 12) + 12) % 12;
     const lastDay = new Date(Date.UTC(yy, mm + 1, 0)).getUTCDate();
-    return Date.UTC(yy, mm, Math.min(d, lastDay)) / 60_000;
+    return Date.UTC(yy, mm, Math.min(anchor.anchorDay ?? d, lastDay)) / 60_000;
   }
   const span = (anchor.stepDays ?? 0) * MINUTES_PER_DAY;
   if (span <= 0) throw new Error("a billing-period allowance needs a recurrence");
@@ -266,21 +285,32 @@ export function billingBoundary(anchor: BillingPeriodAnchor, k: number): number 
 }
 
 /**
- * The member's period that contains `minute`: [boundary(k), boundary(k+1))
- * for the k that holds it. A session before the anchor still lands in some
- * period (k < 0), so nothing is ever unjudged. Bounded to 480 steps.
+ * The member's period that contains `minute`: the stated period itself when
+ * the session is inside it, else [boundary(k), boundary(k+1)) for the k that
+ * holds it — found arithmetically (no step cap), so a session before the
+ * anchor still lands in some period. Returns null, never a wrong period,
+ * when the arithmetic cannot place the session (an invalid date); the
+ * caller reads that as "period unknown" (review round 4, L-3).
  */
-export function billingPeriodContaining(anchor: BillingPeriodAnchor, minute: number): Period {
-  let k = 0;
+export function billingPeriodContaining(anchor: BillingPeriodAnchor, minute: number): Period | null {
+  if (!Number.isFinite(minute)) return null;
+  if (anchor.known && minute >= anchor.known.start && minute < anchor.known.end) return anchor.known;
+  let k: number;
   if (anchor.stepDays) {
     k = Math.floor((minute - dateMinute(anchor.anchor)) / (anchor.stepDays * MINUTES_PER_DAY));
+  } else if (anchor.stepMonths) {
+    const [ay, am] = anchor.anchor.split("-").map(Number);
+    const at = new Date(minute * 60_000);
+    k = Math.floor(((at.getUTCFullYear() - ay) * 12 + (at.getUTCMonth() + 1 - am)) / anchor.stepMonths);
+    // The month difference ignores the day: correct by at most one step either way.
+    if (minute < billingBoundary(anchor, k)) k -= 1;
+    else if (minute >= billingBoundary(anchor, k + 1)) k += 1;
   } else {
-    for (let i = 0; i < 480 && minute >= billingBoundary(anchor, k + 1); i += 1) k += 1;
-    for (let i = 0; i < 480 && minute < billingBoundary(anchor, k); i += 1) k -= 1;
+    return null;
   }
+  if (!Number.isFinite(k)) return null;
   const p = { start: billingBoundary(anchor, k), end: billingBoundary(anchor, k + 1) };
-  if (!(minute >= p.start && minute < p.end)) throw new Error("billing period does not contain the session");
-  return p;
+  return minute >= p.start && minute < p.end ? p : null;
 }
 
 /** The tier's cycle as a recurrence; null for a non-recurring tier ("none" or unknown). Shared with billing (lib/billing-cycle.ts). */
@@ -293,18 +323,37 @@ export function billingCycleStep(billingCycle: string | null | undefined): { ste
   return null;
 }
 
+const lastDayOfMonth = (iso: IsoDate) => {
+  const [y, m] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+};
+const dayOf = (iso: IsoDate) => Number(iso.slice(8, 10));
+
 /**
- * The recurrence a Stripe-stated period implies, from its own length on the
- * club calendar: an exact week multiple is days; 28–31 days is a month (the
- * length varies by month, the anchor day does not); 365/366 is a year; any
- * other length is taken literally. Never the tier's cycle: the subscription
- * keeps its own price when a tier is edited or a member is moved.
+ * The recurrence a Stripe-stated period implies, measured on Stripe's own
+ * UTC instants (no clock change can stretch or shrink it): an exact week
+ * multiple is days — except a 28-day period that starts and ends on the same
+ * day of the month, which is February of a monthly plan; 29–31 days is a
+ * month; 365/366 is a year; any other length is taken literally. Never the
+ * tier's cycle: the subscription keeps its own price when a tier is edited
+ * or a member is moved. For a monthly recurrence the day the boundaries fall
+ * on is the START's day when the end is a clamped month end (31 Jan → 28 Feb
+ * renews on the 31st, not the 28th), else the end's day (review round 4,
+ * M-1 and L-1).
  */
-export function recurrenceOfPeriod(startDay: IsoDate, endDay: IsoDate): { stepDays?: number; stepMonths?: number } {
-  const days = Math.round((dateMinute(endDay) - dateMinute(startDay)) / MINUTES_PER_DAY);
+export function recurrenceOfPeriod(
+  start: Date,
+  end: Date,
+  startDay: IsoDate,
+  endDay: IsoDate,
+): { stepDays?: number; stepMonths?: number; anchorDay?: number } {
+  const days = Math.round((end.getTime() - start.getTime()) / DAY_MS);
+  const sameDayOfMonth = dayOf(startDay) === dayOf(endDay);
+  const endIsMonthEnd = dayOf(endDay) === lastDayOfMonth(endDay);
+  const monthly = (days >= 29 && days <= 31) || (days === 28 && (sameDayOfMonth || (endIsMonthEnd && dayOf(startDay) > dayOf(endDay))));
+  if (monthly) return { stepMonths: 1, anchorDay: endIsMonthEnd && dayOf(startDay) > dayOf(endDay) ? dayOf(startDay) : dayOf(endDay) };
   if (days === 7 || days === 14 || days === 28) return { stepDays: days };
-  if (days >= 28 && days <= 31) return { stepMonths: 1 };
-  if (days === 365 || days === 366) return { stepMonths: 12 };
+  if (days === 365 || days === 366) return { stepMonths: 12, anchorDay: endIsMonthEnd && dayOf(startDay) > dayOf(endDay) ? dayOf(startDay) : dayOf(endDay) };
   return { stepDays: Math.max(1, days) };
 }
 
@@ -328,8 +377,9 @@ export function wallClockDateOf(d: Date): IsoDate {
  *    stored period yet the period is unknown;
  *  - everyone else (desk, cash, standing order; TeamUp-imported): the period
  *    ending on `nextDueAt` (a zoneless wall-clock date), recurring by the
- *    tier's billing cycle; a stale Stripe period from an ended subscription is
- *    ignored.
+ *    tier's billing cycle — on the last day of the month when the due date
+ *    is a month end, as lib/overdue.ts advances it; a stale Stripe period
+ *    from an ended subscription is ignored.
  */
 export type MemberBillingView = {
   stripeSubscriptionId?: string | null;
@@ -350,17 +400,22 @@ export type MemberBillingView = {
 export function withMemberBillingPeriod(a: ClassAllowance | null, member: MemberBillingView, timeZone: string): ClassAllowance | null {
   if (!a || a.basis !== "billing") return a;
   if (member.stripeSubscriptionId) {
-    if (member.billingPeriodStart && member.billingPeriodEnd && member.billingPeriodEnd > member.billingPeriodStart) {
-      const startDay = localDateOf(member.billingPeriodStart, timeZone);
-      const endDay = localDateOf(member.billingPeriodEnd, timeZone);
+    const { billingPeriodStart: start, billingPeriodEnd: end } = member;
+    if (start && end && end > start && Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
+      const startDay = localDateOf(start, timeZone);
+      const endDay = localDateOf(end, timeZone);
       if (endDay <= startDay) return null;
-      return { limit: a.limit, basis: "billing", member: { anchor: endDay, ...recurrenceOfPeriod(startDay, endDay) } };
+      const known = { start: dateMinute(startDay), end: dateMinute(endDay) };
+      return { limit: a.limit, basis: "billing", member: { anchor: endDay, known, ...recurrenceOfPeriod(start, end, startDay, endDay) } };
     }
     return null;
   }
   const step = billingCycleStep(member.billingCycle);
-  if (member.nextDueAt && step) {
-    return { limit: a.limit, basis: "billing", member: { anchor: wallClockDateOf(member.nextDueAt), ...step } };
+  if (member.nextDueAt && step && Number.isFinite(member.nextDueAt.getTime())) {
+    const due = wallClockDateOf(member.nextDueAt);
+    // A due date on the last day of its month stays a month end as it advances (lib/overdue.ts): anchor day 31.
+    const anchorDay = step.stepMonths ? (dayOf(due) === lastDayOfMonth(due) ? 31 : dayOf(due)) : undefined;
+    return { limit: a.limit, basis: "billing", member: { anchor: due, ...step, ...(anchorDay ? { anchorDay } : {}) } };
   }
   return null;
 }

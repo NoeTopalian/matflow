@@ -338,9 +338,11 @@ describe("Stripe webhook: invoice.payment_succeeded convergence", () => {
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(200);
     expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "mem-1" }, data: { paymentStatus: "paid" } }));
-    // A newer period only: the write is conditional on the stored end being older (or absent).
+    // A later-STARTING period only: a retried older invoice cannot move the
+    // period backwards, while an anchor reset to a shorter later period still
+    // wins (review round 4, M-2).
     expect(mockMemberUpdateMany).toHaveBeenCalledWith({
-      where: { id: "mem-1", OR: [{ billingPeriodEnd: null }, { billingPeriodEnd: { lt: new Date(1_795_219_200 * 1000) } }] },
+      where: { id: "mem-1", OR: [{ billingPeriodStart: null }, { billingPeriodStart: { lt: new Date(1_792_800_000 * 1000) } }] },
       data: { billingPeriodStart: new Date(1_792_800_000 * 1000), billingPeriodEnd: new Date(1_795_219_200 * 1000) },
     });
   });

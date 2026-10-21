@@ -407,11 +407,14 @@ export async function POST(req: NextRequest) {
           data: { paymentStatus: "paid" },
         });
         if (periodStart && periodEnd && periodEnd > periodStart) {
-          // Only a NEWER period replaces the stored one: a retried past-due
-          // invoice paid after the renewal, or an event delivered out of
-          // order, must not move the member's period backwards (L-3).
+          // Only a LATER-STARTING period replaces the stored one: a retried
+          // past-due invoice paid after the renewal, or an event delivered
+          // out of order, must not move the member's period backwards —
+          // while a plan change that resets the billing anchor (an annual
+          // plan moved to monthly: a shorter period starting later) still
+          // wins (review rounds 3 L-3 and 4 M-2).
           await tx.member.updateMany({
-            where: { id: member.id, OR: [{ billingPeriodEnd: null }, { billingPeriodEnd: { lt: periodEnd } }] },
+            where: { id: member.id, OR: [{ billingPeriodStart: null }, { billingPeriodStart: { lt: periodStart } }] },
             data: { billingPeriodStart: periodStart, billingPeriodEnd: periodEnd },
           });
         }

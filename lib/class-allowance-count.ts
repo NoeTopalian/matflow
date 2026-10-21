@@ -1,29 +1,19 @@
 /**
- * T7 (Sean note 5): the one database read the class allowance is judged on.
- *
- * Counted rows (product decision, 20 Oct 2026: confirmed attendance consumes
- * one session; nothing else does):
- *  - attendance records for this member that are not imports
- *    (checkInMethod <> 'import' AND importJobId IS NULL);
- *  - on sessions that are not cancelled;
- *  - not paid for by a class pack (no ClassPackRedemption row points at the
- *    record): a class-pack redemption does not count against the plan
- *    allowance;
- *  - inside the period, judged in TypeScript (lib/class-allowance.ts) from the
- *    wall-clock slots this returns. A booking is not an attendance row and
- *    counts nothing; a refused check-in writes nothing, so it counts nothing;
- *    an unmarked or undone visit is a deleted row, so it counts nothing.
- *
- * ONE statement, run AFTER the Member row lock (lib/checkin.ts). Under READ
- * COMMITTED each statement reads its own snapshot, taken when it starts:
- *  - starting after the lock means every earlier check-in for this member has
- *    committed and is seen (the lock is held to commit);
- *  - the tier's allowance and the visits come from the SAME snapshot, so a
- *    limit cut and an unmark committing between two separate reads can never
- *    combine into an admission no serial order allows (R-ALLOW rule (b),
- *    planning evidence §8c);
- *  - no FOR SHARE / FOR UPDATE clause here (rule (c)): a locking clause would
- *    re-check rows at newer versions and mix snapshots.
+ * Statement C: what the check-in engine reads, under the Member lock it
+ * already holds, to judge the plan allowance — two plain reads, no locking
+ * clause (rule (c): a locking clause would re-check rows at newer versions):
+ *   C1 the tier's allowance columns, the member's billing columns and whether
+ *      the member is already in the judged session;
+ *   C2 the member's counted visits inside the judged session's own period,
+ *      bounded by that period (an annual billing period is read in full).
+ * Between C1 and C2 only writers that do not lock the Member row can commit —
+ * a tier edit, an unmark, a class cancellation. Each reads nothing a
+ * check-in writes, so every interleaving is equivalent to a serial order
+ * (unmark, then this check-in, then the edit); a competing check-in, an undo
+ * batch, a deletion or the webhook's period write all wait on the Member
+ * lock. Counted rows: not imports, not cancelled sessions, not class-pack
+ * redemptions, not the judged session. The member portal reads the same way
+ * for "now".
  */
 import type { Prisma } from "@prisma/client";
 import {
@@ -31,6 +21,7 @@ import {
   currentPeriodUsage,
   nowMinute,
   slotMinute,
+  BillingPeriodUnknown,
   periodContaining,
   tierAllowance,
   withMemberBillingPeriod,
@@ -140,7 +131,13 @@ export async function readAllowanceSnapshot(
   if (!allowance) {
     return { allowance: null, periodUnknown, periodUnknownLimit: periodUnknown ? tier!.limit : null, alreadyIn, visits: [] };
   }
-  const period = periodContaining(allowance, args.session);
+  let period: { start: number; end: number };
+  try {
+    period = periodContaining(allowance, args.session);
+  } catch (e) {
+    if (!(e instanceof BillingPeriodUnknown)) throw e;
+    return { allowance: null, periodUnknown: true, periodUnknownLimit: allowance.limit, alreadyIn, visits: [] };
+  }
   // ISO strings cast to `timestamp`: ClassInstance.date is a timestamp WITHOUT
   // zone holding a UTC wall clock (the Prisma convention); the cast ignores the
   // trailing Z, so the comparison is wall clock to wall clock. A day of slack

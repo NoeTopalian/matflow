@@ -14,6 +14,7 @@ import {
   allowanceVerdict,
   withMemberBillingPeriod,
   billingPeriodContaining,
+  BillingPeriodUnknown,
   periodContaining,
   classLimitText,
   countInPeriod,
@@ -271,20 +272,20 @@ describe("per member's billing period (owner scope, 21 Oct 2026; review round 3)
   it("monthly periods are contiguous for anchors on the 28th, 29th, 30th and 31st across February (M-1)", () => {
     for (const anchor of ["2026-01-28", "2026-01-29", "2026-01-30", "2026-01-31"]) {
       const a: BillingPeriodAnchor = { anchor, stepMonths: 1 };
-      let prev = billingPeriodContaining(a, at("2025-12-15", "12:00"));
+      let prev = billingPeriodContaining(a, at("2025-12-15", "12:00"))!;
       for (const day of ["2026-01-15", "2026-02-15", "2026-03-15", "2026-04-15", "2026-05-15"]) {
-        const p = billingPeriodContaining(a, at(day, "12:00"));
+        const p = billingPeriodContaining(a, at(day, "12:00"))!;
         expect(p.start).toBe(prev.end);
         prev = p;
       }
     }
     // Stripe-like anchor on the 28th: 28 Jan → 28 Feb → 28 Mar (never the 31st).
     const a28: BillingPeriodAnchor = { anchor: "2026-02-28", stepMonths: 1 };
-    expect(minuteToLocal(billingPeriodContaining(a28, at("2026-03-10", "12:00")).end).date).toBe("2026-03-28");
+    expect(minuteToLocal(billingPeriodContaining(a28, at("2026-03-10", "12:00"))!.end).date).toBe("2026-03-28");
     // Anchor on the 31st: 28 Feb in a non-leap year, 31 Mar again.
     const a31: BillingPeriodAnchor = { anchor: "2026-01-31", stepMonths: 1 };
-    expect(minuteToLocal(billingPeriodContaining(a31, at("2026-02-10", "12:00")).end).date).toBe("2026-02-28");
-    expect(minuteToLocal(billingPeriodContaining(a31, at("2026-03-10", "12:00")).end).date).toBe("2026-03-31");
+    expect(minuteToLocal(billingPeriodContaining(a31, at("2026-02-10", "12:00"))!.end).date).toBe("2026-02-28");
+    expect(minuteToLocal(billingPeriodContaining(a31, at("2026-03-10", "12:00"))!.end).date).toBe("2026-03-31");
   });
 
   it("the renewal day belongs to the NEW period (desk member, monthly, due on the 30th)", () => {
@@ -344,6 +345,56 @@ describe("per member's billing period (owner scope, 21 Oct 2026; review round 3)
     expect(allowanceAskSentence("Ava Green", v)).toBe("No renewal date is recorded for Ava Green, so their 4 classes per billing period can't be counted. Admit anyway?");
     expect(allowanceBookingNotice(v)).toMatch(/^Your plan counts classes per billing period, but no renewal date is recorded for you\. Ask staff\. Booking doesn't use a class/);
     expect(allowanceUsageText(v)).toBe("Your plan allows 4 classes per billing period, but no renewal date is recorded for you — ask staff");
+  });
+
+  it("R4-M1: a Stripe period 31 Jan → 28 Feb keeps the 31st: the stored period is returned verbatim and the next ends 31 Mar, then 30 Apr", () => {
+    const a = withMemberBillingPeriod(tier, live({ billingPeriodStart: D("2026-01-31"), billingPeriodEnd: D("2026-02-28") }), LONDON)!;
+    expect(a.basis === "billing" ? a.member : null).toMatchObject({ anchor: "2026-02-28", anchorDay: 31, stepMonths: 1 });
+    expect(periodContaining(a, at("2026-02-10", "12:00"))).toEqual({ start: dateMinute("2026-01-31"), end: dateMinute("2026-02-28") });
+    expect(periodContaining(a, at("2026-03-10", "12:00"))).toEqual({ start: dateMinute("2026-02-28"), end: dateMinute("2026-03-31") });
+    expect(periodContaining(a, at("2026-04-10", "12:00"))).toEqual({ start: dateMinute("2026-03-31"), end: dateMinute("2026-04-30") });
+    expect(periodContaining(a, at("2025-12-31", "12:00"))).toEqual({ start: dateMinute("2025-12-31"), end: dateMinute("2026-01-31") });
+    // Leap year: 31 Jan 2028 → 29 Feb 2028 (29 days) is also monthly on the 31st.
+    const leap = withMemberBillingPeriod(tier, live({ billingPeriodStart: D("2028-01-31"), billingPeriodEnd: D("2028-02-29") }), LONDON)!;
+    expect(periodContaining(leap, at("2028-03-10", "12:00")).end).toBe(dateMinute("2028-03-31"));
+    // 30 Jan → 28 Feb keeps the 30th.
+    const d30 = withMemberBillingPeriod(tier, live({ billingPeriodStart: D("2026-01-30"), billingPeriodEnd: D("2026-02-28") }), LONDON)!;
+    expect(periodContaining(d30, at("2026-03-10", "12:00")).end).toBe(dateMinute("2026-03-30"));
+  });
+
+  it("R4-M1: a desk member due on a month end stays on month ends (lib/overdue.ts): 28 Feb → 31 Mar → 30 Apr; due on the 30th stays the 30th", () => {
+    const feb = withMemberBillingPeriod(tier, { nextDueAt: D("2026-02-28"), billingCycle: "monthly" }, LONDON)!;
+    expect(periodContaining(feb, at("2026-03-10", "12:00"))).toEqual({ start: dateMinute("2026-02-28"), end: dateMinute("2026-03-31") });
+    expect(periodContaining(feb, at("2026-04-10", "12:00"))).toEqual({ start: dateMinute("2026-03-31"), end: dateMinute("2026-04-30") });
+    expect(periodContaining(feb, at("2026-02-10", "12:00"))).toEqual({ start: dateMinute("2026-01-31"), end: dateMinute("2026-02-28") });
+    const d30 = withMemberBillingPeriod(tier, { nextDueAt: D("2026-04-30"), billingCycle: "monthly" }, LONDON)!;
+    // 30 Apr IS April's last day, so overdue.ts advances it to 31 May: mirrored here.
+    expect(periodContaining(d30, at("2026-05-10", "12:00")).end).toBe(dateMinute("2026-05-31"));
+  });
+
+  it("R4-L1: the recurrence is measured on Stripe's UTC instants across a clock change, and a 28-day period on the same day of the month is February of a monthly plan", () => {
+    // 28 Mar → 28 Apr spans the BST change: 31 days on the UTC clock, not 30 days 23 hours.
+    const dst = withMemberBillingPeriod(tier, live({ billingPeriodStart: new Date("2026-03-28T10:00:00.000Z"), billingPeriodEnd: new Date("2026-04-28T10:00:00.000Z") }), LONDON)!;
+    expect(dst.basis === "billing" ? dst.member : null).toMatchObject({ stepMonths: 1, anchorDay: 28 });
+    expect(periodContaining(dst, at("2026-05-10", "12:00")).end).toBe(dateMinute("2026-05-28"));
+    // 2 Feb → 2 Mar is 28 days: the same day of the month means monthly, not four-weekly.
+    const feb = withMemberBillingPeriod(tier, live({ billingPeriodStart: D("2026-02-02"), billingPeriodEnd: D("2026-03-02") }), LONDON)!;
+    expect(feb.basis === "billing" ? feb.member : null).toMatchObject({ stepMonths: 1, anchorDay: 2 });
+    expect(periodContaining(feb, at("2026-03-15", "12:00")).end).toBe(dateMinute("2026-04-02"));
+    // 28 Sep → 26 Oct is 28 days on different days: four-weekly.
+    const fw = withMemberBillingPeriod(tier, live({ billingPeriodStart: D("2026-09-28"), billingPeriodEnd: D("2026-10-26") }), LONDON)!;
+    expect(fw.basis === "billing" ? fw.member : null).toMatchObject({ stepDays: 28 });
+  });
+
+  it("R4-L3: a session far from the anchor is placed arithmetically (no step cap); an unplaceable session reads as unknown, never a wrong period", () => {
+    const a = withMemberBillingPeriod(tier, { nextDueAt: D("2026-11-02"), billingCycle: "four_weekly" }, LONDON)!;
+    expect(periodContaining(a, at("2016-01-01", "12:00")).end).toBeLessThanOrEqual(dateMinute("2016-01-29"));
+    expect(periodContaining(a, at("2046-06-01", "12:00")).start).toBeGreaterThan(dateMinute("2046-05-04"));
+    const monthly = withMemberBillingPeriod(tier, { nextDueAt: D("2026-11-30"), billingCycle: "monthly" }, LONDON)!;
+    expect(periodContaining(monthly, at("2019-02-10", "12:00"))).toEqual({ start: dateMinute("2019-01-31"), end: dateMinute("2019-02-28") });
+    expect(billingPeriodContaining({ anchor: "2026-11-02", stepDays: 28 }, Number.NaN)).toBeNull();
+    expect(billingPeriodContaining({ anchor: "2026-11-02" }, at("2026-10-01", "12:00"))).toBeNull();
+    expect(() => periodContaining({ limit: 4, basis: "billing", member: { anchor: "2026-11-02" } }, at("2026-10-01", "12:00"))).toThrow(BillingPeriodUnknown);
   });
 
   it("copy for a known billing period reads like any other period", () => {
