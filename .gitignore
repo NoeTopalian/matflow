@@ -44,8 +44,10 @@ next-env.d.ts
 /app/generated/prisma
 .worktrees/
 
-# tool-internal / local-only — never commit
-.claude/
+# tool-internal / local-only — never commit (except the shared project skills)
+.claude/*
+!.claude/skills/
+.claude/skills/matflow-verify-browser/scripts/journeys/
 .playwright-mcp/
 .venv/
 playwright-report/
