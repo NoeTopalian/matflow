@@ -27,11 +27,16 @@ export const checkinSchema = z.object({
   onBehalfOfMemberId: z.string().optional(),
   checkInMethod: z.enum(["admin", "self", "auto"]).default("admin"),
   // Staff marks only: what the register asked about and the person admitted
-  // anyway (a hold, an unsigned waiver, an adult in a kids class, a class
-  // their membership does not include). Recorded on the attendance.mark audit
-  // row. Only "tier_not_included" changes a rule: the staff door ASKS about a
-  // class outside the member's plan (T6a, Q3), and this is the confirmation.
-  acknowledged: z.array(z.enum(["on_hold", "waiver_unsigned", "kids_class", "tier_not_included"])).max(4).optional(),
+  // anyway (a hold, an unsigned waiver, an adult in a kids class). Recorded on
+  // the attendance.mark audit row; it changes no rule. The squad list and the
+  // membership list have no acknowledgement: they refuse at every door (owner
+  // decision, 20 Oct 2026). A register tab loaded before that change may still
+  // send "tier_not_included"; it is dropped here, so the mark is judged (and
+  // refused) exactly as if it had not been sent, and nothing records it.
+  acknowledged: z.preprocess(
+    (v) => (Array.isArray(v) ? v.filter((x) => x !== "tier_not_included") : v),
+    z.array(z.enum(["on_hold", "waiver_unsigned", "kids_class"])).max(3).optional(),
+  ),
 });
 
 export async function POST(req: Request) {
@@ -156,7 +161,6 @@ export async function POST(req: Request) {
     classInstanceId,
     method: effectiveMethod,
     enforceRankGate: isSelf,
-    enforceRosterGate: isSelf,
     enforceTimeWindow: isSelf,
     requireCoverage: isSelf,
     // A member taking the last place is refused; a staff member deliberately
@@ -178,11 +182,8 @@ export async function POST(req: Request) {
     // A tier bound to one venue does not cover a class held at another; the
     // desk can still mark them (ADR-001 D2 slice 2).
     enforceVenueGate: isSelf,
-    // T6a: a class whose memberships do not include the member's plan. The
-    // member deciding is refused; the desk is asked, and admits only with the
-    // confirmation the register sends back (recorded on the audit row).
-    tierGate: isSelf ? "refuse" : "ask",
-    tierOverrideConfirmed: !isSelf && !!acknowledged?.includes("tier_not_included"),
+    // The squad list and the membership list are not flags: the engine
+    // refuses on them for the desk, "auto" and the member alike.
     // T6b: a paused or archived class is closed to the member deciding; the
     // desk still admits (T4c owns the per-door modes).
     enforceClassStateGate: isSelf,
@@ -193,9 +194,7 @@ export async function POST(req: Request) {
 
   switch (result.kind) {
     case "success":
-      // T6a (Q3): a staff override is always recorded, so a staff "auto"
-      // admission past the tier gate writes the row as an "admin" one does.
-      if (effectiveMethod === "admin" || (effectiveMethod === "auto" && (result.overrides?.length ?? 0) > 0)) {
+      if (effectiveMethod === "admin") {
         // A staff mark is audited. The coach register's raw upsert used to be
         // the only staff mark that wrote a row; since 18 Sep 2026 every screen
         // marks through this route, so the row lives here — the same shape as
@@ -215,8 +214,6 @@ export async function POST(req: Request) {
             recordId: result.record.id,
             created: true,
             ...(acknowledged && acknowledged.length > 0 ? { acknowledged: [...new Set(acknowledged)] } : {}),
-            // The gates the engine actually admitted past on staff say-so.
-            ...(result.overrides && result.overrides.length > 0 ? { overrides: result.overrides } : {}),
           },
           req,
         });

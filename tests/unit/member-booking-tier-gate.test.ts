@@ -72,12 +72,22 @@ describe("booking — tier gate", () => {
     expect((await book()).status).toBe(201);
   });
 
-  it("a rostered class is governed by its roster: a rostered member books regardless of tier", async () => {
+  it("a rostered member on a plan the class excludes is refused on the plan (both must hold, 20 Oct 2026)", async () => {
     h.rosterCount.mockResolvedValue(4);
     h.rosterFindFirst.mockResolvedValue({ id: "r-1" });
+    const res = await book();
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { reason: string }).reason).toBe("tier_not_included");
+    expect(h.subCreate).not.toHaveBeenCalled();
+    expect(h.order).toEqual(["lock", "tiers"]);
+  });
+
+  it("a rostered member on an included plan books", async () => {
+    h.rosterCount.mockResolvedValue(4);
+    h.rosterFindFirst.mockResolvedValue({ id: "r-1" });
+    h.memberFindFirst.mockResolvedValue({ membershipTierId: "t-adv", membershipTier: { name: "Advanced Unlimited" } });
     expect((await book()).status).toBe(201);
     expect(h.subCreate).toHaveBeenCalled();
-    expect(h.tierFindMany).not.toHaveBeenCalled();
   });
 
   it("a member not on a roster class's roster is refused with the check-in's roster sentence, whatever their plan", async () => {

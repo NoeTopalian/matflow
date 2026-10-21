@@ -76,9 +76,10 @@ vi.mock("@/lib/prisma", () => ({
     memberClassPack: { update: packUpdateMock },
     member: { findFirst: memberFindFirstMock },
     classInstance: { findFirst: classInstanceFindFirstMock },
-    // T6a: the coach mark takes the Class row lock and reads the class's
-    // membership list (none here, so the tier ask is open).
+    // The coach mark takes the Class row lock and reads the class's squad
+    // list and membership list (neither here, so the class is open).
     $queryRaw: vi.fn(async () => []),
+    classRoster: { count: vi.fn(async () => 0), findUnique: vi.fn(async () => null) },
     classMembershipTier: { findMany: vi.fn(async () => []) },
   },
 }));

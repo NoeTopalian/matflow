@@ -8,7 +8,7 @@
  * Pure: no I/O, no Next imports, unit-tested in tests/unit/checkin-refusal.test.ts.
  */
 import type { PerformCheckinResult as CheckinResult } from "@/lib/checkin";
-import { tierRefusalSentence } from "@/lib/class-tier-gate";
+import { tierRefusalSentence, ROSTER_REFUSAL_SENTENCE } from "@/lib/class-tier-gate";
 import { classNotLiveSentence } from "@/lib/class-live";
 
 export type CheckinRefusalReason =
@@ -31,7 +31,7 @@ export type CheckinRefusalReason =
 
 export type CheckinRefusal = {
   status: 402 | 403 | 404 | 409;
-  body: { error: string; reason: CheckinRefusalReason; askable?: boolean };
+  body: { error: string; reason: CheckinRefusalReason };
 };
 
 function ukDate(d: Date): string {
@@ -112,7 +112,7 @@ export function checkinRefusal(
     case "duplicate":
       return { status: 409, body: { error: "Already checked in", reason: "already_checked_in" } };
     case "roster_not_listed":
-      return { status: 403, body: { error: "You're not on the roster for this class.", reason: "roster_not_listed" } };
+      return { status: 403, body: { error: ROSTER_REFUSAL_SENTENCE, reason: "roster_not_listed" } };
     case "waiver_unsigned":
       return {
         status: 403,
@@ -142,15 +142,11 @@ export function checkinRefusal(
         },
       };
     case "tier_not_included":
-      // T6a: names the class and the plan. On a staff door the answer is
-      // askable: the register / scanner may confirm and admit anyway.
+      // T6a: names the class and the plan. Every door refuses with this
+      // sentence, staff doors included (no override, 20 Oct 2026).
       return {
         status: 403,
-        body: {
-          error: tierRefusalSentence(result.className, result.tierName),
-          reason: "tier_not_included",
-          ...(result.askable ? { askable: true } : {}),
-        },
+        body: { error: tierRefusalSentence(result.className, result.tierName), reason: "tier_not_included" },
       };
     case "member_not_found":
       return { status: 404, body: { error: "Member not found", reason: "member_not_found" } };

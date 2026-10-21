@@ -1,16 +1,19 @@
 /**
- * T6a: class eligibility by membership tier, inside the single check-in engine.
+ * Class eligibility inside the single check-in engine: the membership list
+ * (T6a) and the squad list / roster (T6d).
  *
- * Owner decisions (17 Oct 2026):
- *  - no tiers on the class = open, exactly as before (acceptance 1);
- *  - tiers on the class admit members on those tiers; a member with no tier
- *    is not covered (acceptance 2, 6);
- *  - the member app and kiosk refuse ("refuse"); the desk register and card
- *    scanner ask ("ask") and admit only once staff confirm, reporting the
- *    override so the route can record it (acceptance 3, 4);
- *  - a class with a roster is governed by its roster, not its tiers;
+ * Owner decisions (20 Oct 2026, superseding the 17 Oct ask and "roster
+ * decides"):
+ *  - no tiers and no roster on the class = open to everyone, as before;
+ *  - tiers on the class admit only members on those tiers; a member with no
+ *    tier is not covered;
+ *  - a roster admits only members on it;
+ *  - both set = both must hold;
+ *  - NO door overrides either: self, parent, kiosk, the desk register (admin,
+ *    auto) and the card scanner (qr) all refuse, and there is no flag to
+ *    switch the check off;
  *  - a deactivated tier still attached still admits (acceptance 11).
- * The gate runs after the Class row lock, before any write or pack credit.
+ * Both gates run after the Class row lock, before any write or pack credit.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -21,6 +24,7 @@ const h = vi.hoisted(() => ({
   instanceFindFirst: vi.fn(),
   tierFindMany: vi.fn(),
   rosterCount: vi.fn(),
+  rosterFindUnique: vi.fn(),
   packFindFirst: vi.fn(),
   packUpdateMany: vi.fn(),
   queryRaw: vi.fn(),
@@ -32,7 +36,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
     fn({
       member: { findUnique: h.memberFindUnique, findFirst: h.memberFindFirst },
       memberRank: { findFirst: vi.fn().mockResolvedValue(null) },
-      classRoster: { count: h.rosterCount, findUnique: vi.fn().mockResolvedValue({ id: "r-1" }) },
+      classRoster: { count: h.rosterCount, findUnique: h.rosterFindUnique },
       classMembershipTier: { findMany: h.tierFindMany },
       classInstance: { findFirst: h.instanceFindFirst },
       attendanceRecord: { create: h.recordCreate, count: vi.fn().mockResolvedValue(0) },
@@ -69,26 +73,34 @@ function setMember(tierId: string | null) {
   h.memberFindUnique.mockResolvedValue(memberRow(tierId));
   h.memberFindFirst.mockResolvedValue({ membershipTierId: tierId, membershipTier: tierId ? { name: TIER_NAMES[tierId] } : null });
 }
+/** A squad class: `onIt` says whether this member is on the roster. */
+function setRoster(onIt: boolean) {
+  h.rosterCount.mockImplementation(async () => { h.order.push("roster"); return 3; });
+  h.rosterFindUnique.mockResolvedValue(onIt ? { id: "r-1" } : null);
+}
 
 const SELF: PerformCheckinArgs = {
   tenantId: "t-1", memberId: "m-1", classInstanceId: "ci-1", method: "self",
-  enforceRankGate: true, enforceRosterGate: true, enforceTimeWindow: false,
+  enforceRankGate: true, enforceTimeWindow: false,
   requireCoverage: true, enforceCapacity: true, enforceWaiverGate: true, enforceHoldGate: true,
-  enforceKidsGate: true, enforceVenueGate: true, tierGate: "refuse", checkedInByUserId: null,
+  enforceKidsGate: true, enforceVenueGate: true, checkedInByUserId: null,
 };
 const KIOSK: PerformCheckinArgs = { ...SELF, method: "kiosk", requireCoverage: false };
 const DESK: PerformCheckinArgs = {
-  ...SELF, method: "admin", enforceRankGate: false, enforceRosterGate: false, requireCoverage: false,
+  ...SELF, method: "admin", enforceRankGate: false, requireCoverage: false,
   enforceCapacity: false, enforceWaiverGate: false, enforceHoldGate: false, enforceKidsGate: false,
-  enforceVenueGate: false, tierGate: "ask", checkedInByUserId: "u-1",
+  enforceVenueGate: false, checkedInByUserId: "u-1",
 };
+const AUTO: PerformCheckinArgs = { ...DESK, method: "auto" };
 const CARD: PerformCheckinArgs = { ...DESK, method: "qr" };
+const EVERY_DOOR = { SELF, KIOSK, DESK, AUTO, CARD };
 
 beforeEach(() => {
   vi.clearAllMocks();
   h.order.length = 0;
   h.instanceFindFirst.mockResolvedValue(INSTANCE);
-  h.rosterCount.mockResolvedValue(0);
+  h.rosterCount.mockImplementation(async () => { h.order.push("roster"); return 0; });
+  h.rosterFindUnique.mockResolvedValue(null);
   h.tierFindMany.mockImplementation(async () => { h.order.push("tiers"); return [{ tierId: "t-adv" }]; });
   h.queryRaw.mockImplementation(async () => { h.order.push("lock"); return [{ maxCapacity: null }]; });
   h.recordCreate.mockImplementation(async ({ data }: { data: { checkInMethod: string } }) => ({
@@ -99,34 +111,35 @@ beforeEach(() => {
   setMember("t-beg");
 });
 
-describe("tier gate — refusing doors (member app, parent, kiosk)", () => {
+describe("tier gate — every door refuses", () => {
   it("acceptance 2: a Beginners member at an Advanced-only class is refused with the class and plan, and nothing is written", async () => {
     const r = await performCheckin(SELF);
-    expect(r).toEqual({ kind: "tier_not_included", className: "Advanced", tierName: "Beginners Unlimited", askable: false });
+    expect(r).toEqual({ kind: "tier_not_included", className: "Advanced", tierName: "Beginners Unlimited" });
     expect(h.recordCreate).not.toHaveBeenCalled();
     const refusal = checkinRefusal(r)!;
     expect(refusal.status).toBe(403);
-    expect(refusal.body.reason).toBe("tier_not_included");
-    expect(refusal.body.error).toContain("Advanced");
-    expect(refusal.body.error).toContain("Beginners Unlimited");
-    expect(refusal.body.askable).toBeUndefined();
+    expect(refusal.body).toEqual({
+      error: "Advanced isn't included in your Beginners Unlimited membership. Ask staff about a membership that includes it.",
+      reason: "tier_not_included",
+    });
   });
 
-  it("the kiosk gives the same refusal", async () => {
-    const r = await performCheckin(KIOSK);
-    expect(r.kind).toBe("tier_not_included");
+  it.each(Object.entries(EVERY_DOOR))("%s refuses with the same answer and writes nothing", async (_door, args) => {
+    const r = await performCheckin(args);
+    expect(r).toEqual({ kind: "tier_not_included", className: "Advanced", tierName: "Beginners Unlimited" });
     expect(h.recordCreate).not.toHaveBeenCalled();
   });
 
-  it("a member on an included tier is admitted", async () => {
+  it("a member on an included tier is admitted at every door", async () => {
     setMember("t-adv");
-    expect((await performCheckin(SELF)).kind).toBe("success");
-    expect((await performCheckin(KIOSK)).kind).toBe("success");
+    for (const args of Object.values(EVERY_DOOR)) {
+      expect((await performCheckin(args)).kind).toBe("success");
+    }
   });
 
   it("acceptance 6 (owner option: refuse): a member with no tier is not covered", async () => {
     setMember(null);
-    const r = await performCheckin(KIOSK);
+    const r = await performCheckin(DESK);
     expect(r).toMatchObject({ kind: "tier_not_included", tierName: null });
     expect(checkinRefusal(r)!.body.error).toMatch(/don't have a membership plan set/);
   });
@@ -140,69 +153,116 @@ describe("tier gate — refusing doors (member app, parent, kiosk)", () => {
   });
 
   it("is read after the Class row lock (the write-phase re-check)", async () => {
-    await performCheckin(SELF);
+    await performCheckin(DESK);
     expect(h.order.indexOf("lock")).toBeGreaterThanOrEqual(0);
     expect(h.order.indexOf("lock")).toBeLessThan(h.order.indexOf("tiers"));
   });
 });
 
-describe("tier gate — asking doors (register, card scanner)", () => {
-  it("acceptance 3: the desk is asked (askable refusal) until staff confirm", async () => {
-    const r = await performCheckin(DESK);
-    expect(r).toEqual({ kind: "tier_not_included", className: "Advanced", tierName: "Beginners Unlimited", askable: true });
-    expect(checkinRefusal(r)!.body.askable).toBe(true);
+describe("no staff override", () => {
+  // An old register tab or scanner may still send the confirmation. The
+  // engine has no such argument any more: whatever arrives is ignored.
+  const withStaleConfirmation = (args: PerformCheckinArgs) =>
+    ({ ...args, tierOverrideConfirmed: true, tierGate: "ask", enforceRosterGate: false } as unknown as PerformCheckinArgs);
+
+  it.each(Object.entries(EVERY_DOOR))("%s: a tier confirmation flag is ignored and no override is reported", async (_door, args) => {
+    const r = await performCheckin(withStaleConfirmation(args));
+    expect(r.kind).toBe("tier_not_included");
+    expect(r).not.toHaveProperty("overrides");
     expect(h.recordCreate).not.toHaveBeenCalled();
   });
 
-  it("acceptance 3: on confirm the member is admitted and the override is reported", async () => {
-    const r = await performCheckin({ ...DESK, tierOverrideConfirmed: true });
-    expect(r.kind).toBe("success");
-    if (r.kind === "success") expect(r.overrides).toEqual(["tier_not_included"]);
-  });
-
-  it("acceptance 4: the card scanner asks the same way and records the override on confirm", async () => {
-    expect((await performCheckin(CARD)).kind).toBe("tier_not_included");
-    const r = await performCheckin({ ...CARD, tierOverrideConfirmed: true });
-    expect(r.kind).toBe("success");
-    if (r.kind === "success") {
-      expect(r.overrides).toEqual(["tier_not_included"]);
-      expect(r.record.checkInMethod).toBe("qr");
-    }
-  });
-
-  it("a confirmation on an included member records no override", async () => {
+  it("a successful mark never carries an overrides field", async () => {
     setMember("t-adv");
-    const r = await performCheckin({ ...DESK, tierOverrideConfirmed: true });
+    const r = await performCheckin(withStaleConfirmation(DESK));
     expect(r.kind).toBe("success");
-    if (r.kind === "success") expect(r.overrides).toBeUndefined();
+    expect(r).not.toHaveProperty("overrides");
   });
 
-  it("a refusing door ignores a confirmation flag", async () => {
-    expect((await performCheckin({ ...SELF, tierOverrideConfirmed: true })).kind).toBe("tier_not_included");
+  it.each(Object.entries(EVERY_DOOR))("%s: enforceRosterGate: false no longer skips the roster", async (_door, args) => {
+    setRoster(false);
+    setMember("t-adv");
+    expect((await performCheckin(withStaleConfirmation(args))).kind).toBe("roster_not_listed");
   });
 });
 
-describe("tier gate — composition and compatibility", () => {
-  it("acceptance 1: a class with no tiers behaves exactly as before at every door", async () => {
-    h.tierFindMany.mockResolvedValue([]);
-    setMember(null);
-    for (const args of [SELF, KIOSK, DESK, CARD]) {
-      const r = await performCheckin(args);
-      expect(r.kind).toBe("success");
-      if (r.kind === "success") expect(r.overrides).toBeUndefined();
+describe("roster gate — under the Class lock, at every door", () => {
+  it.each(Object.entries(EVERY_DOOR))("%s refuses a member who is not on the roster, after the lock, writing nothing", async (_door, args) => {
+    setRoster(false);
+    setMember("t-adv");
+    const r = await performCheckin(args);
+    expect(r).toEqual({ kind: "roster_not_listed" });
+    expect(h.recordCreate).not.toHaveBeenCalled();
+    expect(h.order.indexOf("lock")).toBeGreaterThanOrEqual(0);
+    expect(h.order.indexOf("lock")).toBeLessThan(h.order.indexOf("roster"));
+    expect(checkinRefusal(r)!.body).toEqual({ error: "You're not on the roster for this class.", reason: "roster_not_listed" });
+  });
+
+  it("reads the roster with the tenant filter (convention: RLS is the backstop, not the defence)", async () => {
+    setRoster(true);
+    setMember("t-adv");
+    await performCheckin(DESK);
+    expect(h.rosterCount).toHaveBeenCalledWith({ where: { tenantId: "t-1", classId: "c-adv" } });
+    expect(h.rosterFindUnique).toHaveBeenCalledWith({
+      where: { classId_memberId: { classId: "c-adv", memberId: "m-1" }, tenantId: "t-1" },
+      select: { id: true },
+    });
+  });
+
+  it("refuses before a pack credit is spent", async () => {
+    setRoster(false);
+    h.memberFindUnique.mockResolvedValue({ ...memberRow("t-adv"), stripeSubscriptionId: null, paymentStatus: "overdue" });
+    expect((await performCheckin(SELF)).kind).toBe("roster_not_listed");
+    expect(h.packUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("both gates combine", () => {
+  it.each(Object.entries(EVERY_DOOR))("%s: a rostered member on a tier the class excludes is refused on the tier", async (_door, args) => {
+    setRoster(true);
+    setMember("t-beg");
+    expect(await performCheckin(args)).toEqual({ kind: "tier_not_included", className: "Advanced", tierName: "Beginners Unlimited" });
+    expect(h.recordCreate).not.toHaveBeenCalled();
+  });
+
+  it("a member on an included tier but not on the roster is refused on the roster", async () => {
+    setRoster(false);
+    setMember("t-adv");
+    expect((await performCheckin(KIOSK)).kind).toBe("roster_not_listed");
+  });
+
+  it("a member failing both reads the roster sentence", async () => {
+    setRoster(false);
+    setMember("t-beg");
+    expect((await performCheckin(SELF)).kind).toBe("roster_not_listed");
+  });
+
+  it("a rostered member on an included tier is admitted at every door", async () => {
+    setRoster(true);
+    setMember("t-adv");
+    for (const args of Object.values(EVERY_DOOR)) {
+      expect((await performCheckin(args)).kind).toBe("success");
     }
   });
 
-  it("a caller that does not opt in is unchanged (gate off)", async () => {
-    const r = await performCheckin({ ...SELF, tierGate: undefined });
-    expect(r.kind).toBe("success");
-    expect(h.tierFindMany).not.toHaveBeenCalled();
+  it("a rostered class with no tiers ticked admits any rostered member, with or without a plan", async () => {
+    setRoster(true);
+    h.tierFindMany.mockResolvedValue([]);
+    setMember(null);
+    expect((await performCheckin(DESK)).kind).toBe("success");
   });
+});
 
-  it("a rostered class is governed by its roster: a rostered member on another tier is admitted", async () => {
-    h.rosterCount.mockResolvedValue(3);
-    const r = await performCheckin(SELF);
-    expect(r.kind).toBe("success");
+describe("composition and compatibility", () => {
+  it("acceptance 1: a class with neither restriction admits everyone at every door, as before", async () => {
+    h.tierFindMany.mockResolvedValue([]);
+    setMember(null);
+    for (const args of Object.values(EVERY_DOOR)) {
+      const r = await performCheckin(args);
+      expect(r.kind).toBe("success");
+      expect(r).not.toHaveProperty("overrides");
+    }
+    expect(h.rosterFindUnique).not.toHaveBeenCalled();
   });
 
   it("acceptance 11: a deactivated tier still attached still admits its members", async () => {

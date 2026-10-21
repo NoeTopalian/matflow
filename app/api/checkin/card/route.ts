@@ -11,10 +11,12 @@
 // WHAT A SCAN IS ALLOWED TO DO
 // ----------------------------
 // A coach standing in front of the class is recording who was actually there,
-// so this runs the ADMIN gate profile: no rank gate, no roster allow-list, no
-// time window, no payment coverage. That matches the manual register on the
-// same screen. It deliberately does NOT match the kiosk, which is a public
-// unattended surface and gates far harder.
+// so this runs the ADMIN gate profile: no rank gate, no time window, no
+// payment coverage. That matches the manual register on the same screen. It
+// deliberately does NOT match the kiosk, which is a public unattended surface
+// and gates far harder. The squad list and the membership list are the
+// exception: they refuse here as at every door (owner decision, 20 Oct 2026),
+// and the card's row carries the sentence the member would read.
 //
 // The permission rule is the one every attendance writer now shares: any
 // staff role may write to any instance in the club. Until 17 Sep 2026 this
@@ -34,7 +36,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { verifyCardToken } from "@/lib/card-token";
 import { performCheckin } from "@/lib/checkin";
 import { logAudit } from "@/lib/audit-log";
-import { tierAskSentence } from "@/lib/class-tier-gate";
+import { checkinRefusal } from "@/lib/checkin-refusal";
 
 /**
  * One request per card is what the client actually sends, so a dropped
@@ -60,10 +62,8 @@ const SCAN_RATE_WINDOW_MS = 5 * 60 * 1000;
 const schema = z.object({
   classInstanceId: z.string().min(1),
   tokens: z.array(z.string().min(1).max(4096)).min(1).max(MAX_TOKENS_PER_REQUEST),
-  // T6a (Q3): the scanner ASKS about a class outside the member's membership.
-  // The coach's "Admit anyway" resends that one card with this confirmation;
-  // the admission is recorded on the card_scan audit row as an override.
-  acknowledged: z.array(z.enum(["tier_not_included"])).max(1).optional(),
+  // There is no `acknowledged`: the scanner never admits past the squad list
+  // or the membership list. An old client's field is stripped by the schema.
 });
 
 /**
@@ -80,9 +80,9 @@ type ScanStatus =
   | "member_not_found"
   | "class_not_found"
   | "class_cancelled"
-  // T6a: the class's memberships do not include this member's plan. Nothing
-  // was recorded; the coach is asked and may resend with `acknowledged`.
-  | "needs_confirmation"
+  // The class's squad list or memberships do not admit this member. Nothing
+  // was recorded and nothing the coach sends admits them.
+  | "refused"
   | "error";
 
 type ScanResult = {
@@ -92,9 +92,9 @@ type ScanResult = {
   status: ScanStatus;
   memberId?: string;
   memberName?: string;
-  /** needs_confirmation only: the machine reason and the question to put to the coach. */
-  reason?: "tier_not_included";
-  question?: string;
+  /** refused only: the machine reason and the sentence the member would read. */
+  reason?: "tier_not_included" | "roster_not_listed";
+  message?: string;
 };
 
 
@@ -116,8 +116,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data" }, { status: 400 });
   }
-  const { classInstanceId, tokens, acknowledged } = parsed.data;
-  const tierConfirmed = !!acknowledged?.includes("tier_not_included");
+  const { classInstanceId, tokens } = parsed.data;
 
   let rl;
   try {
@@ -204,7 +203,6 @@ export async function POST(req: Request) {
   const memberById = new Map(members.map((m) => [m.id, m]));
 
   let recorded = 0;
-  const overrides: { memberId: string; reasons: string[] }[] = [];
   for (const v of verified) {
     const member = memberById.get(v.memberId);
     if (!member) {
@@ -230,7 +228,6 @@ export async function POST(req: Request) {
       method: "qr",
       // Admin profile: a coach is physically present and recording reality.
       enforceRankGate: false,
-      enforceRosterGate: false,
       enforceTimeWindow: false,
       requireCoverage: false,
       // A coach scanning a card IS the staff override — they can see the room.
@@ -240,10 +237,8 @@ export async function POST(req: Request) {
       // card and looking at the person. A waiver missing from the system is a
       // conversation at the desk, not a scanner that stops mid-register.
       enforceWaiverGate: false,
-      // T6a (Q3): the scanner asks rather than admits silently; the coach
-      // confirms and the card is resent with the acknowledgement.
-      tierGate: "ask",
-      tierOverrideConfirmed: tierConfirmed,
+      // The squad list and the membership list refuse here too; the engine
+      // has no flag for them.
       checkedInByUserId: userId,
     });
 
@@ -252,16 +247,17 @@ export async function POST(req: Request) {
       case "success":
         recorded += 1;
         results[v.index] = { ...base, status: "success" };
-        if (outcome.overrides && outcome.overrides.length > 0) {
-          overrides.push({ memberId: member.id, reasons: outcome.overrides });
-        }
         break;
       case "tier_not_included":
+      case "roster_not_listed":
+        // The sentence the member reads at their own door, so the coach can
+        // say the same thing; the remedy is changing the membership or the
+        // squad list, never a resend.
         results[v.index] = {
           ...base,
-          status: "needs_confirmation",
-          reason: "tier_not_included",
-          question: tierAskSentence(member.name, outcome.className, outcome.tierName),
+          status: "refused",
+          reason: outcome.kind,
+          message: checkinRefusal(outcome)!.body.error,
         };
         break;
       case "duplicate":
@@ -277,9 +273,9 @@ export async function POST(req: Request) {
         results[v.index] = { ...base, status: "member_not_found" };
         break;
       default:
-        // rank_below / rank_above / roster_not_listed / waiver_unsigned /
-        // on_hold / outside_window / no_coverage cannot occur with every gate disabled
-        // (the scan is the staff override), so reaching here
+        // rank_below / rank_above / waiver_unsigned / on_hold /
+        // outside_window / no_coverage cannot occur with those gates disabled
+        // (the scan is the staff override for them), so reaching here
         // means something genuinely unexpected. Report it as a failure rather
         // than mapping it to a friendlier status that hides it.
         results[v.index] = { ...base, status: "error" };
@@ -299,8 +295,6 @@ export async function POST(req: Request) {
         scanned: tokens.length,
         recorded,
         memberIds: results.filter((r) => r.status === "success").map((r) => r.memberId),
-        // Members admitted past a gate on the coach's confirmation (T6a).
-        ...(overrides.length > 0 ? { overrides } : {}),
       },
       req,
     });

@@ -4,24 +4,27 @@
 //
 // Behaviour matrix (set by the caller):
 //
-//   method   enforceRankGate  enforceRosterGate  enforceTimeWindow  requireCoverage  enforceCapacity  enforceWaiverGate
-//   ------   ---------------  -----------------  -----------------  ---------------  ---------------  -----------------
-//   admin    false            false              false              false            false            false  (staff override — bypass all gates)
-//   self     true             true               true               true             true             true   (member self-serve)
-//   auto     false            false              false              false            false            false  (cron / system)
-//   kiosk    true             true               true               false            true             true   (iPad at the door — respects window, forgiving on subs)
+//   method   enforceRankGate  enforceTimeWindow  requireCoverage  enforceCapacity  enforceWaiverGate
+//   ------   ---------------  -----------------  ---------------  ---------------  -----------------
+//   admin    false            false              false            false            false  (staff mark — bypasses these gates)
+//   self     true             true               true             true             true   (member self-serve)
+//   auto     false            false              false            false            false  (cron / system)
+//   kiosk    true             true               false            true             true   (iPad at the door — respects window, forgiving on subs)
+//   qr       false            false              false            false            false  (a coach scanning a card)
 //
 //   enforceHoldGate (a membership on hold, lib/member-hold.ts) follows the
 //   waiver column: self and kiosk refuse, staff paths admit. enforceKidsGate
 //   (an adult into a `Class.isKids` class) follows the same line.
-//   qr       false            false              false              false            false            false  (a coach scanning a card IS the staff override)
 //
-// TIER (T6a, Sean note 1): a class with memberships selected
-// (ClassMembershipTier) admits members on those memberships. `tierGate`:
-// self and kiosk "refuse"; the register (admin) and the card scanner (qr)
-// "ask" - refused with an askable answer until staff confirm, then admitted
-// with `overrides: ["tier_not_included"]` for the route to record. A class
-// with no memberships selected, or with a roster, is not tier-gated.
+// CLASS ELIGIBILITY — the squad list (ClassRoster) and the membership list
+// (ClassMembershipTier) — is NOT in the matrix: it has no flag and no
+// override (owner decision, 20 Oct 2026). For EVERY method, inside the write
+// transaction and after the Class row lock, a class with a roster refuses a
+// member who is not on it ("roster_not_listed"), and a class with
+// memberships ticked refuses a member whose plan is not one of them
+// ("tier_not_included"). A class with both requires both; a class with
+// neither is open to everyone. Staff who want someone in change the
+// membership or the squad list through the audited routes instead.
 //
 // CAPACITY, added round 3. `Class.maxCapacity` was enforced at BOOKING only
 // (`/api/member/class-subscriptions/[classId]`, round 1 defect L-F 1) and
@@ -68,7 +71,7 @@ import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
 import { isOnHold } from "@/lib/member-hold";
 import { isOverdue } from "@/lib/overdue";
 import { isAdultAccount } from "@/lib/account-type";
-import { classTierCovers, TIER_OVERRIDE_REASON, type TierGateMode } from "@/lib/class-tier-gate";
+import { classTierCovers } from "@/lib/class-tier-gate";
 import { doorLifecycle } from "@/lib/class-lifecycle";
 
 
@@ -90,10 +93,6 @@ export type PerformCheckinArgs = {
   classInstanceId: string;
   method: CheckinMethod;
   enforceRankGate: boolean;
-  // Task 10: enforce per-class allow-list (ClassRoster). When the class has any
-  // roster rows, the member must be on the roster. Same enforcement profile as
-  // rank gate (admin bypasses; self+kiosk enforce).
-  enforceRosterGate: boolean;
   enforceTimeWindow: boolean;
   requireCoverage: boolean;
   /**
@@ -135,18 +134,6 @@ export type PerformCheckinArgs = {
    */
   enforceKidsGate?: boolean;
   /**
-   * T6a: the class's membership list (ClassMembershipTier). "refuse" for the
-   * member-decided doors (self, parent, kiosk); "ask" for the staff doors
-   * (register, card scanner), which are refused with an askable answer unless
-   * `tierOverrideConfirmed` says staff confirmed, and then admitted with the
-   * override reported in `overrides`. Omitted = "off" (system paths, tests).
-   * Checked inside the write transaction, after the Class row lock, so an
-   * admission honours the list committed before its lock was granted.
-   */
-  tierGate?: TierGateMode;
-  /** Staff saw the "not included in their membership" question and admitted anyway. */
-  tierOverrideConfirmed?: boolean;
-  /**
    * T6b: refuse a session of a PAUSED or ARCHIVED class (Class.isActive false
    * or deletedAt set). The member-decided doors (self, parent, kiosk) pass
    * true: the class is hidden from them, and a session minted before the
@@ -171,8 +158,6 @@ export type PerformCheckinResult =
        * let the room quietly fill past what the coach planned for.
        */
       overCapacity?: { taken: number; maxCapacity: number };
-      /** Gates staff admitted past (T6a: "tier_not_included"). Recorded by the route. */
-      overrides?: Array<typeof TIER_OVERRIDE_REASON>;
     }
   | { kind: "class_not_found" }
   | { kind: "class_full"; taken: number; maxCapacity: number }
@@ -196,8 +181,6 @@ export type PerformCheckinResult =
       kind: "tier_not_included";
       className: string;
       tierName: string | null;
-      /** True on a staff door: staff may admit after confirming. */
-      askable: boolean;
     }
   | {
       kind: "outside_window";
@@ -306,72 +289,72 @@ async function capacityState(
   return { taken, maxCapacity };
 }
 
-export type TierGateState =
-  | { kind: "open"; overridden: boolean }
-  | { kind: "tier_not_included"; className: string; tierName: string | null; askable: boolean };
+/** Why a class turned a member away on eligibility grounds; null = admitted. */
+export type ClassEligibilityRefusal =
+  | { kind: "roster_not_listed" }
+  | { kind: "tier_not_included"; className: string; tierName: string | null };
 
 /**
- * T6a tier gate, run INSIDE the write transaction and AFTER capacityState has
- * taken the Class row lock. The class PATCH takes the same lock before it
- * replaces the tier rows, so a check-in waiting on the lock is judged against
- * the list that committed first. The member's tier is re-read here too, so the
- * admission honours the tier as it stands at write time.
+ * Class eligibility (owner decision, 20 Oct 2026): the squad list AND the
+ * membership list, both enforced, no override. Run INSIDE the write
+ * transaction and AFTER the caller has taken the Class row lock. The class
+ * PATCH rewrites both lists under the same lock, so a check-in waiting on it
+ * is judged against whichever version committed first (the single-member
+ * roster routes do not take that lock; a check-in reads their last commit).
+ * The member's tier is re-read here too, so the answer honours it at write
+ * time.
+ *
+ * The roster is judged first, so a member failing both reads the roster
+ * sentence; then the tier list, which a roster does NOT short-circuit.
  */
-async function tierGateState(
+async function classEligibility(
   tx: Prisma.TransactionClient,
-  args: Pick<PerformCheckinArgs, "tenantId" | "memberId" | "tierGate" | "tierOverrideConfirmed">,
+  tenantId: string,
+  memberId: string,
   classId: string,
   className: string,
-): Promise<TierGateState> {
-  const mode = args.tierGate ?? "off";
-  if (mode === "off") return { kind: "open", overridden: false };
+): Promise<ClassEligibilityRefusal | null> {
+  const rosterCount = await tx.classRoster.count({ where: { tenantId, classId } });
+  if (rosterCount > 0) {
+    const onRoster = await tx.classRoster.findUnique({
+      where: { classId_memberId: { classId, memberId }, tenantId },
+      select: { id: true },
+    });
+    if (!onRoster) return { kind: "roster_not_listed" };
+  }
   const rows = await tx.classMembershipTier.findMany({
-    where: { tenantId: args.tenantId, classId },
+    where: { tenantId, classId },
     select: { tierId: true },
   });
-  if (rows.length === 0) return { kind: "open", overridden: false };
-  // A comp / squad class is governed by its roster (owner decision 17 Oct 2026).
-  const rosterCount = await tx.classRoster.count({ where: { tenantId: args.tenantId, classId } });
+  if (rows.length === 0) return null;
   const member = await tx.member.findFirst({
-    where: { id: args.memberId, tenantId: args.tenantId },
+    where: { id: memberId, tenantId },
     select: { membershipTierId: true, membershipTier: { select: { name: true } } },
   });
   const covered = classTierCovers({
     allowedTierIds: rows.map((r) => r.tierId),
     memberTierId: member?.membershipTierId ?? null,
-    hasRoster: rosterCount > 0,
   });
-  if (covered) return { kind: "open", overridden: false };
-  if (mode === "ask" && args.tierOverrideConfirmed === true) return { kind: "open", overridden: true };
-  return {
-    kind: "tier_not_included",
-    className,
-    tierName: member?.membershipTier?.name ?? null,
-    askable: mode === "ask",
-  };
+  if (covered) return null;
+  return { kind: "tier_not_included", className, tierName: member?.membershipTier?.name ?? null };
 }
 
 /**
- * T6a (Q3) for a staff door that marks without performCheckin (the coach
- * attendance route): the same tier gate in "ask" mode, after the same Class
- * row lock, so the admission is judged against the committed tier list and an
- * override is reported back for the route to record.
+ * Class eligibility for a staff door that marks without performCheckin (the
+ * coach tick route): takes the Class row lock itself, then runs the same
+ * roster + tier check as every other door. Refuse-only — there is no
+ * confirmation that admits past it.
  */
-export async function staffTierAsk(
+export async function lockedClassEligibility(
   tx: Prisma.TransactionClient,
-  args: { tenantId: string; memberId: string; confirmed: boolean },
+  args: { tenantId: string; memberId: string },
   classId: string,
   className: string,
-): Promise<TierGateState> {
+): Promise<ClassEligibilityRefusal | null> {
   await tx.$queryRaw`
     SELECT "id" FROM "Class" WHERE "id" = ${classId} AND "tenantId" = ${args.tenantId} FOR UPDATE
   `;
-  return tierGateState(
-    tx,
-    { tenantId: args.tenantId, memberId: args.memberId, tierGate: "ask", tierOverrideConfirmed: args.confirmed },
-    classId,
-    className,
-  );
+  return classEligibility(tx, args.tenantId, args.memberId, classId, className);
 }
 
 /**
@@ -460,22 +443,8 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     }
   }
 
-  // Task 10: roster gate. If the class has any ClassRoster rows AND the caller
-  // requested enforcement, the member must be on the roster.
-  if (args.enforceRosterGate) {
-    const rosterCount = await withTenantContext(tenantId, (tx) =>
-      tx.classRoster.count({ where: { classId: instance.classId } }),
-    );
-    if (rosterCount > 0) {
-      const onRoster = await withTenantContext(tenantId, (tx) =>
-        tx.classRoster.findUnique({
-          where: { classId_memberId: { classId: instance.classId, memberId } },
-          select: { id: true },
-        }),
-      );
-      if (!onRoster) return { kind: "roster_not_listed" };
-    }
-  }
+  // The roster (squad list) gate is not here: it runs for every method under
+  // the Class row lock, beside the tier gate (classEligibility).
 
   // Time window gate.
   if (args.enforceTimeWindow) {
@@ -578,9 +547,9 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         // Refusing after the decrement would cost the member a class they
         // never attended.
         const cap = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
-        // Tier gate after the lock and before a credit is spent.
-        const tier = await tierGateState(tx, args, instance.classId, instance.class.name);
-        if (tier.kind === "tier_not_included") return tier;
+        // Roster + tier after the lock and before a credit is spent.
+        const refused = await classEligibility(tx, tenantId, memberId, instance.classId, instance.class.name);
+        if (refused) return refused;
         if (cap && args.enforceCapacity && cap.taken >= cap.maxCapacity) {
           return { kind: "class_full" as const, ...cap };
         }
@@ -633,11 +602,10 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
           record,
           creditsRemaining: refreshed?.creditsRemaining ?? 0,
           overCapacity: cap && cap.taken >= cap.maxCapacity ? cap : undefined,
-          tierOverridden: tier.overridden,
         };
       });
 
-      if (result.kind === "tier_not_included") return result;
+      if (result.kind === "tier_not_included" || result.kind === "roster_not_listed") return result;
       if (result.kind === "class_full") {
         return { kind: "class_full", taken: result.taken, maxCapacity: result.maxCapacity };
       }
@@ -650,7 +618,6 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         record: result.record,
         coverage: { kind: "pack", creditsRemaining: result.creditsRemaining },
         ...(result.overCapacity ? { overCapacity: result.overCapacity } : {}),
-        ...(result.tierOverridden ? { overrides: [TIER_OVERRIDE_REASON] } : {}),
       };
     }
 
@@ -658,8 +625,8 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     // is on file — record straight.
     const straight = await withTenantContext(tenantId, async (tx) => {
       const cap = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
-      const tier = await tierGateState(tx, args, instance.classId, instance.class.name);
-      if (tier.kind === "tier_not_included") return tier;
+      const refused = await classEligibility(tx, tenantId, memberId, instance.classId, instance.class.name);
+      if (refused) return refused;
       if (cap && args.enforceCapacity && cap.taken >= cap.maxCapacity) {
         return { kind: "class_full" as const, ...cap };
       }
@@ -678,16 +645,14 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         // A staff override that took the room past its ceiling. The check-in
         // stands; the caller says so.
         overCapacity: cap && cap.taken >= cap.maxCapacity ? cap : undefined,
-        tierOverridden: tier.overridden,
       };
     });
-    if (straight.kind === "tier_not_included") return straight;
+    if (straight.kind === "tier_not_included" || straight.kind === "roster_not_listed") return straight;
     if (straight.kind === "class_full") {
       return { kind: "class_full", taken: straight.taken, maxCapacity: straight.maxCapacity };
     }
     const record = straight.record;
     const overCapacity = straight.overCapacity;
-    const overrides = straight.tierOverridden ? { overrides: [TIER_OVERRIDE_REASON] } : {};
 
     // Pack-redeem opportunistically for kiosk path so credits don't pile up
     // when a member already has a pack but no subscription.
@@ -729,7 +694,6 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
           record,
           coverage: { kind: "pack", creditsRemaining: packResult.creditsRemaining },
           ...(overCapacity ? { overCapacity } : {}),
-          ...overrides,
         };
       }
       return {
@@ -737,7 +701,6 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         record,
         coverage: { kind: "uncovered_kiosk" },
         ...(overCapacity ? { overCapacity } : {}),
-        ...overrides,
       };
     }
 
@@ -746,7 +709,6 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       record,
       coverage: { kind: hasActiveSubscription ? "subscription" : "manual" },
       ...(overCapacity ? { overCapacity } : {}),
-      ...overrides,
     };
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2002") return { kind: "duplicate" };

@@ -1,10 +1,11 @@
-// T6a (Q3): each door hands the engine the right tier mode, and records a
-// staff override the same way existing desk overrides are recorded.
-//  - POST /api/checkin: member/parent "refuse"; staff "ask", confirmed by
-//    acknowledged: ["tier_not_included"], which lands on attendance.mark.
-//  - POST /api/checkin/card: "ask"; an unconfirmed scan is needs_confirmation
-//    with the question; the confirmed resend is admitted and audited.
-//  - POST /api/kiosk/[token]/checkin: "refuse", with the class and plan named.
+// Class eligibility at each door (owner decision, 20 Oct 2026): the
+// membership list and the squad list refuse everywhere, staff doors included,
+// with the sentence the member reads. No door hands the engine a mode or a
+// confirmation, and a stale client's "tier_not_included" confirmation is
+// ignored and recorded nowhere.
+//  - POST /api/checkin: member, parent and staff alike get the 403.
+//  - POST /api/checkin/card: a refused card is "refused" with the sentence.
+//  - POST /api/kiosk/[token]/checkin: the same sentence.
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
 
 process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET ?? "checkin-tier-doors-secret";
@@ -51,10 +52,17 @@ vi.mock("@/lib/prisma-tenant", () => {
 });
 
 const SUCCESS = { kind: "success", record: { id: "rec-1", tenantId: "t1", memberId: "mem-1", classInstanceId: "inst-1", checkInMethod: "admin" }, coverage: { kind: "manual" } };
-const REFUSED = (askable: boolean) => ({ kind: "tier_not_included", className: "Advanced", tierName: "Beginners Unlimited", askable });
+const TIER_REFUSED = { kind: "tier_not_included", className: "Advanced", tierName: "Beginners Unlimited" };
+const ROSTER_REFUSED = { kind: "roster_not_listed" };
+const TIER_SENTENCE = "Advanced isn't included in your Beginners Unlimited membership. Ask staff about a membership that includes it.";
+const ROSTER_SENTENCE = "You're not on the roster for this class.";
+const NO_GATE_ARGS = ["tierGate", "tierOverrideConfirmed", "enforceRosterGate"];
 
 function req(url: string, body: unknown) {
   return new Request(url, { method: "POST", headers: { "Content-Type": "application/json", Origin: "http://test" }, body: JSON.stringify(body) });
+}
+function expectNoGateArgs(args: Record<string, unknown>) {
+  for (const k of NO_GATE_ARGS) expect(args).not.toHaveProperty(k);
 }
 
 beforeEach(() => {
@@ -64,50 +72,68 @@ beforeEach(() => {
 });
 
 describe("POST /api/checkin", () => {
-  it("a member's own check-in is refused (tierGate refuse), 403 tier_not_included naming class and plan", async () => {
-    h.auth.mockResolvedValue({ user: { id: "u-m", role: "member", tenantId: "t1", memberId: "mem-1", email: "m@x" } });
-    h.performCheckin.mockResolvedValue(REFUSED(false));
+  const asMember = () => h.auth.mockResolvedValue({ user: { id: "u-m", role: "member", tenantId: "t1", memberId: "mem-1", email: "m@x" } });
+  const asCoach = () => h.auth.mockResolvedValue({ user: { id: "coach-1", role: "coach", tenantId: "t1" } });
+
+  it("a member's own check-in is refused, 403 tier_not_included naming class and plan", async () => {
+    asMember();
+    h.performCheckin.mockResolvedValue(TIER_REFUSED);
     const { POST } = await import("@/app/api/checkin/route");
     const res = await POST(req("http://test/api/checkin", { classInstanceId: "inst-1" }));
-    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ method: "self", tierGate: "refuse", tierOverrideConfirmed: false });
+    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ method: "self" });
+    expectNoGateArgs(h.performCheckin.mock.calls[0][0]);
     expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.reason).toBe("tier_not_included");
-    expect(body.error).toContain("Advanced");
-    expect(body.error).toContain("Beginners Unlimited");
+    expect(await res.json()).toEqual({ error: TIER_SENTENCE, reason: "tier_not_included" });
   });
 
-  it("a member cannot smuggle a confirmation through acknowledged", async () => {
-    h.auth.mockResolvedValue({ user: { id: "u-m", role: "member", tenantId: "t1", memberId: "mem-1", email: "m@x" } });
-    h.performCheckin.mockResolvedValue(REFUSED(false));
-    const { POST } = await import("@/app/api/checkin/route");
-    await POST(req("http://test/api/checkin", { classInstanceId: "inst-1", acknowledged: ["tier_not_included"] }));
-    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ tierGate: "refuse", tierOverrideConfirmed: false });
-  });
-
-  it("a staff mark asks: unconfirmed is a 403 with askable: true", async () => {
-    h.auth.mockResolvedValue({ user: { id: "coach-1", role: "coach", tenantId: "t1" } });
-    h.performCheckin.mockResolvedValue(REFUSED(true));
+  it("a staff mark is refused with the same sentence the member sees — no askable, nothing audited", async () => {
+    asCoach();
+    h.performCheckin.mockResolvedValue(TIER_REFUSED);
     const { POST } = await import("@/app/api/checkin/route");
     const res = await POST(req("http://test/api/checkin", { classInstanceId: "inst-1", memberId: "mem-1", checkInMethod: "admin" }));
-    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ method: "admin", tierGate: "ask", tierOverrideConfirmed: false });
+    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ method: "admin" });
+    expectNoGateArgs(h.performCheckin.mock.calls[0][0]);
     expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ reason: "tier_not_included", askable: true });
+    expect(await res.json()).toEqual({ error: TIER_SENTENCE, reason: "tier_not_included" });
+    expect(h.logAudit).not.toHaveBeenCalled();
   });
 
-  it("a confirmed staff mark is admitted and the override is on the attendance.mark audit row", async () => {
-    h.auth.mockResolvedValue({ user: { id: "coach-1", role: "coach", tenantId: "t1" } });
-    h.performCheckin.mockResolvedValue({ ...SUCCESS, overrides: ["tier_not_included"] });
+  it("a staff mark of someone not on the squad list is refused with the roster sentence", async () => {
+    asCoach();
+    h.performCheckin.mockResolvedValue(ROSTER_REFUSED);
+    const { POST } = await import("@/app/api/checkin/route");
+    const res = await POST(req("http://test/api/checkin", { classInstanceId: "inst-1", memberId: "mem-1", checkInMethod: "admin" }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: ROSTER_SENTENCE, reason: "roster_not_listed" });
+  });
+
+  it.each([
+    ["staff", () => asCoach(), { memberId: "mem-1", checkInMethod: "admin" }],
+    ["staff auto", () => asCoach(), { memberId: "mem-1", checkInMethod: "auto" }],
+    ["member", () => asMember(), {}],
+  ])("%s: a tier_not_included confirmation is ignored — no 400, nothing passed to the engine, still refused", async (_who, sign, extra) => {
+    sign();
+    h.performCheckin.mockResolvedValue(TIER_REFUSED);
+    const { POST } = await import("@/app/api/checkin/route");
+    const res = await POST(req("http://test/api/checkin", { classInstanceId: "inst-1", ...extra, acknowledged: ["tier_not_included"] }));
+    expect(res.status).toBe(403);
+    expectNoGateArgs(h.performCheckin.mock.calls[0][0]);
+    expect(h.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("a staff mark that succeeds records no tier override, even when the old confirmation was sent", async () => {
+    asCoach();
+    h.performCheckin.mockResolvedValue(SUCCESS);
     const { POST } = await import("@/app/api/checkin/route");
     const res = await POST(req("http://test/api/checkin", {
-      classInstanceId: "inst-1", memberId: "mem-1", checkInMethod: "admin", acknowledged: ["tier_not_included"],
+      classInstanceId: "inst-1", memberId: "mem-1", checkInMethod: "admin", acknowledged: ["on_hold", "tier_not_included"],
     }));
     expect(res.status).toBe(201);
-    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ tierGate: "ask", tierOverrideConfirmed: true });
-    expect(h.logAudit.mock.calls[0][0]).toMatchObject({
-      action: "attendance.mark",
-      metadata: { acknowledged: ["tier_not_included"], overrides: ["tier_not_included"] },
-    });
+    const audit = h.logAudit.mock.calls[0][0] as { action: string; metadata: Record<string, unknown> };
+    expect(audit.action).toBe("attendance.mark");
+    // The other asks are kept exactly as they are; the tier one is gone.
+    expect(audit.metadata.acknowledged).toEqual(["on_hold"]);
+    expect(audit.metadata).not.toHaveProperty("overrides");
   });
 });
 
@@ -125,47 +151,71 @@ describe("POST /api/checkin/card", () => {
     h.memberFindMany.mockResolvedValue([{ id: "mem-1", name: "Ava Green", cardVersion: 1 }]);
   });
 
-  it("an unconfirmed scan asks: needs_confirmation with the question, nothing recorded", async () => {
-    h.performCheckin.mockResolvedValue(REFUSED(true));
+  it("a card for a plan the class excludes is refused with the member's sentence; nothing recorded or audited", async () => {
+    h.performCheckin.mockResolvedValue(TIER_REFUSED);
     const token = signCardToken({ tenantId: "t1", memberId: "mem-1", cardVersion: 1 });
     const body = await (await POST(cardReq({ classInstanceId: "inst-1", tokens: [token] }))).json();
-    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ method: "qr", tierGate: "ask", tierOverrideConfirmed: false });
+    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ method: "qr" });
+    expectNoGateArgs(h.performCheckin.mock.calls[0][0]);
     expect(body.recorded).toBe(0);
-    expect(body.results[0]).toMatchObject({
-      status: "needs_confirmation",
-      reason: "tier_not_included",
-      question: "Advanced isn't included in Ava Green's Beginners Unlimited membership. Admit anyway?",
+    expect(body.results[0]).toEqual({
+      index: 0, memberId: "mem-1", memberName: "Ava Green",
+      status: "refused", reason: "tier_not_included", message: TIER_SENTENCE,
     });
     expect(h.logAudit).not.toHaveBeenCalled();
   });
 
-  it("the confirmed resend is admitted and the override is on the card_scan audit row", async () => {
-    h.performCheckin.mockResolvedValue({ ...SUCCESS, overrides: ["tier_not_included"] });
+  it("a card for someone not on the squad list is refused with the roster sentence", async () => {
+    h.performCheckin.mockResolvedValue(ROSTER_REFUSED);
+    const token = signCardToken({ tenantId: "t1", memberId: "mem-1", cardVersion: 1 });
+    const body = await (await POST(cardReq({ classInstanceId: "inst-1", tokens: [token] }))).json();
+    expect(body.results[0]).toMatchObject({ status: "refused", reason: "roster_not_listed", message: ROSTER_SENTENCE });
+  });
+
+  it("a resend carrying the old confirmation is ignored: still refused, no override anywhere", async () => {
+    h.performCheckin.mockResolvedValue(TIER_REFUSED);
     const token = signCardToken({ tenantId: "t1", memberId: "mem-1", cardVersion: 1 });
     const body = await (await POST(cardReq({ classInstanceId: "inst-1", tokens: [token], acknowledged: ["tier_not_included"] }))).json();
-    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ tierGate: "ask", tierOverrideConfirmed: true });
+    expectNoGateArgs(h.performCheckin.mock.calls[0][0]);
+    expect(body.results[0].status).toBe("refused");
+    expect(h.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("an admitted card's card_scan audit row carries no overrides", async () => {
+    h.performCheckin.mockResolvedValue({ ...SUCCESS, record: { ...SUCCESS.record, checkInMethod: "qr" } });
+    const token = signCardToken({ tenantId: "t1", memberId: "mem-1", cardVersion: 1 });
+    const body = await (await POST(cardReq({ classInstanceId: "inst-1", tokens: [token], acknowledged: ["tier_not_included"] }))).json();
     expect(body.results[0].status).toBe("success");
-    expect(h.logAudit.mock.calls[0][0]).toMatchObject({
-      action: "attendance.card_scan",
-      metadata: { overrides: [{ memberId: "mem-1", reasons: ["tier_not_included"] }] },
-    });
+    const audit = h.logAudit.mock.calls[0][0] as { action: string; metadata: Record<string, unknown> };
+    expect(audit.action).toBe("attendance.card_scan");
+    expect(audit.metadata).not.toHaveProperty("overrides");
   });
 });
 
 describe("POST /api/kiosk/[token]/checkin", () => {
-  it("refuses with the class and plan named", async () => {
+  const kiosk = async () => {
     h.tenantFindFirst.mockResolvedValue({ id: "t1", subscriptionStatus: "active", deletedAt: null });
     h.verifyKioskMemberToken.mockReturnValue({ ok: true, memberId: "mem-1" });
-    h.performCheckin.mockResolvedValue(REFUSED(false));
     const { POST } = await import("@/app/api/kiosk/[token]/checkin/route");
-    const res = await POST(
+    return POST(
       req("http://test/api/kiosk/x/checkin", { kioskMemberToken: "kiosk-member-token", classInstanceId: "inst-1" }),
       { params: Promise.resolve({ token: "a".repeat(32) }) },
     );
-    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ method: "kiosk", tierGate: "refuse" });
+  };
+
+  it("refuses with the class and plan named", async () => {
+    h.performCheckin.mockResolvedValue(TIER_REFUSED);
+    const res = await kiosk();
+    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ method: "kiosk" });
+    expectNoGateArgs(h.performCheckin.mock.calls[0][0]);
     expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.reason).toBe("tier_not_included");
-    expect(body.error).toBe("Advanced isn't included in your Beginners Unlimited membership. Ask staff about a membership that includes it.");
+    expect(await res.json()).toEqual({ error: TIER_SENTENCE, reason: "tier_not_included" });
+  });
+
+  it("refuses a member not on the squad list with the same roster sentence", async () => {
+    h.performCheckin.mockResolvedValue(ROSTER_REFUSED);
+    const res = await kiosk();
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: ROSTER_SENTENCE, reason: "roster_not_listed" });
   });
 });

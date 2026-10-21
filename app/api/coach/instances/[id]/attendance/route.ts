@@ -4,17 +4,15 @@ import { z } from "zod";
 import { requireApiStaff } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
-import { restorePackCreditsForAttendance, staffTierAsk } from "@/lib/checkin";
+import { restorePackCreditsForAttendance, lockedClassEligibility } from "@/lib/checkin";
 import { checkinRefusal } from "@/lib/checkin-refusal";
-import { TIER_OVERRIDE_REASON } from "@/lib/class-tier-gate";
 
+// No `acknowledged`: the squad list and the membership list refuse a tick as
+// they refuse every door (owner decision, 20 Oct 2026). An old client's field
+// is stripped by the schema and admits no one.
 const schema = z.object({
   memberId: z.string().min(1),
   attended: z.boolean(),
-  // T6a (Q3): the gates staff confirmed, as POST /api/checkin takes them.
-  // "tier_not_included" admits a member whose plan the class's memberships
-  // do not include; the admission is recorded as an override.
-  acknowledged: z.array(z.string().max(40)).max(10).optional(),
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -30,7 +28,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid data" }, { status: 400 });
-  const tierConfirmed = parsed.data.acknowledged?.includes(TIER_OVERRIDE_REASON) === true;
 
   try {
     const outcome = await withTenantContext(tenantId, async (tx) => {
@@ -57,20 +54,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
           select: { id: true },
         });
-        // T6a (Q3): a staff door ASKS when the class's memberships do not
-        // include the member's plan, exactly as the desk register does. Only
-        // when the tick would admit someone: a member already in is not
-        // re-judged.
-        let tierOverridden = false;
+        // The squad list and the membership list, under the Class row lock,
+        // refuse-only, exactly as every other door. Only when the tick would
+        // admit someone: a tick on a member already in writes nothing, so it
+        // is not re-judged.
         if (!existing) {
-          const tier = await staffTierAsk(
+          const refused = await lockedClassEligibility(
             tx,
-            { tenantId, memberId: member.id, confirmed: tierConfirmed },
+            { tenantId, memberId: member.id },
             instance.classId,
             instance.class.name,
           );
-          if (tier.kind === "tier_not_included") return tier;
-          tierOverridden = tier.overridden;
+          if (refused) return refused;
         }
         const record = await tx.attendanceRecord.upsert({
           where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
@@ -92,13 +87,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // A row another device created between the read and the upsert hits
         // the no-op update branch; it is ours only if it reads as this tick's.
         const created = !existing && record.checkInMethod === "admin" && record.checkedInById === userId;
-        return {
-          kind: "marked" as const,
-          memberId: member.id,
-          recordId: record.id,
-          created,
-          overrides: created && tierOverridden ? [TIER_OVERRIDE_REASON] : [],
-        };
+        return { kind: "marked" as const, memberId: member.id, recordId: record.id, created };
       } else {
         // Unmark is the inverse of a check-in: if the attendance was covered
         // by a class pack, the credit goes back in the same transaction
@@ -114,14 +103,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           await tx.attendanceRecord.deleteMany({ where: { id: { in: ids } } });
         }
       }
-      return { kind: "marked" as const, memberId: member.id, recordId: null, created: false, overrides: [] as string[] };
+      return { kind: "marked" as const, memberId: member.id, recordId: null, created: false };
     });
 
     if (outcome === "no-instance") return NextResponse.json({ error: "Class not found" }, { status: 404 });
     if (outcome === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
-    if (outcome.kind === "tier_not_included") {
-      // The askable answer the register reads: confirm, then send
-      // acknowledged: ["tier_not_included"] to admit.
+    if (outcome.kind === "tier_not_included" || outcome.kind === "roster_not_listed") {
+      // The sentence the member reads at their own door. Nothing was written.
       const refusal = checkinRefusal(outcome)!;
       return NextResponse.json(refusal.body, { status: refusal.status });
     }
@@ -132,11 +120,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       entityType: "AttendanceRecord",
       entityId: `${classInstanceId}:${outcome.memberId}`,
       metadata: parsed.data.attended
-        ? {
-            classInstanceId, memberId: outcome.memberId, recordId: outcome.recordId, created: outcome.created,
-            // The gates staff admitted past, as POST /api/checkin records them.
-            ...(outcome.overrides.length > 0 ? { overrides: outcome.overrides } : {}),
-          }
+        ? { classInstanceId, memberId: outcome.memberId, recordId: outcome.recordId, created: outcome.created }
         : { classInstanceId, memberId: outcome.memberId },
       req,
     });

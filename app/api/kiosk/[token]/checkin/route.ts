@@ -17,7 +17,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { verifyKioskMemberToken } from "@/lib/kiosk-token";
 import { performCheckin } from "@/lib/checkin";
 import { KIDS_CLASS_REFUSAL } from "@/lib/checkin-refusal";
-import { tierRefusalSentence } from "@/lib/class-tier-gate";
+import { tierRefusalSentence, ROSTER_REFUSAL_SENTENCE } from "@/lib/class-tier-gate";
 import { classNotLiveSentence } from "@/lib/class-live";
 import { logAudit } from "@/lib/audit-log";
 import { normaliseIp, summariseUa } from "@/lib/login-fingerprint";
@@ -90,8 +90,7 @@ export async function POST(
     classInstanceId,
     method: "kiosk",
     enforceRankGate: true,        // default #1: rank gates enforced
-    enforceRosterGate: true,      // default #1b: roster (allow-list) enforced
-    enforceTimeWindow: true,      // kiosk respects the configured check-in window
+    enforceTimeWindow: true,     // kiosk respects the configured check-in window
     requireCoverage: false,       // default #2: forgiving on subs
     // The iPad at the door is the MEMBER deciding, with no one to look at the
     // room, so the ceiling holds here exactly as it does for self check-in.
@@ -109,9 +108,8 @@ export async function POST(
     // The tablet is a member-decided path: a venue-bound tier does not open
     // a class at another venue (ADR-001 D2 slice 2).
     enforceVenueGate: true,
-    // T6a: a class whose memberships do not include the member's plan is
-    // refused at the tablet with the class and the plan named (Q3).
-    tierGate: "refuse",
+    // The squad list and the membership list need no flag: the engine
+    // refuses on both at every door, the tablet included.
     // T6b: a paused or archived class is not offered at the tablet, and a
     // session minted before the pause is refused by instance id too.
     enforceClassStateGate: true,
@@ -188,16 +186,15 @@ export async function POST(
         { status: 409 },
       );
     case "roster_not_listed":
-      // The kiosk asks for this gate (`enforceRosterGate: true`) and then had
-      // no case for its answer, so a comp class working exactly as configured
-      // fell through `default:` to a 500 and the tablet blamed itself. Same
-      // sentence as the staff route, so the two surfaces agree about the same
-      // state.
+      // The kiosk once had no case for this answer, so a comp class working
+      // exactly as configured fell through `default:` to a 500 and the tablet
+      // blamed itself. Same sentence as the staff route, so the two surfaces
+      // agree about the same state.
       // T6d: the machine-readable reason, as the staff route sends. The kiosk
       // search no longer offers a squad class to a member who is not on it,
       // so this answer is now reached only by a direct POST.
       return NextResponse.json(
-        { error: "You're not on the roster for this class.", reason: "roster_not_listed" },
+        { error: ROSTER_REFUSAL_SENTENCE, reason: "roster_not_listed" },
         { status: 403 },
       );
     case "waiver_unsigned":
