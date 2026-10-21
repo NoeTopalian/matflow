@@ -13,7 +13,7 @@ import { classTierCovers, tierRefusalSentence } from "@/lib/class-tier-gate";
 import { classNotLiveSentence } from "@/lib/class-live";
 import { doorLifecycle } from "@/lib/class-lifecycle";
 import { checkinRefusal } from "@/lib/checkin-refusal";
-import { allowanceVerdict, allowanceBookingSentence, nowMinute, slotMinute } from "@/lib/class-allowance";
+import { allowanceVerdict, allowanceBookingNotice, nowMinute, slotMinute } from "@/lib/class-allowance";
 import { readAllowanceSnapshot } from "@/lib/class-allowance-count";
 import { usableTimezone } from "@/lib/class-time";
 
@@ -111,21 +111,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
         }
       }
 
-      // T7: the plan allowance, as the member app's check-in judges it. A
-      // booking is a standing place, not an attendance, so it is judged for
-      // the class's next session (or now, when none is scheduled yet): a
-      // member whose allowance is used up for that session is told the count
-      // and when the next class frees up, and can book from then.
       // A member who already holds this booking (a re-tap, a client retry)
-      // keeps the idempotent success: the allowance is not re-judged for a
-      // place they already have.
+      // keeps the idempotent success.
       const already = await tx.classSubscription.findFirst({
         where: { classId, memberId: r.memberId },
         select: { id: true },
       });
       if (already) return "ok" as const;
-      const allowance = await bookingAllowance(tx, r.tenantId, r.memberId, classId);
-      if (allowance) return { kind: "allowance" as const, ...allowance };
 
       const { maxCapacity } = locked[0];
       if (maxCapacity !== null) {
@@ -141,7 +133,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
       await tx.classSubscription.create({
         data: { memberId: r.memberId, classId },
       });
-      return "ok" as const;
+      // T7 (owner decision, 20 Oct 2026): a booking consumes nothing and is
+      // never refused for the allowance — only confirmed attendance counts,
+      // and a booking is not a guarantee of admission. The member is told
+      // what the door will say: the class's next session (or now, when none
+      // is scheduled yet) is judged, and a used-up period becomes a notice
+      // on the booked state, not a refusal.
+      const allowance = await bookingAllowance(tx, r.tenantId, r.memberId, classId);
+      return { kind: "booked" as const, allowanceNotice: allowance ? allowanceBookingNotice(allowance) : null };
     });
     if (created === "no-class") return NextResponse.json({ error: "Class not found" }, { status: 404 });
     if (created === "not-rostered") {
@@ -161,12 +160,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
         { status: 403 },
       );
     }
-    if (typeof created === "object" && created.kind === "allowance") {
-      return NextResponse.json(
-        { error: allowanceBookingSentence(created), reason: "allowance_reached" },
-        { status: 403 },
-      );
-    }
     if (created === "full") {
       return NextResponse.json(
         {
@@ -176,19 +169,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
         { status: 409 },
       );
     }
+    if (typeof created === "object" && created.kind === "booked") {
+      return NextResponse.json({ success: true, classId, allowanceNotice: created.allowanceNotice }, { status: 201 });
+    }
   } catch (e: unknown) {
     // Idempotent: re-subscribe is a no-op via @@unique([memberId, classId])
     if ((e as { code?: string }).code !== "P2002") {
       return NextResponse.json({ error: "Failed to subscribe" }, { status: 500 });
     }
   }
-  return NextResponse.json({ success: true, classId }, { status: 201 });
+  return NextResponse.json({ success: true, classId, allowanceNotice: null }, { status: 201 });
 }
 
 /**
- * T7: the allowance verdict for a booking, or null when the plan allows it
- * (or is Unlimited). Judged at the class's next session that has not started
- * yet in the club's clock; with none scheduled, at now.
+ * T7: the allowance verdict for a booking when the plan's period is already
+ * used up, or null when it allows the session (or is Unlimited). Judged at
+ * the class's next session that has not started yet in the club's clock;
+ * with none scheduled, at now. Informational only: see POST.
  */
 async function bookingAllowance(
   tx: Prisma.TransactionClient,
@@ -220,9 +217,7 @@ async function bookingAllowance(
   });
   if (!snap?.allowance) return null;
   const v = allowanceVerdict(snap.allowance, next ? slotMinute(next) : nowAt, snap.visits);
-  return v.exhausted
-    ? { used: v.used, limit: v.limit, weeks: v.weeks, nextFree: v.nextFree, ...(v.around ? { around: true as const } : {}) }
-    : null;
+  return v.exhausted ? v : null;
 }
 
 export async function DELETE(req: Request, ctx: { params: Promise<{ classId: string }> }) {

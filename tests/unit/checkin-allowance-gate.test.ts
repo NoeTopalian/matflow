@@ -1,11 +1,14 @@
 /**
  * T7 (Sean note 5): the class allowance inside the single check-in engine.
  *
- * Owner decisions (17 Oct 2026):
+ * Owner decisions (17 and 20 Oct 2026):
  *  - enforced as soon as a plan has a limit; blank = Unlimited;
- *  - member app and kiosk refuse with the count and the date it frees up;
- *    the desk register and the card scanner ask, and an admission is reported
- *    as the "allowance_reached" override with the count;
+ *  - the allowance resets on an explicit basis (each week, each calendar
+ *    month, every N weeks from a start date), never a rolling window: a
+ *    session is judged against the period IT falls in;
+ *  - member app and kiosk refuse with the count and the date it resets; the
+ *    desk register and the card scanner ask, and an admission is reported as
+ *    the "allowance_reached" override with the count;
  *  - counted rows: not imports, not cancelled sessions, not class-pack
  *    redemptions; a check-in a pack pays for is not gated;
  *  - CONCURRENCY: inside the write transaction, Class FOR UPDATE, then the
@@ -17,7 +20,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 type CRow = {
   classLimit: number | null;
+  classLimitBasis: string | null;
   classLimitWeeks: number | null;
+  classLimitAnchor: string | null;
   maxClassesPerWeek: number | null;
   alreadyIn: boolean;
   visits: Array<{ d: number; s: string }>;
@@ -68,9 +73,16 @@ const INSTANCE = {
 };
 
 function cRow(over: Partial<CRow> = {}): CRow {
-  return { classLimit: null, classLimitWeeks: null, maxClassesPerWeek: null, alreadyIn: false, visits: [], ...over };
+  return {
+    classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null, maxClassesPerWeek: null,
+    alreadyIn: false, visits: [], ...over,
+  };
 }
-/** Four counted visits inside the 4 weeks before Monday 19 Oct 18:00. */
+/** 4 classes every 4 weeks, periods counted from Monday 28 September: the session (Mon 19 Oct) is in 28 Sep – 26 Oct. */
+const FOUR_IN_FOUR = { classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4, classLimitAnchor: "2026-09-28" };
+const PERIOD = { start: "2026-09-28", end: "2026-10-26" };
+const FACTS = { used: 4, limit: 4, basis: "weeks", weeks: 4, period: PERIOD, resetsOn: "2026-10-26" };
+/** Four counted visits inside that period, before Monday 19 Oct 18:00. */
 const FOUR_VISITS = [
   { d: DAY("2026-10-05"), s: "18:00" },
   { d: DAY("2026-10-12"), s: "07:00" },
@@ -109,7 +121,7 @@ beforeEach(() => {
   h.order.length = 0;
   h.sql.length = 0;
   h.memberRows = [{ id: "m-1" }];
-  h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: FOUR_VISITS });
+  h.cRow = cRow({ ...FOUR_IN_FOUR, visits: FOUR_VISITS });
   h.instanceFindFirst.mockResolvedValue(INSTANCE);
   h.memberFindUnique.mockResolvedValue(memberRow());
   h.queryRaw.mockImplementation(async (strings: unknown) => {
@@ -131,18 +143,15 @@ beforeEach(() => {
 });
 
 describe("refusing doors (member app, parent, kiosk)", () => {
-  it("the member app refuses the fifth class in 4 weeks, names the count and the free date, and writes nothing", async () => {
+  it("the member app refuses the fifth class of the period, names the count and the reset date, and writes nothing", async () => {
     const r = await performCheckin(SELF);
-    expect(r).toEqual({
-      kind: "allowance_reached", askable: false, used: 4, limit: 4, weeks: 4,
-      nextFree: { date: "2026-11-02", time: "18:00" },
-    });
+    expect(r).toEqual({ kind: "allowance_reached", askable: false, ...FACTS });
     expect(h.recordCreate).not.toHaveBeenCalled();
     const refusal = checkinRefusal(r)!;
     expect(refusal.status).toBe(403);
     expect(refusal.body).toMatchObject({
       reason: "allowance_reached",
-      error: "4 of 4 classes used in the last 4 weeks; next free on Monday 2 November from 18:00. Ask staff if you need to train before then.",
+      error: "4 of 4 classes used this 4-week period; it resets on Monday 26 October. Ask staff if you need to train before then.",
     });
     expect(refusal.body.askable).toBeUndefined();
   });
@@ -153,11 +162,41 @@ describe("refusing doors (member app, parent, kiosk)", () => {
     expect(h.recordCreate).not.toHaveBeenCalled();
   });
 
-  it("admits while the rolling total is within the allowance (several in one week)", async () => {
-    h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: FOUR_VISITS.slice(1) });
+  it("admits while the period's count is within the allowance (several in one week)", async () => {
+    h.cRow = cRow({ ...FOUR_IN_FOUR, visits: FOUR_VISITS.slice(1) });
     const r = await performCheckin(SELF);
     expect(r.kind).toBe("success");
     if (r.kind === "success") expect(r.overrides).toBeUndefined();
+  });
+
+  it("judges the period the session falls in, not a window ending at the session (never a rolling window)", async () => {
+    // Four visits in the previous period (22–25 Sep). A rolling 4 weeks before
+    // Mon 19 Oct would count them; the period 28 Sep – 26 Oct holds none.
+    h.cRow = cRow({
+      ...FOUR_IN_FOUR,
+      visits: ["2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25"].map((d) => ({ d: DAY(d), s: "18:00" })),
+    });
+    expect((await performCheckin(SELF)).kind).toBe("success");
+  });
+
+  it("a visit recorded in a later period never counts against this session's period (an undo lands in its own period)", async () => {
+    h.cRow = cRow({ ...FOUR_IN_FOUR, visits: [...FOUR_VISITS.slice(1), { d: DAY("2026-10-27"), s: "18:00" }] });
+    expect((await performCheckin(SELF)).kind).toBe("success");
+  });
+
+  it("a calendar-month allowance resets on the 1st", async () => {
+    h.cRow = cRow({
+      classLimit: 8, classLimitBasis: "month",
+      visits: [1, 2, 5, 6, 7, 8, 12, 14].map((day) => ({ d: DAY(`2026-10-${String(day).padStart(2, "0")}`), s: "18:00" })),
+    });
+    const r = await performCheckin(SELF);
+    expect(r).toMatchObject({
+      kind: "allowance_reached", used: 8, limit: 8, basis: "month",
+      period: { start: "2026-10-01", end: "2026-11-01" }, resetsOn: "2026-11-01",
+    });
+    expect(checkinRefusal(r)!.body.error).toBe(
+      "8 of 8 classes used this month; it resets on Sunday 1 November. Ask staff if you need to train before then.",
+    );
   });
 
   it("an Unlimited plan is never refused", async () => {
@@ -165,14 +204,27 @@ describe("refusing doors (member app, parent, kiosk)", () => {
     expect((await performCheckin(SELF)).kind).toBe("success");
   });
 
-  it("reads an existing maxClassesPerWeek as N per 1 week until the owner edits the plan", async () => {
-    h.cRow = cRow({ maxClassesPerWeek: 2, visits: [{ d: DAY("2026-10-13"), s: "18:00" }, { d: DAY("2026-10-15"), s: "18:00" }] });
+  it("a limit with no basis is Unlimited (the reader rule never guesses a window)", async () => {
+    h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: [...FOUR_VISITS, ...FOUR_VISITS] });
+    expect((await performCheckin(SELF)).kind).toBe("success");
+  });
+
+  it("reads an existing maxClassesPerWeek as N each calendar week (Monday to Sunday) until the owner edits the plan", async () => {
+    // Mon 19 Oct 07:00 and Wed 21 Oct are in the session's week (19–25 Oct); Thu 15 Oct is in the week before.
+    h.cRow = cRow({
+      maxClassesPerWeek: 2,
+      visits: [{ d: DAY("2026-10-15"), s: "18:00" }, { d: DAY("2026-10-19"), s: "07:00" }, { d: DAY("2026-10-21"), s: "18:00" }],
+    });
     const r = await performCheckin(SELF);
-    expect(r).toMatchObject({ kind: "allowance_reached", used: 2, limit: 2, weeks: 1 });
+    expect(r).toMatchObject({
+      kind: "allowance_reached", used: 2, limit: 2, basis: "week",
+      period: { start: "2026-10-19", end: "2026-10-26" }, resetsOn: "2026-10-26",
+    });
+    expect(r).not.toHaveProperty("weeks");
   });
 
   it("a member already in this session is told so, not that the allowance is used", async () => {
-    h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: FOUR_VISITS, alreadyIn: true });
+    h.cRow = cRow({ ...FOUR_IN_FOUR, visits: FOUR_VISITS, alreadyIn: true });
     expect(await performCheckin(SELF)).toEqual({ kind: "duplicate" });
     expect(h.recordCreate).not.toHaveBeenCalled();
   });
@@ -183,7 +235,7 @@ describe("asking doors (desk register, card scanner)", () => {
     const r = await performCheckin(DESK);
     expect(r).toMatchObject({ kind: "allowance_reached", askable: true, used: 4, limit: 4 });
     expect(h.recordCreate).not.toHaveBeenCalled();
-    expect(checkinRefusal(r)!.body).toMatchObject({ askable: true, allowance: { used: 4, limit: 4, weeks: 4 } });
+    expect(checkinRefusal(r)!.body).toMatchObject({ askable: true, allowance: FACTS });
   });
 
   it("confirmed, the desk admits and reports the override with the count for the audit row", async () => {
@@ -191,7 +243,7 @@ describe("asking doors (desk register, card scanner)", () => {
     expect(r.kind).toBe("success");
     if (r.kind !== "success") return;
     expect(r.overrides).toEqual(["allowance_reached"]);
-    expect(r.overAllowance).toEqual({ used: 4, limit: 4, weeks: 4, nextFree: { date: "2026-11-02", time: "18:00" } });
+    expect(r.overAllowance).toEqual(FACTS);
   });
 
   it("the card scanner asks the same way", async () => {
@@ -201,7 +253,7 @@ describe("asking doors (desk register, card scanner)", () => {
   });
 
   it("a confirmation is inert when nothing was asked: no override is recorded", async () => {
-    h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: [] });
+    h.cRow = cRow({ ...FOUR_IN_FOUR, visits: [] });
     const r = await performCheckin({ ...DESK, allowanceOverrideConfirmed: true });
     expect(r.kind === "success" && r.overrides).toBeUndefined();
   });
@@ -209,7 +261,7 @@ describe("asking doors (desk register, card scanner)", () => {
 
 describe("lock order and the single read", () => {
   it("Class FOR UPDATE, then the Member lock, then statement C, then the insert", async () => {
-    h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: [] });
+    h.cRow = cRow({ ...FOUR_IN_FOUR, visits: [] });
     await performCheckin(SELF);
     expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "insert"]);
   });
@@ -298,7 +350,7 @@ describe("class packs and the allowance decide together (review, 17 Oct 2026)", 
 
   it("within the allowance a covered member is counted and the pack is left alone", async () => {
     h.packFindFirst.mockResolvedValue({ id: "pack-1" });
-    h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: FOUR_VISITS.slice(1) });
+    h.cRow = cRow({ ...FOUR_IN_FOUR, visits: FOUR_VISITS.slice(1) });
     const r = await performCheckin(SELF);
     expect(r.kind === "success" && r.coverage.kind).toBe("subscription");
     expect(h.packUpdateMany).not.toHaveBeenCalled();
@@ -330,7 +382,7 @@ describe("class packs and the allowance decide together (review, 17 Oct 2026)", 
     it("desk plan with a pack, within the allowance: both doors count the visit and leave the pack (the kiosk no longer drains it)", async () => {
       h.memberFindUnique.mockResolvedValue(deskRow());
       h.packFindFirst.mockResolvedValue({ id: "pack-1" });
-      h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: FOUR_VISITS.slice(1) });
+      h.cRow = cRow({ ...FOUR_IN_FOUR, visits: FOUR_VISITS.slice(1) });
       for (const door of [SELF, KIOSK]) {
         h.order.length = 0;
         const r = await performCheckin(door);
@@ -360,7 +412,7 @@ describe("coverage is re-checked under the Member lock (R-ALLOW rule 2)", () => 
 
   it("the lock re-reads the columns the gates used, dates as epoch milliseconds", async () => {
     h.memberRows = [lockRow()];
-    h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: [] });
+    h.cRow = cRow({ ...FOUR_IN_FOUR, visits: [] });
     expect((await performCheckin(SELF)).kind).toBe("success");
     const lock = h.sql.find((t) => t.includes('FROM "Member" WHERE'))!;
     for (const col of ['"membershipTierId"', '"paymentStatus"', '"stripeSubscriptionId"', '"waiverAccepted"', '"accountType"']) {
@@ -396,7 +448,7 @@ describe("coverage is re-checked under the Member lock (R-ALLOW rule 2)", () => 
     const due = new Date("2026-11-01T00:00:00.000Z");
     h.memberFindUnique.mockResolvedValue({ ...memberRow(true), nextDueAt: due });
     h.memberRows = [lockRow({ nextDueAtMs: due.getTime() })];
-    h.cRow = cRow({ classLimit: 4, classLimitWeeks: 4, visits: [] });
+    h.cRow = cRow({ ...FOUR_IN_FOUR, visits: [] });
     expect((await performCheckin(SELF)).kind).toBe("success");
     expect(h.memberFindUnique).toHaveBeenCalledTimes(1);
   });

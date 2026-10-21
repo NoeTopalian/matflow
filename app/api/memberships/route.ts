@@ -6,7 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { billingCycleSchema } from "@/lib/billing-cycle";
-import { allowanceColumns, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
+import { allowanceColumns, classLimitAnchorSchema, classLimitBasisSchema, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
@@ -16,12 +16,15 @@ const createSchema = z.object({
   currency: z.string().length(3).regex(/^[A-Z]{3}$/),
   billingCycle: billingCycleSchema,
   // Legacy single weekly limit, still accepted from a page loaded before T7c.
-  // Never together with classLimit/classLimitWeeks (refineAllowance).
+  // Never together with the allowance fields (refineAllowance).
   maxClassesPerWeek: z.number().int().min(1).max(30).optional(),
-  // T7c: "N classes every M weeks" (lib/class-allowance.ts). Both or neither;
-  // null or absent = Unlimited.
+  // T7c: "N classes" on an explicit reset basis (lib/class-allowance.ts):
+  // limit + basis together; "weeks" also needs the weeks and the start date.
+  // All null or absent = Unlimited.
   classLimit: classLimitSchema.nullable().optional(),
+  classLimitBasis: classLimitBasisSchema.nullable().optional(),
   classLimitWeeks: classLimitWeeksSchema.nullable().optional(),
+  classLimitAnchor: classLimitAnchorSchema.nullable().optional(),
   isKids: z.boolean(),
   // ADR-001 D2 slice 2: the venue this tier covers; null/absent = every venue.
   locationId: z.string().min(1).max(64).optional().nullable(),
@@ -72,7 +75,7 @@ export async function POST(req: Request) {
     }
 
     const { name, description, pricePence, currency, billingCycle, isKids, stripePriceId, stripeProductId, locationId } = parsed.data;
-    const allowance = allowanceColumns(parsed.data) ?? { classLimit: null, classLimitWeeks: null, maxClassesPerWeek: null };
+    const allowance = allowanceColumns(parsed.data) ?? { classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null, maxClassesPerWeek: null };
 
     // A venue from another club must not attach — refused, never dropped.
     if (locationId) {
@@ -104,7 +107,12 @@ export async function POST(req: Request) {
       action: "membership.tier.create",
       entityType: "MembershipTier",
       entityId: tier.id,
-      metadata: { name, pricePence, billingCycle, isKids, classLimit: allowance.classLimit, classLimitWeeks: allowance.classLimitWeeks, hasStripePriceId: !!stripePriceId },
+      metadata: {
+        name, pricePence, billingCycle, isKids,
+        classLimit: allowance.classLimit, classLimitBasis: allowance.classLimitBasis, classLimitWeeks: allowance.classLimitWeeks,
+        classLimitAnchor: allowance.classLimitAnchor ? allowance.classLimitAnchor.toISOString().slice(0, 10) : null,
+        hasStripePriceId: !!stripePriceId,
+      },
       req,
     });
 

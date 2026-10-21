@@ -37,8 +37,15 @@ export type CheckinRefusal = {
     error: string;
     reason: CheckinRefusalReason;
     askable?: boolean;
-    /** allowance_reached only: the count, so a staff client can word its question. */
-    allowance?: { used: number; limit: number; weeks: number; nextFree: { date: string; time: string } | null };
+    /** allowance_reached only: the count and the period, so a staff client can word its question. */
+    allowance?: {
+      used: number;
+      limit: number;
+      basis: "week" | "month" | "weeks";
+      weeks?: number;
+      period: { start: string; end: string };
+      resetsOn: string;
+    };
   };
 };
 
@@ -157,9 +164,9 @@ export function checkinRefusal(
         body: { error: tierRefusalSentence(result.className, result.tierName), reason: "tier_not_included" },
       };
     case "allowance_reached":
-      // T7: the count and the date the next class frees up, in the member's
-      // words. On a staff door the answer is askable: the register confirms
-      // and resends with acknowledged: ["allowance_reached"].
+      // T7: the count and the date the period resets, in the member's words.
+      // On a staff door the answer is askable: the register confirms and
+      // resends with acknowledged: ["allowance_reached"].
       return {
         status: 403,
         body: {
@@ -167,8 +174,9 @@ export function checkinRefusal(
           reason: "allowance_reached",
           ...(result.askable ? { askable: true } : {}),
           allowance: {
-            used: result.used, limit: result.limit, weeks: result.weeks, nextFree: result.nextFree,
-            ...(result.around ? { around: true } : {}),
+            used: result.used, limit: result.limit, basis: result.basis,
+            ...(result.weeks !== undefined ? { weeks: result.weeks } : {}),
+            period: result.period, resetsOn: result.resetsOn,
           },
         },
       };

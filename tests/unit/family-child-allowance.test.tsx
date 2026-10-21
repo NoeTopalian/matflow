@@ -55,14 +55,17 @@ async function render(): Promise<string> {
 beforeEach(() => {
   vi.clearAllMocks();
   h.childFindFirst.mockResolvedValue(CHILD);
-  h.usage.mockResolvedValue({ used: 2, limit: 4, weeks: 4, text: "2 of 4 classes used in the last 4 weeks" });
+  h.usage.mockResolvedValue({
+    used: 2, limit: 4, basis: "weeks", weeks: 4, period: { start: "2026-09-28", end: "2026-10-26" }, resetsOn: "2026-10-26",
+    text: "2 of 4 classes used this 4-week period — resets Monday 26 October",
+  });
 });
 
 describe("child page: class allowance", () => {
   it("shows the child's count, read for that child in that club", async () => {
     const html = await render();
     expect(html).toContain("Class allowance");
-    expect(html).toContain("2 of 4 classes used in the last 4 weeks");
+    expect(html).toContain("2 of 4 classes used this 4-week period — resets Monday 26 October");
     expect(h.usage).toHaveBeenCalledWith(expect.anything(), { tenantId: "t1", memberId: "kid-1" });
   });
 

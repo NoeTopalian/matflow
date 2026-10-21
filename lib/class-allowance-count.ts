@@ -1,16 +1,18 @@
 /**
  * T7 (Sean note 5): the one database read the class allowance is judged on.
  *
- * Counted rows (owner decision, 17 Oct 2026):
+ * Counted rows (product decision, 20 Oct 2026: confirmed attendance consumes
+ * one session; nothing else does):
  *  - attendance records for this member that are not imports
  *    (checkInMethod <> 'import' AND importJobId IS NULL);
  *  - on sessions that are not cancelled;
  *  - not paid for by a class pack (no ClassPackRedemption row points at the
- *    record): a class-pack redemption does not count against the tier
+ *    record): a class-pack redemption does not count against the plan
  *    allowance;
- *  - inside the window, judged in TypeScript (lib/class-allowance.ts) from the
- *    wall-clock slots this returns.
- * A refused check-in writes nothing, so it counts nothing.
+ *  - inside the period, judged in TypeScript (lib/class-allowance.ts) from the
+ *    wall-clock slots this returns. A booking is not an attendance row and
+ *    counts nothing; a refused check-in writes nothing, so it counts nothing;
+ *    an unmarked or undone visit is a deleted row, so it counts nothing.
  *
  * ONE statement, run AFTER the Member row lock (lib/checkin.ts). Under READ
  * COMMITTED each statement reads its own snapshot, taken when it starts:
@@ -26,11 +28,14 @@
 import type { Prisma } from "@prisma/client";
 import {
   allowanceUsageText,
+  currentPeriodUsage,
   nowMinute,
   slotMinute,
   tierAllowance,
-  usedInLastWeeks,
+  type AllowanceBasis,
+  type AllowanceVerdict,
   type ClassAllowance,
+  type IsoDate,
 } from "@/lib/class-allowance";
 import { usableTimezone } from "@/lib/class-time";
 
@@ -45,7 +50,9 @@ export type AllowanceSnapshot = {
 
 type Row = {
   classLimit: number | null;
+  classLimitBasis: string | null;
   classLimitWeeks: number | null;
+  classLimitAnchor: Date | string | null;
   maxClassesPerWeek: number | null;
   alreadyIn: boolean | null;
   visits: unknown;
@@ -54,20 +61,21 @@ type Row = {
 const DAY_MS = 86_400_000;
 
 /**
- * The marker range to fetch around a session: the window before it, plus the
- * windows after it that the exact rule and the "next free" date look at, with
- * a day of slack either side for the different marker spellings (00:00Z,
+ * The marker range to fetch around a session. The longest period any plan can
+ * have is 8 weeks (CLASS_LIMIT_WEEKS_MAX), so the period containing the
+ * session starts at most 8 weeks before it and ends at most 8 weeks after;
+ * a day of slack either side covers the different marker spellings (00:00Z,
  * 23:00Z the day before, 16:00Z).
  */
 export function fetchRange(centre: Date, weeks: number): { from: Date; to: Date } {
   const span = weeks * 7 * DAY_MS;
   return {
     from: new Date(centre.getTime() - span - 2 * DAY_MS),
-    to: new Date(centre.getTime() + 2 * span + 2 * DAY_MS),
+    to: new Date(centre.getTime() + span + 2 * DAY_MS),
   };
 }
 
-/** The widest window any plan can have (CLASS_LIMIT_WEEKS_MAX), used before the tier is known. */
+/** The widest period any plan can have (CLASS_LIMIT_WEEKS_MAX), used before the tier is known. */
 const WIDEST_WEEKS = 8;
 
 function parseVisits(raw: unknown): number[] {
@@ -102,7 +110,7 @@ export async function readAllowanceSnapshot(
   const toIso = to.toISOString();
   const current = args.currentInstanceId ?? "";
   const rows = await tx.$queryRaw<Row[]>`
-    SELECT t."classLimit", t."classLimitWeeks", t."maxClassesPerWeek",
+    SELECT t."classLimit", t."classLimitBasis", t."classLimitWeeks", t."classLimitAnchor", t."maxClassesPerWeek",
            EXISTS (
              SELECT 1 FROM "AttendanceRecord" a0
               WHERE a0."memberId" = m."id" AND a0."classInstanceId" = ${current}
@@ -134,7 +142,9 @@ export async function readAllowanceSnapshot(
   return {
     allowance: tierAllowance({
       classLimit: row.classLimit ?? null,
+      classLimitBasis: row.classLimitBasis ?? null,
       classLimitWeeks: row.classLimitWeeks ?? null,
+      classLimitAnchor: row.classLimitAnchor ?? null,
       maxClassesPerWeek: row.maxClassesPerWeek ?? null,
     }),
     alreadyIn: row.alreadyIn === true,
@@ -145,14 +155,18 @@ export async function readAllowanceSnapshot(
 export type AllowanceUsage = {
   used: number;
   limit: number;
-  weeks: number;
-  /** "2 of 4 classes used in the last 4 weeks". */
+  basis: AllowanceBasis;
+  weeks?: number;
+  /** The current period as calendar dates (end exclusive) and the date it resets. */
+  period: AllowanceVerdict["period"];
+  resetsOn: IsoDate;
+  /** "2 of 4 classes used this 4-week period — resets Tuesday 17 November". */
   text: string;
 };
 
 /**
  * The member portal line (plan card and schedule): classes counted in the
- * window ending now, by the same rows the check-in counts. Null for an
+ * period containing now, by the same rows the check-in counts. Null for an
  * Unlimited plan, no plan, or a member not in this club.
  */
 export async function memberAllowanceUsage(
@@ -168,11 +182,14 @@ export async function memberAllowanceUsage(
     currentInstanceId: null,
   });
   if (!snap?.allowance) return null;
-  const used = usedInLastWeeks(snap.allowance, nowMinute(now, usableTimezone(tenant?.timezone)), snap.visits);
+  const v = currentPeriodUsage(snap.allowance, nowMinute(now, usableTimezone(tenant?.timezone)), snap.visits);
   return {
-    used,
-    limit: snap.allowance.limit,
-    weeks: snap.allowance.weeks,
-    text: allowanceUsageText(used, snap.allowance) ?? "",
+    used: v.used,
+    limit: v.limit,
+    basis: v.basis,
+    ...(v.weeks !== undefined ? { weeks: v.weeks } : {}),
+    period: v.period,
+    resetsOn: v.resetsOn,
+    text: allowanceUsageText(v),
   };
 }

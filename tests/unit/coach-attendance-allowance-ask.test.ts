@@ -42,7 +42,9 @@ vi.mock("@/lib/prisma-tenant", () => ({
 
 import { POST } from "@/app/api/coach/instances/[id]/attendance/route";
 
-const FACTS = { used: 4, limit: 4, weeks: 4, nextFree: { date: "2026-11-02", time: "18:00" } };
+const FACTS = {
+  used: 4, limit: 4, basis: "weeks", weeks: 4, period: { start: "2026-09-28", end: "2026-10-26" }, resetsOn: "2026-10-26",
+};
 const req = (body: unknown) => ({ json: async () => body, headers: new Headers() }) as unknown as Request;
 const params = Promise.resolve({ id: "inst_1" });
 

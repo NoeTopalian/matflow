@@ -1,25 +1,37 @@
-// T7 (Sean note 5): the rolling window the check-in engine judges with.
-// Owner decision 17 Oct 2026: N classes in the M x 7 days ending at the start
-// of the session being attended, in the club's clock; several in one week are
-// fine while the rolling total stays within N. Pure; no database.
+// T7 (Sean note 5): the period the check-in engine judges with. Product
+// decision 20 Oct 2026: N classes per EXPLICIT period — each calendar week
+// (Monday start), each calendar month, or every N weeks from a plan-level start
+// date — never a rolling window. A class is judged against the period that
+// contains it, half-open [start, end), on the club's wall clock. Pure; no database.
 import { describe, it, expect } from "vitest";
 import {
   allowanceAskSentence,
-  allowanceBookingSentence,
-  allowanceUsageText,
+  allowanceBookingNotice,
+  allowanceCountPhrase,
   allowanceRefusalSentence,
+  allowanceSummary,
+  allowanceUsageText,
   allowanceVerdict,
+  countInPeriod,
+  currentPeriodUsage,
+  dateMinute,
+  dateText,
+  lastDayText,
   minuteToLocal,
-  nextFreeText,
   nowMinute,
+  periodContaining,
   slotMinute,
-  usedInLastWeeks,
-  windowUsed,
+  type ClassAllowance,
 } from "@/lib/class-allowance";
 
 /** A session on a calendar date at a wall-clock time, stored as the cron stores it (00:00Z marker). */
 const at = (date: string, time: string) => slotMinute({ date: new Date(`${date}T00:00:00.000Z`), startTime: time });
-const FOUR_IN_FOUR = { limit: 4, weeks: 4 };
+const local = (minute: number) => minuteToLocal(minute).date;
+
+const WEEKLY: ClassAllowance = { limit: 3, basis: "week" };
+const MONTHLY: ClassAllowance = { limit: 8, basis: "month" };
+// Four every four weeks, periods counted from Tuesday 20 October 2026.
+const FOUR_IN_FOUR: ClassAllowance = { limit: 4, basis: "weeks", weeks: 4, anchor: "2026-10-20" };
 
 describe("slotMinute (the club's wall clock)", () => {
   it("reads every spelling of one calendar date as that date (00:00Z, 23:00Z the day before, 16:00Z the day before)", () => {
@@ -37,162 +49,167 @@ describe("slotMinute (the club's wall clock)", () => {
   });
 });
 
-describe("the rolling window", () => {
-  it("allows several classes in one week while the rolling total stays within N", () => {
-    const visits = [at("2026-10-12", "18:00"), at("2026-10-13", "18:00"), at("2026-10-14", "18:00")];
-    const v = allowanceVerdict(FOUR_IN_FOUR, at("2026-10-15", "18:00"), visits);
-    expect(v).toMatchObject({ used: 3, limit: 4, weeks: 4, exhausted: false, nextFree: null });
+describe("periodContaining", () => {
+  it("each week runs Monday 00:00 to the next Monday 00:00 (Sunday 25 October is still the week of Monday 19 October)", () => {
+    const p = periodContaining(WEEKLY, at("2026-10-25", "23:59"));
+    expect([local(p.start), local(p.end)]).toEqual(["2026-10-19", "2026-10-26"]);
+    const q = periodContaining(WEEKLY, at("2026-10-26", "00:00"));
+    expect(local(q.start)).toBe("2026-10-26");
   });
 
-  it("refuses the fifth class inside 4 weeks and says when the next frees up", () => {
-    const visits = [
-      at("2026-10-05", "18:00"),
-      at("2026-10-12", "07:00"),
-      at("2026-10-12", "18:00"),
-      at("2026-10-14", "18:00"),
-    ];
-    const v = allowanceVerdict(FOUR_IN_FOUR, at("2026-10-19", "18:00"), visits);
-    expect(v.used).toBe(4);
-    expect(v.exhausted).toBe(true);
-    // The oldest visit (5 Oct 18:00) leaves the window exactly 4 weeks later.
-    expect(v.nextFree).toEqual({ date: "2026-11-02", time: "18:00" });
+  it("each month runs the 1st to the next 1st, year end and leap day included", () => {
+    const p = periodContaining(MONTHLY, at("2026-12-31", "20:00"));
+    expect([local(p.start), local(p.end)]).toEqual(["2026-12-01", "2027-01-01"]);
+    const feb = periodContaining(MONTHLY, at("2028-02-29", "09:00"));
+    expect([local(feb.start), local(feb.end)]).toEqual(["2028-02-01", "2028-03-01"]);
   });
 
-  it("is half-open: the session exactly M weeks earlier at the same time has dropped out (weekly trainer admitted every week)", () => {
-    const mondays = ["2026-09-21", "2026-09-28", "2026-10-05", "2026-10-12"].map((d) => at(d, "18:00"));
-    expect(windowUsed(FOUR_IN_FOUR, at("2026-10-19", "18:00"), mondays)).toBe(3);
-    expect(allowanceVerdict(FOUR_IN_FOUR, at("2026-10-19", "18:00"), mondays).exhausted).toBe(false);
+  it("every N weeks counts from the plan's start date: 20 Oct → 17 Nov → 15 Dec", () => {
+    const p1 = periodContaining(FOUR_IN_FOUR, at("2026-11-16", "18:00"));
+    expect([local(p1.start), local(p1.end)]).toEqual(["2026-10-20", "2026-11-17"]);
+    const p2 = periodContaining(FOUR_IN_FOUR, at("2026-11-17", "06:00"));
+    expect([local(p2.start), local(p2.end)]).toEqual(["2026-11-17", "2026-12-15"]);
   });
 
-  it("counts a class starting at the same minute (two classes at once cannot both take the last place)", () => {
-    const one = { limit: 1, weeks: 1 };
-    expect(allowanceVerdict(one, at("2026-10-19", "18:00"), [at("2026-10-19", "18:00")]).exhausted).toBe(true);
+  it("a class before the start date still falls in a period (the one ending at the start date), so nothing is unjudged", () => {
+    const p = periodContaining(FOUR_IN_FOUR, at("2026-10-01", "18:00"));
+    expect([local(p.start), local(p.end)]).toEqual(["2026-09-22", "2026-10-20"]);
   });
 
-  it("is measured on the wall clock, so the March clock change does not make a weekly class count twice", () => {
-    // 29 Mar 2027 is the Monday after the UK clocks go forward (28 Mar 2027).
-    const before = ["2027-03-08", "2027-03-15", "2027-03-22"].map((d) => at(d, "18:00"));
-    const first = at("2027-03-01", "18:00");
-    const v = allowanceVerdict(FOUR_IN_FOUR, at("2027-03-29", "18:00"), [first, ...before]);
-    expect(v.used).toBe(3);
-    expect(v.exhausted).toBe(false);
-  });
-
-  it("judges every window containing the session, so recording a later class first cannot over-admit", () => {
-    // Limit 1 a week. The evening class was recorded first (a staff mark);
-    // the morning class the same day must not then pass on the window ending
-    // at its own start, which does not reach the evening.
-    const one = { limit: 1, weeks: 1 };
-    const v = allowanceVerdict(one, at("2026-10-19", "07:00"), [at("2026-10-19", "18:00")]);
-    expect(v.used).toBe(1);
-    expect(v.exhausted).toBe(true);
-    // Free again once the evening class is a week old: from the following Monday 18:00.
-    expect(v.nextFree).toEqual({ date: "2026-10-26", time: "18:00" });
-  });
-
-  it("reads a legacy weekly allowance (maxClassesPerWeek) as N per 7 days", () => {
-    const weekly = { limit: 2, weeks: 1 };
-    const visits = [at("2026-10-13", "18:00"), at("2026-10-15", "18:00")];
-    expect(allowanceVerdict(weekly, at("2026-10-19", "18:00"), visits).exhausted).toBe(true);
-    expect(allowanceVerdict(weekly, at("2026-10-20", "18:00"), visits).exhausted).toBe(false);
-  });
-
-  it("reports more than N used truthfully when staff admitted past it or the limit was lowered", () => {
-    const visits = [1, 2, 3, 4, 5].map((d) => at(`2026-10-1${d}`, "18:00"));
-    expect(allowanceVerdict(FOUR_IN_FOUR, at("2026-10-16", "18:00"), visits).used).toBe(5);
+  it("boundaries are calendar dates, so the March and October clock changes never move them", () => {
+    const p = periodContaining(WEEKLY, at("2026-03-29", "10:00")); // clocks go forward 29 March 2026
+    expect([local(p.start), local(p.end)]).toEqual(["2026-03-23", "2026-03-30"]);
+    expect(dateMinute("2026-03-30") - dateMinute("2026-03-23")).toBe(7 * 1440);
   });
 });
 
-describe("usedInLastWeeks (the member portal line)", () => {
-  it("counts the window ending now and ignores sessions still to come", () => {
-    const visits = [at("2026-09-01", "18:00"), at("2026-10-05", "18:00"), at("2026-10-14", "18:00"), at("2026-10-20", "18:00")];
-    const now = at("2026-10-17", "12:00");
-    expect(usedInLastWeeks(FOUR_IN_FOUR, now, visits)).toBe(2);
+describe("allowanceVerdict (the period containing the session)", () => {
+  it("allows several classes in one week while the period total stays within N", () => {
+    const visits = [at("2026-10-20", "18:00"), at("2026-10-21", "18:00"), at("2026-10-22", "18:00")];
+    const v = allowanceVerdict(FOUR_IN_FOUR, at("2026-10-23", "18:00"), visits);
+    expect(v).toMatchObject({ used: 3, limit: 4, basis: "weeks", weeks: 4, exhausted: false, resetsOn: "2026-11-17" });
+    expect(v.period).toEqual({ start: "2026-10-20", end: "2026-11-17" });
+  });
+
+  it("refuses the fifth class inside the period and names the reset date", () => {
+    const visits = [at("2026-10-20", "18:00"), at("2026-10-21", "18:00"), at("2026-10-22", "18:00"), at("2026-11-10", "18:00")];
+    const v = allowanceVerdict(FOUR_IN_FOUR, at("2026-11-16", "18:00"), visits);
+    expect(v.exhausted).toBe(true);
+    expect(v.resetsOn).toBe("2026-11-17");
+    expect(allowanceRefusalSentence(v)).toBe(
+      "4 of 4 classes used this 4-week period; it resets on Tuesday 17 November. Ask staff if you need to train before then.",
+    );
+  });
+
+  it("resets on the period boundary: the first class of the next period sees 0 used", () => {
+    const visits = [at("2026-10-20", "18:00"), at("2026-10-21", "18:00"), at("2026-10-22", "18:00"), at("2026-11-10", "18:00")];
+    expect(allowanceVerdict(FOUR_IN_FOUR, at("2026-11-17", "06:00"), visits).used).toBe(0);
+  });
+
+  it("a weekly plan resets every Monday: three classes Mon–Wed, the fourth on Thursday is refused, Monday is free again", () => {
+    const visits = [at("2026-10-19", "18:00"), at("2026-10-20", "18:00"), at("2026-10-21", "18:00")];
+    expect(allowanceVerdict(WEEKLY, at("2026-10-22", "18:00"), visits)).toMatchObject({ used: 3, exhausted: true, resetsOn: "2026-10-26" });
+    expect(allowanceVerdict(WEEKLY, at("2026-10-26", "07:00"), visits)).toMatchObject({ used: 0, exhausted: false, resetsOn: "2026-11-02" });
+  });
+
+  it("a monthly plan counts the calendar month whatever the gaps between classes", () => {
+    const visits = Array.from({ length: 8 }, (_, i) => at(`2026-11-${String(2 + i * 3).padStart(2, "0")}`, "18:00"));
+    expect(allowanceVerdict(MONTHLY, at("2026-11-30", "18:00"), visits)).toMatchObject({ used: 8, exhausted: true, resetsOn: "2026-12-01" });
+    expect(allowanceVerdict(MONTHLY, at("2026-12-01", "18:00"), visits).used).toBe(0);
+  });
+
+  it("is order-independent: a later class recorded first lands in its own period and cannot over-admit an earlier one", () => {
+    // Period 20 Oct–16 Nov already holds 4; a class on 10 Nov is refused however the rows were recorded.
+    const visits = [at("2026-11-15", "18:00"), at("2026-11-14", "18:00"), at("2026-10-20", "18:00"), at("2026-10-21", "18:00")];
+    expect(allowanceVerdict(FOUR_IN_FOUR, at("2026-11-10", "18:00"), visits).exhausted).toBe(true);
+    // And a class in the NEXT period is unaffected by all of them.
+    expect(allowanceVerdict(FOUR_IN_FOUR, at("2026-11-18", "18:00"), visits).used).toBe(0);
+  });
+
+  it("a reversed visit restores the allowance for its own period, never the current one (the count is the rows)", () => {
+    const before = [at("2026-10-20", "18:00"), at("2026-10-21", "18:00"), at("2026-10-22", "18:00"), at("2026-10-23", "18:00")];
+    expect(allowanceVerdict(FOUR_IN_FOUR, at("2026-11-02", "18:00"), before).exhausted).toBe(true);
+    const afterUnmark = before.filter((v) => v !== at("2026-10-22", "18:00"));
+    expect(allowanceVerdict(FOUR_IN_FOUR, at("2026-11-02", "18:00"), afterUnmark)).toMatchObject({ used: 3, exhausted: false });
+  });
+
+  it("reports more than N used truthfully when staff admitted past it or the limit was lowered, and never reads 6 of 4", () => {
+    const visits = Array.from({ length: 6 }, (_, i) => at(`2026-10-2${i}`, "18:00"));
+    const v = allowanceVerdict(FOUR_IN_FOUR, at("2026-10-27", "18:00"), visits);
+    expect(v.used).toBe(6);
+    expect(allowanceCountPhrase(v)).toBe("4 of 4 classes used this 4-week period (6 recorded)");
+  });
+
+  it("countInPeriod is half-open at the end", () => {
+    const p = periodContaining(WEEKLY, at("2026-10-19", "10:00"));
+    expect(countInPeriod([at("2026-10-26", "00:00"), at("2026-10-25", "23:59"), at("2026-10-19", "00:00")], p)).toBe(2);
+  });
+});
+
+describe("currentPeriodUsage (the member portal line)", () => {
+  it("counts the period containing now, including a class later today that is already recorded", () => {
+    const now = at("2026-10-21", "17:35");
+    const visits = [at("2026-10-20", "18:00"), at("2026-10-21", "18:00")];
+    const v = currentPeriodUsage(FOUR_IN_FOUR, now, visits);
+    expect(v).toMatchObject({ used: 2, limit: 4, resetsOn: "2026-11-17" });
+    expect(allowanceUsageText(v)).toBe("2 of 4 classes used this 4-week period — resets Tuesday 17 November");
+  });
+
+  it("ignores visits in other periods", () => {
+    const v = currentPeriodUsage(WEEKLY, at("2026-10-28", "12:00"), [at("2026-10-19", "18:00"), at("2026-11-02", "18:00")]);
+    expect(v.used).toBe(0);
   });
 });
 
 describe("the copy", () => {
-  const facts = { used: 4, limit: 4, weeks: 4, nextFree: { date: "2026-11-02", time: "18:00" } };
+  const v = allowanceVerdict(FOUR_IN_FOUR, at("2026-11-16", "18:00"), [at("2026-10-20", "18:00"), at("2026-10-21", "18:00"), at("2026-10-22", "18:00"), at("2026-11-10", "18:00")]);
 
-  it("names the date the next class frees up", () => {
-    expect(nextFreeText({ date: "2026-11-02", time: "18:00" })).toBe("Monday 2 November from 18:00");
+  it("dates read as weekday, day and month, with the year on request", () => {
+    expect(dateText("2026-11-17")).toBe("Tuesday 17 November");
+    expect(dateText("2026-11-17", true)).toBe("Tuesday 17 November 2026");
+    expect(lastDayText("2026-11-17")).toBe("Monday 16 November");
   });
 
-  it("the member app, kiosk and booking refusal", () => {
-    expect(allowanceRefusalSentence(facts)).toBe(
-      "4 of 4 classes used in the last 4 weeks; next free on Monday 2 November from 18:00. Ask staff if you need to train before then.",
+  it("a parent checking in a child is told whose allowance it is", () => {
+    expect(allowanceRefusalSentence(v, "Sam")).toBe(
+      "Sam: 4 of 4 classes used this 4-week period; it resets on Tuesday 17 November. Ask staff if Sam needs to train before then.",
     );
-    expect(allowanceRefusalSentence({ used: 1, limit: 1, weeks: 1, nextFree: null })).toBe(
-      "1 of 1 class used in the last week. Ask staff if you need to train.",
+  });
+
+  it("booking is never refused for the allowance: the notice says what happens at the door", () => {
+    expect(allowanceBookingNotice(v)).toBe(
+      "4 of 4 classes used this 4-week period. You can book, but you'll be refused at check-in unless a place frees up; it resets on Tuesday 17 November.",
     );
   });
 
   it("the staff question", () => {
-    expect(allowanceAskSentence("Ava Green", facts)).toBe(
-      "Ava Green has used 4 of 4 classes in the last 4 weeks (next free on Monday 2 November from 18:00). Admit anyway?",
-    );
+    expect(allowanceAskSentence("Jordan", v)).toBe("Jordan has used 4 of 4 classes this 4-week period (resets on Tuesday 17 November). Admit anyway?");
+    expect(allowanceAskSentence("Jordan", { ...v, used: 6 })).toBe("Jordan has used all 4 classes this 4-week period (6 recorded; resets on Tuesday 17 November). Admit anyway?");
+    const weekly = allowanceVerdict(WEEKLY, at("2026-10-22", "18:00"), [at("2026-10-19", "18:00"), at("2026-10-20", "18:00"), at("2026-10-21", "18:00")]);
+    expect(allowanceAskSentence("Jordan", weekly)).toBe("Jordan has used 3 of 3 classes this week (resets on Monday 26 October). Admit anyway?");
+  });
+
+  it("a monthly plan says this month", () => {
+    const m = allowanceVerdict(MONTHLY, at("2026-11-05", "18:00"), [at("2026-11-02", "18:00")]);
+    expect(allowanceUsageText(m)).toBe("1 of 8 classes used this month — resets Tuesday 1 December");
   });
 });
 
-describe("review fixes (17 Oct 2026): the window copy and the portal count", () => {
-  const one = { limit: 1, weeks: 1 };
+describe("allowanceSummary (what the plan editor shows before saving)", () => {
+  const now = at("2026-10-21", "15:00");
 
-  it("an out-of-order judgement is flagged around, and worded within W weeks of this class, not in the last W weeks", () => {
-    const v = allowanceVerdict(one, at("2026-10-19", "07:00"), [at("2026-10-19", "18:00")]);
-    expect(v.around).toBe(true);
-    expect(allowanceRefusalSentence(v)).toBe(
-      "1 of 1 class used within 1 week of this class; next free on Monday 26 October from 18:00. Ask staff if you need to train before then.",
-    );
-    expect(allowanceAskSentence("Ava Green", v)).toBe(
-      "Ava Green has used 1 of 1 class within 1 week of this class (next free on Monday 26 October from 18:00). Admit anyway?",
-    );
+  it("states the allowance in plain words with the next reset and the actual period dates", () => {
+    expect(allowanceSummary(FOUR_IN_FOUR, now)).toEqual({
+      sentence: "Attend up to 4 classes during each 4-week period. Your next reset is Tuesday 17 November 2026.",
+      period: "The current period runs Tuesday 20 October to Monday 16 November 2026.",
+      nextReset: "2026-11-17",
+    });
+    expect(allowanceSummary(WEEKLY, now).sentence).toBe("Attend up to 3 classes during each week. Your next reset is Monday 26 October 2026.");
+    expect(allowanceSummary(MONTHLY, now).sentence).toBe("Attend up to 8 classes during each calendar month. Your next reset is Sunday 1 November 2026.");
+    expect(allowanceSummary({ limit: 1, basis: "week" }, now).sentence).toMatch(/^Attend up to 1 class during each week\./);
   });
 
-  it("an in-order judgement is not flagged around", () => {
-    const v = allowanceVerdict(one, at("2026-10-19", "18:00"), [at("2026-10-19", "07:00")]);
-    expect(v.exhausted).toBe(true);
-    expect(v.around).toBeUndefined();
-  });
-
-  it("past the allowance the copy never reads 6 of 4", () => {
-    const facts = { used: 6, limit: 4, weeks: 4, nextFree: null };
-    expect(allowanceUsageText(6, { limit: 4, weeks: 4 })).toBe("4 of 4 classes used in the last 4 weeks (6 recorded)");
-    expect(allowanceRefusalSentence(facts)).toBe("4 of 4 classes used in the last 4 weeks (6 recorded). Ask staff if you need to train.");
-    expect(allowanceAskSentence("Ava Green", facts)).toBe("Ava Green has used all 4 classes in the last 4 weeks (6 recorded). Admit anyway?");
-    expect(allowanceAskSentence("Ava Green", { used: 3, limit: 1, weeks: 1, nextFree: { date: "2026-11-02", time: "18:00" } })).toBe(
-      "Ava Green has used their 1 class in the last week (3 recorded; next free on Monday 2 November from 18:00). Admit anyway?",
-    );
-  });
-
-  it("a parent checking in a child is told whose allowance it is", () => {
-    expect(allowanceRefusalSentence({ used: 4, limit: 4, weeks: 4, nextFree: { date: "2026-11-02", time: "18:00" } }, "Sam")).toBe(
-      "Sam: 4 of 4 classes used in the last 4 weeks; next free on Monday 2 November from 18:00. Ask staff if Sam needs to train before then.",
-    );
-  });
-
-  it("booking has its own tail", () => {
-    expect(allowanceBookingSentence({ used: 4, limit: 4, weeks: 4, nextFree: { date: "2026-11-02", time: "18:00" } })).toBe(
-      "4 of 4 classes used in the last 4 weeks; you can book a session starting on or after Monday 2 November at 18:00.",
-    );
-    expect(allowanceBookingSentence({ used: 1, limit: 1, weeks: 1, nextFree: null })).toBe(
-      "1 of 1 class used in the last week. Ask staff before booking more classes.",
-    );
-  });
-
-  it("the portal counts a class checked into before it starts (17:35 for the 18:00 class)", () => {
-    const visits = [at("2026-10-05", "18:00"), at("2026-10-14", "18:00"), at("2026-10-17", "18:00")];
-    expect(usedInLastWeeks(FOUR_IN_FOUR, at("2026-10-17", "17:35"), visits)).toBe(3);
-  });
-
-  it("the portal moves its window end to that visit, as the next check-in will (an old visit drops out)", () => {
-    // 19 Sep 17:50 is inside the 4 weeks before now (17 Oct 17:35) but not
-    // inside the 4 weeks before tonight's 18:00 class.
-    const visits = [at("2026-09-19", "17:50"), at("2026-10-17", "18:00")];
-    expect(usedInLastWeeks(FOUR_IN_FOUR, at("2026-10-17", "17:35"), visits)).toBe(1);
-  });
-
-  it("the portal still ignores sessions on later days", () => {
-    const visits = [at("2026-10-14", "18:00"), at("2026-10-18", "10:00")];
-    expect(usedInLastWeeks(FOUR_IN_FOUR, at("2026-10-17", "17:35"), visits)).toBe(1);
+  it("Unlimited has no period", () => {
+    expect(allowanceSummary(null, now)).toEqual({ sentence: expect.stringMatching(/^Unlimited classes\./), period: null, nextReset: null });
   });
 });

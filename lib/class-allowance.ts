@@ -1,152 +1,140 @@
 /**
  * T7c (Sean note 5, "max 4 classes every 4 weeks allows for multiple classes
- * in 1 week"): a membership tier's class allowance, defined once.
+ * in 1 week"): a membership plan's class allowance, defined once.
  *
- * Owner decision (Noe, 17 Oct 2026; Sean may change it): each tier has an
- * optional allowance of N classes (`classLimit`, 1-60) every M weeks
- * (`classLimitWeeks`, 1-8). Blank = Unlimited. The window is ROLLING: the
- * M x 7 days ending at the start of the session being attended, so several
- * classes in one week are fine while the rolling total stays within N.
+ * Product decisions (Noe, 20 Oct 2026):
+ *  - Memberships recur; an attendance allowance is optional. The administrator
+ *    picks Unlimited, or `N classes` on an EXPLICIT reset basis, and can clear
+ *    it again. Billing frequency (`billingCycle`) is separate and never implied.
+ *  - Reset bases: each calendar week (Monday to Sunday), each calendar month,
+ *    or every N weeks (2–8) counted from a period start date the plan carries.
+ *    A class is judged against the period that CONTAINS it; the period is
+ *    half-open [start, end). There is no rolling window: a period starts and
+ *    ends on dates the administrator and the member can both see.
+ *  - Booking consumes nothing. Confirmed attendance consumes one session of
+ *    the period containing that class. Cancelling a booking, or being absent
+ *    (no attendance row), consumes nothing. Reversing attendance deletes the
+ *    row, and because the count is always recomputed from rows by the class's
+ *    own date, the session goes back to its own period.
+ *  - Open decision, documented in docs/readiness/CLASS-ALLOWANCE-RESET-MODEL-
+ *    2026-10-21.md: the every-N-weeks anchor is PER PLAN (every member on the
+ *    plan shares the periods). If a per-member anchor is chosen later, only
+ *    where the anchor is stored changes, not the maths below.
  *
- * This module is pure: configuration, the rolling-window arithmetic and the
- * wording. The check-in engine (lib/checkin.ts, T7) enforces the allowance
- * with these functions, under the Member row lock, from one database read
- * (lib/class-allowance-count.ts).
+ * This module is pure: configuration, period arithmetic and wording. The
+ * check-in engine (lib/checkin.ts) enforces the allowance with these functions
+ * under the Member row lock, from one database read (lib/class-allowance-count.ts).
  *
- * ── Reader rule (why `maxClassesPerWeek` still matters) ──────────────────────
- * The previous build reads and edits only `maxClassesPerWeek`. The routes keep
- * the three columns in step on every write: a weekly allowance mirrors N into
- * `maxClassesPerWeek`; a multi-week allowance or Unlimited sets it NULL. So:
- *
- *   1. `maxClassesPerWeek` not null  -> N per 1 week. This is either a value
- *      from before T7c (all Total BJJ tiers were NULL on 15 Oct, so in
- *      practice the demo tier), the mirror of a weekly allowance, or a value
- *      the previous build wrote during a rollback. In every case it is the
- *      last word on the plan, so it wins.
- *   2. else `classLimit` and `classLimitWeeks` both set -> N every M weeks.
+ * ── Reader rule (columns → allowance) ────────────────────────────────────────
+ *   1. `classLimitBasis` set → that basis with `classLimit` (and, for "weeks",
+ *      `classLimitWeeks` + `classLimitAnchor`).
+ *   2. else `maxClassesPerWeek` set → N each calendar week. This is the
+ *      previous build's "Classes per week" field (all Total BJJ plans were NULL
+ *      on 15 Oct 2026; the demo seed has one). It was never a rolling window
+ *      to the people who set it, so it is read as the calendar week.
  *   3. else Unlimited.
- *
- * A weekly `classLimit` with a NULL `maxClassesPerWeek` can only exist when
- * the previous build cleared the limit during a rollback; rule 2 would then
- * resurrect it, so a weekly allowance is read from `maxClassesPerWeek` alone.
- *
- * The database keeps the pair together (`MembershipTier_classLimit_pair_check`,
- * migration 20261017052858_tier_class_allowance) and the ranges below.
+ * A weekly allowance still mirrors N into `maxClassesPerWeek`, so a rollback
+ * to the previous build shows the right number; any other basis sets it NULL
+ * (that build then shows Unlimited rather than a wrong "N/wk").
  */
 import { z } from "zod";
 import { zoneOffsetMs } from "@/lib/class-time";
 
 export const CLASS_LIMIT_MIN = 1;
 export const CLASS_LIMIT_MAX = 60;
-export const CLASS_LIMIT_WEEKS_MIN = 1;
+export const CLASS_LIMIT_WEEKS_MIN = 2;
 export const CLASS_LIMIT_WEEKS_MAX = 8;
 
-/** The "every" choices the plan editor offers, in order. */
-export const CLASS_LIMIT_WEEK_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
+export const ALLOWANCE_BASES = ["week", "month", "weeks"] as const;
+export type AllowanceBasis = (typeof ALLOWANCE_BASES)[number];
 
-export type ClassAllowance = { limit: number; weeks: number };
+/** The "every N weeks" choices the plan editor offers, in order. */
+export const CLASS_LIMIT_WEEK_OPTIONS = [2, 3, 4, 5, 6, 7, 8] as const;
+
+/** "YYYY-MM-DD" on the club's calendar. */
+export type IsoDate = string;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export type ClassAllowance =
+  | { limit: number; basis: "week" }
+  | { limit: number; basis: "month" }
+  | { limit: number; basis: "weeks"; weeks: number; anchor: IsoDate };
 
 export type TierAllowanceColumns = {
   classLimit?: number | null;
+  classLimitBasis?: string | null;
   classLimitWeeks?: number | null;
+  /** Prisma gives a Date (UTC midnight) for a @db.Date column; the API gives "YYYY-MM-DD". */
+  classLimitAnchor?: Date | string | null;
   maxClassesPerWeek?: number | null;
 };
+
+function isoDateOf(v: Date | string | null | undefined): IsoDate | null {
+  if (v == null) return null;
+  if (typeof v === "string") return ISO_DATE.test(v) ? v : null;
+  return Number.isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+}
 
 /** The allowance a tier carries under the reader rule above; null = Unlimited. */
 export function tierAllowance(t: TierAllowanceColumns | null | undefined): ClassAllowance | null {
   if (!t) return null;
-  if (t.maxClassesPerWeek != null) return { limit: t.maxClassesPerWeek, weeks: 1 };
-  if (t.classLimit != null && t.classLimitWeeks != null && t.classLimitWeeks > 1) {
-    return { limit: t.classLimit, weeks: t.classLimitWeeks };
+  if (t.classLimitBasis != null && t.classLimit != null) {
+    const basis = t.classLimitBasis;
+    if (basis === "week" || basis === "month") return { limit: t.classLimit, basis };
+    if (basis === "weeks") {
+      const anchor = isoDateOf(t.classLimitAnchor);
+      if (t.classLimitWeeks != null && t.classLimitWeeks >= CLASS_LIMIT_WEEKS_MIN && anchor) {
+        return { limit: t.classLimit, basis: "weeks", weeks: t.classLimitWeeks, anchor };
+      }
+    }
+    return null;
   }
+  if (t.maxClassesPerWeek != null) return { limit: t.maxClassesPerWeek, basis: "week" };
   return null;
 }
 
-/** "1 week", "4 weeks". */
-export function weeksText(weeks: number): string {
-  return weeks === 1 ? "1 week" : `${weeks} weeks`;
+// ── Wording of the allowance itself ──────────────────────────────────────────
+
+/** "each week", "each month", "every 4 weeks". */
+export function basisText(a: ClassAllowance): string {
+  if (a.basis === "week") return "each week";
+  if (a.basis === "month") return "each month";
+  return `every ${a.weeks} weeks`;
 }
 
-/**
- * How a plan's allowance reads wherever the plan is shown: "4 every 4 weeks",
- * "3 every week", or "Unlimited".
- */
+/** "week", "calendar month", "4-week period": the noun for one period. */
+export function periodNoun(a: ClassAllowance): string {
+  if (a.basis === "week") return "week";
+  if (a.basis === "month") return "calendar month";
+  return `${a.weeks}-week period`;
+}
+
+/** How a plan's allowance reads wherever the plan is listed: "4 each week", "4 every 4 weeks", or "Unlimited". */
 export function classLimitText(a: ClassAllowance | null): string {
   if (!a) return "Unlimited";
-  return a.weeks === 1 ? `${a.limit} every week` : `${a.limit} every ${a.weeks} weeks`;
+  return `${a.limit} ${basisText(a)}`;
 }
 
 /** The same with the noun, for running text: "4 classes every 4 weeks", "Unlimited classes". */
 export function classLimitLongText(a: ClassAllowance | null): string {
   if (!a) return "Unlimited classes";
-  const noun = a.limit === 1 ? "class" : "classes";
-  return a.weeks === 1 ? `${a.limit} ${noun} every week` : `${a.limit} ${noun} every ${a.weeks} weeks`;
+  return `${a.limit} ${a.limit === 1 ? "class" : "classes"} ${basisText(a)}`;
 }
 
 /** Sort key: classes per week on average; Unlimited is the largest. */
 export function classLimitSortValue(a: ClassAllowance | null): number {
-  return a ? a.limit / a.weeks : Number.MAX_SAFE_INTEGER;
+  if (!a) return Number.MAX_SAFE_INTEGER;
+  if (a.basis === "week") return a.limit;
+  if (a.basis === "month") return a.limit / (365.25 / 12 / 7);
+  return a.limit / a.weeks;
 }
 
-/**
- * The member portal's line for the plan card and the schedule:
- * "2 of 4 classes used in the last 4 weeks", "1 of 1 class used in the last
- * week". Null for an Unlimited plan (nothing to count against). `used` is the
- * number the check-in engine counts (T7); this helper only words it. Past the
- * allowance (a lowered limit, or desk overrides) it never reads "6 of 4":
- * "4 of 4 classes used in the last 4 weeks (6 recorded)".
- */
-export function allowanceUsageText(used: number, a: ClassAllowance | null): string | null {
-  if (!a) return null;
-  return allowanceCountPhrase({ used, limit: a.limit, weeks: a.weeks });
-}
-
-/**
- * The count, worded once for the portal, the doors and the questions:
- *  - "2 of 4 classes used in the last 4 weeks" (the window ending at the class);
- *  - "4 of 4 classes used within 4 weeks of this class" when the busiest window
- *    is not the one ending at the class (a later visit was recorded first, see
- *    windowUsage below), so "in the last 4 weeks" would not be literally true;
- *  - "4 of 4 classes used in the last 4 weeks (6 recorded)" past the allowance.
- */
-export function allowanceCountPhrase(v: { used: number; limit: number; weeks: number; around?: boolean }): string {
-  const n = Math.max(0, Math.floor(v.used));
-  const noun = v.limit === 1 ? "class" : "classes";
-  const where = allowanceWhere(v);
-  if (n > v.limit) return `${v.limit} of ${v.limit} ${noun} used ${where} (${n} recorded)`;
-  return `${n} of ${v.limit} ${noun} used ${where}`;
-}
-
-function allowanceWhere(v: { weeks: number; around?: boolean }): string {
-  if (v.around) return `within ${weeksText(v.weeks)} of this class`;
-  return v.weeks === 1 ? "in the last week" : `in the last ${v.weeks} weeks`;
-}
-
-// ── The rolling window (T7) ──────────────────────────────────────────────────
+// ── The period (T7) ──────────────────────────────────────────────────────────
 //
-// Owner decision (17 Oct 2026): the window is the M x 7 days ending at the
-// start of the session being attended, in the club's own clock (Europe/London
-// for Total BJJ). Arithmetic is done on WALL-CLOCK minutes, not instants: a
-// session is the minute count of its calendar date and start time as if that
-// wall clock were UTC. So "4 weeks before Monday 18:00" is Monday 18:00 four
-// weeks earlier, whether or not the clocks changed in between. With instants,
-// a weekly class across the March change sits 28 days minus an hour apart and
-// the class four weeks back would wrongly still count.
-//
-// The window is half-open, (S - span, S]: a session exactly M weeks earlier at
-// the same time has dropped out, so a member on "4 every 4 weeks" who trains
-// every Monday at 18:00 is admitted every Monday. A session starting at the
-// same minute as S counts (two classes at once cannot both be admitted on the
-// last place).
-//
-// Exact rolling rule. Check-ins are normally in time order, and then the only
-// window that matters is the one ending at S. But a later session can be
-// recorded first (a staff mark for this evening, then a check-in to this
-// morning's class), and judging the morning class only by the window ending
-// at its own start would let the pair exceed N inside one window. So an
-// admission at S must keep EVERY window of length M weeks that contains S
-// within N: `windowUsed` takes the busiest window containing S. In the usual
-// case (nothing recorded after S) that is exactly the window ending at S.
+// Arithmetic is done on WALL-CLOCK minutes in the club's zone, not instants:
+// a session is the minute count of its calendar date and start time as if that
+// wall clock were UTC. Period boundaries are calendar dates at 00:00 on the
+// same scale, so the clock changes in March and October never move them.
 
 const MINUTES_PER_DAY = 1440;
 const DAY_MS = 86_400_000;
@@ -187,227 +175,311 @@ export function minuteToLocal(minute: number): LocalSlot {
   };
 }
 
-function spanMinutes(weeks: number): number {
-  return weeks * 7 * MINUTES_PER_DAY;
+/** 00:00 of a "YYYY-MM-DD" on the wall-clock minute scale. */
+export function dateMinute(iso: IsoDate): number {
+  const [y, m, d] = iso.split("-").map(Number);
+  return Date.UTC(y, m - 1, d) / 60_000;
 }
 
-/** Visits in (end - span, end]. */
-function countInWindow(visits: readonly number[], end: number, span: number): number {
-  let n = 0;
-  for (const v of visits) if (v > end - span && v <= end) n += 1;
-  return n;
-}
+/** A period on the wall-clock minute scale: half-open [start, end). */
+export type Period = { start: number; end: number };
 
 /**
- * The busiest window of length M weeks that contains S, counting only the
- * other visits (the session being judged is not among them). Windows ending
- * at S and at each recorded visit in [S, S + span) are enough: the count only
- * rises at a visit. `around` is true when that busiest window ends AFTER S
- * (it holds a visit recorded for a later session), so the copy says "within
- * W weeks of this class" rather than "in the last W weeks".
- *
- * Deviation from the owner's wording (17 Oct 2026), kept on purpose and noted
- * in the T7 PR: the owner decision names only the window ending at S. Judging
- * by that window alone lets an out-of-order pair (a desk mark for tonight,
- * then a check-in to this morning's class) exceed N inside one window, which
- * no serial order of check-ins would allow. In the usual case, nothing
- * recorded after S, the two rules are the same.
+ * The period that contains `minute` under allowance `a`.
+ *  - week: Monday 00:00 to the next Monday 00:00;
+ *  - month: the 1st 00:00 to the next 1st 00:00;
+ *  - every N weeks: anchor + k × N × 7 days, for the k whose period holds the
+ *    minute (k may be negative: a class before the anchor date still falls in
+ *    some period, so nothing is ever unjudged).
  */
-export function windowUsage(a: ClassAllowance, session: number, visits: readonly number[]): { used: number; around: boolean } {
-  const span = spanMinutes(a.weeks);
-  const before = countInWindow(visits, session, span);
-  let used = before;
-  for (const v of visits) {
-    if (v >= session && v < session + span) used = Math.max(used, countInWindow(visits, v, span));
+export function periodContaining(a: ClassAllowance, minute: number): Period {
+  const day = Math.floor(minute / MINUTES_PER_DAY);
+  if (a.basis === "week") {
+    const dow = (new Date(day * DAY_MS).getUTCDay() + 6) % 7; // Monday = 0
+    const start = (day - dow) * MINUTES_PER_DAY;
+    return { start, end: start + 7 * MINUTES_PER_DAY };
   }
-  return { used, around: used > before };
+  if (a.basis === "month") {
+    const d = new Date(day * DAY_MS);
+    const y = d.getUTCFullYear();
+    const m = d.getUTCMonth();
+    return { start: Date.UTC(y, m, 1) / 60_000, end: Date.UTC(y, m + 1, 1) / 60_000 };
+  }
+  const span = a.weeks * 7 * MINUTES_PER_DAY;
+  const anchor = dateMinute(a.anchor);
+  const k = Math.floor((minute - anchor) / span);
+  const start = anchor + k * span;
+  return { start, end: start + span };
 }
 
-/** The busiest-window count alone (see windowUsage). */
-export function windowUsed(a: ClassAllowance, session: number, visits: readonly number[]): number {
-  return windowUsage(a, session, visits).used;
+/** Visits (wall-clock minutes) inside the period. */
+export function countInPeriod(visits: readonly number[], p: Period): number {
+  let n = 0;
+  for (const v of visits) if (v >= p.start && v < p.end) n += 1;
+  return n;
 }
 
 export type AllowanceVerdict = {
   used: number;
   limit: number;
-  weeks: number;
+  basis: AllowanceBasis;
+  /** Set for the every-N-weeks basis. */
+  weeks?: number;
   /** used >= limit: admitting this session would exceed the allowance. */
   exhausted: boolean;
-  /** When exhausted: the first session time from which a class is free again. */
-  nextFree: LocalSlot | null;
-  /** Present (true) when the busiest window ends after the session (windowUsage). */
-  around?: true;
+  /** The period the judged session falls in, as calendar dates (end is exclusive). */
+  period: { start: IsoDate; end: IsoDate };
+  /** The calendar date the allowance resets (the period's end). */
+  resetsOn: IsoDate;
 };
 
 /**
  * Whether one more class at `session` fits the allowance, given the member's
- * other counted visits (wall-clock minutes). `nextFree` is the earliest time
- * at which the oldest visit holding the window has dropped out and the
- * busiest window is below N again, assuming nothing else is recorded.
+ * other counted visits (wall-clock minutes; the judged session must not be
+ * among them). Order-independent: a visit recorded later for an earlier class
+ * lands in that class's own period.
  */
 export function allowanceVerdict(a: ClassAllowance, session: number, visits: readonly number[]): AllowanceVerdict {
-  const { used, around } = windowUsage(a, session, visits);
-  const exhausted = used >= a.limit;
-  let nextFree: LocalSlot | null = null;
-  if (exhausted) {
-    const span = spanMinutes(a.weeks);
-    const candidates = [...new Set(visits.map((v) => v + span))].filter((x) => x > session).sort((x, y) => x - y);
-    for (const x of candidates) {
-      if (windowUsed(a, x, visits) < a.limit) {
-        nextFree = minuteToLocal(x);
-        break;
-      }
-    }
-  }
-  return { used, limit: a.limit, weeks: a.weeks, exhausted, nextFree, ...(around ? { around: true as const } : {}) };
+  const p = periodContaining(a, session);
+  const used = countInPeriod(visits, p);
+  return {
+    used,
+    limit: a.limit,
+    basis: a.basis,
+    ...(a.basis === "weeks" ? { weeks: a.weeks } : {}),
+    exhausted: used >= a.limit,
+    period: { start: minuteToLocal(p.start).date, end: minuteToLocal(p.end).date },
+    resetsOn: minuteToLocal(p.end).date,
+  };
 }
 
 /**
- * What the member portal shows: classes counted in the window ending now, or
- * ending at the latest visit already recorded for a session later TODAY, so
- * a member who checks in at 17:35 for the 18:00 class (or whom the desk marks
- * for tonight) sees that class counted straight away, exactly as their next
- * check-in will count it.
+ * What the member portal shows: the period containing now. `visits` are the
+ * member's counted rows; a class later today that is already recorded counts,
+ * exactly as the next check-in will count it.
  */
-export function usedInLastWeeks(a: ClassAllowance, now: number, visits: readonly number[]): number {
-  const endOfToday = Math.floor(now / MINUTES_PER_DAY) * MINUTES_PER_DAY + MINUTES_PER_DAY - 1;
-  let end = now;
-  for (const v of visits) if (v > end && v <= endOfToday) end = v;
-  return countInWindow(visits, end, spanMinutes(a.weeks));
+export function currentPeriodUsage(a: ClassAllowance, now: number, visits: readonly number[]): AllowanceVerdict {
+  return allowanceVerdict(a, now, visits);
 }
 
-/**
- * How a door treats a member whose allowance is used up, as T6a's tier gate:
- *  - "refuse": member-decided doors (member app, parent, kiosk, booking);
- *  - "ask": staff doors (register, card scanner, coach tick) - refused with an
- *    askable answer unless staff confirmed, then admitted and recorded;
- *  - "off": not checked (system paths, tests).
- */
-export type AllowanceGateMode = "refuse" | "ask" | "off";
+// ── Wording of counts, dates and refusals ────────────────────────────────────
 
-/** The override reason recorded when staff admit someone past their allowance. */
-export const ALLOWANCE_OVERRIDE_REASON = "allowance_reached" as const;
+type VerdictCopy = Pick<AllowanceVerdict, "used" | "limit" | "basis" | "resetsOn"> & { weeks?: number; period?: AllowanceVerdict["period"] };
 
-/** "Monday 3 November from 18:00" (or "... at 18:00" with joiner "at"). */
-export function nextFreeText(slot: LocalSlot, joiner: "from" | "at" = "from"): string {
-  const [y, m, d] = slot.date.split("-").map(Number);
-  const day = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", {
+function asAllowance(v: VerdictCopy): ClassAllowance {
+  if (v.basis === "weeks") return { limit: v.limit, basis: "weeks", weeks: v.weeks ?? 2, anchor: "1970-01-05" };
+  return { limit: v.limit, basis: v.basis };
+}
+
+/** "Monday 3 November", or with the year "Monday 3 November 2026". */
+export function dateText(iso: IsoDate, withYear = false): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const text = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", {
     weekday: "long",
     day: "numeric",
     month: "long",
     timeZone: "UTC",
   });
-  return `${day} ${joiner} ${slot.time}`;
+  // en-GB puts a comma before a year ("Tuesday, 17 November 2026"); the year is appended plainly instead.
+  return withYear ? `${text} ${y}` : text;
 }
 
-type VerdictCopy = Pick<AllowanceVerdict, "used" | "limit" | "weeks" | "nextFree"> & { around?: boolean };
+/** The last calendar day of a half-open period, for "Monday 20 October to Sunday 16 November". */
+export function lastDayText(endExclusive: IsoDate, withYear = false): string {
+  return dateText(minuteToLocal(dateMinute(endExclusive) - MINUTES_PER_DAY).date, withYear);
+}
+
+/** "this week", "this month", "this 4-week period". */
+export function thisPeriodText(v: VerdictCopy): string {
+  const a = asAllowance(v);
+  return a.basis === "month" ? "this month" : `this ${periodNoun(a)}`;
+}
+
+/**
+ * The count, worded once for the portal, the doors and the questions:
+ *  - "2 of 4 classes used this week"
+ *  - "4 of 4 classes used this 4-week period (6 recorded)" when more than the
+ *    allowance has been recorded (a lowered limit, or desk overrides) — it
+ *    never reads "6 of 4".
+ */
+export function allowanceCountPhrase(v: VerdictCopy): string {
+  const n = Math.max(0, Math.floor(v.used));
+  const noun = v.limit === 1 ? "class" : "classes";
+  const where = thisPeriodText(v);
+  if (n > v.limit) return `${v.limit} of ${v.limit} ${noun} used ${where} (${n} recorded)`;
+  return `${n} of ${v.limit} ${noun} used ${where}`;
+}
+
+/**
+ * The member portal's line for the plan card and the schedule:
+ * "2 of 4 classes used this 4-week period — resets Monday 17 November".
+ */
+export function allowanceUsageText(v: VerdictCopy): string {
+  return `${allowanceCountPhrase(v)} — resets ${dateText(v.resetsOn)}`;
+}
 
 /**
  * What the member app, the kiosk and the parent's check-in say: "4 of 4
- * classes used in the last 4 weeks; next free on Monday 3 November from
- * 18:00. Ask staff if you need to train before then." A parent checking in a
- * child passes the child's name: "Sam: 4 of 4 classes ... Ask staff if Sam
- * needs to train before then."
+ * classes used this 4-week period; it resets on Monday 17 November. Ask staff
+ * if you need to train before then." A parent checking in a child passes the
+ * child's name: "Sam: 4 of 4 classes ... Ask staff if Sam needs to train
+ * before then."
  */
 export function allowanceRefusalSentence(v: VerdictCopy, who?: string | null): string {
   const usage = allowanceCountPhrase(v);
   const lead = who ? `${who}: ${usage}` : usage;
   const subject = who ? `${who} needs` : "you need";
-  return v.nextFree
-    ? `${lead}; next free on ${nextFreeText(v.nextFree)}. Ask staff if ${subject} to train before then.`
-    : `${lead}. Ask staff if ${subject} to train.`;
+  return `${lead}; it resets on ${dateText(v.resetsOn)}. Ask staff if ${subject} to train before then.`;
 }
 
 /**
- * What booking says. A booking is a standing place, not a check-in, so the
- * tail is about booking: "4 of 4 classes used in the last 4 weeks; you can
- * book a session starting on or after Monday 3 November at 18:00."
+ * What booking adds when the session's period is already used up. Booking
+ * consumes nothing and is never refused for the allowance, but the member
+ * should know what will happen at the door.
  */
-export function allowanceBookingSentence(v: VerdictCopy): string {
-  const usage = allowanceCountPhrase(v);
-  return v.nextFree
-    ? `${usage}; you can book a session starting on or after ${nextFreeText(v.nextFree, "at")}.`
-    : `${usage}. Ask staff before booking more classes.`;
+export function allowanceBookingNotice(v: VerdictCopy): string {
+  return `${allowanceCountPhrase(v)}. You can book, but you'll be refused at check-in unless a place frees up; it resets on ${dateText(v.resetsOn)}.`;
 }
 
 /** The question the register, the card scanner and the coach tick put to staff. */
 export function allowanceAskSentence(memberName: string, v: VerdictCopy): string {
   const n = Math.max(0, Math.floor(v.used));
   const noun = v.limit === 1 ? "class" : "classes";
-  const where = allowanceWhere(v);
+  const where = thisPeriodText(v);
   const over = n > v.limit;
   const count = over
     ? `${v.limit === 1 ? "their 1 class" : `all ${v.limit} classes`} ${where}`
     : `${n} of ${v.limit} ${noun} ${where}`;
-  const extras = [over ? `${n} recorded` : null, v.nextFree ? `next free on ${nextFreeText(v.nextFree)}` : null].filter(
-    (x): x is string => x !== null,
-  );
-  return `${memberName} has used ${count}${extras.length > 0 ? ` (${extras.join("; ")})` : ""}. Admit anyway?`;
+  const extras = [over ? `${n} recorded` : null, `resets on ${dateText(v.resetsOn)}`].filter((x): x is string => x !== null);
+  return `${memberName} has used ${count} (${extras.join("; ")}). Admit anyway?`;
 }
+
+/**
+ * The plain-language summary the plan editor shows before saving, and the
+ * actual dates: "Attend up to 4 classes during each 4-week period. The current
+ * period runs Monday 20 October to Sunday 16 November 2026; the next reset is
+ * Monday 17 November 2026." `now` is a wall-clock minute in the club's zone.
+ */
+export function allowanceSummary(a: ClassAllowance | null, now: number): { sentence: string; period: string | null; nextReset: IsoDate | null } {
+  if (!a) return { sentence: "Unlimited classes. Members on this plan can attend any class their membership includes.", period: null, nextReset: null };
+  const p = periodContaining(a, now);
+  const start = minuteToLocal(p.start).date;
+  const end = minuteToLocal(p.end).date;
+  const noun = a.limit === 1 ? "class" : "classes";
+  const during = a.basis === "month" ? "each calendar month" : `each ${periodNoun(a)}`;
+  return {
+    sentence: `Attend up to ${a.limit} ${noun} during ${during}. Your next reset is ${dateText(end, true)}.`,
+    period: `The current period runs ${dateText(start)} to ${lastDayText(end, true)}.`,
+    nextReset: end,
+  };
+}
+
+/**
+ * How a door treats a member whose allowance is used up, as T6a's tier gate:
+ *  - "refuse": member-decided doors (member app, parent, kiosk);
+ *  - "ask": staff doors (register, card scanner, coach tick) — refused with an
+ *    askable answer unless staff confirmed, then admitted and recorded;
+ *  - "off": not checked (system paths, tests).
+ * Unlike class eligibility, an allowance can be overridden by staff: it is a
+ * usage count the club may choose to waive, not a rule about who may attend.
+ */
+export type AllowanceGateMode = "refuse" | "ask" | "off";
+
+/** The override reason recorded when staff admit someone past their allowance. */
+export const ALLOWANCE_OVERRIDE_REASON = "allowance_reached" as const;
 
 // ── Write side (both membership routes) ──────────────────────────────────────
 
 export const classLimitSchema = z.number().int().min(CLASS_LIMIT_MIN).max(CLASS_LIMIT_MAX);
+export const classLimitBasisSchema = z.enum(ALLOWANCE_BASES);
 export const classLimitWeeksSchema = z.number().int().min(CLASS_LIMIT_WEEKS_MIN).max(CLASS_LIMIT_WEEKS_MAX);
+export const classLimitAnchorSchema = z.string().regex(ISO_DATE, "Period start must be a date (YYYY-MM-DD)").refine(
+  (s) => !Number.isNaN(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s,
+  "Period start must be a real calendar date",
+);
 
 export const PAIR_MESSAGE =
-  "Set both the number of classes and how many weeks, or leave both blank for Unlimited";
+  "Set the number of classes together with how often it resets (each week, each month, or every N weeks from a start date), or clear all of them for Unlimited";
+export const WEEKS_MESSAGE = "Every N weeks needs the number of weeks (2 to 8) and the date the periods count from";
 export const LEGACY_MIX_MESSAGE =
-  "Send the class allowance as classes and weeks only, not together with the old classes-per-week field";
+  "Send the class allowance as classes and a reset basis only, not together with the old classes-per-week field";
 
-type AllowanceInput = {
+export type AllowanceInput = {
   classLimit?: number | null;
+  classLimitBasis?: AllowanceBasis | null;
   classLimitWeeks?: number | null;
+  classLimitAnchor?: string | null;
   maxClassesPerWeek?: number | null;
 };
 
 /**
- * zod superRefine for a create or PATCH body: the pair travels together, and
- * the legacy `maxClassesPerWeek` (still accepted, from a page loaded before
- * this release) is never mixed with it.
+ * zod superRefine for a create or PATCH body: the allowance travels as a set
+ * (limit + basis, plus weeks + anchor for "weeks"); clearing sends nulls; the
+ * legacy `maxClassesPerWeek` (still accepted, from a page loaded before this
+ * release) is never mixed with it.
  */
 export function refineAllowance(data: AllowanceInput, ctx: z.RefinementCtx): void {
-  const hasLimit = data.classLimit !== undefined;
-  const hasWeeks = data.classLimitWeeks !== undefined;
+  const keys = ["classLimit", "classLimitBasis", "classLimitWeeks", "classLimitAnchor"] as const;
+  const sent = keys.filter((k) => data[k] !== undefined);
   const hasLegacy = data.maxClassesPerWeek !== undefined;
-  if (hasLegacy && (hasLimit || hasWeeks)) {
+  if (hasLegacy && sent.length > 0) {
     ctx.addIssue({ code: "custom", path: ["classLimit"], message: LEGACY_MIX_MESSAGE });
     return;
   }
-  if (hasLimit !== hasWeeks || (hasLimit && (data.classLimit === null) !== (data.classLimitWeeks === null))) {
+  if (sent.length === 0) return;
+  const limit = data.classLimit ?? null;
+  const basis = data.classLimitBasis ?? null;
+  if (data.classLimit === undefined || data.classLimitBasis === undefined || (limit === null) !== (basis === null)) {
+    ctx.addIssue({ code: "custom", path: ["classLimitBasis"], message: PAIR_MESSAGE });
+    return;
+  }
+  if (basis === "weeks") {
+    if (data.classLimitWeeks == null || data.classLimitAnchor == null) {
+      ctx.addIssue({ code: "custom", path: ["classLimitWeeks"], message: WEEKS_MESSAGE });
+    }
+  } else if ((data.classLimitWeeks ?? null) !== null || (data.classLimitAnchor ?? null) !== null) {
     ctx.addIssue({ code: "custom", path: ["classLimitWeeks"], message: PAIR_MESSAGE });
   }
 }
 
 export type AllowanceColumns = {
   classLimit: number | null;
+  classLimitBasis: AllowanceBasis | null;
   classLimitWeeks: number | null;
+  /** A Date for Prisma's @db.Date column (UTC midnight of the calendar date). */
+  classLimitAnchor: Date | null;
   maxClassesPerWeek: number | null;
 };
 
+const CLEARED: AllowanceColumns = { classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null, maxClassesPerWeek: null };
+
 /**
- * The three columns to write for a body that passed `refineAllowance`, or
- * null when the body did not touch the allowance (leave all three alone).
- * A weekly allowance mirrors N into `maxClassesPerWeek`; anything else sets it
- * NULL, so the previous build shows a multi-week plan as Unlimited rather than
- * as a wrong "N/wk".
+ * The columns to write for a body that passed `refineAllowance`, or null when
+ * the body did not touch the allowance (leave every column alone). A weekly
+ * allowance mirrors N into `maxClassesPerWeek`; any other basis sets it NULL.
  */
 export function allowanceColumns(data: AllowanceInput): AllowanceColumns | null {
   if (data.classLimit !== undefined) {
     const limit = data.classLimit;
-    const weeks = data.classLimitWeeks ?? null;
-    if (limit === null || weeks === null) return { classLimit: null, classLimitWeeks: null, maxClassesPerWeek: null };
-    return { classLimit: limit, classLimitWeeks: weeks, maxClassesPerWeek: weeks === 1 ? limit : null };
+    const basis = data.classLimitBasis ?? null;
+    if (limit === null || basis === null) return { ...CLEARED };
+    if (basis === "weeks") {
+      return {
+        classLimit: limit,
+        classLimitBasis: "weeks",
+        classLimitWeeks: data.classLimitWeeks ?? null,
+        classLimitAnchor: data.classLimitAnchor ? new Date(`${data.classLimitAnchor}T00:00:00.000Z`) : null,
+        maxClassesPerWeek: null,
+      };
+    }
+    return { classLimit: limit, classLimitBasis: basis, classLimitWeeks: null, classLimitAnchor: null, maxClassesPerWeek: basis === "week" ? limit : null };
   }
   if (data.maxClassesPerWeek !== undefined) {
     const m = data.maxClassesPerWeek;
-    return m === null
-      ? { classLimit: null, classLimitWeeks: null, maxClassesPerWeek: null }
-      : { classLimit: m, classLimitWeeks: 1, maxClassesPerWeek: m };
+    return m === null ? { ...CLEARED } : { classLimit: m, classLimitBasis: "week", classLimitWeeks: null, classLimitAnchor: null, maxClassesPerWeek: m };
   }
   return null;
 }
 
 /** Audit / undo field names for the allowance. */
-export const ALLOWANCE_FIELDS = ["maxClassesPerWeek", "classLimit", "classLimitWeeks"] as const;
+export const ALLOWANCE_FIELDS = ["maxClassesPerWeek", "classLimit", "classLimitBasis", "classLimitWeeks", "classLimitAnchor"] as const;

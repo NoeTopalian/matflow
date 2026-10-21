@@ -7,7 +7,7 @@ import { updateMetadata } from "@/lib/audit-snapshot";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { billingCycleSchema } from "@/lib/billing-cycle";
-import { ALLOWANCE_FIELDS, allowanceColumns, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
+import { ALLOWANCE_FIELDS, allowanceColumns, classLimitAnchorSchema, classLimitBasisSchema, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
 
 const patchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -17,10 +17,13 @@ const patchSchema = z.object({
   billingCycle: billingCycleSchema.optional(),
   // Legacy single weekly limit (a page loaded before T7c); null clears.
   maxClassesPerWeek: z.number().int().min(1).max(30).optional().nullable(),
-  // T7c: "N classes every M weeks"; both together, both null clears to
-  // Unlimited (refineAllowance). The route writes all three columns in step.
+  // T7c: "N classes" on an explicit reset basis; limit + basis together (plus
+  // weeks + start date for "weeks"); nulls clear to Unlimited
+  // (refineAllowance). The route writes every allowance column in step.
   classLimit: classLimitSchema.nullable().optional(),
+  classLimitBasis: classLimitBasisSchema.nullable().optional(),
   classLimitWeeks: classLimitWeeksSchema.nullable().optional(),
+  classLimitAnchor: classLimitAnchorSchema.nullable().optional(),
   isKids: z.boolean().optional(),
   isActive: z.boolean().optional(),
   // ADR-001 D2 slice 2: the venue this tier covers; null = every venue.
@@ -53,10 +56,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    // The allowance keys become the three columns, written together (a
+    // The allowance keys become the allowance columns, written together (a
     // reduced limit applies from the next check-in; nothing recorded changes).
-    const { maxClassesPerWeek, classLimit, classLimitWeeks, ...rest } = parsed.data;
-    const allowance = allowanceColumns({ maxClassesPerWeek, classLimit, classLimitWeeks });
+    const { maxClassesPerWeek, classLimit, classLimitBasis, classLimitWeeks, classLimitAnchor, ...rest } = parsed.data;
+    const allowance = allowanceColumns({ maxClassesPerWeek, classLimit, classLimitBasis, classLimitWeeks, classLimitAnchor });
     const data: Record<string, unknown> = { ...rest, ...(allowance ?? {}) };
 
     const outcome = await withTenantContext(tenantId, async (tx) => {

@@ -643,7 +643,7 @@ export default function MemberSchedulePage() {
   const [scheduleLoading, setScheduleLoading] = useState(true);
   // UI-RULES §7: a failed load is an error, never "No classes today".
   const [loadError, setLoadError] = useState<string | null>(null);
-  // T7: "2 of 4 classes used in the last 4 weeks" for a plan with an
+  // T7: "2 of 4 classes used this 4-week period — resets …" for a plan with an
   // allowance. Supplementary to the grid, so its failure is said in its own
   // line rather than replacing the timetable (and never shown as nothing).
   const [allowance, setAllowance] = useState<{ kind: "loading" } | { kind: "ready"; text: string | null } | { kind: "error" }>({ kind: "loading" });
@@ -918,6 +918,13 @@ export default function MemberSchedulePage() {
         // class is paused) — show that, not a guess (the list may be stale).
         const body = await res.json().catch(() => null);
         failure = bookingFailureMessage(res.status, body, wasSubscribed);
+      } else if (!wasSubscribed) {
+        // T7: the booking stands whatever the allowance says — a booking
+        // consumes nothing and guarantees nothing. When the period is
+        // already used up the server says so, and the member hears it now
+        // rather than at the door.
+        const body = (await res.json().catch(() => null)) as { allowanceNotice?: unknown } | null;
+        if (typeof body?.allowanceNotice === "string" && body.allowanceNotice) toast(body.allowanceNotice, "warning", 8000);
       }
     } catch {
       failure = bookingFailureMessage(0, null, wasSubscribed);

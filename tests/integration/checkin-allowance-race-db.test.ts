@@ -117,7 +117,7 @@ describe.skipIf(!HAS_DB)("Check-in class allowance - real database concurrency",
       tenantId = (await tx.tenant.create({ data: { name: `Allowance race ${STAMP}`, slug: `allowance-race-${STAMP}` } })).id;
       // 1 class every 2 weeks: the smallest limit, so every pair races for the last place.
       tierId = (await tx.membershipTier.create({
-        data: { tenantId, name: "One a fortnight", classLimit: 1, classLimitWeeks: 2 },
+        data: { tenantId, name: "One a fortnight", classLimit: 1, classLimitBasis: "weeks", classLimitWeeks: 2, classLimitAnchor: new Date("2032-01-05") },
       })).id;
       memberId = (await tx.member.create({
         data: {
@@ -203,7 +203,7 @@ describe.skipIf(!HAS_DB)("Check-in class allowance - real database concurrency",
     await waitForLockWaiters(MEMBER_LOCK_SQL, 2);
     // The owner's edit commits without waiting for either check-in (a plain
     // UPDATE of the tier row; the check-ins hold no lock on it).
-    await withRlsBypass((tx) => tx.membershipTier.update({ where: { id: tier2 }, data: { classLimit: 1, classLimitWeeks: 2 } }));
+    await withRlsBypass((tx) => tx.membershipTier.update({ where: { id: tier2 }, data: { classLimit: 1, classLimitBasis: "weeks", classLimitWeeks: 2, classLimitAnchor: new Date("2032-01-05") } }));
     gate.release();
     await gate.done;
     const results = await Promise.all([a, b]);

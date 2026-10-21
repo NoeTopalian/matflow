@@ -478,7 +478,7 @@ Full evidence: `docs/audit/STATE-MAP-2026-08-30/statemap-B-tenant-billing.md`.
 
 **Model:** `MembershipTier` ([prisma/schema.prisma:782-798](../prisma/schema.prisma#L782-L798))
 
-**Fields:** `name`, `description`, `pricePence`, `currency` (default GBP), `billingCycle` (`monthly | annual | none`), `maxClassesPerWeek?` (legacy weekly limit), `classLimit?` + `classLimitWeeks?` (T7c: N classes every M weeks, rolling; read through `lib/class-allowance.ts`), `isKids`, `isActive`.
+**Fields:** `name`, `description`, `pricePence`, `currency` (default GBP), `billingCycle` (`monthly | annual | none`), `maxClassesPerWeek?` (legacy weekly limit), `classLimit?` + `classLimitBasis?` (+ `classLimitWeeks?` + `classLimitAnchor?` for `weeks`) (T7c: N classes per explicit period — week, month, or every N weeks from a start date; read through `lib/class-allowance.ts`), `isKids`, `isActive`.
 
 **Routes:**
 - `GET /api/memberships` — list active tiers ([app/api/memberships/route.ts:18-31](../app/api/memberships/route.ts#L18-L31)), owner / manager

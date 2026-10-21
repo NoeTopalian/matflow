@@ -3,7 +3,7 @@
 // T7: the desk register ASKS when a member's plan allowance is used up. The
 // server answers an unconfirmed staff mark with 403 allowance_reached,
 // askable, and the count; the register puts the question with the count and
-// the date it frees up, and on confirm resends once with
+// the date the period resets, and on confirm resends once with
 // acknowledged: ["allowance_reached"]. Cancel records nothing.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
@@ -25,10 +25,12 @@ let postResponses: Array<{ status: number; body: unknown }> = [];
 const ALLOWANCE_REFUSAL = {
   status: 403,
   body: {
-    error: "4 of 4 classes used in the last 4 weeks; next free on Monday 2 November from 18:00. Ask staff if you need to train before then.",
+    error: "4 of 4 classes used this 4-week period; it resets on Monday 26 October. Ask staff if you need to train before then.",
     reason: "allowance_reached",
     askable: true,
-    allowance: { used: 4, limit: 4, weeks: 4, nextFree: { date: "2026-11-02", time: "18:00" } },
+    allowance: {
+      used: 4, limit: 4, basis: "weeks", weeks: 4, period: { start: "2026-09-28", end: "2026-10-26" }, resetsOn: "2026-10-26",
+    },
   },
 };
 
@@ -59,13 +61,13 @@ async function markByEnter(input: HTMLInputElement, q: string) {
   await act(async () => {});
 }
 
-const QUESTION = "Ava Green has used 4 of 4 classes in the last 4 weeks (next free on Monday 2 November from 18:00). Admit anyway?";
+const QUESTION = "Ava Green has used 4 of 4 classes this 4-week period (resets on Monday 26 October). Admit anyway?";
 
 describe("RegisterPanel - plan allowance used", () => {
   beforeEach(() => { vi.useFakeTimers(); postResponses = []; });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
-  it("asks with the count and the free date, and resends once with the override on confirm", async () => {
+  it("asks with the count and the reset date, and resends once with the override on confirm", async () => {
     postResponses = [ALLOWANCE_REFUSAL, { status: 201, body: { success: true, record: { id: "rec-1" } } }];
     const input = await renderPanel();
     await markByEnter(input, "Ava");
@@ -92,6 +94,6 @@ describe("RegisterPanel - plan allowance used", () => {
     const input = await renderPanel();
     await markByEnter(input, "Ava");
     expect(screen.queryByText(QUESTION)).toBeNull();
-    expect(screen.getByText(/4 of 4 classes used in the last 4 weeks/)).toBeTruthy();
+    expect(screen.getByText(/4 of 4 classes used this 4-week period/)).toBeTruthy();
   });
 });

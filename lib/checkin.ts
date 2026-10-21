@@ -26,12 +26,15 @@
 // neither is open to everyone. Staff who want someone in change the
 // membership or the squad list through the audited routes instead.
 //
-// ALLOWANCE (T7, Sean note 5; owner decisions 17 Oct 2026): a plan with
-// "N classes every M weeks" (lib/class-allowance.ts) is enforced as soon as
-// the owner sets it. `allowanceGate` follows the tier gate's door profile:
-// self and kiosk "refuse" with the count and the date the next class frees
-// up; the register (admin), the card scanner (qr) and the coach tick "ask",
-// and an admission past the allowance is reported in `overrides` as
+// ALLOWANCE (T7, Sean note 5; owner decisions 17 and 20 Oct 2026): a plan
+// with "N classes each week / each month / every M weeks" (the period model
+// in lib/class-allowance.ts: an explicit reset basis, never a rolling window)
+// is enforced as soon as the owner sets it. A session is judged against the
+// period IT falls in; only confirmed attendance counts (a booking consumes
+// nothing; an undone visit is a deleted row, so the count recomputes). Doors:
+// self and kiosk "refuse" with the count and the date the period resets; the
+// register (admin), the card scanner (qr) and the coach tick "ask", and an
+// admission past the allowance is reported in `overrides` as
 // "allowance_reached" with `overAllowance` for the route's audit row. A
 // check-in paid by a class pack is not counted and not gated.
 //
@@ -127,8 +130,9 @@ import {
   ALLOWANCE_OVERRIDE_REASON,
   allowanceVerdict,
   slotMinute,
+  type AllowanceBasis,
   type AllowanceGateMode,
-  type LocalSlot,
+  type IsoDate,
 } from "@/lib/class-allowance";
 import { readAllowanceSnapshot } from "@/lib/class-allowance-count";
 
@@ -225,14 +229,16 @@ export type CheckinOverride = typeof ALLOWANCE_OVERRIDE_REASON;
 
 /** The allowance count a refusal, a question or an override carries. */
 export type AllowanceFacts = {
-  /** Counted classes in the busiest window containing this session (excluding it). */
+  /** Counted classes in the period containing this session (excluding it). */
   used: number;
   limit: number;
-  weeks: number;
-  /** When the next class frees up, in the club's clock; null if it cannot be stated. */
-  nextFree: LocalSlot | null;
-  /** The busiest window ends after this session (a later visit was recorded first); the copy says "within W weeks of this class". */
-  around?: true;
+  basis: AllowanceBasis;
+  /** Set for the every-N-weeks basis. */
+  weeks?: number;
+  /** The period the session falls in, as calendar dates (end exclusive). */
+  period: { start: IsoDate; end: IsoDate };
+  /** The calendar date the allowance resets (the period's end). */
+  resetsOn: IsoDate;
 };
 
 export type PerformCheckinResult =
@@ -564,12 +570,15 @@ async function memberLock(tx: Prisma.TransactionClient, tenantId: string, member
 
 /**
  * T7 allowance judgement, run INSIDE the write transaction, AFTER the Class
- * lock, the tier gate and the Member lock, BEFORE any pack decrement or
- * insert: statement C (readAllowanceSnapshot) gives the plan's allowance,
+ * lock, the eligibility check and the Member lock, BEFORE any pack decrement
+ * or insert: statement C (readAllowanceSnapshot) gives the plan's allowance,
  * whether the member is already in this session, and their counted visits,
- * from one snapshot taken after the lock; the verdict is decided in
- * TypeScript. A member already in this session answers "duplicate" before the
- * allowance, so a double tap says "already checked in", never "allowance used".
+ * from one snapshot taken after the lock; the verdict (the period this
+ * session falls in, and how many counted visits it already holds) is decided
+ * in TypeScript. A member already in this session answers "duplicate" before
+ * the allowance, so a double tap says "already checked in", never "allowance
+ * used" — and two simultaneous check-ins serialise on the Member lock, so the
+ * second sees the first's row and cannot take the same last place.
  */
 async function judgeAllowance(
   tx: Prisma.TransactionClient,
@@ -590,8 +599,9 @@ async function judgeAllowance(
   const v = allowanceVerdict(snap.allowance, slotMinute(session), snap.visits);
   if (!v.exhausted) return { kind: "open", overridden: false };
   const facts: AllowanceFacts = {
-    used: v.used, limit: v.limit, weeks: v.weeks, nextFree: v.nextFree,
-    ...(v.around ? { around: true as const } : {}),
+    used: v.used, limit: v.limit, basis: v.basis,
+    ...(v.weeks !== undefined ? { weeks: v.weeks } : {}),
+    period: v.period, resetsOn: v.resetsOn,
   };
   if (mode === "ask" && args.allowanceOverrideConfirmed === true) return { kind: "open", overridden: true, facts };
   return { kind: "allowance_reached", askable: mode === "ask", ...facts };
@@ -989,8 +999,8 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     if (straight.kind === "member_not_found") return { kind: "member_not_found" };
     if (straight.kind === "duplicate") return { kind: "duplicate" };
     if (straight.kind === "allowance_reached") {
-      const { kind, askable, used, limit, weeks, nextFree, around } = straight;
-      return { kind, askable, used, limit, weeks, nextFree, ...(around ? { around } : {}) };
+      const { kind, askable, used, limit, basis, weeks, period, resetsOn } = straight;
+      return { kind, askable, used, limit, basis, ...(weeks !== undefined ? { weeks } : {}), period, resetsOn };
     }
     if (straight.kind === "class_full") {
       return { kind: "class_full", taken: straight.taken, maxCapacity: straight.maxCapacity };

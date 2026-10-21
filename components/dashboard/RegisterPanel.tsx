@@ -32,7 +32,7 @@ import { NOT_ON_SQUAD_LABEL, SQUAD_ONLY_LABEL } from "@/lib/class-tier-gate";
 import { staleBillingWarning, billingSourceLabel } from "@/lib/billing-source";
 import type { TodaySession } from "@/components/dashboard/SessionPicker";
 import { isAdultAccount } from "@/lib/account-type";
-import { allowanceAskSentence, type LocalSlot } from "@/lib/class-allowance";
+import { ALLOWANCE_BASES, allowanceAskSentence, type AllowanceBasis } from "@/lib/class-allowance";
 
 type RegisterMember = {
   memberId: string;
@@ -101,13 +101,17 @@ type Candidate = {
  */
 type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class" | "allowance_reached";
 
-/** T7: the count the server sends with an askable allowance refusal. */
-type AllowanceBody = { used: number; limit: number; weeks: number; nextFree: LocalSlot | null; around?: boolean };
+/** T7: the count and the period the server sends with an askable allowance refusal. */
+type AllowanceBody = { used: number; limit: number; basis: AllowanceBasis; weeks?: number; resetsOn: string };
 
 function allowanceFrom(body: unknown): AllowanceBody | null {
   const a = (body as { allowance?: unknown } | null)?.allowance as Partial<AllowanceBody> | undefined;
-  if (!a || typeof a.used !== "number" || typeof a.limit !== "number" || typeof a.weeks !== "number") return null;
-  return { used: a.used, limit: a.limit, weeks: a.weeks, nextFree: a.nextFree ?? null, ...(a.around === true ? { around: true } : {}) };
+  if (!a || typeof a.used !== "number" || typeof a.limit !== "number" || typeof a.resetsOn !== "string") return null;
+  if (!(ALLOWANCE_BASES as readonly string[]).includes(a.basis as string)) return null;
+  return {
+    used: a.used, limit: a.limit, basis: a.basis as AllowanceBasis, resetsOn: a.resetsOn,
+    ...(typeof a.weeks === "number" ? { weeks: a.weeks } : {}),
+  };
 }
 
 /** Token-safe tint (UI-RULES §2). */

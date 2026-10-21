@@ -131,9 +131,9 @@ const RESTORABLE: Record<string, readonly string[]> = {
   ],
   MembershipTier: [
     "name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "isKids", "isActive", "locationId",
-    // T7c: the class allowance pair (lib/class-allowance.ts). A row recorded
+    // T7c: the class allowance set (lib/class-allowance.ts). A row recorded
     // before T7c carries only maxClassesPerWeek and still restores that.
-    "classLimit", "classLimitWeeks",
+    "classLimit", "classLimitBasis", "classLimitWeeks", "classLimitAnchor",
   ],
   RankSystem: ["discipline", "name", "order", "color", "stripes"],
   Location: ["name", "address", "isDefault"],
@@ -400,12 +400,20 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
       if (current.stripePriceId && ("pricePence" in restore || "currency" in restore || "billingCycle" in restore)) {
         throw new UndoStale("This plan has a Stripe price; change the price from the Memberships page so Stripe is updated too.");
       }
-      // T7c: the allowance is a pair (MembershipTier_classLimit_pair_check).
-      // A restore that would leave one set and the other blank is refused in
-      // words rather than by the database.
-      const limit = "classLimit" in restore ? restore.classLimit : current.classLimit;
-      const weeks = "classLimitWeeks" in restore ? restore.classLimitWeeks : current.classLimitWeeks;
-      if ((limit == null) !== (weeks == null)) {
+      // T7c: the allowance is a set (limit + basis, plus weeks + start date for
+      // "weeks"; database CHECKs *_tier_class_allowance_basis). A restore that
+      // would leave the set inconsistent is refused in words rather than by the
+      // database.
+      const pick = (k: string) => (k in restore ? restore[k] : current[k]);
+      const limit = pick("classLimit");
+      const basis = pick("classLimitBasis");
+      const weeks = pick("classLimitWeeks");
+      const anchor = pick("classLimitAnchor");
+      const weeksSet = basis === "weeks";
+      const consistent =
+        (limit == null) === (basis == null) &&
+        (weeksSet ? weeks != null && anchor != null : weeks == null && anchor == null);
+      if (!consistent) {
         throw new UndoStale("This plan's class allowance has changed since; set it again from the Memberships page.");
       }
     },

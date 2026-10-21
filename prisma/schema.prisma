@@ -1353,14 +1353,19 @@ model MembershipTier {
   currency          String   @default("GBP")
   billingCycle      String   @default("monthly") // CHECK: weekly | fortnightly | four_weekly | monthly | annual | none (20260430000001, widened by 20260923220000; the list lives in lib/billing-cycle.ts)
   maxClassesPerWeek Int?
-  // T7c (Sean note 5): the class allowance, "N classes every M weeks", read as
-  // a ROLLING window. Both NULL = Unlimited; CHECKs (migration
-  // *_tier_class_allowance) keep them set together, N 1-60 and M 1-8. The
-  // reader rule lives in lib/class-allowance.ts: a non-null maxClassesPerWeek
-  // still wins as N per 1 week, so the previous build (which edits only that
-  // column) is never silently overridden. The routes keep the three in step.
+  // T7c (Sean note 5; product decision 20 Oct 2026): the class allowance,
+  // `classLimit` classes per EXPLICIT period. `classLimitBasis` is "week"
+  // (each calendar week, Monday start), "month" (each calendar month) or
+  // "weeks" (every `classLimitWeeks` weeks, 2-8, counted from the plan's
+  // `classLimitAnchor` date). All NULL = Unlimited. CHECKs (migrations
+  // *_tier_class_allowance and *_tier_class_allowance_basis) keep the set
+  // consistent. Reader rule in lib/class-allowance.ts: the basis wins; a
+  // non-null maxClassesPerWeek with no basis (the previous build's field) is
+  // read as N each calendar week; a weekly allowance mirrors N into it.
   classLimit        Int?
+  classLimitBasis   String?
   classLimitWeeks   Int?
+  classLimitAnchor  DateTime? @db.Date
   isKids            Boolean  @default(false)
   isActive          Boolean  @default(true)
   // ADR-001 D2 slice 2: the venue this tier gives access to. NULL = every

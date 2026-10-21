@@ -173,7 +173,7 @@ describe.skipIf(!HAS_DB)("T7 review fixes - real database", () => {
       userId = (await tx.user.create({
         data: { tenantId, email: `t7-review-coach-${STAMP}@test.local`, name: "Coach", role: "coach", passwordHash: "x" },
       })).id;
-      tierId = (await tx.membershipTier.create({ data: { tenantId, name: "One a fortnight", classLimit: 1, classLimitWeeks: 2 } })).id;
+      tierId = (await tx.membershipTier.create({ data: { tenantId, name: "One a fortnight", classLimit: 1, classLimitBasis: "weeks", classLimitWeeks: 2, classLimitAnchor: new Date("2032-01-05") } })).id;
       classX = (await tx.class.create({ data: { tenantId, name: "Review X", duration: 60, maxCapacity: 50 } })).id;
       classY = (await tx.class.create({ data: { tenantId, name: "Review Y", duration: 60, maxCapacity: 50 } })).id;
       packTemplate = (await tx.classPack.create({ data: { tenantId, name: "Ten", totalCredits: 10, validityDays: 90, pricePence: 9000 } })).id;

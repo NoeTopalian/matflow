@@ -51,11 +51,13 @@ vi.mock("@/lib/prisma-tenant", () => {
   };
 });
 
-const FACTS = { used: 4, limit: 4, weeks: 4, nextFree: { date: "2026-11-02", time: "18:00" } };
+const FACTS = {
+  used: 4, limit: 4, basis: "weeks", weeks: 4, period: { start: "2026-09-28", end: "2026-10-26" }, resetsOn: "2026-10-26",
+};
 const SUCCESS = { kind: "success", record: { id: "rec-1", tenantId: "t1", memberId: "mem-1", classInstanceId: "inst-1", checkInMethod: "admin" }, coverage: { kind: "manual" } };
 const REFUSED = (askable: boolean) => ({ kind: "allowance_reached", askable, ...FACTS });
 const MEMBER_SENTENCE =
-  "4 of 4 classes used in the last 4 weeks; next free on Monday 2 November from 18:00. Ask staff if you need to train before then.";
+  "4 of 4 classes used this 4-week period; it resets on Monday 26 October. Ask staff if you need to train before then.";
 
 function req(url: string, body: unknown) {
   return new Request(url, { method: "POST", headers: { "Content-Type": "application/json", Origin: "http://test" }, body: JSON.stringify(body) });
@@ -101,7 +103,7 @@ describe("POST /api/checkin", () => {
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({
       reason: "allowance_reached",
-      error: "Sam: 4 of 4 classes used in the last 4 weeks; next free on Monday 2 November from 18:00. Ask staff if Sam needs to train before then.",
+      error: "Sam: 4 of 4 classes used this 4-week period; it resets on Monday 26 October. Ask staff if Sam needs to train before then.",
     });
   });
 
@@ -172,7 +174,7 @@ describe("POST /api/checkin/card", () => {
     expect(body.results[0]).toMatchObject({
       status: "needs_confirmation",
       reason: "allowance_reached",
-      question: "Ava Green has used 4 of 4 classes in the last 4 weeks (next free on Monday 2 November from 18:00). Admit anyway?",
+      question: "Ava Green has used 4 of 4 classes this 4-week period (resets on Monday 26 October). Admit anyway?",
     });
     expect(h.logAudit).not.toHaveBeenCalled();
   });

@@ -36,9 +36,9 @@ describe("describeApiError", () => {
     expect(describeApiError(fe({ name: ["Too small: expected string to have >=1 characters"] }))).toBe("Name is required.");
     expect(describeApiError(fe({ amountPence: ["Too big: expected number to be <=1000000"] }))).toBe("Amount must be £10,000 or less.");
     expect(describeApiError(fe({ maxClassesPerWeek: ["Too big: expected number to be <=30"] }))).toBe("Classes per week must be 30 or less.");
-    // T7c: the plan editor's allowance pair.
+    // T7c: the plan editor's allowance fields.
     expect(describeApiError(fe({ classLimit: ["Too big: expected number to be <=60"] }))).toBe("Classes allowed must be 60 or less.");
-    expect(describeApiError(fe({ classLimitWeeks: ["Too small: expected number to be >=1"] }))).toBe("Weeks must be at least 1.");
+    expect(describeApiError(fe({ classLimitWeeks: ["Too small: expected number to be >=2"] }))).toBe("Every (weeks) must be at least 2.");
     expect(describeApiError(fe({ email: ["Invalid email address"] }))).toBe("Enter a valid email address.");
     expect(describeApiError(fe({ emergencyContactPhone: ["Too big: expected string to have <=40 characters"] }))).toBe(
       "Emergency contact phone must be 40 characters or fewer.",
