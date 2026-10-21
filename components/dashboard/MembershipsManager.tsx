@@ -107,6 +107,7 @@ export const BASIS_LABELS: Record<AllowanceBasis, string> = {
   week: "Each week (Monday to Sunday)",
   month: "Each calendar month",
   weeks: "Every N weeks from a start date",
+  billing: "Each member's own billing period (from their renewal date)",
 };
 
 export const PERIOD_START_ERROR = "Every N weeks needs the date the periods count from (a real calendar date).";
@@ -122,7 +123,7 @@ export function formAllowance(form: { classLimit: string; classLimitBasis: strin
   if (limit.kind === "invalid") return { kind: "error", message: CLASS_LIMIT_ERROR };
   if (limit.kind === "blank") return { kind: "ok", allowance: null };
   const basis = form.classLimitBasis as AllowanceBasis;
-  if (basis === "week" || basis === "month") return { kind: "ok", allowance: { limit: limit.value, basis } };
+  if (basis === "week" || basis === "month" || basis === "billing") return { kind: "ok", allowance: { limit: limit.value, basis } };
   const weeks = Number(form.classLimitWeeks);
   const anchor = form.classLimitAnchor.trim();
   if (!(CLASS_LIMIT_WEEK_OPTIONS as readonly number[]).includes(weeks)) return { kind: "error", message: "Every N weeks must be a whole number from 2 to 8." };

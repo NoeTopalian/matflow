@@ -73,6 +73,29 @@ describe("20261021170000_tier_class_allowance_weeks_check_null_safe (review H-1:
   });
 });
 
+describe("20261021230000_member_billing_period_allowance_basis (per member's billing period)", () => {
+  const { code, statements } = load("20261021230000_member_billing_period_allowance_basis");
+
+  it("opens with BEGIN and closes with COMMIT", () => {
+    expect(statements[0]).toBe("BEGIN;");
+    expect(statements[statements.length - 1]).toBe("COMMIT;");
+  });
+
+  it("adds two nullable Member timestamps, no default, no backfill, no renames", () => {
+    expect(code).toMatch(/ALTER TABLE "Member" ADD COLUMN\s+"billingPeriodStart" TIMESTAMP\(3\),/);
+    expect(code).toMatch(/ADD COLUMN\s+"billingPeriodEnd" TIMESTAMP\(3\);/);
+    expect(code).not.toMatch(/ADD COLUMN[^;]*NOT NULL/);
+    expect(code).not.toMatch(/DEFAULT|\bUPDATE\b|DROP COLUMN|RENAME/i);
+  });
+
+  it("replaces only the basis CHECK, NOT VALID then VALIDATE, with every basis the code knows", () => {
+    expect([...code.matchAll(/DROP CONSTRAINT IF EXISTS "([^"]+)"/g)].map((m) => m[1])).toEqual(["MembershipTier_classLimitBasis_check"]);
+    expect([...code.matchAll(/ADD CONSTRAINT "([^"]+)"/g)].map((m) => m[1])).toEqual(["MembershipTier_classLimitBasis_check"]);
+    expect(code).toContain(`VALIDATE CONSTRAINT "MembershipTier_classLimitBasis_check";`);
+    expect(code).toContain(`"classLimitBasis" IN (${ALLOWANCE_BASES.map((b) => `'${b}'`).join(", ")})`);
+  });
+});
+
 describe("20261021140000_tier_class_allowance_basis (the explicit reset basis)", () => {
   const { code, statements } = load("20261021140000_tier_class_allowance_basis");
 
@@ -109,7 +132,8 @@ describe("20261021140000_tier_class_allowance_basis (the explicit reset basis)",
   });
 
   it("the CHECKs match the helpers the routes validate with", () => {
-    expect(code).toContain(`"classLimitBasis" IN (${ALLOWANCE_BASES.map((b) => `'${b}'`).join(", ")})`);
+    // The three original words; "billing" is added by 20261021230000 (below), which replaces this CHECK.
+    expect(code).toContain(`"classLimitBasis" IN ('week', 'month', 'weeks')`);
     expect(code).toContain(`("classLimit" IS NULL) = ("classLimitBasis" IS NULL)`);
     expect(code).toContain(`"classLimitWeeks" BETWEEN ${CLASS_LIMIT_WEEKS_MIN} AND ${CLASS_LIMIT_WEEKS_MAX} AND "classLimitAnchor" IS NOT NULL`);
     expect(code).toContain(`"classLimitBasis" IS DISTINCT FROM 'weeks' AND "classLimitWeeks" IS NULL AND "classLimitAnchor" IS NULL`);

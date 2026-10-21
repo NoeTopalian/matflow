@@ -237,12 +237,19 @@ export type AllowanceFacts = {
   basis: AllowanceBasis;
   /** Set for the every-N-weeks basis. */
   weeks?: number;
-  /** The period the session falls in, as calendar dates (end exclusive). */
-  period: { start: IsoDate; end: IsoDate };
-  /** The calendar date the allowance resets (the period's end). */
-  resetsOn: IsoDate;
+  /** The period the session falls in, as calendar dates (end exclusive). Absent when the period is unknown. */
+  period?: { start: IsoDate; end: IsoDate };
+  /** The calendar date the allowance resets (the period's end). Absent when the period is unknown. */
+  resetsOn?: IsoDate;
   /** False when the session's period is not the one containing now (club clock): the copy then names the period. */
   current?: boolean;
+  /**
+   * The plan counts per billing period and this member has no recorded
+   * period (no Stripe paid period, no next due date): the count cannot be
+   * made, so member-decided doors refuse and staff doors ask (never a silent
+   * calendar fallback). `used` is 0 and `limit` is the plan's.
+   */
+  periodUnknown?: true;
 };
 
 export type PerformCheckinResult =
@@ -609,6 +616,14 @@ async function judgeAllowance(
   });
   if (!snap) return { kind: "member_not_found" };
   if (snap.alreadyIn) return { kind: "duplicate" };
+  if (snap.periodUnknown && snap.periodUnknownLimit !== null) {
+    // Per-billing-period plan, no period recorded for this member: judged as
+    // "cannot be counted" — refused where the member decides, asked where
+    // staff do, recorded as an override when admitted.
+    const facts: AllowanceFacts = { used: 0, limit: snap.periodUnknownLimit, basis: "billing", periodUnknown: true };
+    if (mode === "ask" && args.allowanceOverrideConfirmed === true) return { kind: "open", overridden: true, facts };
+    return { kind: "allowance_reached", askable: mode === "ask", ...facts };
+  }
   if (!snap.allowance) return { kind: "open", overridden: false };
   const v = allowanceVerdict(snap.allowance, slotMinute(session), snap.visits, nowMinute(new Date(), usableTimezone(timeZone)));
   if (!v.exhausted) return { kind: "open", overridden: false };
@@ -1018,8 +1033,15 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     if (straight.kind === "member_not_found") return { kind: "member_not_found" };
     if (straight.kind === "duplicate") return { kind: "duplicate" };
     if (straight.kind === "allowance_reached") {
-      const { kind, askable, used, limit, basis, weeks, period, resetsOn } = straight;
-      return { kind, askable, used, limit, basis, ...(weeks !== undefined ? { weeks } : {}), period, resetsOn };
+      const { kind, askable, used, limit, basis, weeks, period, resetsOn, current, periodUnknown } = straight;
+      return {
+        kind, askable, used, limit, basis,
+        ...(weeks !== undefined ? { weeks } : {}),
+        ...(period ? { period } : {}),
+        ...(resetsOn ? { resetsOn } : {}),
+        ...(current !== undefined ? { current } : {}),
+        ...(periodUnknown ? { periodUnknown } : {}),
+      };
     }
     if (straight.kind === "class_full") {
       return { kind: "class_full", taken: straight.taken, maxCapacity: straight.maxCapacity };

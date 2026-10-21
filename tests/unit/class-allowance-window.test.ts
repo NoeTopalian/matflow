@@ -12,6 +12,10 @@ import {
   allowanceSummary,
   allowanceUsageText,
   allowanceVerdict,
+  withMemberBillingPeriod,
+  billingPeriodContaining,
+  periodContaining,
+  classLimitText,
   countInPeriod,
   currentPeriodUsage,
   dateMinute,
@@ -19,7 +23,6 @@ import {
   lastDayText,
   minuteToLocal,
   nowMinute,
-  periodContaining,
   slotMinute,
   type ClassAllowance,
 } from "@/lib/class-allowance";
@@ -245,5 +248,65 @@ describe("historical periods are named, never called \"this\" (review gap 5)", (
   it("the current period still reads \"this\"", () => {
     const current = allowanceVerdict(FOUR_IN_FOUR, at("2026-11-03", "18:00"), visits, nowNov);
     expect(allowanceCountPhrase(current)).toBe("0 of 4 classes used this 4-week period");
+  });
+});
+
+describe("per member's billing period (owner scope, 21 Oct 2026)", () => {
+  const D = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+  const tier = { limit: 4, basis: "billing" as const };
+
+  it("resolves a Stripe-stated period and steps it by the tier's cycle, forwards and backwards", () => {
+    const a = withMemberBillingPeriod(tier, { billingPeriodStart: D("2026-09-28"), billingPeriodEnd: D("2026-10-26"), billingCycle: "four_weekly" })!;
+    expect(a.basis).toBe("billing");
+    expect(periodContaining(a, at("2026-10-19", "18:00"))).toEqual({ start: dateMinute("2026-09-28"), end: dateMinute("2026-10-26") });
+    expect(periodContaining(a, at("2026-11-02", "18:00"))).toEqual({ start: dateMinute("2026-10-26"), end: dateMinute("2026-11-23") });
+    expect(periodContaining(a, at("2026-09-01", "18:00"))).toEqual({ start: dateMinute("2026-08-31"), end: dateMinute("2026-09-28") });
+  });
+
+  it("derives a desk member's period from the next due date and the cycle (four-weekly: 28 days; monthly: clamped months)", () => {
+    const fw = withMemberBillingPeriod(tier, { nextDueAt: D("2026-11-02"), billingCycle: "four_weekly" })!;
+    expect(periodContaining(fw, at("2026-10-19", "18:00"))).toEqual({ start: dateMinute("2026-10-05"), end: dateMinute("2026-11-02") });
+    const monthly = withMemberBillingPeriod(tier, { nextDueAt: D("2026-03-31"), billingCycle: "monthly" })!;
+    // 31 March back one month is 28 February (clamped); the period before that ends 28 Feb and starts 31 Jan.
+    expect(periodContaining(monthly, at("2026-03-10", "18:00"))).toEqual({ start: dateMinute("2026-02-28"), end: dateMinute("2026-03-31") });
+    expect(periodContaining(monthly, at("2026-02-10", "18:00"))).toEqual({ start: dateMinute("2026-01-31"), end: dateMinute("2026-02-28") });
+  });
+
+  it("the stated period wins over the due date; no period at all is null (cannot be counted); other bases pass through", () => {
+    const both = withMemberBillingPeriod(tier, { nextDueAt: D("2026-10-06"), billingPeriodStart: D("2026-09-28"), billingPeriodEnd: D("2026-10-26"), billingCycle: "four_weekly" })!;
+    expect(periodContaining(both, at("2026-10-19", "18:00")).start).toBe(dateMinute("2026-09-28"));
+    expect(withMemberBillingPeriod(tier, { billingCycle: "four_weekly" })).toBeNull();
+    expect(withMemberBillingPeriod(tier, { nextDueAt: D("2026-11-02"), billingCycle: "none" })).toBeNull();
+    expect(withMemberBillingPeriod(FOUR_IN_FOUR, { billingCycle: "four_weekly" })).toBe(FOUR_IN_FOUR);
+    expect(withMemberBillingPeriod(null, {})).toBeNull();
+    expect(() => periodContaining(tier, at("2026-10-19", "18:00"))).toThrow(/member's period/);
+  });
+
+  it("billingPeriodContaining refuses an empty period", () => {
+    expect(() => billingPeriodContaining({ start: 10, end: 10, stepDays: 28 }, 5)).toThrow();
+  });
+
+  it("the plan reads '4 each billing period' and the editor summary says there is no shared reset date", () => {
+    expect(classLimitText(tier)).toBe("4 each billing period");
+    const s = allowanceSummary(tier, at("2026-10-21", "12:00"));
+    expect(s.sentence).toMatch(/^Attend up to 4 classes during each member's own billing period/);
+    expect(s.nextReset).toBeNull();
+    expect(s.period).toMatch(/no renewal date recorded/);
+  });
+
+  it("copy for a member whose period is unknown: refusal, question, booking notice, portal line", () => {
+    const v = { used: 0, limit: 4, basis: "billing" as const, periodUnknown: true as const };
+    expect(allowanceRefusalSentence(v)).toBe("Your plan counts classes per billing period, but no renewal date is recorded for you. Ask staff.");
+    expect(allowanceRefusalSentence(v, "Sam")).toBe("Sam's plan counts classes per billing period, but no renewal date is recorded for Sam. Ask staff.");
+    expect(allowanceAskSentence("Ava Green", v)).toBe("No renewal date is recorded for Ava Green, so their 4 classes per billing period can't be counted. Admit anyway?");
+    expect(allowanceBookingNotice(v)).toMatch(/^Your plan counts classes per billing period, but no renewal date is recorded for you\. Ask staff\. Booking doesn't use a class/);
+    expect(allowanceUsageText(v)).toBe("Your plan allows 4 classes per billing period, but no renewal date is recorded for you — ask staff");
+  });
+
+  it("copy for a known billing period reads like any other period", () => {
+    const a = withMemberBillingPeriod(tier, { nextDueAt: D("2026-11-02"), billingCycle: "four_weekly" })!;
+    const v = allowanceVerdict(a, at("2026-10-19", "18:00"), [at("2026-10-05", "18:00"), at("2026-10-12", "07:00"), at("2026-10-12", "18:00"), at("2026-10-14", "18:00")], at("2026-10-21", "12:00"));
+    expect(v).toMatchObject({ used: 4, limit: 4, basis: "billing", exhausted: true, period: { start: "2026-10-05", end: "2026-11-02" }, resetsOn: "2026-11-02", current: true });
+    expect(allowanceRefusalSentence(v)).toBe("4 of 4 classes used this billing period; it resets on Monday 2 November. Ask staff if you need to train before then.");
   });
 });

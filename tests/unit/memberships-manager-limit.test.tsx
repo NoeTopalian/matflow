@@ -223,7 +223,7 @@ describe("the class allowance in the tier editor", () => {
     expect(input.type).toBe("text");
     expect(input.getAttribute("inputmode")).toBe("numeric");
     expect(Array.from(basisSelect().options).map((o) => o.textContent)).toEqual([
-      "Each week (Monday to Sunday)", "Each calendar month", "Every N weeks from a start date",
+      "Each week (Monday to Sunday)", "Each calendar month", "Every N weeks from a start date", "Each member's own billing period (from their renewal date)",
     ]);
     expect(screen.queryByLabelText("every (weeks)")).toBeNull();
     setBasis("weeks");

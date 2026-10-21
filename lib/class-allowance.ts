@@ -45,7 +45,7 @@ export const CLASS_LIMIT_MAX = 60;
 export const CLASS_LIMIT_WEEKS_MIN = 2;
 export const CLASS_LIMIT_WEEKS_MAX = 8;
 
-export const ALLOWANCE_BASES = ["week", "month", "weeks"] as const;
+export const ALLOWANCE_BASES = ["week", "month", "weeks", "billing"] as const;
 export type AllowanceBasis = (typeof ALLOWANCE_BASES)[number];
 
 /** The "every N weeks" choices the plan editor offers, in order. */
@@ -55,10 +55,26 @@ export const CLASS_LIMIT_WEEK_OPTIONS = [2, 3, 4, 5, 6, 7, 8] as const;
 export type IsoDate = string;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * A member's own billing period on the wall-clock minute scale, and the step
+ * to the next one, resolved per member (see withMemberBillingPeriod). On the
+ * tier itself a "billing" allowance carries neither: it has no shared dates.
+ */
+export type BillingPeriodAnchor = {
+  /** One known period [start, end), as wall-clock minutes. */
+  start: number;
+  end: number;
+  /** The tier's billing cycle as a step: whole days, or calendar months. */
+  stepDays?: number;
+  stepMonths?: number;
+};
+
 export type ClassAllowance =
   | { limit: number; basis: "week" }
   | { limit: number; basis: "month" }
-  | { limit: number; basis: "weeks"; weeks: number; anchor: IsoDate };
+  | { limit: number; basis: "weeks"; weeks: number; anchor: IsoDate }
+  /** "N per billing period": each member's own periods, from one renewal date to the next (owner scope, 21 Oct 2026). */
+  | { limit: number; basis: "billing"; member?: BillingPeriodAnchor };
 
 export type TierAllowanceColumns = {
   classLimit?: number | null;
@@ -85,7 +101,7 @@ export function tierAllowance(t: TierAllowanceColumns | null | undefined): Class
   if (!t) return null;
   if (t.classLimitBasis != null && t.classLimit != null) {
     const basis = t.classLimitBasis;
-    if (basis === "week" || basis === "month") return { limit: t.classLimit, basis };
+    if (basis === "week" || basis === "month" || basis === "billing") return { limit: t.classLimit, basis };
     if (basis === "weeks") {
       const anchor = isoDateOf(t.classLimitAnchor);
       if (t.classLimitWeeks != null && t.classLimitWeeks >= CLASS_LIMIT_WEEKS_MIN && anchor) {
@@ -100,17 +116,19 @@ export function tierAllowance(t: TierAllowanceColumns | null | undefined): Class
 
 // ── Wording of the allowance itself ──────────────────────────────────────────
 
-/** "each week", "each month", "every 4 weeks". */
+/** "each week", "each month", "every 4 weeks", "each billing period". */
 export function basisText(a: ClassAllowance): string {
   if (a.basis === "week") return "each week";
   if (a.basis === "month") return "each month";
+  if (a.basis === "billing") return "each billing period";
   return `every ${a.weeks} weeks`;
 }
 
-/** "week", "calendar month", "4-week period": the noun for one period. */
+/** "week", "calendar month", "4-week period", "billing period": the noun for one period. */
 export function periodNoun(a: ClassAllowance): string {
   if (a.basis === "week") return "week";
   if (a.basis === "month") return "calendar month";
+  if (a.basis === "billing") return "billing period";
   return `${a.weeks}-week period`;
 }
 
@@ -126,11 +144,11 @@ export function classLimitLongText(a: ClassAllowance | null): string {
   return `${a.limit} ${a.limit === 1 ? "class" : "classes"} ${basisText(a)}`;
 }
 
-/** Sort key: classes per week on average; Unlimited is the largest. */
+/** Sort key: classes per week on average; Unlimited is the largest. A billing period is taken as a month. */
 export function classLimitSortValue(a: ClassAllowance | null): number {
   if (!a) return Number.MAX_SAFE_INTEGER;
   if (a.basis === "week") return a.limit;
-  if (a.basis === "month") return a.limit / (365.25 / 12 / 7);
+  if (a.basis === "month" || a.basis === "billing") return a.limit / (365.25 / 12 / 7);
   return a.limit / a.weeks;
 }
 
@@ -210,11 +228,113 @@ export function periodContaining(a: ClassAllowance, minute: number): Period {
     const m = d.getUTCMonth();
     return { start: Date.UTC(y, m, 1) / 60_000, end: Date.UTC(y, m + 1, 1) / 60_000 };
   }
+  if (a.basis === "billing") {
+    if (!a.member) throw new Error("a billing-period allowance needs the member's period (withMemberBillingPeriod)");
+    return billingPeriodContaining(a.member, minute);
+  }
   const span = a.weeks * 7 * MINUTES_PER_DAY;
   const anchor = dateMinute(a.anchor);
   const k = Math.floor((minute - anchor) / span);
   const start = anchor + k * span;
   return { start, end: start + span };
+}
+
+/** Minutes → UTC Date on the wall-clock scale, and back. */
+const minuteDate = (minute: number) => new Date(minute * 60_000);
+const dateToMinute = (d: Date) => Math.floor(d.getTime() / 60_000);
+
+/** Whole-month step on the wall-clock scale, day-of-month clamped (31 Jan + 1 month = 28/29 Feb; a month-end stays a month-end). */
+function addMonthsClampedUtc(from: Date, months: number): Date {
+  const day = from.getUTCDate();
+  const result = new Date(from.getTime());
+  result.setUTCDate(1);
+  result.setUTCMonth(result.getUTCMonth() + months);
+  const lastOfTarget = new Date(Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0)).getUTCDate();
+  const lastOfSource = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + 1, 0)).getUTCDate();
+  result.setUTCDate(day === lastOfSource ? lastOfTarget : Math.min(day, lastOfTarget));
+  return result;
+}
+
+function stepPeriod(p: Period, anchor: BillingPeriodAnchor, direction: 1 | -1): Period {
+  if (anchor.stepMonths) {
+    const start = dateToMinute(addMonthsClampedUtc(minuteDate(p.start), direction * anchor.stepMonths));
+    const end = dateToMinute(addMonthsClampedUtc(minuteDate(p.end), direction * anchor.stepMonths));
+    return { start, end };
+  }
+  const span = (anchor.stepDays ?? 0) * MINUTES_PER_DAY;
+  if (span <= 0) throw new Error("a billing-period allowance needs a cycle step");
+  return { start: p.start + direction * span, end: p.end + direction * span };
+}
+
+/**
+ * The member's billing period that contains `minute`: the known period
+ * stepped forwards or backwards by the cycle until it does. A session before
+ * the first known period (or after the last) still lands in some period, so
+ * nothing is ever unjudged. Bounded: 240 steps (20 years of months).
+ */
+export function billingPeriodContaining(anchor: BillingPeriodAnchor, minute: number): Period {
+  let p: Period = { start: anchor.start, end: anchor.end };
+  if (!(p.end > p.start)) throw new Error("a billing period must end after it starts");
+  for (let i = 0; i < 240 && minute >= p.end; i += 1) p = stepPeriod(p, anchor, 1);
+  for (let i = 0; i < 240 && minute < p.start; i += 1) p = stepPeriod(p, anchor, -1);
+  return p;
+}
+
+/** The cycle of a tier as a step for billingPeriodContaining; null for a non-recurring tier ("none" or unknown). */
+export function billingCycleStep(billingCycle: string | null | undefined): { stepDays?: number; stepMonths?: number } | null {
+  switch (billingCycle) {
+    case "weekly": return { stepDays: 7 };
+    case "fortnightly": return { stepDays: 14 };
+    case "four_weekly": return { stepDays: 28 };
+    case "monthly": return { stepMonths: 1 };
+    case "annual": return { stepMonths: 12 };
+    default: return null;
+  }
+}
+
+/**
+ * What MatFlow knows about one member's billing period, in order of authority:
+ *  1. `billingPeriodStart/End` — the subscription period Stripe stated on the
+ *     last paid invoice (written by the webhook; Stripe-billed members);
+ *  2. `nextDueAt` with the tier's cycle — the period ending on the next due
+ *     date MatFlow tracks (desk, cash and standing-order members, advanced by
+ *     each recorded payment; TeamUp-imported members, from the export's next
+ *     payment date until the next import refreshes it).
+ * Dates are the zoneless wall-clock timestamps those columns hold (UTC
+ * components = the club's calendar, the convention lib/overdue.ts uses).
+ */
+export type MemberBillingView = {
+  billingPeriodStart?: Date | null;
+  billingPeriodEnd?: Date | null;
+  nextDueAt?: Date | null;
+  billingCycle?: string | null;
+};
+
+/**
+ * Resolve a tier's "billing" allowance for one member. Returns the allowance
+ * with the member's period attached, or `null` when no period is known — the
+ * caller must treat that as "cannot be counted" (refuse at member-decided
+ * doors, ask at staff doors), never fall back to a calendar period.
+ * Non-billing allowances pass through unchanged.
+ */
+export function withMemberBillingPeriod(a: ClassAllowance | null, member: MemberBillingView): ClassAllowance | null {
+  if (!a || a.basis !== "billing") return a;
+  const step = billingCycleStep(member.billingCycle);
+  if (member.billingPeriodStart && member.billingPeriodEnd && member.billingPeriodEnd > member.billingPeriodStart) {
+    const start = dateToMinute(member.billingPeriodStart);
+    const end = dateToMinute(member.billingPeriodEnd);
+    // Stripe's own period length is the step when the tier's cycle is not a plain step.
+    const fallback = step ?? { stepDays: Math.max(1, Math.round((end - start) / MINUTES_PER_DAY)) };
+    return { limit: a.limit, basis: "billing", member: { start, end, ...fallback } };
+  }
+  if (member.nextDueAt && step) {
+    const end = dateToMinute(member.nextDueAt);
+    const startDate = step.stepMonths
+      ? addMonthsClampedUtc(member.nextDueAt, -step.stepMonths)
+      : new Date(member.nextDueAt.getTime() - (step.stepDays ?? 0) * DAY_MS);
+    return { limit: a.limit, basis: "billing", member: { start: dateToMinute(startDate), end, ...step } };
+  }
+  return null;
 }
 
 /** Visits (wall-clock minutes) inside the period. */
@@ -277,15 +397,26 @@ export function currentPeriodUsage(a: ClassAllowance, now: number, visits: reado
 
 // ── Wording of counts, dates and refusals ────────────────────────────────────
 
-type VerdictCopy = Pick<AllowanceVerdict, "used" | "limit" | "basis" | "resetsOn"> & {
+type VerdictCopy = Pick<AllowanceVerdict, "used" | "limit" | "basis"> & {
+  resetsOn?: IsoDate;
   weeks?: number;
   period?: AllowanceVerdict["period"];
   current?: boolean;
+  /** A billing-period allowance for a member with no recorded period: it cannot be counted. */
+  periodUnknown?: true;
 };
 
 function asAllowance(v: VerdictCopy): ClassAllowance {
   if (v.basis === "weeks") return { limit: v.limit, basis: "weeks", weeks: v.weeks ?? 2, anchor: "1970-01-05" };
   return { limit: v.limit, basis: v.basis };
+}
+
+/** The member's sentence when their plan counts per billing period and no period is recorded. */
+export const PERIOD_UNKNOWN_MEMBER = "Your plan counts classes per billing period, but no renewal date is recorded for you. Ask staff.";
+export function periodUnknownSentence(who?: string | null): string {
+  return who
+    ? `${who}'s plan counts classes per billing period, but no renewal date is recorded for ${who}. Ask staff.`
+    : PERIOD_UNKNOWN_MEMBER;
 }
 
 /** "Monday 3 November", or with the year "Monday 3 November 2026". */
@@ -347,6 +478,7 @@ export function allowanceCountPhrase(v: VerdictCopy): string {
  * "2 of 4 classes used this 4-week period — resets Monday 17 November".
  */
 export function allowanceUsageText(v: VerdictCopy): string {
+  if (v.periodUnknown || !v.resetsOn) return `Your plan allows ${v.limit} ${v.limit === 1 ? "class" : "classes"} per billing period, but no renewal date is recorded for you — ask staff`;
   return `${allowanceCountPhrase(v)} — resets ${dateText(v.resetsOn)}`;
 }
 
@@ -358,6 +490,7 @@ export function allowanceUsageText(v: VerdictCopy): string {
  * before then."
  */
 export function allowanceRefusalSentence(v: VerdictCopy, who?: string | null): string {
+  if (v.periodUnknown || !v.resetsOn) return periodUnknownSentence(who);
   const usage = allowanceCountPhrase(v);
   const lead = who ? `${who}: ${usage}` : usage;
   const subject = who ? `${who} needs` : "you need";
@@ -370,11 +503,15 @@ export function allowanceRefusalSentence(v: VerdictCopy, who?: string | null): s
  * should know what will happen at the door.
  */
 export function allowanceBookingNotice(v: VerdictCopy): string {
+  if (v.periodUnknown || !v.resetsOn) return `${PERIOD_UNKNOWN_MEMBER} Booking doesn't use a class, but checking in will need staff to admit you.`;
   return `${allowanceCountPhrase(v)}. Booking doesn't use a class, but checking in before ${dateText(v.resetsOn)} will need a class-pack credit or staff to admit you.`;
 }
 
 /** The question the register, the card scanner and the coach tick put to staff. */
 export function allowanceAskSentence(memberName: string, v: VerdictCopy): string {
+  if (v.periodUnknown || !v.resetsOn) {
+    return `No renewal date is recorded for ${memberName}, so their ${v.limit} ${v.limit === 1 ? "class" : "classes"} per billing period can't be counted. Admit anyway?`;
+  }
   const n = Math.max(0, Math.floor(v.used));
   const noun = v.limit === 1 ? "class" : "classes";
   const where = thisPeriodText(v);
@@ -394,6 +531,14 @@ export function allowanceAskSentence(memberName: string, v: VerdictCopy): string
  */
 export function allowanceSummary(a: ClassAllowance | null, now: number): { sentence: string; period: string | null; nextReset: IsoDate | null } {
   if (!a) return { sentence: "Unlimited classes. Members on this plan can attend any class their membership includes.", period: null, nextReset: null };
+  if (a.basis === "billing") {
+    const noun = a.limit === 1 ? "class" : "classes";
+    return {
+      sentence: `Attend up to ${a.limit} ${noun} during each member's own billing period, from one renewal date to the next. There is no shared reset date: each member's period follows their renewal date (Stripe's paid period, or the next due date MatFlow tracks).`,
+      period: "A member with no renewal date recorded can't be counted: the member app and the kiosk refuse them and the desk and the scanner ask before admitting.",
+      nextReset: null,
+    };
+  }
   const p = periodContaining(a, now);
   const start = minuteToLocal(p.start).date;
   const end = minuteToLocal(p.end).date;

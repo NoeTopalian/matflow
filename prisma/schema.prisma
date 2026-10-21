@@ -245,6 +245,14 @@ model Member {
   // Null means "no due date tracked" — every existing member, and anyone on a
   // Stripe subscription where Stripe owns the schedule.
   nextDueAt                DateTime?
+  // The paid subscription period Stripe stated on the last paid invoice
+  // (invoice.payment_succeeded, first line's period): the authoritative
+  // billing period for a Stripe-billed member, which the "billing" class
+  // allowance basis counts against. NULL for everyone else — desk and
+  // TeamUp-billed members derive their period from nextDueAt and the tier's
+  // billing cycle (lib/class-allowance.ts withMemberBillingPeriod).
+  billingPeriodStart       DateTime?
+  billingPeriodEnd         DateTime?
   // A membership hold (paymentStatus "paused") with a planned end. Null while
   // not on hold, or on hold with no end date. Set by the hold route, mirrored
   // from Stripe's pause_collection.resumes_at by the webhook, cleared on

@@ -385,9 +385,19 @@ export async function POST(req: NextRequest) {
             currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
           },
         });
+        // The paid period Stripe states on the invoice's first line is the
+        // member's authoritative billing period (owner scope, 21 Oct 2026:
+        // "N attendances per member's billing period"). Stored as the zoneless
+        // timestamps the allowance reads; absent on a one-off invoice.
+        const line = ((obj.lines as { data?: Array<{ period?: { start?: number; end?: number } }> } | undefined)?.data ?? [])[0];
+        const periodStart = typeof line?.period?.start === "number" ? new Date(line.period.start * 1000) : null;
+        const periodEnd = typeof line?.period?.end === "number" ? new Date(line.period.end * 1000) : null;
         await tx.member.update({
           where: { id: member.id },
-          data: { paymentStatus: "paid" },
+          data: {
+            paymentStatus: "paid",
+            ...(periodStart && periodEnd && periodEnd > periodStart ? { billingPeriodStart: periodStart, billingPeriodEnd: periodEnd } : {}),
+          },
         });
         // A1: a subscription charge fires BOTH invoice.payment_succeeded and
         // payment_intent.succeeded. The PI leg keys its upsert on

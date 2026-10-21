@@ -223,7 +223,12 @@ async function bookingAllowance(
     centre: next?.date ?? now,
     currentInstanceId: next?.id ?? null,
   });
-  if (!snap?.allowance) return null;
+  if (!snap) return null;
+  // A per-billing-period plan with no period recorded: the door will ask staff; say so now.
+  if (snap.periodUnknown && snap.periodUnknownLimit !== null) {
+    return { used: 0, limit: snap.periodUnknownLimit, basis: "billing" as const, periodUnknown: true as const };
+  }
+  if (!snap.allowance) return null;
   const v = allowanceVerdict(snap.allowance, next ? slotMinute(next) : nowAt, snap.visits, nowAt);
   return v.exhausted ? v : null;
 }

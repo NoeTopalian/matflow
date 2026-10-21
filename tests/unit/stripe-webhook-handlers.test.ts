@@ -319,6 +319,44 @@ describe("Stripe webhook: invoice.payment_succeeded convergence", () => {
     }));
   });
 
+  it("stores the invoice line's paid period on the member as the authoritative billing period (owner scope, 21 Oct 2026)", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-inv-period",
+      type: "invoice.payment_succeeded",
+      account: "acct_test",
+      data: {
+        object: {
+          id: "in_p", customer: "cus_x", amount_paid: 5000, currency: "gbp",
+          lines: { data: [{ period: { start: 1_792_800_000, end: 1_795_219_200 } }] },
+        },
+      },
+    });
+    invoicesRetrieveMock.mockResolvedValue({ id: "in_p", payments: { data: [] } });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "mem-1" },
+      data: { paymentStatus: "paid", billingPeriodStart: new Date(1_792_800_000 * 1000), billingPeriodEnd: new Date(1_795_219_200 * 1000) },
+    }));
+  });
+
+  it("an invoice without a line period leaves the member's billing period alone", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-inv-noperiod",
+      type: "invoice.payment_succeeded",
+      account: "acct_test",
+      data: { object: { id: "in_q", customer: "cus_x", amount_paid: 5000, currency: "gbp" } },
+    });
+    invoicesRetrieveMock.mockResolvedValue({ id: "in_q", payments: { data: [] } });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { paymentStatus: "paid" } }));
+  });
+
   it("falls back to keying on the invoice id when the resolver finds no payment", async () => {
     constructEventMock.mockReturnValue({
       id: "evt-inv-nopi",

@@ -32,6 +32,7 @@ import {
   nowMinute,
   slotMinute,
   tierAllowance,
+  withMemberBillingPeriod,
   type AllowanceBasis,
   type AllowanceVerdict,
   type ClassAllowance,
@@ -40,8 +41,16 @@ import {
 import { usableTimezone } from "@/lib/class-time";
 
 export type AllowanceSnapshot = {
-  /** The member's tier allowance under the reader rule; null = Unlimited (or no tier). */
+  /**
+   * The member's allowance under the reader rule, with a "billing" allowance
+   * already resolved to this member's own period; null = Unlimited (or no
+   * tier), OR a billing allowance whose period is unknown (then
+   * `periodUnknown` is set and the limit is in `periodUnknownLimit`).
+   */
   allowance: ClassAllowance | null;
+  /** The plan counts per billing period but this member has no recorded period: cannot be counted. */
+  periodUnknown: boolean;
+  periodUnknownLimit: number | null;
   /** The member already has a record for the session being judged. */
   alreadyIn: boolean;
   /** Counted visits, as wall-clock minutes (lib/class-allowance.ts slotMinute). */
@@ -54,6 +63,10 @@ type Row = {
   classLimitWeeks: number | null;
   classLimitAnchor: Date | string | null;
   maxClassesPerWeek: number | null;
+  billingCycle: string | null;
+  nextDueAt: Date | null;
+  billingPeriodStart: Date | null;
+  billingPeriodEnd: Date | null;
   alreadyIn: boolean | null;
   visits: unknown;
 };
@@ -111,6 +124,7 @@ export async function readAllowanceSnapshot(
   const current = args.currentInstanceId ?? "";
   const rows = await tx.$queryRaw<Row[]>`
     SELECT t."classLimit", t."classLimitBasis", t."classLimitWeeks", t."classLimitAnchor", t."maxClassesPerWeek",
+           t."billingCycle", m."nextDueAt", m."billingPeriodStart", m."billingPeriodEnd",
            EXISTS (
              SELECT 1 FROM "AttendanceRecord" a0
               WHERE a0."tenantId" = m."tenantId" AND a0."memberId" = m."id" AND a0."classInstanceId" = ${current}
@@ -139,14 +153,26 @@ export async function readAllowanceSnapshot(
   `;
   const row = rows[0];
   if (!row) return null;
+  const tier = tierAllowance({
+    classLimit: row.classLimit ?? null,
+    classLimitBasis: row.classLimitBasis ?? null,
+    classLimitWeeks: row.classLimitWeeks ?? null,
+    classLimitAnchor: row.classLimitAnchor ?? null,
+    maxClassesPerWeek: row.maxClassesPerWeek ?? null,
+  });
+  // A "billing" allowance is this member's own period: Stripe's last paid
+  // period, else the period ending on the next due date MatFlow tracks.
+  const allowance = withMemberBillingPeriod(tier, {
+    billingPeriodStart: row.billingPeriodStart ?? null,
+    billingPeriodEnd: row.billingPeriodEnd ?? null,
+    nextDueAt: row.nextDueAt ?? null,
+    billingCycle: row.billingCycle ?? null,
+  });
+  const periodUnknown = tier?.basis === "billing" && allowance === null;
   return {
-    allowance: tierAllowance({
-      classLimit: row.classLimit ?? null,
-      classLimitBasis: row.classLimitBasis ?? null,
-      classLimitWeeks: row.classLimitWeeks ?? null,
-      classLimitAnchor: row.classLimitAnchor ?? null,
-      maxClassesPerWeek: row.maxClassesPerWeek ?? null,
-    }),
+    allowance,
+    periodUnknown,
+    periodUnknownLimit: periodUnknown ? tier!.limit : null,
     alreadyIn: row.alreadyIn === true,
     visits: parseVisits(row.visits),
   };
@@ -157,9 +183,11 @@ export type AllowanceUsage = {
   limit: number;
   basis: AllowanceBasis;
   weeks?: number;
-  /** The current period as calendar dates (end exclusive) and the date it resets. */
-  period: AllowanceVerdict["period"];
-  resetsOn: IsoDate;
+  /** The current period as calendar dates (end exclusive) and the date it resets; absent when the period is unknown. */
+  period?: AllowanceVerdict["period"];
+  resetsOn?: IsoDate;
+  /** The plan counts per billing period and this member has no recorded period. */
+  periodUnknown?: true;
   /** "2 of 4 classes used this 4-week period — resets Tuesday 17 November". */
   text: string;
 };
@@ -181,7 +209,12 @@ export async function memberAllowanceUsage(
     centre: now,
     currentInstanceId: null,
   });
-  if (!snap?.allowance) return null;
+  if (!snap) return null;
+  if (snap.periodUnknown && snap.periodUnknownLimit !== null) {
+    const facts = { used: 0, limit: snap.periodUnknownLimit, basis: "billing" as const, periodUnknown: true as const };
+    return { ...facts, text: allowanceUsageText(facts) };
+  }
+  if (!snap.allowance) return null;
   const v = currentPeriodUsage(snap.allowance, nowMinute(now, usableTimezone(tenant?.timezone)), snap.visits);
   return {
     used: v.used,

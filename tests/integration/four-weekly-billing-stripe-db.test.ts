@@ -150,10 +150,14 @@ describe.skipIf(!HAS_DB || !HAS_TEST_KEY)("four-weekly recurring billing — Str
       expect(res.status).toBe(200);
     }
     const after = await withRlsBypass(async (tx) => ({
-      member: await tx.member.findUnique({ where: { id: memberId }, select: { paymentStatus: true } }),
+      member: await tx.member.findUnique({ where: { id: memberId }, select: { paymentStatus: true, billingPeriodStart: true, billingPeriodEnd: true } }),
       payments: await tx.payment.findMany({ where: { memberId }, select: { stripeInvoiceId: true, amountPence: true, status: true }, orderBy: { paidAt: "asc" } }),
     }));
     expect(after.member?.paymentStatus).toBe("paid");
+    // The member's authoritative billing period is the renewal invoice's paid period (the "billing" allowance basis counts against it).
+    const renewal = invoices.data[0].lines.data[0].period;
+    expect(after.member?.billingPeriodStart?.getTime()).toBe(renewal.start * 1000);
+    expect(after.member?.billingPeriodEnd?.getTime()).toBe(renewal.end * 1000);
     expect(after.payments).toHaveLength(2);
     expect(after.payments.map((p) => p.amountPence)).toEqual([PRICE_PENCE, PRICE_PENCE]);
     expect(new Set(after.payments.map((p) => p.stripeInvoiceId)).size).toBe(2);

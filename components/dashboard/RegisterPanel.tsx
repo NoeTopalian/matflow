@@ -102,15 +102,24 @@ type Candidate = {
 type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class" | "allowance_reached";
 
 /** T7: the count and the period the server sends with an askable allowance refusal. */
-type AllowanceBody = { used: number; limit: number; basis: AllowanceBasis; weeks?: number; resetsOn: string };
+type AllowanceBody = {
+  used: number; limit: number; basis: AllowanceBasis; weeks?: number; resetsOn?: string;
+  period?: { start: string; end: string }; current?: boolean; periodUnknown?: true;
+};
 
 function allowanceFrom(body: unknown): AllowanceBody | null {
   const a = (body as { allowance?: unknown } | null)?.allowance as Partial<AllowanceBody> | undefined;
-  if (!a || typeof a.used !== "number" || typeof a.limit !== "number" || typeof a.resetsOn !== "string") return null;
+  if (!a || typeof a.used !== "number" || typeof a.limit !== "number") return null;
   if (!(ALLOWANCE_BASES as readonly string[]).includes(a.basis as string)) return null;
+  // Either a dated period, or a billing-period plan with no period recorded.
+  if (typeof a.resetsOn !== "string" && a.periodUnknown !== true) return null;
   return {
-    used: a.used, limit: a.limit, basis: a.basis as AllowanceBasis, resetsOn: a.resetsOn,
+    used: a.used, limit: a.limit, basis: a.basis as AllowanceBasis,
+    ...(typeof a.resetsOn === "string" ? { resetsOn: a.resetsOn } : {}),
     ...(typeof a.weeks === "number" ? { weeks: a.weeks } : {}),
+    ...(a.period && typeof a.period.start === "string" && typeof a.period.end === "string" ? { period: { start: a.period.start, end: a.period.end } } : {}),
+    ...(typeof a.current === "boolean" ? { current: a.current } : {}),
+    ...(a.periodUnknown === true ? { periodUnknown: true as const } : {}),
   };
 }
 

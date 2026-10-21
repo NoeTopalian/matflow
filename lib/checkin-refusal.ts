@@ -41,10 +41,13 @@ export type CheckinRefusal = {
     allowance?: {
       used: number;
       limit: number;
-      basis: "week" | "month" | "weeks";
+      basis: "week" | "month" | "weeks" | "billing";
       weeks?: number;
-      period: { start: string; end: string };
-      resetsOn: string;
+      period?: { start: string; end: string };
+      resetsOn?: string;
+      current?: boolean;
+      /** A per-billing-period plan with no period recorded for this member. */
+      periodUnknown?: true;
     };
   };
 };
@@ -176,7 +179,10 @@ export function checkinRefusal(
           allowance: {
             used: result.used, limit: result.limit, basis: result.basis,
             ...(result.weeks !== undefined ? { weeks: result.weeks } : {}),
-            period: result.period, resetsOn: result.resetsOn,
+            ...(result.period ? { period: result.period } : {}),
+            ...(result.resetsOn ? { resetsOn: result.resetsOn } : {}),
+            ...(result.current !== undefined ? { current: result.current } : {}),
+            ...(result.periodUnknown ? { periodUnknown: true as const } : {}),
           },
         },
       };

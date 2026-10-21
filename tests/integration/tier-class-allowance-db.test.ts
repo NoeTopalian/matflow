@@ -132,6 +132,14 @@ describe.skipIf(!HAS_DB)("MembershipTier class allowance — real database", () 
     expect(tierAllowance(await cols(tierA))).toEqual({ limit: 4, basis: "weeks", weeks: 4, anchor: "2026-10-20" });
   });
 
+  it("PATCH 4 per billing period writes the basis with no weeks, no start date, no legacy mirror", async () => {
+    const res = await patch(tierA, { classLimit: 4, classLimitBasis: "billing" });
+    expect(res.status).toBe(200);
+    expect(await cols(tierA)).toEqual({ ...NONE, classLimit: 4, classLimitBasis: "billing" });
+    expect(tierAllowance(await cols(tierA))).toEqual({ limit: 4, basis: "billing" });
+    await patch(tierA, { classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null });
+  });
+
   it("acceptance 4: the previous build editing maxClassesPerWeek during a rollback is read as N each week (the basis still wins while set)", async () => {
     // The old build writes only the column it knows; the basis row stays as it was.
     await withRlsBypass((tx) => tx.membershipTier.update({ where: { id: tierA }, data: { maxClassesPerWeek: 5 } }));

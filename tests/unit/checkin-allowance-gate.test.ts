@@ -24,6 +24,10 @@ type CRow = {
   classLimitWeeks: number | null;
   classLimitAnchor: string | null;
   maxClassesPerWeek: number | null;
+  billingCycle: string | null;
+  nextDueAt: Date | null;
+  billingPeriodStart: Date | null;
+  billingPeriodEnd: Date | null;
   alreadyIn: boolean;
   visits: Array<{ d: number; s: string }>;
 };
@@ -75,6 +79,7 @@ const INSTANCE = {
 function cRow(over: Partial<CRow> = {}): CRow {
   return {
     classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null, maxClassesPerWeek: null,
+    billingCycle: "monthly", nextDueAt: null, billingPeriodStart: null, billingPeriodEnd: null,
     alreadyIn: false, visits: [], ...over,
   };
 }
@@ -145,7 +150,7 @@ beforeEach(() => {
 describe("refusing doors (member app, parent, kiosk)", () => {
   it("the member app refuses the fifth class of the period, names the count and the reset date, and writes nothing", async () => {
     const r = await performCheckin(SELF);
-    expect(r).toEqual({ kind: "allowance_reached", askable: false, ...FACTS });
+    expect(r).toEqual({ kind: "allowance_reached", askable: false, ...FACTS, current: expect.any(Boolean) });
     expect(h.recordCreate).not.toHaveBeenCalled();
     const refusal = checkinRefusal(r)!;
     expect(refusal.status).toBe(403);
@@ -451,5 +456,75 @@ describe("coverage is re-checked under the Member lock (R-ALLOW rule 2)", () => 
     h.cRow = cRow({ ...FOUR_IN_FOUR, visits: [] });
     expect((await performCheckin(SELF)).kind).toBe("success");
     expect(h.memberFindUnique).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("per member's billing period (owner scope, 21 Oct 2026)", () => {
+  const BILLING = { classLimit: 4, classLimitBasis: "billing" };
+
+  it("a desk-billed member: the period ends on the next due date MatFlow tracks and runs one cycle back", async () => {
+    // four_weekly, due 2 Nov: the period is 5 Oct – 2 Nov; the four visits and the session (19 Oct) are in it.
+    h.cRow = cRow({ ...BILLING, billingCycle: "four_weekly", nextDueAt: new Date("2026-11-02T00:00:00.000Z"), visits: FOUR_VISITS });
+    const r = await performCheckin(SELF);
+    expect(r).toMatchObject({
+      kind: "allowance_reached", askable: false, used: 4, limit: 4, basis: "billing",
+      period: { start: "2026-10-05", end: "2026-11-02" }, resetsOn: "2026-11-02",
+    });
+    expect(h.recordCreate).not.toHaveBeenCalled();
+    expect(checkinRefusal(r)!.body.error).toMatch(/^4 of 4 classes used (this|the) billing period/);
+  });
+
+  it("a Stripe-billed member: the paid period Stripe stated, stepped forward by the cycle for a later session", async () => {
+    // Paid period 28 Sep – 26 Oct (four_weekly). A session on 2 Nov is in the NEXT period (26 Oct – 23 Nov): 0 used.
+    h.instanceFindFirst.mockResolvedValue({ ...INSTANCE, date: new Date("2026-11-02T00:00:00.000Z") });
+    h.cRow = cRow({
+      ...BILLING, billingCycle: "four_weekly",
+      billingPeriodStart: new Date("2026-09-28T00:00:00.000Z"), billingPeriodEnd: new Date("2026-10-26T00:00:00.000Z"),
+      visits: FOUR_VISITS,
+    });
+    expect((await performCheckin(SELF)).kind).toBe("success");
+    // The same member, the same visits, a session inside the stated period: refused.
+    h.instanceFindFirst.mockResolvedValue(INSTANCE);
+    h.recordCreate.mockClear();
+    const r = await performCheckin(SELF);
+    expect(r).toMatchObject({ kind: "allowance_reached", period: { start: "2026-09-28", end: "2026-10-26" } });
+  });
+
+  it("the stated Stripe period wins over a stale next due date", async () => {
+    h.cRow = cRow({
+      ...BILLING, billingCycle: "four_weekly", nextDueAt: new Date("2026-10-06T00:00:00.000Z"),
+      billingPeriodStart: new Date("2026-09-28T00:00:00.000Z"), billingPeriodEnd: new Date("2026-10-26T00:00:00.000Z"),
+      visits: FOUR_VISITS,
+    });
+    expect(await performCheckin(SELF)).toMatchObject({ kind: "allowance_reached", period: { start: "2026-09-28", end: "2026-10-26" } });
+  });
+
+  it("no period recorded: the member app refuses with 'no renewal date', never a silent calendar fallback", async () => {
+    h.cRow = cRow({ ...BILLING, billingCycle: "four_weekly", visits: [] });
+    const r = await performCheckin(SELF);
+    expect(r).toMatchObject({ kind: "allowance_reached", askable: false, used: 0, limit: 4, basis: "billing", periodUnknown: true });
+    expect(r).not.toHaveProperty("resetsOn");
+    expect(h.recordCreate).not.toHaveBeenCalled();
+    expect(checkinRefusal(r)!.body).toMatchObject({
+      reason: "allowance_reached",
+      error: "Your plan counts classes per billing period, but no renewal date is recorded for you. Ask staff.",
+      allowance: { periodUnknown: true, limit: 4 },
+    });
+  });
+
+  it("no period recorded: the desk is asked, and an admission records the override with periodUnknown", async () => {
+    h.cRow = cRow({ ...BILLING, billingCycle: "four_weekly", visits: [] });
+    const asked = await performCheckin(DESK);
+    expect(asked).toMatchObject({ kind: "allowance_reached", askable: true, periodUnknown: true });
+    const admitted = await performCheckin({ ...DESK, allowanceOverrideConfirmed: true });
+    expect(admitted.kind).toBe("success");
+    if (admitted.kind !== "success") return;
+    expect(admitted.overrides).toEqual(["allowance_reached"]);
+    expect(admitted.overAllowance).toMatchObject({ periodUnknown: true, limit: 4, basis: "billing" });
+  });
+
+  it("a non-recurring tier (cycle none) with a due date has no period either", async () => {
+    h.cRow = cRow({ ...BILLING, billingCycle: "none", nextDueAt: new Date("2026-11-02T00:00:00.000Z"), visits: [] });
+    expect(await performCheckin(SELF)).toMatchObject({ kind: "allowance_reached", periodUnknown: true });
   });
 });
