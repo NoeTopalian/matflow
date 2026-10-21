@@ -29,7 +29,8 @@ async function sleep(ms: number) {
 }
 
 describe.skipIf(!HAS_DB || !HAS_TEST_KEY)("four-weekly recurring billing — Stripe test environment + MatFlow webhook", () => {
-  const stripe = new Stripe(KEY, { apiVersion: "2026-03-25.dahlia" as never });
+  // Constructed lazily: the describe body runs even when skipped, and an empty key throws.
+  let stripe: Stripe;
   let tenantId = "";
   let memberId = "";
   let clockId = "";
@@ -41,6 +42,7 @@ describe.skipIf(!HAS_DB || !HAS_TEST_KEY)("four-weekly recurring billing — Str
   const PRICE_PENCE = 5000;
 
   beforeAll(async () => {
+    stripe = new Stripe(KEY, { apiVersion: "2026-03-25.dahlia" as never });
     process.env.STRIPE_WEBHOOK_SECRET = SECRET;
     await withRlsBypass(async (tx) => {
       tenantId = (await tx.tenant.create({
@@ -135,7 +137,9 @@ describe.skipIf(!HAS_DB || !HAS_TEST_KEY)("four-weekly recurring billing — Str
         id: `evt_fw_${STAMP}_${invoice.id}`, object: "event", type: "invoice.payment_succeeded", account, livemode: false,
         created: Math.floor(Date.now() / 1000), data: { object: invoice },
       });
-      const signature = stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET, timestamp: Math.floor(Date.now() / 1000) });
+      const signature = stripe.webhooks.generateTestHeaderString({
+        payload, secret: SECRET, timestamp: Math.floor(Date.now() / 1000),
+      } as Parameters<typeof stripe.webhooks.generateTestHeaderString>[0]);
       const res = (await stripeWebhook(
         new Request("http://localhost/api/stripe/webhook", {
           method: "POST", headers: new Headers({ "content-type": "application/json", "stripe-signature": signature }), body: payload,
