@@ -195,7 +195,7 @@ describe("formAllowance and allowanceNote (the summary shown before saving)", ()
     expect(n.period).toBe("The current period runs Tuesday 20 October to Monday 16 November 2026.");
     expect(n.enforcement).toContain("Attending a class uses one; booking does not.");
     expect(n.enforcement).toContain("It is enforced as soon as you save");
-    expect(n.enforcement).toContain("the member app, the kiosk and booking refuse once it is used up");
+    expect(n.enforcement).toContain("the member app and the kiosk refuse once it is used up, a booking still goes through with a warning");
     expect(n.enforcement).toContain("the desk and the card scanner ask before admitting");
     expect(n.enforcement).toContain("applies from the next check-in; nothing already recorded changes");
     expect(n.enforcement).toContain("Class-pack check-ins do not count");

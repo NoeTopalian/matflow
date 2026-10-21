@@ -136,7 +136,7 @@ export function allowanceNote(fa: FormAllowance, now = new Date()): { summary: s
     summary: s.sentence,
     period: s.period,
     enforcement:
-      "Attending a class uses one; booking does not. It is enforced as soon as you save: the member app, the kiosk and booking refuse once it is used up, and the desk and the card scanner ask before admitting. " +
+      "Attending a class uses one; booking does not. It is enforced as soon as you save: the member app and the kiosk refuse once it is used up, a booking still goes through with a warning (a booking never guarantees a place), and the desk and the card scanner ask before admitting. " +
       "A lower allowance applies from the next check-in; nothing already recorded changes. " +
       "Class-pack check-ins do not count: once the allowance is used up, a member with a class pack can still check in with a pack credit.",
   };
