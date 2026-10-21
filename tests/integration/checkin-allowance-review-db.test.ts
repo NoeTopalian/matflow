@@ -346,6 +346,7 @@ describe.skipIf(!HAS_DB)("T7 review fixes - real database", () => {
     expect(r.kind).toBe("success");
   });
 
+  // Four sequential check-ins plus fixtures over the network: over the 30 s default on Neon.
   it("a covered member whose allowance is used up checks in on a pack, at the member app and the kiosk; pack visits are not counted", async () => {
     const memberId = await newMember({ stripeSubscriptionId: `sub_t7r_${STAMP}`, paymentStatus: "paid" });
     const packId = await givePack(memberId, 2);
@@ -373,5 +374,5 @@ describe.skipIf(!HAS_DB)("T7 review fixes - real database", () => {
       tenantId, memberId, now: new Date(Date.UTC(2032, 0, 5) + dayOffset * 86_400_000 + 23 * 3_600_000),
     }));
     expect(usage).toMatchObject({ used: 1, limit: 1, weeks: 2 });
-  });
+  }, 90000);
 });

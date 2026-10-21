@@ -167,6 +167,7 @@ describe.skipIf(!HAS_DB)("Check-in class allowance - real database concurrency",
     expect(await recordsIn([x, y])).toBe(1);
   });
 
+  // Eight pairs, each two full check-ins over the network (eligibility + Member lock + statement C): well over the 30 s default on Neon.
   it("unparked and repeated, two simultaneous check-ins never both pass the last place", async () => {
     for (let i = 0; i < 8; i += 1) {
       const { x, y } = await freshPair();
@@ -179,7 +180,7 @@ describe.skipIf(!HAS_DB)("Check-in class allowance - real database concurrency",
       expect(results.filter((r) => r.kind === "allowance_reached")).toHaveLength(1);
       expect(await recordsIn([x, y])).toBe(1);
     }
-  });
+  }, 120000);
 
   it("a limit set while two check-ins are in flight is honoured: the lock does not depend on the plan (C10 / IT-A2)", async () => {
     // A member on an Unlimited plan; both check-ins are parked on the Member
