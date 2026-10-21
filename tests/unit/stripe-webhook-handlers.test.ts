@@ -337,10 +337,50 @@ describe("Stripe webhook: invoice.payment_succeeded convergence", () => {
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(200);
-    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "mem-1" },
-      data: { paymentStatus: "paid", billingPeriodStart: new Date(1_792_800_000 * 1000), billingPeriodEnd: new Date(1_795_219_200 * 1000) },
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "mem-1" }, data: { paymentStatus: "paid" } }));
+    // A newer period only: the write is conditional on the stored end being older (or absent).
+    expect(mockMemberUpdateMany).toHaveBeenCalledWith({
+      where: { id: "mem-1", OR: [{ billingPeriodEnd: null }, { billingPeriodEnd: { lt: new Date(1_795_219_200 * 1000) } }] },
+      data: { billingPeriodStart: new Date(1_792_800_000 * 1000), billingPeriodEnd: new Date(1_795_219_200 * 1000) },
+    });
+  });
+
+  it("a mid-cycle plan change: the proration line is skipped and the subscription item's full period is stored (review round 3, M-6)", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-inv-proration",
+      type: "invoice.payment_succeeded",
+      account: "acct_test",
+      data: {
+        object: {
+          id: "in_pr", customer: "cus_x", amount_paid: 1234, currency: "gbp",
+          lines: { data: [
+            { period: { start: 1_793_500_000, end: 1_795_219_200 }, parent: { type: "subscription_item_details", subscription_item_details: { proration: true } } },
+            { period: { start: 1_792_800_000, end: 1_795_219_200 }, parent: { type: "subscription_item_details", subscription_item_details: { proration: false } } },
+          ] },
+        },
+      },
+    });
+    invoicesRetrieveMock.mockResolvedValue({ id: "in_pr", payments: { data: [] } });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockMemberUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { billingPeriodStart: new Date(1_792_800_000 * 1000), billingPeriodEnd: new Date(1_795_219_200 * 1000) },
     }));
+  });
+
+  it("an invoice with several lines and no parent information stores no period (it cannot tell which is the subscription)", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-inv-multi",
+      type: "invoice.payment_succeeded",
+      account: "acct_test",
+      data: { object: { id: "in_m", customer: "cus_x", amount_paid: 1234, currency: "gbp", lines: { data: [{ period: { start: 1, end: 2 } }, { period: { start: 3, end: 4 } }] } } },
+    });
+    invoicesRetrieveMock.mockResolvedValue({ id: "in_m", payments: { data: [] } });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockMemberUpdateMany).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ billingPeriodStart: expect.anything() }) }));
   });
 
   it("an invoice without a line period leaves the member's billing period alone", async () => {

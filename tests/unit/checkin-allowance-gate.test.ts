@@ -25,6 +25,7 @@ type CRow = {
   classLimitAnchor: string | null;
   maxClassesPerWeek: number | null;
   billingCycle: string | null;
+  stripeSubscriptionId: string | null;
   nextDueAt: Date | null;
   billingPeriodStart: Date | null;
   billingPeriodEnd: Date | null;
@@ -79,7 +80,7 @@ const INSTANCE = {
 function cRow(over: Partial<CRow> = {}): CRow {
   return {
     classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null, maxClassesPerWeek: null,
-    billingCycle: "monthly", nextDueAt: null, billingPeriodStart: null, billingPeriodEnd: null,
+    billingCycle: "monthly", stripeSubscriptionId: null, nextDueAt: null, billingPeriodStart: null, billingPeriodEnd: null,
     alreadyIn: false, visits: [], ...over,
   };
 }
@@ -134,6 +135,7 @@ beforeEach(() => {
     h.sql.push(text);
     if (text.includes('FROM "Class"')) { h.order.push("class-lock"); return [{ maxCapacity: null }]; }
     if (text.includes('FROM "Member" WHERE') && text.includes("UPDATE")) { h.order.push("member-lock"); return h.memberRows; }
+    if (text.includes('json_agg')) { h.order.push("statement-c2"); return h.cRow ? [h.cRow] : []; }
     if (text.includes('"AttendanceRecord"')) { h.order.push("statement-c"); return h.cRow ? [h.cRow] : []; }
     h.order.push("other");
     return [];
@@ -268,7 +270,7 @@ describe("lock order and the single read", () => {
   it("Class FOR UPDATE, then the Member lock, then statement C, then the insert", async () => {
     h.cRow = cRow({ ...FOUR_IN_FOUR, visits: [] });
     await performCheckin(SELF);
-    expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "insert"]);
+    expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "statement-c2", "insert"]);
   });
 
   it("the Member lock is a row-write lock scoped to the member and the club", async () => {
@@ -288,13 +290,16 @@ describe("lock order and the single read", () => {
 
   it("statement C carries the counted-row rules and no locking clause", async () => {
     await performCheckin(SELF);
-    const c = h.sql.find((s) => s.includes('"AttendanceRecord"'))!;
+    // C1: the plan and the member; C2: the counted visits of the judged period.
+    const c1 = h.sql.find((s) => s.includes('"classLimit"'))!;
+    expect(c1).toContain(`"maxClassesPerWeek"`);
+    expect(c1).toContain(`"billingPeriodEnd"`);
+    expect(c1).not.toMatch(/FOR (UPDATE|SHARE|NO KEY|KEY SHARE)/);
+    const c = h.sql.find((s) => s.includes("json_agg"))!;
     expect(c).toContain(`"checkInMethod" <> 'import'`);
     expect(c).toContain(`"importJobId" IS NULL`);
     expect(c).toContain(`"isCancelled" = false`);
     expect(c).toContain(`"ClassPackRedemption"`);
-    expect(c).toContain(`"classLimit"`);
-    expect(c).toContain(`"maxClassesPerWeek"`);
     expect(c).not.toMatch(/FOR (UPDATE|SHARE|NO KEY|KEY SHARE)/);
   });
 
@@ -335,7 +340,7 @@ describe("class packs and the allowance decide together (review, 17 Oct 2026)", 
     expect(r.coverage).toEqual({ kind: "pack", creditsRemaining: 4 });
     expect(r.overrides).toBeUndefined();
     // Counted, found used up, then the pack pays in the SAME transaction.
-    expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "pack-decrement", "insert"]);
+    expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "statement-c2", "pack-decrement", "insert"]);
     expect(h.redemptionCreate).toHaveBeenCalledWith({ data: { memberPackId: "pack-1", attendanceRecordId: "ar-1" } });
   });
 
@@ -380,7 +385,7 @@ describe("class packs and the allowance decide together (review, 17 Oct 2026)", 
         h.order.length = 0;
         const r = await performCheckin(door);
         expect(r.kind === "success" && r.coverage.kind).toBe("pack");
-        expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "pack-decrement", "insert"]);
+        expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "statement-c2", "pack-decrement", "insert"]);
       }
     });
 
@@ -392,7 +397,7 @@ describe("class packs and the allowance decide together (review, 17 Oct 2026)", 
         h.order.length = 0;
         const r = await performCheckin(door);
         expect(r.kind).toBe("success");
-        expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "insert"]);
+        expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "statement-c2", "insert"]);
       }
       expect(h.packUpdateMany).not.toHaveBeenCalled();
     });
@@ -478,7 +483,7 @@ describe("per member's billing period (owner scope, 21 Oct 2026)", () => {
     // Paid period 28 Sep – 26 Oct (four_weekly). A session on 2 Nov is in the NEXT period (26 Oct – 23 Nov): 0 used.
     h.instanceFindFirst.mockResolvedValue({ ...INSTANCE, date: new Date("2026-11-02T00:00:00.000Z") });
     h.cRow = cRow({
-      ...BILLING, billingCycle: "four_weekly",
+      ...BILLING, billingCycle: "four_weekly", stripeSubscriptionId: "sub_1",
       billingPeriodStart: new Date("2026-09-28T00:00:00.000Z"), billingPeriodEnd: new Date("2026-10-26T00:00:00.000Z"),
       visits: FOUR_VISITS,
     });
@@ -490,9 +495,9 @@ describe("per member's billing period (owner scope, 21 Oct 2026)", () => {
     expect(r).toMatchObject({ kind: "allowance_reached", period: { start: "2026-09-28", end: "2026-10-26" } });
   });
 
-  it("the stated Stripe period wins over a stale next due date", async () => {
+  it("a live Stripe member is judged on the stated period, never on a stale next due date", async () => {
     h.cRow = cRow({
-      ...BILLING, billingCycle: "four_weekly", nextDueAt: new Date("2026-10-06T00:00:00.000Z"),
+      ...BILLING, billingCycle: "four_weekly", stripeSubscriptionId: "sub_1", nextDueAt: new Date("2026-10-06T00:00:00.000Z"),
       billingPeriodStart: new Date("2026-09-28T00:00:00.000Z"), billingPeriodEnd: new Date("2026-10-26T00:00:00.000Z"),
       visits: FOUR_VISITS,
     });
@@ -521,6 +526,28 @@ describe("per member's billing period (owner scope, 21 Oct 2026)", () => {
     if (admitted.kind !== "success") return;
     expect(admitted.overrides).toEqual(["allowance_reached"]);
     expect(admitted.overAllowance).toMatchObject({ periodUnknown: true, limit: 4, basis: "billing" });
+  });
+
+  it("an annual billing period counts visits from the whole year: the visits read is bounded by the period, not a fixed window (H-1)", async () => {
+    h.cRow = cRow({
+      classLimit: 10, classLimitBasis: "billing", billingCycle: "annual", nextDueAt: new Date("2027-01-10T00:00:00.000Z"),
+      visits: Array.from({ length: 10 }, (_, i) => ({ d: DAY(`2026-0${1 + (i % 8)}-1${i}`), s: "18:00" })),
+    });
+    const r = await performCheckin(SELF);
+    expect(r).toMatchObject({ kind: "allowance_reached", used: 10, limit: 10, period: { start: "2026-01-10", end: "2027-01-10" } });
+    const c2 = h.queryRaw.mock.calls.map((c) => c[0]).find((strings) => sqlOf(strings).includes("json_agg"))!;
+    const call = h.queryRaw.mock.calls.find((c) => c[0] === c2)!;
+    const bounds = call.slice(1).filter((v): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v));
+    expect(bounds).toEqual(["2026-01-09T00:00:00.000Z", "2027-01-11T00:00:00.000Z"]);
+  });
+
+  it("no period recorded: a usable class pack is NOT spent at the member app — the member is refused, nothing written (M-4)", async () => {
+    h.cRow = cRow({ ...BILLING, billingCycle: "four_weekly", visits: [] });
+    h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+    const r = await performCheckin(SELF);
+    expect(r).toMatchObject({ kind: "allowance_reached", periodUnknown: true });
+    expect(h.packUpdateMany).not.toHaveBeenCalled();
+    expect(h.recordCreate).not.toHaveBeenCalled();
   });
 
   it("a non-recurring tier (cycle none) with a due date has no period either", async () => {

@@ -57,7 +57,11 @@ describe.skipIf(!HAS_DB || !HAS_TEST_KEY || !ACCOUNT.startsWith("acct_"))("four-
 
   afterAll(async () => {
     if (clockId) await stripe.testHelpers.testClocks.del(clockId, opts).catch(() => {});
-    if (priceId) await stripe.prices.update(priceId, { active: false }, opts).catch(() => {});
+    if (priceId) {
+      await stripe.prices.update(priceId, { active: false }, opts).catch(() => {});
+      const product = await withRlsBypass((tx) => tx.membershipTier.findUnique({ where: { id: tierId }, select: { stripeProductId: true } })).catch(() => null);
+      if (product?.stripeProductId) await stripe.products.update(product.stripeProductId, { active: false }, opts).catch(() => {});
+    }
     if (tenantId) {
       await withRlsBypass(async (tx) => {
         await tx.payment.deleteMany({ where: { tenantId } });

@@ -220,8 +220,9 @@ async function bookingAllowance(
   const snap = await readAllowanceSnapshot(tx, {
     tenantId,
     memberId,
-    centre: next?.date ?? now,
+    session: next ? slotMinute(next) : nowAt,
     currentInstanceId: next?.id ?? null,
+    timeZone: usableTimezone(tenant?.timezone),
   });
   if (!snap) return null;
   // A per-billing-period plan with no period recorded: the door will ask staff; say so now.

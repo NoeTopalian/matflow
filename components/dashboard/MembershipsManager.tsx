@@ -19,6 +19,7 @@ import { describeApiError } from "@/lib/api-field-errors";
 import { BILLING_CYCLES, cycleLabel, isBillingCycle, type BillingCycle } from "@/lib/billing-cycle";
 import {
   ALLOWANCE_BASES,
+  BILLING_ON_NONE_MESSAGE,
   CLASS_LIMIT_MAX,
   CLASS_LIMIT_MIN,
   CLASS_LIMIT_WEEK_OPTIONS,
@@ -118,11 +119,13 @@ export const PERIOD_START_ERROR = "Every N weeks needs the date the periods coun
  * value is never sent and never quietly read as blank.
  */
 export type FormAllowance = { kind: "ok"; allowance: ClassAllowance | null } | { kind: "error"; message: string };
-export function formAllowance(form: { classLimit: string; classLimitBasis: string; classLimitWeeks: string; classLimitAnchor: string }): FormAllowance {
+export function formAllowance(form: { classLimit: string; classLimitBasis: string; classLimitWeeks: string; classLimitAnchor: string; billingCycle?: string }): FormAllowance {
   const limit = parseClassLimit(form.classLimit);
   if (limit.kind === "invalid") return { kind: "error", message: CLASS_LIMIT_ERROR };
   if (limit.kind === "blank") return { kind: "ok", allowance: null };
   const basis = form.classLimitBasis as AllowanceBasis;
+  // A plan billed once has no billing period to count in (review round 3, L-5).
+  if (basis === "billing" && form.billingCycle === "none") return { kind: "error", message: BILLING_ON_NONE_MESSAGE };
   if (basis === "week" || basis === "month" || basis === "billing") return { kind: "ok", allowance: { limit: limit.value, basis } };
   const weeks = Number(form.classLimitWeeks);
   const anchor = form.classLimitAnchor.trim();
@@ -724,7 +727,8 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
                   className="w-64"
                 >
                   {ALLOWANCE_BASES.map((b) => (
-                    <option key={b} value={b}>{BASIS_LABELS[b]}</option>
+                    // A once-off plan has no billing period to count in.
+                    <option key={b} value={b} disabled={b === "billing" && form.billingCycle === "none"}>{BASIS_LABELS[b]}</option>
                   ))}
                 </Select>
               </div>

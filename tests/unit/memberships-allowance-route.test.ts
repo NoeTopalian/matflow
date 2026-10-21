@@ -154,7 +154,7 @@ describe("PATCH /api/memberships/[id] — class allowance", () => {
   it("an inconsistent set reads as one sentence the owner can act on", async () => {
     const res = await patch({ classLimit: 4 });
     expect(describeApiError(await res.json())).toBe(
-      "Set the number of classes together with how often it resets (each week, each month, or every N weeks from a start date), or clear all of them for Unlimited.",
+      "Set the number of classes together with how often it resets (each week, each month, every N weeks from a start date, or each member's own billing period), or clear all of them for Unlimited.",
     );
     const res2 = await patch({ classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4 });
     expect(describeApiError(await res2.json())).toBe("Every N weeks needs the number of weeks (2 to 8) and the date the periods count from.");

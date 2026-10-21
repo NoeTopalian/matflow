@@ -7,7 +7,7 @@ import { updateMetadata } from "@/lib/audit-snapshot";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { billingCycleSchema } from "@/lib/billing-cycle";
-import { ALLOWANCE_FIELDS, allowanceColumns, classLimitAnchorSchema, classLimitBasisSchema, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
+import { ALLOWANCE_FIELDS, BILLING_ON_NONE_MESSAGE, allowanceColumns, classLimitAnchorSchema, classLimitBasisSchema, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
 
 const patchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -68,6 +68,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         if (!loc) return "bad_location" as const;
       }
       const before = await tx.membershipTier.findFirst({ where: { id, tenantId } });
+      if (!before) return null;
+      // A plan billed once has no billing period to count classes in: the
+      // basis and the cycle are judged together, whichever this body sends
+      // (review round 3, L-5).
+      const nextBasis = allowance ? allowance.classLimitBasis : before.classLimitBasis;
+      const nextCycle = rest.billingCycle ?? before.billingCycle;
+      if (nextBasis === "billing" && nextCycle === "none") return "billing_on_none" as const;
       const r = await tx.membershipTier.updateMany({
         where: { id, tenantId },
         data,
@@ -77,6 +84,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return fresh ? { fresh, before } : null;
     });
     if (outcome === "bad_location") return NextResponse.json({ error: "That venue is not one of this club's locations" }, { status: 400 });
+    if (outcome === "billing_on_none") {
+      return NextResponse.json({ error: BILLING_ON_NONE_MESSAGE, details: { fieldErrors: { classLimitBasis: [BILLING_ON_NONE_MESSAGE] } } }, { status: 400 });
+    }
     if (!outcome) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const { fresh, before } = outcome;
 

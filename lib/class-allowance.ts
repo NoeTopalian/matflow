@@ -39,6 +39,7 @@
  */
 import { z } from "zod";
 import { zoneOffsetMs } from "@/lib/class-time";
+import { cycleDays, cycleMonths } from "@/lib/billing-cycle";
 
 export const CLASS_LIMIT_MIN = 1;
 export const CLASS_LIMIT_MAX = 60;
@@ -61,10 +62,13 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
  * tier itself a "billing" allowance carries neither: it has no shared dates.
  */
 export type BillingPeriodAnchor = {
-  /** One known period [start, end), as wall-clock minutes. */
-  start: number;
-  end: number;
-  /** The tier's billing cycle as a step: whole days, or calendar months. */
+  /**
+   * A boundary between two of the member's periods, as a calendar date on
+   * the club's clock (a period starts at 00:00 on a boundary and ends at
+   * 00:00 on the next). Every other boundary is counted from this one.
+   */
+  anchor: IsoDate;
+  /** The recurrence between boundaries: whole days, or calendar months (day-of-month clamped). Exactly one is set. */
   stepDays?: number;
   stepMonths?: number;
 };
@@ -239,71 +243,96 @@ export function periodContaining(a: ClassAllowance, minute: number): Period {
   return { start, end: start + span };
 }
 
-/** Minutes → UTC Date on the wall-clock scale, and back. */
-const minuteDate = (minute: number) => new Date(minute * 60_000);
-const dateToMinute = (d: Date) => Math.floor(d.getTime() / 60_000);
-
-/** Whole-month step on the wall-clock scale, day-of-month clamped (31 Jan + 1 month = 28/29 Feb; a month-end stays a month-end). */
-function addMonthsClampedUtc(from: Date, months: number): Date {
-  const day = from.getUTCDate();
-  const result = new Date(from.getTime());
-  result.setUTCDate(1);
-  result.setUTCMonth(result.getUTCMonth() + months);
-  const lastOfTarget = new Date(Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0)).getUTCDate();
-  const lastOfSource = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + 1, 0)).getUTCDate();
-  result.setUTCDate(day === lastOfSource ? lastOfTarget : Math.min(day, lastOfTarget));
-  return result;
-}
-
-function stepPeriod(p: Period, anchor: BillingPeriodAnchor, direction: 1 | -1): Period {
+/**
+ * Boundary k of a member's periods: the anchor date shifted by k steps.
+ * Months are clamped to the day the anchor carries (an anchor on the 31st
+ * gives the 28th/29th in February and the 31st again in March), so the k-th
+ * boundary is a function of the anchor alone and consecutive boundaries are
+ * contiguous by construction — never one period's start computed separately
+ * from the previous period's end.
+ */
+export function billingBoundary(anchor: BillingPeriodAnchor, k: number): number {
+  const [y, m, d] = anchor.anchor.split("-").map(Number);
   if (anchor.stepMonths) {
-    const start = dateToMinute(addMonthsClampedUtc(minuteDate(p.start), direction * anchor.stepMonths));
-    const end = dateToMinute(addMonthsClampedUtc(minuteDate(p.end), direction * anchor.stepMonths));
-    return { start, end };
+    const months = m - 1 + k * anchor.stepMonths;
+    const yy = y + Math.floor(months / 12);
+    const mm = ((months % 12) + 12) % 12;
+    const lastDay = new Date(Date.UTC(yy, mm + 1, 0)).getUTCDate();
+    return Date.UTC(yy, mm, Math.min(d, lastDay)) / 60_000;
   }
   const span = (anchor.stepDays ?? 0) * MINUTES_PER_DAY;
-  if (span <= 0) throw new Error("a billing-period allowance needs a cycle step");
-  return { start: p.start + direction * span, end: p.end + direction * span };
+  if (span <= 0) throw new Error("a billing-period allowance needs a recurrence");
+  return dateMinute(anchor.anchor) + k * span;
 }
 
 /**
- * The member's billing period that contains `minute`: the known period
- * stepped forwards or backwards by the cycle until it does. A session before
- * the first known period (or after the last) still lands in some period, so
- * nothing is ever unjudged. Bounded: 240 steps (20 years of months).
+ * The member's period that contains `minute`: [boundary(k), boundary(k+1))
+ * for the k that holds it. A session before the anchor still lands in some
+ * period (k < 0), so nothing is ever unjudged. Bounded to 480 steps.
  */
 export function billingPeriodContaining(anchor: BillingPeriodAnchor, minute: number): Period {
-  let p: Period = { start: anchor.start, end: anchor.end };
-  if (!(p.end > p.start)) throw new Error("a billing period must end after it starts");
-  for (let i = 0; i < 240 && minute >= p.end; i += 1) p = stepPeriod(p, anchor, 1);
-  for (let i = 0; i < 240 && minute < p.start; i += 1) p = stepPeriod(p, anchor, -1);
+  let k = 0;
+  if (anchor.stepDays) {
+    k = Math.floor((minute - dateMinute(anchor.anchor)) / (anchor.stepDays * MINUTES_PER_DAY));
+  } else {
+    for (let i = 0; i < 480 && minute >= billingBoundary(anchor, k + 1); i += 1) k += 1;
+    for (let i = 0; i < 480 && minute < billingBoundary(anchor, k); i += 1) k -= 1;
+  }
+  const p = { start: billingBoundary(anchor, k), end: billingBoundary(anchor, k + 1) };
+  if (!(minute >= p.start && minute < p.end)) throw new Error("billing period does not contain the session");
   return p;
 }
 
-/** The cycle of a tier as a step for billingPeriodContaining; null for a non-recurring tier ("none" or unknown). */
+/** The tier's cycle as a recurrence; null for a non-recurring tier ("none" or unknown). Shared with billing (lib/billing-cycle.ts). */
 export function billingCycleStep(billingCycle: string | null | undefined): { stepDays?: number; stepMonths?: number } | null {
-  switch (billingCycle) {
-    case "weekly": return { stepDays: 7 };
-    case "fortnightly": return { stepDays: 14 };
-    case "four_weekly": return { stepDays: 28 };
-    case "monthly": return { stepMonths: 1 };
-    case "annual": return { stepMonths: 12 };
-    default: return null;
-  }
+  if (!billingCycle) return null;
+  const days = cycleDays(billingCycle);
+  if (days) return { stepDays: days };
+  const months = cycleMonths(billingCycle);
+  if (months) return { stepMonths: months };
+  return null;
 }
 
 /**
- * What MatFlow knows about one member's billing period, in order of authority:
- *  1. `billingPeriodStart/End` — the subscription period Stripe stated on the
- *     last paid invoice (written by the webhook; Stripe-billed members);
- *  2. `nextDueAt` with the tier's cycle — the period ending on the next due
- *     date MatFlow tracks (desk, cash and standing-order members, advanced by
- *     each recorded payment; TeamUp-imported members, from the export's next
- *     payment date until the next import refreshes it).
- * Dates are the zoneless wall-clock timestamps those columns hold (UTC
- * components = the club's calendar, the convention lib/overdue.ts uses).
+ * The recurrence a Stripe-stated period implies, from its own length on the
+ * club calendar: an exact week multiple is days; 28–31 days is a month (the
+ * length varies by month, the anchor day does not); 365/366 is a year; any
+ * other length is taken literally. Never the tier's cycle: the subscription
+ * keeps its own price when a tier is edited or a member is moved.
+ */
+export function recurrenceOfPeriod(startDay: IsoDate, endDay: IsoDate): { stepDays?: number; stepMonths?: number } {
+  const days = Math.round((dateMinute(endDay) - dateMinute(startDay)) / MINUTES_PER_DAY);
+  if (days === 7 || days === 14 || days === 28) return { stepDays: days };
+  if (days >= 28 && days <= 31) return { stepMonths: 1 };
+  if (days === 365 || days === 366) return { stepMonths: 12 };
+  return { stepDays: Math.max(1, days) };
+}
+
+/** The calendar date, in the club's zone, of an instant (a Stripe epoch; a Date). */
+export function localDateOf(instant: Date, timeZone: string): IsoDate {
+  return minuteToLocal(nowMinute(instant, timeZone)).date;
+}
+
+/** The calendar date a zoneless timestamp holds (UTC components = the club's calendar, the lib/overdue.ts convention). */
+export function wallClockDateOf(d: Date): IsoDate {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * What MatFlow knows about one member's billing period. Who bills decides
+ * which source counts:
+ *  - a member with a live Stripe subscription (`stripeSubscriptionId` set):
+ *    ONLY the paid period Stripe stated on the last paid invoice
+ *    (`billingPeriodStart/End`, an instant, written by the webhook). Their
+ *    `nextDueAt` is not maintained (lib/overdue.ts) and is ignored; with no
+ *    stored period yet the period is unknown;
+ *  - everyone else (desk, cash, standing order; TeamUp-imported): the period
+ *    ending on `nextDueAt` (a zoneless wall-clock date), recurring by the
+ *    tier's billing cycle; a stale Stripe period from an ended subscription is
+ *    ignored.
  */
 export type MemberBillingView = {
+  stripeSubscriptionId?: string | null;
   billingPeriodStart?: Date | null;
   billingPeriodEnd?: Date | null;
   nextDueAt?: Date | null;
@@ -311,28 +340,27 @@ export type MemberBillingView = {
 };
 
 /**
- * Resolve a tier's "billing" allowance for one member. Returns the allowance
- * with the member's period attached, or `null` when no period is known — the
+ * Resolve a tier's "billing" allowance for one member, on the club's
+ * calendar (`timeZone` converts Stripe's instants). Returns the allowance with
+ * the member's recurrence attached, or `null` when no period is known — the
  * caller must treat that as "cannot be counted" (refuse at member-decided
- * doors, ask at staff doors), never fall back to a calendar period.
- * Non-billing allowances pass through unchanged.
+ * doors, ask at staff doors), never fall back to a calendar period. Non-billing
+ * allowances pass through unchanged.
  */
-export function withMemberBillingPeriod(a: ClassAllowance | null, member: MemberBillingView): ClassAllowance | null {
+export function withMemberBillingPeriod(a: ClassAllowance | null, member: MemberBillingView, timeZone: string): ClassAllowance | null {
   if (!a || a.basis !== "billing") return a;
-  const step = billingCycleStep(member.billingCycle);
-  if (member.billingPeriodStart && member.billingPeriodEnd && member.billingPeriodEnd > member.billingPeriodStart) {
-    const start = dateToMinute(member.billingPeriodStart);
-    const end = dateToMinute(member.billingPeriodEnd);
-    // Stripe's own period length is the step when the tier's cycle is not a plain step.
-    const fallback = step ?? { stepDays: Math.max(1, Math.round((end - start) / MINUTES_PER_DAY)) };
-    return { limit: a.limit, basis: "billing", member: { start, end, ...fallback } };
+  if (member.stripeSubscriptionId) {
+    if (member.billingPeriodStart && member.billingPeriodEnd && member.billingPeriodEnd > member.billingPeriodStart) {
+      const startDay = localDateOf(member.billingPeriodStart, timeZone);
+      const endDay = localDateOf(member.billingPeriodEnd, timeZone);
+      if (endDay <= startDay) return null;
+      return { limit: a.limit, basis: "billing", member: { anchor: endDay, ...recurrenceOfPeriod(startDay, endDay) } };
+    }
+    return null;
   }
+  const step = billingCycleStep(member.billingCycle);
   if (member.nextDueAt && step) {
-    const end = dateToMinute(member.nextDueAt);
-    const startDate = step.stepMonths
-      ? addMonthsClampedUtc(member.nextDueAt, -step.stepMonths)
-      : new Date(member.nextDueAt.getTime() - (step.stepDays ?? 0) * DAY_MS);
-    return { limit: a.limit, basis: "billing", member: { start: dateToMinute(startDate), end, ...step } };
+    return { limit: a.limit, basis: "billing", member: { anchor: wallClockDateOf(member.nextDueAt), ...step } };
   }
   return null;
 }
@@ -576,8 +604,9 @@ export const classLimitAnchorSchema = z.string().regex(ISO_DATE, "Period start m
 );
 
 export const PAIR_MESSAGE =
-  "Set the number of classes together with how often it resets (each week, each month, or every N weeks from a start date), or clear all of them for Unlimited";
+  "Set the number of classes together with how often it resets (each week, each month, every N weeks from a start date, or each member's own billing period), or clear all of them for Unlimited";
 export const WEEKS_MESSAGE = "Every N weeks needs the number of weeks (2 to 8) and the date the periods count from";
+export const BILLING_ON_NONE_MESSAGE = "A plan billed once (no billing cycle) has no billing period to count classes in — choose each week, each month or every N weeks";
 export const LEGACY_MIX_MESSAGE =
   "Send the class allowance as classes and a reset basis only, not together with the old classes-per-week field";
 

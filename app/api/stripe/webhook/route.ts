@@ -224,7 +224,10 @@ export async function POST(req: NextRequest) {
           },
           // D1: stamp cancelledAt so churn/net-new analytics date the
           // cancellation by when it happened, not by updatedAt.
-          data: { status: "cancelled", paymentStatus: "cancelled", cancelledAt: new Date(), stripeSubscriptionId: null },
+          // The ended subscription's paid period goes with it: a member who
+          // later pays at the desk is counted on their due date, not on a
+          // dead anchor (review round 3, M-5).
+          data: { status: "cancelled", paymentStatus: "cancelled", cancelledAt: new Date(), stripeSubscriptionId: null, billingPeriodStart: null, billingPeriodEnd: null },
         });
         // A3H-9: audit-log the subscription deletion so the gym owner can
         // trace the cancellation back to the Stripe event.
@@ -389,16 +392,29 @@ export async function POST(req: NextRequest) {
         // member's authoritative billing period (owner scope, 21 Oct 2026:
         // "N attendances per member's billing period"). Stored as the zoneless
         // timestamps the allowance reads; absent on a one-off invoice.
-        const line = ((obj.lines as { data?: Array<{ period?: { start?: number; end?: number } }> } | undefined)?.data ?? [])[0];
-        const periodStart = typeof line?.period?.start === "number" ? new Date(line.period.start * 1000) : null;
-        const periodEnd = typeof line?.period?.end === "number" ? new Date(line.period.end * 1000) : null;
+        // The line is the subscription's own recurring item, never a proration
+        // (a mid-cycle plan change invoices a partial period first) and never
+        // a one-off; an invoice with no line parent information is trusted
+        // only when it has a single line (review round 3, M-6).
+        type InvoiceLine = { period?: { start?: number; end?: number }; parent?: { type?: string; subscription_item_details?: { proration?: boolean } } | null };
+        const lines = ((obj.lines as { data?: InvoiceLine[] } | undefined)?.data ?? []);
+        const recurring = lines.find((l) => l.parent?.subscription_item_details && l.parent.subscription_item_details.proration !== true)
+          ?? (lines.length === 1 && !lines[0].parent ? lines[0] : undefined);
+        const periodStart = typeof recurring?.period?.start === "number" ? new Date(recurring.period.start * 1000) : null;
+        const periodEnd = typeof recurring?.period?.end === "number" ? new Date(recurring.period.end * 1000) : null;
         await tx.member.update({
           where: { id: member.id },
-          data: {
-            paymentStatus: "paid",
-            ...(periodStart && periodEnd && periodEnd > periodStart ? { billingPeriodStart: periodStart, billingPeriodEnd: periodEnd } : {}),
-          },
+          data: { paymentStatus: "paid" },
         });
+        if (periodStart && periodEnd && periodEnd > periodStart) {
+          // Only a NEWER period replaces the stored one: a retried past-due
+          // invoice paid after the renewal, or an event delivered out of
+          // order, must not move the member's period backwards (L-3).
+          await tx.member.updateMany({
+            where: { id: member.id, OR: [{ billingPeriodEnd: null }, { billingPeriodEnd: { lt: periodEnd } }] },
+            data: { billingPeriodStart: periodStart, billingPeriodEnd: periodEnd },
+          });
+        }
         // A1: a subscription charge fires BOTH invoice.payment_succeeded and
         // payment_intent.succeeded. The PI leg keys its upsert on
         // stripePaymentIntentId; key THIS leg on the same PI (when present) so

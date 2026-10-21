@@ -41,9 +41,10 @@
 // Lock order on EVERY check-in write transaction: Class FOR UPDATE
 // (capacityState), then the Member row (memberLock: FOR NO KEY UPDATE, see
 // there for why not FOR UPDATE), then the eligibility reads (classEligibility:
-// roster + tier, judged on the member row as locked), then statement C
-// (lib/class-allowance-count.ts, a plain read), then the pack decrement and
-// the AttendanceRecord insert. The Member lock is taken
+// roster + tier, judged on the member row as locked), then the pack and the
+// allowance (statement C, lib/class-allowance-count.ts, plain reads — the
+// kiosk spends a pack before it, a refusing door after it), then the
+// AttendanceRecord insert. The Member lock is taken
 // unconditionally, whatever the plan and the door, because whether a plan is
 // limited is itself configuration that can change mid-check-in: a lock taken
 // only when an earlier read said "limited" would not serialise against a
@@ -608,11 +609,13 @@ async function judgeAllowance(
 ): Promise<AllowanceGateState> {
   const mode = args.allowanceGate ?? "off";
   if (mode === "off") return { kind: "open", overridden: false };
+  const zone = usableTimezone(timeZone);
   const snap = await readAllowanceSnapshot(tx, {
     tenantId: args.tenantId,
     memberId: args.memberId,
-    centre: session.date,
+    session: slotMinute(session),
     currentInstanceId: session.id,
+    timeZone: zone,
   });
   if (!snap) return { kind: "member_not_found" };
   if (snap.alreadyIn) return { kind: "duplicate" };
@@ -625,7 +628,7 @@ async function judgeAllowance(
     return { kind: "allowance_reached", askable: mode === "ask", ...facts };
   }
   if (!snap.allowance) return { kind: "open", overridden: false };
-  const v = allowanceVerdict(snap.allowance, slotMinute(session), snap.visits, nowMinute(new Date(), usableTimezone(timeZone)));
+  const v = allowanceVerdict(snap.allowance, slotMinute(session), snap.visits, nowMinute(new Date(), zone));
   if (!v.exhausted) return { kind: "open", overridden: false };
   const facts: AllowanceFacts = {
     used: v.used, limit: v.limit, basis: v.basis,
@@ -1000,7 +1003,11 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         allowance = await judgeAllowance(tx, args, instance, tenant?.timezone || DEFAULT_TIMEZONE);
         if (allowance.kind === "member_not_found" || allowance.kind === "duplicate") return allowance;
         if (allowance.kind === "allowance_reached") {
-          if (!allowance.askable) pack = await claimPack(tx, tenantId, memberId);
+          // A used-up allowance falls through to a usable pack on a refusing
+          // door (owner decision, 17 Oct 2026). An UNKNOWN billing period is
+          // not a used-up allowance: nothing is spent, the member is refused
+          // (review round 3, M-4).
+          if (!allowance.askable && !allowance.periodUnknown) pack = await claimPack(tx, tenantId, memberId);
           if (!pack) return allowance;
           allowance = { kind: "open", overridden: false };
         }

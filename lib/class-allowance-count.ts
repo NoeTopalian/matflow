@@ -31,6 +31,7 @@ import {
   currentPeriodUsage,
   nowMinute,
   slotMinute,
+  periodContaining,
   tierAllowance,
   withMemberBillingPeriod,
   type AllowanceBasis,
@@ -64,33 +65,29 @@ type Row = {
   classLimitAnchor: Date | string | null;
   maxClassesPerWeek: number | null;
   billingCycle: string | null;
+  stripeSubscriptionId: string | null;
   nextDueAt: Date | null;
   billingPeriodStart: Date | null;
   billingPeriodEnd: Date | null;
   alreadyIn: boolean | null;
-  visits: unknown;
 };
 
-const DAY_MS = 86_400_000;
+const MINUTES_PER_DAY = 1440;
 
 /**
- * The marker range to fetch around a session. The longest period any plan can
- * have is 8 weeks (CLASS_LIMIT_WEEKS_MAX), so the period containing the
- * session starts at most 8 weeks before it and ends at most 8 weeks after;
- * a day of slack either side covers the different marker spellings (00:00Z,
- * 23:00Z the day before, 16:00Z).
+ * Statement C, in two reads under the Member lock the caller already holds:
+ *  C1 — the tier's allowance columns, the member's billing columns and
+ *       whether the member is already in the judged session;
+ *  C2 — the member's counted visits inside the judged session's own period
+ *       (plus a day either side for the marker spellings), which is known
+ *       only after C1 resolved the period. An Unlimited plan skips C2.
+ * A period of any length (an annual billing period included) is counted in
+ * full: the range is the period's, never a fixed window. `session` is the
+ * judged session's wall-clock minute (or now, for the member portal);
+ * `currentInstanceId` is the session being judged (excluded from the visits
+ * and reported as `alreadyIn`), or null. Returns null when the member is not
+ * in this club.
  */
-export function fetchRange(centre: Date, weeks: number): { from: Date; to: Date } {
-  const span = weeks * 7 * DAY_MS;
-  return {
-    from: new Date(centre.getTime() - span - 2 * DAY_MS),
-    to: new Date(centre.getTime() + span + 2 * DAY_MS),
-  };
-}
-
-/** The widest period any plan can have (CLASS_LIMIT_WEEKS_MAX), used before the tier is known. */
-const WIDEST_WEEKS = 8;
-
 function parseVisits(raw: unknown): number[] {
   const list = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
   if (!Array.isArray(list)) return [];
@@ -105,48 +102,18 @@ function parseVisits(raw: unknown): number[] {
   return out;
 }
 
-/**
- * Statement C. `centre` is the session's date marker (or now, for the member
- * portal); `currentInstanceId` is the session being judged (excluded from the
- * visits and reported as `alreadyIn`), or null. Returns null when the member
- * is not in this club.
- */
 export async function readAllowanceSnapshot(
   tx: Prisma.TransactionClient,
-  args: { tenantId: string; memberId: string; centre: Date; currentInstanceId: string | null },
+  args: { tenantId: string; memberId: string; session: number; currentInstanceId: string | null; timeZone: string },
 ): Promise<AllowanceSnapshot | null> {
-  const { from, to } = fetchRange(args.centre, WIDEST_WEEKS);
-  // ISO strings cast to `timestamp`: ClassInstance.date is a timestamp WITHOUT
-  // zone holding a UTC wall clock (the Prisma convention); the cast ignores the
-  // trailing Z, so the comparison is wall clock to wall clock.
-  const fromIso = from.toISOString();
-  const toIso = to.toISOString();
   const current = args.currentInstanceId ?? "";
   const rows = await tx.$queryRaw<Row[]>`
     SELECT t."classLimit", t."classLimitBasis", t."classLimitWeeks", t."classLimitAnchor", t."maxClassesPerWeek",
-           t."billingCycle", m."nextDueAt", m."billingPeriodStart", m."billingPeriodEnd",
+           t."billingCycle", m."stripeSubscriptionId", m."nextDueAt", m."billingPeriodStart", m."billingPeriodEnd",
            EXISTS (
              SELECT 1 FROM "AttendanceRecord" a0
               WHERE a0."tenantId" = m."tenantId" AND a0."memberId" = m."id" AND a0."classInstanceId" = ${current}
-           ) AS "alreadyIn",
-           COALESCE((
-             SELECT json_agg(json_build_object(
-                      'd', (EXTRACT(EPOCH FROM ci."date") * 1000)::float8,
-                      's', ci."startTime"))
-               FROM "AttendanceRecord" a
-               JOIN "ClassInstance" ci ON ci."id" = a."classInstanceId"
-              WHERE a."tenantId" = m."tenantId"
-                AND a."memberId" = m."id"
-                AND a."checkInMethod" <> 'import'
-                AND a."importJobId" IS NULL
-                AND ci."isCancelled" = false
-                AND ci."id" <> ${current}
-                AND ci."date" >= ${fromIso}::timestamp
-                AND ci."date" <= ${toIso}::timestamp
-                AND NOT EXISTS (
-                  SELECT 1 FROM "ClassPackRedemption" r WHERE r."attendanceRecordId" = a."id"
-                )
-           ), '[]'::json) AS "visits"
+           ) AS "alreadyIn"
       FROM "Member" m
       LEFT JOIN "MembershipTier" t ON t."id" = m."membershipTierId" AND t."tenantId" = m."tenantId"
      WHERE m."id" = ${args.memberId} AND m."tenantId" = ${args.tenantId}
@@ -160,21 +127,53 @@ export async function readAllowanceSnapshot(
     classLimitAnchor: row.classLimitAnchor ?? null,
     maxClassesPerWeek: row.maxClassesPerWeek ?? null,
   });
-  // A "billing" allowance is this member's own period: Stripe's last paid
-  // period, else the period ending on the next due date MatFlow tracks.
+  // A "billing" allowance is this member's own period, by who bills them.
   const allowance = withMemberBillingPeriod(tier, {
+    stripeSubscriptionId: row.stripeSubscriptionId ?? null,
     billingPeriodStart: row.billingPeriodStart ?? null,
     billingPeriodEnd: row.billingPeriodEnd ?? null,
     nextDueAt: row.nextDueAt ?? null,
     billingCycle: row.billingCycle ?? null,
-  });
+  }, args.timeZone);
   const periodUnknown = tier?.basis === "billing" && allowance === null;
+  const alreadyIn = row.alreadyIn === true;
+  if (!allowance) {
+    return { allowance: null, periodUnknown, periodUnknownLimit: periodUnknown ? tier!.limit : null, alreadyIn, visits: [] };
+  }
+  const period = periodContaining(allowance, args.session);
+  // ISO strings cast to `timestamp`: ClassInstance.date is a timestamp WITHOUT
+  // zone holding a UTC wall clock (the Prisma convention); the cast ignores the
+  // trailing Z, so the comparison is wall clock to wall clock. A day of slack
+  // either side covers the different marker spellings (00:00Z, 23:00Z the day
+  // before, 16:00Z); the period itself decides what counts.
+  const fromIso = new Date((period.start - MINUTES_PER_DAY) * 60_000).toISOString();
+  const toIso = new Date((period.end + MINUTES_PER_DAY) * 60_000).toISOString();
+  const visitRows = await tx.$queryRaw<Array<{ visits: unknown }>>`
+    SELECT COALESCE((
+             SELECT json_agg(json_build_object(
+                      'd', (EXTRACT(EPOCH FROM ci."date") * 1000)::float8,
+                      's', ci."startTime"))
+               FROM "AttendanceRecord" a
+               JOIN "ClassInstance" ci ON ci."id" = a."classInstanceId"
+              WHERE a."tenantId" = ${args.tenantId}
+                AND a."memberId" = ${args.memberId}
+                AND a."checkInMethod" <> 'import'
+                AND a."importJobId" IS NULL
+                AND ci."isCancelled" = false
+                AND ci."id" <> ${current}
+                AND ci."date" >= ${fromIso}::timestamp
+                AND ci."date" <= ${toIso}::timestamp
+                AND NOT EXISTS (
+                  SELECT 1 FROM "ClassPackRedemption" r WHERE r."attendanceRecordId" = a."id"
+                )
+           ), '[]'::json) AS "visits"
+  `;
   return {
     allowance,
-    periodUnknown,
-    periodUnknownLimit: periodUnknown ? tier!.limit : null,
-    alreadyIn: row.alreadyIn === true,
-    visits: parseVisits(row.visits),
+    periodUnknown: false,
+    periodUnknownLimit: null,
+    alreadyIn,
+    visits: parseVisits(visitRows[0]?.visits),
   };
 }
 
@@ -203,11 +202,13 @@ export async function memberAllowanceUsage(
 ): Promise<AllowanceUsage | null> {
   const now = args.now ?? new Date();
   const tenant = await tx.tenant.findUnique({ where: { id: args.tenantId }, select: { timezone: true } });
+  const zone = usableTimezone(tenant?.timezone);
   const snap = await readAllowanceSnapshot(tx, {
     tenantId: args.tenantId,
     memberId: args.memberId,
-    centre: now,
+    session: nowMinute(now, zone),
     currentInstanceId: null,
+    timeZone: zone,
   });
   if (!snap) return null;
   if (snap.periodUnknown && snap.periodUnknownLimit !== null) {
@@ -215,7 +216,7 @@ export async function memberAllowanceUsage(
     return { ...facts, text: allowanceUsageText(facts) };
   }
   if (!snap.allowance) return null;
-  const v = currentPeriodUsage(snap.allowance, nowMinute(now, usableTimezone(tenant?.timezone)), snap.visits);
+  const v = currentPeriodUsage(snap.allowance, nowMinute(now, zone), snap.visits);
   return {
     used: v.used,
     limit: v.limit,

@@ -136,6 +136,8 @@ type ScanStatus =
   | "error"
   | "request_failed"
   | "network"
+  // The scanner gave up waiting (10 s). MatFlow may still have recorded it.
+  | "timed_out"
   // In flight — pushed at decode, replaced in place by the outcome.
   | "pending"
   // Derived from the HTTP response, never from the body (A4-iv).
@@ -208,6 +210,7 @@ const STATUS_COPY: Record<ScanStatus, { label: string; hint?: string; tone: "ok"
   error: { label: "Didn't record", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
   request_failed: { label: "Didn't record", hint: "Hold the card again once — if it fails twice, use the register.", tone: "bad" },
   network: { label: "Didn't reach MatFlow", hint: "Check signal and hold the card again once — if it fails twice, use the register.", tone: "bad" },
+  timed_out: { label: "No answer yet", hint: "It may have been recorded. Hold the card again to check — it will say Already in if it was.", tone: "warn" },
   pending: { label: "Sending…", tone: "ok" },
   // Kept seen, so the remedy is the register, never "hold it again". A
   // captive-portal page on venue wifi lands here too, hence the clause.
@@ -241,6 +244,7 @@ const NO_NAME: Record<ScanStatus, string> = {
   error: "Card not sent",
   request_failed: "Card not sent",
   network: "Card not sent",
+  timed_out: "No answer yet",
   pending: "Reading…",
   signed_out: "Card not sent",
   not_allowed: "Card not sent",
@@ -257,7 +261,7 @@ const NO_NAME: Record<ScanStatus, string> = {
  * spends the 240-per-5-minute limiter inside a minute. Every other failure
  * keeps the token seen, because for those the copy sends the coach elsewhere.
  */
-const RETRYABLE_BY_HOLDING: ReadonlySet<ScanStatus> = new Set(["request_failed", "network", "server_down"]);
+const RETRYABLE_BY_HOLDING: ReadonlySet<ScanStatus> = new Set(["request_failed", "network", "timed_out", "server_down"]);
 
 /**
  * The statuses the route can actually put in a 200 body. The response-derived
@@ -302,6 +306,7 @@ const ANNOUNCE: Record<ScanStatus, (name?: string) => string> = {
   error: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
   request_failed: () => "That card didn't record. Hold the card again once.",
   network: () => "That card didn't send. Check signal and hold the card again once.",
+  timed_out: (n) => `No answer yet for ${n ?? "that card"}. It may have been recorded. Hold the card again to check.`,
   // Never announced (noise at 4 Hz); the outcome that replaces it is.
   pending: () => "",
   signed_out: () => "Signed out. Sign in again, then use the register for this one.",
@@ -478,8 +483,11 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
         reason: result.reason === "allowance_reached" ? result.reason : undefined,
         message: typeof result.message === "string" ? result.message : undefined,
       });
-    } catch {
-      settle("network");
+    } catch (e) {
+      // The 10 s abort is not "didn't reach MatFlow": the request may have
+      // reached it and been recorded (round-3 review, L-1). Said as its own
+      // status; holding the card again answers "Already in" if it was.
+      settle((e as { name?: string })?.name === "TimeoutError" ? "timed_out" : "network");
     }
   }, []);
 
