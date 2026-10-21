@@ -120,7 +120,12 @@ export function formAllowance(form: { classLimit: string; classLimitBasis: strin
   const weeks = Number(form.classLimitWeeks);
   const anchor = form.classLimitAnchor.trim();
   if (!(CLASS_LIMIT_WEEK_OPTIONS as readonly number[]).includes(weeks)) return { kind: "error", message: "Every N weeks must be a whole number from 2 to 8." };
-  if (!ISO_DATE.test(anchor) || new Date(`${anchor}T00:00:00Z`).toISOString().slice(0, 10) !== anchor) return { kind: "error", message: PERIOD_START_ERROR };
+  // A regex-valid but impossible date ("2026-13-01") makes an Invalid Date,
+  // whose toISOString throws — and this runs during render.
+  const anchorDate = new Date(`${anchor}T00:00:00Z`);
+  if (!ISO_DATE.test(anchor) || Number.isNaN(anchorDate.getTime()) || anchorDate.toISOString().slice(0, 10) !== anchor) {
+    return { kind: "error", message: PERIOD_START_ERROR };
+  }
   return { kind: "ok", allowance: { limit: limit.value, basis: "weeks", weeks, anchor } };
 }
 

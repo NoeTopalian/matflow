@@ -139,8 +139,16 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
       // what the door will say: the class's next session (or now, when none
       // is scheduled yet) is judged, and a used-up period becomes a notice
       // on the booked state, not a refusal.
-      const allowance = await bookingAllowance(tx, r.tenantId, r.memberId, classId);
-      return { kind: "booked" as const, allowanceNotice: allowance ? allowanceBookingNotice(allowance) : null };
+      // The notice is information, never a reason to fail the booking: a
+      // fault computing it is logged and the booking stands without one.
+      let allowanceNotice: string | null = null;
+      try {
+        const allowance = await bookingAllowance(tx, r.tenantId, r.memberId, classId);
+        allowanceNotice = allowance ? allowanceBookingNotice(allowance) : null;
+      } catch (e) {
+        console.error("[booking] allowance notice failed", e);
+      }
+      return { kind: "booked" as const, allowanceNotice };
     });
     if (created === "no-class") return NextResponse.json({ error: "Class not found" }, { status: 404 });
     if (created === "not-rostered") {

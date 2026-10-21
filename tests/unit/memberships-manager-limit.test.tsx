@@ -54,11 +54,16 @@ function tier(over: Partial<MembershipTierRow> = {}): MembershipTierRow {
   };
 }
 
-/** The columns as the routes write them, with the anchor as the page serialises it ("YYYY-MM-DD"). */
+/**
+ * The columns as the routes write them. The anchor is a Date run through
+ * JSON, exactly as POST/PATCH /api/memberships return the Prisma row
+ * ("2026-10-20T00:00:00.000Z"); the page serialises it as "YYYY-MM-DD" and
+ * the manager must read both (review M-1, 21 Oct 2026).
+ */
 function rowColumns(input: AllowanceInput): Partial<MembershipTierRow> {
   const cols = allowanceColumns(input);
   if (!cols) return {};
-  return { ...cols, classLimitAnchor: cols.classLimitAnchor ? cols.classLimitAnchor.toISOString().slice(0, 10) : null };
+  return { ...cols, classLimitAnchor: cols.classLimitAnchor ? JSON.parse(JSON.stringify(cols.classLimitAnchor)) : null };
 }
 
 /** A tier carrying a T7c allowance as the routes write it. */

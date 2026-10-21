@@ -132,6 +132,11 @@ export async function POST(req: Request) {
   }
   const { classInstanceId, tokens, acknowledged } = parsed.data;
   const allowanceConfirmed = !!acknowledged?.includes("allowance_reached");
+  // A confirmation answers ONE question about ONE card: it never admits a
+  // whole stack past their allowances.
+  if (allowanceConfirmed && tokens.length !== 1) {
+    return NextResponse.json({ error: "Confirm one card at a time" }, { status: 400 });
+  }
 
   let rl;
   try {

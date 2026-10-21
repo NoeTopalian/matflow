@@ -196,6 +196,14 @@ describe("POST /api/checkin/card", () => {
       metadata: { overrides: [{ memberId: "mem-1", reasons: ["allowance_reached"], overAllowance: FACTS }] },
     });
   });
+
+  it("a confirmation answers one card: a stack sent with acknowledged is refused outright, nothing recorded (review L-11)", async () => {
+    const tokens = ["mem-1", "mem-2"].map((memberId) => signCardToken({ tenantId: "t1", memberId, cardVersion: 1 }));
+    const res = await POST(cardReq({ classInstanceId: "inst-1", tokens, acknowledged: ["allowance_reached"] }));
+    expect(res.status).toBe(400);
+    expect(h.performCheckin).not.toHaveBeenCalled();
+    expect(h.logAudit).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/kiosk/[token]/checkin", () => {

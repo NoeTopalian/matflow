@@ -53,6 +53,26 @@ describe("20261017052858_tier_class_allowance (the first columns)", () => {
   });
 });
 
+describe("20261021170000_tier_class_allowance_weeks_check_null_safe (review H-1: the every-N-weeks CHECK is NULL-safe)", () => {
+  const { code, statements } = load("20261021170000_tier_class_allowance_weeks_check_null_safe");
+
+  it("opens with BEGIN and closes with COMMIT, and only replaces the one CHECK", () => {
+    expect(statements[0]).toBe("BEGIN;");
+    expect(statements[statements.length - 1]).toBe("COMMIT;");
+    expect([...code.matchAll(/DROP CONSTRAINT IF EXISTS "([^"]+)"/g)].map((m) => m[1])).toEqual(["MembershipTier_classLimitWeeks_check"]);
+    expect([...code.matchAll(/ADD CONSTRAINT "([^"]+)"/g)].map((m) => m[1])).toEqual(["MembershipTier_classLimitWeeks_check"]);
+    expect(code).toContain(`VALIDATE CONSTRAINT "MembershipTier_classLimitWeeks_check";`);
+    expect(code).not.toMatch(/ADD COLUMN|DROP COLUMN|RENAME|\bUPDATE\b/i);
+  });
+
+  it("a NULL weeks on the weeks basis can no longer make the CHECK expression NULL (which would pass)", () => {
+    expect(code).toContain(
+      `"classLimitBasis" = 'weeks' AND "classLimitWeeks" IS NOT NULL AND "classLimitWeeks" BETWEEN ${CLASS_LIMIT_WEEKS_MIN} AND ${CLASS_LIMIT_WEEKS_MAX} AND "classLimitAnchor" IS NOT NULL`,
+    );
+    expect(code).toContain(`"classLimitBasis" IS DISTINCT FROM 'weeks' AND "classLimitWeeks" IS NULL AND "classLimitAnchor" IS NULL`);
+  });
+});
+
 describe("20261021140000_tier_class_allowance_basis (the explicit reset basis)", () => {
   const { code, statements } = load("20261021140000_tier_class_allowance_basis");
 

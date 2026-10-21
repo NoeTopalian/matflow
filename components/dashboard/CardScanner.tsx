@@ -373,7 +373,9 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
     // added to, never from a later session's fresh one.
     const seen = seenRef.current;
     const retried = retriedRef.current;
-    const at = Date.now();
+    // A confirm resend keeps the asked row's stamp, so it settles IN PLACE
+    // rather than leaving the askable row behind and adding a second one.
+    const at = confirm?.at ?? Date.now();
 
     // The row exists from the moment the card is read, so a scan in flight is
     // visibly different from a card that never decoded — and the list is in

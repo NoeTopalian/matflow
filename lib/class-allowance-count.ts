@@ -113,7 +113,7 @@ export async function readAllowanceSnapshot(
     SELECT t."classLimit", t."classLimitBasis", t."classLimitWeeks", t."classLimitAnchor", t."maxClassesPerWeek",
            EXISTS (
              SELECT 1 FROM "AttendanceRecord" a0
-              WHERE a0."memberId" = m."id" AND a0."classInstanceId" = ${current}
+              WHERE a0."tenantId" = m."tenantId" AND a0."memberId" = m."id" AND a0."classInstanceId" = ${current}
            ) AS "alreadyIn",
            COALESCE((
              SELECT json_agg(json_build_object(

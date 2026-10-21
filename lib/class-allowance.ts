@@ -71,7 +71,12 @@ export type TierAllowanceColumns = {
 
 function isoDateOf(v: Date | string | null | undefined): IsoDate | null {
   if (v == null) return null;
-  if (typeof v === "string") return ISO_DATE.test(v) ? v : null;
+  if (typeof v === "string") {
+    if (ISO_DATE.test(v)) return v;
+    // A Date run through JSON (the membership routes return the Prisma row):
+    // "2026-10-20T00:00:00.000Z" is the same calendar day.
+    return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v) ? v.slice(0, 10) : null;
+  }
   return Number.isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
 }
 
@@ -338,7 +343,7 @@ export function allowanceRefusalSentence(v: VerdictCopy, who?: string | null): s
  * should know what will happen at the door.
  */
 export function allowanceBookingNotice(v: VerdictCopy): string {
-  return `${allowanceCountPhrase(v)}. You can book, but you'll be refused at check-in unless a place frees up; it resets on ${dateText(v.resetsOn)}.`;
+  return `${allowanceCountPhrase(v)}. Booking doesn't use a class, but checking in before ${dateText(v.resetsOn)} will need a class-pack credit or staff to admit you.`;
 }
 
 /** The question the register, the card scanner and the coach tick put to staff. */

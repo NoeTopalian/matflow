@@ -46,7 +46,7 @@ const FOUR_VISITS = [
   { d: DAY("2026-10-14"), s: "18:00" },
 ];
 const NOTICE =
-  "4 of 4 classes used this 4-week period. You can book, but you'll be refused at check-in unless a place frees up; it resets on Monday 26 October.";
+  "4 of 4 classes used this 4-week period. Booking doesn't use a class, but checking in before Monday 26 October will need a class-pack credit or staff to admit you.";
 const book = async () => (await POST(new Request("http://localhost"), { params: Promise.resolve({ classId: "c-1" }) }))!;
 
 beforeEach(() => {
@@ -118,7 +118,7 @@ describe("booking - plan allowance (never a refusal)", () => {
       visits: [...FOUR_VISITS, { d: DAY("2026-10-15"), s: "18:00" }, { d: DAY("2026-10-16"), s: "18:00" }],
     };
     const body = (await (await book()).json()) as { allowanceNotice: string };
-    expect(body.allowanceNotice).toMatch(/^4 of 4 classes used this 4-week period \(6 recorded\)\. You can book/);
+    expect(body.allowanceNotice).toMatch(/^4 of 4 classes used this 4-week period \(6 recorded\)\. Booking doesn't use a class/);
   });
 
   it("with no session scheduled, the notice is judged at now", async () => {
@@ -128,6 +128,14 @@ describe("booking - plan allowance (never a refusal)", () => {
     expect(res.status).toBe(201);
     expect((await res.json()).allowanceNotice).toBe(NOTICE);
     expect(h.cValues).toContain("");
+  });
+
+  it("a fault computing the notice never fails the booking", async () => {
+    h.instanceFindMany.mockRejectedValue(new Error("boom"));
+    const res = await book();
+    expect(res.status).toBe(201);
+    expect((await res.json()).allowanceNotice).toBeNull();
+    expect(h.subCreate).toHaveBeenCalledTimes(1);
   });
 
   it("the route has no allowance refusal at all (static guard)", () => {

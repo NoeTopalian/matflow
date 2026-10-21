@@ -178,7 +178,7 @@ describe("the copy", () => {
 
   it("booking is never refused for the allowance: the notice says what happens at the door", () => {
     expect(allowanceBookingNotice(v)).toBe(
-      "4 of 4 classes used this 4-week period. You can book, but you'll be refused at check-in unless a place frees up; it resets on Tuesday 17 November.",
+      "4 of 4 classes used this 4-week period. Booking doesn't use a class, but checking in before Tuesday 17 November will need a class-pack credit or staff to admit you.",
     );
   });
 
