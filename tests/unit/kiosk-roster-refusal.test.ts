@@ -2,7 +2,7 @@
 //
 // `lib/checkin.ts` returns `{ kind: "roster_not_listed" }` when a class has an
 // allow-list and the member is not on it, and the kiosk route asks for that
-// gate to be enforced (`enforceRosterGate: true`). Its switch had no case for
+// gate (now enforced by the engine at every door). Its switch had no case for
 // the kind, so the result fell through `default:` to a 500 and the tablet said
 // "Could not check in — please ask staff." — the copy reserved for a genuine
 // failure. A competition squad's comp class, working exactly as configured,

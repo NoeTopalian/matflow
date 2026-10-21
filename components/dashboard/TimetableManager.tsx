@@ -1187,10 +1187,10 @@ function ClassForm({
         <legend className="text-xs font-medium" style={{ color: "var(--tx-2)" }}>Who can attend</legend>
         <p id="class-tiers-hint" className="text-[11px]" style={{ color: "var(--tx-3)" }}>
           {useRoster
-            ? "This class has a roster, so the roster decides who can attend. Memberships ticked here apply only if the roster is removed."
+            ? "This class has a squad list. Only members on it can book or check in; if memberships are also ticked, a member must be on one of them too."
             : allowedTierIds.length === 0
               ? "Everyone — any member can book and check in. Tick memberships to limit this class to them."
-              : "Only members on the ticked memberships can book or check themselves in. The register and card scanner ask before admitting anyone else."}
+              : "Only members on the ticked memberships can book or check in — at the desk and the card scanner too. To admit someone else, change their membership."}
         </p>
         {tierChoices.length === 0 ? (
           <p className="text-xs" style={{ color: "var(--tx-3)" }}>

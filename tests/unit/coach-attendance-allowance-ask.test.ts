@@ -1,7 +1,8 @@
 // T7: the coach tick route (POST /api/coach/instances/[id]/attendance) marks
 // without performCheckin, so it asks about the plan allowance itself, the way
-// the desk register does: after the tier ask (which takes the Class lock),
-// under the Member lock, and only when the tick would admit someone.
+// the desk register does: after the eligibility check (which takes the Class
+// lock and refuses only), under the Member lock, and only when the tick would
+// admit someone.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
@@ -18,7 +19,7 @@ const h = vi.hoisted(() => ({
   instanceFindFirst: vi.fn(),
   logAudit: vi.fn(),
   requireApiStaff: vi.fn(),
-  staffTierAsk: vi.fn(),
+  lockedClassEligibility: vi.fn(),
   staffAllowanceAsk: vi.fn(),
   order: [] as string[],
 }));
@@ -27,7 +28,7 @@ vi.mock("@/lib/api-authz", () => ({ requireApiStaff: h.requireApiStaff }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: h.logAudit }));
 vi.mock("@/lib/checkin", () => ({
   restorePackCreditsForAttendance: vi.fn(async () => 0),
-  staffTierAsk: h.staffTierAsk,
+  lockedClassEligibility: h.lockedClassEligibility,
   staffAllowanceAsk: h.staffAllowanceAsk,
 }));
 vi.mock("@/lib/prisma-tenant", () => ({
@@ -55,7 +56,7 @@ beforeEach(() => {
   h.memberFindFirst.mockResolvedValue({ id: "mem_1" });
   h.findUnique.mockResolvedValue(null);
   h.upsert.mockImplementation(async () => { h.order.push("upsert"); return { id: "rec_1", checkInMethod: "admin", checkedInById: "user_coach" }; });
-  h.staffTierAsk.mockImplementation(async () => { h.order.push("tier"); return { kind: "open", overridden: false }; });
+  h.lockedClassEligibility.mockImplementation(async () => { h.order.push("eligibility"); return null; });
   h.staffAllowanceAsk.mockImplementation(async (_tx: unknown, args: { confirmed: boolean }) => {
     h.order.push("allowance");
     return args.confirmed
@@ -65,9 +66,9 @@ beforeEach(() => {
 });
 
 describe("coach tick - allowance ask", () => {
-  it("asks after the tier ask (Class lock, then Member lock) and writes nothing until confirmed", async () => {
+  it("asks after the eligibility check (Class lock, then Member lock) and writes nothing until confirmed", async () => {
     const res = await POST(req({ memberId: "mem_1", attended: true }), { params });
-    expect(h.order).toEqual(["tier", "allowance"]);
+    expect(h.order).toEqual(["eligibility", "allowance"]);
     expect(h.staffAllowanceAsk).toHaveBeenCalledWith(
       expect.anything(),
       { tenantId: "tenant_a", memberId: "mem_1", confirmed: false },
@@ -82,7 +83,7 @@ describe("coach tick - allowance ask", () => {
   it("admits on acknowledged: ['allowance_reached'] and records the override with the count", async () => {
     const res = await POST(req({ memberId: "mem_1", attended: true, acknowledged: ["allowance_reached"] }), { params });
     expect(res.status).toBe(200);
-    expect(h.order).toEqual(["tier", "allowance", "upsert"]);
+    expect(h.order).toEqual(["eligibility", "allowance", "upsert"]);
     expect(h.logAudit.mock.calls[0][0]).toMatchObject({
       action: "attendance.mark",
       metadata: { created: true, overrides: ["allowance_reached"], overAllowance: FACTS },

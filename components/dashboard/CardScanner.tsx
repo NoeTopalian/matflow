@@ -126,10 +126,13 @@ type ScanStatus =
   | "member_not_found"
   | "class_not_found"
   | "class_cancelled"
-  // T6a: the class's memberships do not include this member's plan, or (T7)
-  // their plan allowance is used up. Nothing recorded; the row offers "Admit
-  // anyway", which resends the card confirmed.
+  // T7: their plan allowance is used up. Nothing recorded; the row offers
+  // "Admit anyway", which resends the card confirmed.
   | "needs_confirmation"
+  // The class's squad list or memberships do not admit this member. Nothing
+  // recorded, and nothing the coach can send admits them: the row shows the
+  // sentence the member would read, and the remedy is the member's profile.
+  | "refused"
   | "error"
   | "request_failed"
   | "network"
@@ -147,27 +150,30 @@ type ScanRow = {
   token: string;
   status: ScanStatus;
   memberName?: string;
-  /** needs_confirmation only: the question the server put (names the class and plan). */
+  /** needs_confirmation only: the question the server put (names the member and the count). */
   question?: string;
   /** needs_confirmation only: which question it is. */
   reason?: ConfirmReason;
-  /** Answers the coach already gave for this card (a card can be asked twice). */
+  /** Answers the coach already gave for this card. */
   acked?: ConfirmReason[];
+  /** refused only: the server's sentence (names the class and plan, or the squad list). */
+  message?: string;
   at: number;
 };
 
-/** The questions the scanner can be asked (T6a tier, T7 allowance). */
-type ConfirmReason = "tier_not_included" | "allowance_reached";
+/**
+ * The questions the scanner can be asked: the plan allowance only (T7). The
+ * squad list and the membership list are refused, never asked.
+ */
+type ConfirmReason = "allowance_reached";
 
 /** The row label for a card awaiting confirmation, by question. */
 const CONFIRM_LABEL: Record<ConfirmReason, string> = {
-  tier_not_included: "Not on their plan",
   allowance_reached: "Allowance used",
 };
 
 /** What the screen reader says for a card awaiting confirmation, by question. */
 const CONFIRM_ANNOUNCE: Record<ConfirmReason, (name?: string) => string> = {
-  tier_not_included: (n) => `${n ?? "That card"}, not included in their membership. Admit anyway, or leave them out.`,
   allowance_reached: (n) => `${n ?? "That card"}, class allowance used. Admit anyway, or leave them out.`,
 };
 
@@ -197,7 +203,8 @@ const STATUS_COPY: Record<ScanStatus, { label: string; hint?: string; tone: "ok"
   member_not_found: { label: "Member not found", hint: "They may have been removed.", tone: "bad" },
   class_not_found: { label: "Class not found", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
   class_cancelled: { label: "Class was cancelled", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
-  needs_confirmation: { label: "Not on their plan", tone: "warn" },
+  needs_confirmation: { label: "Allowance used", tone: "warn" },
+  refused: { label: "Refused", tone: "bad" },
   error: { label: "Didn't record", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
   request_failed: { label: "Didn't record", hint: "Hold the card again once — if it fails twice, use the register.", tone: "bad" },
   network: { label: "Didn't reach MatFlow", hint: "Check signal and hold the card again once — if it fails twice, use the register.", tone: "bad" },
@@ -230,6 +237,7 @@ const NO_NAME: Record<ScanStatus, string> = {
   class_not_found: "Card not sent",
   class_cancelled: "Card not sent",
   needs_confirmation: "Card not recorded",
+  refused: "Card not recorded",
   error: "Card not sent",
   request_failed: "Card not sent",
   network: "Card not sent",
@@ -258,7 +266,7 @@ const RETRYABLE_BY_HOLDING: ReadonlySet<ScanStatus> = new Set(["request_failed",
  */
 const SERVER_STATUSES: ReadonlySet<string> = new Set([
   "success", "duplicate", "revoked", "invalid", "expired", "wrong_tenant",
-  "member_not_found", "class_not_found", "class_cancelled", "needs_confirmation", "error",
+  "member_not_found", "class_not_found", "class_cancelled", "needs_confirmation", "refused", "error",
 ]);
 
 /** A member is in the register after these — recorded now, or already there. */
@@ -289,7 +297,8 @@ const ANNOUNCE: Record<ScanStatus, (name?: string) => string> = {
   member_not_found: () => "Member not found.",
   class_not_found: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
   class_cancelled: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
-  needs_confirmation: (n) => `${n ?? "That card"}, not included in their membership. Admit anyway, or leave them out.`,
+  needs_confirmation: (n) => `${n ?? "That card"}, class allowance used. Admit anyway, or leave them out.`,
+  refused: (n) => `${n ?? "That card"}, refused. This class isn't open to them.`,
   error: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
   request_failed: () => "That card didn't record. Hold the card again once.",
   network: () => "That card didn't send. Check signal and hold the card again once.",
@@ -353,7 +362,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
   }, [instance.id]);
 
   /**
-   * `confirm` resends a card the server asked about (T6a "Admit anyway"): the
+   * `confirm` resends a card the server asked about (T7 "Admit anyway"): the
    * existing row goes back to pending and settles in place, rather than a new
    * row appearing for the same card.
    */
@@ -364,7 +373,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
     // added to, never from a later session's fresh one.
     const seen = seenRef.current;
     const retried = retriedRef.current;
-    const at = confirm?.at ?? Date.now();
+    const at = Date.now();
 
     // The row exists from the moment the card is read, so a scan in flight is
     // visibly different from a card that never decoded — and the list is in
@@ -382,16 +391,21 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
     }
 
     // The pending row becomes the outcome, in place.
-    const settle = (status: ScanStatus, memberName?: string, question?: string, reason?: ConfirmReason) => {
+    const settle = (
+      status: ScanStatus,
+      memberName?: string,
+      detail: { question?: string; reason?: ConfirmReason; message?: string } = {},
+    ) => {
+      const { question, reason, message } = detail;
       setRows((prev) => {
         const i = prev.findIndex((r) => r.token === token && r.at === at);
         // No row: a session switch cleared the list while this was in flight.
         // The scan still recorded, into the class it was sent to — Stop cannot
         // recall a request already on the wire — so the outcome is shown,
         // never dropped. Labelling the row with its own session is later work.
-        if (i === -1) return [{ token, status, memberName, question, reason, acked: confirm?.acknowledged, at }, ...prev];
+        if (i === -1) return [{ token, status, memberName, question, reason, message, acked: confirm?.acknowledged, at }, ...prev];
         const next = prev.slice();
-        next[i] = { ...prev[i], status, memberName, question, reason };
+        next[i] = { ...prev[i], status, memberName, question, reason, message };
         return next;
       });
       setLastSettled({ status, memberName, reason });
@@ -457,12 +471,11 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
         settle("request_failed");
         return;
       }
-      settle(
-        result.status as ScanStatus,
-        result.memberName,
-        typeof result.question === "string" ? result.question : undefined,
-        result.reason === "allowance_reached" || result.reason === "tier_not_included" ? result.reason : undefined,
-      );
+      settle(result.status as ScanStatus, result.memberName, {
+        question: typeof result.question === "string" ? result.question : undefined,
+        reason: result.reason === "allowance_reached" ? result.reason : undefined,
+        message: typeof result.message === "string" ? result.message : undefined,
+      });
     } catch {
       settle("network");
     }
@@ -782,10 +795,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
                     {copy.hint && <p className="text-sm text-tx-3">{copy.hint}</p>}
                     {r.status === "needs_confirmation" && (
                       <>
-                        <p className="text-sm text-tx-3">{r.question ??
-                            (r.reason === "allowance_reached"
-                              ? "Their class allowance is used up. Admit anyway?"
-                              : "This class isn't included in their membership. Admit anyway?")}</p>
+                        <p className="text-sm text-tx-3">{r.question ?? "Their class allowance is used up. Admit anyway?"}</p>
                         <Button
                           className="mt-2"
                           variant="secondary"
@@ -793,13 +803,20 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
                           onClick={() =>
                             void submitToken(r.token, {
                               at: r.at,
-                              acknowledged: [...new Set([...(r.acked ?? []), r.reason ?? "tier_not_included"])],
+                              acknowledged: [...new Set([...(r.acked ?? []), r.reason ?? "allowance_reached"])],
                             })
                           }
                         >
                           Admit anyway
                         </Button>
                       </>
+                    )}
+                    {r.status === "refused" && (
+                      // The member's own sentence; the remedy is their
+                      // membership or the squad list, never a rescan.
+                      <p className="text-sm text-tx-3">
+                        {r.message ?? "This class isn't open to them."} Change their membership or the squad list to admit them.
+                      </p>
                     )}
                   </div>
                   <span className="shrink-0 text-sm font-medium" style={{ color: ink }}>

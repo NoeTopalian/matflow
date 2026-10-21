@@ -46,8 +46,8 @@ vi.mock("@/lib/api-authz", () => ({ requireApiStaff: requireApiStaffMock }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
 vi.mock("@/lib/checkin", () => ({
   restorePackCreditsForAttendance: vi.fn(async () => 0),
-  // T6a: the class has no membership list here, so the tier ask is open.
-  staffTierAsk: vi.fn(async () => ({ kind: "open", overridden: false })),
+  // The class has no squad list or membership list here, so it is open.
+  lockedClassEligibility: vi.fn(async () => null),
   // T7: the plan has no allowance here, so the allowance ask is open.
   staffAllowanceAsk: vi.fn(async () => ({ kind: "open", overridden: false })),
 }));

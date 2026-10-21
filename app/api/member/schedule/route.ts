@@ -178,13 +178,13 @@ export async function GET(req: Request) {
           if (r && r.rankSystem.order > cls.maxRank.order) eligibility = "rank_above";
         }
         // T6a: the same rule the check-in engine and booking apply. Locked,
-        // not hidden: the member sees the class and what to ask about.
+        // not hidden: the member sees the class and what to ask about. Being
+        // on the roster does not lift it (both must hold, 20 Oct 2026).
         if (
-          eligibility === "ok" &&
+          (eligibility === "ok" || eligibility === "roster_ok") &&
           !classTierCovers({
             allowedTierIds: cls.allowedTiers.map((t) => t.tierId),
             memberTierId: viewerTierId,
-            hasRoster: isRosterMode,
           })
         ) {
           eligibility = "tier_not_included";

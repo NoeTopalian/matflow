@@ -66,9 +66,10 @@ type Tx = Parameters<Parameters<typeof withTenantContext>[1]>[0];
 
 /**
  * T6a narrowing cascade: members booked on the class (ClassSubscription) whose
- * plan the NEW membership list does not include. Owner decision 17 Oct 2026:
- * a class with a roster is governed by its roster, so no one loses a booking
- * on tier grounds there; an empty list is open, so no one loses one either.
+ * plan the NEW membership list does not include. An empty list is open, so no
+ * one loses a booking. A rostered class is narrowed exactly the same way:
+ * the roster and the list must BOTH hold (owner decision, 20 Oct 2026), so a
+ * rostered member on an excluded plan loses the booking too.
  * Run in the pre-flight for the dry-run preview, and again INSIDE the write
  * transaction after the Class lock, which is the set actually removed.
  */
@@ -77,15 +78,14 @@ async function tierLosers(
   tenantId: string,
   classId: string,
   allowedTierIds: readonly string[],
-  hasRosterAfter: boolean,
 ): Promise<string[]> {
-  if (allowedTierIds.length === 0 || hasRosterAfter) return [];
+  if (allowedTierIds.length === 0) return [];
   const subs = await tx.classSubscription.findMany({
     where: { classId, member: { tenantId } },
     select: { memberId: true, member: { select: { membershipTierId: true } } },
   });
   return subs
-    .filter((s) => !classTierCovers({ allowedTierIds, memberTierId: s.member.membershipTierId, hasRoster: false }))
+    .filter((s) => !classTierCovers({ allowedTierIds, memberTierId: s.member.membershipTierId }))
     .map((s) => s.memberId);
 }
 
@@ -96,28 +96,12 @@ function sameIds(a: readonly string[], b: readonly string[]): boolean {
   return b.every((x) => s.has(x));
 }
 
-/** The class's roster after this edit: a roster body replaces it, a rank gate clears it. */
-async function rosterAfterEdit(
-  tx: Tx,
-  tenantId: string,
-  classId: string,
-  wantsRoster: boolean,
-  wantsRankGate: boolean,
-  rosterIds: string[],
-): Promise<boolean> {
-  if (wantsRoster) return rosterIds.length > 0;
-  if (wantsRankGate) return false;
-  return (await tx.classRoster.count({ where: { classId, tenantId } })) > 0;
-}
-
 /**
- * T6a/T6d: the members whose booking this edit removes on membership grounds.
- *  - The list changes: judged against the new list (unless a roster governs).
- *  - The list stays, but the edit removes the class's roster (an empty roster
- *    body, or a rank gate, which clears it): the existing list starts to
- *    apply, so members booked outside it lose their booking rather than being
- *    left booked on a class they will be refused at.
- * Must run before the roster is rewritten (it reads whether a roster existed).
+ * T6a: the members whose booking this edit removes on membership grounds —
+ * only when the list actually changes, judged against the new list. A roster
+ * edit does not change who the list admits (the list applies with or without
+ * a roster), so it cascades nothing here; the roster's own cascade (bookings
+ * of members not on a new roster) is the `wantsRoster` branch of the PATCH.
  */
 async function tierCascade(
   tx: Tx,
@@ -126,30 +110,15 @@ async function tierCascade(
   edit: {
     wantsTiers: boolean;
     nextTierIds: readonly string[];
-    wantsRoster: boolean;
-    wantsRankGate: boolean;
-    rosterIds: string[];
     /** The list before this edit, when the caller already read it. */
     currentTierIds?: readonly string[];
   },
 ): Promise<string[]> {
-  const rosterMayClear = edit.wantsRoster || edit.wantsRankGate;
-  if (!edit.wantsTiers && !rosterMayClear) return [];
-  const readTiers = async () =>
-    edit.currentTierIds
-      ?? (await tx.classMembershipTier.findMany({ where: { classId, tenantId }, select: { tierId: true } })).map((t) => t.tierId);
-  if (edit.wantsTiers && !sameIds(await readTiers(), edit.nextTierIds)) {
-    const hasRosterAfter = await rosterAfterEdit(tx, tenantId, classId, edit.wantsRoster, edit.wantsRankGate, edit.rosterIds);
-    return tierLosers(tx, tenantId, classId, edit.nextTierIds, hasRosterAfter);
-  }
-  if (!rosterMayClear) return [];
-  // The list is unchanged. Only a roster that existed and is now removed
-  // makes it start to apply.
-  if (await rosterAfterEdit(tx, tenantId, classId, edit.wantsRoster, edit.wantsRankGate, edit.rosterIds)) return [];
-  const hadRoster = (await tx.classRoster.count({ where: { classId, tenantId } })) > 0;
-  if (!hadRoster) return [];
-  const currentTierIds = await readTiers();
-  return currentTierIds.length > 0 ? tierLosers(tx, tenantId, classId, currentTierIds, false) : [];
+  if (!edit.wantsTiers) return [];
+  const before = edit.currentTierIds
+    ?? (await tx.classMembershipTier.findMany({ where: { classId, tenantId }, select: { tierId: true } })).map((t) => t.tierId);
+  if (sameIds(before, edit.nextTierIds)) return [];
+  return tierLosers(tx, tenantId, classId, edit.nextTierIds);
 }
 
 /**
@@ -525,9 +494,7 @@ export async function PATCH(req: Request, { params }: Params) {
         losers = [...losers, ...subs.map((s) => s.memberId)];
       }
       // T6a preview only: the authoritative set is recomputed after the lock.
-      const tierPreview = await tierCascade(tx, tenantId, id, {
-        wantsTiers, nextTierIds, wantsRoster, wantsRankGate, rosterIds,
-      });
+      const tierPreview = await tierCascade(tx, tenantId, id, { wantsTiers, nextTierIds });
       return { kind: "ok" as const, affected: Array.from(new Set(losers)), rosterIds, tierPreview };
     });
 
@@ -602,16 +569,11 @@ export async function PATCH(req: Request, { params }: Params) {
           }
         }
       }
-      // The narrowing cascade's members, computed after the lock: when the
-      // list actually changed, or when the roster is removed and the class's
-      // existing list starts to apply. Runs before the roster write below, so
-      // "had a roster" reads the roster as it was.
+      // The narrowing cascade's members, computed after the lock, when the
+      // list actually changed — rostered class or not.
       const tierAffected = await tierCascade(tx, tenantId, id, {
         wantsTiers,
         nextTierIds: tiersAfter,
-        wantsRoster,
-        wantsRankGate,
-        rosterIds,
         currentTierIds: wantsTiers ? tiersBefore : undefined,
       });
 

@@ -1,22 +1,26 @@
 /**
- * T6a (Sean note 1): which memberships include a class.
+ * Who may attend a class: its membership list (T6a, Sean note 1) and its
+ * squad list / roster (T6d).
  *
- * Owner decisions, 17 Oct 2026 (Q1 / Q3):
- *  - A class with NO tiers selected is open to everyone, exactly as before the
- *    ClassMembershipTier table existed. Nothing changes until a club
- *    configures a class.
- *  - A class with tiers selected admits members whose `membershipTierId` is in
- *    the list. A member with no tier is treated as not covered.
- *  - A class that has a roster (a comp / squad class) is governed by its
- *    roster: a rostered member is admitted regardless of tier, and a member
- *    who is not on it is refused by the roster gate as today. The tier list is
- *    not consulted for such a class.
- *  - The member app, booking and the kiosk refuse; the desk register and the
- *    card scanner ask, and an admission is recorded as an override.
+ * Owner decisions, 20 Oct 2026 (supersede "roster decides" and the staff ask
+ * of 17 Oct):
+ *  - A class with NO tiers selected and NO roster is open to everyone, exactly
+ *    as before either table existed.
+ *  - A class with tiers selected admits only members whose `membershipTierId`
+ *    is in the list. A member with no tier is not covered.
+ *  - A class with a roster admits only members on it.
+ *  - A class with both admits only a member who satisfies BOTH: on the roster
+ *    AND on one of the ticked memberships.
+ *  - No door overrides either gate: the member app, a parent for a child, the
+ *    kiosk, booking, the desk register, the card scanner and the coach tick
+ *    all refuse, with the sentence the member reads. Staff who want someone
+ *    in change the membership (PATCH /api/members/[id]) or the squad list
+ *    (/api/classes/[id]/roster), both audited.
  *
  * Pure: no I/O, safe in client components. The engine (lib/checkin.ts), the
  * booking routes, the member schedule and the staff register all decide
- * through `classTierCovers`, so no surface can disagree with another.
+ * through `classTierCovers`, so no surface can disagree with another. The
+ * roster half is a membership test on ClassRoster, run beside it.
  */
 
 export type ClassTierGateInput = {
@@ -24,34 +28,22 @@ export type ClassTierGateInput = {
   allowedTierIds: readonly string[];
   /** The member's own Member.membershipTierId. */
   memberTierId: string | null | undefined;
-  /** The class has at least one ClassRoster row. */
-  hasRoster: boolean;
 };
 
-/** True when the class's membership list lets this member in. */
+/**
+ * True when the class's membership list lets this member in. Says nothing
+ * about the roster: a rostered class with a list is judged on both.
+ */
 export function classTierCovers(input: ClassTierGateInput): boolean {
   if (input.allowedTierIds.length === 0) return true;
-  if (input.hasRoster) return true;
   if (!input.memberTierId) return false;
   return input.allowedTierIds.includes(input.memberTierId);
 }
 
 /**
- * How a door treats a class the member's plan does not include:
- *  - "refuse": member-decided doors (member app, parent, kiosk, booking).
- *  - "ask": staff doors (register, card scanner). Refused with an askable
- *    answer unless the caller says staff confirmed, in which case admitted and
- *    the override is reported back so the route can record it.
- *  - "off": not checked (system / cron, tests).
- */
-export type TierGateMode = "refuse" | "ask" | "off";
-
-/** The override reason recorded when staff admit someone anyway. */
-export const TIER_OVERRIDE_REASON = "tier_not_included" as const;
-
-/**
  * The sentence a member reads when their plan does not include a class. It
- * names the class and the plan, so the member knows what to ask about.
+ * names the class and the plan, so the member knows what to ask about. The
+ * desk register and the card scanner show the same sentence.
  */
 export function tierRefusalSentence(className: string, tierName: string | null | undefined): string {
   return tierName
@@ -59,12 +51,11 @@ export function tierRefusalSentence(className: string, tierName: string | null |
     : `${className} is only open to certain memberships, and you don't have a membership plan set yet. Ask staff.`;
 }
 
-/** The question the desk register and the card scanner put to staff. */
-export function tierAskSentence(memberName: string, className: string, tierName: string | null | undefined): string {
-  return tierName
-    ? `${className} isn't included in ${memberName}'s ${tierName} membership. Admit anyway?`
-    : `${className} is only open to certain memberships, and ${memberName} has no membership plan set. Admit anyway?`;
-}
+/**
+ * The sentence every door gives a member who is not on a squad class's
+ * roster (check-in, kiosk, booking, and the staff doors, which refuse too).
+ */
+export const ROSTER_REFUSAL_SENTENCE = "You're not on the roster for this class.";
 
 /** The short label the member schedule shows on a class their plan does not include. */
 export const TIER_LOCKED_LABEL = "Not included in your membership";

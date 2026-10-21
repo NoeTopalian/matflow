@@ -63,9 +63,9 @@ const SECRET = "whsec_t7_review_synthetic_local_only_0123456789";
 function selfArgs(tenantId: string, memberId: string, classInstanceId: string, method: "self" | "kiosk" = "self"): PerformCheckinArgs {
   return {
     tenantId, memberId, classInstanceId, method,
-    enforceRankGate: true, enforceRosterGate: true, enforceTimeWindow: false, requireCoverage: method === "self",
+    enforceRankGate: true, enforceTimeWindow: false, requireCoverage: method === "self",
     enforceCapacity: true, enforceWaiverGate: true, enforceHoldGate: true, enforceKidsGate: true,
-    enforceVenueGate: true, tierGate: "refuse", enforceClassStateGate: true, allowanceGate: "refuse",
+    enforceVenueGate: true, enforceClassStateGate: true, allowanceGate: "refuse",
   };
 }
 

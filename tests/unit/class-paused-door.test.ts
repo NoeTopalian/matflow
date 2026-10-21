@@ -50,13 +50,13 @@ import { performCheckin } from "@/lib/checkin";
 
 const SELF = {
   tenantId: "t-1", memberId: "m-1", classInstanceId: "ci-1", method: "self" as const,
-  enforceRankGate: true, enforceRosterGate: true, enforceTimeWindow: false,
+  enforceRankGate: true, enforceTimeWindow: false,
   requireCoverage: false, enforceCapacity: true, enforceWaiverGate: true, enforceHoldGate: true,
   enforceVenueGate: true, enforceKidsGate: true, enforceClassStateGate: true, checkedInByUserId: null,
 };
 const KIOSK = { ...SELF, method: "kiosk" as const };
 const ADMIN = {
-  ...SELF, method: "admin" as const, enforceRankGate: false, enforceRosterGate: false,
+  ...SELF, method: "admin" as const, enforceRankGate: false,
   enforceCapacity: false, enforceWaiverGate: false, enforceHoldGate: false, enforceVenueGate: false,
   enforceKidsGate: false, enforceClassStateGate: false, checkedInByUserId: "u-1",
 };

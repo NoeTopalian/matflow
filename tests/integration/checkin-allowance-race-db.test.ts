@@ -36,16 +36,16 @@ const STAMP = Date.now();
 function selfArgs(tenantId: string, memberId: string, classInstanceId: string): PerformCheckinArgs {
   return {
     tenantId, memberId, classInstanceId, method: "self",
-    enforceRankGate: true, enforceRosterGate: true, enforceTimeWindow: false, requireCoverage: true,
+    enforceRankGate: true, enforceTimeWindow: false, requireCoverage: true,
     enforceCapacity: true, enforceWaiverGate: true, enforceHoldGate: true, enforceKidsGate: true,
-    enforceVenueGate: true, tierGate: "refuse", enforceClassStateGate: true, allowanceGate: "refuse",
+    enforceVenueGate: true, enforceClassStateGate: true, allowanceGate: "refuse",
   };
 }
 function deskArgs(tenantId: string, memberId: string, classInstanceId: string, confirmed: boolean): PerformCheckinArgs {
   return {
     tenantId, memberId, classInstanceId, method: "admin",
-    enforceRankGate: false, enforceRosterGate: false, enforceTimeWindow: false, requireCoverage: false,
-    enforceCapacity: false, enforceWaiverGate: false, tierGate: "ask", allowanceGate: "ask",
+    enforceRankGate: false, enforceTimeWindow: false, requireCoverage: false,
+    enforceCapacity: false, enforceWaiverGate: false, allowanceGate: "ask",
     allowanceOverrideConfirmed: confirmed, checkedInByUserId: null,
   };
 }

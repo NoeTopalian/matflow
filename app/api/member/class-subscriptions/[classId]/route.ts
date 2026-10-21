@@ -76,11 +76,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
         return { kind: "not_live" as const, className: locked[0].name, state };
       }
 
-      // T6d composition: a class with a roster (a comp / squad class) is
-      // governed by its roster, here as at the member app's check-in. A
-      // member on it may book regardless of tier; a member who is not on it
-      // is refused with the check-in's own sentence, and the tier list is
-      // not consulted (classTierCovers relies on this gate for that case).
+      // A class with a roster (a comp / squad class) admits only members on
+      // it, here as at every check-in door; a member who is not on it is
+      // refused with the check-in's own sentence. Being on it does not excuse
+      // the membership list below (owner decision, 20 Oct 2026: both hold).
       const rosterCount = await tx.classRoster.count({ where: { classId, tenantId: r.tenantId } });
       if (rosterCount > 0) {
         const onRoster = await tx.classRoster.findFirst({
@@ -93,13 +92,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
       // T6a: the same membership gate as the member app's check-in, read
       // after the same Class lock, so a booking and a check-in can never
       // disagree about who a class is for. A class with no memberships
-      // selected, or with a roster, is not tier-gated.
-      const tierRows = rosterCount > 0
-        ? []
-        : await tx.classMembershipTier.findMany({
-            where: { classId, tenantId: r.tenantId },
-            select: { tierId: true },
-          });
+      // selected is not tier-gated; a rostered one is.
+      const tierRows = await tx.classMembershipTier.findMany({
+        where: { classId, tenantId: r.tenantId },
+        select: { tierId: true },
+      });
       if (tierRows.length > 0) {
         const member = await tx.member.findFirst({
           where: { id: r.memberId, tenantId: r.tenantId },
@@ -108,7 +105,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
         const covered = classTierCovers({
           allowedTierIds: tierRows.map((t) => t.tierId),
           memberTierId: member?.membershipTierId ?? null,
-          hasRoster: false,
         });
         if (!covered) {
           return { kind: "tier" as const, className: locked[0].name, tierName: member?.membershipTier?.name ?? null };

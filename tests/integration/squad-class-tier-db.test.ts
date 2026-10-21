@@ -1,9 +1,9 @@
 // T6d — squad (roster) classes composed with the T6a membership gate, against
 // real Postgres (Neon child branch).
 //
-// Owner decision 17 Oct 2026: for a class with a roster, the roster is the
-// access rule. A rostered member is admitted regardless of their membership
-// tier; a member who is not on the roster is refused as today. And the kiosk
+// Owner decision 20 Oct 2026 (superseding 17 Oct "roster decides"): a class
+// with a roster AND memberships ticked admits only a member who is on the
+// roster AND on a listed tier, at every door, staff doors included. And the kiosk
 // no longer offers a squad class to a member who is not on its roster: the
 // class list carries `rosterOnly` and the name search for that class lists
 // only rostered members.
@@ -43,14 +43,15 @@ describe.skipIf(!HAS_DB)("squad class + membership tiers — real database", () 
   let tierAdv: string;
   let memberOnBeg: string; // on the roster, on a tier the class does not list
   let memberOffAdv: string; // not on the roster, on the listed tier
+  let memberOnAdv: string; // on the roster AND on the listed tier
   let classId: string;
   let instanceId: string;
 
   const kioskArgs = (memberId: string) => ({
     tenantId, memberId, classInstanceId: instanceId, method: "kiosk" as const,
-    enforceRankGate: true, enforceRosterGate: true, enforceTimeWindow: false, requireCoverage: false,
+    enforceRankGate: true, enforceTimeWindow: false, requireCoverage: false,
     enforceCapacity: true, enforceWaiverGate: true, enforceHoldGate: true, enforceKidsGate: true,
-    enforceVenueGate: true, tierGate: "refuse" as const,
+    enforceVenueGate: true,
   });
 
   beforeAll(async () => {
@@ -67,11 +68,15 @@ describe.skipIf(!HAS_DB)("squad class + membership tiers — real database", () 
       memberOffAdv = (await tx.member.create({
         data: { tenantId, name: `Sasha Other ${STAMP}`, email: `squad-off-${STAMP}@test.local`, membershipTierId: tierAdv, membershipType: "Advanced Unlimited", waiverAccepted: true, paymentStatus: "paid" },
       })).id;
+      memberOnAdv = (await tx.member.create({
+        data: { tenantId, name: `Robin Both ${STAMP}`, email: `squad-both-${STAMP}@test.local`, membershipTierId: tierAdv, membershipType: "Advanced Unlimited", waiverAccepted: true, paymentStatus: "paid" },
+      })).id;
       const c = await tx.class.create({ data: { tenantId, name: "Comp Squad", duration: 60 } });
       classId = c.id;
       // The class lists Advanced only, and has a roster holding the Beginner.
       await tx.classMembershipTier.create({ data: { tenantId, classId, tierId: tierAdv } });
       await tx.classRoster.create({ data: { tenantId, classId, memberId: memberOnBeg } });
+      await tx.classRoster.create({ data: { tenantId, classId, memberId: memberOnAdv } });
       // Today's session, on the club's calendar day.
       const { start } = todayWindow(new Date(), "Europe/London");
       const day = new Date(start.getTime() + 12 * 60 * 60 * 1000);
@@ -93,8 +98,28 @@ describe.skipIf(!HAS_DB)("squad class + membership tiers — real database", () 
     });
   });
 
-  it("a rostered member on a tier the class does not list is admitted (the roster governs)", async () => {
-    const result = await performCheckin(kioskArgs(memberOnBeg));
+  const deskArgs = (memberId: string) => ({
+    ...kioskArgs(memberId), method: "admin" as const, enforceRankGate: false, enforceCapacity: false,
+    enforceWaiverGate: false, enforceHoldGate: false, enforceKidsGate: false, enforceVenueGate: false,
+  });
+  const cardArgs = (memberId: string) => ({ ...deskArgs(memberId), method: "qr" as const });
+
+  it("a rostered member on a tier the class does not list is refused on the tier, at the kiosk, the desk and the scanner", async () => {
+    for (const args of [kioskArgs(memberOnBeg), deskArgs(memberOnBeg), cardArgs(memberOnBeg)]) {
+      const result = await performCheckin(args);
+      expect(result).toMatchObject({ kind: "tier_not_included", className: "Comp Squad", tierName: "Beginners Unlimited" });
+    }
+    expect(await withRlsBypass((tx) => tx.attendanceRecord.count({ where: { classInstanceId: instanceId, memberId: memberOnBeg } }))).toBe(0);
+  });
+
+  it("the desk and the scanner refuse a member who is not on the roster too (no staff override)", async () => {
+    for (const args of [deskArgs(memberOffAdv), cardArgs(memberOffAdv)]) {
+      expect((await performCheckin(args)).kind).toBe("roster_not_listed");
+    }
+  });
+
+  it("a member on the roster AND the listed tier is admitted", async () => {
+    const result = await performCheckin(kioskArgs(memberOnAdv));
     expect(result.kind).toBe("success");
   });
 

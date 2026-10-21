@@ -88,15 +88,15 @@ function memberRow(subscribed = true) {
 
 const SELF: PerformCheckinArgs = {
   tenantId: "t-1", memberId: "m-1", classInstanceId: "ci-1", method: "self",
-  enforceRankGate: true, enforceRosterGate: true, enforceTimeWindow: false,
+  enforceRankGate: true, enforceTimeWindow: false,
   requireCoverage: true, enforceCapacity: true, enforceWaiverGate: true, enforceHoldGate: true,
-  enforceKidsGate: true, enforceVenueGate: true, tierGate: "refuse", allowanceGate: "refuse", checkedInByUserId: null,
+  enforceKidsGate: true, enforceVenueGate: true, allowanceGate: "refuse", checkedInByUserId: null,
 };
 const KIOSK: PerformCheckinArgs = { ...SELF, method: "kiosk", requireCoverage: false };
 const DESK: PerformCheckinArgs = {
-  ...SELF, method: "admin", enforceRankGate: false, enforceRosterGate: false, requireCoverage: false,
+  ...SELF, method: "admin", enforceRankGate: false, requireCoverage: false,
   enforceCapacity: false, enforceWaiverGate: false, enforceHoldGate: false, enforceKidsGate: false,
-  enforceVenueGate: false, tierGate: "ask", allowanceGate: "ask", checkedInByUserId: "u-1",
+  enforceVenueGate: false, allowanceGate: "ask", checkedInByUserId: "u-1",
 };
 const CARD: PerformCheckinArgs = { ...DESK, method: "qr" };
 

@@ -63,7 +63,6 @@ describe.skipIf(!HAS_DB)("Per-tenant check-in window", () => {
       classInstanceId,
       method: "self",
       enforceRankGate: false,
-      enforceRosterGate: false,
       enforceTimeWindow: true,
       requireCoverage: false,
       enforceCapacity: false,

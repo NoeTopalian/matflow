@@ -4,18 +4,27 @@ import { z } from "zod";
 import { requireApiStaff } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
-import { restorePackCreditsForAttendance, staffAllowanceAsk, staffTierAsk, type AllowanceFacts } from "@/lib/checkin";
+import {
+  restorePackCreditsForAttendance,
+  lockedClassEligibility,
+  staffAllowanceAsk,
+  type AllowanceFacts,
+} from "@/lib/checkin";
 import { checkinRefusal } from "@/lib/checkin-refusal";
-import { TIER_OVERRIDE_REASON } from "@/lib/class-tier-gate";
 import { ALLOWANCE_OVERRIDE_REASON } from "@/lib/class-allowance";
 
+// `acknowledged` carries one answer only: "allowance_reached" (T7), the
+// coach's confirmation after being asked about a used-up plan allowance. The
+// squad list and the membership list refuse a tick as they refuse every door
+// (owner decision, 20 Oct 2026): an old client's "tier_not_included" is
+// stripped here and admits no one.
 const schema = z.object({
   memberId: z.string().min(1),
   attended: z.boolean(),
-  // T6a (Q3): the gates staff confirmed, as POST /api/checkin takes them.
-  // "tier_not_included" admits a member whose plan the class's memberships
-  // do not include; the admission is recorded as an override.
-  acknowledged: z.array(z.string().max(40)).max(10).optional(),
+  acknowledged: z.preprocess(
+    (v) => (Array.isArray(v) ? v.filter((x) => x !== "tier_not_included") : v),
+    z.array(z.enum([ALLOWANCE_OVERRIDE_REASON])).max(1).optional(),
+  ),
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -31,7 +40,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid data" }, { status: 400 });
-  const tierConfirmed = parsed.data.acknowledged?.includes(TIER_OVERRIDE_REASON) === true;
   const allowanceConfirmed = parsed.data.acknowledged?.includes(ALLOWANCE_OVERRIDE_REASON) === true;
 
   try {
@@ -59,23 +67,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
           select: { id: true },
         });
-        // T6a (Q3): a staff door ASKS when the class's memberships do not
-        // include the member's plan, exactly as the desk register does. Only
-        // when the tick would admit someone: a member already in is not
-        // re-judged.
-        let tierOverridden = false;
+        // The squad list and the membership list, under the Class row lock,
+        // refuse-only, exactly as every other door. Only when the tick would
+        // admit someone: a tick on a member already in writes nothing, so it
+        // is not re-judged.
         let overAllowance: AllowanceFacts | null = null;
         if (!existing) {
-          const tier = await staffTierAsk(
+          const refused = await lockedClassEligibility(
             tx,
-            { tenantId, memberId: member.id, confirmed: tierConfirmed },
+            { tenantId, memberId: member.id },
             instance.classId,
             instance.class.name,
           );
-          if (tier.kind === "tier_not_included") return tier;
-          tierOverridden = tier.overridden;
-          // T7: the plan allowance, asked the same way, under the Member lock
-          // taken after staffTierAsk's Class lock (the engine's order).
+          if (refused) return refused;
+          // T7: the plan allowance is ASKED about, as the desk register asks,
+          // under the Member lock taken after lockedClassEligibility's Class
+          // lock (the engine's order).
           const allowance = await staffAllowanceAsk(
             tx,
             { tenantId, memberId: member.id, confirmed: allowanceConfirmed },
@@ -106,7 +113,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // the no-op update branch; it is ours only if it reads as this tick's.
         const created = !existing && record.checkInMethod === "admin" && record.checkedInById === userId;
         const overrides: string[] = [];
-        if (created && tierOverridden) overrides.push(TIER_OVERRIDE_REASON);
         if (created && overAllowance) overrides.push(ALLOWANCE_OVERRIDE_REASON);
         return {
           kind: "marked" as const,
@@ -139,9 +145,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     if (outcome === "no-instance") return NextResponse.json({ error: "Class not found" }, { status: 404 });
     if (outcome === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
-    if (outcome.kind === "tier_not_included" || outcome.kind === "allowance_reached") {
-      // The askable answer the register reads: confirm, then send
-      // acknowledged: ["tier_not_included"] to admit.
+    if (outcome.kind === "tier_not_included" || outcome.kind === "roster_not_listed" || outcome.kind === "allowance_reached") {
+      // Nothing was written. The eligibility refusals carry the sentence the
+      // member reads at their own door; the allowance answer is askable: the
+      // register confirms, then resends with acknowledged: ["allowance_reached"].
       const refusal = checkinRefusal(outcome)!;
       return NextResponse.json(refusal.body, { status: refusal.status });
     }

@@ -8,7 +8,7 @@
  * Pure: no I/O, no Next imports, unit-tested in tests/unit/checkin-refusal.test.ts.
  */
 import type { PerformCheckinResult as CheckinResult } from "@/lib/checkin";
-import { tierRefusalSentence } from "@/lib/class-tier-gate";
+import { tierRefusalSentence, ROSTER_REFUSAL_SENTENCE } from "@/lib/class-tier-gate";
 import { classNotLiveSentence } from "@/lib/class-live";
 import { allowanceRefusalSentence } from "@/lib/class-allowance";
 
@@ -120,7 +120,7 @@ export function checkinRefusal(
     case "duplicate":
       return { status: 409, body: { error: "Already checked in", reason: "already_checked_in" } };
     case "roster_not_listed":
-      return { status: 403, body: { error: "You're not on the roster for this class.", reason: "roster_not_listed" } };
+      return { status: 403, body: { error: ROSTER_REFUSAL_SENTENCE, reason: "roster_not_listed" } };
     case "waiver_unsigned":
       return {
         status: 403,
@@ -150,15 +150,11 @@ export function checkinRefusal(
         },
       };
     case "tier_not_included":
-      // T6a: names the class and the plan. On a staff door the answer is
-      // askable: the register / scanner may confirm and admit anyway.
+      // T6a: names the class and the plan. Every door refuses with this
+      // sentence, staff doors included (no override, 20 Oct 2026).
       return {
         status: 403,
-        body: {
-          error: tierRefusalSentence(result.className, result.tierName),
-          reason: "tier_not_included",
-          ...(result.askable ? { askable: true } : {}),
-        },
+        body: { error: tierRefusalSentence(result.className, result.tierName), reason: "tier_not_included" },
       };
     case "allowance_reached":
       // T7: the count and the date the next class frees up, in the member's

@@ -7,7 +7,9 @@
  *  - PATCH replaces the rows AFTER the Class row lock, and the narrowing
  *    cascade (bookings of members the new list excludes) is computed inside
  *    the write transaction and audited by member id (acceptance 8);
- *  - a class with a roster is governed by its roster: no tier cascade;
+ *  - a rostered class is narrowed exactly the same way (roster AND tier
+ *    both hold, 20 Oct 2026); a roster edit alone cascades nothing on tier
+ *    grounds;
  *  - before/after tier ids ride on class.created / class.updated.
  */
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -190,32 +192,37 @@ describe("PATCH /api/classes/[id]", () => {
     expect(db.classSubscription.deleteMany).not.toHaveBeenCalled();
   });
 
-  it("a rostered class is governed by its roster: no tier cascade", async () => {
+  it("narrowing a ROSTERED class removes the bookings it excludes too (both must hold), audited by member id", async () => {
     db.classRoster.count.mockResolvedValue(2);
-    db.classSubscription.findMany.mockResolvedValue([{ memberId: "m_beg", member: { membershipTierId: "tier_beg" } }]);
-    await patch({ allowedTierIds: ["tier_adv"] });
-    expect(db.classSubscription.deleteMany).not.toHaveBeenCalled();
-  });
-
-  it("removing the roster (a rank gate clears it) makes the stored list apply: bookings outside it are removed and audited", async () => {
-    db.classRoster.count.mockResolvedValue(2); // the class had a roster
-    db.classMembershipTier.findMany.mockResolvedValue([{ tierId: "tier_adv" }]); // list unchanged by this edit
-    db.rankSystem.findFirst.mockResolvedValue({ id: "r_white", order: 0, discipline: "BJJ" });
-    const ranked = [{ rankSystem: { discipline: "BJJ", order: 1 } }];
     db.classSubscription.findMany.mockResolvedValue([
-      { memberId: "m_beg", member: { membershipTierId: "tier_beg", memberRanks: ranked } },
-      { memberId: "m_adv", member: { membershipTierId: "tier_adv", memberRanks: ranked } },
+      { memberId: "m_beg", member: { membershipTierId: "tier_beg" } },
+      { memberId: "m_adv", member: { membershipTierId: "tier_adv" } },
     ]);
-    const preview = await patch({ requiredRankId: "r_white" }, "?dryRun=1");
+    const preview = await patch({ allowedTierIds: ["tier_adv"] }, "?dryRun=1");
     expect(await preview.json()).toMatchObject({ tierAffectedMemberIds: ["m_beg"] });
 
-    const res = await patch({ requiredRankId: "r_white" });
+    const res = await patch({ allowedTierIds: ["tier_adv"] });
     expect(res.status).toBe(200);
     expect(db.classSubscription.deleteMany).toHaveBeenCalledWith({
       where: { classId: "c1", memberId: { in: ["m_beg"] }, member: { tenantId: T } },
     });
     const audit = logAudit.mock.calls.find((c) => (c as unknown as [{ action: string }])[0].action === "class.updated") as unknown as [{ metadata: Record<string, unknown> }];
     expect(audit[0].metadata.tierCascadeMemberIds).toEqual(["m_beg"]);
+  });
+
+  it("removing the roster with the list unchanged cascades nothing on tier grounds (the list already applied)", async () => {
+    db.classRoster.count.mockResolvedValue(2); // the class had a roster
+    db.classMembershipTier.findMany.mockResolvedValue([{ tierId: "tier_adv" }]); // list unchanged by this edit
+    db.rankSystem.findFirst.mockResolvedValue({ id: "r_white", order: 0, discipline: "BJJ" });
+    const ranked = [{ rankSystem: { discipline: "BJJ", order: 1 } }];
+    db.classSubscription.findMany.mockResolvedValue([
+      { memberId: "m_adv", member: { membershipTierId: "tier_adv", memberRanks: ranked } },
+    ]);
+    const preview = await patch({ requiredRankId: "r_white" }, "?dryRun=1");
+    expect(await preview.json()).toMatchObject({ tierAffectedMemberIds: [] });
+    const res = await patch({ requiredRankId: "r_white" });
+    expect(res.status).toBe(200);
+    expect(db.classSubscription.deleteMany).not.toHaveBeenCalled();
   });
 
   it("an edit that leaves the roster in place cascades nothing on tier grounds", async () => {

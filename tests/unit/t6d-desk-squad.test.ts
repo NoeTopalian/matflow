@@ -130,11 +130,11 @@ describe("register — a squad class", () => {
     expect(body.expected[0].notOnRoster).toBe(false);
   });
 
-  it("a rostered member on a plan the class's memberships exclude is not asked about the plan (roster governs)", async () => {
+  it("a rostered member on a plan the class's memberships exclude is flagged on the plan (both must hold; the mark will be refused)", async () => {
     m.instanceFindFirst.mockResolvedValue(squadInstance(1, [{ tier: { id: "t-adv", name: "Advanced" } }]));
     m.subscriptionFindMany.mockResolvedValue([{ member: member("on", "On Squad", true) }]);
     const body = await (await registerGET(new Request("http://x"), { params })).json();
-    expect(body.expected[0].tierNotIncluded).toBe(false);
+    expect(body.expected[0].tierNotIncluded).toBe(true);
     expect(body.expected[0].notOnRoster).toBe(false);
   });
 });

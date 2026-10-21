@@ -177,17 +177,21 @@ describe("POST /api/checkin/card", () => {
     expect(h.logAudit).not.toHaveBeenCalled();
   });
 
-  it("the confirmed resend (with every answer given so far) is admitted and the count is on the card_scan audit row", async () => {
-    h.performCheckin.mockResolvedValue({ ...SUCCESS, overrides: ["tier_not_included", "allowance_reached"], overAllowance: FACTS });
+  it("the confirmed resend is admitted and the count is on the card_scan audit row; an old client's tier answer is dropped", async () => {
+    h.performCheckin.mockResolvedValue({ ...SUCCESS, overrides: ["allowance_reached"], overAllowance: FACTS });
     const token = signCardToken({ tenantId: "t1", memberId: "mem-1", cardVersion: 1 });
     const body = await (await POST(cardReq({
       classInstanceId: "inst-1", tokens: [token], acknowledged: ["tier_not_included", "allowance_reached"],
     }))).json();
-    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ tierOverrideConfirmed: true, allowanceOverrideConfirmed: true });
+    const args = h.performCheckin.mock.calls[0][0];
+    expect(args).toMatchObject({ allowanceOverrideConfirmed: true });
+    // The squad list and the membership list have no override flag any more.
+    expect(args).not.toHaveProperty("tierOverrideConfirmed");
+    expect(args).not.toHaveProperty("tierGate");
     expect(body.results[0].status).toBe("success");
     expect(h.logAudit.mock.calls[0][0]).toMatchObject({
       action: "attendance.card_scan",
-      metadata: { overrides: [{ memberId: "mem-1", reasons: ["tier_not_included", "allowance_reached"], overAllowance: FACTS }] },
+      metadata: { overrides: [{ memberId: "mem-1", reasons: ["allowance_reached"], overAllowance: FACTS }] },
     });
   });
 });
