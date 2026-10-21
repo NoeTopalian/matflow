@@ -84,8 +84,9 @@ describe.skipIf(!HAS_DB || !HAS_TEST_KEY)("four-weekly recurring billing — Str
     clockId = clock.id;
     const customer = await stripe.customers.create({ email: `four-weekly-${STAMP}@test.local`, name: "Four Weekly", test_clock: clockId });
     customerId = customer.id;
-    await stripe.paymentMethods.attach("pm_card_visa", { customer: customerId });
-    await stripe.customers.update(customerId, { invoice_settings: { default_payment_method: "pm_card_visa" } });
+    // Attaching the test token mints a real payment method id; that id is the default.
+    const pm = await stripe.paymentMethods.attach("pm_card_visa", { customer: customerId });
+    await stripe.customers.update(customerId, { invoice_settings: { default_payment_method: pm.id } });
     const product = await stripe.products.create({ name: `Adult four-weekly ${STAMP}` });
     productId = product.id;
     const price = await stripe.prices.create({ product: productId, unit_amount: PRICE_PENCE, currency: "gbp", recurring: recurring! });
@@ -104,6 +105,7 @@ describe.skipIf(!HAS_DB || !HAS_TEST_KEY)("four-weekly recurring billing — Str
   }, 120_000);
 
   it("Stripe renews it 28 days later: a second paid invoice whose period starts where the first ended", async () => {
+    expect(subscriptionId, "the subscription from the first case").not.toBe("");
     const clock = await stripe.testHelpers.testClocks.retrieve(clockId);
     const target = clock.frozen_time + 28 * DAY + 3600;
     await stripe.testHelpers.testClocks.advance(clockId, { frozen_time: target });

@@ -46,6 +46,9 @@ try {
       await tx.memberRank.deleteMany({ where: { id: { in: rankIds } } }).catch(() => {});
       await tx.rankSystem.deleteMany({ where: { tenantId } });
       const classIds = (await tx.class.findMany({ where: { tenantId }, select: { id: true } })).map((x) => x.id);
+      // Bookings and squad lists reference the class without a cascade; the membership list cascades.
+      await tx.classSubscription.deleteMany({ where: { classId: { in: classIds } } });
+      await tx.classRoster.deleteMany({ where: { classId: { in: classIds } } }).catch(() => {});
       await tx.classSchedule.deleteMany({ where: { classId: { in: classIds } } });
       await tx.classInstance.deleteMany({ where: { classId: { in: classIds } } });
       await tx.class.deleteMany({ where: { tenantId } });
