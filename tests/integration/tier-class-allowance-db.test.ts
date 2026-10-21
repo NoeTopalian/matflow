@@ -137,7 +137,8 @@ describe.skipIf(!HAS_DB)("MembershipTier class allowance — real database", () 
     expect(res.status).toBe(200);
     expect(await cols(tierA)).toEqual({ ...NONE, classLimit: 4, classLimitBasis: "billing" });
     expect(tierAllowance(await cols(tierA))).toEqual({ limit: 4, basis: "billing" });
-    await patch(tierA, { classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null });
+    // Put the 4-every-4-weeks set back: the next case starts from it.
+    await patch(tierA, { classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4, classLimitAnchor: "2026-10-20" });
   });
 
   it("acceptance 4: the previous build editing maxClassesPerWeek during a rollback is read as N each week (the basis still wins while set)", async () => {
