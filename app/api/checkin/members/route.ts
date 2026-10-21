@@ -34,13 +34,12 @@ export async function GET(req: Request) {
   const data = await withTenantContext(session.user.tenantId, async (tx) => {
     const instance = await tx.classInstance.findFirst({
       where: { id: instanceId, class: { tenantId: session.user.tenantId } },
-      // T6a: the class's memberships and whether it has a roster, so the
-      // register can ask before marking someone the class is not for.
+      // T6a: the class's memberships, so the register knows who a mark will
+      // be refused for (the engine refuses; nothing here admits anyone).
       include: {
         class: {
           select: {
             allowedTiers: { select: { tierId: true } },
-            _count: { select: { rosterMembers: true } },
           },
         },
       },
@@ -74,11 +73,10 @@ export async function GET(req: Request) {
     return {
       members, attendances, rankRows,
       allowedTierIds: instance.class.allowedTiers.map((t) => t.tierId),
-      hasRoster: instance.class._count.rosterMembers > 0,
     };
   });
   if (!data) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const { members, attendances, rankRows, allowedTierIds, hasRoster } = data;
+  const { members, attendances, rankRows, allowedTierIds } = data;
   const ranksByMember = new Map<string, typeof rankRows[number]>();
   for (const r of rankRows) {
     if (!ranksByMember.has(r.memberId)) ranksByMember.set(r.memberId, r);
@@ -101,11 +99,11 @@ export async function GET(req: Request) {
       holdUntil: m.holdUntil,
       // The register asks before marking an adult into a kids class.
       accountType: m.accountType,
-      // T6a: the register asks before marking someone whose membership the
-      // class does not include, and names the plan in the question.
+      // T6a: true = a mark for this member WILL BE REFUSED (the class's
+      // memberships do not include their plan, rostered class or not).
       membershipTierId: m.membershipTierId,
       membershipTierName: m.membershipTier?.name ?? null,
-      tierNotIncluded: !classTierCovers({ allowedTierIds, memberTierId: m.membershipTierId, hasRoster }),
+      tierNotIncluded: !classTierCovers({ allowedTierIds, memberTierId: m.membershipTierId }),
       ...(includeCancelled ? { cancelled: m.status === "cancelled" } : {}),
     };
   });

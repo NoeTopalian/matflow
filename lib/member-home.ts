@@ -382,12 +382,12 @@ export async function buildMemberSchedule(
       if (r && r.rankSystem.order > cls.maxRank.order) eligibility = "rank_above";
     }
     // T6a: shown locked, never hidden — the member can see what to ask about.
+    // Being on the roster does not lift it (both must hold, 20 Oct 2026).
     if (
-      eligibility === "ok" &&
+      (eligibility === "ok" || eligibility === "roster_ok") &&
       !classTierCovers({
         allowedTierIds: cls.allowedTiers.map((t) => t.tierId),
         memberTierId: self?.membershipTierId ?? null,
-        hasRoster: isRosterMode,
       })
     ) {
       eligibility = "tier_not_included";

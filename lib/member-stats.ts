@@ -167,17 +167,17 @@ export function pickNextClass(
       const onRoster = c.class.rosterMembers.length > 0;
       // A roster-only class the member is not on is hidden from their schedule.
       if (c.class._count.rosterMembers > 0 && !onRoster) return false;
-      if (onRoster) return true;
+      // The membership list holds for a rostered class too (20 Oct 2026).
       if (
         checkTier &&
         !classTierCovers({
           allowedTierIds: (c.class.allowedTiers ?? []).map((t) => t.tierId),
           memberTierId: opts.memberTierId,
-          hasRoster: c.class._count.rosterMembers > 0,
         })
       ) {
         return false;
       }
+      if (onRoster) return true;
       const req = c.class.requiredRank;
       if (req) {
         const r = memberRanks.find((mr) => mr.rankSystem.discipline === req.discipline);

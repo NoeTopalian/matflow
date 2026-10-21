@@ -36,10 +36,18 @@ describe("pickNextClass — tier", () => {
     expect(pickNextClass([inst("Open", "10:00", { allowedTiers: [] })], [], NOW, { memberTierId: null })?.id).toBe("Open");
   });
 
-  it("a rostered member is offered their roster class regardless of tier", () => {
+  it("a rostered member on a plan the roster class excludes is NOT offered it (both must hold, 20 Oct 2026)", () => {
     const picked = pickNextClass(
       [inst("Comp", "10:00", { allowedTiers: [{ tierId: "t-adv" }], rosterMembers: [{ id: "r1" }], _count: { rosterMembers: 3 } })],
       [], NOW, { memberTierId: "t-beg" },
+    );
+    expect(picked).toBeNull();
+  });
+
+  it("a rostered member on an included plan is offered their roster class", () => {
+    const picked = pickNextClass(
+      [inst("Comp", "10:00", { allowedTiers: [{ tierId: "t-adv" }], rosterMembers: [{ id: "r1" }], _count: { rosterMembers: 3 } })],
+      [], NOW, { memberTierId: "t-adv" },
     );
     expect(picked?.id).toBe("Comp");
   });
@@ -50,7 +58,8 @@ describe("pickNextClass — tier", () => {
 });
 
 describe("buildMemberSchedule — tier", () => {
-  function tx(memberTierId: string | null) {
+  /** `rosteredOn`: the member is on Advanced's roster (and Advanced has one). */
+  function tx(memberTierId: string | null, rosteredOn = false) {
     const cls = (id: string, tierIds: string[]) => ({
       id, name: id, color: null, coachName: null, coachUser: null, location: null, maxCapacity: null, isKids: false,
       requiredRank: null, maxRank: null,
@@ -61,10 +70,20 @@ describe("buildMemberSchedule — tier", () => {
       class: { findMany: vi.fn(async () => [cls("Advanced", ["t-adv"]), cls("Fundamentals", [])]) },
       classInstance: { findMany: vi.fn(async () => []) },
       memberRank: { findMany: vi.fn(async () => []) },
-      classRoster: { findMany: vi.fn(async () => []), groupBy: vi.fn(async () => []) },
+      classRoster: {
+        findMany: vi.fn(async () => (rosteredOn ? [{ classId: "Advanced" }] : [])),
+        groupBy: vi.fn(async () => (rosteredOn ? [{ classId: "Advanced", _count: { _all: 3 } }] : [])),
+      },
       member: { findFirst: vi.fn(async () => ({ membershipTierId: memberTierId })) },
     };
   }
+
+  it("a rostered member on an excluded plan sees the squad class locked; on an included plan, roster_ok", async () => {
+    expect((await buildMemberSchedule(tx("t-beg", true) as never, { tenantId: "t1", memberId: "m1", dateParam: null }))
+      .find((r) => r.name === "Advanced")?.eligibility).toBe("tier_not_included");
+    expect((await buildMemberSchedule(tx("t-adv", true) as never, { tenantId: "t1", memberId: "m1", dateParam: null }))
+      .find((r) => r.name === "Advanced")?.eligibility).toBe("roster_ok");
+  });
 
   it("marks a class outside the member's plan tier_not_included and leaves the rest ok", async () => {
     const rows = await buildMemberSchedule(tx("t-beg") as never, { tenantId: "t1", memberId: "m1", dateParam: null });

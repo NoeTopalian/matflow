@@ -165,7 +165,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       // T6a: [] = everyone. Shown so the desk knows who the class is for.
       allowedTiers,
       // T6d: a squad / comp class (it has a roster). The register shows
-      // "Squad only"; the roster, not the membership list, decides who attends.
+      // "Squad only"; a member must be on the roster AND, when memberships
+      // are ticked, on one of them (20 Oct 2026).
       rosterOnly: hasRoster,
       date: instance.date.toISOString(),
       startTime: instance.startTime,
@@ -182,14 +183,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         status: b.member.status,
         accountType: b.member.accountType,
         membershipType: b.member.membershipType,
-        // T6a: the plan, and whether the class's memberships include it. The
-        // register shows the mismatch and asks before marking.
+        // T6a: the plan, and whether the class's memberships include it.
+        // true = a mark for this member WILL BE REFUSED, rostered class or not.
         membershipTierId: b.member.membershipTierId,
         membershipTierName: b.member.membershipTier?.name ?? null,
-        tierNotIncluded: !classTierCovers({ allowedTierIds, memberTierId: b.member.membershipTierId, hasRoster }),
-        // T6d: at a squad class, a row whose member is not on the roster is
-        // flagged so the desk can see it. Informational: staff marking is the
-        // override, exactly as before.
+        tierNotIncluded: !classTierCovers({ allowedTierIds, memberTierId: b.member.membershipTierId }),
+        // T6d: at a squad class, a member who is not on the roster. true = a
+        // mark WILL BE REFUSED; the remedy is editing the squad list.
         notOnRoster: hasRoster && !b.member.classRosters?.length,
         waiverAccepted: b.member.waiverAccepted,
         walkIn: b.walkIn,

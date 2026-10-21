@@ -100,6 +100,7 @@ describe.skipIf(!HAS_DB)("ClassMembershipTier — real database", () => {
         if (!t) continue;
         await tx.attendanceRecord.deleteMany({ where: { tenantId: t } });
         await tx.classMembershipTier.deleteMany({ where: { tenantId: t } });
+        await tx.classRoster.deleteMany({ where: { tenantId: t } });
         await tx.classSubscription.deleteMany({ where: { class: { tenantId: t } } });
         await tx.classInstance.deleteMany({ where: { class: { tenantId: t } } });
         await tx.classSchedule.deleteMany({ where: { class: { tenantId: t } } });
@@ -173,6 +174,20 @@ describe.skipIf(!HAS_DB)("ClassMembershipTier — real database", () => {
     expect(await withRlsBypass((tx) => tx.classSubscription.count({ where: { classId, memberId: memberBeg } }))).toBe(0);
   });
 
+  it("acceptance 8 on a ROSTERED class: narrowing removes the booking of a rostered member the new list excludes (both must hold)", async () => {
+    expect((await patch({ allowedTierIds: [] })).status).toBe(200);
+    await withRlsBypass(async (tx) => {
+      await tx.classRoster.create({ data: { tenantId: tenantA, classId, memberId: memberBeg } });
+      await tx.classSubscription.create({ data: { memberId: memberBeg, classId } });
+    });
+    try {
+      expect((await patch({ allowedTierIds: [tierAdv] })).status).toBe(200);
+      expect(await withRlsBypass((tx) => tx.classSubscription.count({ where: { classId, memberId: memberBeg } }))).toBe(0);
+    } finally {
+      await withRlsBypass((tx) => tx.classRoster.deleteMany({ where: { tenantId: tenantA, classId } }));
+    }
+  });
+
   it("acceptance 9: a tier change committed while a check-in waits on the Class lock is the list it is judged against", async () => {
     // Open the class first, and give it a session to check into.
     expect((await patch({ allowedTierIds: [] })).status).toBe(200);
@@ -197,9 +212,9 @@ describe.skipIf(!HAS_DB)("ClassMembershipTier — real database", () => {
 
     const checkin = performCheckin({
       tenantId: tenantA, memberId: memberBeg, classInstanceId: instanceId, method: "self",
-      enforceRankGate: false, enforceRosterGate: true, enforceTimeWindow: false, requireCoverage: false,
+      enforceRankGate: false, enforceTimeWindow: false, requireCoverage: false,
       enforceCapacity: true, enforceWaiverGate: true, enforceHoldGate: true, enforceKidsGate: true,
-      enforceVenueGate: true, tierGate: "refuse",
+      enforceVenueGate: true,
     });
     // Let the check-in reach the lock and wait on it.
     await new Promise((r) => setTimeout(r, 500));
