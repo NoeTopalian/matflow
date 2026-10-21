@@ -224,7 +224,7 @@ async function bookingAllowance(
     currentInstanceId: next?.id ?? null,
   });
   if (!snap?.allowance) return null;
-  const v = allowanceVerdict(snap.allowance, next ? slotMinute(next) : nowAt, snap.visits);
+  const v = allowanceVerdict(snap.allowance, next ? slotMinute(next) : nowAt, snap.visits, nowAt);
   return v.exhausted ? v : null;
 }
 

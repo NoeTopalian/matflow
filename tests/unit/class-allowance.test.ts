@@ -53,8 +53,49 @@ describe("tierAllowance (the reader rule)", () => {
     expect(tierAllowance({ classLimit: 8, classLimitBasis: "month", maxClassesPerWeek: 3 })).toEqual({ limit: 8, basis: "month" });
   });
 
-  it("a limit with no basis and no legacy value (a pre-release rolling pair) is Unlimited", () => {
+  it("a limit with no basis cannot be read as a rule: the reader returns Unlimited, and the write side and the database refuse to store it (review gap 3)", () => {
+    // Why Unlimited here and not a guessed period: the reader never invents a
+    // window ("never a silent rolling window"). Such a row cannot exist after
+    // migration 20261021140000 (CHECK classLimit IS NULL = classLimitBasis IS
+    // NULL) and the API refuses it (refineAllowance below), so this branch is
+    // reachable only from in-memory callers and pre-migration tests.
     expect(tierAllowance({ classLimit: 4, classLimitWeeks: 4 })).toBeNull();
+  });
+});
+
+describe("incomplete configuration is refused on write; legacy and explicit Unlimited keep working (review gap 3)", () => {
+  const issues = (data: Parameters<typeof refineAllowance>[0]) => {
+    const found: string[] = [];
+    refineAllowance(data, { addIssue: (i: { message?: string }) => found.push(i.message ?? ""), path: [] } as never);
+    return found;
+  };
+
+  it("a new allowance with a limit and no basis is refused with the pair message (nothing is written)", () => {
+    expect(issues({ classLimit: 4 })).toEqual([PAIR_MESSAGE]);
+    expect(issues({ classLimit: 4, classLimitBasis: null })).toEqual([PAIR_MESSAGE]);
+    expect(allowanceColumns({ classLimit: 4, classLimitBasis: null })).toEqual({
+      classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null, maxClassesPerWeek: null,
+    });
+  });
+
+  it("every-N-weeks without the weeks or the start date is refused", () => {
+    expect(issues({ classLimit: 4, classLimitBasis: "weeks" })).toEqual([WEEKS_MESSAGE]);
+    expect(issues({ classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4 })).toEqual([WEEKS_MESSAGE]);
+    expect(issues({ classLimit: 4, classLimitBasis: "weeks", classLimitAnchor: "2026-10-20" })).toEqual([WEEKS_MESSAGE]);
+  });
+
+  it("a legacy classes-per-week value still reads as N each calendar week", () => {
+    expect(issues({ maxClassesPerWeek: 3 })).toEqual([]);
+    expect(tierAllowance({ maxClassesPerWeek: 3 })).toEqual({ limit: 3, basis: "week" });
+    expect(allowanceColumns({ maxClassesPerWeek: 3 })).toMatchObject({ maxClassesPerWeek: 3, classLimit: 3, classLimitBasis: "week" });
+  });
+
+  it("explicit Unlimited (every column null) is accepted and reads as Unlimited", () => {
+    expect(issues({ classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null })).toEqual([]);
+    expect(allowanceColumns({ classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null })).toEqual({
+      classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null, maxClassesPerWeek: null,
+    });
+    expect(tierAllowance({ classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null, maxClassesPerWeek: null })).toBeNull();
   });
 });
 

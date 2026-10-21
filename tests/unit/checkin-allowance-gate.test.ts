@@ -243,7 +243,7 @@ describe("asking doors (desk register, card scanner)", () => {
     expect(r.kind).toBe("success");
     if (r.kind !== "success") return;
     expect(r.overrides).toEqual(["allowance_reached"]);
-    expect(r.overAllowance).toEqual(FACTS);
+    expect(r.overAllowance).toEqual({ ...FACTS, current: expect.any(Boolean) });
   });
 
   it("the card scanner asks the same way", async () => {

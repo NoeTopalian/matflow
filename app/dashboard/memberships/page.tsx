@@ -70,10 +70,17 @@ export default async function MembershipsPage() {
     locationName: t.locationRef?.name ?? null,
   }));
 
+  // The club's zone: the editor's "current period" and "next reset" dates are
+  // the club's calendar, not the browser's (review gap 5, 21 Oct 2026).
+  const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.tenant.findUnique({ where: { id: session.user.tenantId }, select: { timezone: true } }),
+  );
+
   return (
     <MembershipsManager
       initialTiers={tiers}
       primaryColor={session.user.primaryColor}
+      timeZone={tenant?.timezone ?? null}
     />
   );
 }

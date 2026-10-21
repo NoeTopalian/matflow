@@ -78,7 +78,7 @@ beforeEach(async () => {
     userId: "user_coach",
     role: "coach",
   });
-  instanceFindFirstMock.mockResolvedValue({ id: "inst_1", classId: "cls_1", class: { name: "Fundamentals" } });
+  instanceFindFirstMock.mockResolvedValue({ id: "inst_1", classId: "cls_1", class: { name: "Fundamentals", tenant: { timezone: "Europe/London" } } });
   memberFindFirstMock.mockResolvedValue({ id: "mem_1" });
   upsertMock.mockResolvedValue({});
   findUniqueMock.mockResolvedValue(null);

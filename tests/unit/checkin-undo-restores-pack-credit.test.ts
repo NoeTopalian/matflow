@@ -120,7 +120,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   memberFindFirstMock.mockResolvedValue({ id: "m-1" });
   classInstanceFindFirstMock.mockResolvedValue({
-    id: "ci-1", classId: "c-1", date: new Date("2026-10-17T00:00:00.000Z"), startTime: "18:00", class: { name: "Fundamentals" },
+    id: "ci-1", classId: "c-1", date: new Date("2026-10-17T00:00:00.000Z"), startTime: "18:00", class: { name: "Fundamentals", tenant: { timezone: "Europe/London" } },
   });
   attendanceDeleteManyMock.mockResolvedValue({ count: 1 });
   redemptionDeleteManyMock.mockResolvedValue({ count: 1 });

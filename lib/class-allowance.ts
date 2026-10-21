@@ -236,15 +236,22 @@ export type AllowanceVerdict = {
   period: { start: IsoDate; end: IsoDate };
   /** The calendar date the allowance resets (the period's end). */
   resetsOn: IsoDate;
+  /**
+   * Whether the judged period is the one containing now (club clock). Set
+   * when the caller passes `now`; false makes the copy name the period
+   * ("the week of Monday 13 October") instead of saying "this week".
+   */
+  current?: boolean;
 };
 
 /**
  * Whether one more class at `session` fits the allowance, given the member's
  * other counted visits (wall-clock minutes; the judged session must not be
  * among them). Order-independent: a visit recorded later for an earlier class
- * lands in that class's own period.
+ * lands in that class's own period. `now` (the club's wall-clock minute)
+ * only decides `current`, never the count.
  */
-export function allowanceVerdict(a: ClassAllowance, session: number, visits: readonly number[]): AllowanceVerdict {
+export function allowanceVerdict(a: ClassAllowance, session: number, visits: readonly number[], now?: number): AllowanceVerdict {
   const p = periodContaining(a, session);
   const used = countInPeriod(visits, p);
   return {
@@ -255,6 +262,7 @@ export function allowanceVerdict(a: ClassAllowance, session: number, visits: rea
     exhausted: used >= a.limit,
     period: { start: minuteToLocal(p.start).date, end: minuteToLocal(p.end).date },
     resetsOn: minuteToLocal(p.end).date,
+    ...(now !== undefined ? { current: now >= p.start && now < p.end } : {}),
   };
 }
 
@@ -269,7 +277,11 @@ export function currentPeriodUsage(a: ClassAllowance, now: number, visits: reado
 
 // ── Wording of counts, dates and refusals ────────────────────────────────────
 
-type VerdictCopy = Pick<AllowanceVerdict, "used" | "limit" | "basis" | "resetsOn"> & { weeks?: number; period?: AllowanceVerdict["period"] };
+type VerdictCopy = Pick<AllowanceVerdict, "used" | "limit" | "basis" | "resetsOn"> & {
+  weeks?: number;
+  period?: AllowanceVerdict["period"];
+  current?: boolean;
+};
 
 function asAllowance(v: VerdictCopy): ClassAllowance {
   if (v.basis === "weeks") return { limit: v.limit, basis: "weeks", weeks: v.weeks ?? 2, anchor: "1970-01-05" };
@@ -294,9 +306,24 @@ export function lastDayText(endExclusive: IsoDate, withYear = false): string {
   return dateText(minuteToLocal(dateMinute(endExclusive) - MINUTES_PER_DAY).date, withYear);
 }
 
-/** "this week", "this month", "this 4-week period". */
+/**
+ * "this week", "this month", "this 4-week period" — or, when the judged
+ * period is known NOT to contain now (a mark for a past or future session),
+ * the period by name: "the week of Monday 13 October", "October",
+ * "the 4-week period from Monday 28 September". A member reads their
+ * entitlement from this, so a period must never be called "this" when it
+ * is not (review gap 5, 21 Oct 2026).
+ */
 export function thisPeriodText(v: VerdictCopy): string {
   const a = asAllowance(v);
+  if (v.current === false && v.period) {
+    if (a.basis === "week") return `the week of ${dateText(v.period.start)}`;
+    if (a.basis === "month") {
+      const [y, m] = v.period.start.split("-").map(Number);
+      return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+    }
+    return `the ${periodNoun(a)} from ${dateText(v.period.start)}`;
+  }
   return a.basis === "month" ? "this month" : `this ${periodNoun(a)}`;
 }
 
@@ -373,7 +400,7 @@ export function allowanceSummary(a: ClassAllowance | null, now: number): { sente
   const noun = a.limit === 1 ? "class" : "classes";
   const during = a.basis === "month" ? "each calendar month" : `each ${periodNoun(a)}`;
   return {
-    sentence: `Attend up to ${a.limit} ${noun} during ${during}. Your next reset is ${dateText(end, true)}.`,
+    sentence: `Attend up to ${a.limit} ${noun} during ${during}. The next reset is ${dateText(end, true)}.`,
     period: `The current period runs ${dateText(start)} to ${lastDayText(end, true)}.`,
     nextReset: end,
   };

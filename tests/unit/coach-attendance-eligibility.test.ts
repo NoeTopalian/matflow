@@ -74,7 +74,7 @@ beforeEach(() => {
   h.order.length = 0;
   h.requireApiStaff.mockResolvedValue({ ok: true, tenantId: "tenant_a", userId: "user_coach", role: "coach" });
   h.instanceFindFirst.mockResolvedValue({
-    id: "inst_1", classId: "cls_adv", date: new Date("2026-10-19T00:00:00.000Z"), startTime: "18:00", class: { name: "Advanced" },
+    id: "inst_1", classId: "cls_adv", date: new Date("2026-10-19T00:00:00.000Z"), startTime: "18:00", class: { name: "Advanced", tenant: { timezone: "Europe/London" } },
   });
   setMemberTier("tier_beg", "Beginners");
   h.findUnique.mockResolvedValue(null);
@@ -115,7 +115,7 @@ describe("coach tick — class eligibility, no override", () => {
     const res = await POST(req({ memberId: "mem_1", attended: true }), { params });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "You're not on the roster for this class.", reason: "roster_not_listed" });
-    expect(h.order).toEqual(["lock", "roster"]);
+    expect(h.order).toEqual(["lock", "member-lock", "roster"]);
     expect(h.upsert).not.toHaveBeenCalled();
     expect(h.rosterCount).toHaveBeenCalledWith({ where: { tenantId: "tenant_a", classId: "cls_adv" } });
   });
@@ -125,7 +125,7 @@ describe("coach tick — class eligibility, no override", () => {
     const res = await POST(req({ memberId: "mem_1", attended: true }), { params });
     expect(res.status).toBe(403);
     expect((await res.json()).reason).toBe("tier_not_included");
-    expect(h.order).toEqual(["lock", "roster", "tiers"]);
+    expect(h.order).toEqual(["lock", "member-lock", "roster", "tiers"]);
   });
 
   it("a rostered member on an included plan is marked, after the lock and both checks; no overrides on the audit row", async () => {
@@ -133,7 +133,8 @@ describe("coach tick — class eligibility, no override", () => {
     setMemberTier("tier_adv", "Advanced");
     const res = await POST(req({ memberId: "mem_1", attended: true }), { params });
     expect(res.status).toBe(200);
-    expect(h.order).toEqual(["lock", "roster", "tiers", "member-lock", "write"]);
+    // The allowance ask re-takes the Member lock it already holds (a no-op on the row).
+    expect(h.order).toEqual(["lock", "member-lock", "roster", "tiers", "member-lock", "write"]);
     const audit = h.logAudit.mock.calls[0][0] as { action: string; metadata: Record<string, unknown> };
     expect(audit.action).toBe("attendance.mark");
     expect(audit.metadata).toMatchObject({ created: true, recordId: "rec_1" });

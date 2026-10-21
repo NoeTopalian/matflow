@@ -53,7 +53,7 @@ beforeEach(() => {
   h.order.length = 0;
   h.requireApiStaff.mockResolvedValue({ ok: true, tenantId: "tenant_a", userId: "user_coach", role: "coach" });
   h.instanceFindFirst.mockResolvedValue({
-    id: "inst_1", classId: "cls_1", date: new Date("2026-10-19T00:00:00.000Z"), startTime: "18:00", class: { name: "Fundamentals" },
+    id: "inst_1", classId: "cls_1", date: new Date("2026-10-19T00:00:00.000Z"), startTime: "18:00", class: { name: "Fundamentals", tenant: { timezone: "Europe/London" } },
   });
   h.memberFindFirst.mockResolvedValue({ id: "mem_1" });
   h.findUnique.mockResolvedValue(null);
@@ -73,7 +73,7 @@ describe("coach tick - allowance ask", () => {
     expect(h.order).toEqual(["eligibility", "allowance"]);
     expect(h.staffAllowanceAsk).toHaveBeenCalledWith(
       expect.anything(),
-      { tenantId: "tenant_a", memberId: "mem_1", confirmed: false },
+      { tenantId: "tenant_a", memberId: "mem_1", confirmed: false, timeZone: "Europe/London" },
       { id: "inst_1", date: new Date("2026-10-19T00:00:00.000Z"), startTime: "18:00" },
     );
     expect(res.status).toBe(403);

@@ -196,7 +196,7 @@ describe("formAllowance and allowanceNote (the summary shown before saving)", ()
 
   it("states the plain summary with the next reset and the actual period dates, then what enforcement means", () => {
     const n = allowanceNote(formAllowance(form({ classLimit: "4", classLimitBasis: "weeks" })), NOW);
-    expect(n.summary).toBe("Attend up to 4 classes during each 4-week period. Your next reset is Tuesday 17 November 2026.");
+    expect(n.summary).toBe("Attend up to 4 classes during each 4-week period. The next reset is Tuesday 17 November 2026.");
     expect(n.period).toBe("The current period runs Tuesday 20 October to Monday 16 November 2026.");
     expect(n.enforcement).toContain("Attending a class uses one; booking does not.");
     expect(n.enforcement).toContain("It is enforced as soon as you save");
@@ -205,8 +205,8 @@ describe("formAllowance and allowanceNote (the summary shown before saving)", ()
     expect(n.enforcement).toContain("applies from the next check-in; nothing already recorded changes");
     expect(n.enforcement).toContain("Class-pack check-ins do not count");
     expect(n.summary + n.period).not.toMatch(/rolling|before each class/);
-    expect(allowanceNote(formAllowance(form({ classLimit: "3" })), NOW).summary).toBe("Attend up to 3 classes during each week. Your next reset is Monday 26 October 2026.");
-    expect(allowanceNote(formAllowance(form({ classLimit: "8", classLimitBasis: "month" })), NOW).summary).toBe("Attend up to 8 classes during each calendar month. Your next reset is Sunday 1 November 2026.");
+    expect(allowanceNote(formAllowance(form({ classLimit: "3" })), NOW).summary).toBe("Attend up to 3 classes during each week. The next reset is Monday 26 October 2026.");
+    expect(allowanceNote(formAllowance(form({ classLimit: "8", classLimitBasis: "month" })), NOW).summary).toBe("Attend up to 8 classes during each calendar month. The next reset is Sunday 1 November 2026.");
   });
 
   it("mondayOf gives the Monday of the week (the default period start)", () => {
@@ -250,7 +250,7 @@ describe("the class allowance in the tier editor", () => {
   it("the summary under the fields shows the period dates before saving", () => {
     renderWith([allowanceTier(FOUR_IN_FOUR)]);
     openEdit("Plan A");
-    expect(screen.getByTestId("tier-allowance-summary").textContent).toMatch(/^Attend up to 4 classes during each 4-week period\. Your next reset is /);
+    expect(screen.getByTestId("tier-allowance-summary").textContent).toMatch(/^Attend up to 4 classes during each 4-week period\. The next reset is /);
     expect(screen.getByTestId("tier-allowance-period").textContent).toMatch(/^The current period runs /);
     setBasis("month");
     expect(screen.getByTestId("tier-allowance-summary").textContent).toMatch(/^Attend up to 4 classes during each calendar month\./);

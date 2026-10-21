@@ -200,16 +200,50 @@ describe("allowanceSummary (what the plan editor shows before saving)", () => {
 
   it("states the allowance in plain words with the next reset and the actual period dates", () => {
     expect(allowanceSummary(FOUR_IN_FOUR, now)).toEqual({
-      sentence: "Attend up to 4 classes during each 4-week period. Your next reset is Tuesday 17 November 2026.",
+      sentence: "Attend up to 4 classes during each 4-week period. The next reset is Tuesday 17 November 2026.",
       period: "The current period runs Tuesday 20 October to Monday 16 November 2026.",
       nextReset: "2026-11-17",
     });
-    expect(allowanceSummary(WEEKLY, now).sentence).toBe("Attend up to 3 classes during each week. Your next reset is Monday 26 October 2026.");
-    expect(allowanceSummary(MONTHLY, now).sentence).toBe("Attend up to 8 classes during each calendar month. Your next reset is Sunday 1 November 2026.");
+    expect(allowanceSummary(WEEKLY, now).sentence).toBe("Attend up to 3 classes during each week. The next reset is Monday 26 October 2026.");
+    expect(allowanceSummary(MONTHLY, now).sentence).toBe("Attend up to 8 classes during each calendar month. The next reset is Sunday 1 November 2026.");
     expect(allowanceSummary({ limit: 1, basis: "week" }, now).sentence).toMatch(/^Attend up to 1 class during each week\./);
   });
 
   it("Unlimited has no period", () => {
     expect(allowanceSummary(null, now)).toEqual({ sentence: expect.stringMatching(/^Unlimited classes\./), period: null, nextReset: null });
+  });
+});
+
+describe("historical periods are named, never called \"this\" (review gap 5)", () => {
+  // Four visits in 28 Sep – 26 Oct; a session in that period judged in November.
+  const visits = ["2026-10-05", "2026-10-12", "2026-10-14", "2026-10-15"].map((d) => at(d, "18:00"));
+  const nowNov = at("2026-11-03", "12:00");
+
+  it("allowanceVerdict reports whether the judged period is the current one", () => {
+    const past = allowanceVerdict(FOUR_IN_FOUR, at("2026-10-19", "18:00"), visits, nowNov);
+    expect(past.current).toBe(false);
+    const current = allowanceVerdict(FOUR_IN_FOUR, at("2026-11-03", "18:00"), visits, nowNov);
+    expect(current.current).toBe(true);
+    expect(allowanceVerdict(FOUR_IN_FOUR, at("2026-10-19", "18:00"), visits)).not.toHaveProperty("current");
+  });
+
+  it("every-N-weeks: the period is named from its start date", () => {
+    const past = allowanceVerdict(FOUR_IN_FOUR, at("2026-10-19", "18:00"), visits, nowNov);
+    expect(allowanceCountPhrase(past)).toBe("4 of 4 classes used the 4-week period from Tuesday 22 September");
+    expect(allowanceAskSentence("Ava Green", past)).toBe(
+      "Ava Green has used 4 of 4 classes the 4-week period from Tuesday 22 September (resets on Tuesday 20 October). Admit anyway?",
+    );
+  });
+
+  it("week: the week of its Monday; month: the month by name", () => {
+    const week = allowanceVerdict({ limit: 2, basis: "week" }, at("2026-10-14", "18:00"), [at("2026-10-12", "18:00"), at("2026-10-13", "18:00")], nowNov);
+    expect(allowanceCountPhrase(week)).toBe("2 of 2 classes used the week of Monday 12 October");
+    const month = allowanceVerdict({ limit: 1, basis: "month" }, at("2026-10-14", "18:00"), [at("2026-10-02", "18:00")], nowNov);
+    expect(allowanceCountPhrase(month)).toBe("1 of 1 class used October 2026");
+  });
+
+  it("the current period still reads \"this\"", () => {
+    const current = allowanceVerdict(FOUR_IN_FOUR, at("2026-11-03", "18:00"), visits, nowNov);
+    expect(allowanceCountPhrase(current)).toBe("0 of 4 classes used this 4-week period");
   });
 });

@@ -51,7 +51,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // 2026: coaches see all, theirs highlighted). Tenancy only.
           class: { tenantId },
         },
-        select: { id: true, classId: true, date: true, startTime: true, class: { select: { name: true } } },
+        select: { id: true, classId: true, date: true, startTime: true, class: { select: { name: true, tenant: { select: { timezone: true } } } } },
       });
       if (!instance) return "no-instance" as const;
       const member = await tx.member.findFirst({
@@ -79,13 +79,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             instance.classId,
             instance.class.name,
           );
+          if (refused?.kind === "member_not_found") return "no-member" as const;
           if (refused) return refused;
           // T7: the plan allowance is ASKED about, as the desk register asks,
-          // under the Member lock taken after lockedClassEligibility's Class
-          // lock (the engine's order).
+          // under the Member lock lockedClassEligibility already holds (Class,
+          // then Member: the engine's order).
           const allowance = await staffAllowanceAsk(
             tx,
-            { tenantId, memberId: member.id, confirmed: allowanceConfirmed },
+            { tenantId, memberId: member.id, confirmed: allowanceConfirmed, timeZone: instance.class.tenant.timezone },
             { id: instance.id, date: instance.date, startTime: instance.startTime },
           );
           if (allowance.kind === "member_not_found") return "no-member" as const;

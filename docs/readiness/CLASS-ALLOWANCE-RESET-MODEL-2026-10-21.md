@@ -35,6 +35,22 @@ What is **not** settled, and is left for Noe or Sean:
 
 Until the decision is taken, the "every N weeks" option is implemented with the per-plan anchor and the editor states the period start date in the summary, so nothing is silent. Switching models later changes where the anchor is stored, not the period maths.
 
+## The missing option: "per billing period" (identified 21 Oct 2026, evening — NOT implemented)
+
+The agreed scope includes "four attendances per billing period". None of the three bases above is that: a shared per-plan start date gives every member the same four-week blocks, which is not each member's own subscription period. It was not silently replaced — it is absent, and this section says what it needs.
+
+**What "per billing period" requires:** for each member, the start and end of their current paid period. MatFlow holds that only partly:
+
+| Member billed by | Where the period could come from | State today |
+|---|---|---|
+| Desk / cash / standing order (`billedBy` matflow, no Stripe subscription) | `Member.nextDueAt` is the period end; start = end − `MembershipTier.billingCycle` (`lib/overdue.ts` `advanceDueDate` steps it when a payment is recorded) | **available** where a due date has been recorded; NULL for members without one |
+| TeamUp-imported (Total BJJ) | the import maps "next payment date" into `Member.nextDueAt` (`lib/importers/index.ts`), refreshed by later imports | **available** for members whose export carried a date; not maintained between imports |
+| Stripe subscription | Stripe's `current_period_start/end`; the webhook (`invoice.payment_succeeded`) records the payment and sets `paymentStatus` but stores **no period**; `nextDueAt` is NULL by design ("Stripe owns the schedule", `prisma/schema.prisma` Member comment) | **not stored** |
+
+**Design when approved:** a fourth basis `billing`: period = `[nextDueAt − cycle, nextDueAt)` stepped forward or back by the tier's cycle until it contains the class (so a four-weekly plan gives each member their own 28-day blocks ending on their renewal date); for Stripe-billed members the webhook must first store the invoice line period (`lines.data[0].period.start/end`) — a change to the production webhook that needs its own review and migration. A member on a `billing` plan with no recorded period cannot be counted: the honest behaviour is to refuse at member-decided doors with "no renewal date is recorded — ask staff" and to ask at staff doors, never to fall back to a calendar period silently. The editor would describe the option as "each member's own billing period (from their renewal date)" and could show no shared reset date.
+
+**Decision required (Noe):** (1) add the `billing` basis on `nextDueAt` now (covers desk and TeamUp-billed members, which is Total BJJ today) and treat Stripe-billed members as "period unknown" until the webhook stores it; or (2) store the subscription period for every member first (webhook + import + manual payments), then add the basis. Either way, "billing is separate" below still holds: the allowance basis is chosen explicitly; it is never derived from the billing cycle without the administrator picking it.
+
 ## Legacy column
 `maxClassesPerWeek` (the previous build's "Classes per week") now reads as `N each calendar week`, not a rolling seven days. Every Total BJJ plan had it NULL on 15 Oct (PR #41); the demo seed's "3x Per Week" tier is the only known value. A weekly allowance still mirrors N into the column so a rollback to the previous build shows the right number.
 

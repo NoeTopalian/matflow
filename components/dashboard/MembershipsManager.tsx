@@ -37,6 +37,8 @@ import {
 interface Props {
   initialTiers: MembershipTierRow[];
   primaryColor: string;
+  /** The club's IANA zone (Tenant.timezone): the editor's dates are the club's calendar. Null falls back to the browser's zone. */
+  timeZone?: string | null;
 }
 
 function formatPrice(pricePence: number, currency: string) {
@@ -89,9 +91,13 @@ const sameAllowance = (a: ClassAllowance | null, b: ClassAllowance | null) =>
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Today, and the Monday of this week, on the browser's calendar (the administrator sits in the club's zone). */
-export function todayIso(now = new Date()): string {
-  return minuteToLocal(nowMinute(now, Intl.DateTimeFormat().resolvedOptions().timeZone)).date;
+/** The zone the editor's dates are read in: the club's when the page passes it, else the browser's. */
+export function editorZone(timeZone?: string | null): string {
+  return timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+/** Today, and the Monday of this week, on the club's calendar (review gap 5, 21 Oct 2026). */
+export function todayIso(now = new Date(), timeZone?: string | null): string {
+  return minuteToLocal(nowMinute(now, editorZone(timeZone))).date;
 }
 export function mondayOf(iso: string): string {
   return minuteToLocal(periodContaining({ limit: 1, basis: "week" }, dateMinute(iso)).start).date;
@@ -133,9 +139,9 @@ export function formAllowance(form: { classLimit: string; classLimitBasis: strin
  * The editor's note under the allowance fields: the plain summary with the
  * actual dates (allowanceSummary), then what enforcement means.
  */
-export function allowanceNote(fa: FormAllowance, now = new Date()): { summary: string; period: string | null; enforcement: string } {
+export function allowanceNote(fa: FormAllowance, now = new Date(), timeZone?: string | null): { summary: string; period: string | null; enforcement: string } {
   if (fa.kind === "error") return { summary: fa.message, period: null, enforcement: "" };
-  const s = allowanceSummary(fa.allowance, nowMinute(now, Intl.DateTimeFormat().resolvedOptions().timeZone));
+  const s = allowanceSummary(fa.allowance, nowMinute(now, editorZone(timeZone)));
   if (!fa.allowance) return { summary: s.sentence, period: null, enforcement: "" };
   return {
     summary: s.sentence,
@@ -184,7 +190,7 @@ const emptyForm = {
 
 type FormState = typeof emptyForm;
 
-export default function MembershipsManager({ initialTiers, primaryColor }: Props) {
+export default function MembershipsManager({ initialTiers, primaryColor, timeZone = null }: Props) {
   const { toast } = useToast();
   const [tiers, setTiers] = useState<MembershipTierRow[]>(initialTiers);
   const [showModal, setShowModal] = useState(false);
@@ -223,7 +229,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
 
   function openAdd() {
     setEditingId(null);
-    setForm({ ...emptyForm, classLimitAnchor: mondayOf(todayIso()) });
+    setForm({ ...emptyForm, classLimitAnchor: mondayOf(todayIso(new Date(), timeZone)) });
     setShowModal(true);
   }
 
@@ -240,7 +246,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       classLimit: allowance ? String(allowance.limit) : "",
       classLimitBasis: allowance?.basis ?? "week",
       classLimitWeeks: String(allowance?.basis === "weeks" ? allowance.weeks : 4),
-      classLimitAnchor: allowance?.basis === "weeks" ? allowance.anchor : mondayOf(todayIso()),
+      classLimitAnchor: allowance?.basis === "weeks" ? allowance.anchor : mondayOf(todayIso(new Date(), timeZone)),
       isKids: tier.isKids,
       stripePriceId: tier.stripePriceId ?? "",
       stripeProductId: tier.stripeProductId ?? "",
@@ -751,7 +757,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
               )}
             </div>
             {(() => {
-              const note = allowanceNote(formAllowance(form));
+              const note = allowanceNote(formAllowance(form), new Date(), timeZone);
               return (
                 <div className="mt-1.5 space-y-1 text-[11px]" data-testid="tier-allowance-note">
                   <p className="text-tx-2" data-testid="tier-allowance-summary">{note.summary}</p>

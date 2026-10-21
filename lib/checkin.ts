@@ -39,10 +39,11 @@
 // check-in paid by a class pack is not counted and not gated.
 //
 // Lock order on EVERY check-in write transaction: Class FOR UPDATE
-// (capacityState / classEligibility), then the Member row (memberLock: FOR NO KEY
-// UPDATE, see there for why not FOR UPDATE), then
-// statement C (lib/class-allowance-count.ts, a plain read), then the pack
-// decrement and the AttendanceRecord insert. The Member lock is taken
+// (capacityState), then the Member row (memberLock: FOR NO KEY UPDATE, see
+// there for why not FOR UPDATE), then the eligibility reads (classEligibility:
+// roster + tier, judged on the member row as locked), then statement C
+// (lib/class-allowance-count.ts, a plain read), then the pack decrement and
+// the AttendanceRecord insert. The Member lock is taken
 // unconditionally, whatever the plan and the door, because whether a plan is
 // limited is itself configuration that can change mid-check-in: a lock taken
 // only when an earlier read said "limited" would not serialise against a
@@ -120,7 +121,7 @@
 import * as Sentry from "@sentry/nextjs";
 import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
+import { parseTime, usableTimezone, DEFAULT_TIMEZONE } from "@/lib/class-time";
 import { isOnHold } from "@/lib/member-hold";
 import { isOverdue } from "@/lib/overdue";
 import { isAdultAccount } from "@/lib/account-type";
@@ -129,6 +130,7 @@ import { doorLifecycle } from "@/lib/class-lifecycle";
 import {
   ALLOWANCE_OVERRIDE_REASON,
   allowanceVerdict,
+  nowMinute,
   slotMinute,
   type AllowanceBasis,
   type AllowanceGateMode,
@@ -239,6 +241,8 @@ export type AllowanceFacts = {
   period: { start: IsoDate; end: IsoDate };
   /** The calendar date the allowance resets (the period's end). */
   resetsOn: IsoDate;
+  /** False when the session's period is not the one containing now (club clock): the copy then names the period. */
+  current?: boolean;
 };
 
 export type PerformCheckinResult =
@@ -454,10 +458,18 @@ export async function lockedClassEligibility(
   args: { tenantId: string; memberId: string },
   classId: string,
   className: string,
-): Promise<ClassEligibilityRefusal | null> {
+): Promise<ClassEligibilityRefusal | { kind: "member_not_found" } | null> {
   await tx.$queryRaw`
     SELECT "id" FROM "Class" WHERE "id" = ${classId} AND "tenantId" = ${args.tenantId} FOR UPDATE
   `;
+  // The Member lock BEFORE the tier is read: a plan change that commits while
+  // this tick is in flight either lands before the lock (and is what the tick
+  // judges) or waits behind it. Without the lock here the tick read the tier,
+  // then queued on the Member row for the allowance, and could admit on a
+  // plan the member no longer held (review gap 4, 21 Oct 2026). The same
+  // lock is taken again by staffAllowanceAsk; a second FOR NO KEY UPDATE on a
+  // row this transaction already holds is a no-op.
+  if (!(await memberLock(tx, args.tenantId, args.memberId))) return { kind: "member_not_found" };
   return classEligibility(tx, args.tenantId, args.memberId, classId, className);
 }
 
@@ -584,6 +596,8 @@ async function judgeAllowance(
   tx: Prisma.TransactionClient,
   args: Pick<PerformCheckinArgs, "tenantId" | "memberId" | "allowanceGate" | "allowanceOverrideConfirmed">,
   session: { id: string; date: Date; startTime: string },
+  /** The club's IANA zone: decides only whether the session's period is the current one (copy), never the count. */
+  timeZone: string,
 ): Promise<AllowanceGateState> {
   const mode = args.allowanceGate ?? "off";
   if (mode === "off") return { kind: "open", overridden: false };
@@ -596,12 +610,13 @@ async function judgeAllowance(
   if (!snap) return { kind: "member_not_found" };
   if (snap.alreadyIn) return { kind: "duplicate" };
   if (!snap.allowance) return { kind: "open", overridden: false };
-  const v = allowanceVerdict(snap.allowance, slotMinute(session), snap.visits);
+  const v = allowanceVerdict(snap.allowance, slotMinute(session), snap.visits, nowMinute(new Date(), usableTimezone(timeZone)));
   if (!v.exhausted) return { kind: "open", overridden: false };
   const facts: AllowanceFacts = {
     used: v.used, limit: v.limit, basis: v.basis,
     ...(v.weeks !== undefined ? { weeks: v.weeks } : {}),
     period: v.period, resetsOn: v.resetsOn,
+    ...(v.current !== undefined ? { current: v.current } : {}),
   };
   if (mode === "ask" && args.allowanceOverrideConfirmed === true) return { kind: "open", overridden: true, facts };
   return { kind: "allowance_reached", askable: mode === "ask", ...facts };
@@ -615,7 +630,7 @@ async function judgeAllowance(
  */
 export async function staffAllowanceAsk(
   tx: Prisma.TransactionClient,
-  args: { tenantId: string; memberId: string; confirmed: boolean },
+  args: { tenantId: string; memberId: string; confirmed: boolean; timeZone?: string | null },
   session: { id: string; date: Date; startTime: string },
 ): Promise<AllowanceGateState> {
   if (!(await memberLock(tx, args.tenantId, args.memberId))) return { kind: "member_not_found" };
@@ -623,6 +638,7 @@ export async function staffAllowanceAsk(
     tx,
     { tenantId: args.tenantId, memberId: args.memberId, allowanceGate: "ask", allowanceOverrideConfirmed: args.confirmed },
     session,
+    args.timeZone ?? DEFAULT_TIMEZONE,
   );
 }
 
@@ -894,14 +910,16 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         // Refusing after the decrement would cost the member a class they
         // never attended.
         const cap = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
-        // Roster + tier after the lock and before a credit is spent.
-        const refused = await classEligibility(tx, tenantId, memberId, instance.classId, instance.class.name);
-        if (refused) return refused;
         if (cap && args.enforceCapacity && cap.taken >= cap.maxCapacity) {
           return { kind: "class_full" as const, ...cap };
         }
-        // T7: the Member lock, second in the order, then the pack.
+        // T7: the Member lock, second in the order. Roster + tier are read
+        // UNDER it, so a plan change that commits mid-check-in is either
+        // seen here or makes the lock restart the check-in — never a stale
+        // tier admitting someone (review gap 4, 21 Oct 2026).
         if (!(await lockMember(tx))) return { kind: "member_not_found" as const };
+        const refused = await classEligibility(tx, tenantId, memberId, instance.classId, instance.class.name);
+        if (refused) return refused;
         const pack = await claimPack(tx, tenantId, memberId);
         if (!pack) return { kind: "no_coverage" as const };
         const record = await tx.attendanceRecord.create({
@@ -953,17 +971,18 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     const kioskPackFirst = method === "kiosk" && !covered;
     const straight = await withTenantContext(tenantId, async (tx) => {
       const cap = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
-      const refused = await classEligibility(tx, tenantId, memberId, instance.classId, instance.class.name);
-      if (refused) return refused;
       if (cap && args.enforceCapacity && cap.taken >= cap.maxCapacity) {
         return { kind: "class_full" as const, ...cap };
       }
-      // T7: Member lock, then the pack or the allowance, then the insert.
+      // T7: Member lock, then eligibility under it (see the pack path above),
+      // then the pack or the allowance, then the insert.
       if (!(await lockMember(tx))) return { kind: "member_not_found" as const };
+      const refused = await classEligibility(tx, tenantId, memberId, instance.classId, instance.class.name);
+      if (refused) return refused;
       let pack = kioskPackFirst ? await claimPack(tx, tenantId, memberId) : null;
       let allowance: AllowanceGateState = { kind: "open", overridden: false };
       if (!pack) {
-        allowance = await judgeAllowance(tx, args, instance);
+        allowance = await judgeAllowance(tx, args, instance, tenant?.timezone || DEFAULT_TIMEZONE);
         if (allowance.kind === "member_not_found" || allowance.kind === "duplicate") return allowance;
         if (allowance.kind === "allowance_reached") {
           if (!allowance.askable) pack = await claimPack(tx, tenantId, memberId);

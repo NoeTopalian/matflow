@@ -253,6 +253,40 @@ describe.skipIf(!HAS_DB)("T7 review fixes - real database", () => {
     }
   });
 
+  it("a plan change in flight cannot admit on stale eligibility: the tick locks the Member row before it reads the tier (review gap 4)", async () => {
+    // Class Z admits only the fortnight plan. The member is on it. A staff
+    // member moves them to another plan while a coach tick is in flight.
+    const memberId = await newMember();
+    let classZ = "";
+    let otherTier = "";
+    await withRlsBypass(async (tx) => {
+      otherTier = (await tx.membershipTier.create({ data: { tenantId, name: "Other plan" } })).id;
+      classZ = (await tx.class.create({ data: { tenantId, name: "Review Z", duration: 60, maxCapacity: 50 } })).id;
+      await tx.classMembershipTier.create({ data: { tenantId, classId: classZ, tierId } });
+    });
+    dayOffset += 30;
+    const z = (await withRlsBypass((tx) => tx.classInstance.create({
+      data: { classId: classZ, date: new Date(Date.UTC(2032, 0, 5) + dayOffset * 86_400_000), startTime: "18:00", endTime: "19:00" },
+    }))).id;
+    // GATE holds the Member row. The plan change queues on it FIRST, then the
+    // tick: Postgres grants row locks in queue order, so when the gate opens
+    // the plan change commits before the tick reads anything about the member.
+    const gate = holdLock((tx) => tx.$queryRaw`SELECT "id" FROM "Member" WHERE "id" = ${memberId} FOR UPDATE`);
+    await gate.isReady;
+    const change = withRlsBypass((tx) => tx.member.update({ where: { id: memberId }, data: { membershipTierId: otherTier } }));
+    await waitForLockWaiters('%"Member" SET%', 1);
+    const coach = tick(z, memberId);
+    await waitForLockWaiters(MEMBER_LOCK_SQL, 1);
+    gate.release();
+    await gate.done;
+    await change;
+    const c = await coach;
+    // Judged on the plan as committed: refused, nothing written.
+    expect(c.status).toBe(403);
+    expect(c.body).toMatchObject({ reason: "tier_not_included" });
+    expect(await recordsIn([z], memberId)).toBe(0);
+  }, 60_000);
+
   it("dispute webhook x pack check-in: the webhook waits on the Member, not the pack, and both complete (no 40P01)", async () => {
     // An overdue member (not covered), so the check-in pays with a pack:
     // Class, then Member, then the pack. The pack was bought with the charge
