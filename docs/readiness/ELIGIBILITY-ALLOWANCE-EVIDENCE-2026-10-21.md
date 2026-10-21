@@ -235,3 +235,45 @@ Low:
 - L-B: raised DB timeouts (120 s / 90 s) are plausible given network-bound sequential check-ins, but only a before/after timing would prove no slowdown from the added eligibility reads. Record the observed durations.
 
 Residual list is honest: L-3, L-4, L-6, L-7, L-8, L-9, L-12 and the redemption-subquery half of L-10 are unchanged and correctly logged.
+
+## Evening and night, 21–22 Oct 2026: billing-period basis, Stripe four-weekly, scanner timeout, review rounds 3–6
+
+Code head `b995e383` (docs-only commit `aace2493` on top is the candidate). Local only; nothing pushed. Lineage after `43bcdadb`: merge-forward from `origin/main` `e954482f` = `5f649315`; Member lock before the tier read, club clock, named periods `0c7f6e3f`; billing-period basis, Stripe app-flow test, card-retry proof `2cd09439`; review-round-3 fixes `8ef03acf`; round 4 `74ebcdde`; round 5 `b995e383`; round-6 wording `aace2493`.
+
+### Gates on `b995e383` (run one after another, nothing else on the machine; 22 Oct 00:19–00:54)
+- `tsc --noEmit` exit 0. `npm run lint` exit 0 (five warnings, all on files this branch does not touch).
+- Full `npm test`: 531 files passed, **7344 tests passed, 2 failed**, 673 skipped (database files without a URL — not passed), 3 todo, 623 s. The two failures are the same base calendar expiries recorded in the morning: `tests/unit/member-hold.test.ts` posts a hold until 2026-10-20, now in the past (400), and `tests/unit/impersonation-cannot-activate.test.ts`'s positive control uses `tempPasswordExpiresAt: null`, which `LEGACY_TEMP_PASSWORD_DEADLINE` (2026-10-20T23:59:59Z, `lib/temp-password.ts`) now expires (403). Both files and both routes are byte-identical to `origin/main`; they fail there from 21 Oct too. Not fixed on this branch.
+- Database suites as owner and as `matflow_app` (`tier-class-allowance-db`, `class-membership-tier-db`, `squad-class-tier-db`, `checkin-allowance-review-db`, `card-scan-retry-db`): **43/43 both roles**. `checkin-allowance-race-db`: see the next section.
+- Stripe test environment (`four-weekly-billing-stripe-db`, `four-weekly-billing-app-flow-db` on the connected test account): **7/7**.
+- `server.mjs build`: `BUILD EXIT 0 commit b995e383 tree DIRTY` (the only dirty file was the round-6 wording in the reset-model doc, committed as `aace2493`; rebuilt on `aace2493` for the journeys, result below).
+
+### The race suite and the transport drops (gap 1)
+`checkin-allowance-race-db` (seven concurrency cases) was run five times tonight on this machine against the Neon test branch, each time with everything else finished:
+
+| Run | Code | Owner | Restricted | What failed |
+|---|---|---|---|---|
+| 1 (beside the full suite and a journey) | `8ef03acf` | 7/7 | 5/7 | coach-tick-vs-self parked; with acknowledgement — "Test timed out in 30000ms", "Connection terminated due to connection timeout" |
+| 2 (alone) | `8ef03acf` | 5/7 | 7/7 | limit-set-while-in-flight; double tap — "Connection terminated unexpectedly", a 15 s transaction budget cut, "canceling statement due to lock timeout" |
+| 3 (alone, `pg_stat_activity` watched every 400 ms for 7 min) | `8ef03acf` | 7/7 | 6/7 | desk override under contention — "Connection terminated unexpectedly" |
+| 4 (in the sequential chain) | `b995e383` | 5/7 | 6/7 | coach-tick-vs-self parked and with acknowledgement; member-deletion cascade — all "Connection terminated unexpectedly" |
+
+Evidence gathered: round-trip to the branch is unchanged (`select 1` 209–215 ms, a three-statement transaction 837–1267 ms, a fresh connection 1.7–1.9 s); the lock watch recorded 45 lock waits, the longest **3 s**, every one of them between the test's own sessions, so no lock is held longer than the design intends and nothing else contends; both roles connect through the `-pooler` host, with `idle_in_transaction_session_timeout` 300 s and no `idle_session_timeout`, `statement_timeout` or `lock_timeout` at the server (the transaction sets its own 10 s lock bound and 15 s budget). Every failure is a transport error from the `pg` driver — the socket closed mid-transaction — or its direct consequence (a partner transaction waiting on a lock whose holder's socket died, cut by the 10 s lock bound or the 15 s budget). No assertion on admissions, duplicates or overrides failed in any run; the cases that failed differ every run; each case passed in at least one run as each role; and the same suite passed 7/7 as both roles twice on 21 Oct. The code under the Member lock did not change between the run-1 code and the candidate except for a comment and the pure-TypeScript period placement in statement C (no new read or write, confirmed by review round 5). Conclusion: the drops are between this machine and the Neon pooler during the long parked transactions tonight; they are not lock contention, not other processes, and not a defect this branch introduced — but the suite **has not been seen green as both roles in one run tonight**, and that stays on the record. The earlier "extra timeout" from the previous report (`sec-c-body-canary-sweep`, 32 s under contention) was re-run alone: 240/240 in 15.7 s.
+
+### Scanner timeout (gap 4)
+- Measured: the real card request from the scanner to the local production build takes 11.1–11.8 s on this machine (one check-in transaction ≈ 20 statements × 205 ms round trip, plus the audit row) against the scanner's 10 s `AbortSignal.timeout`. On Vercel, with the database in the same region, the same transaction runs in well under a second; the timeout is a property of this machine's distance from Neon, not of the route.
+- What happens when the browser aborts: the server transaction is not cancelled by the client disconnecting; it commits. The scanner now shows a new `timed_out` state ("No answer yet…") instead of an error and allows a retry.
+- A retry cannot duplicate: `tests/integration/card-scan-retry-db.test.ts` (both roles, in the chain above) replays the same scan after a committed first one and gets `duplicate` with exactly one attendance row and no second allowance consumption; the engine judges `alreadyIn` under the Member lock before counting.
+- Browser: `scanner-override` journey — the real scanner-to-server request is exercised without the client abort (the server's ask with the member's count is asserted), and the component's `timed_out` and retry rendering is driven with a stubbed response as **component evidence only**; results below.
+
+### Four-week billing (gap 3): what was and was not demonstrated
+(a) Direct Stripe test objects — price `week` × 4, subscription, test clock advanced 28 days, renewal invoice with a 28-day period: **demonstrated**. (b) MatFlow's own flow on the connected test account — `ensureTierPrice`, `createSubscriptionForMember`, the intent confirmed with a test card (the browser's card-entry form itself was not driven), test-clock renewal, and the resulting invoices replayed through the real webhook route with a locally signed `Stripe-Signature`, storing `Member.billingPeriodStart/End`: **demonstrated**. (c) Stripe's own webhook delivery to a MatFlow endpoint: **not demonstrated** (no public endpoint from this machine).
+
+### Independent review, rounds 3–6 (locking, period boundaries, timeout/retry)
+- Round 3 (`2cd09439` → fixes `8ef03acf`): Medium 6, Low 7 — all fixed or recorded; included the Member lock before `classEligibility`, the two-read statement C, the proration-line selection in the webhook.
+- Round 4 (`8ef03acf` → fixes `74ebcdde`): CHANGES REQUIRED, Medium 2 / Low 5 — anchor day lost on clamped month ends (M-1), period guard on the END (M-2), recurrence measured on local dates (L-1), header (L-2), step cap and containment throw (L-3), existing-subscriber residual (L-4). All fixed except L-5 (optional, declined).
+- Round 5 (`74ebcdde`): **APPROVED**, Low 4. The reviewer traced the real code: 31 Jan → 28 Feb → 31 Mar → 30 Apr, the four-weekly grid, the `known` short-circuit, an exhaustive 134,484-placement check of the month arithmetic (0 misses), the lock section (no new read or write), the webhook guard on START. L-1 (a projected period behind the stated one could overlap it) fixed in `b995e383` with a unit case; L-2/L-3 recorded as residuals; L-4 comments fixed.
+- Round 6 (`b995e383`): **APPROVED**, Low 3 — all wording in the residual paragraph, fixed in `aace2493`.
+Reports: the session scratchpad `review/round3-report.md` … `round6-report.md` (outside the repo).
+
+### Browser journeys on the `aace2493` build
+(filled in below once run)
