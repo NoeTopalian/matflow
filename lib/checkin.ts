@@ -593,7 +593,8 @@ async function memberLock(tx: Prisma.TransactionClient, tenantId: string, member
  * lock, the eligibility check and the Member lock, BEFORE any pack decrement
  * or insert: statement C (readAllowanceSnapshot) gives the plan's allowance,
  * whether the member is already in this session, and their counted visits,
- * from one snapshot taken after the lock; the verdict (the period this
+ * in two plain reads after the lock (C1 the plan and the member's billing
+ * columns, C2 the visits inside that period); the verdict (the period this
  * session falls in, and how many counted visits it already holds) is decided
  * in TypeScript. A member already in this session answers "duplicate" before
  * the allowance, so a double tap says "already checked in", never "allowance

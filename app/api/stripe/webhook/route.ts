@@ -388,7 +388,8 @@ export async function POST(req: NextRequest) {
             currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
           },
         });
-        // The paid period Stripe states on the invoice's first line is the
+        // The paid period Stripe states on the invoice's subscription line
+        // (the full-period line, never a proration credit) is the
         // member's authoritative billing period (owner scope, 21 Oct 2026:
         // "N attendances per member's billing period"). Stored as the zoneless
         // timestamps the allowance reads; absent on a one-off invoice.

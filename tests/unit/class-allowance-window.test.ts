@@ -397,6 +397,18 @@ describe("per member's billing period (owner scope, 21 Oct 2026; review round 3)
     expect(() => periodContaining({ limit: 4, basis: "billing", member: { anchor: "2026-11-02" } }, at("2026-10-01", "12:00"))).toThrow(BillingPeriodUnknown);
   });
 
+  it("R5-L1: a period projected behind the stated one never overlaps it (a 23:30Z boundary across the clock change)", () => {
+    // [27 Sep 23:30Z, 25 Oct 23:30Z) is local [28 Sep, 25 Oct): 27 local days on a 28-day step.
+    const a = withMemberBillingPeriod(tier, live({ billingPeriodStart: new Date("2026-09-27T23:30:00.000Z"), billingPeriodEnd: new Date("2026-10-25T23:30:00.000Z") }), LONDON)!;
+    const before = periodContaining(a, at("2026-09-27", "18:00"));
+    expect(before.end).toBe(dateMinute("2026-09-28"));
+    expect(before.start).toBeLessThan(before.end);
+    expect(periodContaining(a, at("2026-09-28", "07:00"))).toEqual({ start: dateMinute("2026-09-28"), end: dateMinute("2026-10-25") });
+    // Monthly on the 31st: [30 Sep 23:30Z, 31 Oct 23:30Z) is local [1 Oct, 31 Oct); 30 Sep ends at 1 Oct.
+    const m = withMemberBillingPeriod(tier, live({ billingPeriodStart: new Date("2026-09-30T23:30:00.000Z"), billingPeriodEnd: new Date("2026-10-31T23:30:00.000Z") }), LONDON)!;
+    expect(periodContaining(m, at("2026-09-30", "18:00")).end).toBe(dateMinute("2026-10-01"));
+  });
+
   it("copy for a known billing period reads like any other period", () => {
     const a = withMemberBillingPeriod(tier, { nextDueAt: D("2026-11-02"), billingCycle: "four_weekly" }, LONDON)!;
     const v = allowanceVerdict(a, at("2026-10-19", "18:00"), [at("2026-10-05", "18:00"), at("2026-10-12", "07:00"), at("2026-10-12", "18:00"), at("2026-10-14", "18:00")], at("2026-10-21", "12:00"));

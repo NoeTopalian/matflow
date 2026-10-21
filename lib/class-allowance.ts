@@ -310,6 +310,11 @@ export function billingPeriodContaining(anchor: BillingPeriodAnchor, minute: num
   }
   if (!Number.isFinite(k)) return null;
   const p = { start: billingBoundary(anchor, k), end: billingBoundary(anchor, k + 1) };
+  // Behind the stated period the grid is anchored on its END, so when the
+  // stated period's local length is not one step (a boundary between 23:00
+  // and 00:00Z across a clock change) the last grid period before it would
+  // overlap it. A period never reaches into the stated one (review round 5, L-1).
+  if (anchor.known && p.end > anchor.known.start && p.start < anchor.known.start) p.end = anchor.known.start;
   return minute >= p.start && minute < p.end ? p : null;
 }
 
