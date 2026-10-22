@@ -68,6 +68,20 @@ describe.skipIf(!HAS_DB)(`T1 member populations and members pagination on TEST${
         data: { tenantId: ids.A, email: `${STAMP}-owner@example.test`, name: "T1 owner", role: "owner", passwordHash: "synthetic-t1-not-a-hash" },
       })).id;
       for (const tenantId of [ids.A, ids.B]) {
+        // A kids account must have a guardian (CHECK Member_kids_must_have_parent,
+        // migration 20260515000001 — on main and in production), so the guardian
+        // row is created first and every kids row points at it. The guardian is
+        // itself one of the counted rows (status active, accountType parent).
+        const guardianId = (await tx.member.create({
+          data: {
+            tenantId,
+            name: `${STAMP} guardian`,
+            email: `${STAMP}-${tenantId.slice(-6)}-guardian@example.test`,
+            status: "active",
+            accountType: "parent",
+            paymentStatus: "free",
+          },
+        })).id;
         const rows = STATUSES.flatMap((status) =>
           ACCOUNT_TYPES.flatMap((accountType) =>
             PAYMENT_STATUSES.map((paymentStatus) => ({
@@ -78,6 +92,7 @@ describe.skipIf(!HAS_DB)(`T1 member populations and members pagination on TEST${
               accountType,
               paymentStatus,
               cancelledAt: status === "cancelled" ? new Date() : null,
+              parentMemberId: accountType === "kids" ? guardianId : null,
             })),
           ),
         );
