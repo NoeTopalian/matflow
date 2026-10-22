@@ -49,10 +49,10 @@ const PLACEHOLDER_INSUFFICIENT: ReportSections = {
 
 async function gatherMetrics(input: ReportInput): Promise<Record<string, number>> {
   const { tenantId, periodStart, periodEnd } = input;
-  const prevStart = new Date(periodStart);
-  prevStart.setMonth(prevStart.getMonth() - 1);
-  const prevEnd = new Date(periodEnd);
-  prevEnd.setMonth(prevEnd.getMonth() - 1);
+  // Previous period = the calendar month before periodStart, half-open
+  // [prevStart, periodStart). Built from calendar fields on the 1st, so a
+  // 31-day month cannot overflow (31 Oct - 1 month used to land on 1 Oct).
+  const prevStart = new Date(periodStart.getFullYear(), periodStart.getMonth() - 1, 1);
 
   const [
     totalMembers,
@@ -72,13 +72,13 @@ async function gatherMetrics(input: ReportInput): Promise<Record<string, number>
       tx.member.count({ where: { tenantId, ...TRAINING_MEMBER } }),
       tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
       tx.member.count({ where: { tenantId, joinedAt: { gte: periodStart, lte: periodEnd }, ...TRAINING_MEMBER } }),
-      tx.member.count({ where: { tenantId, joinedAt: { gte: prevStart, lte: prevEnd }, ...TRAINING_MEMBER } }),
+      tx.member.count({ where: { tenantId, joinedAt: { gte: prevStart, lt: periodStart }, ...TRAINING_MEMBER } }),
       tx.member.count({ where: { tenantId, ...LEFT_MEMBER } }),
       tx.attendanceRecord.count({
         where: { tenantId, checkInTime: { gte: periodStart, lte: periodEnd } },
       }),
       tx.attendanceRecord.count({
-        where: { tenantId, checkInTime: { gte: prevStart, lte: prevEnd } },
+        where: { tenantId, checkInTime: { gte: prevStart, lt: periodStart } },
       }),
       tx.class.count({ where: { tenantId, isActive: true } }),
     ]),
