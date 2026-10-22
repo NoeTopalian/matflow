@@ -59,7 +59,14 @@ const db = vi.hoisted(() => {
       };
     },
   });
-  return { tenants, calls, tx: new Proxy({ tenant } as Record<string, unknown>, {
+  // Active (ACTIVE_MEMBER) members per club: 1 of the 2 member rows each.
+  const member = {
+    groupBy: async (args: { by: string[]; where: { tenantId: { in: string[] } } }) => {
+      calls.push({ method: "groupBy", args });
+      return args.where.tenantId.in.map((tenantId) => ({ tenantId, _count: { _all: 1 } }));
+    },
+  };
+  return { tenants, calls, tx: new Proxy({ tenant, member } as Record<string, unknown>, {
     get(target, model: string) {
       if (model in target) return target[model];
       return new Proxy({}, { get: (_, method: string) => () => { throw new Error(`unexpected ${model}.${method}`); } });
@@ -98,7 +105,9 @@ const closed = (id: string) => db.tenants.find((t) => t.id === id)!;
 const rowNames = () => screen.getAllByRole("row").slice(1).map((r) => r.querySelector("td div")?.textContent);
 
 /** The tenants CSV header row as it was before this change (main c5a74c0). */
-const OPEN_CSV_HEADER = "Gym,Slug,Owner Name,Owner Email,Active members,Status,Stripe Connected,Stripe Charges Enabled,Onboarding Completed,Created";
+const OPEN_CSV_HEADER = "Gym,Slug,Owner Name,Owner Email,Members,Status,Stripe Connected,Stripe Charges Enabled,Onboarding Completed,Created";
+/** The same header with the separate ACTIVE_MEMBER column straight after "Members". */
+const WITH_ACTIVE_HEADER = OPEN_CSV_HEADER.replace("Owner Email,Members,", "Owner Email,Members,Active members,");
 
 /** Captures the CSV the Export button builds, restoring the mocks afterwards (afterEach). */
 function captureCsv() {
@@ -146,7 +155,10 @@ describe("Tenants list — default view", () => {
     fireEvent.click(screen.getByRole("button", { name: "Export CSV (2)" }));
     const text = await csv.text;
     // The open view's header row is exactly the pre-existing one (compatibility).
-    expect(text.split("\n")[0]).toBe(OPEN_CSV_HEADER);
+    // Every pre-existing header is unchanged and in place; "Members" keeps its
+    // all-rows meaning and the ACTIVE_MEMBER count is a separate column after it.
+    expect(text.split("\n")[0]).toBe(WITH_ACTIVE_HEADER);
+    expect(text.split("\n")[1].split(",").slice(4, 6)).toEqual(["2", "1"]);
     expect(text).not.toContain("closed-club");
     expect(text).not.toContain("aged-closed");
   });
@@ -208,7 +220,7 @@ describe("Tenants list — Closed clubs view", () => {
     fireEvent.click(screen.getByRole("button", { name: "Export CSV (2)" }));
     const lines = (await csv.text).split("\n");
     expect(lines).toHaveLength(3);
-    expect(lines[0]).toBe(`${OPEN_CSV_HEADER},Closed`);
+    expect(lines[0]).toBe(`${WITH_ACTIVE_HEADER},Closed`);
     expect(lines[1]).toContain("closed-club");
     expect(lines[1].endsWith(closed("c1").deletedAt!.toISOString())).toBe(true);
     expect(lines.join("\n")).not.toContain("open-one");
@@ -226,7 +238,8 @@ describe("authorization and no side effects", () => {
 
   it("listing closed clubs only reads", async () => {
     await renderList({ view: "closed" });
-    expect(db.calls.map((c) => c.method).sort()).toEqual(["count", "count", "findMany"]);
+    // Reads only: the club list, two counts, and the per-club active-member groupBy.
+    expect(db.calls.map((c) => c.method).sort()).toEqual(["count", "count", "findMany", "groupBy"]);
   });
 
   it("opening a closed club's details page only reads (no restore, no write)", async () => {

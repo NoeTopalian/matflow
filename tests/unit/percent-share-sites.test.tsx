@@ -35,6 +35,8 @@ describe("share formatters round half-up", () => {
         ]}
       />,
     );
-    expect(screen.getByText("(15%)")).toBeTruthy();
+    const row = screen.getByText("A").closest("li")!;
+    expect(row.textContent).toContain("29");
+    expect(row.textContent).toContain("(15%)");
   });
 });

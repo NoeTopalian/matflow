@@ -110,16 +110,21 @@ export default function TenantsList({
 
   function exportCsv() {
     const rows = [
-      // Headers unchanged for the open view except "Active members", which names what that column now counts (no documented consumer; compatibility
+      // Population per column: "Members" is every member row the club has, as
+      // main exported it (all statuses, guardian accounts included); "Active
+      // members" is the ACTIVE_MEMBER count, the club's own headline number
+      // (active training members, guardians excluded). Existing headers are
+      // unchanged and the new column sits straight after "Members". (No documented consumer; compatibility
       // unknown), so "Status" here is the subscription status; the closed view
       // only appends a Closed column.
-      ["Gym", "Slug", "Owner Name", "Owner Email", "Active members", "Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created", ...(closedView ? ["Closed"] : [])],
+      ["Gym", "Slug", "Owner Name", "Owner Email", "Members", "Active members", "Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created", ...(closedView ? ["Closed"] : [])],
       ...filtered.map((t) => [
         t.name,
         t.slug,
         t.ownerName ?? "",
         t.ownerEmail ?? "",
         String(t.memberCount),
+        String(t.activeMemberCount),
         t.status,
         String(t.stripeConnected),
         t.stripeChargesEnabled === null ? "" : String(t.stripeChargesEnabled),
@@ -210,7 +215,7 @@ export default function TenantsList({
 
           <select aria-label="Sort tenants" value={sort} onChange={(e) => setSort(e.target.value as SortKey)} style={select}>
             <option value="recent">{closedView ? "Sort: Recently closed" : "Sort: Most recent"}</option>
-            <option value="members_desc">Sort: Active members high to low</option>
+            <option value="members_desc">Sort: Members high to low</option>
             <option value="name_asc">Sort: Name A to Z</option>
             <option value="status">Sort: Subscription</option>
           </select>
@@ -229,6 +234,7 @@ export default function TenantsList({
                 <tr>
                   <th style={th}>Gym</th>
                   <th style={th}>Owner</th>
+                  <th style={th}>Members</th>
                   <th style={th}>Active members</th>
                   <th style={th}>Subscription</th>
                   <th style={th}>Stripe</th>
@@ -255,6 +261,7 @@ export default function TenantsList({
                       )}
                     </td>
                     <td style={td}>{t.memberCount}</td>
+                    <td style={td}>{t.activeMemberCount}</td>
                     <td style={td}>{statusBadge(t.status)}</td>
                     <td style={td}>{stripeBadge(t)}</td>
                     <td style={td}>{formatDate(t.createdAt)}</td>
