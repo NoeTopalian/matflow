@@ -110,10 +110,10 @@ export default function TenantsList({
 
   function exportCsv() {
     const rows = [
-      // Headers unchanged for the open view (no documented consumer; compatibility
+      // Headers unchanged for the open view except "Active members", which names what that column now counts (no documented consumer; compatibility
       // unknown), so "Status" here is the subscription status; the closed view
       // only appends a Closed column.
-      ["Gym", "Slug", "Owner Name", "Owner Email", "Members", "Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created", ...(closedView ? ["Closed"] : [])],
+      ["Gym", "Slug", "Owner Name", "Owner Email", "Active members", "Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created", ...(closedView ? ["Closed"] : [])],
       ...filtered.map((t) => [
         t.name,
         t.slug,

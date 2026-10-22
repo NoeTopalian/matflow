@@ -98,7 +98,7 @@ const closed = (id: string) => db.tenants.find((t) => t.id === id)!;
 const rowNames = () => screen.getAllByRole("row").slice(1).map((r) => r.querySelector("td div")?.textContent);
 
 /** The tenants CSV header row as it was before this change (main c5a74c0). */
-const OPEN_CSV_HEADER = "Gym,Slug,Owner Name,Owner Email,Members,Status,Stripe Connected,Stripe Charges Enabled,Onboarding Completed,Created";
+const OPEN_CSV_HEADER = "Gym,Slug,Owner Name,Owner Email,Active members,Status,Stripe Connected,Stripe Charges Enabled,Onboarding Completed,Created";
 
 /** Captures the CSV the Export button builds, restoring the mocks afterwards (afterEach). */
 function captureCsv() {
