@@ -283,7 +283,10 @@ describe("other owner-only doors under impersonation", () => {
       user: { id: "u-sean", tenantId: "t-club", role: "owner", totpPending: false, mustChangePassword: true },
       expires: "2099-01-01",
     });
-    h.userFindFirst.mockResolvedValue({ id: "u-sean", passwordHash: TEMP_HASH, mustChangePassword: true, tempPasswordExpiresAt: null });
+    // A temporary password still inside its deadline. (A null deadline means the
+    // legacy cut-off, 20 Oct 2026, which has passed — that case is the expiry
+    // test's, not this positive control's.)
+    h.userFindFirst.mockResolvedValue({ id: "u-sean", passwordHash: TEMP_HASH, mustChangePassword: true, tempPasswordExpiresAt: new Date(Date.now() + 86_400_000) });
     const { POST } = await import("@/app/api/auth/set-password/route");
     const res = await POST(post("http://localhost/api/auth/set-password", { password: "OwnerChose1Abc" }));
     expect(res.status).not.toBe(403);
