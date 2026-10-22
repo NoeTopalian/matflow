@@ -3,8 +3,9 @@
  *
  * Wizard v2 Step 13 — "white-glove" CSV import. Owner uploads their member
  * CSV during onboarding; instead of running the auto-importer, we save the
- * file and email the MatFlow team to import it manually within 1 business
- * day. Lets new gyms onboard without learning the CSV column-mapping flow.
+ * file and notify the MatFlow team, who import it by hand. No turnaround time
+ * is promised (onboarding batch 1, 17 Oct 2026). Lets new gyms onboard without
+ * learning the CSV column-mapping flow.
  *
  * Auth: requireOwner()
  * Body (multipart): file (CSV, max 10MB) + notes (optional, max 500)
@@ -18,8 +19,8 @@
  *   - Audit log onboarding.csv_handoff
  */
 import { NextResponse } from "next/server";
-import { put } from "@vercel/blob";
-import { randomBytes } from "crypto";
+import { put, del } from "@vercel/blob";
+import { createHash, randomBytes } from "crypto";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
@@ -30,8 +31,78 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { z } from "zod";
 import { checkUploadRateLimit, formFields, normaliseUploadFilename } from "@/lib/upload-guard";
 
-// Lane C2 (9 Oct 2026): exactly `file` and an optional `notes`; anything else is refused.
-const formSchema = z.strictObject({ file: z.unknown().optional(), notes: z.string().max(4000).optional() });
+// Lane C2 (9 Oct 2026): exactly `file`, an optional `notes` and (onboarding
+// batch 1, 16 Oct 2026) an optional `clientRef`; anything else is refused.
+//
+// `clientRef` makes a retry safe. The wizard mints one random reference per
+// chosen file and resends it on every retry of that file. If the first
+// attempt was accepted but its response never reached the browser, the retry
+// finds that job and returns it instead of storing the file again, creating a
+// second job and emailing the team twice. It lives in the blob pathname, so no
+// schema change is needed to look it up.
+const CLIENT_REF = /^[a-f0-9]{32}$/;
+const formSchema = z.strictObject({
+  file: z.unknown().optional(),
+  notes: z.string().max(4000).optional(),
+  clientRef: z.string().regex(CLIENT_REF).optional(),
+});
+const CLIENT_REF_LOCK_NS = 0x43535648; // "CSVH"
+
+const MAIL_OFF =
+  "Your file is uploaded and safe. Email is turned off for this club, so the MatFlow team was not notified automatically — let your MatFlow contact know it's there.";
+
+// No timing or delivery promise: a sent notification is all the code can see.
+const SENT =
+  "Your file is uploaded and safe, and a notification about it was sent to the MatFlow team. Your members will appear on the Members page once they're imported.";
+
+/**
+ * The same reference sent with different file content: refused, so the owner
+ * is never told "we already have this file" about a file we don't have. The
+ * wizard then forgets the reference, and sending again is a new hand-off.
+ */
+function refMismatch() {
+  return NextResponse.json(
+    { error: "This upload reference belongs to a different file. Choose the file again to send it as a new upload.", code: "handoff_ref_mismatch" },
+    { status: 409 },
+  );
+}
+
+/**
+ * The reply to a retry that found the first hand-off. Whether the first
+ * attempt reached the MatFlow team is read from its audit row, never assumed:
+ * the owner may never have seen the first reply, which is the only place they
+ * would have been told to contact us. Unknown (no row, or the first attempt
+ * stopped before notifying) is said as unknown.
+ */
+async function alreadyReceived(tenantId: string, jobId: string, submittedNotes: string) {
+  const row = await withTenantContext(tenantId, (tx) =>
+    tx.auditLog.findFirst({
+      where: { tenantId, action: "onboarding.csv_handoff", entityId: jobId },
+      select: { metadata: true },
+    }),
+  ).catch(() => null);
+  const meta = (row?.metadata ?? null) as { teamNotified?: unknown; notes?: unknown } | null;
+  // What the first attempt recorded decides the reply, not today's mail
+  // setting: a notification sent then was sent, whatever the setting is now.
+  let message: string;
+  if (meta?.teamNotified === true) {
+    message = "We already have this file, so it wasn't sent twice. A notification about it was sent to the MatFlow team.";
+  } else if (!isEmailDeliveryOn()) {
+    message = `We already have this file, so it wasn't sent twice. ${MAIL_OFF.replace(/^Your file is uploaded and safe\. /, "")}`;
+  } else {
+    message = "We already have this file, so it wasn't sent twice — but we can't confirm the MatFlow team was told about it. Email hello@matflow.studio so we can import it.";
+  }
+  // Whether the notes sent now are the notes the first upload stored: null
+  // when there is no record to compare with.
+  const notesMatch = meta ? (typeof meta.notes === "string" ? meta.notes : "") === submittedNotes : null;
+  if (notesMatch === false) {
+    // Same channel as the sentence above it.
+    message += meta?.teamNotified === true || isEmailDeliveryOn()
+      ? " Notes you changed after your first attempt weren't added — email them to hello@matflow.studio."
+      : " Notes you changed after your first attempt weren't added — pass them to your MatFlow contact too.";
+  }
+  return NextResponse.json({ jobId, message, alreadyReceived: true, notesMatch }, { status: 200 });
+}
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_NOTES_LEN = 500;
@@ -98,6 +169,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Only CSV files are supported" }, { status: 400 });
   }
 
+  // A retry of a hand-off that already arrived: answer with that job and do
+  // nothing else (no second file, job, email or rate-limit spend).
+  const clientRef = parsedForm.data.clientRef ?? null;
+  const refMarker = clientRef ? `/handoff-${clientRef}` : null;
+  // What was sent, so a replay is only ever a replay of the same bytes.
+  const contentHash = createHash("sha256").update(Buffer.from(await file.arrayBuffer())).digest("hex");
+  if (refMarker) {
+    const existing = await withTenantContext(tenantId, (tx) =>
+      tx.importJob.findFirst({
+        where: { tenantId, createdById: userId, status: "pending_white_glove", fileBlobUrl: { contains: refMarker } },
+        select: { id: true, fileHash: true },
+      }),
+    );
+    if (existing) {
+      if (existing.fileHash !== contentHash) return refMismatch();
+      return alreadyReceived(tenantId, existing.id, notes);
+    }
+  }
+
   // Every accepted hand-off is stored AND emails the MatFlow team, so the
   // budget is spent here — after the caller's own mistakes are refused, before
   // anything is stored or sent (lane C2; lib/upload-guard.ts says what backs it).
@@ -106,11 +196,15 @@ export async function POST(req: Request) {
 
   // Reached only by a file we would otherwise have stored — see the note above.
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return NextResponse.json({ error: "File uploads not configured" }, { status: 503 });
+    return NextResponse.json({ error: "File uploads not configured", code: "uploads_unavailable" }, { status: 503 });
   }
 
+  // Set once the file is stored, and once its job is committed: a failure in
+  // between must not leave member data in storage with no job pointing at it.
+  let storedUrl: string | null = null;
+  let committed = false;
   try {
-    const cuid = randomBytes(12).toString("hex");
+    const cuid = clientRef ?? randomBytes(12).toString("hex");
     // Private (audit P0-1): the handoff CSV is raw member PII — names,
     // emails, phones, dates of birth. A public blob URL is a permanent
     // unauthenticated download link, and this one was previously emailed
@@ -122,8 +216,24 @@ export async function POST(req: Request) {
       contentType: "text/csv",
       addRandomSuffix: true,
     });
+    storedUrl = blob.url;
+    // Deduplication finds a retry by this marker in the stored URL; if the
+    // provider ever stops keeping the pathname, say so rather than fail open.
+    if (refMarker && !blob.url.includes(refMarker)) {
+      console.error("[onboarding/csv-handoff] clientRef not in blob url; retries of this upload cannot be matched");
+    }
 
-    const { job, tenant, owner } = await withTenantContext(tenantId, async (tx) => {
+    const created = await withTenantContext(tenantId, async (tx) => {
+      if (refMarker) {
+        // A retry can arrive while the first attempt is still being stored.
+        // Serialise per reference and look again, so only one job is created.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${CLIENT_REF_LOCK_NS}::int4, hashtext(${`${tenantId}:${clientRef}`}::text))`;
+        const raced = await tx.importJob.findFirst({
+          where: { tenantId, createdById: userId, status: "pending_white_glove", fileBlobUrl: { contains: refMarker } },
+          select: { id: true, fileHash: true },
+        });
+        if (raced) return { kind: "duplicate" as const, duplicateOf: raced.id, sameFile: raced.fileHash === contentHash };
+      }
       const j = await tx.importJob.create({
         data: {
           tenantId,
@@ -131,6 +241,10 @@ export async function POST(req: Request) {
           source: "generic",
           fileName: normaliseUploadFilename(file.name, "members.csv"),
           fileBlobUrl: blob.url,
+          // The content hash: a replay under this reference must carry the
+          // same bytes. (The admin import's duplicate guards only consider
+          // complete or running jobs, so a pending hand-off refuses nothing.)
+          fileHash: contentHash,
           status: "pending_white_glove",
         },
       });
@@ -138,8 +252,17 @@ export async function POST(req: Request) {
         tx.tenant.findUnique({ where: { id: tenantId }, select: { name: true, slug: true } }),
         tx.user.findUnique({ where: { id: userId }, select: { name: true, email: true } }),
       ]);
-      return { job: j, tenant: t, owner: o };
+      return { kind: "created" as const, job: j, tenant: t, owner: o };
     });
+    committed = true;
+    if (created.kind === "duplicate") {
+      // The first attempt won the race: drop this copy of the file and answer
+      // with the first job. Best effort — an orphaned private blob holds no job.
+      await del(blob.url).catch(() => {});
+      if (!created.sameFile) return refMismatch();
+      return alreadyReceived(tenantId, created.duplicateOf, notes);
+    }
+    const { job, tenant, owner } = created;
 
     // Unset default must actually deliver — see app/api/apply/route.ts note.
     const internalRecipients = (process.env.MATFLOW_APPLICATIONS_TO ?? "noetopalian@gmail.com")
@@ -173,21 +296,26 @@ export async function POST(req: Request) {
       ),
     );
 
+    const teamReached = notified.some((r) => r.status === "fulfilled" && r.value?.ok === true);
+
+    // Durable (awaited, own transaction): a retry reads teamNotified and notes
+    // back from this row (alreadyReceived). If the write still fails, the job
+    // and email stand; a later replay then says it can't confirm, which is true.
     await logAudit({
       tenantId,
       userId,
       action: "onboarding.csv_handoff",
       entityType: "ImportJob",
       entityId: job.id,
-      metadata: { fileName: job.fileName, sizeBytes: file.size, notes: notes || null },
+      metadata: { fileName: job.fileName, sizeBytes: file.size, notes: notes || null, teamNotified: teamReached },
       req,
-    });
+      durable: true,
+    }).catch((e) => console.warn("[onboarding/csv-handoff] audit write failed", e instanceof Error ? e.message : e));
 
-    const teamReached = notified.some((r) => r.status === "fulfilled" && r.value?.ok === true);
     const message = !isEmailDeliveryOn()
-      ? "Your file is uploaded and safe. Email is turned off for this club, so the MatFlow team was not notified automatically and you won't get an email when it's done — let your MatFlow contact know it's there."
+      ? MAIL_OFF
       : teamReached
-        ? "We'll import your members within 1 business day and email you when they're ready."
+        ? SENT
         : "Your file is uploaded and safe, but our automatic notification to the MatFlow team didn't go through — email hello@matflow.studio so we can import it.";
 
     return NextResponse.json(
@@ -199,6 +327,16 @@ export async function POST(req: Request) {
       { status: 201 },
     );
   } catch (e) {
+    // Stored but no job committed (the transaction failed): remove the file
+    // unless a job does point at it (the commit landed but its answer was
+    // lost), so member data is never left in storage with nothing to find it.
+    if (storedUrl && !committed) {
+      const url = storedUrl;
+      const owned = await withTenantContext(tenantId, (tx) =>
+        tx.importJob.findFirst({ where: { tenantId, fileBlobUrl: url }, select: { id: true } }),
+      ).catch(() => ({ id: "unknown" }));
+      if (!owned) await del(url).catch(() => {});
+    }
     return apiError("CSV handoff upload failed", 500, e, "[onboarding/csv-handoff]");
   }
 }

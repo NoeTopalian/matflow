@@ -88,7 +88,11 @@ describe("owner wizard: 'Finish setup' only on the last step", () => {
     const src = readFileSync(path.join(process.cwd(), "components/onboarding/OwnerOnboardingWizard.tsx"), "utf8");
     const hits = [...src.matchAll(/"Finish setup →"/g)].map((m) => m.index!);
     expect(hits).toHaveLength(1);
-    expect(hits[0]).toBeGreaterThan(src.indexOf("Step 9 of {TOTAL_STEPS}"));
+    // Anchored on the block comment: batch 1 (16 Oct 2026) removed the
+    // duplicate in-step "Step 9 of" label this used to find.
+    const step9 = src.indexOf("── Step 9: Member import");
+    expect(step9).toBeGreaterThan(0);
+    expect(hits[0]).toBeGreaterThan(step9);
     expect(src).not.toMatch(/>One last thing</);
   });
 });

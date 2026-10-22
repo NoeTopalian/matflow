@@ -14,7 +14,36 @@ interface Props {
   tenantName: string;
   ownerName: string;
   primaryColor: string;
+  /** The club's saved name; the session's tenantName can lag a rename. */
+  storedName?: string | null;
+  /** The club's saved time zone, so step 1 only changes it when it differs. */
+  storedTimezone?: string | null;
+  /** The club's saved logo size, so step 5 only saves it when the owner changes it. */
+  storedLogoSize?: "sm" | "md" | "lg" | null;
+  /** True when the club already finished setup (wizard reopened with ?resume=1). */
+  alreadyOnboarded?: boolean;
+  /** The club's saved questionnaire answers, so step 6 prefills them and saves only a change. */
+  storedAnswers?: StoredAnswers | null;
+  /** True when the club may have saved answers that couldn't be read; step 6 then saves nothing. */
+  answersUnknown?: boolean;
 }
+
+export type StoredAnswers = { size: string; goals: string[]; referral: string; referralOther: string | null };
+
+/** Shown, and the step kept, whenever a save does not succeed (Batch 1, 16 Oct 2026). */
+// Not "nothing has changed": after a dropped connection the server may have
+// saved it. Every save the wizard retries is safe to send twice.
+const SAVE_FAILED = "We couldn't confirm that saved. Check your connection and try again.";
+const SIGNED_OUT = "You've been signed out, so that wasn't saved. Sign in again, then carry on with setup.";
+// Failure messages stay up long enough to read (the default toast is 3.5 s).
+const FAIL_MS = 8000;
+// What was saved earlier in this run stays saved; the wizard never deletes.
+const RANKS_KEPT = "Belt systems and ranks you'd already saved stay as first saved, including any you removed or changed here. Change or delete them on the Ranks page.";
+const CLASSES_KEPT = "Classes you'd already saved stay as first saved, including any you removed or changed here. Change or delete them on the Timetable page.";
+
+type RankDraft = { discipline: string; name: string; order: number; color: string; stripes: number };
+
+const FINISH_FAILED = "We couldn't finish setup. Nothing is lost — try again.";
 
 interface ClassDraft {
   id: string;
@@ -119,6 +148,30 @@ const DAYS_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 // UI day index 0=Mon..6=Sun → JS dayOfWeek (0=Sun..6=Sat)
 function uiDayToJs(d: number) { return (d + 1) % 7; }
 
+/** GET /api/classes returns at most this many classes (its defaultTake/maxTake). */
+const CLASS_PAGE = 100;
+
+type ServerClass = {
+  id: string; name: string; coachName?: string | null; location?: string | null; maxCapacity?: number | null; duration?: number | null;
+  schedules?: Array<{ dayOfWeek: number; startTime: string; endTime: string }>;
+};
+type ClassList = { items: ServerClass[]; complete: boolean };
+type LostClass = { kind: "found"; id: string } | { kind: "none" } | { kind: "uncertain" };
+
+/** Exactly what step 4 sends to POST /api/classes for a draft. */
+function classPayload(cls: ClassDraft) {
+  const [sh, sm] = cls.startTime.split(":").map(Number);
+  const [eh, em] = cls.endTime.split(":").map(Number);
+  return {
+    name: cls.name,
+    coachName: cls.coach || undefined,
+    location: cls.location || undefined,
+    duration: Math.max((eh * 60 + em) - (sh * 60 + sm), 30),
+    maxCapacity: cls.capacity ? parseInt(cls.capacity) : undefined,
+    schedules: cls.days.map((d) => ({ dayOfWeek: uiDayToJs(d), startTime: cls.startTime, endTime: cls.endTime })),
+  };
+}
+
 function hex(h: string, a: number) {
   const n = parseInt(h.replace("#", ""), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
@@ -131,10 +184,35 @@ function uid() { return Math.random().toString(36).slice(2); }
  * Empty string when the runtime will not say — step 1 then sends nothing and
  * the column keeps its Europe/London default, which is the honest outcome.
  */
-const detectedTimezone: string = (() => {
+function readDeviceTimezone(): string {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone ?? ""; }
   catch { return ""; }
-})();
+}
+
+/** Identifies "the same file" across a reload: name, size and modified time. */
+function csvFingerprint(f: File): string {
+  return `${f.name}:${f.size}:${f.lastModified}`;
+}
+
+/** The CSV hand-off reference kept for this tab, if any. */
+function readCsvRef(key: string): { fp: string; ref: string; notes: string } | null {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(key) ?? "null") as { fp?: unknown; ref?: unknown; notes?: unknown } | null;
+    if (v && typeof v.fp === "string" && typeof v.ref === "string" && /^[a-f0-9]{32}$/.test(v.ref)) {
+      return { fp: v.fp, ref: v.ref, notes: typeof v.notes === "string" ? v.notes : "" };
+    }
+  } catch { /* storage unavailable or malformed */ }
+  return null;
+}
+
+/** A second click within this window of a step change is the same gesture. */
+const ADVANCE_GUARD_MS = 400;
+
+/** Statuses meaning "this input was refused" — retrying it unchanged won't help.
+ * 401/403/429 and 5xx are a session, rate or connection problem instead. */
+function isInputRefused(status: number): boolean {
+  return status === 400 || status === 422;
+}
 
 // ─── Belt strip preview ───────────────────────────────────────────────────────
 
@@ -192,6 +270,29 @@ function GymPreview({ gymName, color }: { gymName: string; color: string }) {
   );
 }
 
+// ─── Failure note ─────────────────────────────────────────────────────────────
+
+/**
+ * The last failed save on this step, shown next to the step's buttons until
+ * the owner tries again, moves on or dismisses it (onboarding batch 1, 17 Oct
+ * 2026). The toast that also fires disappears after a few seconds; this stays.
+ */
+function StepFailure({ message, onDismiss }: { message: string | null; onDismiss: () => void }) {
+  if (!message) return null;
+  return (
+    <div
+      role="alert"
+      className="mt-4 flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs leading-relaxed"
+      style={{ borderColor: "rgba(239,68,68,0.45)", background: "rgba(239,68,68,0.08)", color: "rgba(255,255,255,0.9)" }}
+    >
+      <span className="flex-1">{message}</span>
+      <button onClick={onDismiss} aria-label="Dismiss this message" className="shrink-0 p-1 -m-1" style={{ color: "rgba(255,255,255,0.7)" }}>
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+}
+
 // ─── Class form ───────────────────────────────────────────────────────────────
 
 function ClassForm({
@@ -222,7 +323,7 @@ function ClassForm({
           placeholder="Class name"
           className="bg-transparent text-white text-sm font-semibold outline-none flex-1 placeholder-gray-600"
         />
-        <button onClick={onRemove} className="text-gray-600 hover:text-gray-400 ml-2">
+        <button onClick={onRemove} aria-label="Remove class" className="text-gray-600 hover:text-gray-400 ml-2">
           <X className="w-4 h-4" />
         </button>
       </div>
@@ -292,9 +393,26 @@ function ClassForm({
 
 // ─── Wizard ───────────────────────────────────────────────────────────────────
 
-export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryColor: initColor }: Props) {
+export default function OwnerOnboardingWizard({
+  tenantName,
+  ownerName,
+  primaryColor: initColor,
+  storedName = null,
+  storedTimezone = null,
+  storedLogoSize = null,
+  storedAnswers = null,
+  answersUnknown = false,
+  alreadyOnboarded = false,
+}: Props) {
   const { toast } = useToast();
   const router = useRouter();
+  // The last failed save, kept beside the step's buttons (StepFailure).
+  const [stepFailure, setStepFailure] = useState<string | null>(null);
+  /** A save failed: say so where the owner acts, and in a toast. */
+  function fail(message: string, ms = FAIL_MS) {
+    setStepFailure(message);
+    toast(message, "error", ms);
+  }
   const fileRef = useRef<HTMLInputElement>(null);
   // F-14: a refresh used to restart at step 1. The step is kept for this tab so
   // a reload lands where the owner was; a fresh sign-in starts over.
@@ -306,7 +424,12 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       if (saved >= 1 && saved <= 9) setStepState(saved);
     } catch { /* storage unavailable: start at 1 */ }
   }, [stepKey]);
+  // When the step last changed. The next step's Continue/Skip renders where
+  // the last one was, so the second click of a double click would otherwise
+  // land on it and move a second step (Batch 1).
+  const lastStepChangeAt = useRef(0);
   const setStep = useCallback((next: number | ((prev: number) => number)) => {
+    lastStepChangeAt.current = Date.now();
     setStepState((prev) => {
       const value = typeof next === "function" ? next(prev) : next;
       try { sessionStorage.setItem(stepKey, String(value)); } catch { /* ignore */ }
@@ -314,9 +437,26 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
     });
   }, [stepKey]);
   const [loading, setLoading] = useState(false);
+  // A second click before React re-renders must not start a second save.
+  // goNext/skip hold this for their whole run.
+  const busyRef = useRef(false);
+  const justChangedStep = () => Date.now() - lastStepChangeAt.current < ADVANCE_GUARD_MS;
 
-  // Step 1
-  const [gymName, setGymName] = useState(tenantName);
+  // Read on the client after mount: on the server this would be the server's
+  // zone, and the step 1 note would render differently on each side.
+  const [detectedTimezone, setDetectedTimezone] = useState<string | null>(null);
+  useEffect(() => { setDetectedTimezone(readDeviceTimezone()); }, []);
+  // A failure note belongs to the step it happened on.
+  useEffect(() => { setStepFailure(null); }, [step]);
+
+  // Step 1 sends the device zone only for a club that has not finished setup
+  // and whose saved zone differs. A reopened wizard never moves the zone.
+  const willSetTimezone = !alreadyOnboarded && !!detectedTimezone && detectedTimezone !== (storedTimezone ?? "");
+
+  // Step 1: prefilled from, and compared with, the club's saved name — the
+  // session's copy can lag a rename made in Settings.
+  const savedName = storedName ?? tenantName;
+  const [gymName, setGymName] = useState(savedName);
 
   // Step 2
   const [sports, setSports] = useState<string[]>([]);
@@ -340,14 +480,38 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   const [primaryColor, setPrimaryColor] = useState(initColor);
   // Wizard Step 5 expansion to mirror Settings → Branding tab.
   const [themeMode, setThemeMode] = useState<"dark" | "light">("dark");
-  const [logoSize, setLogoSize] = useState<"sm" | "md" | "lg">("md");
+  const [logoSize, setLogoSize] = useState<"sm" | "md" | "lg">(storedLogoSize ?? "md");
+  // What the server holds now, so passing step 5 again sends nothing new.
+  const savedLogoSize = useRef<"sm" | "md" | "lg">(storedLogoSize ?? "md");
+  const uploadedLogo = useRef<{ file: File; url: string } | null>(null);
+  const savedLogoUrl = useRef<string | null>(null);
 
-  // Step 6 — questionnaire
-  const [gymSize, setGymSize] = useState("");
-  const [goals, setGoals] = useState<string[]>([]);
-  const [referral, setReferral] = useState("");
+  // Step 4: classes already created in this run, by draft id, with the draft
+  // as saved. Back then Continue used to create every class and its sessions
+  // a second time.
+  const createdClasses = useRef<Map<string, string>>(new Map());
+  // Lost responses on step 4: drafts whose save got no answer, server ids this
+  // run created or adopted, and the club's class ids before this run saved any
+  // (undefined = not read yet; no class is sent until it has been read).
+  const unconfirmedClasses = useRef<Map<string, string>>(new Map()); // draft id -> the draft as sent
+  const serverClassIds = useRef<Set<string>>(new Set());
+  const classesBeforeRun = useRef<ClassList | undefined>(undefined);
+  // Saves that succeeded but whose new class id couldn't be read: while any
+  // exist, a matching class can't be told apart from them, so none is adopted.
+  const unidentifiedSaves = useRef(0);
+  // Step 3: ranks saved in this run, by discipline#order, with what was sent.
+  const savedRanks = useRef<Map<string, string>>(new Map());
+
+  // Step 6 — questionnaire, prefilled from what the club already answered.
+  const [gymSize, setGymSize] = useState(storedAnswers?.size ?? "");
+  const [goals, setGoals] = useState<string[]>(storedAnswers?.goals ?? []);
+  const [referral, setReferral] = useState(storedAnswers?.referral ?? "");
   // Sub-project #4: free-text input shown when referral === "other".
-  const [referralOther, setReferralOther] = useState("");
+  const [referralOther, setReferralOther] = useState(storedAnswers?.referralOther ?? "");
+  // What the server holds, in the shape step 6 sends; a match sends nothing.
+  const savedAnswers = useRef<string | null>(storedAnswers ? JSON.stringify({
+    size: storedAnswers.size, goals: storedAnswers.goals, referral: storedAnswers.referral, referralOther: storedAnswers.referralOther,
+  }) : null);
 
   // Step 7 — payment rail (Wizard v2)
   const [paymentRail, setPaymentRail] = useState<"" | "pay_at_desk" | "stripe">("");
@@ -359,6 +523,16 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
   const [csvNotes, setCsvNotes] = useState("");
   const [csvUploaded, setCsvUploaded] = useState(false);
   const [csvHandoffMessage, setCsvHandoffMessage] = useState<string | null>(null);
+  // Shown when a hand-off did not go through; the button stays available.
+  const [csvHandoffError, setCsvHandoffError] = useState<string | null>(null);
+  // One reference per chosen file, resent on every retry of it, so a retry
+  // after a lost response finds the first upload instead of sending it twice.
+  // Kept for this tab with the file's fingerprint (name, size, modified time),
+  // so a reload or choosing the same file again reuses it.
+  const csvClientRef = useRef<string | null>(null);
+  const csvRefKey = `${stepKey}.csvref`;
+  // Notes sent with the first attempt under the current reference.
+  const csvNotesSent = useRef<string | null>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
 
   // Completion
@@ -406,7 +580,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
     try {
       file = await downscaleImage(original, IMAGE_MAX_EDGE_PX);
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Couldn't read that image", "error");
+      fail(err instanceof Error ? err.message : "Couldn't read that image");
       return;
     }
     setLogoFile(file);
@@ -415,101 +589,358 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
     reader.readAsDataURL(file);
   }
 
+  /** The server's reason for refusing a request, for naming it to the owner. */
+  async function serverError(res: Response): Promise<string> {
+    const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+    return typeof body.error === "string" && body.error ? body.error : `error ${res.status}`;
+  }
+
+  /** Every rank step 3 would send for the current selection, in send order. */
+  function rankDrafts(): RankDraft[] {
+    const out: RankDraft[] = [];
+    for (const presetName of selectedPresets) {
+      const preset = RANK_PRESETS[presetName];
+      if (!preset) continue;
+      preset.forEach((r, i) => out.push({
+        discipline: presetName, name: r.name, order: i, color: r.color, stripes: presetName === "BJJ" ? 4 : 0,
+      }));
+    }
+    // Sub-project #1: persist custom rank systems alongside presets.
+    for (const sys of customRankSystems) {
+      const discipline = sys.discipline.trim();
+      if (!discipline) continue;
+      sys.ranks
+        .map((r) => ({ name: r.name.trim(), color: r.color }))
+        .filter((r) => r.name.length > 0)
+        .forEach((r, i) => out.push({ discipline, name: r.name, order: i, color: r.color, stripes: 0 }));
+    }
+    return out;
+  }
+
+  /** True when a rank saved earlier in this run has since been removed or changed here. */
+  function rankChangesAfterSave(): boolean {
+    const drafts = new Map(rankDrafts().map((r) => [`${r.discipline}#${r.order}`, JSON.stringify(r)]));
+    for (const [key, sent] of savedRanks.current) {
+      if (drafts.get(key) !== sent) return true;
+    }
+    return false;
+  }
+
+  /** True when a class saved earlier in this run has since been removed or changed here. */
+  function classChangesAfterSave(): boolean {
+    for (const [id, sent] of createdClasses.current) {
+      const now = classes.find((c) => c.id === id);
+      if (!now || JSON.stringify(now) !== sent) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The club's classes, or null when the list can't be read. `strict=1` makes
+   * the route answer an internal error as a 5xx instead of an empty list, so
+   * an empty list here really is empty. The route returns one page of at most
+   * CLASS_PAGE classes by name; a full page may be cut short, so it is marked
+   * incomplete and "not in it" proves nothing.
+   */
+  async function listClasses(): Promise<ClassList | null> {
+    // Bounded: Save and Skip wait on this, and a stalled connection must not
+    // hold either button for minutes.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10_000);
+    try {
+      const res = await fetch("/api/classes?strict=1", { signal: ctrl.signal }).catch(() => null);
+      if (!res || !res.ok) return null;
+      const data = (await res.json().catch(() => null)) as unknown;
+      if (!Array.isArray(data)) return null;
+      return { items: data as ServerClass[], complete: data.length < CLASS_PAGE };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Settle saves that got no answer, by the draft AS SENT (it may since have
+   * been edited or removed). A class the server made anyway is adopted as
+   * saved — so a later edit or removal of it is reported like any saved class.
+   * One the server didn't make is forgotten (Save then sends a draft still on
+   * screen normally). Anything that can't be identified with confidence (list
+   * unreadable or cut short, two possible matches, an earlier save whose id
+   * is unknown) stays unsettled and is reported — never re-sent or guessed.
+   * Returns the names of sends that couldn't be settled now, that turned out
+   * to be saved, and that weren't.
+   */
+  async function settleUnconfirmedDetailed(): Promise<{ unchecked: string[]; madeAfterAll: string[]; notMade: string[] }> {
+    const unchecked: string[] = [];
+    const madeAfterAll: string[] = [];
+    const notMade: string[] = [];
+    if (unconfirmedClasses.current.size === 0) return { unchecked, madeAfterAll, notMade };
+    const before = classesBeforeRun.current;
+    const list = before ? await listClasses() : null;
+    for (const [draftId, sent] of [...unconfirmedClasses.current]) {
+      const draft = JSON.parse(sent) as ClassDraft;
+      if (!before || !list) { unchecked.push(draft.name.trim()); continue; }
+      const result = findLostClass(draft, list, before);
+      if (result.kind === "uncertain") { unchecked.push(draft.name.trim()); continue; }
+      unconfirmedClasses.current.delete(draftId);
+      if (result.kind === "found") {
+        createdClasses.current.set(draftId, sent);
+        serverClassIds.current.add(result.id);
+        madeAfterAll.push(draft.name.trim());
+      } else {
+        notMade.push(draft.name.trim());
+      }
+    }
+    return { unchecked, madeAfterAll, notMade };
+  }
+
+  async function settleUnconfirmed(): Promise<string[]> {
+    return (await settleUnconfirmedDetailed()).unchecked;
+  }
+
+  /** “A”, “A” and “B”, “A”, “B” and “C”. */
+  function quoteNames(names: string[]): string {
+    const q = names.map((n) => `“${n}”`);
+    return q.length <= 1 ? (q[0] ?? "") : `${q.slice(0, -1).join(", ")} and ${q[q.length - 1]}`;
+  }
+
+  /** What to say about sends that couldn't be checked: name them and say what to do. */
+  function uncheckedMessage(names: string[], retry = false): string {
+    const one = names.length === 1;
+    return `We couldn't confirm whether ${quoteNames(names)} reached us.${retry ? " Press Save again to check once your connection is back (or sign in again if you've been signed out)." : ""} If this keeps happening, skip this step and look on the Timetable page: add ${one ? "it" : "any"} if missing, or delete the extra if there are two.`;
+  }
+
+  /**
+   * Whether an unanswered save of `cls` made a class: one that was not there
+   * before this run, is not already this run's, and matches everything that
+   * was sent (name, coach, location, capacity, duration, days and times).
+   * Only a single match against complete lists counts as "found", and only a
+   * complete list proves "none"; anything else is "uncertain".
+   */
+  function findLostClass(cls: ClassDraft, list: ClassList, before: ClassList): LostClass {
+    const sent = classPayload(cls);
+    const days = sent.schedules.map((s) => s.dayOfWeek).sort().join(",");
+    const beforeIds = new Set(before.items.map((c) => c.id));
+    const candidates = list.items.filter((c) =>
+      !beforeIds.has(c.id) &&
+      !serverClassIds.current.has(c.id) &&
+      c.name === sent.name &&
+      (c.coachName ?? null) === (sent.coachName ?? null) &&
+      (c.location ?? null) === (sent.location ?? null) &&
+      (c.maxCapacity ?? null) === (sent.maxCapacity ?? null) &&
+      (c.duration ?? null) === sent.duration &&
+      (c.schedules ?? []).map((s) => s.dayOfWeek).sort().join(",") === days &&
+      (c.schedules ?? []).every((s) => s.startTime === cls.startTime && s.endTime === cls.endTime),
+    );
+    if (candidates.length > 1) return { kind: "uncertain" };
+    if (candidates.length === 1) {
+      // A class from an earlier save whose id is unknown, or one missing from
+      // a cut-short "before" list, could be this very match.
+      if (!before.complete || unidentifiedSaves.current > 0) return { kind: "uncertain" };
+      return { kind: "found", id: candidates[0].id };
+    }
+    return list.complete ? { kind: "none" } : { kind: "uncertain" };
+  }
+
+  /** True only for the hand-off route's own "uploads aren't available" 503. */
+  async function uploadsUnavailable(res: Response): Promise<boolean> {
+    const body = (await res.clone().json().catch(() => null)) as { code?: unknown } | null;
+    return body?.code === "uploads_unavailable";
+  }
+
+  /**
+   * A 403's reason as an owner can act on it: the server's own sentence when it
+   * is one, otherwise plain words (a platform page, or a cross-site check's
+   * technical message such as "Invalid Referer").
+   */
+  async function forbiddenReason(res: Response): Promise<string> {
+    const body = (await res.clone().json().catch(() => null)) as { error?: unknown } | null;
+    const said = typeof body?.error === "string" ? body.error.trim() : "";
+    const technical = !said || /referer|origin|csrf|forbidden/i.test(said);
+    const reason = technical ? "access was refused. Refresh the page, sign in again if asked, then try again" : said;
+    return /[.!?]$/.test(reason) ? reason : `${reason}.`;
+  }
+
+  /** Setup is finished: the CSV hand-off reference has done its job for this tab. */
+  function forgetCsvRef() {
+    csvClientRef.current = null;
+    csvNotesSent.current = null;
+    try { sessionStorage.removeItem(csvRefKey); } catch { /* ignore */ }
+  }
+
+  /** PATCH /api/settings; null when no response arrived. */
+  async function patchSettings(body: Record<string, unknown>): Promise<Response | null> {
+    return fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => null);
+  }
+
+  /** What to tell the owner when a save did not succeed — the cause, not a guess. */
+  async function saveFailure(res: Response | null, fallback = SAVE_FAILED): Promise<string> {
+    if (res && res.status === 401) return SIGNED_OUT;
+    // 403 is not "signed out" (support access, an authenticator or password
+    // step, a cross-site check): the server's own sentence says what it is.
+    if (res && res.status === 403) return `That wasn't saved: ${await forbiddenReason(res)}`;
+    // Refused as entered: retrying unchanged can't work, so say what was wrong.
+    if (res && isInputRefused(res.status)) return `We couldn't save that: ${await serverError(res)}. Check what you entered and try again.`;
+    return fallback;
+  }
+
+  // Batch 1 (16 Oct 2026): every save is checked. A failed save keeps the
+  // owner on the step with SAVE_FAILED; nothing advances wearing a tick, and
+  // only fields the owner actually changed are sent.
   async function goNext() {
+    if (busyRef.current || justChangedStep()) return;
+    busyRef.current = true;
     setLoading(true);
+    setStepFailure(null); // a new attempt; it is set again if this one fails
     try {
       if (step === 1) {
-        if (gymName.trim()) {
-          // Campaign lane L-B, J16. `Tenant.timezone` decides which day
-          // Register calls today, which day a class is filed under and when
-          // check-in opens, and prisma/schema.prisma has claimed since the
-          // column was added that it "defaults from owner browser at
-          // onboarding step 1" — which nothing did. It does now, and the
-          // screen says so rather than setting it behind the owner's back;
-          // Settings → Waiver carries the control that changes it.
-          await fetch("/api/settings", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(
-              detectedTimezone
-                ? { name: gymName.trim(), timezone: detectedTimezone }
-                : { name: gymName.trim() },
-            ),
-          });
+        // Campaign lane L-B, J16: `Tenant.timezone` decides which day Register
+        // calls today and when check-in opens. The device zone is applied
+        // only to a club still in first setup whose saved zone differs; the
+        // screen says so. A reopened wizard never moves it.
+        const body: Record<string, unknown> = {};
+        const name = gymName.trim();
+        if (name && name !== savedName) body.name = name;
+        if (willSetTimezone) body.timezone = detectedTimezone;
+        if (Object.keys(body).length > 0) {
+          const res = await patchSettings(body);
+          if (!res?.ok) {
+            fail(await saveFailure(res), FAIL_MS);
+            return;
+          }
         }
       } else if (step === 3) {
         let totalRanks = 0;
-        for (const presetName of selectedPresets) {
-          const preset = RANK_PRESETS[presetName];
-          if (!preset) continue;
-          for (let i = 0; i < preset.length; i++) {
-            const res = await fetch("/api/ranks", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                discipline: presetName,
-                name: preset[i].name,
-                order: i,
-                color: preset[i].color,
-                stripes: presetName === "BJJ" ? 4 : 0,
-              }),
-            });
-            if (res.ok || res.status === 409) totalRanks++;
+        let rankFailed = false;
+        let rankEditedAfterSave = false;
+        const rejectedRanks: string[] = [];
+        // A belt system or rank saved earlier in this run and since removed or
+        // changed here stays on the server as first saved; say so (below).
+        if (rankChangesAfterSave()) rankEditedAfterSave = true;
+        const postRank = async (rank: RankDraft) => {
+          const key = `${rank.discipline}#${rank.order}`;
+          const payload = JSON.stringify(rank);
+          const res = await fetch("/api/ranks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: payload,
+          }).catch(() => null);
+          if (res && res.ok) {
+            savedRanks.current.set(key, payload);
+            totalRanks++;
+          } else if (res && res.status === 409) {
+            // 409 = this rank already exists (unique per discipline+order), so a
+            // retry after a partial failure never duplicates. If this run saved
+            // it with different details, the change was not applied — say so.
+            totalRanks++;
+            const prior = savedRanks.current.get(key);
+            if (prior !== undefined && prior !== payload) rankEditedAfterSave = true;
+          } else if (res && isInputRefused(res.status)) {
+            rejectedRanks.push(`“${rank.name}” (${await serverError(res)})`);
+          } else {
+            rankFailed = true;
           }
-        }
-        // Sub-project #1: persist custom rank systems alongside presets.
-        for (const sys of customRankSystems) {
-          const discipline = sys.discipline.trim();
-          if (!discipline) continue;
-          const cleanRanks = sys.ranks
-            .map((r) => ({ name: r.name.trim(), color: r.color }))
-            .filter((r) => r.name.length > 0);
-          for (let i = 0; i < cleanRanks.length; i++) {
-            const res = await fetch("/api/ranks", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                discipline,
-                name: cleanRanks[i].name,
-                order: i,
-                color: cleanRanks[i].color,
-                stripes: 0,
-              }),
-            });
-            if (res.ok || res.status === 409) totalRanks++;
-          }
-        }
+        };
+        for (const rank of rankDrafts()) await postRank(rank);
         setSummary((s) => ({ ...s, ranks: totalRanks }));
+        if (rejectedRanks.length > 0) {
+          fail(`These ranks weren't accepted: ${rejectedRanks.join("; ")}. Change or remove them, then try again.`, FAIL_MS);
+          return;
+        }
+        if (rankFailed) {
+          fail("Some ranks didn't save. Check your connection (or sign in again if you've been signed out), then try again — ranks already saved won't be added twice.", FAIL_MS);
+          return;
+        }
+        if (rankEditedAfterSave) toast(RANKS_KEPT, "info", 6000);
       } else if (step === 4) {
         let totalClasses = 0;
+        let createdNow = 0;
+        let classFailed = false;
+        const rejectedClasses: string[] = [];
+        const failedNames: string[] = [];
+        // The club's classes before this run first saves any, so a class a
+        // lost response created can be told apart from one that was there. No
+        // class is sent until this has been read: without it, a save that gets
+        // no answer could never be checked. If it can't be read now, nothing is
+        // sent and the read is tried again on the next Save.
+        const toSend = classes.some((c) => !createdClasses.current.has(c.id) && !!c.name.trim() && c.days.length > 0 && !!c.startTime && !!c.endTime);
+        if (classesBeforeRun.current === undefined && toSend) {
+          const list = await listClasses();
+          if (!list) {
+            fail("We couldn't load your timetable, so no classes were saved. Check your connection (or sign in again if you've been signed out), then press Save again.", FAIL_MS);
+            return;
+          }
+          classesBeforeRun.current = list;
+        }
+        // Saves that got no answer are settled first (settleUnconfirmed); what
+        // can't be checked now is not re-sent, and is named to the owner.
+        const unchecked = await settleUnconfirmed();
+        const editedAfterSave = classChangesAfterSave();
         for (const cls of classes) {
+          // Checked before completeness: a saved class edited down to a blank
+          // draft is still on the server (classChangesAfterSave reports it).
+          if (createdClasses.current.has(cls.id)) {
+            totalClasses++;
+            continue;
+          }
           if (!cls.name.trim() || cls.days.length === 0 || !cls.startTime || !cls.endTime) continue;
-          const [sh, sm] = cls.startTime.split(":").map(Number);
-          const [eh, em] = cls.endTime.split(":").map(Number);
-          const duration = Math.max((eh * 60 + em) - (sh * 60 + sm), 30);
-          const schedules = cls.days.map((d) => ({
-            dayOfWeek: uiDayToJs(d),
-            startTime: cls.startTime,
-            endTime: cls.endTime,
-          }));
+          // Still unsettled (list unreadable): don't risk a second copy.
+          if (unconfirmedClasses.current.has(cls.id)) {
+            classFailed = true;
+            continue;
+          }
           const res = await fetch("/api/classes", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: cls.name,
-              coachName: cls.coach || undefined,
-              location: cls.location || undefined,
-              duration,
-              maxCapacity: cls.capacity ? parseInt(cls.capacity) : undefined,
-              schedules,
-            }),
-          });
-          if (res.ok) totalClasses++;
+            body: JSON.stringify(classPayload(cls)),
+          }).catch(() => null);
+          if (res && res.ok) {
+            const made = (await res.json().catch(() => null)) as { id?: unknown } | null;
+            if (typeof made?.id === "string") serverClassIds.current.add(made.id);
+            else unidentifiedSaves.current++;
+            createdClasses.current.set(cls.id, JSON.stringify(cls));
+            unconfirmedClasses.current.delete(cls.id);
+            totalClasses++;
+            createdNow++;
+          } else if (res && isInputRefused(res.status)) {
+            // The server refused this class as entered; retrying unchanged
+            // would be refused again, so name it and say why.
+            rejectedClasses.push(`“${cls.name.trim()}” (${await serverError(res)})`);
+          } else {
+            // No answer, or a server failure: the class may exist anyway.
+            if (!res || res.status >= 500) unconfirmedClasses.current.set(cls.id, JSON.stringify(cls));
+            classFailed = true;
+            failedNames.push(cls.name.trim());
+          }
         }
-        if (totalClasses > 0) {
+        if (createdNow > 0) {
           await fetch("/api/instances/generate", { method: "POST" }).catch(() => {});
         }
         setSummary((s) => ({ ...s, classes: totalClasses }));
+        if (rejectedClasses.length > 0) {
+          if (unchecked.length > 0) toast(uncheckedMessage(unchecked), "info", 10000);
+          fail(`These classes weren't accepted: ${rejectedClasses.join("; ")}. Change or remove them, then press Save again.`, FAIL_MS);
+          return;
+        }
+        if (classFailed) {
+          // A class whose answer was lost is found and adopted on the retry
+          // while the class list can be read; when it can't right now, the
+          // classes concerned are named and nothing is promised. Every class
+          // that failed in this press is named, so none can be dropped unseen.
+          const others = failedNames.filter((n) => !unchecked.includes(n));
+          fail(
+            unchecked.length > 0
+              ? `${uncheckedMessage(unchecked, true)}${others.length > 0 ? ` ${quoteNames(others)} didn't save either.` : ""}`
+              : `${quoteNames(failedNames)} didn't save. Check your connection (or sign in again if you've been signed out), then press Save again — classes already saved won't be added twice.`,
+            10000,
+          );
+          return;
+        }
+        if (unchecked.length > 0) toast(uncheckedMessage(unchecked), "info", 10000);
+        if (editedAfterSave) toast(CLASSES_KEPT, "info", 6000);
       } else if (step === 5) {
         const body: Record<string, unknown> = {};
         if (theme) {
@@ -518,52 +949,75 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           body.textColor = theme.text;
           body.bgColor = theme.bg;
           body.fontFamily = theme.font;
-          setPrimaryColor(theme.primary);
-          setSummary((s) => ({ ...s, theme: theme.name }));
         }
-        // Persist the logo-size choice from the wizard's expanded Step 5
-        // (mirrors the Settings → Branding tab control).
-        body.logoSize = logoSize;
+        // Logo size only when the owner changed it: passing this step used to
+        // reset a club's saved size to "md".
+        if (logoSize !== savedLogoSize.current) body.logoSize = logoSize;
         if (logoFile) {
-          const fd = new FormData();
-          fd.append("file", logoFile);
-          const uploadRes = await fetch("/api/upload", { method: "POST", body: fd });
-          if (uploadRes.ok) {
-            const data = await uploadRes.json() as { url?: string };
-            if (data.url) body.logoUrl = data.url;
-          } else {
-            const errBody = await uploadRes.json().catch(() => ({} as { error?: string }));
-            toast(
-              `Logo upload failed: ${errBody.error ?? `HTTP ${uploadRes.status}`}. Onboarding will continue without a logo — set it later in Settings.`,
-              "error",
-            );
+          // Upload a chosen file once; passing this step again reuses it
+          // instead of storing a second copy.
+          let url = uploadedLogo.current?.file === logoFile ? uploadedLogo.current.url : null;
+          if (!url) {
+            const fd = new FormData();
+            fd.append("file", logoFile);
+            const uploadRes = await fetch("/api/upload", { method: "POST", body: fd }).catch(() => null);
+            const data = uploadRes && uploadRes.ok
+              ? ((await uploadRes.json().catch(() => ({}))) as { url?: string })
+              : null;
+            if (!data?.url) {
+              const errBody = uploadRes && !uploadRes.ok
+                ? ((await uploadRes.json().catch(() => ({}))) as { error?: string })
+                : {};
+              fail(
+                `That logo didn't upload${errBody.error ? `: ${errBody.error}` : ""}. Your current logo hasn't changed. Press Next to try again or choose a different file — or press Skip to move on without saving the rest of this page.`,
+                FAIL_MS,
+              );
+              return;
+            }
+            url = data.url;
+            uploadedLogo.current = { file: logoFile, url };
           }
+          if (url !== savedLogoUrl.current) body.logoUrl = url;
         }
         if (Object.keys(body).length > 0) {
-          await fetch("/api/settings", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
+          const res = await patchSettings(body);
+          if (!res?.ok) {
+            fail(await saveFailure(res), FAIL_MS);
+            return;
+          }
+          if (typeof body.logoSize === "string") savedLogoSize.current = logoSize;
+          if (typeof body.logoUrl === "string") savedLogoUrl.current = body.logoUrl;
+        }
+        if (theme) {
+          setPrimaryColor(theme.primary);
+          setSummary((s) => ({ ...s, theme: theme.name }));
         }
       } else if (step === 6) {
         // Persist questionnaire answers but don't mark onboardingCompleted —
         // there are now 2 more steps (payment rail, CSV handoff) before
         // the celebration screen.
-        await fetch("/api/settings", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            onboardingAnswers: {
-              size: gymSize,
-              goals,
-              referral,
-              // Persist the free-text only when "other" is selected; trims and falls
-              // back to null so analytics queries on the JSON column stay clean.
-              referralOther: referral === "other" ? (referralOther.trim() || null) : null,
-            },
-          }),
-        }).catch(() => {});
+        const answers: StoredAnswers = {
+          size: gymSize,
+          goals,
+          referral,
+          // Persist the free-text only when "other" is selected; trims and falls
+          // back to null so analytics queries on the JSON column stay clean.
+          referralOther: referral === "other" ? (referralOther.trim() || null) : null,
+        };
+        // Only a change is saved: a reopened wizard used to overwrite a club's
+        // stored answers with blank goals and referral.
+        if (answersUnknown) {
+          // The club's saved answers couldn't be read: saving now could
+          // overwrite them, so nothing is sent and the owner is told.
+          toast("Your earlier answers couldn't be loaded, so these weren't saved. Nothing you'd saved before has changed.", "info", FAIL_MS);
+        } else if (JSON.stringify(answers) !== savedAnswers.current) {
+          const res = await patchSettings({ onboardingAnswers: answers });
+          if (!res?.ok) {
+            fail(await saveFailure(res), FAIL_MS);
+            return;
+          }
+          savedAnswers.current = JSON.stringify(answers);
+        }
       } else if (step === 7) {
         // Payment rail — record the owner's choice, for BOTH answers.
         //
@@ -589,7 +1043,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             ),
           }).catch(() => null);
           if (!railRes || !railRes.ok) {
-            toast("Couldn't save how you take payments — try again.", "error");
+            fail(await saveFailure(railRes, "Couldn't save how you take payments — try again."), FAIL_MS);
             return;
           }
         }
@@ -603,55 +1057,139 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
         // somehow invoked, just advance.
       } else if (step === 9) {
         // CSV handoff — if owner chose white-glove, the file is already
-        // uploaded via the upload-on-select pattern. Mark completion.
-        await fetch("/api/settings", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ onboardingCompleted: true }),
-        }).catch(() => {});
+        // uploaded via the upload-on-select pattern. Mark completion, and
+        // only show "ready" once the server has recorded it; otherwise the
+        // next dashboard visit would send the owner back to step 1.
+        const res = await patchSettings({ onboardingCompleted: true });
+        if (!res?.ok) {
+          fail(await saveFailure(res, FINISH_FAILED), FAIL_MS);
+          return;
+        }
+        forgetCsvRef();
         setStep(FINAL_STEP);
-        setLoading(false);
         return;
       }
       setStep((s) => s + 1);
     } catch {
-      setStep((s) => s + 1);
+      // Unexpected error: stay on this step rather than advance past it.
+      fail(SAVE_FAILED, FAIL_MS);
     } finally {
       setLoading(false);
+      busyRef.current = false;
     }
   }
 
   async function skip() {
+    if (busyRef.current || justChangedStep()) return;
+    setStepFailure(null);
     if (step === 9) {
-      // Skipping the last step still completes onboarding.
+      // Skipping the last step still completes onboarding — but only once
+      // the server has recorded it.
+      busyRef.current = true;
       setLoading(true);
-      await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ onboardingCompleted: true }),
-      }).catch(() => {});
+      const res = await patchSettings({ onboardingCompleted: true });
       setLoading(false);
+      busyRef.current = false;
+      if (!res?.ok) {
+        fail(await saveFailure(res, FINISH_FAILED), FAIL_MS);
+        return;
+      }
+      forgetCsvRef();
       setStep(FINAL_STEP);
       return;
     }
+    // Skip past saves that got no answer: settle them first, as Save does, so
+    // the owner is told what is and isn't on the timetable.
+    if (step === 4 && unconfirmedClasses.current.size > 0) {
+      busyRef.current = true;
+      setLoading(true);
+      let settled: Awaited<ReturnType<typeof settleUnconfirmedDetailed>> | null = null;
+      try {
+        settled = await settleUnconfirmedDetailed();
+      } finally {
+        setLoading(false);
+        busyRef.current = false;
+      }
+      const { unchecked, madeAfterAll, notMade } = settled;
+      const one = (n: string[]) => n.length === 1;
+      if (madeAfterAll.length > 0) {
+        // The last word the owner had was "didn't save": correct it.
+        toast(`${quoteNames(madeAfterAll)} ${one(madeAfterAll) ? "was" : "were"} saved after all — ${one(madeAfterAll) ? "it's" : "they're"} on your timetable.`, "info", 10000);
+        setSummary((s) => ({ ...s, classes: s.classes + madeAfterAll.length }));
+      }
+      if (unchecked.length > 0) toast(uncheckedMessage(unchecked), "info", 10000);
+      if (notMade.length > 0) toast(`${quoteNames(notMade)} ${one(notMade) ? "wasn't" : "weren't"} saved. Add ${one(notMade) ? "it" : "them"} on the Timetable page if you want ${one(notMade) ? "it" : "them"}.`, "info", 10000);
+    }
+    // Skip does not undo what this run already saved: say so, as Continue does.
+    if (step === 3 && rankChangesAfterSave()) toast(RANKS_KEPT, "info", 6000);
+    if (step === 4 && classChangesAfterSave()) toast(CLASSES_KEPT, "info", 6000);
     setStep((s) => s + 1);
   }
 
   async function uploadCsvHandoff() {
-    if (!csvFile) return;
+    if (!csvFile || busyRef.current) return;
+    busyRef.current = true;
     setLoading(true);
+    setCsvHandoffError(null);
+    const notes = csvNotes.trim();
+    if (!csvClientRef.current) {
+      csvClientRef.current = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+      csvNotesSent.current = notes;
+      try {
+        sessionStorage.setItem(csvRefKey, JSON.stringify({ fp: csvFingerprint(csvFile), ref: csvClientRef.current, notes }));
+      } catch { /* storage unavailable: the reference lives for this page only */ }
+    }
     try {
       const fd = new FormData();
       fd.append("file", csvFile);
-      if (csvNotes.trim()) fd.append("notes", csvNotes.trim());
-      const res = await fetch("/api/onboarding/csv-handoff", { method: "POST", body: fd });
-      if (res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { message?: unknown };
-        setCsvHandoffMessage(typeof data.message === "string" ? data.message : null);
+      if (notes) fd.append("notes", notes);
+      fd.append("clientRef", csvClientRef.current);
+      const res = await fetch("/api/onboarding/csv-handoff", { method: "POST", body: fd }).catch(() => null);
+      if (res && res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { message?: unknown; alreadyReceived?: unknown; notesMatch?: unknown };
+        let message = typeof data.message === "string" ? data.message : null;
+        // A retry that found the first upload keeps the first upload's notes.
+        // When the server has the first upload's record it says itself, in the
+        // right channel, whether changed notes were dropped (notesMatch false).
+        // With no record, fall back to the notes this tab sent first.
+        if (data.alreadyReceived === true && data.notesMatch == null && notes !== (csvNotesSent.current ?? "")) {
+          message = `${message ?? ""} Notes you changed after your first attempt may not have been added.`.trim();
+        }
+        setCsvHandoffMessage(message);
         setCsvUploaded(true);
+        // The reference is kept until setup finishes: if the page reloads
+        // before Finish, uploading the same file again finds this upload
+        // instead of sending it twice. It is forgotten once setup completes
+        // (forgetCsvRef); the route matches only jobs still awaiting import.
+      } else if (res && res.status === 401) {
+        setCsvHandoffError("Your file wasn't sent because you've been signed out. Sign in again, then upload it here.");
+      } else if (res && res.status === 403) {
+        setCsvHandoffError(`Your file wasn't sent: ${await forbiddenReason(res)}`);
+      } else if (res && res.status === 409 && ((await res.clone().json().catch(() => null)) as { code?: unknown } | null)?.code === "handoff_ref_mismatch") {
+        // This file's content differs from the upload its reference belongs
+        // to: forget that reference, so pressing Upload again sends this file
+        // as a new hand-off rather than being matched to the earlier one.
+        csvClientRef.current = null;
+        csvNotesSent.current = null;
+        try { sessionStorage.removeItem(csvRefKey); } catch { /* ignore */ }
+        setCsvHandoffError("This file is different from the one sent earlier, so it wasn't matched to that upload. Press Upload CSV again to send it as a new upload.");
+      } else if (res && res.status >= 400 && res.status < 500) {
+        // Refused before anything was stored (wrong type, too large, too many
+        // uploads): say why; the owner can fix it or choose another file.
+        setCsvHandoffError(`Your file wasn't sent: ${await serverError(res)}.`);
+      } else if (res && res.status === 503 && (await uploadsUnavailable(res))) {
+        // Our route's 503 is "uploads aren't available" — refused before
+        // anything was stored, and retrying won't help.
+        setCsvHandoffError("Your file wasn't sent: uploads aren't available right now. Choose another option above.");
+      } else {
+        // No response, or a server failure: it may or may not have arrived.
+        // The retry carries the same reference, so it can't arrive twice.
+        setCsvHandoffError("We couldn't confirm your file arrived. Press Upload CSV again — if it already arrived, it won't be sent twice. If it keeps failing, choose another option above.");
       }
-    } catch { /* show inline error if needed; csvUploaded stays false */ }
-    finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+      busyRef.current = false;
+    }
   }
 
   async function startStripeConnect() {
@@ -730,9 +1268,10 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <div className="flex items-center gap-3">
             {step > 1 && (
               <button
-                onClick={() => setStep((s) => s - 1)}
+                onClick={() => { if (!justChangedStep()) setStep((s) => s - 1); }}
+                disabled={loading}
                 aria-label="Back"
-                className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:bg-white/8"
+                className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:bg-white/8 disabled:opacity-40"
                 style={{ color: "rgba(255,255,255,0.4)" }}
               >
                 <ChevronLeft className="w-4 h-4" />
@@ -744,15 +1283,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               </p>
             </div>
           </div>
-          {step >= 3 && step <= 6 && (
-            <button
-              onClick={skip}
-              className="text-xs font-medium"
-              style={{ color: "rgba(255,255,255,0.3)" }}
-            >
-              Skip
-            </button>
-          )}
+          {/* Batch 1: Skip lives once, in each step's footer, beside Continue. */}
         </div>
       )}
 
@@ -777,6 +1308,8 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Gym Name</label>
               <input aria-label="Gym Name"
+                // The settings API accepts up to 100 characters.
+                maxLength={100}
                 value={gymName}
                 onChange={(e) => setGymName(e.target.value)}
                 placeholder="e.g. Total BJJ"
@@ -786,15 +1319,22 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             {/* Inline rgba rather than the muted Tailwind grey the rest of this
                 step uses: UI-RULES §11 ratchets that class family down, never
                 up, and this is a new line. Same tone, no new debt. */}
-            {detectedTimezone && (
+            {detectedTimezone === null ? null : willSetTimezone ? (
               <p className="text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.45)" }}>
                 We&apos;ll set your club&apos;s time zone to{" "}
                 <span className="text-white font-medium">{detectedTimezone.replace(/_/g, " ")}</span>,
                 from this device. Change it any time in Settings → Waiver.
               </p>
-            )}
+            ) : storedTimezone ? (
+              <p className="text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.45)" }}>
+                Your club&apos;s time zone stays{" "}
+                <span className="text-white font-medium">{storedTimezone.replace(/_/g, " ")}</span>.
+                Change it any time in Settings → Waiver.
+              </p>
+            ) : null}
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <button
             onClick={goNext}
             disabled={!canNext || loading}
@@ -1023,9 +1563,11 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             </button>
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
+              disabled={loading}
               className="flex-1 py-3.5 rounded-2xl text-sm font-semibold transition-all"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
             >
@@ -1094,9 +1636,11 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             </button>
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
+              disabled={loading}
               className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
             >
@@ -1314,9 +1858,11 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             <p className="text-[10px] text-gray-600 mt-2">Mock data — your real members will appear here once added.</p>
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
+              disabled={loading}
               className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
             >
@@ -1339,7 +1885,6 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       {step === 6 && (
         <div className="flex-1 flex flex-col">
           <div className="mb-6">
-            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 6 of {TOTAL_STEPS}</p>
             <h1 className="text-white text-2xl font-bold tracking-tight mb-2">Tell us about your gym</h1>
             <p className="text-gray-500 text-sm">This helps us tailor MatFlow to your needs.</p>
           </div>
@@ -1445,9 +1990,11 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             </div>
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
+              disabled={loading}
               className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
             >
@@ -1469,7 +2016,6 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       {step === 7 && (
         <div className="flex-1 flex flex-col">
           <div className="mb-6">
-            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 7 of {TOTAL_STEPS}</p>
             <h1 className="text-white text-2xl font-bold tracking-tight mb-2">How will you take payments?</h1>
             <p className="text-gray-500 text-sm leading-relaxed">You can change this later from Settings → Revenue.</p>
           </div>
@@ -1540,9 +2086,11 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
             </div>
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
+              disabled={loading}
               className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
             >
@@ -1564,7 +2112,6 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       {step === 8 && (
         <div className="flex-1 flex flex-col">
           <div className="mb-6">
-            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 8 of {TOTAL_STEPS}</p>
             <h1 className="text-white text-2xl font-bold tracking-tight mb-2">Secure your owner account</h1>
             <p className="text-gray-500 text-sm leading-relaxed">Two-factor auth is strongly recommended for owners. Set it up now and you&apos;ll be prompted for a 6-digit code on every future sign-in. You can save for later and enrol from your dashboard whenever you&apos;re ready.</p>
           </div>
@@ -1581,7 +2128,6 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       {step === 9 && (
         <div className="flex-1 flex flex-col">
           <div className="mb-6">
-            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: primaryColor }}>Step 9 of {TOTAL_STEPS}</p>
             <h1 className="text-white text-2xl font-bold tracking-tight mb-2">Bring your members across</h1>
             <p className="text-gray-500 text-sm leading-relaxed">Already have a member list? Pick how you&apos;d like to get them into MatFlow.</p>
           </div>
@@ -1620,7 +2166,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: "rgba(255,255,255,0.06)" }}>📨</div>
               <div className="flex-1">
                 <p className="text-sm font-semibold text-white">Send my CSV to MatFlow — we&apos;ll import it for you</p>
-                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Recommended for &gt;20 members. Drop your file below; we&apos;ll import it within 1 business day.</p>
+                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Recommended for &gt;20 members. Upload your file below and the MatFlow team will import it for you.</p>
                 {importChoice === "white_glove" && (
                   <div onClick={(e) => e.stopPropagation()} className="mt-4 space-y-3">
                     <input
@@ -1632,6 +2178,13 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                         const f = e.target.files?.[0] ?? null;
                         setCsvFile(f);
                         setCsvUploaded(false);
+                        setCsvHandoffError(null);
+                        // The same file (even after a reload) keeps its
+                        // reference; a different file is a different hand-off.
+                        const kept = f ? readCsvRef(csvRefKey) : null;
+                        const same = !!f && !!kept && kept.fp === csvFingerprint(f);
+                        csvClientRef.current = same ? kept!.ref : null;
+                        csvNotesSent.current = same ? kept!.notes : null;
                       }}
                       className="hidden"
                     />
@@ -1674,6 +2227,9 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
                     {/* What happens next comes from the server, which knows
                         whether the MatFlow team was actually notified and
                         whether email is on (7 Oct 2026, mail-dark). */}
+                    {csvHandoffError && !csvUploaded && (
+                      <p role="alert" className="text-xs" style={{ color: "rgba(255,255,255,0.85)" }}>{csvHandoffError}</p>
+                    )}
                     {csvUploaded && csvHandoffMessage && (
                       <p role="status" className="text-xs" style={{ color: "rgba(255,255,255,0.7)" }}>{csvHandoffMessage}</p>
                     )}
@@ -1693,14 +2249,16 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
               <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: "rgba(255,255,255,0.06)" }}>📊</div>
               <div className="flex-1">
                 <p className="text-sm font-semibold text-white">Self-serve CSV upload</p>
-                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Map columns yourself in Settings → Account → Import. Best if you&apos;re comfortable matching fields.</p>
+                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>Map columns yourself in Settings → Import. Best if you&apos;re comfortable matching fields.</p>
               </div>
             </button>
           </div>
 
+          <StepFailure message={stepFailure} onDismiss={() => setStepFailure(null)} />
           <div className="mt-6 flex gap-3">
             <button
               onClick={skip}
+              disabled={loading}
               className="flex-1 py-3.5 rounded-2xl text-sm font-semibold"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
             >
