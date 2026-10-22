@@ -61,6 +61,14 @@ Always ask before:
 
 When asking, ask once, with the recommended action and why. Never ask about anything in the "without asking" list.
 
+## Definition of done
+A task is finished only when one of these is true:
+- The PR is merged and the post-merge deploy check passed, or
+- The PR is green and waiting only on an "Always ask" approval, with that question asked once, or
+- You are blocked on something only Noe can supply (a secret, a product decision), stated in one message.
+"Checks are running, I'll report back" is not done: keep watching (`gh pr checks <n> --watch`) and continue.
+Never end a turn to give a status update.
+
 ## Other boundaries
 - **Noe runs** Vercel actions, production env vars, anything against production Postgres, credential rotation, and enters all credentials and MFA codes. No production data writes or customer account changes by the agent.
 - **Never Vercel Instant Rollback or Promote** — fix forward (adopted in PR #27, 12 Oct 2026; procedure in [`docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md`](docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md) §4).
