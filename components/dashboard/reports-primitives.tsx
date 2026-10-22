@@ -6,6 +6,7 @@
  * title row, empty frame and number format, so they are defined once here.
  */
 import type { ElementType } from "react";
+import { percent } from "@/lib/percent";
 
 export type TooltipPayload = {
   value?: number | string;

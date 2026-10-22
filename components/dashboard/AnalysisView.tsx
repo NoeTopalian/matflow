@@ -23,6 +23,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import { formatPct, formatRatio, ratioCounts } from "@/components/dashboard/reports-primitives";
+import { percent } from "@/lib/percent";
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541"];
 const STATUS_COLORS: Record<string, string> = { active: "#67BA90", taster: "#C9F990", inactive: "#EB3163", cancelled: "#8E1F57" };
@@ -74,7 +75,7 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
   const checkinDiff = Math.abs(metrics.checkinsThisMonth - metrics.checkinsLastMonth);
   // Engagement = % of members with ≥1 check-in this month (bounded 0..100).
   const engagementRate = metrics.totalMembers > 0
-    ? Math.min(100, Math.round((metrics.activeMembersThisMonth / metrics.totalMembers) * 100))
+    ? Math.min(100, percent(metrics.activeMembersThisMonth, metrics.totalMembers))
     : 0;
   // T2b: the rate always travels with its counts, "x% (n of m)".
   const engagementText = formatRatio(
@@ -237,7 +238,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
   const checkinDelta = delta(metrics.checkinsThisMonth, metrics.checkinsLastMonth);
   // Engagement = % of members with ≥1 check-in this month (bounded 0..100).
   const engagementRate = metrics.totalMembers > 0
-    ? Math.min(100, Math.round((metrics.activeMembersThisMonth / metrics.totalMembers) * 100))
+    ? Math.min(100, percent(metrics.activeMembersThisMonth, metrics.totalMembers))
     : 0;
 
   useEffect(() => {

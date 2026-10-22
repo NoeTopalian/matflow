@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { noPaymentYetWhere } from "@/lib/overdue";
 import { ACTIVE_MEMBER, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER, isActiveMember } from "@/lib/member-population";
+import { percent, ratePct1dp } from "@/lib/percent";
 
 export interface ClassOption {
   id: string;
@@ -311,17 +312,6 @@ function formatWeek(date: Date) {
 
 function formatMonth(date: Date) {
   return date.toLocaleString("en-GB", { month: "short", year: "2-digit" });
-}
-
-function percent(count: number, total: number) {
-  if (total <= 0) return 0;
-  return Math.round((count / total) * 100);
-}
-
-/** n ÷ base as a percentage to one decimal place; null when the base is 0 (T2b). */
-function ratePct1dp(n: number, base: number): number | null {
-  if (base <= 0) return null;
-  return Math.round((n / base) * 1000) / 10;
 }
 
 function roundedAverage(total: number, sessions: number) {
