@@ -6,6 +6,8 @@
  * queries live in app/dashboard/page.tsx and feed this builder.
  */
 
+import { TRAINING_MEMBER } from "@/lib/member-population";
+
 export type ActionItemKind = "money" | "retention" | "admin" | "moment";
 
 export type ActionItem = {
@@ -31,6 +33,12 @@ export type ActionItemsInput = {
   missingWaiver: { id: string; name: string }[];
   /** Active members not seen in 14+ days — never someone who joined inside the window and has not trained yet (see atRiskMemberWhere). */
   atRisk: { id: string; name: string }[];
+  /**
+   * True while the club has no MatFlow check-in (see atRiskSuppressed). The
+   * at-risk rows are then dropped, whatever `atRisk` holds, so the named list
+   * and the headline tile are switched off by the same signal.
+   */
+  atRiskSuppressed?: boolean;
   /** Active/taster members with a dateOfBirth (filtered to the next 7 days here). */
   birthdayCandidates: { id: string; name: string; dateOfBirth: Date }[];
 };
@@ -43,8 +51,12 @@ export const AT_RISK_DAYS = 14;
  * shared by the dashboard's headline count and its named action list so the
  * two cannot disagree. A member who has never attended and joined inside the
  * window is NEW, not lapsed: the end-user simulation (30 Sep 2026) saw eight
- * members who joined that morning listed as "Not seen in 14+ days". Mirrors
- * `isQuiet` in components/dashboard/MembersList.tsx.
+ * members who joined that morning listed as "Not seen in 14+ days".
+ *
+ * NOT yet the same rule as the Members "Quiet" chip (`isQuiet` in
+ * components/dashboard/MembersList.tsx), which also requires `paid` and is
+ * never suppressed; aligning the two is T2a Part F. Until then the chip shows
+ * its own count.
  */
 export function atRiskMemberWhere(tenantId: string, now: Date) {
   const since = new Date(now);
@@ -52,9 +64,115 @@ export function atRiskMemberWhere(tenantId: string, now: Date) {
   return {
     tenantId,
     status: "active",
+    // Training members only: the TeamUp import made 219 no-login guardian
+    // drafts (active, never attend), and every one of them would otherwise be
+    // "not seen in 14 days" (T2a Part U, 17 Oct 2026; lib/member-population.ts).
+    ...TRAINING_MEMBER,
     attendances: { none: { checkInTime: { gte: since } } },
     OR: [{ joinedAt: { lt: since } }, { attendances: { some: {} } }],
   };
+}
+
+/**
+ * An attendance row made IN MatFlow — a register tick, kiosk, QR or self
+ * check-in — as opposed to history brought in by an import. The same marker
+ * the undo path uses to refuse removing imported rows (lib/undo-registry.ts,
+ * attendance undo): `checkInMethod <> 'import' AND importJobId IS NULL`.
+ */
+export const MATFLOW_CHECKIN_WHERE = {
+  checkInMethod: { not: "import" },
+  importJobId: null,
+} as const;
+
+/**
+ * What the At-Risk tile says in place of a number while it is suppressed.
+ * The trigger is ANY check-in recorded in MatFlow (register, kiosk, QR,
+ * member self check-in or auto check-in: MATFLOW_CHECKIN_WHERE), not only a
+ * register, so the copy names a check-in. The detail line describes the
+ * suppression only: once it lifts, imported visits still count as visits in
+ * atRiskMemberWhere (T2a Part U residual U2).
+ */
+export const AT_RISK_SUPPRESSED_NOTE = "Starts after the first check-in recorded in MatFlow";
+export const AT_RISK_SUPPRESSED_DETAIL = "Hidden until then: imported history alone would flag the whole club";
+/** Muted line under "All caught up" while At-Risk is unknown rather than zero (UI-RULES §7). */
+export const AT_RISK_SUPPRESSED_TODO_NOTE = "At-Risk members start after the first check-in recorded in MatFlow.";
+
+/** The slice of a Prisma (transaction) client the at-risk gate reads. */
+export type AtRiskGateClient = {
+  attendanceRecord: {
+    findFirst(args: {
+      where: { tenantId: string; checkInMethod: { not: "import" }; importJobId: null };
+      select: { id: true };
+    }): Promise<{ id: string } | null>;
+  };
+};
+
+/**
+ * THE one rule for whether the dashboard shows At-Risk at all (T2a Part U,
+ * owner decision Q4 A-3 option (c), 17 Oct 2026): suppressed while the club
+ * has no MatFlow check-in. Every visit on record for a club fresh off TeamUp
+ * is imported and dated before the switch, so from 14 days after the import
+ * the unsuppressed tile flags the whole club (about 312 active training
+ * members; the 531 seen on 17 Oct also counted the 219 guardian drafts, which
+ * atRiskMemberWhere now excludes). Imported attendance does not count. The
+ * headline tile, the to-do row and the named action list all read this one
+ * answer, through readAtRisk.
+ *
+ * Cost: while suppressed no row matches, so Postgres walks the tenant's
+ * attendance through the (tenantId, checkInTime) index on each dashboard
+ * render. Acceptable at Total BJJ's volume; if it shows up in latency, a
+ * partial index on AttendanceRecord(tenantId) WHERE checkInMethod <> 'import'
+ * AND importJobId IS NULL belongs in a later schema batch.
+ */
+export async function atRiskSuppressed(tx: AtRiskGateClient, tenantId: string): Promise<boolean> {
+  const first = await tx.attendanceRecord.findFirst({
+    where: { tenantId, ...MATFLOW_CHECKIN_WHERE },
+    select: { id: true },
+  });
+  return first === null;
+}
+
+export type AtRiskWhere = ReturnType<typeof atRiskMemberWhere>;
+
+/** The slice of a Prisma (transaction) client readAtRisk reads. */
+export type AtRiskReadClient = AtRiskGateClient & {
+  member: {
+    count(args: { where: AtRiskWhere }): PromiseLike<number>;
+    findMany(args: {
+      where: AtRiskWhere;
+      select: { id: true; name: true };
+      take: number;
+    }): PromiseLike<{ id: string; name: string }[]>;
+  };
+};
+
+/** One club-wide At-Risk answer: the tile count, the named rows and the gate. */
+export type AtRiskRead = {
+  suppressed: boolean;
+  count: number;
+  members: { id: string; name: string }[];
+};
+
+/** How many at-risk names the dashboard action list is fed. */
+export const AT_RISK_LIST_TAKE = 25;
+
+/**
+ * Reads At-Risk ONCE for the dashboard: the gate, then (only when the gate is
+ * open) the headline count and the named rows from the same predicate. The
+ * page hands this one value to the stats tile and to the action-item builder,
+ * so the tile, the to-do row and the named list cannot disagree. While
+ * suppressed, no member query runs at all.
+ */
+export async function readAtRisk(tx: AtRiskReadClient, tenantId: string, now: Date): Promise<AtRiskRead> {
+  if (await atRiskSuppressed(tx, tenantId)) {
+    return { suppressed: true, count: 0, members: [] };
+  }
+  const where = atRiskMemberWhere(tenantId, now);
+  const [count, members] = await Promise.all([
+    tx.member.count({ where }),
+    tx.member.findMany({ where, select: { id: true, name: true }, take: AT_RISK_LIST_TAKE }),
+  ]);
+  return { suppressed: false, count, members };
 }
 
 const SEVERITY: Record<ActionItemKind, number> = { money: 0, retention: 1, admin: 2, moment: 3 };
@@ -128,8 +246,8 @@ export function buildActionItems(input: ActionItemsInput): ActionItem[] {
     });
   }
 
-  // ── Retention
-  for (const m of input.atRisk) {
+  // ── Retention (switched off with the tile: see atRiskSuppressed)
+  for (const m of input.atRiskSuppressed ? [] : input.atRisk) {
     items.push({
       id: `retention-${m.id}`,
       kind: "retention",
