@@ -1,9 +1,9 @@
-﻿// /admin/tenants â€” super-admin only. Server component fetches all tenants
+// /admin/tenants — super-admin only. Server component fetches all tenants
 // + their stats; client component renders the searchable/filterable/sortable
 // list. Gated by proxy.ts admin-cookie check. Sibling to /admin/applications.
 //
 // Two views, chosen on the server so a view never receives the other's rows:
-// open clubs (the default, deletedAt null â€” unchanged) and "Closed clubs"
+// open clubs (the default, deletedAt null — unchanged) and "Closed clubs"
 // (?view=closed: soft-deleted through the club page's Danger zone; sign-in is
 // refused and the club page offers Restore). Closure is deletedAt, separate
 // from the subscription status each row still shows.
