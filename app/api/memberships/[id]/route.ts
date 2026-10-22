@@ -7,7 +7,7 @@ import { updateMetadata } from "@/lib/audit-snapshot";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { billingCycleSchema } from "@/lib/billing-cycle";
-import { ALLOWANCE_FIELDS, BILLING_ON_NONE_MESSAGE, allowanceColumns, classLimitAnchorSchema, classLimitBasisSchema, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
+import { ALLOWANCE_FIELDS, BILLING_BASIS_AVAILABLE, BILLING_BASIS_UNAVAILABLE_MESSAGE, BILLING_ON_NONE_MESSAGE, allowanceColumns, classLimitAnchorSchema, classLimitBasisSchema, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
 
 const patchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -60,6 +60,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // reduced limit applies from the next check-in; nothing recorded changes).
     const { maxClassesPerWeek, classLimit, classLimitBasis, classLimitWeeks, classLimitAnchor, ...rest } = parsed.data;
     const allowance = allowanceColumns({ maxClassesPerWeek, classLimit, classLimitBasis, classLimitWeeks, classLimitAnchor });
+    // The billing-period basis ships dark until live Stripe delivery is verified (release gate, 22 Oct 2026).
+    if (allowance?.classLimitBasis === "billing" && !BILLING_BASIS_AVAILABLE) {
+      return NextResponse.json({ error: BILLING_BASIS_UNAVAILABLE_MESSAGE, details: { fieldErrors: { classLimitBasis: [BILLING_BASIS_UNAVAILABLE_MESSAGE] } } }, { status: 400 });
+    }
     const data: Record<string, unknown> = { ...rest, ...(allowance ?? {}) };
 
     const outcome = await withTenantContext(tenantId, async (tx) => {

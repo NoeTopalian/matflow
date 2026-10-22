@@ -222,8 +222,9 @@ describe("the class allowance in the tier editor", () => {
     const input = openEdit("Plan A");
     expect(input.type).toBe("text");
     expect(input.getAttribute("inputmode")).toBe("numeric");
+    // The billing-period basis is not offered while it ships dark (release gate, 22 Oct 2026; BILLING_BASIS_AVAILABLE).
     expect(Array.from(basisSelect().options).map((o) => o.textContent)).toEqual([
-      "Each week (Monday to Sunday)", "Each calendar month", "Every N weeks from a start date", "Each member's own billing period (from their renewal date)",
+      "Each week (Monday to Sunday)", "Each calendar month", "Every N weeks from a start date",
     ]);
     expect(screen.queryByLabelText("every (weeks)")).toBeNull();
     setBasis("weeks");

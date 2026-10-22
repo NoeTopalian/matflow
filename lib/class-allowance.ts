@@ -667,6 +667,17 @@ export const PAIR_MESSAGE =
   "Set the number of classes together with how often it resets (each week, each month, every N weeks from a start date, or each member's own billing period), or clear all of them for Unlimited";
 export const WEEKS_MESSAGE = "Every N weeks needs the number of weeks (2 to 8) and the date the periods count from";
 export const BILLING_ON_NONE_MESSAGE = "A plan billed once (no billing cycle) has no billing period to count classes in — choose each week, each month or every N weeks";
+/**
+ * Release gate (Noe, 22 Oct 2026): the "billing" basis ships dark. Its code
+ * and migrations are in, but live Stripe webhook delivery to MatFlow is not
+ * verified and Total BJJ's members carry no renewal dates, so no plan may be
+ * saved with it until both hold. The editor does not offer it and both
+ * membership routes refuse it; the other three bases are unaffected.
+ */
+export const BILLING_BASIS_AVAILABLE = false;
+export const OFFERED_ALLOWANCE_BASES: readonly AllowanceBasis[] = BILLING_BASIS_AVAILABLE ? ALLOWANCE_BASES : ALLOWANCE_BASES.filter((b) => b !== "billing");
+export const BILLING_BASIS_UNAVAILABLE_MESSAGE =
+  "Counting classes per member's billing period is not available yet — choose each week, each month or every N weeks";
 export const LEGACY_MIX_MESSAGE =
   "Send the class allowance as classes and a reset basis only, not together with the old classes-per-week field";
 

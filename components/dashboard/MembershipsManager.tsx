@@ -18,8 +18,10 @@ import type { MembershipTierRow } from "@/app/dashboard/memberships/page";
 import { describeApiError } from "@/lib/api-field-errors";
 import { BILLING_CYCLES, cycleLabel, isBillingCycle, type BillingCycle } from "@/lib/billing-cycle";
 import {
-  ALLOWANCE_BASES,
+  BILLING_BASIS_AVAILABLE,
+  BILLING_BASIS_UNAVAILABLE_MESSAGE,
   BILLING_ON_NONE_MESSAGE,
+  OFFERED_ALLOWANCE_BASES,
   CLASS_LIMIT_MAX,
   CLASS_LIMIT_MIN,
   CLASS_LIMIT_WEEK_OPTIONS,
@@ -124,6 +126,8 @@ export function formAllowance(form: { classLimit: string; classLimitBasis: strin
   if (limit.kind === "invalid") return { kind: "error", message: CLASS_LIMIT_ERROR };
   if (limit.kind === "blank") return { kind: "ok", allowance: null };
   const basis = form.classLimitBasis as AllowanceBasis;
+  // The billing-period basis ships dark until live Stripe delivery is verified (release gate, 22 Oct 2026).
+  if (basis === "billing" && !BILLING_BASIS_AVAILABLE) return { kind: "error", message: BILLING_BASIS_UNAVAILABLE_MESSAGE };
   // A plan billed once has no billing period to count in (review round 3, L-5).
   if (basis === "billing" && form.billingCycle === "none") return { kind: "error", message: BILLING_ON_NONE_MESSAGE };
   if (basis === "week" || basis === "month" || basis === "billing") return { kind: "ok", allowance: { limit: limit.value, basis } };
@@ -726,8 +730,8 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
                   title={form.classLimit.trim() === "" ? "Enter how many classes first; blank is Unlimited." : undefined}
                   className="w-64"
                 >
-                  {ALLOWANCE_BASES.map((b) => (
-                    // A once-off plan has no billing period to count in.
+                  {OFFERED_ALLOWANCE_BASES.map((b) => (
+                    // A once-off plan has no billing period to count in. (The billing basis itself is offered only once BILLING_BASIS_AVAILABLE.)
                     <option key={b} value={b} disabled={b === "billing" && form.billingCycle === "none"}>{BASIS_LABELS[b]}</option>
                   ))}
                 </Select>

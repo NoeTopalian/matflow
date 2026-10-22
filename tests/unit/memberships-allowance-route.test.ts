@@ -145,10 +145,16 @@ describe("PATCH /api/memberships/[id] — class allowance", () => {
     [{ classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 9, classLimitAnchor: "2026-10-20" }],
     [{ classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4, classLimitAnchor: "2026-02-30" }],
     [{ classLimit: 4, classLimitBasis: "week", maxClassesPerWeek: 4 }],
+    [{ classLimit: 4, classLimitBasis: "billing" }],
   ])("refuses %j with a 400 and writes nothing", async (body) => {
     const res = await patch(body);
     expect(res.status).toBe(400);
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("the billing-period basis is refused in plain words while it ships dark (release gate, 22 Oct 2026)", async () => {
+    const res = await patch({ classLimit: 4, classLimitBasis: "billing" });
+    expect(describeApiError(await res.json())).toBe("Counting classes per member's billing period is not available yet — choose each week, each month or every N weeks.");
   });
 
   it("an inconsistent set reads as one sentence the owner can act on", async () => {
@@ -198,6 +204,7 @@ describe("POST /api/memberships — class allowance", () => {
     [{ classLimit: 61, classLimitBasis: "week" }],
     [{ classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4 }],
     [{ classLimit: 4, classLimitBasis: "week", maxClassesPerWeek: 4 }],
+    [{ classLimit: 4, classLimitBasis: "billing" }],
   ])("refuses %j", async (extra) => {
     const res = await post(extra);
     expect(res.status).toBe(400);

@@ -6,7 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { billingCycleSchema } from "@/lib/billing-cycle";
-import { BILLING_ON_NONE_MESSAGE, allowanceColumns, classLimitAnchorSchema, classLimitBasisSchema, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
+import { BILLING_BASIS_AVAILABLE, BILLING_BASIS_UNAVAILABLE_MESSAGE, BILLING_ON_NONE_MESSAGE, allowanceColumns, classLimitAnchorSchema, classLimitBasisSchema, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
@@ -77,6 +77,10 @@ export async function POST(req: Request) {
     const { name, description, pricePence, currency, billingCycle, isKids, stripePriceId, stripeProductId, locationId } = parsed.data;
     const allowance = allowanceColumns(parsed.data) ?? { classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null, maxClassesPerWeek: null };
 
+    // The billing-period basis ships dark until live Stripe delivery is verified (release gate, 22 Oct 2026).
+    if (allowance.classLimitBasis === "billing" && !BILLING_BASIS_AVAILABLE) {
+      return NextResponse.json({ error: BILLING_BASIS_UNAVAILABLE_MESSAGE, details: { fieldErrors: { classLimitBasis: [BILLING_BASIS_UNAVAILABLE_MESSAGE] } } }, { status: 400 });
+    }
     // A plan billed once has no billing period to count classes in (review round 3, L-5).
     if (allowance.classLimitBasis === "billing" && billingCycle === "none") {
       return NextResponse.json({ error: BILLING_ON_NONE_MESSAGE, details: { fieldErrors: { classLimitBasis: [BILLING_ON_NONE_MESSAGE] } } }, { status: 400 });

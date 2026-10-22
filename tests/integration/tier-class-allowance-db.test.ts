@@ -33,7 +33,7 @@ import { auth } from "@/auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { POST } from "@/app/api/memberships/route";
 import { PATCH } from "@/app/api/memberships/[id]/route";
-import { tierAllowance } from "@/lib/class-allowance";
+import { BILLING_BASIS_UNAVAILABLE_MESSAGE, tierAllowance } from "@/lib/class-allowance";
 
 const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -132,10 +132,17 @@ describe.skipIf(!HAS_DB)("MembershipTier class allowance — real database", () 
     expect(tierAllowance(await cols(tierA))).toEqual({ limit: 4, basis: "weeks", weeks: 4, anchor: "2026-10-20" });
   });
 
-  it("PATCH 4 per billing period writes the basis with no weeks, no start date, no legacy mirror", async () => {
+  it("PATCH 4 per billing period: refused with a 400 while the basis ships dark, nothing written; the column accepts it once released", async () => {
+    // Release gate (22 Oct 2026): BILLING_BASIS_AVAILABLE is false until live
+    // Stripe delivery is verified, so the route refuses the basis and the
+    // 4-every-4-weeks set the previous case wrote is untouched.
     const res = await patch(tierA, { classLimit: 4, classLimitBasis: "billing" });
-    expect(res.status).toBe(200);
-    expect(await cols(tierA)).toEqual({ ...NONE, classLimit: 4, classLimitBasis: "billing" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe(BILLING_BASIS_UNAVAILABLE_MESSAGE);
+    expect(await cols(tierA)).toEqual(FOUR_IN_FOUR);
+    // The schema (migration 20261021230000) already admits the basis, so the
+    // release needs no migration: write it directly and read it back.
+    await withRlsBypass((tx) => tx.membershipTier.update({ where: { id: tierA }, data: { ...NONE, classLimit: 4, classLimitBasis: "billing" } }));
     expect(tierAllowance(await cols(tierA))).toEqual({ limit: 4, basis: "billing" });
     // Put the 4-every-4-weeks set back: the next case starts from it.
     await patch(tierA, { classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4, classLimitAnchor: "2026-10-20" });
