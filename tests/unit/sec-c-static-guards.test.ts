@@ -129,4 +129,7 @@ describe("SEC-047 shared server caches are keyed by tenant", () => {
     expect(hits(/["']use cache["']|draftMode\(/)).toEqual([]);
     expect(code("next.config.ts")).not.toMatch(/cacheComponents|useCache/);
   });
+  it("no Server Actions ('use server'): ADV-14's non-use claim (GHSA-p3m5-59mp-jv5r) is pinned, not assumed", () => {
+    expect(hits(/["']use server["']/)).toEqual([]);
+  });
 });

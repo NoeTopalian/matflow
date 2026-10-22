@@ -167,7 +167,9 @@ database schema back, so old code meets a newer schema.
 
 The rollback that preserves security is a roll-FORWARD:
 1. `git revert <bad-sha>` on a branch (never a force-push; `main` is unprotected today, SF-15).
-2. Run the gates on the revert: `npm run lint && npm test && npm run build`, plus the security DB set under both roles
+2. Run the gates on the revert: `npm run lint && npm test` and the production build (locally with
+   `.claude/skills/matflow-verify-local` `server.mjs build`, which has no database URL; a local `npm run build`
+   migrates whatever non-production database URL the shell holds), plus the security DB set under both roles
    (`docs/security/TEST-EVIDENCE.md` §How to re-run) and `node scripts/readiness/test-skip-gate.mjs … --require-db`.
 3. If the bad change included a migration: write a forward migration that undoes it; never `migrate reset`, never
    restore the database to undo code. Pushing `main` runs `prisma migrate deploy` against production.

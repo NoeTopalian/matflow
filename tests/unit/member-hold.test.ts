@@ -131,17 +131,22 @@ beforeEach(() => {
 
 describe("POST /api/members/[id]/hold", () => {
   it("pauses Stripe (void, resumes_at) FIRST, then writes paused + holdUntil, and audits", async () => {
+    // The route validates the hold date against the real clock, so the date is
+    // computed, not fixed: a literal 2026-10-20 expired on 21 Oct 2026 and failed CI.
+    const until = new Date(Date.now() + 30 * 86_400_000);
+    until.setUTCHours(0, 0, 0, 0);
+    const untilIso = until.toISOString();
     memberFindFirstMock.mockResolvedValue({ id: "mem-1", name: "Sam", paymentStatus: "paid", stripeSubscriptionId: "sub_1", status: "active" });
     const { POST } = await import("@/app/api/members/[id]/hold/route");
-    const res = await POST(req({ until: "2026-10-20T00:00:00.000Z" }), params);
+    const res = await POST(req({ until: untilIso }), params);
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true, paymentStatus: "paused", holdUntil: "2026-10-20T00:00:00.000Z", stripePaused: true });
+    expect(await res.json()).toMatchObject({ ok: true, paymentStatus: "paused", holdUntil: untilIso, stripePaused: true });
     expect(subscriptionsUpdateMock).toHaveBeenCalledWith(
       "sub_1",
-      { pause_collection: { behavior: "void", resumes_at: Math.floor(Date.parse("2026-10-20T00:00:00Z") / 1000) } },
+      { pause_collection: { behavior: "void", resumes_at: Math.floor(until.getTime() / 1000) } },
       { stripeAccount: "acct_gym" },
     );
-    expect(memberUpdateManyMock).toHaveBeenCalledWith({ where: { id: "mem-1", tenantId: "tenant-A", paymentStatus: { not: "paused" } }, data: { paymentStatus: "paused", holdUntil: new Date("2026-10-20T00:00:00Z"), holdPriorStatus: "paid" } });
+    expect(memberUpdateManyMock).toHaveBeenCalledWith({ where: { id: "mem-1", tenantId: "tenant-A", paymentStatus: { not: "paused" } }, data: { paymentStatus: "paused", holdUntil: until, holdPriorStatus: "paid" } });
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "member.hold.start", entityId: "mem-1", metadata: expect.objectContaining({ stripePaused: true, priorPaymentStatus: "paid" }) }));
   });
 
