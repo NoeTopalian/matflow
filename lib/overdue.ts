@@ -72,6 +72,32 @@ export function overdueClause(now: Date) {
 }
 
 /**
+ * NOT overdue, as a Prisma where — the exact complement of overdueClause /
+ * isOverdue, written positively.
+ *
+ * Do not write `NOT: { OR: overdueClause(now) }` instead. Postgres evaluates
+ * `"nextDueAt" < $1` on a NULL due date as UNKNOWN, `NOT (unknown)` is still
+ * UNKNOWN, and the row drops out — so every paid member with no due date would
+ * vanish from a "Paid" count. Each branch here is NULL-safe.
+ */
+export function notOverdueWhere(now: Date) {
+  return {
+    AND: [
+      { paymentStatus: { not: "overdue" } },
+      {
+        OR: [
+          { paymentStatus: { in: [...NOT_CHASEABLE] } },
+          { billedBy: "teamup" },
+          { stripeSubscriptionId: { not: null } },
+          { nextDueAt: null },
+          { nextDueAt: { gte: now } },
+        ],
+      },
+    ],
+  };
+}
+
+/**
  * "No payment yet" (decision 1, 30 Sep 2026): a member on a plan whom nobody
  * has ever recorded a payment for. MatFlow-billed only — TeamUp's members are
  * TeamUp's to chase. This is the Payments → Outstanding list's definition;

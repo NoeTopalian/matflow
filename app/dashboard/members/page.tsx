@@ -2,6 +2,7 @@ import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import MembersList, { MemberRow, type MonthWindowProp } from "@/components/dashboard/MembersList";
 import { clubMonthWindow, clubMonthWindowForKey } from "@/lib/club-month";
+import { getMemberListCounts } from "@/lib/member-list-counts-server";
 import PrintCardsLink from "@/components/dashboard/PrintCardsLink";
 import PromotionAlerts from "@/components/dashboard/PromotionAlerts";
 import { shownPaymentStatus } from "@/lib/overdue";
@@ -19,9 +20,14 @@ import { shownPaymentStatus } from "@/lib/overdue";
 // row select is narrow (no wide columns, one rank, one visit, one photo), so
 // 1,500 stays far below the 5,000-row payload P-01 was about. When the cap is
 // hit the page now says so (MembersList `truncatedAt`).
+//
+// 23 Oct 2026 (review L5): the cap now limits the TABLE only. Every total on
+// the page (headline, tiles, chips) is counted on the server over the whole
+// population (getMemberListCounts), so a club past the cap is never told it
+// has fewer members than Reports says.
 const MEMBERS_SSR_TAKE = 1500;
 
-async function getMembers(tenantId: string): Promise<{ rows: MemberRow[]; truncated: boolean }> {
+async function getMembers(tenantId: string, now: Date): Promise<{ rows: MemberRow[]; truncated: boolean }> {
   const rows = await withTenantContext(tenantId, (tx) =>
     tx.member.findMany({
       where: { tenantId },
@@ -82,7 +88,6 @@ async function getMembers(tenantId: string): Promise<{ rows: MemberRow[]; trunca
     );
   }
 
-  const now = new Date();
   const mapped: MemberRow[] = visible.map((m) => ({
     id: m.id,
     name: m.name,
@@ -144,8 +149,12 @@ export default async function MembersPage({ searchParams }: Props) {
   // none. The throw now reaches app/dashboard/error.tsx (retry + reference);
   // instrumentation.ts's onRequestError keeps the ops-log line the old catch
   // was added for.
-  const { rows: members, truncated } = await getMembers(session!.user.tenantId);
+  // One instant for the rows' shown payment status and the server counts, so
+  // a member cannot be "overdue" in the table and "paid" in a total.
+  const now = new Date();
+  const { rows: members, truncated } = await getMembers(session!.user.tenantId, now);
   const monthWindow = await getMonthWindow(session!.user.tenantId, typeof month === "string" ? month : undefined);
+  const counts = await getMemberListCounts(session!.user.tenantId, now, monthWindow);
 
   // Guardian links an import suggested and nobody has confirmed — counted
   // across the whole club for the header badge. Owner and manager only: the
@@ -181,6 +190,7 @@ export default async function MembersPage({ searchParams }: Props) {
         guardianReviewCount={guardianReviewCount}
         truncatedAt={truncated ? MEMBERS_SSR_TAKE : null}
         monthWindow={monthWindow}
+        serverCounts={counts}
         supportScope={(session!.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
       />
     </>
