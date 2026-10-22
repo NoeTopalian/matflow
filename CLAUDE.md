@@ -35,10 +35,33 @@ Next.js 16 + TypeScript + Tailwind v4 (CSS-first) + Prisma 7 (`@prisma/adapter-p
 
 Production uses Neon's `-pooler` host; pool size is capped in `lib/prisma.ts`. Schema changes: the `matflow-verify-local` skill's `migrate-test.mjs dev <name>` (worktree migrations, test branch only), never `db push`, never against production from local. Raw SQL only in a script under `scripts/`, never psql against production.
 
-## Approval boundaries — Noe approves each action; approval for one does not cover the next
+## Standing approvals (Noe, 2026-10-22)
 
-- **Push** any branch (branch pushes create Vercel preview builds). **Open or update a PR** only as approved (draft unless told otherwise).
-- **Merge** only on explicit approval: `gh pr merge <n> --merge --match-head-commit <sha>`. A push or merge to `main` auto-deploys **and migrates production**.
+Do without asking:
+- Create branches, commit, push to non-main branches, force-push your own agent branches
+- Open, update and convert draft PRs; write PR titles/bodies
+- Watch CI, re-run failed or flaky jobs, fix failing checks and push again
+- Run tests, lint, typecheck, builds, preview deploys, and the Neon test branch
+- Close PRs that a newer PR explicitly supersedes, with a comment linking the replacement
+- Rebase agent branches on main when they fall behind
+- Install dev dependencies already listed in package.json; run `npm ci`
+
+Merge to main without asking ONLY when all are true:
+- All required checks green, including the race suite
+- No files under prisma/migrations/**, prisma/schema.prisma, .github/**, auth, billing/Stripe, or tenant-scoping code
+- An independent review (Codex via agent-loop, or a second reviewer) approved the exact head SHA
+- The PR is not a draft and no human comment asks to hold
+
+A merge to `main` auto-deploys **and migrates production** (`gh pr merge <n> --merge --match-head-commit <sha>`); after any merge, run the post-deployment checks and report them before calling the work complete. Never push to `main` directly.
+
+Always ask before:
+- Merging anything that touches migrations, schema, auth, billing, tenant isolation, CI config, or env/secrets
+- Deleting data, dropping columns, or running anything against production
+- Adding new dependencies
+
+When asking, ask once, with the recommended action and why. Never ask about anything in the "without asking" list.
+
+## Other boundaries
 - **Noe runs** Vercel actions, production env vars, anything against production Postgres, credential rotation, and enters all credentials and MFA codes. No production data writes or customer account changes by the agent.
 - **Never Vercel Instant Rollback or Promote** — fix forward (adopted in PR #27, 12 Oct 2026; procedure in [`docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md`](docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md) §4).
 - Never print secrets or connection strings. Never `git add -A` (sensitive files in the repo root). Never commit `.env`.
