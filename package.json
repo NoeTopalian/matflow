@@ -49,7 +49,7 @@
     "react-hook-form": "^7.71.2",
     "recharts": "^3.8.0",
     "resend": "^6.12.2",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "stripe": "^22.0.1",
     "svix": "^1.92.2",
     "tailwind-merge": "^3.5.0",
