@@ -18,6 +18,7 @@ import ImportReconciliation from "@/components/dashboard/ImportReconciliation";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import LocationsCard from "@/components/dashboard/LocationsCard";
+import PublicPageSection from "@/components/dashboard/PublicPageSection";
 import { SettingImpact } from "@/components/dashboard/SettingImpact";
 import { StaffUnlockControl } from "@/components/dashboard/UnlockSignIn";
 import { StaffTotpResetControl } from "@/components/dashboard/StaffTotpReset";
@@ -691,6 +692,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [bgCol, setBgCol]               = useState("#111111");
   const [fontFamily, setFontFamily]     = useState("Inter, sans-serif");
   const [logoPreview, setLogoPreview]   = useState<string | null>(settings?.logoUrl ?? null);
+  // The logo the server last confirmed. A failed upload falls back to this,
+  // never to the local preview (see saveBranding).
+  const [savedLogoUrl, setSavedLogoUrl] = useState<string | null>(settings?.logoUrl ?? null);
   const [logoFile, setLogoFile]         = useState<File | null>(null);
   const [logoBg, setLogoBg]             = useState<"none" | "black" | "white">("none");
   const [logoSize, setLogoSize]         = useState<"sm" | "md" | "lg">((settings?.logoSize as "sm" | "md" | "lg") ?? "md");
@@ -1103,16 +1107,23 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       if (logoFile) {
         const fd = new FormData();
         fd.append("file", logoFile);
-        const upRes = await fetch("/api/upload", { method: "POST", body: fd });
+        const upRes = await fetch("/api/upload?purpose=logo", { method: "POST", body: fd });
         if (upRes.ok) {
           const { url } = await upRes.json();
           finalLogoUrl = url;
         } else {
           // Surface the failure instead of silently writing logoUrl=null to the DB.
-          // Common cause: BLOB_READ_WRITE_TOKEN missing in Vercel env (returns 503).
+          // purpose=logo never touches Blob (T9b), so this is a refused or
+          // unreadable image, a rate limit, or the route being unreachable.
           const errBody = await upRes.json().catch(() => ({} as { error?: string }));
           uploadError = errBody.error ?? `Logo upload failed (HTTP ${upRes.status})`;
-          finalLogoUrl = logoPreview;
+          // Keep the logo the server already has. logoPreview is the
+          // browser's FileReader data URL: never re-encoded by sharp, so it can
+          // carry EXIF (phone GPS) at up to 1600px, or be an image sharp
+          // refused as hostile. Logos are public (T9b), so only the sanitised
+          // ≤512px WebP from /api/upload?purpose=logo may ever be saved.
+          finalLogoUrl = savedLogoUrl;
+          setLogoPreview(savedLogoUrl);
         }
       }
 
@@ -1138,11 +1149,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       root.style.setProperty("--color-text-muted",       hex(textCol, 0.4));
       root.style.setProperty("--color-text-subtle",      hex(textCol, 0.2));
 
-      // 3. Save to DB. Allow data: URLs through so members see the logo even
-      // when Vercel Blob isn't configured (BLOB_READ_WRITE_TOKEN missing) —
-      // the base64 stays bounded because the file was downscaled in the
-      // browser on selection and /api/settings caps the column at 3M chars.
-      // The proper fix is to provision Blob; this is a resilience fallback.
+      // 3. Save to DB. Logos are stored inline as a raster data: URL (T9b) so
+      // they render with no session on the login page, kiosk, leaderboard and
+      // public club page. The base64 stays bounded: /api/upload?purpose=logo
+      // re-encodes to a ≤512px WebP, and /api/settings caps the column at 3M
+      // chars and refuses external links (lib/logo-url.ts).
       try {
         const persistedLogoUrl =
           typeof finalLogoUrl === "string" && finalLogoUrl.length > 0
@@ -1178,10 +1189,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         // the old ones. Drop it so the screen reflects the server, not a wish.
         try { localStorage.removeItem("gym-settings"); } catch { /* storage unavailable */ }
         toast(saveError, "error");
-      } else if (uploadError) {
-        toast(`Branding saved, but ${uploadError}`, "error");
       } else {
-        toast("Branding saved — member app updated", "success");
+        const confirmed = typeof finalLogoUrl === "string" && finalLogoUrl.length > 0 ? finalLogoUrl : null;
+        setSavedLogoUrl(confirmed);
+        setLogoPreview(confirmed);
+        if (uploadError) {
+          toast(`Branding saved, but ${uploadError}`, "error");
+        } else {
+          toast("Branding saved — member app updated", "success");
+        }
       }
     } catch {
       toast("Failed to save branding", "error");
@@ -1599,6 +1615,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {/* The club's public contact email (1 Oct 2026): what members see
               and reply to; never a login. Owner only, like every tenant write. */}
           {isOwner && !supportEdit && <ContactEmailSection initialEmail={settings?.contactEmail ?? null} />}
+          {/* T9c: the opt-in public club page. Owner only; never in a support
+              session (publishing stays with the owner). */}
+          {isOwner && !supportScope && <PublicPageSection />}
           {/* ADR-001 D2: venues inside the club. Owner and manager edit. */}
           <LocationsCard canEdit={(isOwner || role === "manager") && !supportEdit} />
           <div className="grid grid-cols-3 gap-3">

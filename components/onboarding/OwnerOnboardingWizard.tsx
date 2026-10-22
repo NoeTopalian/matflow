@@ -527,7 +527,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
         if (logoFile) {
           const fd = new FormData();
           fd.append("file", logoFile);
-          const uploadRes = await fetch("/api/upload", { method: "POST", body: fd });
+          const uploadRes = await fetch("/api/upload?purpose=logo", { method: "POST", body: fd });
           if (uploadRes.ok) {
             const data = await uploadRes.json() as { url?: string };
             if (data.url) body.logoUrl = data.url;

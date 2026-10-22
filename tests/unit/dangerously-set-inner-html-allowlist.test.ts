@@ -47,6 +47,16 @@ const ALLOWLIST: Array<{ file: string; justificationSubstring: string }> = [
     // component.
     justificationSubstring: "lightModeCSS",
   },
+  {
+    file: "app/[slug]/page.tsx",
+    // T9c (17 Oct 2026): the public club page's JSON-LD <script
+    // type="application/ld+json">. Structured data, never executed. The
+    // string comes only from serialiseJsonLd (lib/public-club-page.ts), which
+    // JSON-encodes the object and escapes every "<" as <, so a club name
+    // cannot close the element (Next's JSON-LD guide; pinned in
+    // tests/unit/sec-c-xss-sinks.test.tsx and public-club-page-read-model).
+    justificationSubstring: "serialiseJsonLd(clubJsonLd(page))",
+  },
 ];
 
 function walk(dir: string, out: string[]) {
