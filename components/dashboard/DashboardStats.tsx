@@ -13,6 +13,7 @@ import {
   QrCode,
   ShieldAlert,
   UserRoundX,
+  Users,
 } from "lucide-react";
 import { Sheet } from "@/components/ui/sheet";
 import type { DayClass } from "@/components/dashboard/WeeklyCalendar";
@@ -396,9 +397,23 @@ export default function DashboardStats({
         </div>
       )}
 
-      {/* Noe (2026-08-17): the four stat boxes stay one row on laptops — the
-          previous xl breakpoint (1280px) wrapped them 2×2 on ordinary windows. */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* Noe (2026-08-17): the stat boxes stay one row on laptops — the
+          previous xl breakpoint (1280px) wrapped them 2×2 on ordinary windows.
+          Active Members (issue #44) leads the row: the headline size of the
+          club, the same count and population as Reports (status active,
+          training members only — app/dashboard/page.tsx getStats). On phones
+          it takes the full width above the 2×2 of attention counts. */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="col-span-2 lg:col-span-1 grid">
+          <MetricCard
+            label="Active Members"
+            value={stats.totalActive}
+            detail="Training members, status active"
+            color={primaryColor}
+            icon={Users}
+            href="/dashboard/members?filter=active"
+          />
+        </div>
         <MetricCard label={todoListLabel} value={ownerTodoCount} detail="Tasks needing attention" color="#f59e0b" icon={ClipboardList} onClick={() => setTodoOpen(true)} />
         <MetricCard label="Payments Due" value={stats.paymentsDue} detail="Overdue or no payment yet" color="#ef4444" icon={CreditCard} href={paymentsDueHref} />
         <MetricCard
