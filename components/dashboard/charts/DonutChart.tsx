@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { formatRatio, wholePct } from "@/components/dashboard/reports-primitives";
+import { percent } from "@/lib/percent";
 
 export type DonutSlice = {
   label: string;
@@ -120,7 +121,7 @@ export function DonutLegend({ data, showCounts = false }: { data: DonutSlice[]; 
   return (
     <ul className="w-full min-w-0 space-y-2">
       {data.map((d) => {
-        const pct = total > 0 ? Math.round((d.value / total) * 100) : 0;
+        const pct = total > 0 ? percent(d.value, total) : 0;
         return (
           <li key={d.label} className="flex items-center justify-between gap-3 text-sm">
             <span className="flex items-center gap-2 min-w-0">
