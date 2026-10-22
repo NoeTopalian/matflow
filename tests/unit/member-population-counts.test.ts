@@ -68,7 +68,8 @@ describe("member population counts", () => {
   it("Reports' Active members and churn counts use ACTIVE_MEMBER and LEFT_MEMBER (behaviour-identical refactor)", () => {
     const src = readFileSync("lib/reports.ts", "utf8");
     expect(src).toContain("tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } })");
-    expect(src).toContain("tx.member.count({ where: { tenantId, ...LEFT_MEMBER, cancelledAt: { gte: currentMonthStart } } })");
+    // Review L4: the month is the club-zone half-open window (lib/club-month.ts).
+    expect(src).toContain("tx.member.count({ where: { tenantId, ...LEFT_MEMBER, cancelledAt: thisMonth } })");
     expect(src).not.toMatch(/status: "active", \.\.\.TRAINING_MEMBER/);
   });
 

@@ -1,6 +1,7 @@
 import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import MembersList, { MemberRow } from "@/components/dashboard/MembersList";
+import MembersList, { MemberRow, type MonthWindowProp } from "@/components/dashboard/MembersList";
+import { clubMonthWindow, clubMonthWindowForKey } from "@/lib/club-month";
 import PrintCardsLink from "@/components/dashboard/PrintCardsLink";
 import PromotionAlerts from "@/components/dashboard/PromotionAlerts";
 import { shownPaymentStatus } from "@/lib/overdue";
@@ -113,8 +114,30 @@ async function getMembers(tenantId: string): Promise<{ rows: MemberRow[]; trunca
   return { rows: mapped, truncated };
 }
 
-export default async function MembersPage() {
+/**
+ * The month the two Reports drill-through slices list (review L4): resolved
+ * here, on the server, in the club's zone — the `month` a Reports link
+ * carries when it is well formed, otherwise the club's current month. The
+ * client compares instants against these boundaries and never recomputes the
+ * month in the browser's zone.
+ */
+async function getMonthWindow(tenantId: string, monthParam: string | undefined): Promise<MonthWindowProp> {
+  const club = await withTenantContext(tenantId, (tx) =>
+    tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }),
+  );
+  const current = clubMonthWindow(new Date(), club?.timezone);
+  const requested = clubMonthWindowForKey(monthParam, club?.timezone);
+  const window = requested ?? current;
+  return { ...window, isCurrent: window.monthKey === current.monthKey };
+}
+
+interface Props {
+  searchParams: Promise<{ month?: string | string[] }>;
+}
+
+export default async function MembersPage({ searchParams }: Props) {
   const { session } = await requireStaff();
+  const { month } = await searchParams;
 
   // UI-RULES §7: unguarded on purpose. Catching here rendered "No members yet"
   // whenever the database was unreachable — a gym with 200 members told it has
@@ -122,6 +145,7 @@ export default async function MembersPage() {
   // instrumentation.ts's onRequestError keeps the ops-log line the old catch
   // was added for.
   const { rows: members, truncated } = await getMembers(session!.user.tenantId);
+  const monthWindow = await getMonthWindow(session!.user.tenantId, typeof month === "string" ? month : undefined);
 
   // Guardian links an import suggested and nobody has confirmed — counted
   // across the whole club for the header badge. Owner and manager only: the
@@ -156,6 +180,7 @@ export default async function MembersPage() {
         role={session!.user.role}
         guardianReviewCount={guardianReviewCount}
         truncatedAt={truncated ? MEMBERS_SSR_TAKE : null}
+        monthWindow={monthWindow}
         supportScope={(session!.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
       />
     </>

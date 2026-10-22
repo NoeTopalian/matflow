@@ -178,6 +178,23 @@ export function classComposition(topClasses: ReportsData["topClasses"]) {
   return { top, total, label: `top ${top.length} ${top.length === 1 ? "class" : "classes"}` };
 }
 
+/**
+ * The Members drill-through for a "this month" tile. It carries the report's
+ * club-zone month (review L4), so the rows listed are the month the tile
+ * counted — never one recomputed in the browser's zone, and never the next
+ * month if the calendar turned while the cached report was on screen.
+ */
+export function monthDrillHref(filter: "new-this-month" | "churned-this-month", period: ReportsData["period"] | undefined): string {
+  const params = new URLSearchParams({ filter });
+  if (period?.monthKey) params.set("month", period.monthKey);
+  return `/dashboard/members?${params.toString()}`;
+}
+
+/** The CSV's statement of which month "this month" is, and in which zone. */
+export function periodCsvDetail(period: ReportsData["period"]): string {
+  return `"This month" runs midnight to midnight in the club's time zone (${period.timeZone})`;
+}
+
 /** The "Joined this month" copy (Q6, A-13): who it counts, and the net beside churn. */
 const JOINED_SCOPE = "People added in MatFlow, incl. tasters. A TeamUp refresh adds nobody.";
 const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";
@@ -275,6 +292,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
   const rows: (string | number | null)[][] = [
     ["Section", "Metric", "Value", "Detail"],
     ["Report", "Generated at", validGeneratedAt(data.generatedAt) ? formatDateTime(data.generatedAt) : "—", "Figures cached for up to 60 seconds"],
+    ...(data.period ? [["Report", "This month", data.period.label, periodCsvDetail(data.period)]] : []),
     ["Summary", "Total members", data.summary.totalMembers, "Every training member on record, including those who have left"],
     ["Summary", "Current members", data.summary.currentMembers, "Active and inactive members and tasters"],
     ["Summary", "Active members", data.summary.activeMembers, activeMembersDetail(data.summary)],
@@ -560,6 +578,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     retentionRate,
     netNewByMonth,
     paymentHealth,
+    period,
     weeksBack,
     classOptions,
     filters,
@@ -936,7 +955,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           detail={JOINED_SCOPE}
           primaryColor={primaryColor}
           trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: `vs ${formatNumber(summary.newMembersLastMonth)} last month` }}
-          href="/dashboard/members?filter=new-this-month"
+          href={monthDrillHref("new-this-month", period)}
         />
         <MetricCard
           icon={BarChart3}
@@ -1206,7 +1225,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             value={<RatioValue pct={churn.ratePct} n={churn.cancelled} base={churn.base} />}
             detail={churn.base > 0 ? CHURN_FORMULA : "No active or cancelled members this month"}
             primaryColor={primaryColor}
-            href="/dashboard/members?filter=churned-this-month"
+            href={monthDrillHref("churned-this-month", period)}
             hrefLabel="Churn rate this month"
           />
           <MetricCard
@@ -1215,7 +1234,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             value={formatNumber(churn.joined)}
             detail={`Net ${formatSigned(churn.net)} this month · ${JOINED_SCOPE}`}
             primaryColor={primaryColor}
-            href="/dashboard/members?filter=new-this-month"
+            href={monthDrillHref("new-this-month", period)}
             hrefLabel="Joined this month"
           />
           <MetricCard

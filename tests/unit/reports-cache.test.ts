@@ -52,7 +52,8 @@ describe("getReportsDataCached", () => {
     // A 60-second entry written by the previous deployment lacks `churn`,
     // `retention`, `paymentHealth.recovery` and `currentMembersByStatus`;
     // the version in the key keeps the two shapes apart in both directions.
-    expect(REPORTS_CACHE_VERSION).toBe("v3");
+    // v4 (review L4): `period`, the club-zone month window.
+    expect(REPORTS_CACHE_VERSION).toBe("v4");
     await getReportsDataCached("tenant-A");
     expect(calls[0].key[1]).toBe(REPORTS_CACHE_VERSION);
   });

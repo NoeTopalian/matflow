@@ -42,6 +42,15 @@ import {
   isOnHold,
   type PopulationKey,
 } from "@/lib/member-population";
+import { defaultClubMonthWindow, inMonthWindow, type ClubMonthWindow } from "@/lib/club-month";
+
+/**
+ * The club-zone month the server resolved for the two Reports drill-through
+ * slices (review L4). `isCurrent` is false when a Reports link asked for a
+ * month that has since ended, so the header names the month instead of
+ * calling it "this month".
+ */
+export type MonthWindowProp = ClubMonthWindow & { isCurrent: boolean };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -122,6 +131,12 @@ interface Props {
   supportScope?: "view" | "edit" | null;
   /** Set when the page loaded only the first N members (SSR cap). */
   truncatedAt?: number | null;
+  /**
+   * The month "new-this-month" and "churned-this-month" list, resolved on the
+   * server in the club's zone. Absent (tests, older callers): the
+   * schema-default zone's current month — never the browser's zone.
+   */
+  monthWindow?: MonthWindowProp | null;
 }
 
 // ─── Belt colour map ──────────────────────────────────────────────────────────
@@ -366,8 +381,9 @@ const QUIET_THRESHOLD_DAYS = 14;
 // chip, same pattern as "active"/"inactive"/"cancelled" below) — the Reports
 // page's "New this month" / "Churn rate this month" tiles link here so the
 // owner can see the actual members behind those two numbers (Track A drill-
-// through). Month boundary is the browser's local calendar month, same
-// server-local convention lib/reports.ts uses for its own month buckets.
+// through). Review L4 (23 Oct 2026): the month is the CLUB's, resolved on the
+// server as [monthStart, nextMonthStart) (lib/club-month.ts) and passed in as
+// `monthWindow` — the same window Reports counted, never the browser's month.
 const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "churned-this-month", "guardians", "guardian-review"];
 
 /**
@@ -393,12 +409,6 @@ const HEADLINE_POPULATION: Partial<Record<StatusFilter, PopulationKey>> = {
   guardians: "guardian",
 };
 
-function isThisCalendarMonth(iso?: string | null) {
-  if (!iso) return false;
-  const d = new Date(iso);
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-}
 
 /**
  * A parent/guardian account — including the no-login guardian records an
@@ -479,7 +489,11 @@ type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType"
  * (a new member the current view would hide moves the view to one that shows
  * them).
  */
-export function inStatusView(m: ViewRow, f: StatusFilter): boolean {
+export function inStatusView(
+  m: ViewRow,
+  f: StatusFilter,
+  month: Pick<ClubMonthWindow, "monthStart" | "nextMonthStart"> = defaultClubMonthWindow(),
+): boolean {
   if (m.status === "cancelled" && !INCLUDES_CANCELLED.includes(f)) return false;
   // Parent/guardian accounts are listed under their own chip only; every
   // other view is training members, matching its count.
@@ -509,9 +523,9 @@ export function inStatusView(m: ViewRow, f: StatusFilter): boolean {
       // since accountType could be junior/kids and not always reflect linkage).
       return !!m.parentMemberId;
     case "new-this-month":
-      return isThisCalendarMonth(m.joinedAt);
+      return inMonthWindow(m.joinedAt, month);
     case "churned-this-month":
-      return m.status === "cancelled" && isThisCalendarMonth(m.cancelledAt);
+      return m.status === "cancelled" && inMonthWindow(m.cancelledAt, month);
     case "on-hold":
       return isOnHold(m);
     default:
@@ -524,8 +538,12 @@ export function inStatusView(m: ViewRow, f: StatusFilter): boolean {
  * landing view is Active, so a new taster or inactive member would otherwise
  * vanish and look like a failed save).
  */
-export function viewShowingNewMember(m: ViewRow, f: StatusFilter): StatusFilter | null {
-  if (inStatusView(m, f)) return null;
+export function viewShowingNewMember(
+  m: ViewRow,
+  f: StatusFilter,
+  month?: Pick<ClubMonthWindow, "monthStart" | "nextMonthStart">,
+): StatusFilter | null {
+  if (inStatusView(m, f, month)) return null;
   if (isAccountHolderOnly(m)) return "guardians";
   if (m.status === "taster") return "taster";
   return "all";
@@ -536,18 +554,30 @@ export function viewShowingNewMember(m: ViewRow, f: StatusFilter): StatusFilter 
  * header names the slice and counts its rows, so "1 cancelled this month"
  * sits over the one row the churn tile counted.
  */
-const SLICE_HEADLINE_COPY: Partial<Record<StatusFilter, { label: string; includes: string; excludes: string }>> = {
-  "churned-this-month": {
-    label: "Cancelled this month",
-    includes: "Training members whose cancellation date falls this month",
-    excludes: "Excludes guardians",
-  },
-  "new-this-month": {
-    label: "Joined this month",
-    includes: "Training members who joined this month, including tasters and any since cancelled",
-    excludes: "Excludes guardians",
-  },
-};
+function sliceHeadlineCopy(
+  f: StatusFilter,
+  month: Pick<MonthWindowProp, "label" | "isCurrent" | "timeZone">,
+): { label: string; includes: string; excludes: string } | null {
+  // "this month" while it is; a Reports link for a month that has since
+  // ended names that month instead (review L4).
+  const when = month.isCurrent ? "this month" : `in ${month.label}`;
+  const zone = `Months run midnight to midnight in the club's time zone (${month.timeZone})`;
+  if (f === "churned-this-month") {
+    return {
+      label: `Cancelled ${when}`,
+      includes: `Training members whose cancellation date falls ${when}`,
+      excludes: `Excludes guardians. ${zone}`,
+    };
+  }
+  if (f === "new-this-month") {
+    return {
+      label: `Joined ${when}`,
+      includes: `Training members who joined ${when}, including tasters and any since cancelled`,
+      excludes: `Excludes guardians. ${zone}`,
+    };
+  }
+  return null;
+}
 
 const FILTER_LABELS: Partial<Record<StatusFilter, string>> = {
   all: "All current",
@@ -555,8 +585,10 @@ const FILTER_LABELS: Partial<Record<StatusFilter, string>> = {
   guardians: "Parents & guardians",
 };
 
-export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null }: Props) {
+export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null, monthWindow = null }: Props) {
   const supportEdit = supportScope === "edit";
+  // One month window for every "this month" slice on the page (review L4).
+  const month = useMemo<MonthWindowProp>(() => monthWindow ?? { ...defaultClubMonthWindow(), isCurrent: true }, [monthWindow]);
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const requestedFilter = searchParams.get("filter");
@@ -612,7 +644,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   const filtered = useMemo(() => {
     // Everyone matching the search, whatever their standing; otherwise the
     // rows under a chip are exactly the ones its count counts.
-    let list = searchingAll ? members : members.filter((m) => inStatusView(m, statusFilter));
+    let list = searchingAll ? members : members.filter((m) => inStatusView(m, statusFilter, month));
     if (membershipFilter !== "all") list = list.filter((m) => m.membershipType === membershipFilter);
     if (query.trim()) {
       const q = query.toLowerCase();
@@ -634,7 +666,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
       }
     });
     return list;
-  }, [members, query, statusFilter, membershipFilter, sortBy, searchingAll]);
+  }, [members, query, statusFilter, membershipFilter, sortBy, searchingAll, month]);
 
   // Auto-select: scroll single match into view
   useEffect(() => {
@@ -656,7 +688,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
     // A new taster or inactive member is not under the Active landing view;
     // move to a view that lists them, and say so, so the add cannot look like
     // a failed save (and be repeated as a duplicate).
-    const showIn = viewShowingNewMember(member, statusFilter);
+    const showIn = viewShowingNewMember(member, statusFilter, month);
     if (showIn) {
       selectFilter(showIn);
       toast(`${member.name} is listed under ${FILTER_LABELS[showIn] ?? showIn}`, "info");
@@ -715,9 +747,9 @@ export default function MembersList({ members: initial, primaryColor, role, guar
     guardian: counts.guardians,
   };
   // The Reports drill-through slices name themselves and count their own rows.
-  const sliceCopy = SLICE_HEADLINE_COPY[statusFilter];
+  const sliceCopy = sliceHeadlineCopy(statusFilter, month);
   const headlineCount = sliceCopy
-    ? members.filter((m) => inStatusView(m, statusFilter)).length
+    ? members.filter((m) => inStatusView(m, statusFilter, month)).length
     : headlineCounts[headlineKey] ?? counts.all;
   const headlineCopy = sliceCopy ?? POPULATION_COPY[headlineKey];
   // Q4 A-1: members on hold stay inside the Active headline, marked as such.
@@ -735,7 +767,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
         description={
           <>
             <span data-testid="members-headline">
-              {headlineCount} {headlineCopy.label.toLowerCase()}
+              {headlineCount} {headlineCopy.label.charAt(0).toLowerCase() + headlineCopy.label.slice(1)}
               {holdNote ? `, ${holdNote}` : ""}
             </span>
             {" · "}
