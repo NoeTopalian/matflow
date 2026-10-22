@@ -6,6 +6,8 @@
  * queries live in app/dashboard/page.tsx and feed this builder.
  */
 
+import { TRAINING_MEMBER } from "@/lib/member-population";
+
 export type ActionItemKind = "money" | "retention" | "admin" | "moment";
 
 export type ActionItem = {
@@ -51,6 +53,7 @@ export function atRiskMemberWhere(tenantId: string, now: Date) {
   since.setDate(now.getDate() - AT_RISK_DAYS);
   return {
     tenantId,
+    ...TRAINING_MEMBER,
     status: "active",
     attendances: { none: { checkInTime: { gte: since } } },
     OR: [{ joinedAt: { lt: since } }, { attendances: { some: {} } }],
@@ -174,4 +177,18 @@ export function buildActionItems(input: ActionItemsInput): ActionItem[] {
   // Money first, then retention, admin, moments; stable within a kind.
   items.sort((a, b) => SEVERITY[a.kind] - SEVERITY[b.kind]);
   return items.slice(0, MAX_ITEMS);
+}
+
+/**
+ * The Prisma `where` for the birthday candidates: active and taster training
+ * members with a date of birth. Guardian accounts are account holders, not
+ * members (lib/member-population), so they get no birthday row (review L1).
+ */
+export function birthdayCandidateWhere(tenantId: string) {
+  return {
+    tenantId,
+    ...TRAINING_MEMBER,
+    status: { in: ["active", "taster"] },
+    dateOfBirth: { not: null },
+  };
 }

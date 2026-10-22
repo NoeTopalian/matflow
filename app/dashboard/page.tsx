@@ -15,7 +15,7 @@ type TxClient = Prisma.TransactionClient;
 import DashboardStats from "@/components/dashboard/DashboardStats";
 import SetupBanner from "@/components/dashboard/SetupBanner";
 import DeniedNotice from "@/components/dashboard/DeniedNotice";
-import { atRiskMemberWhere, buildActionItems, type ActionItem } from "@/lib/dashboard-action-items";
+import { atRiskMemberWhere, birthdayCandidateWhere, buildActionItems, type ActionItem } from "@/lib/dashboard-action-items";
 import { ACTIVE_MEMBER, CAN_TRAIN_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 
 /**
@@ -223,7 +223,7 @@ async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionIte
     }),
     // DOBs are filtered to the next-7-day window in JS (month/day, year-agnostic).
     tx.member.findMany({
-      where: { tenantId, status: { in: ["active", "taster"] }, dateOfBirth: { not: null } },
+      where: birthdayCandidateWhere(tenantId),
       select: { id: true, name: true, dateOfBirth: true },
       take: 500,
     }),
