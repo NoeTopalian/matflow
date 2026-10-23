@@ -31,6 +31,7 @@ import {
   ON_HOLD,
   TRAINING_MEMBER,
   isActiveMember,
+  isCanTrainMember,
   isChaseablePayer,
   isCurrentMember,
   isGuardianAccount,
@@ -116,9 +117,16 @@ export function isQuiet(
   return sinceJoined === null || sinceJoined >= QUIET_THRESHOLD_DAYS;
 }
 
-/** No phone on record. The server twin is `phone IS NULL OR phone = ''` (writes validate E.164, so blank-but-spaces cannot be stored). */
-export function isMissingPhone(m: { phone?: string | null }) {
-  return !m.phone?.trim();
+/**
+ * Someone who can train (active or taster, not a guardian) with no phone on
+ * record. Round-3 review L6: the dashboard's "Missing phone numbers" item
+ * counts CAN_TRAIN_MEMBER and links to this chip, so both count the same
+ * people (inactive members used to be counted here only) — the alignment
+ * "Waiver missing" got earlier. The server twin is `phone IS NULL OR
+ * phone = ''` (writes validate E.164, so blank-but-spaces cannot be stored).
+ */
+export function isMissingPhone(m: { status: string; accountType?: string | null; phone?: string | null }) {
+  return isCanTrainMember(m) && !m.phone?.trim();
 }
 
 /**
@@ -203,7 +211,7 @@ export function memberListCountWheres(tenantId: string, now: Date, month: Month)
     overdue: { tenantId, ...overduePayerWhere(now) },
     overdueGuardians: { tenantId, ...GUARDIAN_ACCOUNT, ...overduePayerWhere(now) },
     waiverMissing: { tenantId, ...CAN_TRAIN_MEMBER, waiverAccepted: false },
-    missingPhone: { tenantId, ...CURRENT_MEMBER, OR: [{ phone: null }, { phone: "" }] },
+    missingPhone: { tenantId, ...CAN_TRAIN_MEMBER, OR: [{ phone: null }, { phone: "" }] },
     quiet: { tenantId, ...CURRENT_MEMBER, AND: [quietWhere(now)] },
     paid: { tenantId, ...CURRENT_MEMBER, AND: [shownPaidWhere(now)] },
     active: { tenantId, ...ACTIVE_MEMBER },

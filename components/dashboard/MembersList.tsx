@@ -50,6 +50,7 @@ import {
   countMemberRows,
   isQuiet,
   isOverduePayerRow,
+  isMissingPhone,
   isWaiverMissing,
   needsAttention,
   type MemberListCounts,
@@ -513,7 +514,8 @@ export function inStatusView(
     case "waiver-missing":
       return isWaiverMissing(m);
     case "missing-phone":
-      return !m.phone?.trim();
+      // Active and tasters only, as the dashboard counts (round-3 review L6).
+      return isMissingPhone(m);
     case "quiet":
       return isQuiet(m);
     case "kids":
