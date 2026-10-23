@@ -4,15 +4,31 @@
  * feeds it; Reports, the Net New Members card and the CSV only ever show what
  * this returns.
  *
- * Owner decisions Q6 (Noe, 17 Oct 2026), per calendar month in the club's
- * timezone:
+ * THE MOVEMENT DEFINITION — the only one (owner decisions Q6, Noe 17 Oct
+ * 2026, and D11, 23 Oct 2026). Every "joined", "left" and "net" MatFlow shows
+ * — the Reports "Joined this month" and "New this month" tiles, the Net New
+ * Members chart and its tally line, the "Joins" chart, the Reports CSV rows
+ * and the Members drill-throughs (filter=new-this-month, rejoined-this-month,
+ * lost-this-month, tasters-this-month, each with the club month in `month=`)
+ * — counts these events, per calendar month in the club's timezone, for
+ * training members (never guardians):
  * - New       first ever start (first entry to active).
  * - Rejoined  a start after a previous end (re-entry to active).
- * - Lost      a cancellation, plus a completed prepaid course from its dated
- *             end (B-2: the member stays inactive, labelled "Completed course").
- * - Net       new + rejoined - lost.
+ * - Joined    new + rejoined (always labelled "Joined (new + rejoined)").
+ * - Left      ("lost" in code) a cancellation, plus a completed prepaid
+ *             course from its dated end (B-2: the member stays inactive,
+ *             labelled "Completed course").
+ * - Net       new + rejoined - left.
+ * - Tasters added  a person whose first known state is a taster. Counted on
+ *             its own line, never in Joined or Net: a taster is "new" when
+ *             they first start.
+ * - Imported  an import's opening balance (below). NEVER new: an import does
+ *             not manufacture joins, and an import-day join date is not a
+ *             join either (lib/membership-report.ts joinDateHistory).
  * - Headcount active training members at month end; the current month is
  *             "now", so the last point equals the live "Active members" tile.
+ * Member.joinedAt and Member.cancelledAt are NOT the definition: they only
+ * reconstruct history for members with no event log (membership-report).
  *
  * Two kinds of move cross the active line without being a join or a loss, and
  * are counted apart so the headcount always adds up (acceptance 1):
@@ -55,7 +71,7 @@ export interface MovementEvent {
   correction?: boolean;
 }
 
-export type MovementKind = "new" | "rejoined" | "lostCancelled" | "lostCompleted" | "imported" | "otherIn" | "otherOut";
+export type MovementKind = "new" | "rejoined" | "lostCancelled" | "lostCompleted" | "imported" | "otherIn" | "otherOut" | "tasterAdded";
 
 export interface Movement {
   memberId: string;
@@ -83,6 +99,8 @@ export interface MovementTally {
   imported: number;
   otherIn: number;
   otherOut: number;
+  /** People whose first known state is a taster (D11). Not in net, not in the headcount. */
+  tasterAdded: number;
 }
 
 export interface MonthMovement extends MovementTally {
@@ -127,7 +145,9 @@ export const MEMBERSHIP_WINDOW_MONTHS = 12;
 /** The words on screen and in the CSV, once. British English, sentence case. */
 export const MEMBERSHIP_COPY = {
   definition:
-    "New: first ever start. Rejoined: started again after leaving. Lost: cancelled, or finished a prepaid course. Net = new + rejoined − lost.",
+    "New: first ever start. Rejoined: started again after leaving. Joined = new + rejoined. Left: cancelled, or finished a prepaid course. Net = new + rejoined − left. Tasters added are counted apart, and imports are never joins.",
+  /** The Reports tile that counts Joined (D11). */
+  joinedLabel: "Joined this month (new + rejoined)",
   headcount: "Active members at month end",
   headcountAxis: "Active members",
   deletion: "Members deleted from MatFlow are not in past months.",
@@ -254,6 +274,9 @@ export function memberMovements(events: readonly MovementEvent[]): Movement[] {
         ended = true;
       }
     } else if (!isActive) {
+      // D11: a person whose first known state is a taster is a taster added
+      // — never an import's opening balance or a correction at "now".
+      if (state === null && last.toStatus === "taster" && !machine) push("tasterAdded");
       const formerMember =
         last.toStatus === "cancelled" ||
         (last.toStatus === "inactive" && (isImportOpening(last) || last.estimated === true));
@@ -274,7 +297,12 @@ export function memberMovements(events: readonly MovementEvent[]): Movement[] {
 }
 
 export function emptyTally(): MovementTally {
-  return { new: 0, rejoined: 0, lost: 0, lostCancelled: 0, lostCompleted: 0, net: 0, imported: 0, otherIn: 0, otherOut: 0 };
+  return { new: 0, rejoined: 0, lost: 0, lostCancelled: 0, lostCompleted: 0, net: 0, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0 };
+}
+
+/** Joined = new + rejoined (D11), the one figure every "joined" shows. */
+export function joinedOf(t: Pick<MovementTally, "new" | "rejoined">): number {
+  return t.new + t.rejoined;
 }
 
 function addMove(t: MovementTally, kind: MovementKind) {
@@ -348,12 +376,11 @@ export interface BuildMembershipInput {
   boundary: Date | null;
 }
 
-export function buildMembership(input: BuildMembershipInput): MembershipSeries {
-  const { now, timeZone, boundary } = input;
-  const count = input.months ?? MEMBERSHIP_WINDOW_MONTHS;
+/** Each live member's events, with the reconciliation at "now" added (see the header). */
+function reconciledEvents(input: Pick<BuildMembershipInput, "events" | "live" | "now">): { byMember: Map<string, MovementEvent[]>; reconciled: number } {
+  const { now } = input;
   const live = new Map(input.live.map((m) => [m.id, m.status]));
   const byMember = groupByMember(input.events.filter((e) => live.has(e.memberId)));
-
   let reconciled = 0;
   for (const [memberId, status] of live) {
     const list = byMember.get(memberId) ?? [];
@@ -364,6 +391,45 @@ export function buildMembership(input: BuildMembershipInput): MembershipSeries {
     list.sort(compareEvents);
     byMember.set(memberId, list);
   }
+  return { byMember, reconciled };
+}
+
+/** The four Members drill-throughs (D11): one per figure on the Joined tile. */
+export type MovementBucket = "new" | "rejoined" | "lost" | "tasterAdded";
+
+export function movementBucket(kind: MovementKind): MovementBucket | null {
+  if (kind === "new" || kind === "rejoined" || kind === "tasterAdded") return kind;
+  if (kind === "lostCancelled" || kind === "lostCompleted") return "lost";
+  return null;
+}
+
+/**
+ * The members behind each figure for ONE window: the same replay, the same
+ * events and the same window rule as buildMembership's tally (a move counts
+ * when start <= at <= window.at), so a drill-through lists exactly the
+ * members the tile counted. A member counted twice in one figure (rejoined
+ * twice in a month) is listed once.
+ */
+export function moversInWindow(
+  input: Pick<BuildMembershipInput, "events" | "live" | "now">,
+  window: { start: Date; at: Date },
+): Record<MovementBucket, string[]> {
+  const out: Record<MovementBucket, Set<string>> = { new: new Set(), rejoined: new Set(), lost: new Set(), tasterAdded: new Set() };
+  for (const list of reconciledEvents(input).byMember.values()) {
+    for (const m of memberMovements(list)) {
+      const t = m.at.getTime();
+      if (t < window.start.getTime() || t > window.at.getTime()) continue;
+      const bucket = movementBucket(m.kind);
+      if (bucket) out[bucket].add(m.memberId);
+    }
+  }
+  return { new: [...out.new], rejoined: [...out.rejoined], lost: [...out.lost], tasterAdded: [...out.tasterAdded] };
+}
+
+export function buildMembership(input: BuildMembershipInput): MembershipSeries {
+  const { now, timeZone, boundary } = input;
+  const count = input.months ?? MEMBERSHIP_WINDOW_MONTHS;
+  const { byMember, reconciled } = reconciledEvents(input);
 
   const windows = clubMonthWindows(now, timeZone, count);
   const openingAt = new Date(windows[0].start.getTime() - 1);
@@ -422,7 +488,7 @@ export function buildMembership(input: BuildMembershipInput): MembershipSeries {
 
   const totals = emptyTally();
   for (const t of tallies) {
-    for (const k of ["new", "rejoined", "lostCancelled", "lostCompleted", "imported", "otherIn", "otherOut"] as const) totals[k] += t[k];
+    for (const k of ["new", "rejoined", "lostCancelled", "lostCompleted", "imported", "otherIn", "otherOut", "tasterAdded"] as const) totals[k] += t[k];
   }
   totals.lost = totals.lostCancelled + totals.lostCompleted;
   totals.net = totals.new + totals.rejoined - totals.lost;

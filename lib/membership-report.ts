@@ -6,7 +6,10 @@ import {
   compareEvents,
   isImportOpening,
   MEMBERSHIP_WINDOW_MONTHS,
+  moversInWindow,
+  type BuildMembershipInput,
   type MembershipSeries,
+  type MovementBucket,
   type MovementEvent,
 } from "./membership-movement";
 import { planTenantBackfill, STATUS_BACKFILL_SOURCE_ACTION } from "./status-backfill";
@@ -59,7 +62,7 @@ export function emptyMembershipReport(): MembershipReport {
     openingHeadcount: 0,
     headcountByMonth: [],
     movementsByMonth: [],
-    totals: { new: 0, rejoined: 0, lost: 0, lostCancelled: 0, lostCompleted: 0, net: 0, imported: 0, otherIn: 0, otherOut: 0 },
+    totals: { new: 0, rejoined: 0, lost: 0, lostCancelled: 0, lostCompleted: 0, net: 0, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0 },
     reconciled: 0,
     firstDataAt: null,
     historySource: "none",
@@ -86,7 +89,13 @@ export interface MemberDates {
  *   reads as the loss or rejoin it was rather than as a first appearance.
  * - A first event with no fromStatus that is not an import (a creation):
  *   nothing; that event is the start.
+ * - D11: a join date on the import day (within IMPORT_DAY_MS before the
+ *   import create) is the import stamping "now" on a member whose file gave
+ *   no join date, not a join: nothing, so the import create stays the
+ *   opening balance ("imported") and the import manufactures no new joins.
  */
+export const IMPORT_DAY_MS = 24 * 60 * 60 * 1000;
+
 export function joinDateHistory(member: MemberDates, recorded: readonly MovementEvent[], now: Date): MovementEvent[] {
   const first = recorded[0];
   const joined = member.joinedAt.getTime();
@@ -105,6 +114,7 @@ export function joinDateHistory(member: MemberDates, recorded: readonly Movement
   }
   const cutoff = first ? first.occurredAt.getTime() : now.getTime() + 1;
   if (!(joined < cutoff)) return [];
+  if (first && cutoff - joined < IMPORT_DAY_MS) return [];
   const statusThen = first ? first.toStatus : member.status;
   if (statusThen === "active") return [ev("start", "active", joined)];
   if (statusThen === "cancelled" && member.cancelledAt) {
@@ -114,11 +124,41 @@ export function joinDateHistory(member: MemberDates, recorded: readonly Movement
   return [];
 }
 
+/** The replay input and where its history came from: what the report and the Members drill-throughs share. */
+export interface MembershipInput {
+  input: Omit<BuildMembershipInput, "months">;
+  historySource: MembershipReport["historySource"];
+  undatedHistory: number;
+  fromJoinDates: number;
+}
+
 export async function loadMembershipReport(
   tx: TxClient,
   tenantId: string,
   { now, months = MEMBERSHIP_WINDOW_MONTHS }: { now: Date; months?: number },
 ): Promise<MembershipReport> {
+  const loaded = await loadMembershipInput(tx, tenantId, now);
+  const series = buildMembership({ ...loaded.input, months });
+  return { ...series, historySource: loaded.historySource, undatedHistory: loaded.undatedHistory, fromJoinDates: loaded.fromJoinDates };
+}
+
+/**
+ * D11: the members behind each movement figure for one club month — the
+ * Members drill-throughs (new-, rejoined-, lost- and tasters-this-month). The
+ * same reads and replay as loadMembershipReport, so the rows listed are
+ * exactly the members the Reports tile and chart counted for that month.
+ */
+export async function loadMonthMovers(
+  tx: TxClient,
+  tenantId: string,
+  now: Date,
+  window: { start: Date; at: Date },
+): Promise<Record<MovementBucket, string[]>> {
+  const loaded = await loadMembershipInput(tx, tenantId, now);
+  return moversInWindow(loaded.input, window);
+}
+
+export async function loadMembershipInput(tx: TxClient, tenantId: string, now: Date): Promise<MembershipInput> {
   if (!tenantId) throw new Error("loadMembershipReport requires a tenantId");
   // Sequential, not Promise.all: one interactive transaction is one connection.
   const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
@@ -202,13 +242,10 @@ export async function loadMembershipReport(
     if (!boundary || e.occurredAt < boundary) boundary = e.occurredAt;
   }
 
-  const series = buildMembership({
-    events,
-    live: members.map((m) => ({ id: m.id, status: m.status })),
-    now,
-    timeZone,
-    months,
-    boundary,
-  });
-  return { ...series, historySource, undatedHistory, fromJoinDates };
+  return {
+    input: { events, live: members.map((m) => ({ id: m.id, status: m.status })), now, timeZone, boundary },
+    historySource,
+    undatedHistory,
+    fromJoinDates,
+  };
 }

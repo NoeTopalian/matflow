@@ -117,7 +117,8 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
       // T2b: churn with its counts and joined beside it (8 active now + 1
       // cancelled this month = base 9; 2 joined, net +1).
       churnRate: 11.1,
-      churn: { ratePct: 11.1, cancelled: 1, base: 9, joined: 2, net: 1 },
+      // D11: joined and net are the movement figures for the current month (Oct: 2 new + 1 rejoined).
+      churn: { ratePct: 11.1, cancelled: 1, base: 9, joined: 3, net: 3 },
       paymentHealth: {
         overdueCount: 0, noPaymentYetCount: 0, failedLast30Days: 0, recoveryRate: 50,
         recovery: { ratePct: 50, recovered: 1, failedMembers: 2 },
@@ -177,10 +178,11 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
     expect(left?.[3]).not.toMatch(/%/);
     // T2b: churn row carries the same numbers as the tile; joined beside it.
     expect(rows.find((r) => r[1] === "Churn this month")?.[2]).toBe("11.1% (1 of 9)");
-    const joined = rows.find((r) => r[1] === "Joined this month");
-    expect(joined?.[2]).toBe("2");
-    // The net beside churn is the Net New Members card's figure for this month (T8c review).
-    expect(joined?.[3]).toMatch(/^Net \+3 this month \(new \+ rejoined − lost\) · People added in MatFlow/);
+    // D11: the Joined tile line for line — the movement definition, the card's figures.
+    const joined = rows.find((r) => r[1] === "Joined this month (new + rejoined)");
+    expect(joined?.[2]).toBe("3");
+    expect(joined?.[3]).toMatch(/^New 2 · Rejoined 1 · Tasters added 0 · Left 0 · Net \+3 · New: first ever start/);
+    expect(rows.find((r) => r[1] === "Rejoined this month")?.[2]).toBe("1");
     expect(rows.find((r) => r[1] === "Payment recovery")?.[2]).toBe("50% (1 of 2)");
     // Undefined rates export as a dash, never "0%".
     expect(rows.find((r) => r[1] === "6-month survival")?.[2]).toBe("—");
@@ -191,7 +193,7 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
     const movement = rows.find((r) => r[0] === "Membership movement");
     expect(movement?.[1]).toBe("Sep 26 – Oct 26");
     expect(movement?.[2]).toBe("2");
-    expect(movement?.[3]).toMatch(/^New 3 · Rejoined 1 · Lost 2 \(cancelled 1, completed course 1\) · New: first ever start/);
+    expect(movement?.[3]).toMatch(/^New 3 · Rejoined 1 · Left 2 \(cancelled 1, completed course 1\) · Tasters added 0 · New: first ever start/);
     expect(movement?.[3]).toContain("Members deleted from MatFlow are not in past months.");
     const byMonth = rows.filter((r) => r[0] === "Membership movement by month");
     expect(byMonth.map((r) => [r[1], r[2]])).toEqual([["Sep 26", "-1"], ["Oct 26", "3"]]);

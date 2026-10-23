@@ -159,7 +159,8 @@ describe("memberMovements: the owner's Q6 definitions", () => {
       ev("a", "cancelled", "2026-01-20T00:00:00Z", { fromStatus: "taster" }),
       ev("a", "active", "2026-03-01T00:00:00Z", { fromStatus: "cancelled" }),
     ]);
-    expect(taster.map((m) => m.kind)).toEqual(["new"]);
+    // D11: the taster start is a taster added (its own line); the first start is still new.
+    expect(taster.map((m) => m.kind)).toEqual(["tasterAdded", "new"]);
     const former = memberMovements([
       ev("b", "cancelled", IMPORT_DAY, { reason: "import", fromStatus: null, sourceAction: "import_create" }),
       ev("b", "active", "2026-10-12T00:00:00Z", { fromStatus: "cancelled" }),

@@ -51,7 +51,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import NetNewMembersCard from "./NetNewMembersCard";
-import { MEMBERSHIP_COPY, estimatedCaption } from "@/lib/membership-movement";
+import { MEMBERSHIP_COPY, emptyTally, estimatedCaption } from "@/lib/membership-movement";
 import type { MembershipReport } from "@/lib/membership-report";
 import { basisNote } from "@/lib/net-new-series";
 import {
@@ -193,7 +193,9 @@ export function classComposition(topClasses: ReportsData["topClasses"]) {
  * counted — never one recomputed in the browser's zone, and never the next
  * month if the calendar turned while the cached report was on screen.
  */
-export function monthDrillHref(filter: "new-this-month" | "churned-this-month", period: ReportsData["period"] | undefined): string {
+export type MonthDrillFilter = "new-this-month" | "rejoined-this-month" | "lost-this-month" | "tasters-this-month" | "churned-this-month";
+
+export function monthDrillHref(filter: MonthDrillFilter, period: ReportsData["period"] | undefined): string {
   const params = new URLSearchParams({ filter });
   if (period?.monthKey) params.set("month", period.monthKey);
   return `/dashboard/members?${params.toString()}`;
@@ -212,19 +214,23 @@ export function periodCsvDetail(period: ReportsData["period"]): string {
  */
 export const RECOVERY_SCOPE = "Accounts with a failed payment in the last 90 days now marked paid (any status, parents and guardians included)";
 
-/** The "Joined this month" copy (Q6, A-13): who it counts, and the net beside churn. */
-const JOINED_SCOPE = "People added in MatFlow, incl. tasters. A TeamUp refresh adds nobody.";
-
 /**
- * The net printed beside churn (T2b) is the Net New Members card's own figure
- * for the current club month (Q6: new + rejoined − lost), so the page never
- * shows two different nets for one month. Without a current month: the scope alone.
+ * D11 (23 Oct 2026): ONE movement definition (lib/membership-movement.ts) for
+ * the tiles, the charts, the tally line, the CSV and the drill-throughs. The
+ * current club month's tally, or an empty one when the month has no data.
  */
-export function joinedNetDetail(m: Pick<MembershipReport, "movementsByMonth">): string {
-  const current = m.movementsByMonth.find((r) => r.isCurrentMonth);
-  if (!current || current.basis === "none") return JOINED_SCOPE;
-  return `Net ${formatSigned(current.net)} this month (new + rejoined − lost) · ${JOINED_SCOPE}`;
+export function currentMonthMovement(m: Pick<MembershipReport, "movementsByMonth">): MembershipReport["totals"] {
+  const current = m.movementsByMonth.find((r) => r.isCurrentMonth && r.basis !== "none");
+  return current ?? emptyTally();
 }
+
+/** "New 1 · Rejoined 1 · Tasters added 1 · Left 2 · Net 0": the Joined tile's lines and its CSV detail. */
+export function joinedTileDetail(t: MembershipReport["totals"]): string {
+  return `New ${formatNumber(t.new)} · Rejoined ${formatNumber(t.rejoined)} · Tasters added ${formatNumber(t.tasterAdded ?? 0)} · Left ${formatNumber(t.lost)} · Net ${formatSigned(t.net)}`;
+}
+
+/** The "New this month" tile's scope, in the movement words. */
+export const NEW_SCOPE = "First ever start. Rejoins, tasters and imports are counted apart";
 const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";
 
 /** Delta as display text, or null when nothing moved. */
@@ -310,7 +316,7 @@ export function membershipCsvRows(m: MembershipReport): (string | number | null)
   const t = m.totals;
   const caption = estimatedCaption(m);
   const split = (r: MembershipReport["totals"]) =>
-    `New ${r.new} · Rejoined ${r.rejoined} · Lost ${r.lost} (cancelled ${r.lostCancelled}, completed course ${r.lostCompleted})`;
+    `New ${r.new} · Rejoined ${r.rejoined} · Left ${r.lost} (cancelled ${r.lostCancelled}, completed course ${r.lostCompleted}) · Tasters added ${r.tasterAdded ?? 0}`;
   return [
     ["Membership movement", `${m.window.from} – ${m.window.to}`, t.net, `${split(t)} · ${MEMBERSHIP_COPY.definition} ${MEMBERSHIP_COPY.deletion}`],
     ...m.movementsByMonth.filter((r) => r.basis !== "none").map((r) => [
@@ -365,7 +371,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // attendanceScope), so its export row must say so — it was the one scoped
     // number leaving the page unlabelled (assessment lane 5).
     ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Last week: ${data.summary.attendanceLastWeek}${filterSuffix ? ` · ${filterSuffix}` : ""}`],
-    ["Summary", "New members this month", data.summary.newMembersThisMonth, `Last month: ${data.summary.newMembersLastMonth} · ${JOINED_SCOPE}`],
+    ["Summary", "New members this month", data.summary.newMembersThisMonth, `Last month: ${data.summary.newMembersLastMonth} · ${NEW_SCOPE}`],
     ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
     // The rate definition the owner chose on screen, with its formula — the
     // headline of the filter bar, previously missing from the file.
@@ -374,7 +380,12 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // Health rows (T2b): the same text the tiles print, so the file and the
     // screen agree. Club-wide — the class/age filters never scope them.
     ["Health", "Churn this month", formatRatio(churn.ratePct, churn.cancelled, churn.base), `${CHURN_FORMULA} · club-wide`],
-    ["Health", "Joined this month", churn.joined, joinedNetDetail(data.membership)],
+    // D11: the Joined tile, line for line, and the members behind each figure.
+    ["Health", MEMBERSHIP_COPY.joinedLabel, churn.joined, `${joinedTileDetail(currentMonthMovement(data.membership))} · ${MEMBERSHIP_COPY.definition}`],
+    ["Health", "New this month", currentMonthMovement(data.membership).new, "First ever start"],
+    ["Health", "Rejoined this month", currentMonthMovement(data.membership).rejoined, "Started again after leaving"],
+    ["Health", "Tasters added this month", currentMonthMovement(data.membership).tasterAdded ?? 0, "Not in Joined or Net"],
+    ["Health", "Left this month", currentMonthMovement(data.membership).lost, "Cancelled, or finished a prepaid course"],
     ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), RECOVERY_SCOPE],
     // Review L2: payer totals, the Payments → Outstanding definition; the
     // detail says guardians who pay are counted, and how many.
@@ -466,6 +477,54 @@ function TrendBadge({
       <span className="font-semibold tabular-nums">{delta}</span>
       <span style={{ color: "var(--tx-3)" }}>{label}</span>
     </span>
+  );
+}
+
+/**
+ * D11: the Joined tile. One combined figure, explicitly labelled
+ * "Joined this month (new + rejoined)", with New, Rejoined, Tasters added and
+ * Left each on its own line and each a drill-through to exactly the members
+ * that figure counted, for the report's club month. Net and the definition
+ * underneath, in the words the Net New Members card uses.
+ */
+function JoinedThisMonthTile({ joined, t, period }: { joined: number; t: MembershipReport["totals"]; period: ReportsData["period"] | undefined }) {
+  const lines: { label: string; value: number; filter: MonthDrillFilter }[] = [
+    { label: "New", value: t.new, filter: "new-this-month" },
+    { label: "Rejoined", value: t.rejoined, filter: "rejoined-this-month" },
+    { label: "Tasters added", value: t.tasterAdded ?? 0, filter: "tasters-this-month" },
+    { label: "Left", value: t.lost, filter: "lost-this-month" },
+  ];
+  return (
+    <Card className="!p-4" data-testid="reports-joined-tile">
+      <div
+        className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+        style={{ background: "color-mix(in srgb, var(--color-primary) 13%, transparent)" }}
+      >
+        <UserPlus className="w-5 h-5" style={{ color: "var(--color-primary)" }} />
+      </div>
+      <p className="mt-5 text-2xl font-bold leading-tight text-tx-1" data-testid="reports-joined-value">{formatNumber(joined)}</p>
+      <p className="text-xs font-medium mt-1 text-tx-3">{MEMBERSHIP_COPY.joinedLabel}</p>
+      <ul className="mt-2 space-y-0.5 text-[11px]">
+        {lines.map((line) => (
+          <li key={line.filter}>
+            <Link
+              href={monthDrillHref(line.filter, period)}
+              className="flex items-center justify-between gap-2 rounded px-1 -mx-1 py-0.5 text-tx-2 transition-colors hover:bg-[var(--sf-2)]"
+              data-testid={`reports-joined-${line.filter}`}
+            >
+              <span>{line.label}</span>
+              <span className="flex items-center gap-1 font-semibold tabular-nums text-tx-1">
+                {formatNumber(line.value)}
+                <ChevronRight className="w-3 h-3 shrink-0 text-tx-3" aria-hidden="true" />
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[11px] text-tx-2" data-testid="reports-joined-net">
+        Net {formatSigned(t.net)} this month (new + rejoined − left)
+      </p>
+    </Card>
   );
 }
 
@@ -1025,7 +1084,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={UserPlus}
           label="New this month"
           value={formatNumber(summary.newMembersThisMonth)}
-          detail={JOINED_SCOPE}
+          detail={NEW_SCOPE}
           primaryColor={primaryColor}
           trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: `vs ${formatNumber(summary.newMembersLastMonth)} last month` }}
           href={monthDrillHref("new-this-month", period)}
@@ -1136,7 +1195,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionTitle title="First joins" subtitle="First joins per month by join date, last 6 months" icon={UserPlus} />
+          <SectionTitle title="Joined" subtitle="Joined (new + rejoined) per month, last 6 months" icon={UserPlus} />
           {monthlySignups.every((row) => row.count === 0) ? (
             <EmptyChart label="No signup data yet" />
           ) : (
@@ -1301,15 +1360,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             href={monthDrillHref("churned-this-month", period)}
             hrefLabel="Churn rate this month"
           />
-          <MetricCard
-            icon={UserPlus}
-            label="Joined this month"
-            value={formatNumber(churn.joined)}
-            detail={joinedNetDetail(membership)}
-            primaryColor={primaryColor}
-            href={monthDrillHref("new-this-month", period)}
-            hrefLabel="Joined this month"
-          />
+          <JoinedThisMonthTile joined={churn.joined} t={currentMonthMovement(membership)} period={period} />
           <MetricCard
             icon={RefreshCcw}
             label="Payment recovery rate"

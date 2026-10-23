@@ -34,6 +34,22 @@ import { clubMonthWindow, clubMonthWindowForKey, inMonthWindow } from "@/lib/clu
 import { getReportsData } from "@/lib/reports";
 import { reportsCsv, monthDrillHref } from "@/components/dashboard/ReportsView";
 import MembersList, { type MemberRow } from "@/components/dashboard/MembersList";
+import { loadMonthMovers } from "@/lib/membership-report";
+import type { MovementBucket } from "@/lib/membership-movement";
+
+/**
+ * D11: what the Members page server does for a drill-through — the movement
+ * replay for the link's club month (lib/membership-report loadMonthMovers) —
+ * so the rows are flagged exactly as the page would flag them.
+ */
+async function moversFor(window: { monthStart: string; nextMonthStart: string; isCurrent: boolean }): Promise<Map<string, MovementBucket[]>> {
+  const now = new Date();
+  const at = window.isCurrent ? now : new Date(new Date(window.nextMonthStart).getTime() - 1);
+  const movers = await loadMonthMovers(fakeTx(members, { timezone: clubZone }) as never, "club", now, { start: new Date(window.monthStart), at });
+  const out = new Map<string, MovementBucket[]>();
+  for (const bucket of Object.keys(movers) as MovementBucket[]) for (const id of movers[bucket]) out.set(id, [...(out.get(id) ?? []), bucket]);
+  return out;
+}
 
 const ATTRIBUTION = {
   rows: [],
@@ -108,8 +124,9 @@ function rowsFor(fixture: Fixture[]) {
   }));
 }
 
-function memberRows(fixture: Fixture[]): MemberRow[] {
+function memberRows(fixture: Fixture[], moved: Map<string, MovementBucket[]> = new Map()): MemberRow[] {
   return fixture.map((f) => ({
+    ...(moved.has(f.id) ? { moved: moved.get(f.id) } : {}),
     id: f.id,
     name: f.name,
     email: `${f.id}@example.test`,
@@ -141,6 +158,7 @@ async function threeSurfaces(at: string, browserZone: string, fixture: Fixture[]
   const current = clubMonthWindow(new Date(), clubZone);
   const fromLink = clubMonthWindowForKey(monthKey, clubZone)!;
   const monthWindow = { ...fromLink, isCurrent: fromLink.monthKey === current.monthKey };
+  const moved = await moversFor(monthWindow);
 
   process.env.TZ = browserZone;
   const csv = reportsCsv(data, ATTRIBUTION as never);
@@ -148,7 +166,7 @@ async function threeSurfaces(at: string, browserZone: string, fixture: Fixture[]
 
   const listed = (filter: string) => {
     currentSearch = `filter=${filter}&month=${monthKey}`;
-    const view = render(<MembersList members={memberRows(fixture)} primaryColor="#3b82f6" role="owner" monthWindow={monthWindow} />);
+    const view = render(<MembersList members={memberRows(fixture, moved)} primaryColor="#3b82f6" role="owner" monthWindow={monthWindow} />);
     const names = fixture.filter((f) => shown(f.name)).map((f) => f.id);
     const headline = screen.getByTestId("members-headline").textContent;
     view.unmount();
@@ -190,12 +208,12 @@ describe("Reports tiles, CSV and drill-through agree on the club's month", () =>
     expect(data.membership.movementsByMonth.at(-1)).toMatchObject({ month: data.period.monthKey, new: 2, lostCancelled: 1 });
     // CSV: the same numbers, and it says which month and zone.
     expect(csvValue("New members this month")).toBe("2");
-    expect(csvValue("Joined this month")).toBe("2");
+    expect(csvValue("Joined this month (new + rejoined)")).toBe("2");
     expect(csv).toContain("This month,November 2026");
     expect(csv).toContain("Pacific/Auckland");
     // Drill-through: the same members, by id.
     expect(newRows.names.sort()).toEqual(["n1", "n2"]);
-    expect(newRows.headline).toBe("2 joined this month");
+    expect(newRows.headline).toBe("2 new this month");
     expect(churnedRows.names).toEqual(["c1"]);
     expect(churnedRows.headline).toBe("1 cancelled this month");
   });
@@ -215,9 +233,9 @@ describe("Reports tiles, CSV and drill-through agree on the club's month", () =>
     expect(data.membership.movementsByMonth.at(-1)).toMatchObject({ month: "2026-10", new: 2, lostCancelled: 1 });
     expect(data.summary.newMembersThisMonth).toBe(2);
     expect(data.churn.cancelled).toBe(1);
-    expect(csvValue("Joined this month")).toBe("2");
+    expect(csvValue("Joined this month (new + rejoined)")).toBe("2");
     expect(newRows.names.sort()).toEqual(["o1", "o2"]);
-    expect(newRows.headline).toBe("2 joined this month");
+    expect(newRows.headline).toBe("2 new this month");
     expect(churnedRows.names).toEqual(["c1"]);
   });
 
@@ -227,16 +245,18 @@ describe("Reports tiles, CSV and drill-through agree on the club's month", () =>
     vi.setSystemTime(new Date("2026-12-02T00:00:00Z"));
     const fixture: Fixture[] = [{ id: "n1", name: "Nia November", joinedAt: "2026-11-05T00:00:00Z" }];
     const fromLink = clubMonthWindowForKey("2026-11", clubZone)!;
+    members = rowsFor(fixture);
+    const moved = await moversFor({ ...fromLink, isCurrent: false });
     currentSearch = "filter=new-this-month&month=2026-11";
     render(
       <MembersList
-        members={memberRows(fixture)}
+        members={memberRows(fixture, moved)}
         primaryColor="#3b82f6"
         role="owner"
         monthWindow={{ ...fromLink, isCurrent: false }}
       />,
     );
     expect(shown("Nia November")).toBe(true);
-    expect(screen.getByTestId("members-headline").textContent).toBe("1 joined in November 2026");
+    expect(screen.getByTestId("members-headline").textContent).toBe("1 new in November 2026");
   });
 });
