@@ -186,10 +186,13 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
                       where --hue-danger measures 3.76:1 and fails the §7 floor. */}
                   <p className="text-[11px]" style={{ color: r.kind === "no_payment_yet" ? "var(--tx-3)" : "var(--hue-danger-ink)" }}>{overdueLabel(r)}</p>
                 </div>
-                {/* The chase email is the failed-payment reminder; a member who has
+                {/* The chase email is the failed-payment reminder. A member who has
                     simply not paid yet has had nothing fail, so the desk records
-                    or opens instead. */}
-                {r.kind !== "no_payment_yet" && (
+                    or opens instead. But a declined FIRST charge is a "No payment
+                    yet" row since round-3 M1 and carries its failed charge; this
+                    panel is the only place it can be chased, so Chase shows
+                    whenever a charge failed (round-4 review L1). */}
+                {(r.kind !== "no_payment_yet" || r.amountSource === "failed_charge") && (
                 <Button
                   variant="secondary"
                   size="compact"
