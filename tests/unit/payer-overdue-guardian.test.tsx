@@ -232,3 +232,64 @@ describe("overdue and No payment yet partition the payers, as Outstanding lists 
     expect(paymentHealthLine({ overdueCount: 1, noPaymentYetCount: 1, failedLast30Days: 0 })?.text).toBe("1 payer overdue · No payment yet 1");
   });
 });
+
+// Round-3 review M1 (23 Oct 2026): a never-paid member on a plan, due date
+// five days ago, whose first charge FAILED three days ago. Outstanding used
+// to let the failed charge turn the row "overdue" while Reports and Members
+// said "No payment yet", so the split lines contradicted each other. Now all
+// three say 0 overdue / 1 no payment yet; the row keeps the failed charge's
+// amount, reason, date and age.
+describe("a never-paid member with a failed first charge is No payment yet on every surface", () => {
+  const FAILED_AT = new Date(NOW.getTime() - 3 * DAY);
+  const PENDING: FamilyRow = {
+    ...PARENT,
+    id: "f1",
+    name: "Fay Failed",
+    email: "fay@example.test",
+    accountType: "adult",
+    paymentStatus: "pending",
+    membershipTierId: "tier-adult",
+    nextDueAt: new Date(NOW.getTime() - 5 * DAY),
+    waiverAccepted: true,
+  };
+
+  it("Outstanding: one row, kind no_payment_yet, carrying the failed charge; split 0 overdue · 1 no payment yet", () => {
+    const rows = buildOutstandingRows({
+      now: NOW,
+      // The overdue query matches them too (due date passed; pending is chaseable).
+      overdueMembers: [{ id: "f1", name: "Fay Failed", membershipType: "Plan", nextDueAt: PENDING.nextDueAt, planPricePence: 5000, billedBy: "matflow", accountType: "adult" }],
+      latestFailed: new Map([["f1", { amountPence: 4500, createdAt: FAILED_AT, failureReason: "card_declined" }]]),
+      noPaymentYetMembers: [{ id: "f1", name: "Fay Failed", membershipType: "Plan", planPricePence: 5000, billedBy: "matflow", accountType: "adult" }],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: "no_payment_yet",
+      amountPence: 4500,
+      amountSource: "failed_charge",
+      reason: "card_declined",
+      daysOverdue: 3,
+      lastAttempt: FAILED_AT.toISOString(),
+    });
+    expect(outstandingPayerSummary(rows)).toMatchObject({ payers: 1, overdue: 0, noPaymentYet: 1, split: "0 payers overdue · 1 with no payment yet" });
+  });
+
+  it("Reports: 0 payers overdue, 1 with no payment yet, the same in the health line and CSV", async () => {
+    members = [PENDING];
+    const data = await getReportsData("club");
+    expect(data.paymentHealth.overdueCount).toBe(0);
+    expect(data.paymentHealth.noPaymentYetCount).toBe(1);
+    expect(paymentHealthLine(data.paymentHealth)?.text).toBe("0 payers overdue · No payment yet 1");
+    const csv = reportsCsv(data, ATTRIBUTION as never);
+    expect(csv).toContain("Payments,Payers overdue,0,");
+    expect(csv).toContain("Payments,Payers with no payment yet,1,");
+  });
+
+  it("Members: Payers overdue 0 (server and browser), the row shows No payment yet", () => {
+    const server = memberListCountWheres("club", NOW, MONTH);
+    expect(matchRows([PENDING], server.overdue)).toHaveLength(0);
+    const row = listRow(PENDING);
+    expect(row.paymentStatus).toBe("pending");
+    expect(countMemberRows([row], NOW, MONTH).overdue).toBe(0);
+    expect(inStatusView(row, "overdue")).toBe(false);
+  });
+});

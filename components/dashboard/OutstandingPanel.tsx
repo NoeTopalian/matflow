@@ -176,7 +176,7 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
                   {r.memberName}
                 </Link>
                 <p className="mt-0.5 truncate text-xs" style={{ color: "var(--tx-3)" }}>
-                  {r.membershipType ?? "Ad-hoc"}{r.reason && r.kind !== "no_payment_yet" ? ` · ${r.reason}` : ""}
+                  {r.membershipType ?? "Ad-hoc"}{r.reason && r.reason !== NO_PAYMENT_YET_REASON ? ` · ${r.reason}` : ""}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-4">

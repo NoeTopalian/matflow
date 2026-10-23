@@ -61,10 +61,13 @@ export function buildOutstandingRows(input: OutstandingInput): OutstandingRow[] 
   const noPaymentYet = (input.noPaymentYetMembers ?? []).filter((m) => m.billedBy !== "teamup");
   const pendingIds = new Set(noPaymentYet.map((m) => m.id));
   // One row per member. A "No payment yet" member whose tier-seeded due date
-  // has also passed would match the overdue rule too; the plainer reason wins
-  // unless a real failed charge says more.
-  const overdue = input.overdueMembers.filter((m) => !pendingIds.has(m.id) || input.latestFailed.has(m.id));
-  const overdueIds = new Set(overdue.map((m) => m.id));
+  // has also passed matches the overdue rule too; "No payment yet" always
+  // wins, failed charge or not (round-3 review M1, 23 Oct 2026). Reports and
+  // the Members page split payers the same way (lib/overdue
+  // overduePayerWhere), so the three split lines cannot contradict each
+  // other. A failed charge still shows: its amount, reason, date and age stay
+  // on the No-payment-yet row.
+  const overdue = input.overdueMembers.filter((m) => !pendingIds.has(m.id));
   const rows: OutstandingRow[] = overdue.map((m) => {
     const failed = input.latestFailed.get(m.id) ?? null;
     return {
@@ -85,16 +88,16 @@ export function buildOutstandingRows(input: OutstandingInput): OutstandingRow[] 
   });
 
   for (const m of noPaymentYet) {
-    if (overdueIds.has(m.id)) continue;
+    const failed = input.latestFailed.get(m.id) ?? null;
     rows.push({
       memberId: m.id,
       memberName: m.name,
       membershipType: m.membershipType,
-      amountPence: m.planPricePence ?? null,
-      amountSource: m.planPricePence != null ? "plan_price" : null,
-      reason: NO_PAYMENT_YET_REASON,
-      daysOverdue: null,
-      lastAttempt: null,
+      amountPence: failed?.amountPence ?? m.planPricePence ?? null,
+      amountSource: failed ? "failed_charge" : m.planPricePence != null ? "plan_price" : null,
+      reason: failed?.failureReason ?? NO_PAYMENT_YET_REASON,
+      daysOverdue: failed ? daysBetween(input.now, failed.createdAt) : null,
+      lastAttempt: failed ? failed.createdAt.toISOString() : null,
       ...(m.billedBy ? { billedBy: m.billedBy } : {}),
       ...(m.accountType === "parent" ? { payerIsGuardian: true } : {}),
       kind: "no_payment_yet",
