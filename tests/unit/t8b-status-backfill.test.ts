@@ -22,6 +22,7 @@ import {
   monthDelta,
   monthTotals,
   planTenantBackfill,
+  previewTenantBackfillRollback,
   rollbackTenantBackfill,
   STATUS_BACKFILL_AUDIT_ACTION,
   STATUS_BACKFILL_ROLLBACK_AUDIT_ACTION,
@@ -34,7 +35,7 @@ import {
   recordStatusEventsBulk,
   StatusEventPlacementRefused,
 } from "@/lib/member-status";
-import { backfillMode, backfillTarget } from "../../scripts/backfill-status-events-guard.mjs";
+import { backfillMode, backfillPlanDigest, backfillRollbackDigest, backfillTarget } from "../../scripts/backfill-status-events-guard.mjs";
 
 const TZ = "Europe/London";
 const IMPORT_DAY = new Date("2026-10-03T11:39:57.000Z");
@@ -487,6 +488,51 @@ describe("T8b plan, apply, re-apply and rollback (in-memory club)", () => {
     expect((await applyTenantBackfill(fakeTx(db) as never, "tA", { runId: "run-3" })).status).toBe("applied");
   });
 
+  it("review F6: the rollback preview lists the events it would delete, per month and kind, and writes nothing", async () => {
+    const db = club();
+    await applyTenantBackfill(fakeTx(db) as never, "tA", { runId: "run-1" });
+    const backfilled = db.events.filter((e) => e.sourceAction === "import_backfill").map((e) => e.id).sort();
+    const before = JSON.stringify(db.events);
+    const tx = fakeTx(db);
+    const deleteSpy = vi.spyOn(tx.memberStatusEvent, "deleteMany");
+    const p = await previewTenantBackfillRollback(tx as never, "tA");
+    expect(p).toMatchObject({ tenantId: "tA", timeZone: TZ, events: 5 });
+    expect(p.eventIds).toEqual(backfilled);
+    expect(p.byMonth).toEqual({
+      "2025-01": { start: 1, rejoin: 0, cancelled: 0, completed_course: 0 },
+      "2025-02": { start: 1, rejoin: 0, cancelled: 0, completed_course: 0 },
+      "2025-06": { start: 0, rejoin: 0, cancelled: 1, completed_course: 0 },
+      "2025-09": { start: 0, rejoin: 1, cancelled: 0, completed_course: 0 },
+      "2025-12": { start: 0, rejoin: 0, cancelled: 1, completed_course: 0 },
+    });
+    expect(deleteSpy).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+    expect(JSON.stringify(db.events)).toBe(before);
+    // The other club has nothing to roll back.
+    expect((await previewTenantBackfillRollback(fakeTx(db) as never, "tB")).events).toBe(0);
+  });
+
+  it("review F6: a confirmed rollback deletes exactly the previewed events, and refuses if they changed since", async () => {
+    const db = club();
+    await applyTenantBackfill(fakeTx(db) as never, "tA", { runId: "run-1" });
+    const p = await previewTenantBackfillRollback(fakeTx(db) as never, "tA");
+
+    // A back-filled event appears after the preview (another run): refused, nothing removed, no audit row.
+    db.events.push({ id: "late", tenantId: "tA", memberId: "noDate", fromStatus: null, toStatus: "active", reason: "import", occurredAt: new Date("2025-03-01T00:00:00Z"), sourceJobId: "jobA", sourceAction: "import_backfill" });
+    const auditBefore = db.audit.length;
+    await expect(rollbackTenantBackfill(fakeTx(db) as never, "tA", { runId: "run-2", expectedEventIds: p.eventIds })).rejects.toThrow(/changed since the preview/);
+    expect(db.events.filter((e) => e.sourceAction === "import_backfill")).toHaveLength(6);
+    expect(db.audit).toHaveLength(auditBefore);
+
+    // Re-previewed and confirmed: all six go, with one audit row naming the run.
+    const again = await previewTenantBackfillRollback(fakeTx(db) as never, "tA");
+    const r = await rollbackTenantBackfill(fakeTx(db) as never, "tA", { runId: "run-3", expectedEventIds: again.eventIds });
+    expect(r.removed).toBe(6);
+    expect(db.events.some((e) => e.sourceAction === "import_backfill")).toBe(false);
+    expect(db.audit.at(-1)).toMatchObject({ action: STATUS_BACKFILL_ROLLBACK_AUDIT_ACTION, tenantId: "tA" });
+    expect((db.audit.at(-1)!.metadata as Record<string, unknown>)).toMatchObject({ runId: "run-3", removed: 6 });
+  });
+
   it("running for one club leaves the other club's events unchanged (acceptance 5)", async () => {
     const db = club();
     const otherBefore = JSON.stringify(db.events.filter((e) => e.tenantId === "tB"));
@@ -589,8 +635,73 @@ describe("T8b script guard: never production", () => {
     expect(backfillMode([])).toBe("preview");
     expect(backfillMode(["--preview"])).toBe("preview");
     expect(backfillMode(["--apply"])).toBe("apply");
-    expect(backfillMode(["--rollback"])).toBe("rollback");
     expect(() => backfillMode(["--apply", "--rollback"])).toThrow(/together/);
     expect(() => backfillMode(["--apply", "--preview"])).toThrow(/together/);
+  });
+
+  it("review F6: --rollback alone only previews; deleting needs --rollback --confirm-digest <digest>", () => {
+    expect(backfillMode(["--rollback"])).toBe("rollback_preview");
+    expect(backfillMode(["--rollback", "--confirm-digest", "0123456789abcdef"])).toBe("rollback");
+    // The flag without its value is refused, not read as a preview.
+    expect(() => backfillMode(["--rollback", "--confirm-digest"])).toThrow(/confirm-digest/);
+    // The rollback gate belongs to --rollback only, and the apply gate to --apply only.
+    expect(() => backfillMode(["--confirm-digest", "0123456789abcdef"])).toThrow(/--rollback/);
+    expect(() => backfillMode(["--rollback", "--plan-digest", "0123456789abcdef"])).toThrow(/plan-digest/);
+    expect(() => backfillMode(["--apply", "--confirm-digest", "0123456789abcdef"])).toThrow(/--rollback/);
+  });
+});
+
+// ── 6. Digests (review F6) ───────────────────────────────────────────────────
+
+describe("T8b digests: the apply and rollback gates hash what the preview prints", () => {
+  const ev = (memberId: string, at: string, toStatus: string) => ({ memberId, occurredAt: new Date(at), toStatus });
+  const kinds = (o: Partial<Record<"start" | "rejoin" | "cancelled" | "completed_course", number>>) => ({ start: 0, rejoin: 0, cancelled: 0, completed_course: 0, ...o });
+  const plan = (over: Record<string, unknown> = {}) => ({
+    tenantId: "tA",
+    alreadyApplied: false,
+    inputs: [ev("ada", "2025-01-10T00:00:00Z", "active"), ev("ada", "2025-06-30T00:00:00Z", "cancelled")],
+    byMonth: { "2025-01": kinds({ start: 1 }), "2025-06": kinds({ cancelled: 1 }) },
+    exceptions: [{ kind: "undated_end", ledgerRowIds: ["lA5"] }],
+    exceptionCounts: { erased_member: 0, undated_start: 0, undated_end: 1, end_before_start: 0, unknown_status: 0 },
+    ...over,
+  });
+
+  it("the apply digest moves when a member's date moves inside the same month (month totals unchanged)", () => {
+    const moved = plan({ inputs: [ev("ada", "2025-01-11T00:00:00Z", "active"), ev("ada", "2025-06-30T00:00:00Z", "cancelled")] });
+    expect(backfillPlanDigest([moved])).not.toBe(backfillPlanDigest([plan()]));
+  });
+
+  it("the apply digest moves when the member changes but the counts do not", () => {
+    const other = plan({ inputs: [ev("bea", "2025-01-10T00:00:00Z", "active"), ev("bea", "2025-06-30T00:00:00Z", "cancelled")] });
+    expect(backfillPlanDigest([other])).not.toBe(backfillPlanDigest([plan()]));
+  });
+
+  it("the apply digest moves when an exception's ledger row changes but the exception counts do not", () => {
+    const other = plan({ exceptions: [{ kind: "undated_end", ledgerRowIds: ["lA9"] }] });
+    expect(backfillPlanDigest([other])).not.toBe(backfillPlanDigest([plan()]));
+  });
+
+  it("the apply digest moves when a month's kind split changes but its total does not", () => {
+    const other = plan({ byMonth: { "2025-01": kinds({ rejoin: 1 }), "2025-06": kinds({ cancelled: 1 }) } });
+    expect(backfillPlanDigest([other])).not.toBe(backfillPlanDigest([plan()]));
+  });
+
+  it("the apply digest does not depend on row order", () => {
+    const p = plan();
+    const reordered = plan({
+      inputs: [...(p.inputs as unknown[])].reverse(),
+      byMonth: { "2025-06": kinds({ cancelled: 1 }), "2025-01": kinds({ start: 1 }) },
+    });
+    expect(backfillPlanDigest([reordered])).toBe(backfillPlanDigest([p]));
+    expect(backfillPlanDigest([plan()])).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("the rollback digest names the exact events per club and does not depend on order", () => {
+    const preview = { tenantId: "tA", eventIds: ["bf1", "bf2"], byMonth: { "2025-01": kinds({ start: 1 }), "2025-06": kinds({ cancelled: 1 }) } };
+    const d = backfillRollbackDigest([preview]);
+    expect(d).toMatch(/^[0-9a-f]{16}$/);
+    expect(backfillRollbackDigest([{ ...preview, eventIds: ["bf2", "bf1"] }])).toBe(d);
+    expect(backfillRollbackDigest([{ ...preview, eventIds: ["bf1", "bf3"] }])).not.toBe(d);
+    expect(backfillRollbackDigest([preview, { tenantId: "tB", eventIds: ["bf9"], byMonth: { "2024-04": kinds({ start: 1 }) } }])).not.toBe(d);
   });
 });

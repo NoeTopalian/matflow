@@ -559,20 +559,73 @@ export async function applyTenantBackfill(
   return { status: "applied", tenantId, written, plan };
 }
 
+/** Which back-fill kind a written event is: the inverse of the derivation's emit. */
+function eventKind(fromStatus: string | null, toStatus: string): BackfillKind {
+  if (toStatus === "active") return fromStatus === null ? "start" : "rejoin";
+  return toStatus === "inactive" ? "completed_course" : "cancelled";
+}
+
+export interface BackfillRollbackPreview {
+  tenantId: string;
+  timeZone: string;
+  /** Back-filled events a rollback would delete now. */
+  events: number;
+  /** Their ids, sorted: what a confirmed rollback must still find, exactly. */
+  eventIds: string[];
+  /** Per club month, by kind. */
+  byMonth: Record<string, Record<BackfillKind, number>>;
+}
+
+/**
+ * Review F6 (23 Oct 2026): what a rollback of the club's back-fill would
+ * delete, read-only. The script prints this and a digest of it; deleting
+ * then needs that digest (scripts/backfill-status-events-guard.mjs).
+ */
+export async function previewTenantBackfillRollback(tx: TxClient, tenantId: string): Promise<BackfillRollbackPreview> {
+  if (!tenantId) throw new Error("previewTenantBackfillRollback requires a tenantId");
+  const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+  const timeZone = usableTimezone(tenant?.timezone);
+  const events = await tx.memberStatusEvent.findMany({
+    where: { tenantId, reason: "import", sourceAction: STATUS_BACKFILL_SOURCE_ACTION },
+    select: { id: true, fromStatus: true, toStatus: true, occurredAt: true },
+  });
+  const byMonth: Record<string, Record<BackfillKind, number>> = {};
+  for (const e of events) {
+    const month = clubMonthKey(e.occurredAt, timeZone);
+    byMonth[month] ??= emptyKinds();
+    byMonth[month][eventKind(e.fromStatus, e.toStatus)] += 1;
+  }
+  return { tenantId, timeZone, events: events.length, eventIds: events.map((e) => e.id).sort(), byMonth };
+}
+
 /**
  * Remove exactly the club's back-filled events (sourceAction import_backfill).
  * Import-day, refresh, rollback and staff events are never matched.
+ *
+ * Given `expectedEventIds` (the ids a rollback preview listed), the delete is
+ * limited to them and refused, with nothing removed, when the club's
+ * back-filled events are no longer exactly that set (review F6).
  */
 export async function rollbackTenantBackfill(
   tx: TxClient,
   tenantId: string,
-  { runId }: { runId: string },
+  { runId, expectedEventIds }: { runId: string; expectedEventIds?: string[] },
 ): Promise<{ tenantId: string; removed: number }> {
   if (!tenantId) throw new Error("rollbackTenantBackfill requires a tenantId");
   if (!runId) throw new Error("rollbackTenantBackfill requires a runId");
   await lockClub(tx, tenantId);
+  const scope = { tenantId, reason: "import", sourceAction: STATUS_BACKFILL_SOURCE_ACTION } as const;
+  if (expectedEventIds) {
+    const now = (await tx.memberStatusEvent.findMany({ where: scope, select: { id: true } })).map((e) => e.id).sort();
+    const expected = [...expectedEventIds].sort();
+    if (now.length !== expected.length || now.some((id, i) => id !== expected[i])) {
+      throw new Error(
+        `[status-backfill] club ${tenantId}: the back-filled events changed since the preview (${expected.length} previewed, ${now.length} now); nothing removed. Preview the rollback again.`,
+      );
+    }
+  }
   const res = await tx.memberStatusEvent.deleteMany({
-    where: { tenantId, reason: "import", sourceAction: STATUS_BACKFILL_SOURCE_ACTION },
+    where: expectedEventIds ? { ...scope, id: { in: expectedEventIds } } : scope,
   });
   if (res.count > 0) {
     await tx.auditLog.create({
