@@ -128,10 +128,10 @@ describe("recordStatusEventsBulk (importer variant)", () => {
 // lookup runs.
 describe("occurredAt (T8a)", () => {
   function makeDatedTx(latest: Date | null, groups: Array<{ memberId: string; _max: { occurredAt: Date | null } }> = []) {
-    const create = vi.fn(async (_args: { data: Record<string, unknown>; select?: unknown }) => ({ id: "evt-1" }));
+    const create = vi.fn<(args: { data: Record<string, unknown>; select?: unknown }) => Promise<{ id: string }>>(async () => ({ id: "evt-1" }));
     const createMany = vi.fn(async (args: { data: Array<Record<string, unknown>> }) => ({ count: args.data.length }));
-    const findFirst = vi.fn(async (_args: unknown) => (latest ? { occurredAt: latest } : null));
-    const groupBy = vi.fn(async (_args: unknown) => groups);
+    const findFirst = vi.fn<(args: unknown) => Promise<{ occurredAt: Date } | null>>(async () => (latest ? { occurredAt: latest } : null));
+    const groupBy = vi.fn<(args: unknown) => Promise<typeof groups>>(async () => groups);
     return { tx: { memberStatusEvent: { create, createMany, findFirst, groupBy } } as never, create, createMany, findFirst, groupBy };
   }
   const base = { tenantId: "t1", memberId: "m1", fromStatus: "active", toStatus: "cancelled", reason: "import" as const };
