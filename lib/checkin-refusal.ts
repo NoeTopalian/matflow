@@ -8,6 +8,7 @@
  * Pure: no I/O, no Next imports, unit-tested in tests/unit/checkin-refusal.test.ts.
  */
 import type { PerformCheckinResult as CheckinResult } from "@/lib/checkin";
+import { paymentEvidenceSentence, type PaymentEvidence } from "@/lib/overdue";
 
 export type CheckinRefusalReason =
   | "class_not_found"
@@ -54,9 +55,21 @@ export const TEAMUP_NO_PLAN_REFUSAL = "Your membership is with TeamUp and no pla
  * copy; do not shorten them — the numbers and dates are what a member argues
  * with at the desk.
  */
+/**
+ * D10 (owner direction, 23 Oct 2026): a member on a plan refused because they
+ * are behind is told WHICH evidence applies — never paid, a failed charge, or
+ * an outstanding due date — and the next step. The access rule is unchanged.
+ */
+export function paymentRefusalSentence(e: PaymentEvidence, clubTimeZone?: string | null): string {
+  const evidence = paymentEvidenceSentence(e, clubTimeZone || undefined);
+  return e.kind === "no_payment_recorded"
+    ? `${evidence} Ask the desk to record your payment.`
+    : `${evidence} Speak to the desk to settle it.`;
+}
+
 export function checkinRefusal(
   result: CheckinResult,
-  club: { paymentRail?: string | null } = {},
+  club: { paymentRail?: string | null; timeZone?: string | null } = {},
 ): CheckinRefusal | null {
   switch (result.kind) {
     case "class_not_found":
@@ -88,7 +101,9 @@ export function checkinRefusal(
           error:
             result.billedBy === "teamup"
               ? TEAMUP_NO_PLAN_REFUSAL
-              : club.paymentRail === "pay_at_desk"
+              : result.payment
+                ? paymentRefusalSentence(result.payment, club.timeZone)
+                : club.paymentRail === "pay_at_desk"
                 ? "No plan yet — ask the desk to add one."
                 : "No active membership or class pack credits. Buy a pack or contact your gym.",
           reason: "no_coverage",

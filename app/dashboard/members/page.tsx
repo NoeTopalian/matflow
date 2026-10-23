@@ -5,7 +5,7 @@ import { clubMonthWindow, clubMonthWindowForKey } from "@/lib/club-month";
 import { getMemberListCounts } from "@/lib/member-list-counts-server";
 import PrintCardsLink from "@/components/dashboard/PrintCardsLink";
 import PromotionAlerts from "@/components/dashboard/PromotionAlerts";
-import { shownPaymentStatus } from "@/lib/overdue";
+import { PAYMENT_EVIDENCE_LABEL, latestSettledPayment, paymentEvidence, paymentEvidenceSentence, shownPaymentStatus } from "@/lib/overdue";
 import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
 
 // Lane 1 iter-1 P-01 [Critical] fix: hard cap on the SSR-rendered member
@@ -28,7 +28,7 @@ import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-o
 // has fewer members than Reports says.
 const MEMBERS_SSR_TAKE = 1500;
 
-async function getMembers(tenantId: string, now: Date): Promise<{ rows: MemberRow[]; truncated: boolean }> {
+async function getMembers(tenantId: string, now: Date, timeZone: string): Promise<{ rows: MemberRow[]; truncated: boolean }> {
   const rows = await withTenantContext(tenantId, (tx) =>
     tx.member.findMany({
       where: { tenantId },
@@ -76,6 +76,14 @@ async function getMembers(tenantId: string, now: Date): Promise<{ rows: MemberRo
           select: { url: true },
           take: 1,
         },
+        // D10: the latest settled payment tells "payment failed" from "never
+        // paid" and "outstanding" on the Payment badge (lib/overdue paymentEvidence).
+        payments: {
+          where: { tenantId, status: { in: ["succeeded", "failed"] } },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { status: true, createdAt: true },
+        },
       },
       orderBy: { name: "asc" },
       take: MEMBERS_SSR_TAKE + 1, // +1 sentinel so we can detect truncation
@@ -91,7 +99,9 @@ async function getMembers(tenantId: string, now: Date): Promise<{ rows: MemberRo
     );
   }
 
-  const mapped: MemberRow[] = visible.map((m) => ({
+  const mapped: MemberRow[] = visible.map((m) => {
+    const evidence = paymentEvidence(m, now, latestSettledPayment(m.payments));
+    return {
     id: m.id,
     name: m.name,
     email: m.email,
@@ -99,6 +109,9 @@ async function getMembers(tenantId: string, now: Date): Promise<{ rows: MemberRo
     membershipType: m.membershipType,
     status: m.status,
     paymentStatus: shownPaymentStatus(m, now),
+    paymentEvidence: evidence
+      ? { kind: evidence.kind, label: PAYMENT_EVIDENCE_LABEL[evidence.kind], sentence: paymentEvidenceSentence(evidence, timeZone) }
+      : null,
     waiverAccepted: m.waiverAccepted,
     accountType: m.accountType ?? "adult",
     dateOfBirth: m.dateOfBirth ? m.dateOfBirth.toISOString() : null,
@@ -118,7 +131,8 @@ async function getMembers(tenantId: string, now: Date): Promise<{ rows: MemberRo
           stripes: m.memberRanks[0].stripes,
         }
       : null,
-  }));
+    };
+  });
   return { rows: mapped, truncated };
 }
 
@@ -155,8 +169,8 @@ export default async function MembersPage({ searchParams }: Props) {
   // One instant for the rows' shown payment status and the server counts, so
   // a member cannot be "overdue" in the table and "paid" in a total.
   const now = new Date();
-  const { rows: members, truncated } = await getMembers(session!.user.tenantId, now);
   const monthWindow = await getMonthWindow(session!.user.tenantId, typeof month === "string" ? month : undefined);
+  const { rows: members, truncated } = await getMembers(session!.user.tenantId, now, monthWindow.timeZone);
   const counts = await getMemberListCounts(session!.user.tenantId, now, monthWindow);
   // D9 (23 Oct 2026): inactive or cancelled accounts that still owe. Counted
   // over the whole club (not the capped rows) for the payers sub-line and the

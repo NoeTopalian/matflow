@@ -33,6 +33,7 @@ import AttributionFields, { emptyAttribution, type AttributionValue } from "@/co
 import { resolveSignupCredit } from "@/lib/signup-credit";
 import { BilledByTeamUpPill } from "@/components/dashboard/BilledByTeamUpPill";
 import { paymentStatusLabel } from "@/lib/payment-status";
+import type { PaymentEvidence } from "@/lib/overdue";
 import {
   OTHER_OWING_COPY,
   PAYER_COPY,
@@ -93,6 +94,13 @@ export interface MemberRow {
    * flagged by the server. Listed under "Other accounts owing", never under Payers overdue.
    */
   otherOwing?: boolean;
+  /**
+   * D10: why a member on a plan is behind — never paid past the first payment
+   * date, a failed charge, or an outstanding due date — with the badge label
+   * and the sentence the self check-in refusal uses (lib/overdue
+   * paymentEvidence). Null when they are not behind.
+   */
+  paymentEvidence?: { kind: PaymentEvidence["kind"]; label: string; sentence: string } | null;
   lastVisitAt?: string | null;
   // feat/member-profile-pictures Track A: Avatar renders this when set,
   // falls back to deterministic initials when null. Flattened from
@@ -212,7 +220,18 @@ function daysSince(iso?: string | null) {
   return Math.max(0, Math.floor(ms / 86_400_000));
 }
 
-function paymentMeta(status?: string | null) {
+/**
+ * The Payment badge. D10: a member who is behind shows WHICH evidence — "No
+ * payment recorded", "Payment failed" or "Payment outstanding" — the same
+ * three the self check-in refusal names, with its sentence as the title.
+ * Counts and filters still read the shown status, unchanged.
+ */
+export function paymentMeta(status?: string | null, evidence?: MemberRow["paymentEvidence"]) {
+  if (evidence) {
+    return evidence.kind === "no_payment_recorded"
+      ? { label: evidence.label, title: evidence.sentence, color: "#38bdf8", bg: "rgba(56,189,248,0.13)", Icon: CreditCard }
+      : { label: evidence.label, title: evidence.sentence, color: "#f97316", bg: "rgba(249,115,22,0.14)", Icon: AlertTriangle };
+  }
   const s = (status ?? "paid").toLowerCase();
   if (s === "paid") return { label: "Paid", color: "#22c55e", bg: "rgba(34,197,94,0.12)", Icon: CheckCircle2 };
   if (s === "overdue") return { label: "Overdue", color: "#f97316", bg: "rgba(249,115,22,0.14)", Icon: AlertTriangle };
@@ -306,11 +325,16 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
       // Suppressed for no-membership rows (e.g. a parent tied to a kid who
       // holds the membership) — the default "paid" would mislead the owner.
       if (!m.membershipType) return <span className="text-[11px]" style={{ color: "var(--tx-3)" }}>—</span>;
-      const pay = paymentMeta(m.paymentStatus);
+      const pay = paymentMeta(m.paymentStatus, m.paymentEvidence);
       const PayIcon = pay.Icon;
       return (
         <span className="inline-flex flex-nowrap items-center gap-1 whitespace-nowrap">
-          <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: pay.bg, color: pay.color }}>
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+            style={{ background: pay.bg, color: pay.color }}
+            title={"title" in pay ? pay.title : undefined}
+            data-testid="member-payment-badge"
+          >
             <PayIcon className="size-3" />
             {pay.label}
           </span>
