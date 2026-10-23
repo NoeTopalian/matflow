@@ -34,7 +34,10 @@ import { resolveSignupCredit } from "@/lib/signup-credit";
 import { BilledByTeamUpPill } from "@/components/dashboard/BilledByTeamUpPill";
 import { paymentStatusLabel } from "@/lib/payment-status";
 import {
+  PAYER_COPY,
   POPULATION_COPY,
+  payerGuardianNote,
+  payersOverdueLabel,
   isActiveMember,
   isGuardianAccount,
   isOnHold,
@@ -46,6 +49,7 @@ import {
   addCounts,
   countMemberRows,
   isQuiet,
+  isOverduePayerRow,
   isWaiverMissing,
   needsAttention,
   type MemberListCounts,
@@ -486,6 +490,10 @@ export function inStatusView(
   f: StatusFilter,
   month: Pick<ClubMonthWindow, "monthStart" | "nextMonthStart"> = defaultClubMonthWindow(),
 ): boolean {
+  // Payers overdue (review L2): active and taster accounts that owe, of ANY
+  // account type — a guardian who pays is a debt, never dropped — so this
+  // view is decided before the guardian and cancelled rules below.
+  if (f === "overdue") return isOverduePayerRow(m);
   if (m.status === "cancelled" && !INCLUDES_CANCELLED.includes(f)) return false;
   // Parent/guardian accounts are listed under their own chip only; every
   // other view is training members, matching its count.
@@ -502,8 +510,6 @@ export function inStatusView(
       return true;
     case "attention":
       return needsAttention(m);
-    case "overdue":
-      return m.paymentStatus === "overdue";
     case "waiver-missing":
       return isWaiverMissing(m);
     case "missing-phone":
@@ -736,13 +742,18 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   };
   // The Reports drill-through slices name themselves and count their own rows.
   const sliceCopy = sliceHeadlineCopy(statusFilter, month);
+  // Overdue is a PAYER total (review L2): guardians who pay are in it, so its
+  // header names payers rather than a member population.
+  const payerCopy = statusFilter === "overdue" ? PAYER_COPY : null;
   const headlineCount =
     statusFilter === "new-this-month"
       ? counts.newThisMonth
       : statusFilter === "churned-this-month"
         ? counts.churnedThisMonth
-        : headlineCounts[headlineKey] ?? counts.all;
-  const headlineCopy = sliceCopy ?? POPULATION_COPY[headlineKey];
+        : statusFilter === "overdue"
+          ? counts.overdue
+          : headlineCounts[headlineKey] ?? counts.all;
+  const headlineCopy = sliceCopy ?? payerCopy ?? POPULATION_COPY[headlineKey];
   // Q4 A-1: members on hold stay inside the Active headline, marked as such.
   const holdNote = headlineKey === "active" && counts.activeOnHold > 0 ? `${counts.activeOnHold} on hold` : null;
 
@@ -758,7 +769,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
         description={
           <>
             <span data-testid="members-headline">
-              {headlineCount} {headlineCopy.label.charAt(0).toLowerCase() + headlineCopy.label.slice(1)}
+              {payerCopy ? payersOverdueLabel(headlineCount) : `${headlineCount} ${headlineCopy.label.charAt(0).toLowerCase() + headlineCopy.label.slice(1)}`}
               {holdNote ? `, ${holdNote}` : ""}
             </span>
             {" · "}
@@ -812,11 +823,13 @@ export default function MembersList({ members: initial, primaryColor, role, guar
           // Follows the selected population (T1); on the landing view this is
           // Active, the Reports "Active members" number.
           { id: "headline", label: headlineCopy.label, value: headlineCount, sub: headlineCopy.excludes, note: holdNote ? `Includes ${holdNote}` : null, color: primaryColor, Icon: Users },
-          // Paid and Overdue count all current members (active, inactive and
-          // tasters), not the headline population beside them; the sub-line
-          // says so, so Paid above Active is not read as a contradiction.
+          // Paid counts all current members (active, inactive and tasters),
+          // not the headline population beside them; the sub-line says so,
+          // so Paid above Active is not read as a contradiction. Overdue is
+          // a PAYER total (review L2): active and taster accounts that owe,
+          // guardians who pay included, and its sub-line says that.
           { id: "paid", label: "Paid", value: counts.paid, sub: "Of current members", color: "#22c55e", Icon: CheckCircle2 },
-          { id: "overdue", label: "Overdue", value: counts.overdue, sub: "Of current members; needs chasing", color: "#f97316", Icon: AlertTriangle },
+          { id: "overdue", label: PAYER_COPY.label, value: counts.overdue, sub: `${payerGuardianNote(counts.overdueGuardians)}. Needs chasing`, color: "#f97316", Icon: AlertTriangle },
           { id: "waivers", label: "Waivers Missing", value: counts.waiverMissing, sub: "Active & tasters", color: "#f59e0b", Icon: FileCheck2 },
           { id: "tasters", label: "Tasters", value: counts.taster, sub: "Convert soon", color: "#38bdf8", Icon: CalendarCheck },
         ] as { id: string; label: string; value: number; sub: string; note?: string | null; color: string; Icon: typeof Users }[]).map(({ id, label, value, sub, note, color, Icon }) => (
@@ -886,7 +899,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               { key: "active", label: "Active", count: counts.active },
               { key: "all", label: "All current", count: counts.all },
               { key: "attention", label: "Needs Attention", count: counts.attention },
-              { key: "overdue", label: "Overdue", count: counts.overdue },
+              { key: "overdue", label: PAYER_COPY.label, count: counts.overdue },
               { key: "waiver-missing", label: "Waiver Missing", count: counts.waiverMissing },
               { key: "missing-phone", label: "Missing Phone", count: counts.missingPhone },
               { key: "quiet", label: `Quiet (${QUIET_THRESHOLD_DAYS}d+)`, count: counts.quiet },

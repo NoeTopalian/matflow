@@ -53,6 +53,56 @@ export const GUARDIAN_ACCOUNT = { accountType: "parent" } as const satisfies Pri
  */
 export const ON_HOLD = { paymentStatus: "paused" } as const satisfies Prisma.MemberWhereInput;
 
+/**
+ * PAYERS (review L2, 23 Oct 2026): who the club chases for money. A different
+ * axis from the member populations above, on purpose.
+ *
+ * Member totals count people who TRAIN, so guardians are out. Money totals
+ * count ROWS THAT OWE, and a guardian row can owe: a member who switches
+ * themselves to a parent account keeps their plan, due date and subscription
+ * (app/api/member/me/route.ts), staff can put a parent account on a plan
+ * (app/api/members/[id]/route.ts), and nothing in the billing paths refuses
+ * one. Dropping guardians from "overdue" would hide a real debt. So a payer is
+ * any row, guardian or not, whose membership is active or a taster — the
+ * statuses Payments → Outstanding has always chased — and every money total
+ * says "payers" and that guardians who pay are included.
+ *
+ * Kids' own plans are billed on the kid's row (start-for-kid creates the
+ * kid's Stripe customer), so a family is never counted twice.
+ */
+export const CHASEABLE_PAYER = { status: { in: ["active", "taster"] } } satisfies Prisma.MemberWhereInput;
+
+export function isChaseablePayer(m: Pick<PopulationRow, "status">): boolean {
+  return m.status === "active" || m.status === "taster";
+}
+
+export const PAYER_COPY = {
+  label: "Payers overdue",
+  includes: "Active members and tasters who owe the club, including parents and guardians who pay",
+  excludes: "Excludes inactive and cancelled members",
+} as const;
+
+/** "1 payer" / "3 payers". */
+export function payersLabel(n: number): string {
+  return `${n.toLocaleString("en-GB")} ${n === 1 ? "payer" : "payers"}`;
+}
+
+/** "3 payers overdue". */
+export function payersOverdueLabel(n: number): string {
+  return `${payersLabel(n)} overdue`;
+}
+
+/**
+ * The detail every payer total carries: guardians who pay are counted, and
+ * how many of them there are when any are.
+ */
+export function payerGuardianNote(guardians: number): string {
+  if (guardians <= 0) return "Includes parents and guardians who pay";
+  return guardians === 1
+    ? "Includes 1 parent or guardian who pays"
+    : `Includes ${guardians.toLocaleString("en-GB")} parents or guardians who pay`;
+}
+
 /** The fields every client twin reads. Matches the `getMembers` row shape. */
 export type PopulationRow = {
   status: string;

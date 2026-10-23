@@ -20,7 +20,7 @@
  * client list can import the predicates and the row counter.
  */
 import type { Prisma } from "@prisma/client";
-import { notOverdueWhere, overdueClause } from "@/lib/overdue";
+import { notOverdueWhere, overduePayerWhere } from "@/lib/overdue";
 import { inMonthWindow, monthRange, type ClubMonthWindow } from "@/lib/club-month";
 import {
   ACTIVE_MEMBER,
@@ -31,6 +31,7 @@ import {
   ON_HOLD,
   TRAINING_MEMBER,
   isActiveMember,
+  isChaseablePayer,
   isCurrentMember,
   isGuardianAccount,
   isLeftMember,
@@ -48,6 +49,7 @@ export const MEMBER_LIST_COUNT_KEYS = [
   "all",
   "attention",
   "overdue",
+  "overdueGuardians",
   "waiverMissing",
   "missingPhone",
   "quiet",
@@ -119,12 +121,18 @@ export function isMissingPhone(m: { phone?: string | null }) {
   return !m.phone?.trim();
 }
 
-export function isOverdueRow(m: { paymentStatus?: string | null }) {
-  return m.paymentStatus === "overdue";
+/**
+ * A payer who is overdue (review L2): active or taster, ANY account type —
+ * guardians who pay included — whose shown status is overdue. The shown status
+ * already leaves "No payment yet" out (lib/overdue shownPaymentStatus), so
+ * this is the browser twin of overduePayerWhere.
+ */
+export function isOverduePayerRow(m: { status: string; paymentStatus?: string | null }) {
+  return isChaseablePayer(m) && m.paymentStatus === "overdue";
 }
 
 export function needsAttention(m: CountRow, now: Date = new Date()) {
-  return isOverdueRow(m) || isWaiverMissing(m) || m.status === "taster" || isQuiet(m, now);
+  return isOverduePayerRow(m) || isWaiverMissing(m) || m.status === "taster" || isQuiet(m, now);
 }
 
 /** Every Members-page total over loaded rows. The page uses it only for rows the server has not counted (a member added since load). */
@@ -133,7 +141,9 @@ export function countMemberRows(rows: CountRow[], now: Date, month: Month): Memb
   return {
     all: current.length,
     attention: current.filter((m) => needsAttention(m, now)).length,
-    overdue: current.filter(isOverdueRow).length,
+    // A payer total, not a member total: guardians who pay are counted (review L2).
+    overdue: rows.filter(isOverduePayerRow).length,
+    overdueGuardians: rows.filter((m) => isOverduePayerRow(m) && isGuardianAccount(m)).length,
     waiverMissing: current.filter(isWaiverMissing).length,
     missingPhone: current.filter(isMissingPhone).length,
     quiet: current.filter((m) => isQuiet(m, now)).length,
@@ -187,9 +197,11 @@ export function memberListCountWheres(tenantId: string, now: Date, month: Month)
     attention: {
       tenantId,
       ...CURRENT_MEMBER,
-      OR: [{ OR: overdueClause(now) }, waiverMissingCore, { status: "taster" }, quietWhere(now)],
+      OR: [overduePayerWhere(now), waiverMissingCore, { status: "taster" }, quietWhere(now)],
     },
-    overdue: { tenantId, ...CURRENT_MEMBER, OR: overdueClause(now) },
+    // Payers, not members: no TRAINING_MEMBER here on purpose (review L2).
+    overdue: { tenantId, ...overduePayerWhere(now) },
+    overdueGuardians: { tenantId, ...GUARDIAN_ACCOUNT, ...overduePayerWhere(now) },
     waiverMissing: { tenantId, ...CAN_TRAIN_MEMBER, waiverAccepted: false },
     missingPhone: { tenantId, ...CURRENT_MEMBER, OR: [{ phone: null }, { phone: "" }] },
     quiet: { tenantId, ...CURRENT_MEMBER, AND: [quietWhere(now)] },

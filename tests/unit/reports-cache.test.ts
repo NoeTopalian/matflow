@@ -53,7 +53,8 @@ describe("getReportsDataCached", () => {
     // `retention`, `paymentHealth.recovery` and `currentMembersByStatus`;
     // the version in the key keeps the two shapes apart in both directions.
     // v4 (review L4): `period`, the club-zone month window.
-    expect(REPORTS_CACHE_VERSION).toBe("v4");
+    // v5 (review L2): payer and guardian counts in paymentHealth.
+    expect(REPORTS_CACHE_VERSION).toBe("v5");
     await getReportsDataCached("tenant-A");
     expect(calls[0].key[1]).toBe(REPORTS_CACHE_VERSION);
   });

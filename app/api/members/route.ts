@@ -108,6 +108,8 @@ export async function GET(req: Request) {
           paymentStatus: true,
           nextDueAt: true,
           stripeSubscriptionId: true,
+          // Tells "No payment yet" from overdue (lib/overdue shownPaymentStatus, review L2).
+          membershipTierId: true,
           membershipType: true,
           joinedAt: true,
           // TeamUp bridge (readiness spec v3 §7): the list marks TeamUp-billed rows.
@@ -153,7 +155,7 @@ export async function GET(req: Request) {
     const flattened = members.map(({ photos, nextDueAt, stripeSubscriptionId, ...rest }) => ({
       ...rest,
       // Derived like the dashboard and Outstanding tab (lib/overdue.ts).
-      paymentStatus: shownPaymentStatus({ paymentStatus: rest.paymentStatus, nextDueAt, stripeSubscriptionId, billedBy: rest.billedBy }, now),
+      paymentStatus: shownPaymentStatus({ paymentStatus: rest.paymentStatus, nextDueAt, stripeSubscriptionId, billedBy: rest.billedBy, membershipTierId: rest.membershipTierId }, now),
       profilePictureUrl: photos[0]?.url ?? null,
     }));
     // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant member directory.

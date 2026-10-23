@@ -82,7 +82,9 @@ describe("2. one definition of who owes (the Outstanding list's)", () => {
     const dashboard = source("app/dashboard/page.tsx");
     expect(dashboard.match(/OR: owesMoneyClause\(/g)?.length).toBe(2);
     expect(dashboard).not.toMatch(/OR: overdueClause\(/);
-    expect(source("app/api/payments/outstanding/route.ts")).toMatch(/\.\.\.noPaymentYetWhere\(\)/);
+    // Review L2: the payer form of the same rule (lib/overdue noPaymentYetPayerWhere spreads noPaymentYetWhere).
+    expect(source("app/api/payments/outstanding/route.ts")).toMatch(/\.\.\.noPaymentYetPayerWhere\(\)/);
+    expect(source("lib/overdue.ts")).toMatch(/\.\.\.CHASEABLE_PAYER, \.\.\.noPaymentYetWhere\(\)/);
   });
 
   it("the dashboard action list names No payment yet as such", () => {
@@ -100,10 +102,10 @@ describe("2. one definition of who owes (the Outstanding list's)", () => {
 });
 
 describe("2. Reports never says 'all in good standing' while anyone has No payment yet", () => {
-  it("says Overdue now N · No payment yet M", () => {
+  it("says N payers overdue · No payment yet M (review L2: payer words)", () => {
     expect(paymentHealthLine({ overdueCount: 0, noPaymentYetCount: 2, failedLast30Days: 0 })).toEqual({
       tone: "owed",
-      text: "Overdue now 0 · No payment yet 2",
+      text: "0 payers overdue · No payment yet 2",
     });
   });
 
@@ -135,7 +137,7 @@ describe("2. Reports never says 'all in good standing' while anyone has No payme
     const data = await getReportsData("tenant-A");
     expect(data.paymentHealth.noPaymentYetCount).toBe(3);
     expect(data.paymentHealth.overdueCount).toBe(0);
-    expect(paymentHealthLine(data.paymentHealth)?.text).toBe("Overdue now 0 · No payment yet 3");
+    expect(paymentHealthLine(data.paymentHealth)?.text).toBe("0 payers overdue · No payment yet 3");
   });
 });
 

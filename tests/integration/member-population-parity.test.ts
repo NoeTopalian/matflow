@@ -257,7 +257,7 @@ describe.skipIf(!HAS_DB)(`L5 Members totals above the ${CAP}-row cap on TEST${SK
         where: { tenantId: capIds.C },
         orderBy: { name: "asc" },
         select: {
-          name: true, status: true, accountType: true, paymentStatus: true, nextDueAt: true, stripeSubscriptionId: true,
+          name: true, status: true, accountType: true, paymentStatus: true, nextDueAt: true, stripeSubscriptionId: true, membershipTierId: true,
           billedBy: true, waiverAccepted: true, phone: true, parentMemberId: true, joinedAt: true, cancelledAt: true,
           attendances: { orderBy: { checkInTime: "desc" }, take: 1, select: { checkInTime: true } },
         },
@@ -313,6 +313,11 @@ describe.skipIf(!HAS_DB)(`L5 Members totals above the ${CAP}-row cap on TEST${SK
     expect(reports.summary.activeOnHoldMembers).toBe(server.activeOnHold);
     expect(reports.summary.newMembersThisMonth).toBe(server.newThisMonth);
     expect(reports.churn.cancelled).toBe(server.churnedThisMonth);
+    // Review L2: overdue is a PAYER total on both screens, guardians who pay
+    // included (the fixture has active parent accounts marked overdue).
+    expect(server.overdueGuardians).toBeGreaterThan(0);
+    expect(reports.paymentHealth.overdueCount).toBe(server.overdue);
+    expect(reports.paymentHealth.overdueGuardianCount).toBe(server.overdueGuardians);
 
     // The cap is real: the first 1,500 rows alone undercount.
     const capped = countMemberRows(listRows.slice(0, CAP), now, month);

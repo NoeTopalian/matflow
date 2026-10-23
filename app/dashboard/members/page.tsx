@@ -44,6 +44,8 @@ async function getMembers(tenantId: string, now: Date): Promise<{ rows: MemberRo
         paymentStatus: true,
         nextDueAt: true,
         stripeSubscriptionId: true,
+        // Tells "No payment yet" from overdue (lib/overdue shownPaymentStatus, review L2).
+        membershipTierId: true,
         waiverAccepted: true,
         accountType: true,
         dateOfBirth: true,

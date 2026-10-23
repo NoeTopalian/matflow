@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { noPaymentYetWhere } from "@/lib/overdue";
-import { ACTIVE_MEMBER, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER, isActiveMember } from "@/lib/member-population";
+import { noPaymentYetPayerWhere, overduePayerWhere } from "@/lib/overdue";
+import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER, isActiveMember } from "@/lib/member-population";
 import { percent, ratePct1dp } from "@/lib/percent";
 import { clubMonthKey, clubMonthWindow, defaultClubMonthWindow, monthRange, type ClubMonthWindow } from "@/lib/club-month";
 
@@ -185,10 +185,22 @@ export interface ReportsData {
   /** T2b: the counts behind `retentionRate` (members who joined 6+ months ago, and how many are still active). */
   retention: { ratePct: number | null; survived: number; cohort: number };
   netNewByMonth: { month: string; joined: number; cancelled: number; net: number }[];
+  /**
+   * Money totals count PAYERS, not members (review L2, 23 Oct 2026): active
+   * and taster accounts of any type, guardians who pay included (lib/overdue
+   * overduePayerWhere / noPaymentYetPayerWhere — the Payments → Outstanding
+   * and Members "Payers overdue" definition). Overdue and "No payment yet"
+   * never overlap; together they are the Outstanding list.
+   */
   paymentHealth: {
+    /** Payers overdue, by Stripe or by a passed due date. */
     overdueCount: number;
-    /** "No payment yet" on a plan, MatFlow-billed (lib/overdue noPaymentYetWhere — the Outstanding list's rule). */
+    /** How many of `overdueCount` are parent or guardian accounts. */
+    overdueGuardianCount: number;
+    /** Payers on a plan with no payment ever recorded, MatFlow-billed. */
     noPaymentYetCount: number;
+    /** How many of `noPaymentYetCount` are parent or guardian accounts. */
+    noPaymentYetGuardianCount: number;
     failedLast30Days: number;
     recoveryRate: number | null;
     /** T2b: the counts behind `recoveryRate` (members with a failed payment in 90 days, and how many are now paid). */
@@ -356,7 +368,9 @@ export function createEmptyReportsData(): ReportsData {
     netNewByMonth: [],
     paymentHealth: {
       overdueCount: 0,
+      overdueGuardianCount: 0,
       noPaymentYetCount: 0,
+      noPaymentYetGuardianCount: 0,
       failedLast30Days: 0,
       recoveryRate: null,
       recovery: { ratePct: null, recovered: 0, failedMembers: 0 },
@@ -458,7 +472,9 @@ export async function getReportsData(
     retentionBase,
     retentionActive,
     overdueCount,
+    overdueGuardianCount,
     noPaymentYetCount,
+    noPaymentYetGuardianCount,
     failedLast30,
     membersWithRecentFailed,
     cancelledByMonth,
@@ -553,13 +569,17 @@ export async function getReportsData(
       // Retention: joined ≥6 months ago
       tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, ...TRAINING_MEMBER } }),
       tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, ...ACTIVE_MEMBER } }),
-      // Payment health — D5: match the dashboard "payments due" tile predicate
-      // (only active/taster members count as overdue; a cancelled member isn't
-      // chased). Keeps the dashboard tile and this report in agreement.
-      tx.member.count({ where: { tenantId, paymentStatus: "overdue", status: { in: ["active", "taster"] }, billedBy: { not: "teamup" } } }),
-      // Members who owe without being overdue — never "all in good standing" while
+      // Payment health (review L2): PAYERS, the definition Payments →
+      // Outstanding and the Members "Payers overdue" tile share. It used to be
+      // Stripe's stored "overdue" only, so a cash member past their due date
+      // was on Outstanding and missing here. Guardians who pay are counted —
+      // a debt is never dropped — and how many of them is reported beside.
+      tx.member.count({ where: { tenantId, ...overduePayerWhere(now) } }),
+      tx.member.count({ where: { tenantId, ...GUARDIAN_ACCOUNT, ...overduePayerWhere(now) } }),
+      // Payers who owe without being overdue — never "all in good standing" while
       // Payments → Outstanding lists them (end-user check, 30 Sep 2026).
-      tx.member.count({ where: { tenantId, status: { in: ["active", "taster"] }, ...noPaymentYetWhere() } }),
+      tx.member.count({ where: { tenantId, ...noPaymentYetPayerWhere() } }),
+      tx.member.count({ where: { tenantId, ...GUARDIAN_ACCOUNT, ...noPaymentYetPayerWhere() } }),
       tx.payment.count({ where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 30 * 86400000) } } }),
       tx.payment.findMany({
         where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 90 * 86400000) } },
@@ -832,7 +852,9 @@ export async function getReportsData(
     netNewByMonth,
     paymentHealth: {
       overdueCount,
+      overdueGuardianCount,
       noPaymentYetCount,
+      noPaymentYetGuardianCount,
       failedLast30Days: failedLast30,
       recoveryRate,
       recovery: { ratePct: recoveryRate, recovered: recoveredCount, failedMembers: failedMemberIds.length },
@@ -858,8 +880,9 @@ export async function getReportsData(
  * numerator/denominator, current status shares). T2c added no field.
  * "v3" = summary.activeOnHoldMembers (T1 review, 17 Oct 2026).
  * "v4" = period, the club-zone month window (review L4, 23 Oct 2026).
+ * "v5" = paymentHealth payer counts and guardian counts (review L2, 23 Oct 2026).
  */
-export const REPORTS_CACHE_VERSION = "v4";
+export const REPORTS_CACHE_VERSION = "v5";
 
 /**
  * The cached read the reports page and API use. Under 25 concurrent staff

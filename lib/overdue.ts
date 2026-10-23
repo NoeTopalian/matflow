@@ -26,6 +26,7 @@
  */
 
 import { cycleDays, cycleMonths } from "@/lib/billing-cycle";
+import { CHASEABLE_PAYER } from "@/lib/member-population";
 
 /**
  * Statuses that mean "this member is not being charged right now", and so must
@@ -120,6 +121,41 @@ export function owesMoneyClause(now: Date) {
   return [...overdueClause(now), noPaymentYetWhere()];
 }
 
+/** The null-safe complement of noPaymentYetWhere (membershipTierId is nullable). */
+function notNoPaymentYetWhere() {
+  return { OR: [{ paymentStatus: { not: "pending" } }, { membershipTierId: null }, { billedBy: "teamup" }] };
+}
+
+/**
+ * PAYERS OVERDUE (review L2, 23 Oct 2026) — the one definition Reports, the
+ * Members "Payers overdue" tile and chip, and Payments → Outstanding share.
+ * Spread beside an explicit `tenantId`.
+ *
+ * - Payers, not members: any account type, guardians included, status active
+ *   or taster (CHASEABLE_PAYER in lib/member-population.ts).
+ * - Overdue by Stripe or by a passed due date (overdueClause).
+ * - Minus "No payment yet": a plan nobody has paid for whose seeded due date
+ *   has also passed is shown as "No payment yet", as Outstanding has done
+ *   since decision 1 (30 Sep 2026). So overdue and "No payment yet" never
+ *   overlap, and the two together are exactly the Outstanding list.
+ */
+export function overduePayerWhere(now: Date) {
+  return {
+    ...CHASEABLE_PAYER,
+    AND: [{ OR: overdueClause(now) }, notNoPaymentYetWhere()],
+  };
+}
+
+/** Payers on a plan with nothing ever recorded (the Outstanding "No payment yet" rows). Spread beside `tenantId`. */
+export function noPaymentYetPayerWhere() {
+  return { ...CHASEABLE_PAYER, ...noPaymentYetWhere() };
+}
+
+/** noPaymentYetWhere for a member already in memory. */
+export function isNoPaymentYet(member: { paymentStatus: string; membershipTierId?: string | null; billedBy?: string | null }): boolean {
+  return member.paymentStatus === "pending" && !!member.membershipTierId && member.billedBy !== "teamup";
+}
+
 /**
  * The same rule for a member already in memory, so a profile screen and a list
  * query cannot disagree about one person.
@@ -146,12 +182,18 @@ export function isOverdue(
  * "paid" in the row, so every list and profile must derive it the same way the
  * dashboard and Outstanding tab do (verifier lane 4, 30 Sep 2026: the Members
  * list said "Paid" for someone the dashboard said was overdue).
+ *
+ * A plan nobody has paid for stays "pending" ("No payment yet") even once its
+ * seeded due date passes — the Outstanding list's rule (decision 1, 30 Sep
+ * 2026), so the Members list, Reports and Outstanding name one member one way
+ * (review L2). Pass `membershipTierId`: without it "No payment yet" cannot be
+ * told from overdue, and the member reads as overdue (the old behaviour).
  */
 export function shownPaymentStatus(
-  member: { paymentStatus: string; nextDueAt: Date | null; stripeSubscriptionId?: string | null; billedBy?: string | null },
+  member: { paymentStatus: string; nextDueAt: Date | null; stripeSubscriptionId?: string | null; billedBy?: string | null; membershipTierId?: string | null },
   now: Date,
 ): string {
-  return isOverdue(member, now) ? "overdue" : member.paymentStatus;
+  return isOverdue(member, now) && !isNoPaymentYet(member) ? "overdue" : member.paymentStatus;
 }
 
 /**

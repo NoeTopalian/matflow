@@ -45,7 +45,7 @@ import {
   Users,
 } from "lucide-react";
 import type { ReportsData, AttendanceRateMode } from "@/lib/reports";
-import { POPULATION_COPY } from "@/lib/member-population";
+import { PAYER_COPY, POPULATION_COPY, payerGuardianNote } from "@/lib/member-population";
 import type { AttributionData } from "@/lib/attribution";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -195,6 +195,9 @@ export function periodCsvDetail(period: ReportsData["period"]): string {
   return `"This month" runs midnight to midnight in the club's time zone (${period.timeZone})`;
 }
 
+/** Payment recovery counts payers (review L2): any account with a failed payment, guardians included. */
+const RECOVERY_SCOPE = "Payers with a failed payment in the last 90 days who are now paid, including parents and guardians who pay";
+
 /** The "Joined this month" copy (Q6, A-13): who it counts, and the net beside churn. */
 const JOINED_SCOPE = "People added in MatFlow, incl. tasters. A TeamUp refresh adds nobody.";
 const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";
@@ -310,7 +313,11 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // screen agree. Club-wide — the class/age filters never scope them.
     ["Health", "Churn this month", formatRatio(churn.ratePct, churn.cancelled, churn.base), `${CHURN_FORMULA} · club-wide`],
     ["Health", "Joined this month", churn.joined, `Net ${formatSigned(churn.net)} this month · ${JOINED_SCOPE}`],
-    ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), "Members with a failed payment in the last 90 days who are now paid"],
+    ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), RECOVERY_SCOPE],
+    // Review L2: payer totals, the Payments → Outstanding definition; the
+    // detail says guardians who pay are counted, and how many.
+    ["Payments", PAYER_COPY.label, data.paymentHealth.overdueCount, payerGuardianNote(data.paymentHealth.overdueGuardianCount ?? 0)],
+    ["Payments", "Payers with no payment yet", data.paymentHealth.noPaymentYetCount, payerGuardianNote(data.paymentHealth.noPaymentYetGuardianCount ?? 0)],
     ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
     ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
     ...data.monthlySignups.map((row) => ["Monthly signups", row.month, row.count, row.isCurrentMonth ? "Current month" : ""]),
@@ -1241,7 +1248,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             icon={RefreshCcw}
             label="Payment recovery rate"
             value={<RatioValue pct={recovery.ratePct} n={recovery.recovered} base={recovery.failedMembers} />}
-            detail={recovery.failedMembers > 0 ? "Members with a failed payment in the last 90 days who are now paid" : "No failed payments in the last 90 days"}
+            detail={recovery.failedMembers > 0 ? RECOVERY_SCOPE : "No failed payments in the last 90 days"}
             primaryColor={primaryColor}
           />
         </div>
@@ -1273,14 +1280,20 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6">
               <Link
                 href="/dashboard/members?filter=overdue"
-                aria-label="Overdue now — see the members behind this number"
+                aria-label={`${PAYER_COPY.label} — see the payers behind this number`}
                 className="flex items-center justify-between gap-3 py-3 -mx-1 px-1 rounded-lg transition-colors hover:bg-[var(--sf-2)]"
               >
                 <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: hex("#ef4444", 0.12) }}>
+                  <div className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center" style={{ background: hex("#ef4444", 0.12) }}>
                     <AlertTriangle className="w-4 h-4" style={{ color: "#ef4444" }} />
                   </div>
-                  <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>Overdue now</p>
+                  <div className="min-w-0">
+                    {/* Review L2: a payer total, guardians who pay included. */}
+                    <p className="text-sm font-medium text-tx-1">{PAYER_COPY.label}</p>
+                    <p className="text-[11px] text-tx-3" data-testid="reports-payers-overdue-detail">
+                      {payerGuardianNote(paymentHealth.overdueGuardianCount ?? 0)}
+                    </p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span
