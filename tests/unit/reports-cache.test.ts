@@ -54,7 +54,8 @@ describe("getReportsDataCached", () => {
     // the version in the key keeps the two shapes apart in both directions.
     // v4 (review L4): `period`, the club-zone month window.
     // v5 (review L2): payer and guardian counts in paymentHealth.
-    expect(REPORTS_CACHE_VERSION).toBe("v5");
+    // v6 (D9): paymentHealth.otherOwingCount and otherOwingGuardianCount.
+    expect(REPORTS_CACHE_VERSION).toBe("v6");
     await getReportsDataCached("tenant-A");
     expect(calls[0].key[1]).toBe(REPORTS_CACHE_VERSION);
   });
