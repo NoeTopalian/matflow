@@ -195,8 +195,13 @@ export function periodCsvDetail(period: ReportsData["period"]): string {
   return `"This month" runs midnight to midnight in the club's time zone (${period.timeZone})`;
 }
 
-/** Payment recovery counts payers (review L2): any account with a failed payment, guardians included. */
-const RECOVERY_SCOPE = "Payers with a failed payment in the last 90 days who are now paid, including parents and guardians who pay";
+/**
+ * What Payment recovery counts (round-3 review L3): every ACCOUNT with a
+ * failed payment in the last 90 days, whatever its status (cancelled
+ * included) and account type, and "recovered" is the stored status paid
+ * (lib/reports.ts). Not a payer total, so it does not say "payers".
+ */
+export const RECOVERY_SCOPE = "Accounts with a failed payment in the last 90 days now marked paid (any status, parents and guardians included)";
 
 /** The "Joined this month" copy (Q6, A-13): who it counts, and the net beside churn. */
 const JOINED_SCOPE = "People added in MatFlow, incl. tasters. A TeamUp refresh adds nobody.";
