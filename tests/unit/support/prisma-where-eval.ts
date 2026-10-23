@@ -118,6 +118,11 @@ export function fakeTx(members: Row[], opts: { timezone?: string | null } = {}) 
     classInstance: { findMany: async () => [] },
     attendanceRecord: { findMany: async () => [], groupBy: async () => [], count: async () => 0 },
     payment: { count: async () => 0, findMany: async () => [] },
+    // T8c: the membership series (lib/membership-report.ts) reads status
+    // history and the import ledger; none here, so it falls back to the
+    // fixture members' joinedAt / cancelledAt.
+    memberStatusEvent: { findMany: async () => [] },
+    importedMembership: { findMany: async () => [] },
     member: {
       count: memberCount,
       findMany: async (args?: { where?: Where; select?: Record<string, unknown>; take?: number }) => {
