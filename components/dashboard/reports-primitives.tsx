@@ -6,6 +6,7 @@
  * title row, empty frame and number format, so they are defined once here.
  */
 import type { ElementType } from "react";
+import { wholePct } from "@/lib/percent";
 
 export type TooltipPayload = {
   value?: number | string;
@@ -43,9 +44,7 @@ export function ratioCounts(n: number, base: number): string {
 }
 
 /** n ÷ base as a whole percentage, or null when the base is 0 (never NaN, never a fake 0). */
-export function wholePct(n: number, base: number): number | null {
-  return base > 0 ? Math.round((n / base) * 100) : null;
-}
+export { wholePct };
 
 /** A signed count for a net movement: "+3", "−2" (true minus sign), "0". */
 export function formatSigned(n: number): string {

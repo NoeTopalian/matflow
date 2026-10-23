@@ -36,7 +36,7 @@
  * "now" brings the replay into line, so the current month equals the tile.
  * The count is returned so the screen can say so.
  */
-import { parseTime, zoneOffsetMs } from "./class-time";
+import { clubMonthWindow } from "./club-month";
 
 export interface MovementEvent {
   id: string;
@@ -311,25 +311,24 @@ export interface MonthWindow {
   isCurrent: boolean;
 }
 
-export function clubMonthStart(year: number, monthIndex: number, timeZone: string): Date {
-  return parseTime("00:00", new Date(Date.UTC(year, monthIndex, 1)), timeZone);
-}
-
-/** The last `count` calendar months in the club's timezone, oldest first, ending with the month that holds `now`. */
+/**
+ * The last `count` calendar months in the club's timezone, oldest first,
+ * ending with the month that holds `now`. Each month is lib/club-month's
+ * `clubMonthWindow` (the one club-zone month Reports' tiles, CSV and the
+ * Members drill-through use), so a movement and a "Joined this month" tile
+ * can never disagree about which month an instant falls in.
+ */
 export function clubMonthWindows(now: Date, timeZone: string, count: number): MonthWindow[] {
-  const local = new Date(now.getTime() + zoneOffsetMs(now, timeZone));
-  const y = local.getUTCFullYear();
-  const m = local.getUTCMonth();
   const out: MonthWindow[] = [];
   for (let i = count - 1; i >= 0; i -= 1) {
-    const marker = new Date(Date.UTC(y, m - i, 1));
-    const start = clubMonthStart(y, m - i, timeZone);
-    const next = clubMonthStart(y, m - i + 1, timeZone);
+    const w = clubMonthWindow(now, timeZone, -i);
+    const [year, month] = w.monthKey.split("-").map(Number);
+    const marker = new Date(Date.UTC(year, month - 1, 1));
     out.push({
-      key: marker.toISOString().slice(0, 7),
+      key: w.monthKey,
       label: marker.toLocaleString("en-GB", { month: "short", year: "2-digit", timeZone: "UTC" }),
-      start,
-      at: i === 0 ? now : new Date(next.getTime() - 1),
+      start: new Date(w.monthStart),
+      at: i === 0 ? now : new Date(new Date(w.nextMonthStart).getTime() - 1),
       isCurrent: i === 0,
     });
   }

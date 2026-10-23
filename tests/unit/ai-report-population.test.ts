@@ -97,3 +97,24 @@ describe("AI monthly report — metric snapshot population", () => {
     expect(report.metricSnapshot.newDelta).toBe(-1);
   });
 });
+
+describe("AI monthly report — previous-period window (review L8)", () => {
+  it("1 November run (period 1-31 Oct): previous window is exactly 1-30 September", async () => {
+    const at = (y: number, mo: number, d: number, h = 12, mi = 0) => new Date(y, mo, d, h, mi);
+    state.members = [
+      member({ joinedAt: at(2026, 7, 31, 23, 59) }), // 31 Aug: before the window
+      member({ joinedAt: at(2026, 8, 1, 0, 0) }), // 1 Sep 00:00: first instant of the window
+      member({ joinedAt: at(2026, 8, 30, 23, 59) }), // 30 Sep 23:59: last minute of the window
+      member({ joinedAt: at(2026, 9, 1, 0, 0) }), // 1 Oct 00:00: current period, NOT previous
+      member({ joinedAt: at(2026, 9, 1, 18, 0) }), // 1 Oct evening: current period, NOT previous
+    ];
+    const report = await generateMonthlyReport({
+      tenantId: T,
+      tenantName: "Total BJJ",
+      periodStart: new Date(2026, 9, 1),
+      periodEnd: new Date(2026, 9, 31, 23, 59, 59, 999),
+    });
+    expect(report.metricSnapshot.newPrevPeriod).toBe(2);
+    expect(report.metricSnapshot.newThisPeriod).toBe(2);
+  });
+});

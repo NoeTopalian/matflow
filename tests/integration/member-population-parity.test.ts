@@ -33,6 +33,11 @@ import {
   type PopulationRow,
 } from "@/lib/member-population";
 import { GET } from "@/app/api/members/route";
+import { getMemberListCounts } from "@/lib/member-list-counts-server";
+import { MEMBER_LIST_COUNT_KEYS, countMemberRows } from "@/lib/member-list-counts";
+import { clubMonthWindow } from "@/lib/club-month";
+import { shownPaymentStatus } from "@/lib/overdue";
+import { getReportsData } from "@/lib/reports";
 import { classifyDbTarget, assertTestBranch, skipReason } from "./helpers/db-target";
 
 const TARGET = classifyDbTarget(process.env.DATABASE_URL);
@@ -68,6 +73,20 @@ describe.skipIf(!HAS_DB)(`T1 member populations and members pagination on TEST${
         data: { tenantId: ids.A, email: `${STAMP}-owner@example.test`, name: "T1 owner", role: "owner", passwordHash: "synthetic-t1-not-a-hash" },
       })).id;
       for (const tenantId of [ids.A, ids.B]) {
+        // A kids account must have a guardian (CHECK Member_kids_must_have_parent,
+        // migration 20260515000001 — on main and in production), so the guardian
+        // row is created first and every kids row points at it. The guardian is
+        // itself one of the counted rows (status active, accountType parent).
+        const guardianId = (await tx.member.create({
+          data: {
+            tenantId,
+            name: `${STAMP} guardian`,
+            email: `${STAMP}-${tenantId.slice(-6)}-guardian@example.test`,
+            status: "active",
+            accountType: "parent",
+            paymentStatus: "free",
+          },
+        })).id;
         const rows = STATUSES.flatMap((status) =>
           ACCOUNT_TYPES.flatMap((accountType) =>
             PAYMENT_STATUSES.map((paymentStatus) => ({
@@ -78,6 +97,7 @@ describe.skipIf(!HAS_DB)(`T1 member populations and members pagination on TEST${
               accountType,
               paymentStatus,
               cancelledAt: status === "cancelled" ? new Date() : null,
+              parentMemberId: accountType === "kids" ? guardianId : null,
             })),
           ),
         );
@@ -155,4 +175,153 @@ describe.skipIf(!HAS_DB)(`T1 member populations and members pagination on TEST${
     expect(tiedIds.filter((m) => !seenSet.has(m.id))).toEqual([]);
     expect(tiedIds).toHaveLength(TIED_COUNT);
   });
+});
+
+// ─── Review L5 (23 Oct 2026): totals above the 1,500-row display cap ─────────
+//
+// The Members page loads at most 1,500 rows (MEMBERS_SSR_TAKE). Its totals are
+// now counted on the server over the FULL population (getMemberListCounts).
+// One throwaway tenant (club zone Pacific/Auckland) holds 1,600 members of
+// mixed status, account type and payment state; the server totals must equal
+// (a) the browser predicates over ALL 1,600 rows, (b) plain SQL over all
+// rows, and (c) Reports for the same populations, and must differ from what
+// the first 1,500 rows alone give. createMany in batches of 500 keeps the
+// fixture to four round trips.
+
+const CAP = 1500; // app/dashboard/members/page.tsx MEMBERS_SSR_TAKE
+const BIG = 1600;
+const capIds = { C: "", guardian: "" };
+
+describe.skipIf(!HAS_DB)(`L5 Members totals above the ${CAP}-row cap on TEST${SKIP_NOTE}`, () => {
+  beforeAll(async () => {
+    assertTestBranch(process.env.DATABASE_URL);
+    const month = clubMonthWindow(new Date(), "Pacific/Auckland");
+    const inMonth = new Date(new Date(month.monthStart).getTime() + 60_000);
+    await withRlsBypass(async (tx) => {
+      capIds.C = (await tx.tenant.create({ data: { name: `${STAMP} C`, slug: `${STAMP}-c`, onboardingCompleted: true, timezone: "Pacific/Auckland" } })).id;
+      capIds.guardian = (await tx.member.create({
+        data: { tenantId: capIds.C, name: `${STAMP} c guardian`, email: `${STAMP}-c-guardian@example.test`, status: "active", accountType: "parent", paymentStatus: "free" },
+      })).id;
+      const statuses = ["active", "active", "active", "inactive", "taster", "cancelled"];
+      const types = ["adult", "adult", "junior", "kids", "parent"];
+      const pays = ["paid", "paid", "overdue", "paused", "pending", "free"];
+      const rows = Array.from({ length: BIG }, (_, i) => {
+        const status = statuses[i % statuses.length];
+        const accountType = types[i % types.length];
+        return {
+          tenantId: capIds.C,
+          // Zero-padded, so "the first 1,500 by name" is the first 1,500 indices.
+          name: `${STAMP} c ${String(i).padStart(4, "0")}`,
+          email: `${STAMP}-c-${i}@example.test`,
+          status,
+          accountType,
+          paymentStatus: pays[i % pays.length],
+          // Every 7th due date has passed (derived overdue where it applies), every 11th is ahead.
+          nextDueAt: i % 7 === 0 ? new Date(Date.now() - 5 * 86_400_000) : i % 11 === 0 ? new Date(Date.now() + 5 * 86_400_000) : null,
+          billedBy: i % 13 === 0 ? "teamup" : "matflow",
+          waiverAccepted: i % 2 === 0,
+          phone: i % 3 === 0 ? null : "+447700900123",
+          parentMemberId: accountType === "kids" ? capIds.guardian : null,
+          // A third joined in this club month; the rest long ago.
+          joinedAt: i % 3 === 1 ? inMonth : new Date("2025-01-15T00:00:00Z"),
+          cancelledAt: status === "cancelled" ? (i % 2 === 0 ? inMonth : new Date("2025-06-01T00:00:00Z")) : null,
+        };
+      });
+      for (let from = 0; from < rows.length; from += 500) {
+        await tx.member.createMany({ data: rows.slice(from, from + 500) });
+      }
+    }, { timeout: 120_000 });
+  }, 180_000);
+
+  afterAll(async () => {
+    if (!capIds.C) return;
+    await withRlsBypass(async (tx) => {
+      await tx.member.deleteMany({ where: { tenantId: capIds.C } });
+      await tx.tenant.deleteMany({ where: { id: capIds.C, slug: { startsWith: STAMP } } });
+    }, { timeout: 60_000 });
+    const left = await withRlsBypass(async (tx) => ({
+      tenants: await tx.tenant.count({ where: { id: capIds.C } }),
+      members: await tx.member.count({ where: { tenantId: capIds.C } }),
+    }));
+    expect(left).toEqual({ tenants: 0, members: 0 });
+  }, 120_000);
+
+  it("server totals equal the browser predicates over ALL rows, plain SQL and Reports; the first 1,500 rows alone fall short", async () => {
+    const now = new Date();
+    const month = clubMonthWindow(now, "Pacific/Auckland");
+    const server = await getMemberListCounts(capIds.C, now, month);
+
+    // Every row, uncapped, in the shape the Members page holds.
+    const all = await withTenantContext(capIds.C, (tx) =>
+      tx.member.findMany({
+        where: { tenantId: capIds.C },
+        orderBy: { name: "asc" },
+        select: {
+          name: true, status: true, accountType: true, paymentStatus: true, nextDueAt: true, stripeSubscriptionId: true, membershipTierId: true,
+          billedBy: true, waiverAccepted: true, phone: true, parentMemberId: true, joinedAt: true, cancelledAt: true,
+          attendances: { orderBy: { checkInTime: "desc" }, take: 1, select: { checkInTime: true } },
+        },
+      }),
+    );
+    expect(all.length).toBe(BIG + 1);
+    const listRows = all.map((m) => ({
+      status: m.status,
+      accountType: m.accountType,
+      paymentStatus: shownPaymentStatus(m, now),
+      waiverAccepted: m.waiverAccepted,
+      phone: m.phone,
+      parentMemberId: m.parentMemberId,
+      joinedAt: m.joinedAt.toISOString(),
+      cancelledAt: m.cancelledAt ? m.cancelledAt.toISOString() : null,
+      lastVisitAt: m.attendances[0]?.checkInTime.toISOString() ?? null,
+    }));
+
+    // (a) The browser predicates over every row.
+    const browser = countMemberRows(listRows, now, month);
+    for (const key of MEMBER_LIST_COUNT_KEYS) expect(server[key], key).toBe(browser[key]);
+
+    // (b) Plain SQL over every row, for the named populations. The columns
+    // are timestamp(3) holding a UTC wall clock, so the ISO bounds are cast
+    // to timestamp (the trailing Z is dropped, the wall clock kept).
+    const sql = async (predicate: string, ...params: string[]) =>
+      Number((await withTenantContext(capIds.C, (tx) =>
+        tx.$queryRawUnsafe<Array<{ n: bigint }>>(`SELECT COUNT(*)::bigint AS n FROM "Member" WHERE "tenantId" = $1 AND ${predicate}`, capIds.C, ...params),
+      ))[0].n);
+    const TRAINING = `"accountType" <> 'parent'`;
+    expect(server.active).toBe(await sql(`status = 'active' AND ${TRAINING}`));
+    expect(server.all).toBe(await sql(`status <> 'cancelled' AND ${TRAINING}`));
+    expect(server.inactive).toBe(await sql(`status = 'inactive' AND ${TRAINING}`));
+    expect(server.taster).toBe(await sql(`status = 'taster' AND ${TRAINING}`));
+    expect(server.cancelled).toBe(await sql(`status = 'cancelled' AND ${TRAINING}`));
+    expect(server.guardians).toBe(await sql(`status <> 'cancelled' AND "accountType" = 'parent'`));
+    expect(server.activeOnHold).toBe(await sql(`status = 'active' AND ${TRAINING} AND "paymentStatus" = 'paused'`));
+    expect(server.newThisMonth).toBe(
+      await sql(`${TRAINING} AND "joinedAt" >= $2::timestamp AND "joinedAt" < $3::timestamp`, month.monthStart, month.nextMonthStart),
+    );
+    expect(server.churnedThisMonth).toBe(
+      await sql(`status = 'cancelled' AND ${TRAINING} AND "cancelledAt" >= $2::timestamp AND "cancelledAt" < $3::timestamp`, month.monthStart, month.nextMonthStart),
+    );
+
+    // (c) Reports counts the same populations the same way.
+    const reports = await getReportsData(capIds.C);
+    expect(reports.period.monthKey).toBe(month.monthKey);
+    expect(reports.summary.activeMembers).toBe(server.active);
+    expect(reports.summary.currentMembers).toBe(server.all);
+    expect(reports.summary.inactiveMembers).toBe(server.inactive);
+    expect(reports.summary.tasterMembers).toBe(server.taster);
+    expect(reports.summary.cancelledMembers).toBe(server.cancelled);
+    expect(reports.summary.activeOnHoldMembers).toBe(server.activeOnHold);
+    expect(reports.summary.newMembersThisMonth).toBe(server.newThisMonth);
+    expect(reports.churn.cancelled).toBe(server.churnedThisMonth);
+    // Review L2: overdue is a PAYER total on both screens, guardians who pay
+    // included (the fixture has active parent accounts marked overdue).
+    expect(server.overdueGuardians).toBeGreaterThan(0);
+    expect(reports.paymentHealth.overdueCount).toBe(server.overdue);
+    expect(reports.paymentHealth.overdueGuardianCount).toBe(server.overdueGuardians);
+
+    // The cap is real: the first 1,500 rows alone undercount.
+    const capped = countMemberRows(listRows.slice(0, CAP), now, month);
+    expect(capped.all).toBeLessThan(server.all);
+    expect(capped.active).toBeLessThan(server.active);
+  }, 120_000);
 });

@@ -45,7 +45,7 @@ import {
   Users,
 } from "lucide-react";
 import type { ReportsData, AttendanceRateMode } from "@/lib/reports";
-import { POPULATION_COPY } from "@/lib/member-population";
+import { PAYER_COPY, POPULATION_COPY, payerGuardianNote } from "@/lib/member-population";
 import type { AttributionData } from "@/lib/attribution";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -180,6 +180,31 @@ export function classComposition(topClasses: ReportsData["topClasses"]) {
   const total = top.reduce((sum, cls) => sum + cls.count, 0);
   return { top, total, label: `top ${top.length} ${top.length === 1 ? "class" : "classes"}` };
 }
+
+/**
+ * The Members drill-through for a "this month" tile. It carries the report's
+ * club-zone month (review L4), so the rows listed are the month the tile
+ * counted — never one recomputed in the browser's zone, and never the next
+ * month if the calendar turned while the cached report was on screen.
+ */
+export function monthDrillHref(filter: "new-this-month" | "churned-this-month", period: ReportsData["period"] | undefined): string {
+  const params = new URLSearchParams({ filter });
+  if (period?.monthKey) params.set("month", period.monthKey);
+  return `/dashboard/members?${params.toString()}`;
+}
+
+/** The CSV's statement of which month "this month" is, and in which zone. */
+export function periodCsvDetail(period: ReportsData["period"]): string {
+  return `"This month" runs midnight to midnight in the club's time zone (${period.timeZone})`;
+}
+
+/**
+ * What Payment recovery counts (round-3 review L3): every ACCOUNT with a
+ * failed payment in the last 90 days, whatever its status (cancelled
+ * included) and account type, and "recovered" is the stored status paid
+ * (lib/reports.ts). Not a payer total, so it does not say "payers".
+ */
+export const RECOVERY_SCOPE = "Accounts with a failed payment in the last 90 days now marked paid (any status, parents and guardians included)";
 
 /** The "Joined this month" copy (Q6, A-13): who it counts, and the net beside churn. */
 const JOINED_SCOPE = "People added in MatFlow, incl. tasters. A TeamUp refresh adds nobody.";
@@ -326,6 +351,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
   const rows: (string | number | null)[][] = [
     ["Section", "Metric", "Value", "Detail"],
     ["Report", "Generated at", validGeneratedAt(data.generatedAt) ? formatDateTime(data.generatedAt) : "—", "Figures cached for up to 60 seconds"],
+    ...(data.period ? [["Report", "This month", data.period.label, periodCsvDetail(data.period)]] : []),
     ["Summary", "Total members", data.summary.totalMembers, "Every training member on record, including those who have left"],
     ["Summary", "Current members", data.summary.currentMembers, "Active and inactive members and tasters"],
     ["Summary", "Active members", data.summary.activeMembers, activeMembersDetail(data.summary)],
@@ -343,7 +369,11 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // screen agree. Club-wide — the class/age filters never scope them.
     ["Health", "Churn this month", formatRatio(churn.ratePct, churn.cancelled, churn.base), `${CHURN_FORMULA} · club-wide`],
     ["Health", "Joined this month", churn.joined, joinedNetDetail(data.membership)],
-    ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), "Members with a failed payment in the last 90 days who are now paid"],
+    ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), RECOVERY_SCOPE],
+    // Review L2: payer totals, the Payments → Outstanding definition; the
+    // detail says guardians who pay are counted, and how many.
+    ["Payments", PAYER_COPY.label, data.paymentHealth.overdueCount, payerGuardianNote(data.paymentHealth.overdueGuardianCount ?? 0)],
+    ["Payments", "Payers with no payment yet", data.paymentHealth.noPaymentYetCount, payerGuardianNote(data.paymentHealth.noPaymentYetGuardianCount ?? 0)],
     ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
     ...membershipCsvRows(data.membership),
     ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
@@ -612,6 +642,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     retentionRate,
     membership,
     paymentHealth,
+    period,
     weeksBack,
     classOptions,
     filters,
@@ -988,7 +1019,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           detail={JOINED_SCOPE}
           primaryColor={primaryColor}
           trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: `vs ${formatNumber(summary.newMembersLastMonth)} last month` }}
-          href="/dashboard/members?filter=new-this-month"
+          href={monthDrillHref("new-this-month", period)}
         />
         <MetricCard
           icon={BarChart3}
@@ -1258,7 +1289,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             value={<RatioValue pct={churn.ratePct} n={churn.cancelled} base={churn.base} />}
             detail={churn.base > 0 ? CHURN_FORMULA : "No active or cancelled members this month"}
             primaryColor={primaryColor}
-            href="/dashboard/members?filter=churned-this-month"
+            href={monthDrillHref("churned-this-month", period)}
             hrefLabel="Churn rate this month"
           />
           <MetricCard
@@ -1267,14 +1298,14 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             value={formatNumber(churn.joined)}
             detail={joinedNetDetail(membership)}
             primaryColor={primaryColor}
-            href="/dashboard/members?filter=new-this-month"
+            href={monthDrillHref("new-this-month", period)}
             hrefLabel="Joined this month"
           />
           <MetricCard
             icon={RefreshCcw}
             label="Payment recovery rate"
             value={<RatioValue pct={recovery.ratePct} n={recovery.recovered} base={recovery.failedMembers} />}
-            detail={recovery.failedMembers > 0 ? "Members with a failed payment in the last 90 days who are now paid" : "No failed payments in the last 90 days"}
+            detail={recovery.failedMembers > 0 ? RECOVERY_SCOPE : "No failed payments in the last 90 days"}
             primaryColor={primaryColor}
           />
         </div>
@@ -1306,14 +1337,20 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6">
               <Link
                 href="/dashboard/members?filter=overdue"
-                aria-label="Overdue now — see the members behind this number"
+                aria-label={`${PAYER_COPY.label} — see the payers behind this number`}
                 className="flex items-center justify-between gap-3 py-3 -mx-1 px-1 rounded-lg transition-colors hover:bg-[var(--sf-2)]"
               >
                 <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: hex("#ef4444", 0.12) }}>
+                  <div className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center" style={{ background: hex("#ef4444", 0.12) }}>
                     <AlertTriangle className="w-4 h-4" style={{ color: "#ef4444" }} />
                   </div>
-                  <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>Overdue now</p>
+                  <div className="min-w-0">
+                    {/* Review L2: a payer total, guardians who pay included. */}
+                    <p className="text-sm font-medium text-tx-1">{PAYER_COPY.label}</p>
+                    <p className="text-[11px] text-tx-3" data-testid="reports-payers-overdue-detail">
+                      {payerGuardianNote(paymentHealth.overdueGuardianCount ?? 0)}
+                    </p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span

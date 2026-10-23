@@ -5,13 +5,16 @@
  * overdue member with their latest failed amount + how long they've been
  * overdue, and lets staff Chase (send a reminder email) or Open the member's
  * payments tab to charge/refund — without digging into each profile.
+ *
+ * Rows are PAYERS (review L2): a parent or guardian account that owes is
+ * listed and counted, and the summary says how many there are.
  */
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { AlertCircle, ArrowRight, Banknote, CheckCircle2, Loader2, Send } from "lucide-react";
 
-import { NO_PAYMENT_YET_REASON, type OutstandingRow } from "@/lib/billing";
+import { NO_PAYMENT_YET_REASON, outstandingPayerSummary, type OutstandingRow } from "@/lib/billing";
 import RecordPaymentModal from "@/components/dashboard/RecordPaymentModal";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -119,6 +122,7 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
   }
 
   const rows = data?.rows ?? [];
+  const summary = outstandingPayerSummary(rows);
 
   if (rows.length === 0) {
     return (
@@ -146,10 +150,14 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
         >
           <AlertCircle className="size-5" aria-hidden="true" />
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-2xl font-bold leading-none" style={{ color: "var(--tx-1)" }}>{formatAmount(data?.totalPence ?? 0)}</p>
-          <p className="mt-1 text-xs" style={{ color: "var(--tx-3)" }}>
-            outstanding across {rows.length} member{rows.length === 1 ? "" : "s"} (failed charges, and plan prices for missed due dates and first payments)
+          {/* Review L2: payers, in the words Reports and the Members tile use. */}
+          <p className="mt-1 text-xs text-tx-3" data-testid="outstanding-summary">
+            outstanding across {summary.headline} (failed charges, and plan prices for missed due dates and first payments)
+          </p>
+          <p className="mt-0.5 text-xs text-tx-3" data-testid="outstanding-split">
+            {summary.split}. {summary.guardianNote}.
           </p>
         </div>
       </div>
@@ -168,7 +176,7 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
                   {r.memberName}
                 </Link>
                 <p className="mt-0.5 truncate text-xs" style={{ color: "var(--tx-3)" }}>
-                  {r.membershipType ?? "Ad-hoc"}{r.reason && r.kind !== "no_payment_yet" ? ` · ${r.reason}` : ""}
+                  {r.membershipType ?? "Ad-hoc"}{r.reason && r.reason !== NO_PAYMENT_YET_REASON ? ` · ${r.reason}` : ""}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-4">

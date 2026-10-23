@@ -6,7 +6,11 @@
  * ranking + day math are unit-tested; the Prisma queries live in
  * app/api/payments/outstanding/route.ts and feed this builder. The same data
  * powers the dashboard "money" action items.
+ *
+ * Rows are PAYERS (review L2, 23 Oct 2026): any account that owes, guardians
+ * who pay included, and the panel says so.
  */
+import { payerGuardianNote, payersLabel, payersOverdueLabel } from "@/lib/member-population";
 
 export type OutstandingRow = {
   memberId: string;
@@ -30,6 +34,8 @@ export type OutstandingRow = {
    * a count of days.
    */
   kind?: "overdue" | "no_payment_yet";
+  /** A parent or guardian account that pays (review L2) — counted, and named as such in the summary. */
+  payerIsGuardian?: boolean;
 };
 
 /** The reason a "No payment yet" row carries, shown beside the plan name. */
@@ -37,14 +43,14 @@ export const NO_PAYMENT_YET_REASON = "No payment yet";
 
 export type OutstandingInput = {
   now: Date;
-  overdueMembers: { id: string; name: string; membershipType: string | null; nextDueAt?: Date | null; planPricePence?: number | null; billedBy?: string }[];
+  overdueMembers: { id: string; name: string; membershipType: string | null; nextDueAt?: Date | null; planPricePence?: number | null; billedBy?: string; accountType?: string | null }[];
   /** memberId → the member's most recent failed Payment. */
   latestFailed: Map<string, { amountPence: number; createdAt: Date; failureReason: string | null }>;
   /**
    * Members on a plan with "No payment yet" (paymentStatus "pending"),
    * MatFlow-billed only — TeamUp's members are TeamUp's to chase.
    */
-  noPaymentYetMembers?: { id: string; name: string; membershipType: string | null; planPricePence?: number | null; billedBy?: string }[];
+  noPaymentYetMembers?: { id: string; name: string; membershipType: string | null; planPricePence?: number | null; billedBy?: string; accountType?: string | null }[];
 };
 
 function daysBetween(now: Date, then: Date): number {
@@ -55,10 +61,13 @@ export function buildOutstandingRows(input: OutstandingInput): OutstandingRow[] 
   const noPaymentYet = (input.noPaymentYetMembers ?? []).filter((m) => m.billedBy !== "teamup");
   const pendingIds = new Set(noPaymentYet.map((m) => m.id));
   // One row per member. A "No payment yet" member whose tier-seeded due date
-  // has also passed would match the overdue rule too; the plainer reason wins
-  // unless a real failed charge says more.
-  const overdue = input.overdueMembers.filter((m) => !pendingIds.has(m.id) || input.latestFailed.has(m.id));
-  const overdueIds = new Set(overdue.map((m) => m.id));
+  // has also passed matches the overdue rule too; "No payment yet" always
+  // wins, failed charge or not (round-3 review M1, 23 Oct 2026). Reports and
+  // the Members page split payers the same way (lib/overdue
+  // overduePayerWhere), so the three split lines cannot contradict each
+  // other. A failed charge still shows: its amount, reason, date and age stay
+  // on the No-payment-yet row.
+  const overdue = input.overdueMembers.filter((m) => !pendingIds.has(m.id));
   const rows: OutstandingRow[] = overdue.map((m) => {
     const failed = input.latestFailed.get(m.id) ?? null;
     return {
@@ -73,22 +82,24 @@ export function buildOutstandingRows(input: OutstandingInput): OutstandingRow[] 
       daysOverdue: failed ? daysBetween(input.now, failed.createdAt) : m.nextDueAt ? daysBetween(input.now, m.nextDueAt) : null,
       lastAttempt: failed ? failed.createdAt.toISOString() : null,
       ...(m.billedBy ? { billedBy: m.billedBy } : {}),
+      ...(m.accountType === "parent" ? { payerIsGuardian: true } : {}),
       kind: "overdue",
     };
   });
 
   for (const m of noPaymentYet) {
-    if (overdueIds.has(m.id)) continue;
+    const failed = input.latestFailed.get(m.id) ?? null;
     rows.push({
       memberId: m.id,
       memberName: m.name,
       membershipType: m.membershipType,
-      amountPence: m.planPricePence ?? null,
-      amountSource: m.planPricePence != null ? "plan_price" : null,
-      reason: NO_PAYMENT_YET_REASON,
-      daysOverdue: null,
-      lastAttempt: null,
+      amountPence: failed?.amountPence ?? m.planPricePence ?? null,
+      amountSource: failed ? "failed_charge" : m.planPricePence != null ? "plan_price" : null,
+      reason: failed?.failureReason ?? NO_PAYMENT_YET_REASON,
+      daysOverdue: failed ? daysBetween(input.now, failed.createdAt) : null,
+      lastAttempt: failed ? failed.createdAt.toISOString() : null,
       ...(m.billedBy ? { billedBy: m.billedBy } : {}),
+      ...(m.accountType === "parent" ? { payerIsGuardian: true } : {}),
       kind: "no_payment_yet",
     });
   }
@@ -106,6 +117,35 @@ export function buildOutstandingRows(input: OutstandingInput): OutstandingRow[] 
   });
 
   return rows;
+}
+
+/**
+ * The Outstanding panel's summary, in the payer words Reports and the Members
+ * page use (review L2): "3 payers", "2 payers overdue · 1 with no payment
+ * yet", and the guardian note. Overdue and "No payment yet" partition the
+ * rows, so the two always add up to the total.
+ */
+export function outstandingPayerSummary(rows: Pick<OutstandingRow, "kind" | "payerIsGuardian">[]): {
+  payers: number;
+  overdue: number;
+  noPaymentYet: number;
+  guardians: number;
+  headline: string;
+  split: string;
+  guardianNote: string;
+} {
+  const noPaymentYet = rows.filter((r) => r.kind === "no_payment_yet").length;
+  const overdue = rows.length - noPaymentYet;
+  const guardians = rows.filter((r) => r.payerIsGuardian).length;
+  return {
+    payers: rows.length,
+    overdue,
+    noPaymentYet,
+    guardians,
+    headline: payersLabel(rows.length),
+    split: `${payersOverdueLabel(overdue)} · ${noPaymentYet.toLocaleString("en-GB")} with no payment yet`,
+    guardianNote: payerGuardianNote(guardians),
+  };
 }
 
 /** Total outstanding amount we can quantify (known failed amounts only). */
@@ -127,7 +167,8 @@ export function paymentHealthLine(h: {
 }): { tone: "good" | "owed"; text: string } | null {
   const noPaymentYet = h.noPaymentYetCount ?? 0;
   if (noPaymentYet > 0) {
-    return { tone: "owed", text: `Overdue now ${h.overdueCount} · ${NO_PAYMENT_YET_REASON} ${noPaymentYet}` };
+    // Payer words (review L2), the same as Outstanding and the Members tile.
+    return { tone: "owed", text: `${payersOverdueLabel(h.overdueCount)} · ${NO_PAYMENT_YET_REASON} ${noPaymentYet}` };
   }
   if (h.overdueCount === 0 && h.failedLast30Days === 0) {
     return { tone: "good", text: "All payments are in good standing." };

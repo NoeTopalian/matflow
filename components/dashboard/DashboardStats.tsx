@@ -19,6 +19,7 @@ import type { DayClass } from "@/components/dashboard/WeeklyCalendar";
 import { filterTodoItems } from "@/lib/dashboard-todo";
 import type { ActionItem, ActionItemKind } from "@/lib/dashboard-action-items";
 import { capacityLabel, spacesLeftText } from "@/lib/capacity-label";
+import { paymentsDueCopy } from "@/lib/payments-due";
 import AddTaskModal, { type CreatedTask } from "@/components/dashboard/AddTaskModal";
 
 export type UserTask = {
@@ -225,8 +226,10 @@ export default function DashboardStats({
   const [completing, setCompleting] = useState<string | null>(null);
   const myOpenTaskCount = tasks.filter((t) => t.assignedTo?.id === currentUserId).length;
   // Payments → Outstanding is owner/manager only; a coach gets the Members
-  // overdue filter rather than a "not allowed" redirect.
-  const paymentsDueHref = currentUserRole === "owner" || currentUserRole === "manager" ? "/dashboard/payments" : "/dashboard/members?filter=overdue";
+  // "Payers overdue" chip rather than a "not allowed" redirect, and the tile
+  // counts and names exactly that chip (round-3 review L5, lib/payments-due.ts).
+  const paymentsDue = paymentsDueCopy(currentUserRole);
+  const paymentsDueHref = paymentsDue.href;
 
   function handleCreated(t: CreatedTask) {
     // Normalise CreatedTask (where assignedTo / assigneeMember are optional
@@ -286,8 +289,9 @@ export default function DashboardStats({
       action: "Review waivers",
     },
     {
-      // Payments → Outstanding's definition: overdue plus "No payment yet".
-      label: "Payments due (overdue or no payment yet)",
+      // Owner/manager: Outstanding's definition, overdue plus "No payment yet".
+      // Other roles: payers overdue, the chip the link opens.
+      label: paymentsDue.todoLabel,
       count: stats.paymentsDue,
       Icon: CreditCard,
       color: "#ef4444",
@@ -400,7 +404,7 @@ export default function DashboardStats({
           previous xl breakpoint (1280px) wrapped them 2×2 on ordinary windows. */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <MetricCard label={todoListLabel} value={ownerTodoCount} detail="Tasks needing attention" color="#f59e0b" icon={ClipboardList} onClick={() => setTodoOpen(true)} />
-        <MetricCard label="Payments Due" value={stats.paymentsDue} detail="Overdue or no payment yet" color="#ef4444" icon={CreditCard} href={paymentsDueHref} />
+        <MetricCard label={paymentsDue.label} value={stats.paymentsDue} detail={paymentsDue.detail} color="#ef4444" icon={CreditCard} href={paymentsDueHref} />
         <MetricCard
           label="Today's Classes"
           value={todayClasses.length}

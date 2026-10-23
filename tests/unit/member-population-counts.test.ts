@@ -61,14 +61,18 @@ describe("member population counts", () => {
     const src = readFileSync("lib/reports.ts", "utf8");
     const qs = memberQueries(src);
     expect(qs.length).toBeGreaterThan(8);
-    const unguarded = qs.filter((q) => !POPULATIONS.test(q) && !q.includes("paymentStatus") && !q.includes("noPaymentYetWhere") && !q.includes("ADULT_ACCOUNT_TYPES"));
+    // Money totals count PAYERS, a named population of their own (review L2:
+    // lib/overdue overduePayerWhere / noPaymentYetPayerWhere, guardians who
+    // pay included on purpose), so they are exempt from the member rule.
+    const unguarded = qs.filter((q) => !POPULATIONS.test(q) && !q.includes("paymentStatus") && !/\.\.\.(overduePayerWhere|noPaymentYetPayerWhere)\(/.test(q) && !q.includes("ADULT_ACCOUNT_TYPES"));
     expect(unguarded, unguarded.join("\n---\n")).toEqual([]);
   });
 
   it("Reports' Active members and churn counts use ACTIVE_MEMBER and LEFT_MEMBER (behaviour-identical refactor)", () => {
     const src = readFileSync("lib/reports.ts", "utf8");
     expect(src).toContain("tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } })");
-    expect(src).toContain("tx.member.count({ where: { tenantId, ...LEFT_MEMBER, cancelledAt: { gte: currentMonthStart } } })");
+    // Review L4: the month is the club-zone half-open window (lib/club-month.ts).
+    expect(src).toContain("tx.member.count({ where: { tenantId, ...LEFT_MEMBER, cancelledAt: thisMonth } })");
     expect(src).not.toMatch(/status: "active", \.\.\.TRAINING_MEMBER/);
   });
 

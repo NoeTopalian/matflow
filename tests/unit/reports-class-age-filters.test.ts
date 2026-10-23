@@ -29,6 +29,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     class: { findMany: vi.fn(), count: vi.fn() },
+    // Review L4: getReportsData reads the club zone for its month windows.
+    tenant: { findUnique: vi.fn(async () => ({ timezone: "Europe/London" })) },
     classInstance: { findMany: vi.fn() },
     attendanceRecord: { findMany: vi.fn(), groupBy: vi.fn(), count: vi.fn() },
     member: { groupBy: vi.fn(), findMany: vi.fn(), count: vi.fn() },

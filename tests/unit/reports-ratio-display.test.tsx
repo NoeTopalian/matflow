@@ -222,3 +222,22 @@ describe("AnalysisView — engagement shows its counts", () => {
     expect(screen.queryByText("0%")).toBeNull();
   });
 });
+
+describe("half-up rounding on the Reports surfaces (review L6, round 2)", () => {
+  it("wholePct from reports-primitives gives 15 for 29 of 200", () => {
+    expect(wholePct(29, 200)).toBe(15);
+  });
+
+  it("CSV status Active row and Active share row print the same text for 29 of 200", () => {
+    const data = reports({
+      summary: { ...reports().summary, currentMembers: 200, activeMembers: 29 },
+      currentMembersByStatus: [{ status: "active", label: "Active", count: 29, percentage: 15 }],
+    });
+    const csv = reportsCsv(data, ATTRIBUTION as never);
+    const lines = csv.split("\n");
+    const status = lines.find((l) => l.startsWith("Current members by status,Active,"));
+    const share = lines.find((l) => l.startsWith("Owner insights,Active share of current members,"));
+    expect(status).toContain("15% (29 of 200)");
+    expect(share).toContain("15% (29 of 200)");
+  });
+});

@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { formatDate } from "@/lib/date";
 import type { AttributionData, FunnelSteps, StaffConversionRow } from "@/lib/attribution";
 import { ratioCounts } from "@/components/dashboard/reports-primitives";
+import { percent } from "@/lib/percent";
 
 /**
  * The conversion funnel — ONE implementation, drawn on Reports (under the stat
@@ -118,7 +119,7 @@ function rateText(rate: number | null, suffix: string): string {
  */
 export function pctOf(part: number, whole: number, minTrials: number): string | null {
   if (whole < Math.max(minTrials, 1)) return null;
-  return `${Math.round((part / whole) * 100)}% ${ratioCounts(part, whole)}`;
+  return `${percent(part, whole)}% ${ratioCounts(part, whole)}`;
 }
 
 /** "−3 lost before joining · 25% (3 of 12)", "0 lost before joining" — no minus on zero, no share when it is unguarded. */

@@ -23,6 +23,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     class: { findMany: vi.fn(), count: vi.fn() },
+    // Review L4: getReportsData reads the club zone for its month windows.
+    tenant: { findUnique: vi.fn(async () => ({ timezone: "Europe/London" })) },
     classInstance: { findMany: vi.fn() },
     attendanceRecord: { findMany: vi.fn(), groupBy: vi.fn(), count: vi.fn() },
     member: { groupBy: vi.fn(), findMany: vi.fn(), count: vi.fn() },
@@ -36,6 +38,7 @@ vi.mock("@/lib/prisma", () => ({
 
 import { prisma } from "@/lib/prisma";
 import { getReportsData } from "@/lib/reports";
+import { zonedMonthStart } from "@/lib/club-month";
 
 type Where = Record<string, unknown>;
 
@@ -99,8 +102,12 @@ function setup(f: Fixture) {
     if (joinedAt && "lt" in joinedAt && !("gte" in joinedAt)) {
       return Promise.resolve((where.status === "active" ? f.retentionSurvived : f.retentionCohort) as never);
     }
-    if (joinedAt && "gte" in joinedAt && !("lt" in joinedAt)) return Promise.resolve(f.joinedThisMonth as never);
-    if (joinedAt) return Promise.resolve(0 as never); // last month
+    // Review L4: both month windows are half-open [start, next start) in the
+    // club's zone; this month is the one starting at the club's current month.
+    if (joinedAt && "gte" in joinedAt && "lt" in joinedAt) {
+      const thisMonth = (joinedAt.gte as Date).getTime() === zonedMonthStart(new Date(), "Europe/London").getTime();
+      return Promise.resolve((thisMonth ? f.joinedThisMonth : 0) as never);
+    }
     if (where.status === "active") return Promise.resolve(f.active as never);
     return Promise.resolve(0 as never);
   }) as never);
