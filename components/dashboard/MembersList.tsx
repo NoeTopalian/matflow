@@ -33,9 +33,12 @@ import AttributionFields, { emptyAttribution, type AttributionValue } from "@/co
 import { resolveSignupCredit } from "@/lib/signup-credit";
 import { BilledByTeamUpPill } from "@/components/dashboard/BilledByTeamUpPill";
 import { paymentStatusLabel } from "@/lib/payment-status";
+import type { PaymentEvidence } from "@/lib/overdue";
 import {
+  OTHER_OWING_COPY,
   PAYER_COPY,
   POPULATION_COPY,
+  otherAccountsOwingLine,
   payerGuardianNote,
   payersOverdueLabel,
   isActiveMember,
@@ -86,6 +89,18 @@ export interface MemberRow {
   /** "teamup" while TeamUp collects this member's money (readiness spec v3 §7). */
   billedBy?: string | null;
   billingStatusAsOf?: string | null;
+  /**
+   * D9: an inactive or cancelled account that still owes (lib/other-accounts-owing.ts),
+   * flagged by the server. Listed under "Other accounts owing", never under Payers overdue.
+   */
+  otherOwing?: boolean;
+  /**
+   * D10: why a member on a plan is behind — never paid past the first payment
+   * date, a failed charge, or an outstanding due date — with the badge label
+   * and the sentence the self check-in refusal uses (lib/overdue
+   * paymentEvidence). Null when they are not behind.
+   */
+  paymentEvidence?: { kind: PaymentEvidence["kind"]; label: string; sentence: string } | null;
   lastVisitAt?: string | null;
   // feat/member-profile-pictures Track A: Avatar renders this when set,
   // falls back to deterministic initials when null. Flattened from
@@ -155,6 +170,12 @@ interface Props {
    * row cap. Absent (tests, older callers): counted from `members`.
    */
   serverCounts?: MemberListCounts | null;
+  /**
+   * D9: inactive or cancelled accounts that still owe, counted on the server
+   * over the whole club. Absent (tests, older callers): counted from the
+   * flagged rows.
+   */
+  otherOwing?: { count: number; guardians: number } | null;
 }
 
 // ─── Belt colour map ──────────────────────────────────────────────────────────
@@ -199,7 +220,18 @@ function daysSince(iso?: string | null) {
   return Math.max(0, Math.floor(ms / 86_400_000));
 }
 
-function paymentMeta(status?: string | null) {
+/**
+ * The Payment badge. D10: a member who is behind shows WHICH evidence — "No
+ * payment recorded", "Payment failed" or "Payment outstanding" — the same
+ * three the self check-in refusal names, with its sentence as the title.
+ * Counts and filters still read the shown status, unchanged.
+ */
+export function paymentMeta(status?: string | null, evidence?: MemberRow["paymentEvidence"]) {
+  if (evidence) {
+    return evidence.kind === "no_payment_recorded"
+      ? { label: evidence.label, title: evidence.sentence, color: "#38bdf8", bg: "rgba(56,189,248,0.13)", Icon: CreditCard }
+      : { label: evidence.label, title: evidence.sentence, color: "#f97316", bg: "rgba(249,115,22,0.14)", Icon: AlertTriangle };
+  }
   const s = (status ?? "paid").toLowerCase();
   if (s === "paid") return { label: "Paid", color: "#22c55e", bg: "rgba(34,197,94,0.12)", Icon: CheckCircle2 };
   if (s === "overdue") return { label: "Overdue", color: "#f97316", bg: "rgba(249,115,22,0.14)", Icon: AlertTriangle };
@@ -293,11 +325,16 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
       // Suppressed for no-membership rows (e.g. a parent tied to a kid who
       // holds the membership) — the default "paid" would mislead the owner.
       if (!m.membershipType) return <span className="text-[11px]" style={{ color: "var(--tx-3)" }}>—</span>;
-      const pay = paymentMeta(m.paymentStatus);
+      const pay = paymentMeta(m.paymentStatus, m.paymentEvidence);
       const PayIcon = pay.Icon;
       return (
         <span className="inline-flex flex-nowrap items-center gap-1 whitespace-nowrap">
-          <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: pay.bg, color: pay.color }}>
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+            style={{ background: pay.bg, color: pay.color }}
+            title={"title" in pay ? pay.title : undefined}
+            data-testid="member-payment-badge"
+          >
             <PayIcon className="size-3" />
             {pay.label}
           </span>
@@ -392,7 +429,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest" | "last-visit";
-type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "churned-this-month" | "guardians" | "guardian-review";
+type StatusFilter = "all" | "attention" | "overdue" | "other-owing" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "churned-this-month" | "guardians" | "guardian-review";
 
 // "new-this-month" / "churned-this-month": deep-link-only filters (no visible
 // chip, same pattern as "active"/"inactive"/"cancelled" below) — the Reports
@@ -401,7 +438,7 @@ type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missin
 // through). Review L4 (23 Oct 2026): the month is the CLUB's, resolved on the
 // server as [monthStart, nextMonthStart) (lib/club-month.ts) and passed in as
 // `monthWindow` — the same window Reports counted, never the browser's month.
-const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "churned-this-month", "guardians", "guardian-review"];
+const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "other-owing", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "churned-this-month", "guardians", "guardian-review"];
 
 /**
  * The landing view (T1, owner decision Q4 A-1, Noe 17 Oct 2026): the page
@@ -478,7 +515,7 @@ function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null }
  */
 const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month"];
 
-type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt">>;
+type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing">>;
 
 /**
  * Whether a member belongs under a chip when nobody is searching. The single
@@ -495,6 +532,9 @@ export function inStatusView(
   // account type — a guardian who pays is a debt, never dropped — so this
   // view is decided before the guardian and cancelled rules below.
   if (f === "overdue") return isOverduePayerRow(m);
+  // D9: inactive or cancelled accounts that still owe, any account type —
+  // the server flags them (lib/other-accounts-owing.ts).
+  if (f === "other-owing") return !!m.otherOwing;
   if (m.status === "cancelled" && !INCLUDES_CANCELLED.includes(f)) return false;
   // Parent/guardian accounts are listed under their own chip only; every
   // other view is training members, matching its count.
@@ -585,7 +625,7 @@ const FILTER_LABELS: Partial<Record<StatusFilter, string>> = {
   guardians: "Parents & guardians",
 };
 
-export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null, monthWindow = null, serverCounts = null }: Props) {
+export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null, monthWindow = null, serverCounts = null, otherOwing = null }: Props) {
   const supportEdit = supportScope === "edit";
   // One month window for every "this month" slice on the page (review L4).
   const month = useMemo<MonthWindowProp>(() => monthWindow ?? { ...defaultClubMonthWindow(), isCurrent: true }, [monthWindow]);
@@ -747,15 +787,20 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   // Overdue is a PAYER total (review L2): guardians who pay are in it, so its
   // header names payers rather than a member population.
   const payerCopy = statusFilter === "overdue" ? PAYER_COPY : null;
+  // D9: debts on inactive or cancelled accounts — beside the payers, never in them.
+  const otherOwingCount = otherOwing?.count ?? members.filter((m) => m.otherOwing).length;
+  const otherOwingCopy = statusFilter === "other-owing" ? OTHER_OWING_COPY : null;
   const headlineCount =
-    statusFilter === "new-this-month"
+    statusFilter === "other-owing"
+      ? otherOwingCount
+      : statusFilter === "new-this-month"
       ? counts.newThisMonth
       : statusFilter === "churned-this-month"
         ? counts.churnedThisMonth
         : statusFilter === "overdue"
           ? counts.overdue
           : headlineCounts[headlineKey] ?? counts.all;
-  const headlineCopy = sliceCopy ?? payerCopy ?? POPULATION_COPY[headlineKey];
+  const headlineCopy = sliceCopy ?? payerCopy ?? otherOwingCopy ?? POPULATION_COPY[headlineKey];
   // Q4 A-1: members on hold stay inside the Active headline, marked as such.
   const holdNote = headlineKey === "active" && counts.activeOnHold > 0 ? `${counts.activeOnHold} on hold` : null;
 
@@ -771,7 +816,11 @@ export default function MembersList({ members: initial, primaryColor, role, guar
         description={
           <>
             <span data-testid="members-headline">
-              {payerCopy ? payersOverdueLabel(headlineCount) : `${headlineCount} ${headlineCopy.label.charAt(0).toLowerCase() + headlineCopy.label.slice(1)}`}
+              {payerCopy
+                ? payersOverdueLabel(headlineCount)
+                : otherOwingCopy
+                  ? `${headlineCount} ${headlineCount === 1 ? "other account owing" : "other accounts owing"}`
+                  : `${headlineCount} ${headlineCopy.label.charAt(0).toLowerCase() + headlineCopy.label.slice(1)}`}
               {holdNote ? `, ${holdNote}` : ""}
             </span>
             {" · "}
@@ -779,6 +828,17 @@ export default function MembersList({ members: initial, primaryColor, role, guar
             <span className="mt-0.5 block text-xs text-tx-3" data-testid="members-headline-scope">
               {headlineCopy.includes}. {headlineCopy.excludes}.
             </span>
+            {/* D9: the payers view names the debts it leaves out, with the way to them. */}
+            {payerCopy && otherOwingCount > 0 && (
+              <button
+                type="button"
+                onClick={() => selectFilter("other-owing")}
+                data-testid="members-other-owing-line"
+                className="mt-0.5 block text-left text-xs text-tx-2 underline underline-offset-2 hover:text-tx-1"
+              >
+                {otherAccountsOwingLine(otherOwingCount)}
+              </button>
+            )}
           </>
         }
         action={
@@ -902,6 +962,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               { key: "all", label: "All current", count: counts.all },
               { key: "attention", label: "Needs Attention", count: counts.attention },
               { key: "overdue", label: PAYER_COPY.label, count: counts.overdue },
+              { key: "other-owing", label: OTHER_OWING_COPY.label, count: otherOwingCount },
               { key: "waiver-missing", label: "Waiver Missing", count: counts.waiverMissing },
               { key: "missing-phone", label: "Missing Phone", count: counts.missingPhone },
               { key: "quiet", label: `Quiet (${QUIET_THRESHOLD_DAYS}d+)`, count: counts.quiet },

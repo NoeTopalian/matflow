@@ -82,6 +82,25 @@ export const PAYER_COPY = {
   excludes: "Excludes inactive and cancelled members",
 } as const;
 
+/**
+ * OTHER ACCOUNTS OWING (owner direction D9, 23 Oct 2026): inactive or
+ * cancelled accounts with a genuine debt — a failed latest charge, or marked
+ * overdue (lib/overdue otherOwingEvidence). Not chased and in no member
+ * total, but never hidden: Reports, the Members payers view, Outstanding and
+ * the Reports CSV all print this line beside "Payers overdue".
+ */
+export const OTHER_OWING_COPY = {
+  label: "Other accounts owing",
+  short: "Inactive or left, not chased",
+  includes: "Inactive and cancelled accounts whose last charge failed or that are marked overdue, including parents and guardians",
+  excludes: "Not chased, and not counted in Payers overdue or any member total",
+} as const;
+
+/** "Other accounts owing: 2 (inactive or left, not chased)". */
+export function otherAccountsOwingLine(n: number): string {
+  return `${OTHER_OWING_COPY.label}: ${n.toLocaleString("en-GB")} (inactive or left, not chased)`;
+}
+
 /** "1 payer" / "3 payers". */
 export function payersLabel(n: number): string {
   return `${n.toLocaleString("en-GB")} ${n === 1 ? "payer" : "payers"}`;

@@ -22,8 +22,11 @@ import { CHASE_ELSEWHERE_NOTE, isBilledElsewhere } from "@/lib/billing-source";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { useToast } from "@/components/ui/Toast";
+import { OTHER_OWING_COPY, otherAccountsOwingLine } from "@/lib/member-population";
+import type { OtherOwingRow } from "@/lib/other-accounts-owing";
 
-type ApiResponse = { rows: OutstandingRow[]; total: number; totalPence: number };
+/** `otherOwing` (D9): inactive or cancelled accounts that still owe — listed, never chased, not in the totals. */
+type ApiResponse = { rows: OutstandingRow[]; total: number; totalPence: number; otherOwing?: OtherOwingRow[] };
 
 function formatAmount(pence: number | null): string {
   if (pence == null) return "—";
@@ -61,7 +64,7 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
     setData((prev) => {
       if (!prev) return prev;
       const rows = prev.rows.filter((r) => r.memberId !== memberId);
-      return { rows, total: rows.length, totalPence: rows.reduce((s, r) => s + (r.amountPence ?? 0), 0) };
+      return { ...prev, rows, total: rows.length, totalPence: rows.reduce((s, r) => s + (r.amountPence ?? 0), 0) };
     });
     onRecorded?.();
   }
@@ -123,14 +126,20 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
 
   const rows = data?.rows ?? [];
   const summary = outstandingPayerSummary(rows);
+  const otherOwing = data?.otherOwing ?? [];
+  const otherOwingSection = otherOwing.length > 0 ? <OtherAccountsOwing rows={otherOwing} /> : null;
 
   if (rows.length === 0) {
     return (
-      <EmptyState
-        icon={<CheckCircle2 className="size-8" style={{ color: "var(--hue-success)" }} />}
-        title="Nobody owes you right now"
-        hint="Every active member is up to date. Failed and overdue payments, and members on a plan with no payment yet, appear here."
-      />
+      <div className="space-y-4">
+        {/* "Nobody to chase", not "nobody owes": the accounts below still owe (D9). */}
+        <EmptyState
+          icon={<CheckCircle2 className="size-8" style={{ color: "var(--hue-success)" }} />}
+          title={otherOwing.length > 0 ? "Nobody to chase right now" : "Nobody owes you right now"}
+          hint="Every active member is up to date. Failed and overdue payments, and members on a plan with no payment yet, appear here."
+        />
+        {otherOwingSection}
+      </div>
     );
   }
 
@@ -159,6 +168,11 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
           <p className="mt-0.5 text-xs text-tx-3" data-testid="outstanding-split">
             {summary.split}. {summary.guardianNote}.
           </p>
+          {otherOwing.length > 0 && (
+            <p className="mt-0.5 text-xs text-tx-3" data-testid="outstanding-other-owing">
+              {otherAccountsOwingLine(otherOwing.length)} — listed below, not in this total.
+            </p>
+          )}
         </div>
       </div>
 
@@ -227,6 +241,8 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
         })}
       </div>
 
+      {otherOwingSection}
+
       <ConfirmDialog
         open={confirmChase !== null}
         onClose={() => setConfirmChase(null)}
@@ -248,5 +264,60 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
         onRecorded={(id) => handleRecorded(id)}
       />
     </div>
+  );
+}
+
+function formatDay(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/**
+ * D9 (owner direction, 23 Oct 2026): inactive or cancelled accounts that
+ * still owe. Named so the debt is never lost; no Chase button — the club does
+ * not chase people who are inactive or have left — and not in the total
+ * above. Open leads to the member's payments, where staff can record or
+ * refund as for anyone.
+ */
+function OtherAccountsOwing({ rows }: { rows: OtherOwingRow[] }) {
+  return (
+    <section
+      aria-labelledby="other-owing-heading"
+      data-testid="outstanding-other-owing-list"
+      className="overflow-hidden rounded-[var(--r-md)] border"
+      style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
+    >
+      <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--bd-default)" }}>
+        <h3 id="other-owing-heading" className="text-sm font-semibold text-tx-1">
+          {OTHER_OWING_COPY.label} · {rows.length.toLocaleString("en-GB")}
+        </h3>
+        <p className="mt-0.5 text-xs text-tx-3">{OTHER_OWING_COPY.includes}. {OTHER_OWING_COPY.excludes}.</p>
+      </div>
+      {rows.map((r) => (
+        <div key={r.memberId} className="flex items-center justify-between gap-3 px-4 py-3" style={{ borderBottom: "1px solid var(--bd-default)" }}>
+          <div className="min-w-0">
+            <Link href={`/dashboard/members/${r.memberId}?tab=payments`} className="block truncate text-sm font-semibold hover:underline" style={{ color: "var(--tx-1)" }}>
+              {r.memberName}
+            </Link>
+            <p className="mt-0.5 truncate text-xs text-tx-3">
+              {r.status === "cancelled" ? "Cancelled" : "Inactive"}
+              {r.accountType === "parent" ? " · Parent or guardian" : ""}
+              {" · "}
+              {r.evidence === "failed_charge" && r.failedAt ? `Last charge failed on ${formatDay(r.failedAt)}` : "Marked overdue"}
+              {r.reason ? ` · ${r.reason}` : ""}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-4">
+            <p className="text-sm font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>{formatAmount(r.amountPence)}</p>
+            <Link
+              href={`/dashboard/members/${r.memberId}?tab=payments`}
+              className="inline-flex items-center gap-1 rounded-[var(--r-md)] border px-2.5 py-1.5 text-xs font-semibold text-tx-1 transition-colors hover:bg-[var(--sf-2)]"
+              style={{ borderColor: "var(--bd-default)" }}
+            >
+              Open <ArrowRight className="size-3.5" aria-hidden="true" />
+            </Link>
+          </div>
+        </div>
+      ))}
+    </section>
   );
 }

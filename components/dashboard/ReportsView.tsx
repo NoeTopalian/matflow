@@ -45,7 +45,7 @@ import {
   Users,
 } from "lucide-react";
 import type { ReportsData, AttendanceRateMode } from "@/lib/reports";
-import { PAYER_COPY, POPULATION_COPY, payerGuardianNote } from "@/lib/member-population";
+import { OTHER_OWING_COPY, PAYER_COPY, POPULATION_COPY, payerGuardianNote } from "@/lib/member-population";
 import type { AttributionData } from "@/lib/attribution";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -72,6 +72,12 @@ import InitiativesPanel from "@/components/dashboard/InitiativesPanel";
 import MonthlyReportView from "@/components/dashboard/MonthlyReportView";
 
 const WEEK_OPTIONS = [4, 8, 12, 16, 24] as const;
+
+/** D9: "Inactive or left, not chased", with the guardian count when any. Screen and CSV share it. */
+export function otherOwingDetail(guardians: number): string {
+  if (guardians <= 0) return OTHER_OWING_COPY.short;
+  return `${OTHER_OWING_COPY.short} · ${guardians === 1 ? "includes 1 parent or guardian" : `includes ${guardians.toLocaleString("en-GB")} parents or guardians`}`;
+}
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541", "#F59E0B", "#38BDF8"];
 
@@ -374,6 +380,9 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // detail says guardians who pay are counted, and how many.
     ["Payments", PAYER_COPY.label, data.paymentHealth.overdueCount, payerGuardianNote(data.paymentHealth.overdueGuardianCount ?? 0)],
     ["Payments", "Payers with no payment yet", data.paymentHealth.noPaymentYetCount, payerGuardianNote(data.paymentHealth.noPaymentYetGuardianCount ?? 0)],
+    // D9: debts on inactive or cancelled accounts, beside the payers and
+    // never inside them or a member total.
+    ["Payments", OTHER_OWING_COPY.label, data.paymentHealth.otherOwingCount ?? 0, otherOwingDetail(data.paymentHealth.otherOwingGuardianCount ?? 0)],
     ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
     ...membershipCsvRows(data.membership),
     ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
@@ -1376,6 +1385,31 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   {formatNumber(paymentHealth.failedLast30Days)}
                 </span>
               </div>
+              {/* D9: debts on inactive or cancelled accounts. Not chased and
+                  not in Payers overdue, but never hidden; the drill-through
+                  names them on the Members page. */}
+              <Link
+                href="/dashboard/members?filter=other-owing"
+                aria-label={`${OTHER_OWING_COPY.label} — see the accounts behind this number`}
+                data-testid="reports-other-owing"
+                className="flex items-center justify-between gap-3 py-3 -mx-1 px-1 rounded-lg transition-colors hover:bg-[var(--sf-2)]"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center" style={{ background: "var(--sf-2)" }}>
+                    <CreditCard className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-tx-1">{OTHER_OWING_COPY.label}</p>
+                    <p className="text-[11px] text-tx-3" data-testid="reports-other-owing-detail">
+                      {otherOwingDetail(paymentHealth.otherOwingGuardianCount ?? 0)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xl font-bold tabular-nums text-tx-1">{formatNumber(paymentHealth.otherOwingCount ?? 0)}</span>
+                  <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />
+                </div>
+              </Link>
               {healthLine?.tone === "good" && (
                 <div className="flex items-center gap-2 rounded-xl px-3 py-2 border sm:col-span-3" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>
                   <ShieldCheck className="w-4 h-4" style={{ color: "#22c55e" }} />
