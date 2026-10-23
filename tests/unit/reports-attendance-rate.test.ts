@@ -34,6 +34,10 @@ vi.mock("@/lib/prisma", () => ({
     attendanceRecord: { findMany: vi.fn(), groupBy: vi.fn(), count: vi.fn() },
     member: { groupBy: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     payment: { count: vi.fn(), findMany: vi.fn() },
+    // T8c: the membership series reads (lib/membership-report.ts); it reads
+    // the club zone through the same `tenant` mock above.
+    memberStatusEvent: { findMany: vi.fn(async () => []) },
+    importedMembership: { findMany: vi.fn(async () => []) },
   },
 }));
 

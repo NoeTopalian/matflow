@@ -7,6 +7,8 @@ import PrintCardsLink from "@/components/dashboard/PrintCardsLink";
 import PromotionAlerts from "@/components/dashboard/PromotionAlerts";
 import { PAYMENT_EVIDENCE_LABEL, latestSettledPayment, paymentEvidence, paymentEvidenceSentence, shownPaymentStatus } from "@/lib/overdue";
 import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
+import { loadMonthMovers } from "@/lib/membership-report";
+import type { MovementBucket } from "@/lib/membership-movement";
 
 // Lane 1 iter-1 P-01 [Critical] fix: hard cap on the SSR-rendered member
 // list. Previous code was unbounded — at 5 000 members the route transferred
@@ -178,7 +180,28 @@ export default async function MembersPage({ searchParams }: Props) {
   // Unguarded like the loads above (UI-RULES §7).
   const otherOwingRows = await withTenantContext(session!.user.tenantId, (tx) => loadOtherAccountsOwing(tx, session!.user.tenantId));
   const otherOwingIds = new Set(otherOwingRows.map((r) => r.memberId));
-  const listed = members.map((m) => (otherOwingIds.has(m.id) ? { ...m, otherOwing: true } : m));
+  // D11: the members behind each movement figure for the club month in
+  // `month=` — the same replay and window as the Reports Joined tile and the
+  // Net New Members chart (the current month runs to now, a past month to
+  // its last millisecond), so each drill-through lists exactly who was counted.
+  const moveWindow = {
+    start: new Date(monthWindow.monthStart),
+    at: monthWindow.isCurrent ? now : new Date(new Date(monthWindow.nextMonthStart).getTime() - 1),
+  };
+  const movers = await withTenantContext(
+    session!.user.tenantId,
+    (tx) => loadMonthMovers(tx, session!.user.tenantId, now, moveWindow),
+    { maxWait: 10_000, timeout: 30_000 },
+  );
+  const movedBy = new Map<string, MovementBucket[]>();
+  for (const bucket of Object.keys(movers) as MovementBucket[]) {
+    for (const id of movers[bucket]) movedBy.set(id, [...(movedBy.get(id) ?? []), bucket]);
+  }
+  const listed = members.map((m) => {
+    const flagged = otherOwingIds.has(m.id) ? { ...m, otherOwing: true } : m;
+    const moved = movedBy.get(m.id);
+    return moved ? { ...flagged, moved } : flagged;
+  });
 
   // Guardian links an import suggested and nobody has confirmed — counted
   // across the whole club for the header badge. Owner and manager only: the
@@ -216,6 +239,7 @@ export default async function MembersPage({ searchParams }: Props) {
         monthWindow={monthWindow}
         serverCounts={counts}
         otherOwing={otherOwingTotals(otherOwingRows)}
+        movers={{ new: movers.new.length, rejoined: movers.rejoined.length, lost: movers.lost.length, tasterAdded: movers.tasterAdded.length }}
         supportScope={(session!.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
       />
     </>

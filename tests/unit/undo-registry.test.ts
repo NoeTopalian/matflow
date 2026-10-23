@@ -33,6 +33,7 @@ const fake = {
   classRoster: { deleteMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
   memberRank: { findFirst: vi.fn(), update: vi.fn(), delete: vi.fn() },
   attendanceRecord: { findMany: vi.fn(), deleteMany: vi.fn() },
+  memberStatusEvent: { create: vi.fn(), findFirst: vi.fn() },
 } satisfies Record<string, Record<string, Fn>>;
 const tx = fake as unknown as TxLike;
 const applyUndo = (t: TxLike, r: AuditRowLike) => applyUndoReal(t, r);
@@ -371,5 +372,42 @@ describe("second review round (e9bed13 → follow-up)", () => {
     fake.memberRank.findFirst.mockResolvedValue(null);
     await expect(applyUndo(tx, row("member.rank.demote", { fromRankId: "blue", toRankId: "white", stripes: 0, fromStripes: 2, cancelledSubscriptions: 0 }))).rejects.toBeInstanceOf(UndoStale);
     expect(fake.memberRank.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ rankSystemId: "white", stripes: 0 }) }));
+  });
+});
+
+// T8a: a restored member status is a status transition — recorded through the
+// single writer, in the undo's transaction, attributed to the undoing user.
+describe("applyUndo — a restored status records its event (T8a)", () => {
+  it("undoing active -> inactive records one inactive -> active event by the undoing user", async () => {
+    fake.member.findFirst.mockResolvedValue({ id: "m1", status: "inactive", email: "a@x.test" });
+    await applyUndoReal(tx, row("member.update", { changes: { status: { from: "active", to: "inactive" } } }), { userId: "u-owner" });
+    expect(fake.member.update).toHaveBeenCalledWith({ where: { id: "m1" }, data: { status: "active" } });
+    expect(fake.memberStatusEvent.create).toHaveBeenCalledTimes(1);
+    expect(fake.memberStatusEvent.create).toHaveBeenCalledWith({
+      data: { tenantId: "t1", memberId: "m1", fromStatus: "inactive", toStatus: "active", reason: "staff_edit", changedById: "u-owner" },
+      select: { id: true },
+    });
+    // The status write lands before its event.
+    expect(fake.member.update.mock.invocationCallOrder[0]).toBeLessThan(fake.memberStatusEvent.create.mock.invocationCallOrder[0]);
+  });
+
+  it("a before/after snapshot that restores status records the event too", async () => {
+    fake.member.findFirst.mockResolvedValue({ id: "m1", status: "taster", name: "B", email: "a@x.test" });
+    await applyUndoReal(tx, row("member.update", { before: { status: "active", name: "A" }, after: { status: "taster", name: "B" } }), { userId: "u-owner" });
+    expect(fake.memberStatusEvent.create.mock.calls[0][0].data).toMatchObject({ fromStatus: "taster", toStatus: "active", changedById: "u-owner" });
+  });
+
+  it("an undo that does not touch status writes no event", async () => {
+    fake.member.findFirst.mockResolvedValue({ id: "m1", status: "active", name: "B", email: "a@x.test" });
+    await applyUndoReal(tx, row("member.update", { changes: { name: { from: "A", to: "B" } } }), { userId: "u-owner" });
+    expect(fake.memberStatusEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("a stale undo writes neither the status nor an event", async () => {
+    fake.member.findFirst.mockResolvedValue({ id: "m1", status: "active", email: "a@x.test" });
+    await expect(applyUndoReal(tx, row("member.update", { changes: { status: { from: "active", to: "inactive" } } }), { userId: "u-owner" }))
+      .rejects.toBeInstanceOf(UndoStale);
+    expect(fake.member.update).not.toHaveBeenCalled();
+    expect(fake.memberStatusEvent.create).not.toHaveBeenCalled();
   });
 });

@@ -901,7 +901,7 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
       const group = card.getByRole("group", { name: "Net new members view" });
       const bars = group.getByRole("button", { name: "Bars", exact: true });
       const netLine = group.getByRole("button", { name: "Net line", exact: true });
-      const running = group.getByRole("button", { name: "Running total", exact: true });
+      const members = group.getByRole("button", { name: "Members", exact: true });
       await expect(bars).toHaveAttribute("aria-pressed", "true");
 
       const others = {
@@ -926,7 +926,7 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
 
       const chart = card.getByTestId("net-new-chart");
       const hasData = (await chart.count()) > 0;
-      for (const [btn, name] of [[netLine, "net"], [running, "running"], [bars, "bars"]] as const) {
+      for (const [btn, name] of [[netLine, "net"], [members, "members"], [bars, "bars"]] as const) {
         await btn.click();
         await expect(btn).toHaveAttribute("aria-pressed", "true");
         if (hasData) await expect(chart).toHaveAttribute("data-view", name);

@@ -5,6 +5,10 @@ import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-o
 import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER, isActiveMember } from "@/lib/member-population";
 import { percent, ratePct1dp } from "@/lib/percent";
 import { clubMonthKey, clubMonthWindow, defaultClubMonthWindow, monthRange, type ClubMonthWindow } from "@/lib/club-month";
+import { emptyMembershipReport, loadMembershipReport, type MembershipReport } from "@/lib/membership-report";
+import { joinedOf } from "@/lib/membership-movement";
+
+export type { MembershipReport } from "@/lib/membership-report";
 
 export interface ClassOption {
   id: string;
@@ -63,12 +67,12 @@ export interface ChurnFigures {
   /** Active training members now + `cancelled` (the existing formula's base). */
   base: number;
   /**
-   * Training members whose joinedAt falls in the same calendar month
-   * (tasters included) — shown beside churn. A TeamUp refresh creates
-   * nobody, so until cutover this counts people added in MatFlow.
+   * D11: Joined this month by the movement definition — new + rejoined
+   * (lib/membership-movement.ts), the same figure as the Net New Members
+   * card. Tasters and imports are not joins.
    */
   joined: number;
-  /** joined − cancelled for the same month. */
+  /** The movement net for the month: new + rejoined − left. */
   net: number;
 }
 
@@ -185,7 +189,19 @@ export interface ReportsData {
   retentionRate: number | null;
   /** T2b: the counts behind `retentionRate` (members who joined 6+ months ago, and how many are still active). */
   retention: { ratePct: number | null; survived: number; cohort: number };
+  /**
+   * @deprecated Joins by joinedAt against members currently cancelled, by
+   * cancelledAt (a rejoin vanishes). Kept so the shape stays additive; the Net
+   * New Members card and the CSV read `membership` instead (T8c).
+   */
   netNewByMonth: { month: string; joined: number; cancelled: number; net: number }[];
+  /**
+   * T8c: movement (new, rejoined, lost incl. completed course, net) and
+   * active-member headcount per club month, replayed from status history
+   * (lib/membership-movement.ts). The current month's headcount equals
+   * `summary.activeMembers`. Club-wide: never scoped by the class or age filter.
+   */
+  membership: MembershipReport;
   /**
    * Money totals count PAYERS, not members (review L2, 23 Oct 2026): active
    * and taster accounts of any type, guardians who pay included (lib/overdue
@@ -375,6 +391,7 @@ export function createEmptyReportsData(): ReportsData {
     retentionRate: null,
     retention: { ratePct: null, survived: 0, cohort: 0 },
     netNewByMonth: [],
+    membership: emptyMembershipReport(),
     paymentHealth: {
       overdueCount: 0,
       overdueGuardianCount: 0,
@@ -450,7 +467,6 @@ export async function getReportsData(
   // (UTC on Vercel) and the reader's browser zone play no part (review L4).
   const period = clubMonthWindow(now, club?.timezone);
   const thisMonth = monthRange(period);
-  const lastMonth = monthRange(clubMonthWindow(now, period.timeZone, -1));
   const chartMonths = [5, 4, 3, 2, 1, 0].map((back) => clubMonthWindow(now, period.timeZone, -back));
   const sixMonthsAgo = new Date(chartMonths[0].monthStart);
 
@@ -469,15 +485,12 @@ export async function getReportsData(
     weeklyRecords,
     methodCounts,
     memberStatusCounts,
-    newMembers,
     topResult, // Lane 1 iter-1 P-03: { topRaw, instances } — in-tx continuation
     totalMembers,
     totalCheckIns,
     totalActiveClasses,
     attendanceThisWeek,
     attendanceLastWeek,
-    newMembersThisMonth,
-    newMembersLastMonth,
     cancelledThisMonth,
     activeCount,
     retentionBase,
@@ -519,14 +532,6 @@ export async function getReportsData(
         by: ["status"],
         where: { tenantId, ...TRAINING_MEMBER },
         _count: true,
-      }),
-      tx.member.findMany({
-        where: { tenantId, joinedAt: { gte: sixMonthsAgo }, ...TRAINING_MEMBER },
-        select: { joinedAt: true },
-        take: 5000,
-      }).then((rows) => {
-        if (rows.length === 5000) console.warn("[reports] truncated at 5000 rows (member-join window)");
-        return rows;
       }),
       // Lane 1 iter-1 P-03 [Critical] fix: fold the previously-separate
       // `withTenantContext` (lines 257-263) into this same parallel block.
@@ -572,8 +577,6 @@ export async function getReportsData(
           ...attendanceScope,
         },
       }),
-      tx.member.count({ where: { tenantId, joinedAt: thisMonth, ...TRAINING_MEMBER } }),
-      tx.member.count({ where: { tenantId, joinedAt: lastMonth, ...TRAINING_MEMBER } }),
       // Health metrics — churn (D1: date by cancelledAt, not updatedAt, so an
       // unrelated edit to a cancelled member doesn't re-bucket them into churn)
       tx.member.count({ where: { tenantId, ...LEFT_MEMBER, cancelledAt: thisMonth } }),
@@ -646,20 +649,33 @@ export async function getReportsData(
     if (rec.member && isActiveMember(rec.member)) distinctAttendingMemberIds.add(rec.memberId);
   }
 
+  // T8c: movement and headcount, in its own read (one events findMany plus the
+  // ledger when the back-fill has not been applied), after the block above so
+  // the report never holds two pooled connections at once.
+  const membership = await withTenantContext(
+    tenantId,
+    (tx) => loadMembershipReport(tx, tenantId, { now }),
+    { maxWait: 10_000, timeout: 30_000 },
+  );
+  // D11 (23 Oct 2026): every "joined" on the page is the movement definition
+  // (lib/membership-movement.ts) — never Member.joinedAt — so the tiles, the
+  // charts, the CSV and the Members drill-throughs count the same events.
+  const moveIn = (monthKey: string) => membership.movementsByMonth.find((r) => r.month === monthKey && r.basis !== "none") ?? null;
+  const thisMonthMoves = moveIn(period.monthKey);
+  const lastMonthMoves = moveIn(clubMonthWindow(now, period.timeZone, -1).monthKey);
+  const newMembersThisMonth = thisMonthMoves?.new ?? 0;
+  const newMembersLastMonth = lastMonthMoves?.new ?? 0;
+
   // Buckets keyed by the club-zone month ("2026-10") and labelled in that
-  // zone, so the current bucket holds exactly the joiners the tile counts.
+  // zone: joined (new + rejoined) by the movement definition (D11).
   const monthlyMap = new Map<string, { month: string; count: number; isCurrentMonth: boolean }>();
   for (const w of chartMonths) {
+    const moves = moveIn(w.monthKey);
     monthlyMap.set(w.monthKey, {
       month: formatMonth(new Date(w.monthStart), period.timeZone),
-      count: 0,
+      count: moves ? joinedOf(moves) : 0,
       isCurrentMonth: w.monthKey === period.monthKey,
     });
-  }
-
-  for (const member of newMembers) {
-    const bucket = monthlyMap.get(clubMonthKey(member.joinedAt, period.timeZone));
-    if (bucket) bucket.count += 1;
   }
 
   const statusCount = new Map(memberStatusCounts.map((row) => [row.status, row._count]));
@@ -763,8 +779,8 @@ export async function getReportsData(
     ratePct: churnPct,
     cancelled: cancelledThisMonth,
     base: churnBase,
-    joined: newMembersThisMonth,
-    net: newMembersThisMonth - cancelledThisMonth,
+    joined: thisMonthMoves ? joinedOf(thisMonthMoves) : 0,
+    net: thisMonthMoves?.net ?? 0,
   };
   const churnRate = churnPct ?? 0;
 
@@ -865,6 +881,7 @@ export async function getReportsData(
     retentionRate,
     retention: { ratePct: retentionRate, survived: retentionActive, cohort: retentionBase },
     netNewByMonth,
+    membership,
     paymentHealth: {
       overdueCount,
       overdueGuardianCount,
@@ -898,9 +915,16 @@ export async function getReportsData(
  * "v3" = summary.activeOnHoldMembers (T1 review, 17 Oct 2026).
  * "v4" = period, the club-zone month window (review L4, 23 Oct 2026).
  * "v5" = paymentHealth payer counts and guardian counts (review L2, 23 Oct 2026).
- * "v6" = paymentHealth.otherOwingCount / otherOwingGuardianCount (D9, 23 Oct 2026).
+ * "v6" = membership: movement and headcount by month (T8c). The headcount
+ * branch shipped this field as its own "v4" before the reporting branch was
+ * merged in; the merged shape (period + payer counts + membership) matches
+ * neither earlier token, so it gets a fresh one. On the reporting branch
+ * alone "v6" meant paymentHealth.otherOwingCount (D9); that shape is also
+ * different from this one.
+ * "v7" = the merged shape: membership (T8c) + paymentHealth.otherOwingCount /
+ * otherOwingGuardianCount (D9, 23 Oct 2026).
  */
-export const REPORTS_CACHE_VERSION = "v6";
+export const REPORTS_CACHE_VERSION = "v7";
 
 /**
  * The cached read the reports page and API use. Under 25 concurrent staff

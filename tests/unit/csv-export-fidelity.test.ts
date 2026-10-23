@@ -117,7 +117,8 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
       // T2b: churn with its counts and joined beside it (8 active now + 1
       // cancelled this month = base 9; 2 joined, net +1).
       churnRate: 11.1,
-      churn: { ratePct: 11.1, cancelled: 1, base: 9, joined: 2, net: 1 },
+      // D11: joined and net are the movement figures for the current month (Oct: 2 new + 1 rejoined).
+      churn: { ratePct: 11.1, cancelled: 1, base: 9, joined: 3, net: 3 },
       paymentHealth: {
         overdueCount: 0, noPaymentYetCount: 0, failedLast30Days: 0, recoveryRate: 50,
         recovery: { ratePct: 50, recovered: 1, failedMembers: 2 },
@@ -131,6 +132,21 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
         { status: "inactive", label: "Inactive", count: 1, percentage: 11 },
       ],
       checkInMethods: [],
+      // T8c: movement and headcount by month; the first month is estimated.
+      membership: {
+        historySource: "ledger",
+        fromJoinDates: 0,
+        window: { from: "Sep 26", to: "Oct 26", months: 2 },
+        totals: { new: 3, rejoined: 1, lost: 2, lostCancelled: 1, lostCompleted: 1, net: 2, imported: 5, otherIn: 0, otherOut: 0 },
+        movementsByMonth: [
+          { month: "2026-09", label: "Sep 26", new: 1, rejoined: 0, lost: 2, lostCancelled: 1, lostCompleted: 1, net: -1, imported: 0, otherIn: 0, otherOut: 0, basis: "estimated", isCurrentMonth: false },
+          { month: "2026-10", label: "Oct 26", new: 2, rejoined: 1, lost: 0, lostCancelled: 0, lostCompleted: 0, net: 3, imported: 5, otherIn: 0, otherOut: 0, basis: "mixed", isCurrentMonth: true },
+        ],
+        headcountByMonth: [
+          { month: "2026-09", label: "Sep 26", headcount: 0, basis: "estimated", isCurrentMonth: false, at: "2026-09-30T22:59:59.999Z" },
+          { month: "2026-10", label: "Oct 26", headcount: 8, basis: "recorded", isCurrentMonth: true, at: "2026-10-17T13:05:00.000Z" },
+        ],
+      },
       // T2c: the CSV states when its figures were computed.
       generatedAt: new Date(2026, 9, 17, 14, 5).toISOString(),
     };
@@ -162,18 +178,39 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
     expect(left?.[3]).not.toMatch(/%/);
     // T2b: churn row carries the same numbers as the tile; joined beside it.
     expect(rows.find((r) => r[1] === "Churn this month")?.[2]).toBe("11.1% (1 of 9)");
-    const joined = rows.find((r) => r[1] === "Joined this month");
-    expect(joined?.[2]).toBe("2");
-    expect(joined?.[3]).toMatch(/^Net \+1 this month · People added in MatFlow/);
+    // D11: the Joined tile line for line — the movement definition, the card's figures.
+    const joined = rows.find((r) => r[1] === "Joined this month (new + rejoined)");
+    expect(joined?.[2]).toBe("3");
+    expect(joined?.[3]).toMatch(/^New 2 · Rejoined 1 · Tasters added 0 · Left 0 · Net \+3 · New: first ever start/);
+    expect(rows.find((r) => r[1] === "Rejoined this month")?.[2]).toBe("1");
     expect(rows.find((r) => r[1] === "Payment recovery")?.[2]).toBe("50% (1 of 2)");
     // Undefined rates export as a dash, never "0%".
     expect(rows.find((r) => r[1] === "6-month survival")?.[2]).toBe("—");
     expect(rows.find((r) => r[1] === "Self-service check-in")?.[2]).toBe("—");
     expect(rows.find((r) => r[1] === "Active share of current members")?.[2]).toBe("89% (8 of 9)");
+    // T8c: the window's tally, one movement row per month with its basis, and
+    // the headcount at each month end; today's equals the Active members tile.
+    const movement = rows.find((r) => r[0] === "Membership movement");
+    expect(movement?.[1]).toBe("Sep 26 – Oct 26");
+    expect(movement?.[2]).toBe("2");
+    expect(movement?.[3]).toMatch(/^New 3 · Rejoined 1 · Left 2 \(cancelled 1, completed course 1\) · Tasters added 0 · New: first ever start/);
+    expect(movement?.[3]).toContain("Members deleted from MatFlow are not in past months.");
+    const byMonth = rows.filter((r) => r[0] === "Membership movement by month");
+    expect(byMonth.map((r) => [r[1], r[2]])).toEqual([["Sep 26", "-1"], ["Oct 26", "3"]]);
+    expect(byMonth[0][3]).toContain("Estimated from your TeamUp history");
+    expect(byMonth[1][3]).toContain("Brought over by an import without dated history 5");
+    expect(byMonth[1][3]).toContain("Partly estimated");
+    const heads = rows.filter((r) => r[0] === "Active members at month end");
+    expect(heads.map((r) => [r[1], r[2]])).toEqual([["Sep 26", "0"], ["Oct 26", "8"]]);
+    expect(heads[1][2]).toBe(String(data.summary.activeMembers));
+    expect(heads[1][3]).toBe("Today, equals Active members");
+    expect(heads[0][3]).toBe("Active members at month end · Estimated from your TeamUp history");
     const coach = rows.find((r) => r[0] === "Conversion by coach");
     expect(coach?.[1]).toBe("Zoé \"Coach\" 🥋");
-    // No cell in the file starts with a live formula character.
-    for (const r of rows) for (const c of r) expect(/^[=+\-@]/.test(c)).toBe(false);
+    // No text cell in the file starts with a live formula character. A
+    // negative number we rendered ourselves (a month's net, -1) is data, not a
+    // formula, and stays a number (lib/csv.ts csvCell).
+    for (const r of rows) for (const c of r) expect(/^[=+\-@]/.test(c) && !/^-\d+$/.test(c)).toBe(false);
   });
 
   // T2c acceptance 3: the as-of row states the time shown on screen, and the
@@ -192,6 +229,7 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
       churn: { ratePct: null, cancelled: 0, base: 0, joined: 0, net: 0 },
       paymentHealth: { recovery: { ratePct: null, recovered: 0, failedMembers: 0 } },
       weeklyAttendance: [], monthlySignups: [], topClasses: [], currentMembersByStatus: [], checkInMethods: [],
+      membership: { movementsByMonth: [], headcountByMonth: [] },
       generatedAt,
     };
     const attribution = { rows: [], overall: { trials: 0, lost: 0, undecided: 0, converted: 0, conversionRate: null, churned: 0, retained: 0, retentionRate: null }, epochStart: null, minTrials: 5 };

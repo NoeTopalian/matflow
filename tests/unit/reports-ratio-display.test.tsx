@@ -85,6 +85,13 @@ function reports(overrides: Partial<ReportsData> = {}): ReportsData {
     },
     churn: { ratePct: 10, cancelled: 1, base: 10, joined: 3, net: 2 },
     churnRate: 10,
+    // The net beside churn comes from the Net New Members card's current month (T8c review).
+    membership: {
+      ...base.membership,
+      movementsByMonth: [
+        { month: "2026-10", label: "Oct 26", new: 2, rejoined: 1, lost: 1, lostCancelled: 1, lostCompleted: 0, net: 2, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0, basis: "recorded", isCurrentMonth: true },
+      ],
+    },
     retention: { ratePct: 75, survived: 15, cohort: 20 },
     retentionRate: 75,
     paymentHealth: {
@@ -126,13 +133,17 @@ describe("ReportsView — churn tile with counts, joined beside it", () => {
     renderReports(reports());
     const churn = tileFor("Churn rate this month");
     expect(churn.textContent).toContain("10% (1 of 10)");
-    const tiles = screen.getAllByTestId("metric-card");
-    const i = tiles.indexOf(churn);
-    const joined = tiles[i + 1];
-    expect(within(joined).getByText("Joined this month")).toBeTruthy();
-    expect(joined.textContent).toContain("3");
-    expect(joined.textContent).toContain("Net +2 this month");
-    expect(joined.textContent).toContain("People added in MatFlow");
+    // D11: the Joined tile sits immediately after churn, by the movement definition.
+    const joined = screen.getByTestId("reports-joined-tile");
+    // The churn tile is a drill-through link around its card.
+    expect((churn.closest("a") ?? churn).nextElementSibling).toBe(joined);
+    expect(within(joined).getByText("Joined this month (new + rejoined)")).toBeTruthy();
+    expect(screen.getByTestId("reports-joined-value").textContent).toBe("3");
+    expect(screen.getByTestId("reports-joined-new-this-month").textContent).toBe("New2");
+    expect(screen.getByTestId("reports-joined-rejoined-this-month").textContent).toBe("Rejoined1");
+    expect(screen.getByTestId("reports-joined-tasters-this-month").textContent).toBe("Tasters added0");
+    expect(screen.getByTestId("reports-joined-lost-this-month").textContent).toBe("Left1");
+    expect(screen.getByTestId("reports-joined-net").textContent).toBe("Net +2 this month (new + rejoined − left)");
   });
 
   it("an empty base renders a dash on the churn tile, not 0%", () => {

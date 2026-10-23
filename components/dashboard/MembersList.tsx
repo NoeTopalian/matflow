@@ -34,6 +34,7 @@ import { resolveSignupCredit } from "@/lib/signup-credit";
 import { BilledByTeamUpPill } from "@/components/dashboard/BilledByTeamUpPill";
 import { paymentStatusLabel } from "@/lib/payment-status";
 import type { PaymentEvidence } from "@/lib/overdue";
+import type { MovementBucket } from "@/lib/membership-movement";
 import {
   OTHER_OWING_COPY,
   PAYER_COPY,
@@ -94,6 +95,12 @@ export interface MemberRow {
    * flagged by the server. Listed under "Other accounts owing", never under Payers overdue.
    */
   otherOwing?: boolean;
+  /**
+   * D11: the movement figures this member was counted in for the page's club
+   * month (new, rejoined, lost, tasterAdded), flagged by the server from the
+   * same replay as Reports. Drives the four movement drill-throughs.
+   */
+  moved?: MovementBucket[];
   /**
    * D10: why a member on a plan is behind — never paid past the first payment
    * date, a failed charge, or an outstanding due date — with the badge label
@@ -176,6 +183,12 @@ interface Props {
    * flagged rows.
    */
   otherOwing?: { count: number; guardians: number } | null;
+  /**
+   * D11: how many members each movement figure counted for the page's club
+   * month — the Reports Joined tile's numbers. Absent: counted from the
+   * flagged rows.
+   */
+  movers?: Record<MovementBucket, number> | null;
 }
 
 // ─── Belt colour map ──────────────────────────────────────────────────────────
@@ -431,7 +444,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest" | "last-visit";
-type StatusFilter = "all" | "attention" | "overdue" | "other-owing" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "churned-this-month" | "guardians" | "guardian-review";
+type StatusFilter = "all" | "attention" | "overdue" | "other-owing" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "rejoined-this-month" | "lost-this-month" | "tasters-this-month" | "churned-this-month" | "guardians" | "guardian-review";
 
 // "new-this-month" / "churned-this-month": deep-link-only filters (no visible
 // chip, same pattern as "active"/"inactive"/"cancelled" below) — the Reports
@@ -440,7 +453,7 @@ type StatusFilter = "all" | "attention" | "overdue" | "other-owing" | "waiver-mi
 // through). Review L4 (23 Oct 2026): the month is the CLUB's, resolved on the
 // server as [monthStart, nextMonthStart) (lib/club-month.ts) and passed in as
 // `monthWindow` — the same window Reports counted, never the browser's month.
-const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "other-owing", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "churned-this-month", "guardians", "guardian-review"];
+const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "other-owing", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "rejoined-this-month", "lost-this-month", "tasters-this-month", "churned-this-month", "guardians", "guardian-review"];
 
 /**
  * The landing view (T1, owner decision Q4 A-1, Noe 17 Oct 2026): the page
@@ -515,9 +528,22 @@ function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null }
  * component), so a cancelled member no longer inflates "All", "Total members",
  * "Waivers missing" or "Needs attention".
  */
-const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month"];
+const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month", "rejoined-this-month", "lost-this-month", "tasters-this-month"];
 
-type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing">>;
+/**
+ * D11: the four movement drill-throughs and the figure each lists. The server
+ * flags each row with the figures it was counted in for the requested club
+ * month (lib/membership-report loadMonthMovers) — the same events the Reports
+ * Joined tile and the Net New Members chart counted.
+ */
+const MOVEMENT_FILTERS: Partial<Record<StatusFilter, MovementBucket>> = {
+  "new-this-month": "new",
+  "rejoined-this-month": "rejoined",
+  "lost-this-month": "lost",
+  "tasters-this-month": "tasterAdded",
+};
+
+type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing" | "moved">>;
 
 /**
  * Whether a member belongs under a chip when nobody is searching. The single
@@ -565,7 +591,11 @@ export function inStatusView(
       // since accountType could be junior/kids and not always reflect linkage).
       return !!m.parentMemberId;
     case "new-this-month":
-      return inMonthWindow(m.joinedAt, month);
+    case "rejoined-this-month":
+    case "lost-this-month":
+    case "tasters-this-month":
+      // D11: the movement definition, flagged by the server — never joinedAt.
+      return !!m.moved?.includes(MOVEMENT_FILTERS[f]!);
     case "churned-this-month":
       return m.status === "cancelled" && inMonthWindow(m.cancelledAt, month);
     case "on-hold":
@@ -611,12 +641,20 @@ function sliceHeadlineCopy(
       excludes: `Excludes guardians. ${zone}`,
     };
   }
+  // D11: the movement definition (lib/membership-movement.ts), one slice per
+  // figure on the Reports Joined tile.
+  const excludes = `Excludes guardians and imports. ${zone}`;
   if (f === "new-this-month") {
-    return {
-      label: `Joined ${when}`,
-      includes: `Training members who joined ${when}, including tasters and any since cancelled`,
-      excludes: `Excludes guardians. ${zone}`,
-    };
+    return { label: `New ${when}`, includes: `Training members whose first ever start was ${when}, including any since cancelled`, excludes };
+  }
+  if (f === "rejoined-this-month") {
+    return { label: `Rejoined ${when}`, includes: `Training members who started again ${when} after leaving`, excludes };
+  }
+  if (f === "lost-this-month") {
+    return { label: `Left ${when}`, includes: `Training members who cancelled or finished a prepaid course ${when}`, excludes };
+  }
+  if (f === "tasters-this-month") {
+    return { label: `Tasters added ${when}`, includes: `People who started on a taster ${when}. Not counted in Joined or Net`, excludes };
   }
   return null;
 }
@@ -627,7 +665,7 @@ const FILTER_LABELS: Partial<Record<StatusFilter, string>> = {
   guardians: "Parents & guardians",
 };
 
-export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null, monthWindow = null, serverCounts = null, otherOwing = null }: Props) {
+export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null, monthWindow = null, serverCounts = null, otherOwing = null, movers = null }: Props) {
   const supportEdit = supportScope === "edit";
   // One month window for every "this month" slice on the page (review L4).
   const month = useMemo<MonthWindowProp>(() => monthWindow ?? { ...defaultClubMonthWindow(), isCurrent: true }, [monthWindow]);
@@ -795,8 +833,8 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   const headlineCount =
     statusFilter === "other-owing"
       ? otherOwingCount
-      : statusFilter === "new-this-month"
-      ? counts.newThisMonth
+      : MOVEMENT_FILTERS[statusFilter]
+      ? (movers?.[MOVEMENT_FILTERS[statusFilter]!] ?? members.filter((m) => m.moved?.includes(MOVEMENT_FILTERS[statusFilter]!)).length)
       : statusFilter === "churned-this-month"
         ? counts.churnedThisMonth
         : statusFilter === "overdue"

@@ -54,7 +54,7 @@ export async function executeUndo(
   const undone: string[] = [];
   for (const { row } of items) {
     try {
-      await applyUndo(tx, row);
+      await applyUndo(tx, row, { userId: actor.userId });
     } catch (e) {
       if (e instanceof UndoStale) throw new UndoBatchFailed(row, e.message);
       throw e;

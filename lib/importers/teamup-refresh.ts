@@ -12,6 +12,8 @@
  */
 import type { MemberDraft } from "@/lib/importers";
 import { membershipTierWrite, type ResolvedMembershipTier } from "@/lib/membership-tier";
+import { usableTimezone } from "@/lib/class-time";
+import { clubDayIndex, clubMidnight } from "@/lib/status-backfill";
 
 /**
  * The only Member columns a refresh may write. Everything else — name, email,
@@ -70,6 +72,13 @@ export type RefreshChange = {
   fields: RefreshOwnedField[];
   before: Standing;
   after: Standing;
+  /**
+   * When the member's last prepaid course ended at TeamUp (Completed At, else
+   * Cancelled Date), carried only when the file says "inactive". It dates the
+   * refresh's completion event (review F3); it is not a Member column, so it
+   * is outside Standing and the rollback's comparison.
+   */
+  courseEndedAt?: string;
 };
 
 export type RefreshExceptions = {
@@ -218,7 +227,15 @@ export function planRefresh(input: {
       exceptions.holdKept!.push({ memberId: m.id, name: m.name, teamUpSays: after.paymentStatus });
       after = { ...after, paymentStatus: "paused" };
     }
-    matched.push({ memberId: m.id, name: m.name, sourceKey: d.sourceKey, fields: changedFields(before, after), before, after });
+    matched.push({
+      memberId: m.id,
+      name: m.name,
+      sourceKey: d.sourceKey,
+      fields: changedFields(before, after),
+      before,
+      after,
+      ...(after.status === "inactive" && d.courseEndedAt ? { courseEndedAt: d.courseEndedAt } : {}),
+    });
   }
 
   for (const m of input.members) {
@@ -304,4 +321,89 @@ export function planRefreshRollback(
 /** Human words for a field, for the preview list. */
 export function refreshFieldLabel(f: RefreshOwnedField): string {
   return FIELD_WORDS[f];
+}
+
+/**
+ * When a refresh's status change happened (T8a, Q6 D-7: the TeamUp source
+ * date). A move INTO cancelled whose file carries a cancellation date is dated
+ * that day at midnight in the CLUB's timezone — the rule the back-fill uses
+ * for the same TeamUp date (lib/status-backfill.ts clubMidnight; review F2,
+ * 23 Oct 2026: UTC midnight put a New York club's 1 Oct cancellation in
+ * September). A move INTO inactive (a completed prepaid course) whose file
+ * carries the course's end is dated at the club midnight of the day it ended,
+ * so the back-fill and a refresh put the same completion in the same club
+ * month (review F3: the export time put a 28 Oct completion exported on 3 Nov
+ * in November). Anything else is dated by the export time of the file.
+ * `undefined` (no export time recorded) leaves the event at write time. The
+ * status writer then clamps it to no earlier than the member's latest event
+ * and no later than now, so this is a request, never a reordering.
+ */
+export function refreshEventOccurredAt(
+  c: Pick<RefreshChange, "before" | "after" | "courseEndedAt">,
+  sourceExportedAt: Date | null,
+  timeZone: string | null | undefined,
+): Date | undefined {
+  const tz = usableTimezone(timeZone);
+  if (c.after.status === "cancelled" && c.before.status !== "cancelled" && c.after.cancelledAt) {
+    // A date-only TeamUp value, stored at UTC midnight: its first ten characters are the day.
+    const d = clubDateMidnight(c.after.cancelledAt.slice(0, 10), tz);
+    if (d) return d;
+  }
+  if (c.after.status === "inactive" && c.before.status !== "inactive" && c.courseEndedAt) {
+    // Completed At is an instant (the club day it falls on); the Cancelled Date fallback is a day.
+    const end = c.courseEndedAt;
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(end) ? clubDateMidnight(end, tz) : clubInstantMidnight(end, tz);
+    if (d) return d;
+  }
+  return sourceExportedAt ?? undefined;
+}
+
+const DAY_MS = 86_400_000;
+
+/** Midnight, in the club's timezone, of a calendar day "YYYY-MM-DD"; null when it is not one. */
+function clubDateMidnight(day: string, timeZone: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const d = new Date(`${day}T00:00:00.000Z`);
+  return Number.isNaN(d.getTime()) ? null : clubMidnight(d, timeZone);
+}
+
+/** Midnight, in the club's timezone, of the club calendar day an instant falls on; null when it is not one. */
+function clubInstantMidnight(value: string, timeZone: string): Date | null {
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return null;
+  return clubMidnight(new Date(clubDayIndex(at, timeZone) * DAY_MS), timeZone);
+}
+
+/**
+ * The date each restored member's FORWARD refresh event carries, so the
+ * rollback's reverse event can carry the same date (T8a, A-9): replayed for
+ * any day, history then reads as if the refresh never happened, and the
+ * reverse sorts after the forward on its later `createdAt`.
+ *
+ * `events` are the members' import events, newest first by
+ * (occurredAt, createdAt, id). The forward event is the newest import event
+ * moving that member from the change's `before` status to its `after` status;
+ * a member with none (an older run whose event cannot be found) is left out,
+ * and their reverse event is dated at write time as before.
+ *
+ * T8d: given `jobId`, the event this refresh job wrote (provenance
+ * `import_refresh` + `jobId`) is preferred. Without one, only an event with no
+ * provenance at all (written before T8d) may stand in for it: an event another
+ * job is known to have written is never taken as this job's forward move.
+ */
+export function forwardEventDates(
+  restore: Array<Pick<RefreshChange, "memberId" | "before" | "after">>,
+  events: Array<{ memberId: string; fromStatus: string | null; toStatus: string; occurredAt: Date; sourceJobId?: string | null; sourceAction?: string | null }>,
+  jobId?: string,
+): Map<string, Date> {
+  const out = new Map<string, Date>();
+  for (const c of restore) {
+    if (c.before.status === c.after.status) continue;
+    const moves = events.filter((x) => x.memberId === c.memberId && x.fromStatus === c.before.status && x.toStatus === c.after.status);
+    const e = jobId
+      ? moves.find((x) => x.sourceJobId === jobId && x.sourceAction === "import_refresh") ?? moves.find((x) => !x.sourceJobId)
+      : moves[0];
+    if (e) out.set(c.memberId, e.occurredAt);
+  }
+  return out;
 }

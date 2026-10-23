@@ -128,10 +128,11 @@ describe("Reports — Active members says what it counts and marks holds", () =>
     expect(row).toContain("guardians");
   });
 
-  it("the top New this month tile uses the Joined tile's words, not 'Member signups'", () => {
+  it("the top New this month tile uses the movement definition's words, not 'Member signups'", () => {
     render(<ReportsView data={reports()} attribution={ATTRIBUTION as never} primaryColor="#3b82f6" />);
     const tile = tileFor("New this month");
-    expect(tile.textContent).toContain("People added in MatFlow, incl. tasters");
+    // D11: first ever start, by the movement definition.
+    expect(tile.textContent).toContain("First ever start. Rejoins, tasters and imports are counted apart");
     expect(tile.textContent).not.toContain("Member signups");
   });
 });

@@ -74,3 +74,22 @@ describe("executeUndo", () => {
     expect(fake.auditLog.create).not.toHaveBeenCalled();
   });
 });
+
+// T8a: executeUndo hands the undoing user to the handler, so a restored status
+// is attributed to the person who pressed Undo, not to whoever made the edit.
+describe("executeUndo — a restored status is attributed to the undoing user (T8a)", () => {
+  it("records inactive -> active with changedById = the actor", async () => {
+    const create = vi.fn(async () => ({ id: "evt-1" }));
+    const fake = {
+      member: { findFirst: vi.fn(async () => ({ id: "m1", status: "inactive", email: "a@x.test" })), update: vi.fn(), updateMany: vi.fn() },
+      memberStatusEvent: { create, findFirst: vi.fn() },
+      auditLog: { create: vi.fn() },
+    };
+    const row = r("s1", "member.update", "2026-10-10T10:00:00Z", { changes: { status: { from: "active", to: "inactive" } } });
+    await executeUndo(fake as unknown as TxLike, [{ row, decision: { ok: true } }], { tenantId: "t1", userId: "u-owner" });
+    expect(create).toHaveBeenCalledWith({
+      data: { tenantId: "t1", memberId: "m1", fromStatus: "inactive", toStatus: "active", reason: "staff_edit", changedById: "u-owner" },
+      select: { id: true },
+    });
+  });
+});

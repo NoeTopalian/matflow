@@ -56,6 +56,7 @@ describe("SEC-033 raw SQL is parameterised", () => {
       "lib/login-email.ts",
       "lib/prisma-tenant.ts",
       "lib/rate-limit.ts", // lane C3: per-bucket advisory lock + conditional insert; bucket, window, id, max and the lock namespace are bind parameters
+      "lib/status-backfill.ts", // T8b: per-club advisory lock (the key is a bind parameter) and the latest-event mismatch count (tenantId is a bind parameter)
     ]);
   });
   it("no ORM query takes a computed key (orderBy/select/where built from a variable name)", () => {
