@@ -239,11 +239,13 @@ function daysSince(iso?: string | null) {
  * three the self check-in refusal names, with its sentence as the title.
  * Counts and filters still read the shown status, unchanged.
  */
-export function paymentMeta(status?: string | null, evidence?: MemberRow["paymentEvidence"]) {
+type PaymentMeta = { label: string; title?: string; color: string; bg: string; Icon: typeof CreditCard };
+
+export function paymentMeta(status?: string | null, evidence?: MemberRow["paymentEvidence"]): PaymentMeta {
   if (evidence) {
-    return evidence.kind === "no_payment_recorded"
-      ? { label: evidence.label, title: evidence.sentence, color: "#38bdf8", bg: "rgba(56,189,248,0.13)", Icon: CreditCard }
-      : { label: evidence.label, title: evidence.sentence, color: "#f97316", bg: "rgba(249,115,22,0.14)", Icon: AlertTriangle };
+    // The "No payment yet" colours for never paid, the "Overdue" ones for the other two.
+    const base = paymentMeta(evidence.kind === "no_payment_recorded" ? "pending" : "overdue");
+    return { ...base, label: evidence.label, title: evidence.sentence };
   }
   const s = (status ?? "paid").toLowerCase();
   if (s === "paid") return { label: "Paid", color: "#22c55e", bg: "rgba(34,197,94,0.12)", Icon: CheckCircle2 };
@@ -345,7 +347,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
           <span
             className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
             style={{ background: pay.bg, color: pay.color }}
-            title={"title" in pay ? pay.title : undefined}
+            title={pay.title}
             data-testid="member-payment-badge"
           >
             <PayIcon className="size-3" />
@@ -868,14 +870,17 @@ export default function MembersList({ members: initial, primaryColor, role, guar
             </span>
             {/* D9: the payers view names the debts it leaves out, with the way to them. */}
             {payerCopy && otherOwingCount > 0 && (
-              <button
-                type="button"
-                onClick={() => selectFilter("other-owing")}
+              <Link
+                href="/dashboard/members?filter=other-owing"
+                onClick={(e) => {
+                  e.preventDefault();
+                  selectFilter("other-owing");
+                }}
                 data-testid="members-other-owing-line"
-                className="mt-0.5 block text-left text-xs text-tx-2 underline underline-offset-2 hover:text-tx-1"
+                className="mt-0.5 block text-xs text-tx-2 underline underline-offset-2 hover:text-tx-1"
               >
                 {otherAccountsOwingLine(otherOwingCount)}
-              </button>
+              </Link>
             )}
           </>
         }
