@@ -250,6 +250,72 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     });
   });
 
+  // T7c (17 Oct 2026; basis 20 Oct 2026): the allowance set is restorable;
+  // rows recorded before T7c (maxClassesPerWeek only) still restore that column.
+  describe("membership.tier.update: undoing a class allowance change", () => {
+    const FIELDS = ["name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "classLimit", "classLimitBasis", "classLimitWeeks", "classLimitAnchor", "isKids", "isActive", "locationId"] as const;
+    const ALLOWANCE = ["classLimit", "classLimitBasis", "classLimitWeeks", "classLimitAnchor", "maxClassesPerWeek"];
+    const ANCHOR = new Date("2026-10-20T00:00:00.000Z");
+    const WEEKLY3 = { maxClassesPerWeek: 3, classLimit: 3, classLimitBasis: "week", classLimitWeeks: null, classLimitAnchor: null };
+    const FOUR4 = { maxClassesPerWeek: null, classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4, classLimitAnchor: ANCHOR };
+    const NONE = { maxClassesPerWeek: null, classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null };
+    const tierRow = (over: Record<string, unknown>): Record<string, unknown> => ({
+      id: "tier1", name: "Plan A", pricePence: 4500, currency: "GBP", billingCycle: "monthly",
+      ...WEEKLY3, stripePriceId: null, ...over,
+    });
+    const asRow = (m: Record<string, unknown>) => row("membership.tier.update", m, { entityType: "MembershipTier", entityId: "tier1" });
+
+    it("3 each week -> 4 every 4 weeks: Undo restores every allowance column", async () => {
+      const after = tierRow(FOUR4);
+      const r = asRow(updateMetadata(ALLOWANCE, tierRow({}), after, FIELDS));
+      expect(decideUndo(r, false)).toEqual({ ok: true });
+      fake.membershipTier.findFirst.mockResolvedValue(after);
+      await applyUndo(tx, r);
+      expect(fake.membershipTier.update).toHaveBeenCalledWith({
+        where: { id: "tier1" },
+        data: WEEKLY3,
+      });
+    });
+
+    it("4 every 4 weeks -> Unlimited: Undo puts the allowance back, start date included", async () => {
+      const before = tierRow(FOUR4);
+      const after = tierRow(NONE);
+      const r = asRow(updateMetadata(ALLOWANCE, before, after, FIELDS));
+      fake.membershipTier.findFirst.mockResolvedValue(after);
+      await applyUndo(tx, r);
+      // The snapshot holds the date as its ISO string; Prisma accepts that for a DateTime column.
+      expect(fake.membershipTier.update).toHaveBeenCalledWith({
+        where: { id: "tier1" },
+        data: { classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4, classLimitAnchor: ANCHOR.toISOString() },
+      });
+    });
+
+    it("a later allowance change makes it stale: refused, nothing written", async () => {
+      const before = tierRow(FOUR4);
+      const after = tierRow({ ...FOUR4, classLimit: 6 });
+      const r = asRow(updateMetadata(ALLOWANCE, before, after, FIELDS));
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow({ ...FOUR4, classLimit: 8 }));
+      await expect(applyUndo(tx, r)).rejects.toBeInstanceOf(UndoStale);
+      expect(fake.membershipTier.update).not.toHaveBeenCalled();
+    });
+
+    it("a pre-T7c row restores maxClassesPerWeek alone", async () => {
+      const r = asRow({ fields: ["maxClassesPerWeek"], before: { maxClassesPerWeek: 3 }, after: { maxClassesPerWeek: null } });
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow(NONE));
+      await applyUndo(tx, r);
+      expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { maxClassesPerWeek: 3 } });
+    });
+
+    it.each([
+      ["a limit with no basis", { fields: ["classLimit"], before: { classLimit: 4 }, after: { classLimit: null } }],
+      ["every N weeks with no start date", { fields: ["classLimit", "classLimitBasis", "classLimitWeeks"], before: { classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4 }, after: { classLimit: null, classLimitBasis: null, classLimitWeeks: null } }],
+    ])("a restore that would leave the set inconsistent (%s) is refused in words, not by the database", async (_label, m) => {
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow(NONE));
+      await expect(applyUndo(tx, asRow(m))).rejects.toThrow(/class allowance has changed since/);
+      expect(fake.membershipTier.update).not.toHaveBeenCalled();
+    });
+  });
+
   it("class.roster.add → removes the roster row; refused if already gone", async () => {
     fake.classRoster.deleteMany.mockResolvedValue({ count: 1 });
     await applyUndo(tx, row("class.roster.add", { classId: "c1", memberId: "m1" }, { entityType: "ClassRoster", entityId: "cr1" }));

@@ -1,4 +1,7 @@
-// GET /api/kiosk/[token]/members?q=...
+// GET /api/kiosk/[token]/members?q=...[&classInstanceId=...]
+//
+// With `classInstanceId` for a squad class (one with a roster), only the
+// members on that roster are listed (T6d).
 //
 // Public-by-design — kiosk URL token IS the auth.
 // Returns up to 10 members whose name matches the query (case-insensitive
@@ -74,12 +77,52 @@ export async function GET(
     return NextResponse.json({ members: [] });
   }
 
-  const members = await withTenantContext(tenant.id, (tx) =>
-    tx.member.findMany({
+  // T6d (Sean note 1, owner decision 17 Oct 2026): a squad / comp class — one
+  // with a roster — is open only to the members on it. The kiosk picks the
+  // class first and the name second, so the class is known here: when the
+  // tablet passes `classInstanceId` and that class has a roster, the search
+  // lists only rostered members (and a guardian only for a rostered child).
+  // A member who is not on the squad is never offered the class. The check-in
+  // route still enforces the roster gate for a direct POST; this only stops
+  // the tablet offering a tap that would be refused. An id that is not a
+  // class of this club is ignored, and the search behaves exactly as before.
+  const classInstanceIdRaw = (url.searchParams.get("classInstanceId") ?? "").trim();
+  const classInstanceId =
+    classInstanceIdRaw.length > 0 && classInstanceIdRaw.length <= 64 ? classInstanceIdRaw : null;
+
+  const { members, rosterIds } = await withTenantContext(tenant.id, async (tx) => {
+    let roster: Set<string> | null = null;
+    if (classInstanceId) {
+      const instance = await tx.classInstance.findFirst({
+        where: { id: classInstanceId, class: { tenantId: tenant.id } },
+        select: { classId: true },
+      });
+      if (instance) {
+        const rows = await tx.classRoster.findMany({
+          where: { tenantId: tenant.id, classId: instance.classId },
+          select: { memberId: true },
+        });
+        if (rows.length > 0) roster = new Set(rows.map((r) => r.memberId));
+      }
+    }
+    const rosterList = roster ? [...roster] : [];
+    const found = await tx.member.findMany({
       where: {
         tenantId: tenant.id,
         status: { in: ["active", "taster"] },
         name: { contains: q, mode: "insensitive" },
+        ...(roster
+          ? {
+              OR: [
+                { id: { in: rosterList } },
+                {
+                  children: {
+                    some: { id: { in: rosterList }, status: { in: ["active", "taster"] }, ...CONFIRMED_GUARDIAN },
+                  },
+                },
+              ],
+            }
+          : {}),
       },
       select: {
         id: true,
@@ -116,8 +159,9 @@ export async function GET(
       },
       orderBy: { name: "asc" },
       take: MAX_RESULTS,
-    }),
-  );
+    });
+    return { members: found, rosterIds: roster };
+  });
 
   return NextResponse.json({
     members: members.map((m) => {
@@ -126,11 +170,15 @@ export async function GET(
       // with no own membership has membershipType: null — they shouldn't
       // appear as a "Self" option in the picker. The picker logic on the
       // client uses selfTrainable to decide.
+      // T6d: at a squad class, a guardian listed only for a rostered child is
+      // not offered as "Self".
       const selfTrainable =
         m.accountType !== "kids" &&
         !!m.membershipType &&
         // A suggested (unconfirmed) parent link is not a parent: a junior with one trains as themselves.
-        (m.parentMemberId === null || m.guardianConfirmedAt === null);
+        (m.parentMemberId === null || m.guardianConfirmedAt === null) &&
+        (rosterIds === null || rosterIds.has(m.id));
+      const children = rosterIds === null ? m.children : m.children.filter((kid) => rosterIds.has(kid.id));
 
       return {
         kioskMemberToken: signKioskMemberToken({ tenantId: tenant.id, memberId: m.id }),
@@ -143,7 +191,7 @@ export async function GET(
         // Linked kids — each gets a freshly-signed kiosk token so the same
         // /checkin endpoint can be hit per selection without leaking raw
         // member IDs to the client.
-        linkedKids: m.children.map((kid) => ({
+        linkedKids: children.map((kid) => ({
           kioskMemberToken: signKioskMemberToken({
             tenantId: tenant.id,
             memberId: kid.id,

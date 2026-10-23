@@ -224,7 +224,10 @@ export async function POST(req: NextRequest) {
           },
           // D1: stamp cancelledAt so churn/net-new analytics date the
           // cancellation by when it happened, not by updatedAt.
-          data: { status: "cancelled", paymentStatus: "cancelled", cancelledAt: new Date(), stripeSubscriptionId: null },
+          // The ended subscription's paid period goes with it: a member who
+          // later pays at the desk is counted on their due date, not on a
+          // dead anchor (review round 3, M-5).
+          data: { status: "cancelled", paymentStatus: "cancelled", cancelledAt: new Date(), stripeSubscriptionId: null, billingPeriodStart: null, billingPeriodEnd: null },
         });
         // A3H-9: audit-log the subscription deletion so the gym owner can
         // trace the cancellation back to the Stripe event.
@@ -385,10 +388,37 @@ export async function POST(req: NextRequest) {
             currency: ((obj.currency as string) ?? "gbp").toUpperCase(),
           },
         });
+        // The paid period Stripe states on the invoice's subscription line
+        // (the full-period line, never a proration credit) is the
+        // member's authoritative billing period (owner scope, 21 Oct 2026:
+        // "N attendances per member's billing period"). Stored as the zoneless
+        // timestamps the allowance reads; absent on a one-off invoice.
+        // The line is the subscription's own recurring item, never a proration
+        // (a mid-cycle plan change invoices a partial period first) and never
+        // a one-off; an invoice with no line parent information is trusted
+        // only when it has a single line (review round 3, M-6).
+        type InvoiceLine = { period?: { start?: number; end?: number }; parent?: { type?: string; subscription_item_details?: { proration?: boolean } } | null };
+        const lines = ((obj.lines as { data?: InvoiceLine[] } | undefined)?.data ?? []);
+        const recurring = lines.find((l) => l.parent?.subscription_item_details && l.parent.subscription_item_details.proration !== true)
+          ?? (lines.length === 1 && !lines[0].parent ? lines[0] : undefined);
+        const periodStart = typeof recurring?.period?.start === "number" ? new Date(recurring.period.start * 1000) : null;
+        const periodEnd = typeof recurring?.period?.end === "number" ? new Date(recurring.period.end * 1000) : null;
         await tx.member.update({
           where: { id: member.id },
           data: { paymentStatus: "paid" },
         });
+        if (periodStart && periodEnd && periodEnd > periodStart) {
+          // Only a LATER-STARTING period replaces the stored one: a retried
+          // past-due invoice paid after the renewal, or an event delivered
+          // out of order, must not move the member's period backwards —
+          // while a plan change that resets the billing anchor (an annual
+          // plan moved to monthly: a shorter period starting later) still
+          // wins (review rounds 3 L-3 and 4 M-2).
+          await tx.member.updateMany({
+            where: { id: member.id, OR: [{ billingPeriodStart: null }, { billingPeriodStart: { lt: periodStart } }] },
+            data: { billingPeriodStart: periodStart, billingPeriodEnd: periodEnd },
+          });
+        }
         // A1: a subscription charge fires BOTH invoice.payment_succeeded and
         // payment_intent.succeeded. The PI leg keys its upsert on
         // stripePaymentIntentId; key THIS leg on the same PI (when present) so
@@ -972,6 +1002,29 @@ export async function POST(req: NextRequest) {
         // notification is dispute_opened_owner, queued below with the evidence
         // deadline and the dashboard link; the unit suite pins exactly one send
         // per owner per opened dispute.
+
+        // B2: keep Member.paymentStatus in sync so the dashboard "payments due"
+        // tile and reports payment-health reflect an active or lost chargeback.
+        // 'won' with no prior refund returns the member to paid; every other
+        // dispute state is funds-at-risk/clawed-back → overdue. Mirrors the
+        // invoice.payment_failed leg's overdue flip.
+        //
+        // Lock order (T7 review, 17 Oct 2026): the Member row is written FIRST,
+        // before the pack void below. A class-pack check-in takes the Member row
+        // and then the pack (lib/checkin.ts); writing pack-then-Member here made
+        // a cycle with it (Postgres 40P01: the webhook retried and the member
+        // saw a check-in error). Member, then pack, matches the check-in and
+        // member deletion.
+        const disputeMemberId = member?.id ?? linkedPayment?.memberId ?? null;
+        if (disputeMemberId) {
+          const disputeMemberStatus =
+            status === "won" && !linkedPayment?.refundedAmountPence ? "paid" : "overdue";
+          await tx.member.update({
+            where: { id: disputeMemberId },
+            data: { paymentStatus: disputeMemberStatus },
+          });
+        }
+
         if (linkedPayment) {
           if (status === "won") {
             // B5: a dispute won AFTER a (goodwill) refund must NOT resurrect the
@@ -1023,21 +1076,6 @@ export async function POST(req: NextRequest) {
               data: { status: "disputed" },
             });
           }
-        }
-
-        // B2: keep Member.paymentStatus in sync so the dashboard "payments due"
-        // tile and reports payment-health reflect an active or lost chargeback.
-        // 'won' with no prior refund returns the member to paid; every other
-        // dispute state is funds-at-risk/clawed-back → overdue. Mirrors the
-        // invoice.payment_failed leg's overdue flip.
-        const disputeMemberId = member?.id ?? linkedPayment?.memberId ?? null;
-        if (disputeMemberId) {
-          const disputeMemberStatus =
-            status === "won" && !linkedPayment?.refundedAmountPence ? "paid" : "overdue";
-          await tx.member.update({
-            where: { id: disputeMemberId },
-            data: { paymentStatus: disputeMemberStatus },
-          });
         }
 
         // B4: persist the dispute outcome to AuditLog (append-only, owner-

@@ -11,10 +11,12 @@
 // WHAT A SCAN IS ALLOWED TO DO
 // ----------------------------
 // A coach standing in front of the class is recording who was actually there,
-// so this runs the ADMIN gate profile: no rank gate, no roster allow-list, no
-// time window, no payment coverage. That matches the manual register on the
-// same screen. It deliberately does NOT match the kiosk, which is a public
-// unattended surface and gates far harder.
+// so this runs the ADMIN gate profile: no rank gate, no time window, no
+// payment coverage. That matches the manual register on the same screen. It
+// deliberately does NOT match the kiosk, which is a public unattended surface
+// and gates far harder. The squad list and the membership list are the
+// exception: they refuse here as at every door (owner decision, 20 Oct 2026),
+// and the card's row carries the sentence the member would read.
 //
 // The permission rule is the one every attendance writer now shares: any
 // staff role may write to any instance in the club. Until 17 Sep 2026 this
@@ -34,6 +36,8 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { verifyCardToken } from "@/lib/card-token";
 import { performCheckin } from "@/lib/checkin";
 import { logAudit } from "@/lib/audit-log";
+import { allowanceAskSentence } from "@/lib/class-allowance";
+import { checkinRefusal } from "@/lib/checkin-refusal";
 
 /**
  * One request per card is what the client actually sends, so a dropped
@@ -59,6 +63,15 @@ const SCAN_RATE_WINDOW_MS = 5 * 60 * 1000;
 const schema = z.object({
   classInstanceId: z.string().min(1),
   tokens: z.array(z.string().min(1).max(4096)).min(1).max(MAX_TOKENS_PER_REQUEST),
+  // T7: the scanner ASKS about a member whose plan allowance is used up. The
+  // coach's "Admit anyway" resends that one card with this confirmation; the
+  // admission is recorded on the card_scan audit row as an override. The
+  // scanner never admits past the squad list or the membership list: an old
+  // client's "tier_not_included" is stripped here and admits no one.
+  acknowledged: z.preprocess(
+    (v) => (Array.isArray(v) ? v.filter((x) => x !== "tier_not_included") : v),
+    z.array(z.enum(["allowance_reached"])).max(1).optional(),
+  ),
 });
 
 /**
@@ -75,6 +88,12 @@ type ScanStatus =
   | "member_not_found"
   | "class_not_found"
   | "class_cancelled"
+  // T7: their plan allowance is used up. Nothing was recorded; the coach is
+  // asked and may resend with `acknowledged`.
+  | "needs_confirmation"
+  // The class's squad list or memberships do not admit this member. Nothing
+  // was recorded and nothing the coach sends admits them.
+  | "refused"
   | "error";
 
 type ScanResult = {
@@ -84,6 +103,12 @@ type ScanResult = {
   status: ScanStatus;
   memberId?: string;
   memberName?: string;
+  /** needs_confirmation and refused: the machine reason. */
+  reason?: "tier_not_included" | "roster_not_listed" | "allowance_reached";
+  /** needs_confirmation only: the question to put to the coach. */
+  question?: string;
+  /** refused only: the sentence the member would read. */
+  message?: string;
 };
 
 
@@ -105,7 +130,13 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data" }, { status: 400 });
   }
-  const { classInstanceId, tokens } = parsed.data;
+  const { classInstanceId, tokens, acknowledged } = parsed.data;
+  const allowanceConfirmed = !!acknowledged?.includes("allowance_reached");
+  // A confirmation answers ONE question about ONE card: it never admits a
+  // whole stack past their allowances.
+  if (allowanceConfirmed && tokens.length !== 1) {
+    return NextResponse.json({ error: "Confirm one card at a time" }, { status: 400 });
+  }
 
   let rl;
   try {
@@ -192,6 +223,7 @@ export async function POST(req: Request) {
   const memberById = new Map(members.map((m) => [m.id, m]));
 
   let recorded = 0;
+  const overrides: { memberId: string; reasons: string[]; overAllowance?: unknown }[] = [];
   for (const v of verified) {
     const member = memberById.get(v.memberId);
     if (!member) {
@@ -217,7 +249,6 @@ export async function POST(req: Request) {
       method: "qr",
       // Admin profile: a coach is physically present and recording reality.
       enforceRankGate: false,
-      enforceRosterGate: false,
       enforceTimeWindow: false,
       requireCoverage: false,
       // A coach scanning a card IS the staff override — they can see the room.
@@ -227,6 +258,12 @@ export async function POST(req: Request) {
       // card and looking at the person. A waiver missing from the system is a
       // conversation at the desk, not a scanner that stops mid-register.
       enforceWaiverGate: false,
+      // The squad list and the membership list refuse here too; the engine
+      // has no flag for them.
+      // T7: the plan allowance is asked about rather than refused; the coach
+      // confirms and the card is resent with the acknowledgement.
+      allowanceGate: "ask",
+      allowanceOverrideConfirmed: allowanceConfirmed,
       checkedInByUserId: userId,
     });
 
@@ -235,6 +272,33 @@ export async function POST(req: Request) {
       case "success":
         recorded += 1;
         results[v.index] = { ...base, status: "success" };
+        if (outcome.overrides && outcome.overrides.length > 0) {
+          overrides.push({
+            memberId: member.id,
+            reasons: outcome.overrides,
+            ...(outcome.overAllowance ? { overAllowance: outcome.overAllowance } : {}),
+          });
+        }
+        break;
+      case "tier_not_included":
+      case "roster_not_listed":
+        // The sentence the member reads at their own door, so the coach can
+        // say the same thing; the remedy is changing the membership or the
+        // squad list, never a resend.
+        results[v.index] = {
+          ...base,
+          status: "refused",
+          reason: outcome.kind,
+          message: checkinRefusal(outcome)!.body.error,
+        };
+        break;
+      case "allowance_reached":
+        results[v.index] = {
+          ...base,
+          status: "needs_confirmation",
+          reason: "allowance_reached",
+          question: allowanceAskSentence(member.name, outcome),
+        };
         break;
       case "duplicate":
         results[v.index] = { ...base, status: "duplicate" };
@@ -249,9 +313,9 @@ export async function POST(req: Request) {
         results[v.index] = { ...base, status: "member_not_found" };
         break;
       default:
-        // rank_below / rank_above / roster_not_listed / waiver_unsigned /
-        // on_hold / outside_window / no_coverage cannot occur with every gate disabled
-        // (the scan is the staff override), so reaching here
+        // rank_below / rank_above / waiver_unsigned / on_hold /
+        // outside_window / no_coverage cannot occur with those gates disabled
+        // (the scan is the staff override for them), so reaching here
         // means something genuinely unexpected. Report it as a failure rather
         // than mapping it to a friendlier status that hides it.
         results[v.index] = { ...base, status: "error" };
@@ -271,6 +335,8 @@ export async function POST(req: Request) {
         scanned: tokens.length,
         recorded,
         memberIds: results.filter((r) => r.status === "success").map((r) => r.memberId),
+        // T7: the cards admitted past the allowance on the coach's say-so.
+        ...(overrides.length > 0 ? { overrides } : {}),
       },
       req,
     });

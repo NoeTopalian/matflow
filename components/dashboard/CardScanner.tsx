@@ -126,9 +126,18 @@ type ScanStatus =
   | "member_not_found"
   | "class_not_found"
   | "class_cancelled"
+  // T7: their plan allowance is used up. Nothing recorded; the row offers
+  // "Admit anyway", which resends the card confirmed.
+  | "needs_confirmation"
+  // The class's squad list or memberships do not admit this member. Nothing
+  // recorded, and nothing the coach can send admits them: the row shows the
+  // sentence the member would read, and the remedy is the member's profile.
+  | "refused"
   | "error"
   | "request_failed"
   | "network"
+  // The scanner gave up waiting (10 s). MatFlow may still have recorded it.
+  | "timed_out"
   // In flight — pushed at decode, replaced in place by the outcome.
   | "pending"
   // Derived from the HTTP response, never from the body (A4-iv).
@@ -143,8 +152,36 @@ type ScanRow = {
   token: string;
   status: ScanStatus;
   memberName?: string;
+  /** needs_confirmation only: the question the server put (names the member and the count). */
+  question?: string;
+  /** needs_confirmation only: which question it is. */
+  reason?: ConfirmReason;
+  /** Answers the coach already gave for this card. */
+  acked?: ConfirmReason[];
+  /** refused only: the server's sentence (names the class and plan, or the squad list). */
+  message?: string;
   at: number;
 };
+
+/**
+ * The questions the scanner can be asked: the plan allowance only (T7). The
+ * squad list and the membership list are refused, never asked.
+ */
+type ConfirmReason = "allowance_reached";
+
+/** The row label for a card awaiting confirmation, by question. */
+const CONFIRM_LABEL: Record<ConfirmReason, string> = {
+  allowance_reached: "Allowance used",
+};
+
+/** What the screen reader says for a card awaiting confirmation, by question. */
+const CONFIRM_ANNOUNCE: Record<ConfirmReason, (name?: string) => string> = {
+  allowance_reached: (n) => `${n ?? "That card"}, class allowance used. Admit anyway, or leave them out.`,
+};
+
+function labelFor(status: ScanStatus, reason?: ConfirmReason): string {
+  return status === "needs_confirmation" && reason ? CONFIRM_LABEL[reason] : STATUS_COPY[status].label;
+}
 
 /**
  * What a coach is told for each outcome, in plain language. Deliberately says
@@ -168,9 +205,12 @@ const STATUS_COPY: Record<ScanStatus, { label: string; hint?: string; tone: "ok"
   member_not_found: { label: "Member not found", hint: "They may have been removed.", tone: "bad" },
   class_not_found: { label: "Class not found", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
   class_cancelled: { label: "Class was cancelled", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
+  needs_confirmation: { label: "Allowance used", tone: "warn" },
+  refused: { label: "Refused", tone: "bad" },
   error: { label: "Didn't record", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
   request_failed: { label: "Didn't record", hint: "Hold the card again once — if it fails twice, use the register.", tone: "bad" },
   network: { label: "Didn't reach MatFlow", hint: "Check signal and hold the card again once — if it fails twice, use the register.", tone: "bad" },
+  timed_out: { label: "No answer yet", hint: "It may have been recorded. Hold the card again to check — it will say Already in if it was.", tone: "warn" },
   pending: { label: "Sending…", tone: "ok" },
   // Kept seen, so the remedy is the register, never "hold it again". A
   // captive-portal page on venue wifi lands here too, hence the clause.
@@ -199,9 +239,12 @@ const NO_NAME: Record<ScanStatus, string> = {
   member_not_found: "Card not on file",
   class_not_found: "Card not sent",
   class_cancelled: "Card not sent",
+  needs_confirmation: "Card not recorded",
+  refused: "Card not recorded",
   error: "Card not sent",
   request_failed: "Card not sent",
   network: "Card not sent",
+  timed_out: "No answer yet",
   pending: "Reading…",
   signed_out: "Card not sent",
   not_allowed: "Card not sent",
@@ -218,7 +261,7 @@ const NO_NAME: Record<ScanStatus, string> = {
  * spends the 240-per-5-minute limiter inside a minute. Every other failure
  * keeps the token seen, because for those the copy sends the coach elsewhere.
  */
-const RETRYABLE_BY_HOLDING: ReadonlySet<ScanStatus> = new Set(["request_failed", "network", "server_down"]);
+const RETRYABLE_BY_HOLDING: ReadonlySet<ScanStatus> = new Set(["request_failed", "network", "timed_out", "server_down"]);
 
 /**
  * The statuses the route can actually put in a 200 body. The response-derived
@@ -227,7 +270,7 @@ const RETRYABLE_BY_HOLDING: ReadonlySet<ScanStatus> = new Set(["request_failed",
  */
 const SERVER_STATUSES: ReadonlySet<string> = new Set([
   "success", "duplicate", "revoked", "invalid", "expired", "wrong_tenant",
-  "member_not_found", "class_not_found", "class_cancelled", "error",
+  "member_not_found", "class_not_found", "class_cancelled", "needs_confirmation", "refused", "error",
 ]);
 
 /** A member is in the register after these — recorded now, or already there. */
@@ -258,9 +301,12 @@ const ANNOUNCE: Record<ScanStatus, (name?: string) => string> = {
   member_not_found: () => "Member not found.",
   class_not_found: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
   class_cancelled: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
+  needs_confirmation: (n) => `${n ?? "That card"}, class allowance used. Admit anyway, or leave them out.`,
+  refused: (n) => `${n ?? "That card"}, refused. This class isn't open to them.`,
   error: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
   request_failed: () => "That card didn't record. Hold the card again once.",
   network: () => "That card didn't send. Check signal and hold the card again once.",
+  timed_out: (n) => `No answer yet for ${n ?? "that card"}. It may have been recorded. Hold the card again to check.`,
   // Never announced (noise at 4 Hz); the outcome that replaces it is.
   pending: () => "",
   signed_out: () => "Signed out. Sign in again, then use the register for this one.",
@@ -289,7 +335,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
    * is the most recently SCANNED row: a card that rides the 10 s timeout
    * settles after five later cards, and the line above the fold must name it.
    */
-  const [lastSettled, setLastSettled] = useState<{ status: ScanStatus; memberName?: string } | null>(null);
+  const [lastSettled, setLastSettled] = useState<{ status: ScanStatus; memberName?: string; reason?: ConfirmReason } | null>(null);
   /**
    * The one sentence the status region speaks. `seq` is the React key of the
    * rendered text: setting an identical string twice is a state bail-out with
@@ -320,35 +366,58 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
     selectedRef.current = instance.id;
   }, [instance.id]);
 
-  const submitToken = useCallback(async (token: string) => {
+  /**
+   * `confirm` resends a card the server asked about (T7 "Admit anyway"): the
+   * existing row goes back to pending and settles in place, rather than a new
+   * row appearing for the same card.
+   */
+  const submitToken = useCallback(async (token: string, confirm?: { at: number; acknowledged: ConfirmReason[] }) => {
     const classInstanceId = selectedRef.current;
     if (!classInstanceId) return;
     // Captured now: a late response must un-see from the Set this token was
     // added to, never from a later session's fresh one.
     const seen = seenRef.current;
     const retried = retriedRef.current;
-    const at = Date.now();
+    // A confirm resend keeps the asked row's stamp, so it settles IN PLACE
+    // rather than leaving the askable row behind and adding a second one.
+    const at = confirm?.at ?? Date.now();
 
     // The row exists from the moment the card is read, so a scan in flight is
     // visibly different from a card that never decoded — and the list is in
     // scan order, not response order.
-    setRows((prev) => [{ token, status: "pending", at }, ...prev]);
+    if (confirm) {
+      setRows((prev) =>
+        prev.map((r) =>
+          r.token === token && r.at === at
+            ? { ...r, status: "pending", question: undefined, reason: undefined, acked: confirm.acknowledged }
+            : r,
+        ),
+      );
+    } else {
+      setRows((prev) => [{ token, status: "pending", at }, ...prev]);
+    }
 
     // The pending row becomes the outcome, in place.
-    const settle = (status: ScanStatus, memberName?: string) => {
+    const settle = (
+      status: ScanStatus,
+      memberName?: string,
+      detail: { question?: string; reason?: ConfirmReason; message?: string } = {},
+    ) => {
+      const { question, reason, message } = detail;
       setRows((prev) => {
         const i = prev.findIndex((r) => r.token === token && r.at === at);
         // No row: a session switch cleared the list while this was in flight.
         // The scan still recorded, into the class it was sent to — Stop cannot
         // recall a request already on the wire — so the outcome is shown,
         // never dropped. Labelling the row with its own session is later work.
-        if (i === -1) return [{ token, status, memberName, at }, ...prev];
+        if (i === -1) return [{ token, status, memberName, question, reason, message, acked: confirm?.acknowledged, at }, ...prev];
         const next = prev.slice();
-        next[i] = { ...prev[i], status, memberName };
+        next[i] = { ...prev[i], status, memberName, question, reason, message };
         return next;
       });
-      setLastSettled({ status, memberName });
-      setAnnouncement((prev) => ({ text: ANNOUNCE[status](memberName), seq: prev.seq + 1 }));
+      setLastSettled({ status, memberName, reason });
+      const spoken = status === "needs_confirmation" && reason ? CONFIRM_ANNOUNCE[reason](memberName) : ANNOUNCE[status](memberName);
+      setAnnouncement((prev) => ({ text: spoken, seq: prev.seq + 1 }));
       // The long buzz: the coach's eyes are on the stack, and this is the one
       // signal that says "look at the phone". Absent on iOS, inert on desktop.
       if (!IN_REGISTER.has(status)) navigator.vibrate?.(200);
@@ -362,7 +431,11 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
       const res = await fetch("/api/checkin/card", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ classInstanceId, tokens: [token] }),
+        body: JSON.stringify({
+          classInstanceId,
+          tokens: [token],
+          ...(confirm && confirm.acknowledged.length > 0 ? { acknowledged: confirm.acknowledged } : {}),
+        }),
         // Never follow a redirect: the proxy answers an expired session with a
         // 307 to /login, and following it hands back the login PAGE as a 200,
         // which used to read as "check your signal".
@@ -405,9 +478,16 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
         settle("request_failed");
         return;
       }
-      settle(result.status as ScanStatus, result.memberName);
-    } catch {
-      settle("network");
+      settle(result.status as ScanStatus, result.memberName, {
+        question: typeof result.question === "string" ? result.question : undefined,
+        reason: result.reason === "allowance_reached" ? result.reason : undefined,
+        message: typeof result.message === "string" ? result.message : undefined,
+      });
+    } catch (e) {
+      // The 10 s abort is not "didn't reach MatFlow": the request may have
+      // reached it and been recorded (round-3 review, L-1). Said as its own
+      // status; holding the card again answers "Already in" if it was.
+      settle((e as { name?: string })?.name === "TimeoutError" ? "timed_out" : "network");
     }
   }, []);
 
@@ -623,7 +703,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
                 // fold on a phone, so the coach never scrolls to know the
                 // card in their hand went in.
                 <p className="text-sm text-tx-2">
-                  Last: {last.memberName ?? NO_NAME[last.status]} — {STATUS_COPY[last.status].label}
+                  Last: {last.memberName ?? NO_NAME[last.status]} — {labelFor(last.status, last.reason)}
                 </p>
               )}
             </div>
@@ -723,9 +803,34 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-tx-1">{r.memberName ?? NO_NAME[r.status]}</p>
                     {copy.hint && <p className="text-sm text-tx-3">{copy.hint}</p>}
+                    {r.status === "needs_confirmation" && (
+                      <>
+                        <p className="text-sm text-tx-3">{r.question ?? "Their class allowance is used up. Admit anyway?"}</p>
+                        <Button
+                          className="mt-2"
+                          variant="secondary"
+                          size="compact"
+                          onClick={() =>
+                            void submitToken(r.token, {
+                              at: r.at,
+                              acknowledged: [...new Set([...(r.acked ?? []), r.reason ?? "allowance_reached"])],
+                            })
+                          }
+                        >
+                          Admit anyway
+                        </Button>
+                      </>
+                    )}
+                    {r.status === "refused" && (
+                      // The member's own sentence; the remedy is their
+                      // membership or the squad list, never a rescan.
+                      <p className="text-sm text-tx-3">
+                        {r.message ?? "This class isn't open to them."} Change their membership or the squad list to admit them.
+                      </p>
+                    )}
                   </div>
                   <span className="shrink-0 text-sm font-medium" style={{ color: ink }}>
-                    {copy.label}
+                    {labelFor(r.status, r.reason)}
                   </span>
                 </li>
               );

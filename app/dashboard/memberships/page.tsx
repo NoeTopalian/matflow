@@ -10,6 +10,13 @@ export type MembershipTierRow = {
   currency: string;
   billingCycle: string;
   maxClassesPerWeek: number | null;
+  /** T7c: "N classes" per explicit period; read through tierAllowance() in
+   *  lib/class-allowance.ts, never directly (the reader rule lives there).
+   *  The anchor travels as "YYYY-MM-DD". */
+  classLimit: number | null;
+  classLimitBasis: string | null;
+  classLimitWeeks: number | null;
+  classLimitAnchor: string | null;
   isKids: boolean;
   isActive: boolean;
   createdAt: string;
@@ -49,6 +56,10 @@ export default async function MembershipsPage() {
     currency: t.currency,
     billingCycle: t.billingCycle,
     maxClassesPerWeek: t.maxClassesPerWeek,
+    classLimit: t.classLimit,
+    classLimitBasis: t.classLimitBasis,
+    classLimitWeeks: t.classLimitWeeks,
+    classLimitAnchor: t.classLimitAnchor ? t.classLimitAnchor.toISOString().slice(0, 10) : null,
     isKids: t.isKids,
     isActive: t.isActive,
     createdAt: t.createdAt.toISOString(),
@@ -59,10 +70,17 @@ export default async function MembershipsPage() {
     locationName: t.locationRef?.name ?? null,
   }));
 
+  // The club's zone: the editor's "current period" and "next reset" dates are
+  // the club's calendar, not the browser's (review gap 5, 21 Oct 2026).
+  const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.tenant.findUnique({ where: { id: session.user.tenantId }, select: { timezone: true } }),
+  );
+
   return (
     <MembershipsManager
       initialTiers={tiers}
       primaryColor={session.user.primaryColor}
+      timeZone={tenant?.timezone ?? null}
     />
   );
 }

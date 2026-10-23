@@ -38,7 +38,7 @@ try {
     if (!c.slug.startsWith("mfv-")) throw new Error("refusing: not a fixture slug");
     const tenantId = c.tenantId;
     await bypass(async (tx) => {
-      for (const m of ["auditLog", "emailLog", "magicLinkToken", "passwordResetToken", "attendanceRecord", "memberStatusEvent", "memberPhoto", "importJob"]) { try { await tx[m].deleteMany({ where: { tenantId } }); } catch {} }
+      for (const m of ["auditLog", "emailLog", "magicLinkToken", "passwordResetToken", "attendanceRecord", "memberStatusEvent", "memberPhoto", "importJob", "payment", "classMembershipTier"]) { try { await tx[m].deleteMany({ where: { tenantId } }); } catch {} }
       await tx.$executeRawUnsafe(`delete from "LoginEvent" where "tenantId" = $1`, tenantId).catch(() => {});
       await tx.$executeRawUnsafe(`delete from "PasswordHistory" where "userId" in (select id from "User" where "tenantId" = $1)`, tenantId).catch(() => {});
       const rankIds = (await tx.memberRank.findMany({ where: { member: { tenantId } }, select: { id: true } })).map((r) => r.id);
@@ -46,6 +46,9 @@ try {
       await tx.memberRank.deleteMany({ where: { id: { in: rankIds } } }).catch(() => {});
       await tx.rankSystem.deleteMany({ where: { tenantId } });
       const classIds = (await tx.class.findMany({ where: { tenantId }, select: { id: true } })).map((x) => x.id);
+      // Bookings and squad lists reference the class without a cascade; the membership list cascades.
+      await tx.classSubscription.deleteMany({ where: { classId: { in: classIds } } });
+      await tx.classRoster.deleteMany({ where: { classId: { in: classIds } } }).catch(() => {});
       await tx.classSchedule.deleteMany({ where: { classId: { in: classIds } } });
       await tx.classInstance.deleteMany({ where: { classId: { in: classIds } } });
       await tx.class.deleteMany({ where: { tenantId } });

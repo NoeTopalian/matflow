@@ -7,6 +7,7 @@ import { updateMetadata } from "@/lib/audit-snapshot";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { billingCycleSchema } from "@/lib/billing-cycle";
+import { ALLOWANCE_FIELDS, BILLING_BASIS_AVAILABLE, BILLING_BASIS_UNAVAILABLE_MESSAGE, BILLING_ON_NONE_MESSAGE, allowanceColumns, classLimitAnchorSchema, classLimitBasisSchema, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
 
 const patchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -14,7 +15,15 @@ const patchSchema = z.object({
   pricePence: z.number().int().min(0).max(10_000_000, "Price must be £100,000 or less").optional(),
   currency: z.string().length(3).regex(/^[A-Z]{3}$/).optional(),
   billingCycle: billingCycleSchema.optional(),
+  // Legacy single weekly limit (a page loaded before T7c); null clears.
   maxClassesPerWeek: z.number().int().min(1).max(30).optional().nullable(),
+  // T7c: "N classes" on an explicit reset basis; limit + basis together (plus
+  // weeks + start date for "weeks"); nulls clear to Unlimited
+  // (refineAllowance). The route writes every allowance column in step.
+  classLimit: classLimitSchema.nullable().optional(),
+  classLimitBasis: classLimitBasisSchema.nullable().optional(),
+  classLimitWeeks: classLimitWeeksSchema.nullable().optional(),
+  classLimitAnchor: classLimitAnchorSchema.nullable().optional(),
   isKids: z.boolean().optional(),
   isActive: z.boolean().optional(),
   // ADR-001 D2 slice 2: the venue this tier covers; null = every venue.
@@ -23,7 +32,7 @@ const patchSchema = z.object({
   // Both nullable so owners can unlink a tier from Stripe later.
   stripePriceId: z.string().regex(/^price_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
   stripeProductId: z.string().regex(/^prod_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
-});
+}).superRefine(refineAllowance);
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   // Lane 1 iter-1 CSRF sweep [High]: bulk-inserted by scripts/csrf-sweep.mjs.
@@ -47,21 +56,41 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
     }
 
+    // The allowance keys become the allowance columns, written together (a
+    // reduced limit applies from the next check-in; nothing recorded changes).
+    const { maxClassesPerWeek, classLimit, classLimitBasis, classLimitWeeks, classLimitAnchor, ...rest } = parsed.data;
+    const allowance = allowanceColumns({ maxClassesPerWeek, classLimit, classLimitBasis, classLimitWeeks, classLimitAnchor });
+    // The billing-period basis ships dark until live Stripe delivery is verified (release gate, 22 Oct 2026).
+    if (allowance?.classLimitBasis === "billing" && !BILLING_BASIS_AVAILABLE) {
+      return NextResponse.json({ error: BILLING_BASIS_UNAVAILABLE_MESSAGE, details: { fieldErrors: { classLimitBasis: [BILLING_BASIS_UNAVAILABLE_MESSAGE] } } }, { status: 400 });
+    }
+    const data: Record<string, unknown> = { ...rest, ...(allowance ?? {}) };
+
     const outcome = await withTenantContext(tenantId, async (tx) => {
       if (parsed.data.locationId) {
         const loc = await tx.location.findFirst({ where: { id: parsed.data.locationId, tenantId }, select: { id: true } });
         if (!loc) return "bad_location" as const;
       }
       const before = await tx.membershipTier.findFirst({ where: { id, tenantId } });
+      if (!before) return null;
+      // A plan billed once has no billing period to count classes in: the
+      // basis and the cycle are judged together, whichever this body sends
+      // (review round 3, L-5).
+      const nextBasis = allowance ? allowance.classLimitBasis : before.classLimitBasis;
+      const nextCycle = rest.billingCycle ?? before.billingCycle;
+      if (nextBasis === "billing" && nextCycle === "none") return "billing_on_none" as const;
       const r = await tx.membershipTier.updateMany({
         where: { id, tenantId },
-        data: parsed.data as Record<string, unknown>,
+        data,
       });
       if (r.count === 0) return null;
       const fresh = await tx.membershipTier.findFirst({ where: { id, tenantId } });
       return fresh ? { fresh, before } : null;
     });
     if (outcome === "bad_location") return NextResponse.json({ error: "That venue is not one of this club's locations" }, { status: 400 });
+    if (outcome === "billing_on_none") {
+      return NextResponse.json({ error: BILLING_ON_NONE_MESSAGE, details: { fieldErrors: { classLimitBasis: [BILLING_ON_NONE_MESSAGE] } } }, { status: 400 });
+    }
     if (!outcome) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const { fresh, before } = outcome;
 
@@ -72,10 +101,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       entityType: "MembershipTier",
       entityId: id,
       metadata: updateMetadata(
-        Object.keys(parsed.data),
+        Object.keys(data),
         before as unknown as Record<string, unknown> | null,
         fresh as unknown as Record<string, unknown>,
-        ["name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "isKids", "isActive", "locationId"],
+        ["name", "description", "pricePence", "currency", "billingCycle", ...ALLOWANCE_FIELDS, "isKids", "isActive", "locationId"],
       ),
       req,
     });

@@ -34,6 +34,10 @@ const mockPrisma = {
   rankSystem: { findFirst: vi.fn(), findMany: vi.fn() },
   user: { findMany: vi.fn() },
   member: { findMany: vi.fn() },
+  // T6a: the PATCH write transaction opens with a Class row lock; the page reads tiers.
+  $queryRaw: vi.fn().mockResolvedValue([{ id: "c1" }]),
+  classMembershipTier: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn(), createMany: vi.fn() },
+  membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({
@@ -89,7 +93,9 @@ describe("Task 3d — read end: the timetable page loads each class's roster", (
   });
 
   it("maps rosterMembers onto ClassRow.roster, which is what drives useRoster", async () => {
-    mockPrisma.class.findMany.mockResolvedValue([
+    // Once: the live timetable read. The page's second read (T6b, the paused
+    // and archived section) falls back to the empty default.
+    mockPrisma.class.findMany.mockResolvedValueOnce([
       {
         id: "c1",
         name: "Comp Team",

@@ -79,6 +79,10 @@ export default function MemberProfilePage() {
   const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(null);
   const [belt, setBelt] = useState<{ name: string; color: string; stripes: number } | null>(null);
   const [membershipType, setMembershipType] = useState<string | null>(null);
+  // T7: the plan card's allowance line ("2 of 4 classes used in the last 4
+  // weeks"), or a sentence saying it could not be loaded.
+  const [allowanceText, setAllowanceText] = useState<string | null>(null);
+  const [allowanceUnavailable, setAllowanceUnavailable] = useState(false);
   const [memberSince, setMemberSince] = useState<string | null>(null);
   // 2FA-optional spec (2026-05-07): only members with a password can enrol.
   // Magic-link-only members + kid accounts never see the row.
@@ -143,6 +147,17 @@ export default function MemberProfilePage() {
         });
       })
       .catch(() => setLoadError("Couldn't load your gym's details — tap retry."));
+
+    // T7: the plan card's allowance line, from the same uncached endpoint the
+    // schedule reads, so it moves with a check-in (the profile payload below
+    // is browser-cached). Its failure is said on the card, never a blank.
+    void fetch("/api/member/me/allowance", { cache: "no-store" })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((d: { allowance?: { text?: unknown } | null }) => {
+        setAllowanceText(typeof d?.allowance?.text === "string" ? d.allowance.text : null);
+        setAllowanceUnavailable(false);
+      })
+      .catch(() => setAllowanceUnavailable(true));
 
     // Fetch member profile — non-ok throws (error ≠ empty, UI-RULES §7); raw
     // exception text never reaches the member.
@@ -529,7 +544,7 @@ export default function MemberProfilePage() {
       <EmergencyMedicalSection key={signedHere ? "after-signing" : "initial"} onSaved={setEmergencyContact} />
 
       {/* ── Membership — rows render only from real fetched data ── */}
-      {(membershipType || memberSince || gymWebsite) && (
+      {(membershipType || allowanceText || allowanceUnavailable || memberSince || gymWebsite) && (
         <div className="rounded-2xl border overflow-hidden mb-4" style={{ borderColor: "var(--member-border)" }}>
           <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider px-4 pt-4 pb-2">
             Membership
@@ -542,6 +557,16 @@ export default function MemberProfilePage() {
                 <p className="text-white text-sm">{membershipType}</p>
               </div>
               <span className="text-[11px] font-semibold px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-400">Active</span>
+            </div>
+          )}
+          {(allowanceText || allowanceUnavailable) && (
+            <div className="px-4 py-3.5 flex items-center gap-3 border-t border-white/5" data-testid="plan-allowance">
+              <div className="flex-1">
+                <p className="text-[10px] font-medium uppercase tracking-wider mb-0.5" style={{ color: "var(--member-text-muted)" }}>Classes</p>
+                <p className="text-sm" style={{ color: allowanceText ? "var(--member-text)" : "var(--member-text-muted)" }}>
+                  {allowanceText ?? "Couldn't load how many classes your plan has left."}
+                </p>
+              </div>
             </div>
           )}
           {memberSince && (

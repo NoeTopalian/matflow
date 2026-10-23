@@ -78,7 +78,11 @@ describe("the register roster", () => {
       date: new Date("2026-09-18T00:00:00Z"),
       startTime: "12:30",
       endTime: "13:30",
-      class: { id: "class-1", name: "Demo", location: null, coachName: null, maxCapacity: null, color: null },
+      class: {
+        id: "class-1", name: "Demo", location: null, coachName: null, maxCapacity: null, color: null,
+        // T6a: no memberships selected (open to everyone), no roster.
+        allowedTiers: [], _count: { rosterMembers: 0 },
+      },
     });
     waitlistFindManyMock.mockResolvedValue([]);
     attendanceGroupByMock.mockResolvedValue([]);

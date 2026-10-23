@@ -24,6 +24,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
       member: { findUnique: h.memberFindUnique },
       memberRank: { findFirst: vi.fn().mockResolvedValue(null) },
       classRoster: { count: vi.fn().mockResolvedValue(0), findUnique: vi.fn().mockResolvedValue(null), deleteMany: vi.fn() },
+      classMembershipTier: { findMany: vi.fn().mockResolvedValue([]) },
       classSubscription: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn() },
       classInstance: {
         findFirst: vi.fn(async () => ({
@@ -60,13 +61,13 @@ import { pickNextClass, type NextClassCandidate } from "@/lib/member-stats";
 
 const SELF = {
   tenantId: "t-1", memberId: "m-1", classInstanceId: "ci-1", method: "self" as const,
-  enforceRankGate: true, enforceRosterGate: true, enforceTimeWindow: false,
+  enforceRankGate: true, enforceTimeWindow: false,
   requireCoverage: true, enforceCapacity: true, enforceWaiverGate: true, enforceHoldGate: true,
   enforceVenueGate: true, enforceKidsGate: true, checkedInByUserId: null,
 };
 const KIOSK = { ...SELF, method: "kiosk" as const, requireCoverage: false };
 const ADMIN = {
-  ...SELF, method: "admin" as const, enforceRankGate: false, enforceRosterGate: false, requireCoverage: false,
+  ...SELF, method: "admin" as const, enforceRankGate: false, requireCoverage: false,
   enforceCapacity: false, enforceWaiverGate: false, enforceHoldGate: false, enforceVenueGate: false, enforceKidsGate: false,
 };
 

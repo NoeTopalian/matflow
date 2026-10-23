@@ -126,7 +126,20 @@ describe("DELETE /api/locations/[id]", () => {
     const res = await DELETE(req("DELETE"), params("loc-2"));
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/3 classes are/);
-    expect(classCount).toHaveBeenCalledWith({ where: { tenantId: "tenant-A", locationId: "loc-2", deletedAt: null } });
+    // T6b: paused and archived classes count too (imported history does not),
+    // so a restored class never comes back as an "every location" class.
+    expect(classCount).toHaveBeenCalledWith({ where: { tenantId: "tenant-A", locationId: "loc-2", sourceImportJobId: null } });
+    expect(locDelete).not.toHaveBeenCalled();
+  });
+  it("T6b: an ARCHIVED class at the location blocks removal, and the refusal says so", async () => {
+    locFindFirst.mockResolvedValue({ id: "loc-2", name: "Annex", isDefault: false });
+    // 1 class at the venue in all, 0 of them live: the one there is archived.
+    classCount.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    const res = await DELETE(req("DELETE"), params("loc-2"));
+    expect(res.status).toBe(409);
+    const { error } = await res.json();
+    expect(error).toMatch(/1 class is at this location, including 1 paused or archived/);
+    expect(error).toMatch(/Resume or restore/);
     expect(locDelete).not.toHaveBeenCalled();
   });
   it("an empty non-default location is removed and audited; a foreign id is not found", async () => {

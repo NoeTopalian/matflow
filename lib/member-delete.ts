@@ -97,6 +97,20 @@ export async function deleteMemberCascade(
 
   const memberId = member.id;
 
+  // T7 lock order: the Member row FIRST, before any of its packs, attendance
+  // or bookings. The check-in engine holds Class, then this Member row, then
+  // the member's pack (lib/checkin.ts). Without this lock a cascade that
+  // reached the pack first (the DSAR child cascade and the tenant purge call
+  // this with no prior lock on the member) would hold the pack while waiting
+  // to delete a Member row a check-in holds, while that check-in waits for the
+  // pack: a deadlock (planning evidence §8b.3 C1). With it, the cascade
+  // simply waits for the check-in to commit, or the check-in waits and then
+  // finds no member. Callers that already hold the lock re-take it for free.
+  const locked = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "Member" WHERE "id" = ${memberId} AND "tenantId" = ${where.tenantId} FOR UPDATE
+  `;
+  if (locked.length === 0) return { kind: "race" };
+
   // Imported history. ImportedBooking.memberId is ON DELETE SET NULL, which
   // would leave the row behind with the source's name and email on it — the
   // person's data, now attached to nobody. Delete it explicitly, and with it

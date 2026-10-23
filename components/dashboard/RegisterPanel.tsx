@@ -28,9 +28,11 @@ import { useToast } from "@/components/ui/Toast";
 import { describeApiError } from "@/lib/api-field-errors";
 import { classifyCheckinResponse } from "@/lib/checkin-outcome";
 import { medicalNotesText } from "@/lib/medical-notes";
+import { NOT_ON_SQUAD_LABEL, SQUAD_ONLY_LABEL } from "@/lib/class-tier-gate";
 import { staleBillingWarning, billingSourceLabel } from "@/lib/billing-source";
 import type { TodaySession } from "@/components/dashboard/SessionPicker";
 import { isAdultAccount } from "@/lib/account-type";
+import { ALLOWANCE_BASES, allowanceAskSentence, type AllowanceBasis } from "@/lib/class-allowance";
 
 type RegisterMember = {
   memberId: string;
@@ -54,10 +56,23 @@ type RegisterMember = {
   billingStatusAsOf?: string | null;
   /** This session's check-in spent a class-pack credit — the undo gives it back. */
   usedPackCredit?: boolean;
+  /** T6a: the member's plan name (null = none set). */
+  membershipTierName?: string | null;
+  /** T6a: the class's memberships do not include this member's plan — a mark will be refused. */
+  tierNotIncluded?: boolean;
+  /** T6d: a squad class and this member is not on its roster — a mark will be refused. */
+  notOnRoster?: boolean;
 };
 
 type RegisterResponse = {
-  instance?: { maxCapacity: number | null; isKids?: boolean };
+  instance?: {
+    name?: string;
+    maxCapacity: number | null;
+    isKids?: boolean;
+    allowedTiers?: { id: string; name: string }[];
+    /** T6d: a squad / comp class — only members on its roster may attend. */
+    rosterOnly?: boolean;
+  };
   expected: RegisterMember[];
   waitlist: { memberId: string; name: string; position: number; status: string }[];
 };
@@ -72,10 +87,41 @@ type Candidate = {
   cancelled?: boolean;
   /** adult | parent | junior | kids — an adult into a kids class is asked about. */
   accountType?: string | null;
+  /** T6a: see RegisterMember. */
+  membershipTierName?: string | null;
+  tierNotIncluded?: boolean;
 };
 
-/** What the person marking was asked about and admitted anyway — recorded on the audit row. */
-type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class";
+/**
+ * What the person marking was asked about and admitted anyway — recorded on
+ * the audit row. The squad list and the membership list are not here: the
+ * server refuses on them at every door and nothing the desk sends admits.
+ * "allowance_reached" (T7) is the one rule-changing answer: the plan allowance
+ * is used up and the desk admitted anyway.
+ */
+type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class" | "allowance_reached";
+
+/** T7: the count and the period the server sends with an askable allowance refusal. */
+type AllowanceBody = {
+  used: number; limit: number; basis: AllowanceBasis; weeks?: number; resetsOn?: string;
+  period?: { start: string; end: string }; current?: boolean; periodUnknown?: true;
+};
+
+function allowanceFrom(body: unknown): AllowanceBody | null {
+  const a = (body as { allowance?: unknown } | null)?.allowance as Partial<AllowanceBody> | undefined;
+  if (!a || typeof a.used !== "number" || typeof a.limit !== "number") return null;
+  if (!(ALLOWANCE_BASES as readonly string[]).includes(a.basis as string)) return null;
+  // Either a dated period, or a billing-period plan with no period recorded.
+  if (typeof a.resetsOn !== "string" && a.periodUnknown !== true) return null;
+  return {
+    used: a.used, limit: a.limit, basis: a.basis as AllowanceBasis,
+    ...(typeof a.resetsOn === "string" ? { resetsOn: a.resetsOn } : {}),
+    ...(typeof a.weeks === "number" ? { weeks: a.weeks } : {}),
+    ...(a.period && typeof a.period.start === "string" && typeof a.period.end === "string" ? { period: { start: a.period.start, end: a.period.end } } : {}),
+    ...(typeof a.current === "boolean" ? { current: a.current } : {}),
+    ...(a.periodUnknown === true ? { periodUnknown: true as const } : {}),
+  };
+}
 
 /** Token-safe tint (UI-RULES §2). */
 function tint(color: string, percent: number) {
@@ -166,6 +212,8 @@ export default function RegisterPanel({
           waiverAccepted: m.waiverRequired !== true,
           cancelled: m.cancelled === true,
           accountType: typeof m.accountType === "string" ? m.accountType : null,
+          membershipTierName: typeof m.membershipTierName === "string" ? m.membershipTierName : null,
+          tierNotIncluded: m.tierNotIncluded === true,
         })));
         const next = data && typeof data === "object" ? (data as { nextCursor?: unknown }).nextCursor : null;
         cursor = typeof next === "string" && next ? next : null;
@@ -223,12 +271,17 @@ export default function RegisterPanel({
   /** Resolves true only when a check-in was recorded (or already existed). */
   async function mark(
     memberId: string,
-    who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & { waiverAccepted?: boolean; cancelled?: boolean; accountType?: string | null },
+    who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & {
+      waiverAccepted?: boolean; cancelled?: boolean; accountType?: string | null;
+    },
+    /** Answers already given this attempt (the server asked about the allowance; the resend repeats them). */
+    alreadyAcknowledged: Acknowledged[] = [],
   ): Promise<boolean> {
-    const acknowledged: Acknowledged[] = [];
+    const acknowledged: Acknowledged[] = [...alreadyAcknowledged];
+    const asked = (reason: Acknowledged) => alreadyAcknowledged.includes(reason);
     if (who?.cancelled) return false;
     // F-8: an on-hold member can be admitted by staff, but not by accident.
-    if (who?.onHold) {
+    if (who?.onHold && !asked("on_hold")) {
       const until = who.holdUntil ? new Date(who.holdUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
       const confirmed = await ask({
         title: "This membership is on hold",
@@ -241,7 +294,7 @@ export default function RegisterPanel({
     // The member app and kiosk refuse an unsigned waiver; the desk may admit
     // (someone who has just signed on paper), but is asked first — the same
     // way as a hold. A child answers for their own waiver flag.
-    if (who && who.waiverAccepted === false) {
+    if (who && who.waiverAccepted === false && !asked("waiver_unsigned")) {
       const confirmed = await ask({
         title: "No signed waiver",
         body: `${who.name} hasn't signed the waiver. Admit anyway?`,
@@ -252,7 +305,7 @@ export default function RegisterPanel({
     }
     // Self and kiosk check-in refuse an adult into a kids class; the desk may
     // admit (a parent helping on the mat), but is asked first.
-    if (who && register?.instance?.isKids && isAdultAccount(who.accountType)) {
+    if (who && register?.instance?.isKids && isAdultAccount(who.accountType) && !asked("kids_class")) {
       const confirmed = await ask({
         title: "This is a kids class",
         body: `${who.name} is an adult — this is a kids class. Admit anyway?`,
@@ -261,6 +314,8 @@ export default function RegisterPanel({
       if (!confirmed) return false;
       acknowledged.push("kids_class");
     }
+    // The squad list and the membership list are not asked about: the server
+    // refuses a member they exclude, and the refusal below shows its sentence.
     setMarking(memberId);
     setError(null);
     try {
@@ -276,8 +331,30 @@ export default function RegisterPanel({
       });
       const body = await res.json().catch(() => null);
       const outcome = classifyCheckinResponse(res.status, body);
+      // T7: the member's plan allowance is used up. The member app and kiosk
+      // refuse; the desk is asked with the count and the date it frees up,
+      // and the admission is recorded with that count on the audit row.
+      const allowance = allowanceFrom(body);
+      if (
+        outcome.kind === "refused" &&
+        outcome.reason === "allowance_reached" &&
+        (body as { askable?: unknown } | null)?.askable === true &&
+        allowance &&
+        !acknowledged.includes("allowance_reached")
+      ) {
+        setMarking(null);
+        const confirmed = await ask({
+          title: "Class allowance used",
+          body: allowanceAskSentence(who?.name ?? "This member", allowance),
+          confirmLabel: "Admit anyway",
+        });
+        if (!confirmed) return false;
+        return mark(memberId, who, [...acknowledged, "allowance_reached"]);
+      }
       // "Already checked in" is the truth, not a failure: the reload shows it.
-      // Any other 409 (cancelled class, closed window) is the refusal it is.
+      // Any other refusal (cancelled class, closed window, not on the squad
+      // list, a plan the class does not include) is shown in the server's
+      // own words — the sentence the member reads at their own door.
       if (outcome.kind === "refused" || outcome.kind === "signed_out") {
         const hasFields = !!body && typeof body === "object" && "details" in body;
         setError(hasFields ? describeApiError(body) : outcome.message);
@@ -362,6 +439,7 @@ export default function RegisterPanel({
   }
 
   const expected = register?.expected ?? [];
+  const className = () => register?.instance?.name ?? instance.name;
 
   return (
     <div className="space-y-3">
@@ -392,6 +470,28 @@ export default function RegisterPanel({
             </Button>
           )}
         </div>
+      )}
+
+      {register?.instance?.rosterOnly && (
+        // T6d: a squad / comp class. Only members on the roster may attend —
+        // at every door, this register included; the kiosk lists only them.
+        <p className="flex items-center gap-2 text-xs text-tx-3" data-testid="register-squad-only">
+          <span
+            className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase"
+            style={{ background: tint("var(--hue-info)", 12), color: "var(--hue-info-ink)" }}
+          >
+            {SQUAD_ONLY_LABEL}
+          </span>
+          Only members on the squad list can book or be checked in.
+        </p>
+      )}
+
+      {register?.instance?.allowedTiers && register.instance.allowedTiers.length > 0 && (
+        // T6a: who the class is for — on a squad class too, since a member
+        // must be on the squad list AND one of these memberships.
+        <p className="text-xs text-tx-3" data-testid="register-allowed-tiers">
+          For: {register.instance.allowedTiers.map((t) => t.name).join(", ")}
+        </p>
       )}
 
       {register && expected.length === 0 ? (
@@ -443,7 +543,7 @@ export default function RegisterPanel({
                       </span>
                     )}
                     {m.accountType !== "adult" && (
-                      <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: tint("var(--hue-info)", 12), color: "var(--hue-info)" }}>
+                      <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: tint("var(--hue-info)", 12), color: "var(--hue-info-ink)" }}>
                         {m.accountType.toUpperCase()}
                       </span>
                     )}
@@ -454,6 +554,30 @@ export default function RegisterPanel({
                       // silent "walk-in".
                       <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: tint("var(--hue-warning)", 14), color: "var(--hue-warning-ink)" }} title="TeamUp bills this member but MatFlow holds no plan for them yet — set it on the profile. Admit at the desk meanwhile.">
                         PLAN UNDECIDED · STAFF DECIDE
+                      </span>
+                    )}
+                    {m.tierNotIncluded && (
+                      // T6a: the class's memberships do not include this plan.
+                      // A tick is refused; the remedy is changing the membership.
+                      <span
+                        className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold"
+                        style={{ background: tint("var(--hue-warning)", 14), color: "var(--hue-warning-ink)" }}
+                        title={`${m.membershipTierName ? `${className()} isn't included in ${m.membershipTierName}.` : "No membership plan set."} A mark will be refused — change their membership to admit them.`}
+                        data-testid="register-tier-not-included"
+                      >
+                        NOT ON {m.membershipTierName ? m.membershipTierName.toUpperCase() : "A PLAN"}
+                      </span>
+                    )}
+                    {m.notOnRoster && (
+                      // T6d: a squad class and this member is not on its roster.
+                      // A tick is refused; the remedy is editing the squad list.
+                      <span
+                        className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase"
+                        style={{ background: tint("var(--hue-warning)", 14), color: "var(--hue-warning-ink)" }}
+                        title="A mark will be refused — edit the squad list to admit them."
+                        data-testid="register-not-on-roster"
+                      >
+                        {NOT_ON_SQUAD_LABEL}
                       </span>
                     )}
                     {m.walkIn && (
@@ -498,6 +622,17 @@ export default function RegisterPanel({
                       </span>
                     )}
                   </div>
+                  {!m.attended && (m.notOnRoster || m.tierNotIncluded) && (
+                    // Visible on a phone, where the chips' titles never show.
+                    <p className="mt-1 text-[11px]" style={{ color: "var(--hue-warning-ink)" }} data-testid="register-will-be-refused">
+                      Can&rsquo;t be marked in —{" "}
+                      {m.notOnRoster && m.tierNotIncluded
+                        ? "edit the squad list and change their membership first."
+                        : m.notOnRoster
+                          ? "edit the squad list first."
+                          : "change their membership first."}
+                    </p>
+                  )}
                   {medicalNotesText(m.medicalConditions) && (
                     <p className="mt-1 text-[11px] italic" style={{ color: "var(--hue-danger)" }}>
                       <AlertTriangle className="mr-1 inline size-3" />

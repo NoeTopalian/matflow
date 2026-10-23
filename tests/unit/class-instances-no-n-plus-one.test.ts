@@ -3,6 +3,8 @@ import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 // Lane 1 iter-1 CSRF-sweep follow-up: short-circuit the guard so test
 // Requests (which carry no browser-set Origin header) don't 403.
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+// T6b: the per-class Generate now writes class.instances_generated.
+vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => ({})) }));
 
 // LB-006 (audit H5): POST /api/classes/[id]/instances must not loop with a
 // findFirst per candidate date. The original fix batched them into ONE
@@ -83,6 +85,10 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   classFindFirst.mockResolvedValue({
     id: "class-1",
+    // T6b: a live class (the route refuses a paused or archived one).
+    isActive: true,
+    deletedAt: null,
+    sourceImportJobId: null,
     schedules: [
       { dayOfWeek: 1, startTime: "10:00", endTime: "11:00" }, // Mondays
       { dayOfWeek: 4, startTime: "18:00", endTime: "19:00" }, // Thursdays

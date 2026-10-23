@@ -32,6 +32,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
       member: { findUnique: memberFindUniqueMock },
       memberRank: { findFirst: vi.fn().mockResolvedValue(null) },
       classRoster: { count: vi.fn().mockResolvedValue(0), findUnique: vi.fn().mockResolvedValue(null) },
+      classMembershipTier: { findMany: vi.fn().mockResolvedValue([]) },
       classInstance: {
         findFirst: vi.fn().mockResolvedValue({
           id: "ci-1",
@@ -71,7 +72,6 @@ const BASE = {
   memberId: "m-1",
   classInstanceId: "ci-1",
   enforceRankGate: false,
-  enforceRosterGate: false,
   enforceTimeWindow: false,
   requireCoverage: false,
   enforceCapacity: false,

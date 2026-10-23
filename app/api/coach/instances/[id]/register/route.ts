@@ -2,6 +2,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { medicalNotesText } from "@/lib/medical-notes";
 import { NextResponse } from "next/server";
 import { requireApiStaff } from "@/lib/api-authz";
+import { classTierCovers } from "@/lib/class-tier-gate";
 
 function latest(a: Date | null, b: Date | null): Date | null {
   if (!a) return b;
@@ -28,7 +29,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       },
       include: {
         class: {
-          select: { id: true, name: true, location: true, coachName: true, maxCapacity: true, color: true, isKids: true },
+          select: {
+            id: true, name: true, location: true, coachName: true, maxCapacity: true, color: true, isKids: true,
+            // T6a: the memberships that include the class, for the desk ask.
+            allowedTiers: { select: { tier: { select: { id: true, name: true } } } },
+            _count: { select: { rosterMembers: true } },
+          },
         },
       },
     });
@@ -41,6 +47,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             select: {
               id: true, name: true, email: true, status: true, accountType: true,
               membershipType: true,
+              membershipTierId: true,
+              membershipTier: { select: { name: true } },
+              // T6d: whether this member is on the class's roster (squad class).
+              classRosters: { where: { tenantId, classId: instance.class.id }, select: { id: true }, take: 1 },
               waiverAccepted: true, waiverAcceptedAt: true,
               ...(showMedical ? { medicalConditions: true } : {}),
               paymentStatus: true,
@@ -83,6 +93,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           select: {
             id: true, name: true, email: true, status: true, accountType: true,
             membershipType: true,
+            membershipTierId: true,
+            membershipTier: { select: { name: true } },
+            classRosters: { where: { tenantId, classId: instance.class.id }, select: { id: true }, take: 1 },
             waiverAccepted: true, waiverAcceptedAt: true,
             ...(showMedical ? { medicalConditions: true } : {}),
             paymentStatus: true,
@@ -134,6 +147,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const redeemedAttendanceIds = new Set(redemptions.map((r) => r.attendanceRecordId));
   const attendedById = new Map(attendances.map((a) => [a.memberId, a]));
   const lastVisitById = new Map(lastVisits.map((lv) => [lv.memberId, lv._max.checkInTime]));
+  const allowedTiers = instance.class.allowedTiers.map((t) => t.tier);
+  const allowedTierIds = allowedTiers.map((t) => t.id);
+  const hasRoster = instance.class._count.rosterMembers > 0;
 
   return NextResponse.json({
     instance: {
@@ -146,6 +162,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       maxCapacity: instance.class.maxCapacity,
       // The register asks before marking an adult into a kids class.
       isKids: instance.class.isKids,
+      // T6a: [] = everyone. Shown so the desk knows who the class is for.
+      allowedTiers,
+      // T6d: a squad / comp class (it has a roster). The register shows
+      // "Squad only"; a member must be on the roster AND, when memberships
+      // are ticked, on one of them (20 Oct 2026).
+      rosterOnly: hasRoster,
       date: instance.date.toISOString(),
       startTime: instance.startTime,
       endTime: instance.endTime,
@@ -161,6 +183,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         status: b.member.status,
         accountType: b.member.accountType,
         membershipType: b.member.membershipType,
+        // T6a: the plan, and whether the class's memberships include it.
+        // true = a mark for this member WILL BE REFUSED, rostered class or not.
+        membershipTierId: b.member.membershipTierId,
+        membershipTierName: b.member.membershipTier?.name ?? null,
+        tierNotIncluded: !classTierCovers({ allowedTierIds, memberTierId: b.member.membershipTierId }),
+        // T6d: at a squad class, a member who is not on the roster. true = a
+        // mark WILL BE REFUSED; the remedy is editing the squad list.
+        notOnRoster: hasRoster && !b.member.classRosters?.length,
         waiverAccepted: b.member.waiverAccepted,
         walkIn: b.walkIn,
         rank: rank ? {

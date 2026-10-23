@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { AUDIT_LABELS, auditLabel, auditLabelWithUndo, humaniseAction } from "@/lib/audit-labels";
+import { AUDIT_LABELS, auditLabel, auditLabelWithUndo, humaniseAction, auditEntryLabel, classLifecycleOf } from "@/lib/audit-labels";
 
 /**
  * Every audit action the product writes has a sentence on the owner's
@@ -55,5 +55,28 @@ describe("lib/audit-labels", () => {
   it("undo rows read as 'Undid: …'", () => {
     expect(auditLabelWithUndo("undo.member.update")).toBe("Undid: Updated a member's details");
     expect(auditLabelWithUndo("member.update")).toBe("Updated a member's details");
+  });
+});
+
+describe("T6b: class lifecycle rows are named, not 'Fields: isActive'", () => {
+  it("names Pause, Resume and Restore from metadata.lifecycle", () => {
+    expect(auditEntryLabel("class.updated", { fields: ["isActive"], lifecycle: "paused" })).toBe("Paused a class");
+    expect(auditEntryLabel("class.updated", { fields: ["isActive"], lifecycle: "resumed" })).toBe("Resumed a class");
+    expect(auditEntryLabel("class.updated", { fields: ["isActive"], lifecycle: "restored" })).toBe("Restored a class");
+  });
+
+  it("names the undo of one, and falls back for every other row", () => {
+    expect(auditEntryLabel("undo.class.updated", { undoneLifecycle: "paused" })).toBe("Undid: Paused a class");
+    expect(auditEntryLabel("class.updated", { fields: ["name"] })).toBe("Updated a class");
+    expect(auditEntryLabel("class.updated", null)).toBe("Updated a class");
+    expect(auditEntryLabel("class.updated", { lifecycle: "deleted" })).toBe("Updated a class");
+    expect(auditEntryLabel("undo.member.update", {})).toBe("Undid: Updated a member's details");
+  });
+
+  it("classLifecycleOf reads only known markers", () => {
+    expect(classLifecycleOf({ lifecycle: "paused" })).toBe("paused");
+    expect(classLifecycleOf({ lifecycle: "other" })).toBeNull();
+    expect(classLifecycleOf(null)).toBeNull();
+    expect(classLifecycleOf([])).toBeNull();
   });
 });

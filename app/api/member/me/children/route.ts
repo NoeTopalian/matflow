@@ -3,6 +3,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
+import { liveClassWhere } from "@/lib/class-live";
 
 // F4 — parent-mode timetable.
 //
@@ -134,9 +135,13 @@ export async function GET(req: Request) {
       }
 
       const instances = await tx.classInstance.findMany({
+        // T6b: a paused or archived class's minted sessions are off the
+        // parent's view; cancelled sessions stay (the view flags them).
         where: {
           classId: { in: Array.from(allClassIds) },
           date: { gte: windowStart, lt: windowEnd },
+          sourceImportJobId: null,
+          class: liveClassWhere(session.user.tenantId),
         },
         select: {
           id: true,

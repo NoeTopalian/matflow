@@ -319,6 +319,86 @@ describe("Stripe webhook: invoice.payment_succeeded convergence", () => {
     }));
   });
 
+  it("stores the invoice line's paid period on the member as the authoritative billing period (owner scope, 21 Oct 2026)", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-inv-period",
+      type: "invoice.payment_succeeded",
+      account: "acct_test",
+      data: {
+        object: {
+          id: "in_p", customer: "cus_x", amount_paid: 5000, currency: "gbp",
+          lines: { data: [{ period: { start: 1_792_800_000, end: 1_795_219_200 } }] },
+        },
+      },
+    });
+    invoicesRetrieveMock.mockResolvedValue({ id: "in_p", payments: { data: [] } });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "mem-1" }, data: { paymentStatus: "paid" } }));
+    // A later-STARTING period only: a retried older invoice cannot move the
+    // period backwards, while an anchor reset to a shorter later period still
+    // wins (review round 4, M-2).
+    expect(mockMemberUpdateMany).toHaveBeenCalledWith({
+      where: { id: "mem-1", OR: [{ billingPeriodStart: null }, { billingPeriodStart: { lt: new Date(1_792_800_000 * 1000) } }] },
+      data: { billingPeriodStart: new Date(1_792_800_000 * 1000), billingPeriodEnd: new Date(1_795_219_200 * 1000) },
+    });
+  });
+
+  it("a mid-cycle plan change: the proration line is skipped and the subscription item's full period is stored (review round 3, M-6)", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-inv-proration",
+      type: "invoice.payment_succeeded",
+      account: "acct_test",
+      data: {
+        object: {
+          id: "in_pr", customer: "cus_x", amount_paid: 1234, currency: "gbp",
+          lines: { data: [
+            { period: { start: 1_793_500_000, end: 1_795_219_200 }, parent: { type: "subscription_item_details", subscription_item_details: { proration: true } } },
+            { period: { start: 1_792_800_000, end: 1_795_219_200 }, parent: { type: "subscription_item_details", subscription_item_details: { proration: false } } },
+          ] },
+        },
+      },
+    });
+    invoicesRetrieveMock.mockResolvedValue({ id: "in_pr", payments: { data: [] } });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockMemberUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { billingPeriodStart: new Date(1_792_800_000 * 1000), billingPeriodEnd: new Date(1_795_219_200 * 1000) },
+    }));
+  });
+
+  it("an invoice with several lines and no parent information stores no period (it cannot tell which is the subscription)", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-inv-multi",
+      type: "invoice.payment_succeeded",
+      account: "acct_test",
+      data: { object: { id: "in_m", customer: "cus_x", amount_paid: 1234, currency: "gbp", lines: { data: [{ period: { start: 1, end: 2 } }, { period: { start: 3, end: 4 } }] } } },
+    });
+    invoicesRetrieveMock.mockResolvedValue({ id: "in_m", payments: { data: [] } });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockMemberUpdateMany).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ billingPeriodStart: expect.anything() }) }));
+  });
+
+  it("an invoice without a line period leaves the member's billing period alone", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-inv-noperiod",
+      type: "invoice.payment_succeeded",
+      account: "acct_test",
+      data: { object: { id: "in_q", customer: "cus_x", amount_paid: 5000, currency: "gbp" } },
+    });
+    invoicesRetrieveMock.mockResolvedValue({ id: "in_q", payments: { data: [] } });
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(mockMemberUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { paymentStatus: "paid" } }));
+  });
+
   it("falls back to keying on the invoice id when the resolver finds no payment", async () => {
     constructEventMock.mockReturnValue({
       id: "evt-inv-nopi",
@@ -831,6 +911,27 @@ describe("Stripe webhook: charge.dispute.* sync", () => {
       action: "stripe.dispute.lost",
       metadata: expect.objectContaining({ stripeDisputeId: "di_x", status: "lost" }),
     }));
+  });
+
+  it("T7 lock order: a lost dispute writes the Member row BEFORE it voids the pack (Member, then pack, as the check-in)", async () => {
+    constructEventMock.mockReturnValue(
+      disputeEvent({ charge: "ch_x", customer: "cus_x", status: "lost", payment_intent: "pi_x" }),
+    );
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-1", tenantId: "tenant-A", memberId: "mem-1", stripePaymentIntentId: "pi_x" } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({
+      id: "pack-d", tenantId: "tenant-A", status: "active", creditsRemaining: 3, memberId: "mem-1",
+    } as never);
+    const memberUpdate = vi.mocked(prisma.member.update);
+    const packUpdate = vi.mocked(prisma.memberClassPack.update);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(memberUpdate).toHaveBeenCalledWith({ where: { id: "mem-1" }, data: { paymentStatus: "overdue" } });
+    expect(packUpdate).toHaveBeenCalledWith({ where: { id: "pack-d" }, data: { status: "refunded", creditsRemaining: 0 } });
+    const memberAt = memberUpdate.mock.invocationCallOrder[memberUpdate.mock.calls.length - 1];
+    const packAt = packUpdate.mock.invocationCallOrder[0];
+    expect(memberAt).toBeLessThan(packAt);
   });
 });
 
