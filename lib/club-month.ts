@@ -19,6 +19,7 @@
  * components may import `inMonthWindow`.
  */
 import { DEFAULT_TIMEZONE, usableTimezone, zoneOffsetMs } from "@/lib/class-time";
+import { formatMonthYear } from "@/lib/date";
 
 /**
  * Start of a calendar month in `timeZone`, as a UTC instant.
@@ -84,7 +85,7 @@ function windowFor(year: number, month: number, timeZone: string): ClubMonthWind
     nextMonthStart: next.toISOString(),
     monthKey: `${year}-${String(month).padStart(2, "0")}`,
     // Mid-month at noon UTC names the month in any zone.
-    label: new Date(Date.UTC(year, month - 1, 15, 12)).toLocaleString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }),
+    label: formatMonthYear(new Date(Date.UTC(year, month - 1, 15, 12))),
   };
 }
 
