@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { parseTime, usableTimezone, zoneOffsetMs } from "./class-time";
+import { clubMonthKey } from "./club-month";
 import { recordStatusEventsBulk, type RecordStatusEventInput } from "./member-status";
 
 type TxClient = Prisma.TransactionClient;
@@ -140,10 +141,9 @@ export function clubDayIndex(at: Date, timeZone: string): number {
   return Math.floor(localMs(at, timeZone) / DAY_MS);
 }
 
-/** "YYYY-MM" of an instant in the club's timezone. */
-export function clubMonthKey(at: Date, timeZone: string): string {
-  return new Date(localMs(at, timeZone)).toISOString().slice(0, 7);
-}
+// "YYYY-MM" of an instant in the club's timezone: the Reports month rule, one
+// copy only (review F4, 23 Oct 2026). Re-exported for the back-fill's callers.
+export { clubMonthKey };
 
 // ── Pure derivation ──────────────────────────────────────────────────────────
 
