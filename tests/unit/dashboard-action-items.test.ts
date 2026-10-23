@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildActionItems, daysUntilBirthday, type ActionItemsInput } from "@/lib/dashboard-action-items";
+import { atRiskMemberWhere, birthdayCandidateWhere, buildActionItems, daysUntilBirthday, type ActionItemsInput } from "@/lib/dashboard-action-items";
 
 const NOW = new Date("2026-06-29T12:00:00Z");
 
@@ -87,5 +87,21 @@ describe("daysUntilBirthday", () => {
   it("is 0 on the birthday and wraps to next year after it passes", () => {
     expect(daysUntilBirthday(NOW, new Date("1990-06-29"))).toBe(0);
     expect(daysUntilBirthday(NOW, new Date("1990-06-28"))).toBe(364); // already passed → next year
+  });
+});
+
+describe("guardian accounts are not training members (review L1)", () => {
+  it("atRiskMemberWhere excludes guardian accounts", () => {
+    const where = atRiskMemberWhere("tenant-A", NOW);
+    expect(where.tenantId).toBe("tenant-A");
+    expect(where.accountType).toEqual({ not: "parent" });
+  });
+
+  it("birthdayCandidateWhere excludes guardian accounts and keeps active/taster", () => {
+    const where = birthdayCandidateWhere("tenant-A");
+    expect(where.tenantId).toBe("tenant-A");
+    expect(where.accountType).toEqual({ not: "parent" });
+    expect(where.status).toEqual({ in: ["active", "taster"] });
+    expect(where.dateOfBirth).toEqual({ not: null });
   });
 });

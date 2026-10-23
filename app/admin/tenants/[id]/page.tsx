@@ -13,6 +13,7 @@ import LoginEmailCard from "./LoginEmailCard";
 import OwnerProfileCard from "./OwnerProfileCard";
 import { softDeleteCutoff } from "@/lib/tenant-lifecycle";
 import { emailDeliveryMode } from "@/lib/email-delivery";
+import { ACTIVE_MEMBER, POPULATION_COPY } from "@/lib/member-population";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,7 +49,8 @@ export default async function AdminTenantDetailPage({
           select: { id: true, email: true, name: true, totpEnabled: true, lockedUntil: true, loginEmailProvisionalSince: true },
           orderBy: { createdAt: "asc" },
         },
-        _count: { select: { members: true, classes: true } },
+        // Same population as the club's own "Active members" tile (T1).
+        _count: { select: { members: { where: { ...ACTIVE_MEMBER } }, classes: true } },
       },
     }),
   );
@@ -113,7 +115,7 @@ export default async function AdminTenantDetailPage({
         <div style={{ ...card, marginTop: 16 }}>
           <h2 style={cardTitle}>Snapshot</h2>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, fontSize: 13 }}>
-            <Stat label="Members" value={String(tenant._count.members)} />
+            <Stat label={POPULATION_COPY.active.label} value={String(tenant._count.members)} />
             <Stat label="Classes" value={String(tenant._count.classes)} />
             <Stat label="Status" value={isDeleted ? "deleted" : tenant.subscriptionStatus} />
             <Stat label="Tier" value={tenant.subscriptionTier} />

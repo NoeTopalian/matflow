@@ -62,6 +62,15 @@ export function parseClassLimit(raw: string): ClassLimitInput {
   return n >= 1 && n <= 30 ? { kind: "value", value: n } : { kind: "invalid" };
 }
 
+/**
+ * A plan's description as typed (T7a-2, 17 Oct 2026): trimmed, and blank —
+ * including whitespace only — means "no description" (null).
+ */
+export function normaliseDescription(raw: string): string | null {
+  const s = raw.trim();
+  return s === "" ? null : s;
+}
+
 /** Chip surfaces derived from tokens, so they stay legible on the light shell. */
 const CHIP = {
   kids: {
@@ -105,6 +114,9 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
   // sends the limit only when the owner changed it from this value, so an
   // unrelated edit cannot overwrite a limit another session has since set.
   const [loadedLimit, setLoadedLimit] = useState<number | null>(null);
+  // T7a-2: the description this edit form was opened with, normalised the same
+  // way a save normalises it (trimmed; blank = null). Same rule as the limit.
+  const [loadedDescription, setLoadedDescription] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // ADR-001 D2 slice 2: the venue picker appears only once the club has more
   // than one venue; a failed read is said, not shown as "one venue".
@@ -141,6 +153,7 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
   function openEdit(tier: MembershipTierRow) {
     setEditingId(tier.id);
     setLoadedLimit(tier.maxClassesPerWeek ?? null);
+    setLoadedDescription(normaliseDescription(tier.description ?? ""));
     setForm({
       name: tier.name,
       description: tier.description ?? "",
@@ -183,12 +196,21 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
     const maxClassesPerWeek = editingId
       ? (nextLimit === loadedLimit ? undefined : nextLimit)
       : (nextLimit ?? undefined);
+    // T7a-2: the description follows the same rule. Edit: a cleared field is
+    // sent as an explicit null (it used to be `undefined`, which JSON drops,
+    // so the old text survived a "successful" save); unchanged, the key is
+    // left out. Create: blank omits the key, since the create route takes no
+    // null and stores null when the key is absent.
+    const nextDescription = normaliseDescription(form.description);
+    const description = editingId
+      ? (nextDescription === loadedDescription ? undefined : nextDescription)
+      : (nextDescription ?? undefined);
 
     setSaving(true);
     try {
       const body = {
         name: form.name.trim(),
-        description: form.description.trim() || undefined,
+        description,
         pricePence,
         currency: form.currency,
         billingCycle: form.billingCycle,

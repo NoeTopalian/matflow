@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
+import { formatRatio, wholePct } from "@/components/dashboard/reports-primitives";
+import { percent } from "@/lib/percent";
 
 export type DonutSlice = {
   label: string;
@@ -109,12 +111,17 @@ export default function DonutChart({
   );
 }
 
-export function DonutLegend({ data }: { data: DonutSlice[] }) {
+/**
+ * `showCounts` (owner decision Q6, 17 Oct 2026): each share reads
+ * "x% (n of m)" over the slices shown, so the base of every percentage is on
+ * screen. Without it the legend keeps the older "count (x%)" form.
+ */
+export function DonutLegend({ data, showCounts = false }: { data: DonutSlice[]; showCounts?: boolean }) {
   const total = data.reduce((s, d) => s + d.value, 0);
   return (
     <ul className="w-full min-w-0 space-y-2">
       {data.map((d) => {
-        const pct = total > 0 ? Math.round((d.value / total) * 100) : 0;
+        const pct = total > 0 ? percent(d.value, total) : 0;
         return (
           <li key={d.label} className="flex items-center justify-between gap-3 text-sm">
             <span className="flex items-center gap-2 min-w-0">
@@ -122,7 +129,13 @@ export function DonutLegend({ data }: { data: DonutSlice[] }) {
               <span className="truncate" style={{ color: "var(--tx-2)" }}>{d.label}</span>
             </span>
             <span className="shrink-0 tabular-nums" style={{ color: "var(--tx-3)" }}>
-              {d.value} <span className="ml-1 text-xs">({pct}%)</span>
+              {showCounts ? (
+                <span data-testid="donut-legend-ratio">{formatRatio(wholePct(d.value, total), d.value, total)}</span>
+              ) : (
+                <>
+                  {d.value} <span className="ml-1 text-xs">({pct}%)</span>
+                </>
+              )}
             </span>
           </li>
         );

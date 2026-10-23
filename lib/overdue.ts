@@ -26,6 +26,7 @@
  */
 
 import { cycleDays, cycleMonths } from "@/lib/billing-cycle";
+import { CHASEABLE_PAYER } from "@/lib/member-population";
 
 /**
  * Statuses that mean "this member is not being charged right now", and so must
@@ -72,6 +73,32 @@ export function overdueClause(now: Date) {
 }
 
 /**
+ * NOT overdue, as a Prisma where — the exact complement of overdueClause /
+ * isOverdue, written positively.
+ *
+ * Do not write `NOT: { OR: overdueClause(now) }` instead. Postgres evaluates
+ * `"nextDueAt" < $1` on a NULL due date as UNKNOWN, `NOT (unknown)` is still
+ * UNKNOWN, and the row drops out — so every paid member with no due date would
+ * vanish from a "Paid" count. Each branch here is NULL-safe.
+ */
+export function notOverdueWhere(now: Date) {
+  return {
+    AND: [
+      { paymentStatus: { not: "overdue" } },
+      {
+        OR: [
+          { paymentStatus: { in: [...NOT_CHASEABLE] } },
+          { billedBy: "teamup" },
+          { stripeSubscriptionId: { not: null } },
+          { nextDueAt: null },
+          { nextDueAt: { gte: now } },
+        ],
+      },
+    ],
+  };
+}
+
+/**
  * "No payment yet" (decision 1, 30 Sep 2026): a member on a plan whom nobody
  * has ever recorded a payment for. MatFlow-billed only — TeamUp's members are
  * TeamUp's to chase. This is the Payments → Outstanding list's definition;
@@ -92,6 +119,115 @@ export function noPaymentYetWhere() {
  */
 export function owesMoneyClause(now: Date) {
   return [...overdueClause(now), noPaymentYetWhere()];
+}
+
+/** The null-safe complement of noPaymentYetWhere (membershipTierId is nullable). */
+function notNoPaymentYetWhere() {
+  return { OR: [{ paymentStatus: { not: "pending" } }, { membershipTierId: null }, { billedBy: "teamup" }] };
+}
+
+/**
+ * PAYERS OVERDUE (review L2, 23 Oct 2026) — the one definition Reports, the
+ * Members "Payers overdue" tile and chip, and Payments → Outstanding share.
+ * Spread beside an explicit `tenantId`.
+ *
+ * - Payers, not members: any account type, guardians included, status active
+ *   or taster (CHASEABLE_PAYER in lib/member-population.ts).
+ * - Overdue by Stripe or by a passed due date (overdueClause).
+ * - Minus "No payment yet": a plan nobody has paid for whose seeded due date
+ *   has also passed is shown as "No payment yet", as Outstanding has done
+ *   since decision 1 (30 Sep 2026). So overdue and "No payment yet" never
+ *   overlap, and the two together are exactly the Outstanding list.
+ */
+export function overduePayerWhere(now: Date) {
+  return {
+    ...CHASEABLE_PAYER,
+    AND: [{ OR: overdueClause(now) }, notNoPaymentYetWhere()],
+  };
+}
+
+/**
+ * OTHER ACCOUNTS OWING (owner direction D9, Noe 23 Oct 2026).
+ *
+ * "Payers overdue" counts only accounts the club chases — active and taster.
+ * An account set inactive, or one that has left, can still owe: a Stripe
+ * charge that failed after the member was set inactive, or a subscription
+ * Stripe cancelled after its last charge failed. Those debts were in no total
+ * anywhere. They are not chased and never join a member total; they are
+ * counted beside the payers under their own label so the debt stays visible.
+ *
+ * The evidence must be a GENUINE debt, never a stale date:
+ * - the account's latest settled payment (succeeded or failed) is a failed
+ *   charge — a later successful payment clears it; or
+ * - the stored payment status is "overdue" (Stripe said so, or staff marked
+ *   it) — the same signal overdueClause trusts for payers.
+ * A passed `nextDueAt` alone does NOT count here: an inactive or cancelled
+ * member's due date is not advanced by anything, so deriving a debt from it
+ * would invent one (the NOT_CHASEABLE reasoning above).
+ *
+ * Any account type, guardians included, as for payers.
+ */
+export const OTHER_OWING_STATUSES = ["inactive", "cancelled"] as const;
+
+/**
+ * The candidates for "other accounts owing", as a Prisma where. A superset:
+ * the "latest settled payment" rule cannot be written as a where, so callers
+ * load these with their latest settled payment and keep the rows
+ * `otherOwingEvidence` accepts (lib/other-accounts-owing.ts does both). Use as
+ * the single top-level `OR`, like overdueClause; spread beside `tenantId`.
+ */
+export function otherOwingCandidateWhere() {
+  return {
+    status: { in: [...OTHER_OWING_STATUSES] },
+    OR: [{ paymentStatus: "overdue" }, { payments: { some: { status: "failed" } } }],
+  };
+}
+
+/** A payment as the owing rules read it. Only "succeeded" and "failed" are settled. */
+export type SettledPaymentInput = {
+  status: string;
+  createdAt: Date;
+  amountPence?: number | null;
+  failureReason?: string | null;
+};
+
+/** The newest succeeded-or-failed payment, whatever order the rows arrive in. */
+export function latestSettledPayment<T extends SettledPaymentInput>(payments: readonly T[]): T | null {
+  let latest: T | null = null;
+  for (const p of payments) {
+    if (p.status !== "succeeded" && p.status !== "failed") continue;
+    if (!latest || p.createdAt.getTime() > latest.createdAt.getTime()) latest = p;
+  }
+  return latest;
+}
+
+export type OtherOwingEvidence =
+  | { kind: "failed_charge"; at: Date; amountPence: number | null; reason: string | null }
+  | { kind: "marked_overdue" };
+
+/** Why an inactive or cancelled account still owes, or null when it does not (see OTHER_OWING_STATUSES). */
+export function otherOwingEvidence(m: {
+  status: string;
+  paymentStatus: string;
+  payments?: readonly SettledPaymentInput[] | null;
+}): OtherOwingEvidence | null {
+  if (!(OTHER_OWING_STATUSES as readonly string[]).includes(m.status)) return null;
+  const latest = latestSettledPayment(m.payments ?? []);
+  if (latest?.status === "failed") {
+    return { kind: "failed_charge", at: latest.createdAt, amountPence: latest.amountPence ?? null, reason: latest.failureReason ?? null };
+  }
+  if (m.paymentStatus === "overdue") return { kind: "marked_overdue" };
+  return null;
+}
+
+/** Payers on a plan with nothing ever recorded (the Outstanding "No payment yet" rows). Spread beside `tenantId`. */
+export function noPaymentYetPayerWhere() {
+  return { ...CHASEABLE_PAYER, ...noPaymentYetWhere() };
+}
+
+/** noPaymentYetWhere for a member already in memory. */
+export function isNoPaymentYet(member: { paymentStatus: string; membershipTierId?: string | null; billedBy?: string | null }): boolean {
+  return member.paymentStatus === "pending" && !!member.membershipTierId && member.billedBy !== "teamup";
 }
 
 /**
@@ -120,13 +256,88 @@ export function isOverdue(
  * "paid" in the row, so every list and profile must derive it the same way the
  * dashboard and Outstanding tab do (verifier lane 4, 30 Sep 2026: the Members
  * list said "Paid" for someone the dashboard said was overdue).
+ *
+ * A plan nobody has paid for stays "pending" ("No payment yet") even once its
+ * seeded due date passes — the Outstanding list's rule (decision 1, 30 Sep
+ * 2026), so the Members list, Reports and Outstanding name one member one way
+ * (review L2). Pass `membershipTierId`: without it "No payment yet" cannot be
+ * told from overdue, and the member reads as overdue (the old behaviour).
  */
 export function shownPaymentStatus(
-  member: { paymentStatus: string; nextDueAt: Date | null; stripeSubscriptionId?: string | null; billedBy?: string | null },
+  member: { paymentStatus: string; nextDueAt: Date | null; stripeSubscriptionId?: string | null; billedBy?: string | null; membershipTierId?: string | null },
   now: Date,
 ): string {
-  return isOverdue(member, now) ? "overdue" : member.paymentStatus;
+  return isOverdue(member, now) && !isNoPaymentYet(member) ? "overdue" : member.paymentStatus;
 }
+
+/**
+ * THE EVIDENCE BEHIND "NOT PAID" (owner direction D10, Noe 23 Oct 2026).
+ *
+ * The self check-in door refuses a member on a plan who is behind (lib/checkin
+ * hasDeskMembership), and that ACCESS rule is unchanged. What changes is that
+ * the refusal and the Members badge now say WHICH evidence applies, because
+ * "never paid" and "did not pay" are different conversations at the desk:
+ *
+ * - no_payment_recorded: on a plan, nothing ever recorded ("No payment yet"),
+ *   and the first payment date seeded with the plan has passed;
+ * - payment_failed: the latest settled payment is a failed charge (a declined
+ *   first charge included);
+ * - payment_outstanding: a due date passed with a payment history, or the
+ *   account is marked overdue with no failed charge on record.
+ *
+ * Returns null when the member is not behind by the existing rules
+ * (isOverdue, or a stored "overdue"). `lastSettled` is the member's newest
+ * succeeded-or-failed payment, when the caller has it.
+ */
+export type PaymentEvidence =
+  | { kind: "no_payment_recorded"; firstDueAt: Date | null }
+  | { kind: "payment_failed"; failedAt: Date }
+  | { kind: "payment_outstanding"; dueAt: Date | null };
+
+export function paymentEvidence(
+  member: { paymentStatus: string; nextDueAt: Date | null; stripeSubscriptionId?: string | null; billedBy?: string | null; membershipTierId?: string | null },
+  now: Date,
+  lastSettled?: { status: string; createdAt: Date } | null,
+): PaymentEvidence | null {
+  if (!isOverdue(member, now)) return null;
+  if (lastSettled?.status === "failed") return { kind: "payment_failed", failedAt: lastSettled.createdAt };
+  // A date MatFlow does not maintain is not quoted: Stripe owns a subscribed
+  // member's schedule and TeamUp a TeamUp-billed one (see overdueClause).
+  const ownDate = member.stripeSubscriptionId || member.billedBy === "teamup" ? null : member.nextDueAt;
+  if (isNoPaymentYet(member)) return { kind: "no_payment_recorded", firstDueAt: ownDate };
+  return { kind: "payment_outstanding", dueAt: ownDate };
+}
+
+/**
+ * "3 Oct". Due dates are UTC wall-clock dates (see addMonthsClamped), so they
+ * are read in UTC; a failed charge is an instant, read in the club's zone.
+ */
+function dayMonth(d: Date, timeZone: string): string {
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone });
+}
+
+/** The sentence every surface uses for a PaymentEvidence — the door refusal, the Members badge title. */
+export function paymentEvidenceSentence(e: PaymentEvidence, clubTimeZone: string = "Europe/London"): string {
+  switch (e.kind) {
+    case "no_payment_recorded":
+      return e.firstDueAt
+        ? `No payment has been recorded for this membership and its first payment date (${dayMonth(e.firstDueAt, "UTC")}) has passed.`
+        : "No payment has been recorded for this membership and its first payment date has passed.";
+    case "payment_failed":
+      return `A payment failed on ${dayMonth(e.failedAt, clubTimeZone)}.`;
+    case "payment_outstanding":
+      return e.dueAt
+        ? `The payment due on ${dayMonth(e.dueAt, "UTC")} is outstanding.`
+        : "A payment on this membership is outstanding.";
+  }
+}
+
+/** The short badge label for each kind (Members list). */
+export const PAYMENT_EVIDENCE_LABEL: Record<PaymentEvidence["kind"], string> = {
+  no_payment_recorded: "No payment recorded",
+  payment_failed: "Payment failed",
+  payment_outstanding: "Payment outstanding",
+};
 
 /**
  * Advance a due date to the next one in the future.
