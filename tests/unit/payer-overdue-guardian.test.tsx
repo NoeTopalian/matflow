@@ -292,4 +292,38 @@ describe("a never-paid member with a failed first charge is No payment yet on ev
     expect(countMemberRows([row], NOW, MONTH).overdue).toBe(0);
     expect(inStatusView(row, "overdue")).toBe(false);
   });
+
+  // Round-4 review L1: Outstanding is the only place a failed charge can be
+  // chased (the one caller of /api/payments/chase). A declined FIRST charge
+  // is a No-payment-yet row since M1, and must still offer Chase; a plain
+  // No-payment-yet row (nothing has failed) must not.
+  async function renderOutstanding(withFailedCharge: boolean) {
+    const rows = buildOutstandingRows({
+      now: NOW,
+      overdueMembers: [],
+      latestFailed: withFailedCharge
+        ? new Map([["f1", { amountPence: 4500, createdAt: FAILED_AT, failureReason: "card_declined" }]])
+        : new Map(),
+      noPaymentYetMembers: [{ id: "f1", name: "Fay Failed", membershipType: "Plan", planPricePence: 5000, billedBy: "matflow", accountType: "adult" }],
+    });
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ rows, total: rows.length, totalPence: 0 }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    ) as unknown as typeof fetch;
+    const view = render(<OutstandingPanel />);
+    await screen.findByText("Fay Failed");
+    return view;
+  }
+
+  it("Outstanding, rendered: the declined first charge offers Chase and shows the failure reason", async () => {
+    await renderOutstanding(true);
+    expect(screen.getAllByRole("button", { name: /Chase/ })).toHaveLength(1);
+    expect(screen.getByText(/card_declined/)).toBeTruthy();
+    expect(screen.getByText("No payment yet")).toBeTruthy();
+  });
+
+  it("Outstanding, rendered: a plain No-payment-yet row (nothing failed) offers no Chase", async () => {
+    await renderOutstanding(false);
+    expect(screen.queryAllByRole("button", { name: /Chase/ })).toHaveLength(0);
+    expect(screen.getAllByRole("button", { name: /Record/ })).toHaveLength(1);
+  });
 });
