@@ -38,6 +38,7 @@ import { MEMBER_LIST_COUNT_KEYS, countMemberRows } from "@/lib/member-list-count
 import { clubMonthWindow } from "@/lib/club-month";
 import { shownPaymentStatus } from "@/lib/overdue";
 import { getReportsData } from "@/lib/reports";
+import { loadMonthMovers } from "@/lib/membership-report";
 import { classifyDbTarget, assertTestBranch, skipReason } from "./helpers/db-target";
 
 const TARGET = classifyDbTarget(process.env.DATABASE_URL);
@@ -311,7 +312,12 @@ describe.skipIf(!HAS_DB)(`L5 Members totals above the ${CAP}-row cap on TEST${SK
     expect(reports.summary.tasterMembers).toBe(server.taster);
     expect(reports.summary.cancelledMembers).toBe(server.cancelled);
     expect(reports.summary.activeOnHoldMembers).toBe(server.activeOnHold);
-    expect(reports.summary.newMembersThisMonth).toBe(server.newThisMonth);
+    // D11: "New this month" is the movement definition (first ever start),
+    // and the Members new-this-month drill-through lists the same members.
+    const movers = await withTenantContext(capIds.C, (tx) =>
+      loadMonthMovers(tx, capIds.C, new Date(), { start: new Date(month.monthStart), at: new Date() }),
+    );
+    expect(reports.summary.newMembersThisMonth).toBe(movers.new.length);
     expect(reports.churn.cancelled).toBe(server.churnedThisMonth);
     // Review L2: overdue is a PAYER total on both screens, guardians who pay
     // included (the fixture has active parent accounts marked overdue).

@@ -38,7 +38,7 @@ vi.mock("recharts", () => {
 function report(overrides: Partial<MembershipReport> = {}): MembershipReport {
   const base = emptyMembershipReport();
   const mv = (month: string, label: string, n: number, r: number, lc: number, lp: number, basis: "recorded" | "estimated" | "mixed", current = false) => ({
-    month, label, new: n, rejoined: r, lostCancelled: lc, lostCompleted: lp, lost: lc + lp, net: n + r - lc - lp, imported: 0, otherIn: 0, otherOut: 0, basis, isCurrentMonth: current,
+    month, label, new: n, rejoined: r, lostCancelled: lc, lostCompleted: lp, lost: lc + lp, net: n + r - lc - lp, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0, basis, isCurrentMonth: current,
   });
   const hc = (month: string, label: string, headcount: number, basis: "recorded" | "estimated" | "mixed", current = false) => ({
     month, label, headcount, basis, isCurrentMonth: current, at: `${month}-28T00:00:00.000Z`,
@@ -58,7 +58,7 @@ function report(overrides: Partial<MembershipReport> = {}): MembershipReport {
       hc("2026-09", "Sep 26", 39, "estimated"),
       hc("2026-10", "Oct 26", 41, "recorded", true),
     ],
-    totals: { new: 8, rejoined: 1, lostCancelled: 5, lostCompleted: 1, lost: 6, net: 3, imported: 0, otherIn: 0, otherOut: 0 },
+    totals: { new: 8, rejoined: 1, lostCancelled: 5, lostCompleted: 1, lost: 6, net: 3, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0 },
     historySource: "backfill",
     ...overrides,
   };
@@ -103,9 +103,9 @@ describe("NetNewMembersCard", () => {
     render(<NetNewMembersCard membership={report()} />);
     const tally = screen.getByTestId("net-new-tally").textContent ?? "";
     expect(tally).toContain("Aug 26 – Oct 26");
-    expect(tally).toMatch(/8 new · 1 rejoined · 6 lost \(5 cancelled, 1 completed course\) · net \+3/);
+    expect(tally).toMatch(/8 new · 1 rejoined · 6 left \(5 cancelled, 1 completed course\) · net \+3 · 0 tasters added/);
     expect(tally).toContain("41 active members today");
-    expect(screen.getByTestId("net-new-definition").textContent).toMatch(/New: first ever start\. Rejoined: started again after leaving\. Lost: cancelled, or finished a prepaid course\. Net = new \+ rejoined − lost\./);
+    expect(screen.getByTestId("net-new-definition").textContent).toMatch(/New: first ever start\. Rejoined: started again after leaving\. Joined = new \+ rejoined\. Left: cancelled, or finished a prepaid course\. Net = new \+ rejoined − left\. Tasters added are counted apart, and imports are never joins\./);
   });
 
   it("marks months before the first recorded event as estimated from TeamUp history, and carries the deletion caveat", () => {
@@ -195,7 +195,7 @@ describe("NetNewMembersCard", () => {
     render(
       <NetNewMembersCard
         membership={report({
-          totals: { new: 8, rejoined: 1, lostCancelled: 5, lostCompleted: 1, lost: 6, net: 3, imported: 120, otherIn: 1, otherOut: 2 },
+          totals: { new: 8, rejoined: 1, lostCancelled: 5, lostCompleted: 1, lost: 6, net: 3, imported: 120, otherIn: 1, otherOut: 2, tasterAdded: 0 },
           reconciled: 3,
           undatedHistory: 4,
         })}

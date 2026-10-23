@@ -35,10 +35,11 @@ function member(overrides: Partial<MemberRow> & { id: string; name: string }): M
 
 const CLUB: MemberRow[] = [
   member({ id: "a1", name: "Ava Active" }),
-  member({ id: "a2", name: "Ben Active", joinedAt: thisMonth }),
+  // D11: `moved` is the server's movement flag for this month (lib/membership-report loadMonthMovers).
+  member({ id: "a2", name: "Ben Active", joinedAt: thisMonth, moved: ["new"] }),
   member({ id: "i1", name: "Ivy Inactive", status: "inactive" }),
-  member({ id: "t1", name: "Tom Taster", status: "taster", joinedAt: thisMonth }),
-  member({ id: "c1", name: "Cy Cancelled", status: "cancelled", joinedAt: thisMonth, cancelledAt: thisMonth }),
+  member({ id: "t1", name: "Tom Taster", status: "taster", joinedAt: thisMonth, moved: ["tasterAdded"] }),
+  member({ id: "c1", name: "Cy Cancelled", status: "cancelled", joinedAt: thisMonth, cancelledAt: thisMonth, moved: ["new", "lost"] }),
   member({ id: "c2", name: "Di Cancelled", status: "cancelled", cancelledAt: lastMonth }),
   member({ id: "g1", name: "Gus Guardian", accountType: "parent" }),
 ];
@@ -131,11 +132,21 @@ describe("Reports drill-through slices name themselves", () => {
     expect(screen.getByTestId("members-tile-headline").querySelector("p")!.textContent).toBe("1");
   });
 
-  it("new-this-month: the header counts joiners, tasters and since-cancelled included", () => {
+  it("new-this-month (D11): the header counts first starts by the movement definition, since-cancelled included, tasters apart", () => {
     currentSearch = "filter=new-this-month";
     render(<MembersList members={CLUB} primaryColor="#3b82f6" role="owner" />);
-    expect(headline()).toBe("3 joined this month");
-    expect(scope()).toContain("including tasters and any since cancelled");
-    for (const name of ["Ben Active", "Tom Taster", "Cy Cancelled"]) expect(shown(name)).toBe(true);
+    expect(headline()).toBe("2 new this month");
+    expect(scope()).toContain("first ever start");
+    expect(scope()).toContain("including any since cancelled");
+    for (const name of ["Ben Active", "Cy Cancelled"]) expect(shown(name)).toBe(true);
+    expect(shown("Tom Taster")).toBe(false);
+  });
+
+  it("tasters-this-month (D11): the taster added is listed on its own", () => {
+    currentSearch = "filter=tasters-this-month";
+    render(<MembersList members={CLUB} primaryColor="#3b82f6" role="owner" />);
+    expect(headline()).toBe("1 tasters added this month");
+    expect(shown("Tom Taster")).toBe(true);
+    expect(shown("Ben Active")).toBe(false);
   });
 });

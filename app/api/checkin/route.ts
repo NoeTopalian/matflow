@@ -264,18 +264,21 @@ export async function POST(req: Request) {
       // pay-at-desk club sells no packs online), so that one refusal reads the
       // club's payment rail. A failed lookup falls back to the general
       // sentence — it is copy, not a rule.
+      // D10: the club's zone dates a failed charge in the payment refusal.
       let paymentRail: string | null = null;
+      let timeZone: string | null = null;
       if (result.kind === "no_coverage") {
         try {
           const club = await withTenantContext(tenantId, (tx) =>
-            tx.tenant.findUnique({ where: { id: tenantId }, select: { paymentRail: true } }),
+            tx.tenant.findUnique({ where: { id: tenantId }, select: { paymentRail: true, timezone: true } }),
           );
           paymentRail = club?.paymentRail ?? null;
+          timeZone = club?.timezone ?? null;
         } catch {
           paymentRail = null;
         }
       }
-      const refusal = checkinRefusal(result, { paymentRail, memberName: childName });
+      const refusal = checkinRefusal(result, { paymentRail, memberName: childName, timeZone });
       if (refusal) return NextResponse.json(refusal.body, { status: refusal.status });
       return NextResponse.json({ error: "Unknown check-in result" }, { status: 500 });
     }

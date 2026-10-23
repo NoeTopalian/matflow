@@ -29,7 +29,7 @@ function month(
   const lc = t.lostCancelled ?? 0;
   const lp = t.lostCompleted ?? 0;
   return {
-    mv: { month: key, label, new: n, rejoined: r, lostCancelled: lc, lostCompleted: lp, lost: lc + lp, net: n + r - lc - lp, imported: 0, otherIn: 0, otherOut: 0, basis, isCurrentMonth: false },
+    mv: { month: key, label, new: n, rejoined: r, lostCancelled: lc, lostCompleted: lp, lost: lc + lp, net: n + r - lc - lp, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0, basis, isCurrentMonth: false },
     hc: { month: key, label, headcount: t.headcount, basis: headBasis, isCurrentMonth: false, at: `${key}-28T00:00:00.000Z` },
   };
 }

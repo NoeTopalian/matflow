@@ -55,7 +55,8 @@ describe("getReportsDataCached", () => {
     // v4 (review L4): `period`, the club-zone month window.
     // v5 (review L2): payer and guardian counts in paymentHealth.
     // v6 (T8c merged in): `membership`, movement and headcount by month.
-    expect(REPORTS_CACHE_VERSION).toBe("v6");
+    // v7 (D9 merged in): paymentHealth.otherOwingCount beside `membership`.
+    expect(REPORTS_CACHE_VERSION).toBe("v7");
     await getReportsDataCached("tenant-A");
     expect(calls[0].key[1]).toBe(REPORTS_CACHE_VERSION);
   });

@@ -123,7 +123,9 @@ describe("getReportsData — churn with its counts (T2b, Q6)", () => {
   it("9 active and 1 cancelled this month → 10% (1 of 10), with joined and net for the same month", async () => {
     setup(BASE);
     const data = await getReportsData("tenant-A");
-    expect(data.churn).toEqual({ ratePct: 10, cancelled: 1, base: 10, joined: 3, net: 2 });
+    // D11: joined and net are the movement figures (lib/membership-movement.ts)
+    // — this fixture has no status events, so 0 — never the joinedAt count (3).
+    expect(data.churn).toEqual({ ratePct: 10, cancelled: 1, base: 10, joined: 0, net: 0 });
     // The compatibility field keeps the same number for its numeric readers.
     expect(data.churnRate).toBe(10);
   });
@@ -142,10 +144,14 @@ describe("getReportsData — churn with its counts (T2b, Q6)", () => {
     expect(data.churnRate).toBe(0);
   });
 
-  it("net goes negative when more leave than join", async () => {
+  it("D11: net is the movement net, not joinedAt joiners minus cancelledAt cancellations", async () => {
+    // The old tile said 1 − 4 = −3 here from the two date columns. With no
+    // status events nobody joined or left by the movement definition (a
+    // negative movement net is pinned in tests/unit/membership-movement.test.ts).
     setup({ ...BASE, cancelledThisMonth: 4, joinedThisMonth: 1 });
     const data = await getReportsData("tenant-A");
-    expect(data.churn.net).toBe(-3);
+    expect(data.churn.net).toBe(0);
+    expect(data.churn.cancelled).toBe(4);
   });
 });
 

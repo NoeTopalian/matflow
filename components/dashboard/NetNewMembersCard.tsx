@@ -130,7 +130,7 @@ function NetNewTooltip({
             Joined: {formatNumber(Number(p.joined ?? 0))} ({formatNumber(Number(p.new ?? 0))} new, {formatNumber(Number(p.rejoined ?? 0))} rejoined)
           </p>
           <p className="text-[var(--hue-danger-ink)]">
-            Lost: {formatNumber(Number(p.lost ?? 0))} ({formatNumber(Number(p.lostCancelled ?? 0))} cancelled, {formatNumber(Number(p.lostCompleted ?? 0))} completed course)
+            Left: {formatNumber(Number(p.lost ?? 0))} ({formatNumber(Number(p.lostCancelled ?? 0))} cancelled, {formatNumber(Number(p.lostCompleted ?? 0))} completed course)
           </p>
           <p className={`font-semibold ${net >= 0 ? "text-[var(--hue-success-ink)]" : "text-[var(--hue-danger-ink)]"}`}>
             Net: {formatSigned(net)}
@@ -223,11 +223,13 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
             </span>
             <span className="font-semibold tabular-nums">{formatNumber(t.new)}</span> new ·{" "}
             <span className="font-semibold tabular-nums">{formatNumber(t.rejoined)}</span> rejoined ·{" "}
-            <span className="font-semibold tabular-nums">{formatNumber(t.lost)}</span> lost{" "}
+            <span className="font-semibold tabular-nums">{formatNumber(t.lost)}</span> left{" "}
             <span className="text-tx-3">
               ({formatNumber(t.lostCancelled)} cancelled, {formatNumber(t.lostCompleted)} completed course)
             </span>{" "}
             · net <span className="font-semibold tabular-nums">{formatSigned(t.net)}</span>
+            {/* D11: tasters added on their own, never in joined or net. */}
+            {" "}· <span className="font-semibold tabular-nums">{formatNumber(t.tasterAdded ?? 0)}</span> tasters added
             {today && today.headcount !== null && (
               <>
                 {" "}· <span className="font-semibold tabular-nums">{formatNumber(today.headcount)}</span> active members today
@@ -257,7 +259,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
                 <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip content={<NetNewTooltip mode="bars" caption={caption} />} cursor={{ fill: "var(--sf-2)" }} />
                 <Bar dataKey="joined" stackId="a" fill={SUCCESS} radius={[0, 0, 0, 0]} maxBarSize={34} name="Joined" />
-                <Bar dataKey="lost" stackId="b" fill={DANGER} radius={[6, 6, 0, 0]} maxBarSize={34} name="Lost" />
+                <Bar dataKey="lost" stackId="b" fill={DANGER} radius={[6, 6, 0, 0]} maxBarSize={34} name="Left" />
               </BarChart>
             ) : view === "net" ? (
               <ComposedChart data={points} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
@@ -267,7 +269,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
                 <YAxis domain={symmetricDomain(points, "net")} tick={AXIS_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip content={<NetNewTooltip mode="net" caption={caption} />} cursor={{ stroke: "var(--bd-default)" }} />
                 <Area dataKey="netAbove" baseValue={0} type="monotone" fill={SUCCESS} fillOpacity={0.18} stroke="none" isAnimationActive={false} name="Gained" />
-                <Area dataKey="netBelow" baseValue={0} type="monotone" fill={DANGER} fillOpacity={0.18} stroke="none" isAnimationActive={false} name="Lost" />
+                <Area dataKey="netBelow" baseValue={0} type="monotone" fill={DANGER} fillOpacity={0.18} stroke="none" isAnimationActive={false} name="Left" />
                 <ReferenceLine y={0} stroke="var(--tx-3)" strokeDasharray="4 4" />
                 <Line dataKey="net" type="monotone" stroke="var(--tx-1)" strokeWidth={2} dot={<SignedDot />} activeDot={{ r: 5 }} name="Net" />
               </ComposedChart>

@@ -86,9 +86,10 @@ export function evalWhere(row: Row, where: Where | undefined): Tri {
       r = (cond as Where[]).reduce<Tri>((acc, w) => or(acc, evalWhere(row, w)), false);
     } else if (key === "NOT") {
       r = (Array.isArray(cond) ? cond : [cond]).reduce<Tri>((acc, w) => and(acc, not(evalWhere(row, w as Where))), true);
-    } else if (Array.isArray(row[key]) && isPlainObject(cond) && ("some" in cond || "none" in cond || "every" in cond)) {
+    } else if ((Array.isArray(row[key]) || row[key] === undefined) && isPlainObject(cond) && ("some" in cond || "none" in cond || "every" in cond)) {
       // EXISTS is two-valued: an element matches only when its where is TRUE.
-      const items = row[key] as Row[];
+      // A fixture that leaves a to-many relation out has none of it.
+      const items = (row[key] ?? []) as Row[];
       const matches = (w: unknown) => items.filter((it) => evalWhere(it, w as Where) === true).length;
       if ("some" in cond) r = matches(cond.some) > 0;
       else if ("none" in cond) r = matches(cond.none) === 0;

@@ -37,7 +37,9 @@ function member(overrides: Partial<MemberRow> & { id: string; name: string }): M
 }
 
 const MEMBERS: MemberRow[] = [
-  member({ id: "m-new", name: "Nina New", joinedAt: thisMonth }),
+  // D11: the new-this-month slice lists the members the server flagged as
+  // "new" by the movement definition — not a joinedAt comparison.
+  member({ id: "m-new", name: "Nina New", joinedAt: thisMonth, moved: ["new"] }),
   member({ id: "m-old", name: "Oscar Old", joinedAt: lastMonth }),
   member({ id: "m-churned", name: "Cara Churned", status: "cancelled", joinedAt: lastMonth, cancelledAt: thisMonth }),
   member({ id: "m-churned-stale", name: "Sam Stale", status: "cancelled", joinedAt: lastMonth, cancelledAt: lastMonth }),

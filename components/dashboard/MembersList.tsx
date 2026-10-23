@@ -33,9 +33,13 @@ import AttributionFields, { emptyAttribution, type AttributionValue } from "@/co
 import { resolveSignupCredit } from "@/lib/signup-credit";
 import { BilledByTeamUpPill } from "@/components/dashboard/BilledByTeamUpPill";
 import { paymentStatusLabel } from "@/lib/payment-status";
+import type { PaymentEvidence } from "@/lib/overdue";
+import type { MovementBucket } from "@/lib/membership-movement";
 import {
+  OTHER_OWING_COPY,
   PAYER_COPY,
   POPULATION_COPY,
+  otherAccountsOwingLine,
   payerGuardianNote,
   payersOverdueLabel,
   isActiveMember,
@@ -86,6 +90,24 @@ export interface MemberRow {
   /** "teamup" while TeamUp collects this member's money (readiness spec v3 §7). */
   billedBy?: string | null;
   billingStatusAsOf?: string | null;
+  /**
+   * D9: an inactive or cancelled account that still owes (lib/other-accounts-owing.ts),
+   * flagged by the server. Listed under "Other accounts owing", never under Payers overdue.
+   */
+  otherOwing?: boolean;
+  /**
+   * D11: the movement figures this member was counted in for the page's club
+   * month (new, rejoined, lost, tasterAdded), flagged by the server from the
+   * same replay as Reports. Drives the four movement drill-throughs.
+   */
+  moved?: MovementBucket[];
+  /**
+   * D10: why a member on a plan is behind — never paid past the first payment
+   * date, a failed charge, or an outstanding due date — with the badge label
+   * and the sentence the self check-in refusal uses (lib/overdue
+   * paymentEvidence). Null when they are not behind.
+   */
+  paymentEvidence?: { kind: PaymentEvidence["kind"]; label: string; sentence: string } | null;
   lastVisitAt?: string | null;
   // feat/member-profile-pictures Track A: Avatar renders this when set,
   // falls back to deterministic initials when null. Flattened from
@@ -155,6 +177,18 @@ interface Props {
    * row cap. Absent (tests, older callers): counted from `members`.
    */
   serverCounts?: MemberListCounts | null;
+  /**
+   * D9: inactive or cancelled accounts that still owe, counted on the server
+   * over the whole club. Absent (tests, older callers): counted from the
+   * flagged rows.
+   */
+  otherOwing?: { count: number; guardians: number } | null;
+  /**
+   * D11: how many members each movement figure counted for the page's club
+   * month — the Reports Joined tile's numbers. Absent: counted from the
+   * flagged rows.
+   */
+  movers?: Record<MovementBucket, number> | null;
 }
 
 // ─── Belt colour map ──────────────────────────────────────────────────────────
@@ -199,7 +233,20 @@ function daysSince(iso?: string | null) {
   return Math.max(0, Math.floor(ms / 86_400_000));
 }
 
-function paymentMeta(status?: string | null) {
+/**
+ * The Payment badge. D10: a member who is behind shows WHICH evidence — "No
+ * payment recorded", "Payment failed" or "Payment outstanding" — the same
+ * three the self check-in refusal names, with its sentence as the title.
+ * Counts and filters still read the shown status, unchanged.
+ */
+type PaymentMeta = { label: string; title?: string; color: string; bg: string; Icon: typeof CreditCard };
+
+export function paymentMeta(status?: string | null, evidence?: MemberRow["paymentEvidence"]): PaymentMeta {
+  if (evidence) {
+    // The "No payment yet" colours for never paid, the "Overdue" ones for the other two.
+    const base = paymentMeta(evidence.kind === "no_payment_recorded" ? "pending" : "overdue");
+    return { ...base, label: evidence.label, title: evidence.sentence };
+  }
   const s = (status ?? "paid").toLowerCase();
   if (s === "paid") return { label: "Paid", color: "#22c55e", bg: "rgba(34,197,94,0.12)", Icon: CheckCircle2 };
   if (s === "overdue") return { label: "Overdue", color: "#f97316", bg: "rgba(249,115,22,0.14)", Icon: AlertTriangle };
@@ -293,11 +340,16 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
       // Suppressed for no-membership rows (e.g. a parent tied to a kid who
       // holds the membership) — the default "paid" would mislead the owner.
       if (!m.membershipType) return <span className="text-[11px]" style={{ color: "var(--tx-3)" }}>—</span>;
-      const pay = paymentMeta(m.paymentStatus);
+      const pay = paymentMeta(m.paymentStatus, m.paymentEvidence);
       const PayIcon = pay.Icon;
       return (
         <span className="inline-flex flex-nowrap items-center gap-1 whitespace-nowrap">
-          <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: pay.bg, color: pay.color }}>
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+            style={{ background: pay.bg, color: pay.color }}
+            title={pay.title}
+            data-testid="member-payment-badge"
+          >
             <PayIcon className="size-3" />
             {pay.label}
           </span>
@@ -392,7 +444,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest" | "last-visit";
-type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "churned-this-month" | "guardians" | "guardian-review";
+type StatusFilter = "all" | "attention" | "overdue" | "other-owing" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "rejoined-this-month" | "lost-this-month" | "tasters-this-month" | "churned-this-month" | "guardians" | "guardian-review";
 
 // "new-this-month" / "churned-this-month": deep-link-only filters (no visible
 // chip, same pattern as "active"/"inactive"/"cancelled" below) — the Reports
@@ -401,7 +453,7 @@ type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missin
 // through). Review L4 (23 Oct 2026): the month is the CLUB's, resolved on the
 // server as [monthStart, nextMonthStart) (lib/club-month.ts) and passed in as
 // `monthWindow` — the same window Reports counted, never the browser's month.
-const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "churned-this-month", "guardians", "guardian-review"];
+const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "other-owing", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "rejoined-this-month", "lost-this-month", "tasters-this-month", "churned-this-month", "guardians", "guardian-review"];
 
 /**
  * The landing view (T1, owner decision Q4 A-1, Noe 17 Oct 2026): the page
@@ -476,9 +528,22 @@ function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null }
  * component), so a cancelled member no longer inflates "All", "Total members",
  * "Waivers missing" or "Needs attention".
  */
-const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month"];
+const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month", "rejoined-this-month", "lost-this-month", "tasters-this-month"];
 
-type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt">>;
+/**
+ * D11: the four movement drill-throughs and the figure each lists. The server
+ * flags each row with the figures it was counted in for the requested club
+ * month (lib/membership-report loadMonthMovers) — the same events the Reports
+ * Joined tile and the Net New Members chart counted.
+ */
+const MOVEMENT_FILTERS: Partial<Record<StatusFilter, MovementBucket>> = {
+  "new-this-month": "new",
+  "rejoined-this-month": "rejoined",
+  "lost-this-month": "lost",
+  "tasters-this-month": "tasterAdded",
+};
+
+type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing" | "moved">>;
 
 /**
  * Whether a member belongs under a chip when nobody is searching. The single
@@ -495,6 +560,9 @@ export function inStatusView(
   // account type — a guardian who pays is a debt, never dropped — so this
   // view is decided before the guardian and cancelled rules below.
   if (f === "overdue") return isOverduePayerRow(m);
+  // D9: inactive or cancelled accounts that still owe, any account type —
+  // the server flags them (lib/other-accounts-owing.ts).
+  if (f === "other-owing") return !!m.otherOwing;
   if (m.status === "cancelled" && !INCLUDES_CANCELLED.includes(f)) return false;
   // Parent/guardian accounts are listed under their own chip only; every
   // other view is training members, matching its count.
@@ -523,7 +591,11 @@ export function inStatusView(
       // since accountType could be junior/kids and not always reflect linkage).
       return !!m.parentMemberId;
     case "new-this-month":
-      return inMonthWindow(m.joinedAt, month);
+    case "rejoined-this-month":
+    case "lost-this-month":
+    case "tasters-this-month":
+      // D11: the movement definition, flagged by the server — never joinedAt.
+      return !!m.moved?.includes(MOVEMENT_FILTERS[f]!);
     case "churned-this-month":
       return m.status === "cancelled" && inMonthWindow(m.cancelledAt, month);
     case "on-hold":
@@ -569,12 +641,20 @@ function sliceHeadlineCopy(
       excludes: `Excludes guardians. ${zone}`,
     };
   }
+  // D11: the movement definition (lib/membership-movement.ts), one slice per
+  // figure on the Reports Joined tile.
+  const excludes = `Excludes guardians and imports. ${zone}`;
   if (f === "new-this-month") {
-    return {
-      label: `Joined ${when}`,
-      includes: `Training members who joined ${when}, including tasters and any since cancelled`,
-      excludes: `Excludes guardians. ${zone}`,
-    };
+    return { label: `New ${when}`, includes: `Training members whose first ever start was ${when}, including any since cancelled`, excludes };
+  }
+  if (f === "rejoined-this-month") {
+    return { label: `Rejoined ${when}`, includes: `Training members who started again ${when} after leaving`, excludes };
+  }
+  if (f === "lost-this-month") {
+    return { label: `Left ${when}`, includes: `Training members who cancelled or finished a prepaid course ${when}`, excludes };
+  }
+  if (f === "tasters-this-month") {
+    return { label: `Tasters added ${when}`, includes: `People who started on a taster ${when}. Not counted in Joined or Net`, excludes };
   }
   return null;
 }
@@ -585,7 +665,7 @@ const FILTER_LABELS: Partial<Record<StatusFilter, string>> = {
   guardians: "Parents & guardians",
 };
 
-export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null, monthWindow = null, serverCounts = null }: Props) {
+export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null, monthWindow = null, serverCounts = null, otherOwing = null, movers = null }: Props) {
   const supportEdit = supportScope === "edit";
   // One month window for every "this month" slice on the page (review L4).
   const month = useMemo<MonthWindowProp>(() => monthWindow ?? { ...defaultClubMonthWindow(), isCurrent: true }, [monthWindow]);
@@ -747,15 +827,20 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   // Overdue is a PAYER total (review L2): guardians who pay are in it, so its
   // header names payers rather than a member population.
   const payerCopy = statusFilter === "overdue" ? PAYER_COPY : null;
+  // D9: debts on inactive or cancelled accounts — beside the payers, never in them.
+  const otherOwingCount = otherOwing?.count ?? members.filter((m) => m.otherOwing).length;
+  const otherOwingCopy = statusFilter === "other-owing" ? OTHER_OWING_COPY : null;
   const headlineCount =
-    statusFilter === "new-this-month"
-      ? counts.newThisMonth
+    statusFilter === "other-owing"
+      ? otherOwingCount
+      : MOVEMENT_FILTERS[statusFilter]
+      ? (movers?.[MOVEMENT_FILTERS[statusFilter]!] ?? members.filter((m) => m.moved?.includes(MOVEMENT_FILTERS[statusFilter]!)).length)
       : statusFilter === "churned-this-month"
         ? counts.churnedThisMonth
         : statusFilter === "overdue"
           ? counts.overdue
           : headlineCounts[headlineKey] ?? counts.all;
-  const headlineCopy = sliceCopy ?? payerCopy ?? POPULATION_COPY[headlineKey];
+  const headlineCopy = sliceCopy ?? payerCopy ?? otherOwingCopy ?? POPULATION_COPY[headlineKey];
   // Q4 A-1: members on hold stay inside the Active headline, marked as such.
   const holdNote = headlineKey === "active" && counts.activeOnHold > 0 ? `${counts.activeOnHold} on hold` : null;
 
@@ -771,7 +856,11 @@ export default function MembersList({ members: initial, primaryColor, role, guar
         description={
           <>
             <span data-testid="members-headline">
-              {payerCopy ? payersOverdueLabel(headlineCount) : `${headlineCount} ${headlineCopy.label.charAt(0).toLowerCase() + headlineCopy.label.slice(1)}`}
+              {payerCopy
+                ? payersOverdueLabel(headlineCount)
+                : otherOwingCopy
+                  ? `${headlineCount} ${headlineCount === 1 ? "other account owing" : "other accounts owing"}`
+                  : `${headlineCount} ${headlineCopy.label.charAt(0).toLowerCase() + headlineCopy.label.slice(1)}`}
               {holdNote ? `, ${holdNote}` : ""}
             </span>
             {" · "}
@@ -779,6 +868,20 @@ export default function MembersList({ members: initial, primaryColor, role, guar
             <span className="mt-0.5 block text-xs text-tx-3" data-testid="members-headline-scope">
               {headlineCopy.includes}. {headlineCopy.excludes}.
             </span>
+            {/* D9: the payers view names the debts it leaves out, with the way to them. */}
+            {payerCopy && otherOwingCount > 0 && (
+              <Link
+                href="/dashboard/members?filter=other-owing"
+                onClick={(e) => {
+                  e.preventDefault();
+                  selectFilter("other-owing");
+                }}
+                data-testid="members-other-owing-line"
+                className="mt-0.5 block text-xs text-tx-2 underline underline-offset-2 hover:text-tx-1"
+              >
+                {otherAccountsOwingLine(otherOwingCount)}
+              </Link>
+            )}
           </>
         }
         action={
@@ -902,6 +1005,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               { key: "all", label: "All current", count: counts.all },
               { key: "attention", label: "Needs Attention", count: counts.attention },
               { key: "overdue", label: PAYER_COPY.label, count: counts.overdue },
+              { key: "other-owing", label: OTHER_OWING_COPY.label, count: otherOwingCount },
               { key: "waiver-missing", label: "Waiver Missing", count: counts.waiverMissing },
               { key: "missing-phone", label: "Missing Phone", count: counts.missingPhone },
               { key: "quiet", label: `Quiet (${QUIET_THRESHOLD_DAYS}d+)`, count: counts.quiet },
