@@ -210,6 +210,8 @@ export const AUDIT_LABELS: Record<string, string> = {
   // Admin hub lane F (9 Oct 2026): resolving a login-address conflict.
   "admin.login_email.checked": "MatFlow checked who holds a login address in the club",
   "admin.member.contact_email.changed": "MatFlow changed a member's contact email (unverified until confirmed)",
+  // Hub conflicts (12 Oct 2026): a non-owner staff account's login address moved.
+  "admin.staff.login_email.changed": "MatFlow changed a staff account's login email (unverified until confirmed)",
   "admin.access.revoked": "MatFlow signed out every session and cancelled every sign-in link or code in scope (incident revoke-all)",
   "admin.impersonate.start": "MatFlow support signed in as the owner",
   "admin.impersonate.end": "MatFlow support ended the support session",
@@ -241,6 +243,9 @@ export const AUDIT_LABELS: Record<string, string> = {
   // Step-up action name sent by the conflict panel (9 Oct 2026); the audit row
   // it leads to is admin.member.contact_email.changed.
   "member.contact_email": "MatFlow confirmed a change to a member's contact email",
+  // Step-up action name sent by the conflict panel for a staff holder (12 Oct
+  // 2026); the audit row it leads to comes from the staff login-email route.
+  "staff.login_email": "Change a staff account's login address",
 };
 
 /** "member.photo.add" → "Member photo add" — only for names not in the map. */

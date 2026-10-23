@@ -98,18 +98,23 @@ Note: "email from the address on file" is **not** a verification channel while t
 API: `POST /api/admin/customers/[id]/login-email` with `{ action: "mark_provisional" | "clear_provisional" | "change", reason, attestMailboxVerified?, newEmail? }`
 and the step-up grant in `x-matflow-step-up` (`app/api/admin/customers/[id]/login-email/route.ts`).
 
-## Resolving a conflict (the address belongs to a member record)
+## Resolving a conflict (the address is already held in the club)
+
+**12 Oct 2026: the operator procedure for every conflict now lives in
+[OPERATOR-LOGIN-CONFLICTS.md](OPERATOR-LOGIN-CONFLICTS.md).** It covers a member holder, a staff holder (manager, coach
+or admin) and a legacy duplicate, each resolved from the conflict panel, plus who is signed out and how to resume. Follow
+that page. The notes below describe the member path in more technical detail and stay true for it.
 
 Typical case: the owner should sign in with an address that an **imported member** of the same club already holds (the
 import created a member row for the owner's own address, or the club typed it onto someone else). Club screens and the
 owner's self-service answer "That email address is already in use at this club" and never say whose — on purpose. Only
 the operator console says who holds it.
 
-1. **Check.** Login email card → Change login email → type the address → **Check address**. The answer is "Free in this
-   club", or the conflict panel: club, owner, and the holder (member or staff; name; status; whether they can sign in —
-   a password, or a live invite / sign-in / reset link for that address; a link to the record; its id). A legacy
-   duplicate (two rows on one address) shows only a count: stop and review those records with the club; nothing here
-   resolves it. A **staff** holder is the club's to change in Settings → Staff; this workflow moves members only.
+1. **Check.** **Owner's sign-in email (back office)** card → Change login email → type the address → **Check address**. The answer is "Free in this
+   club", or the conflict panel: club, owner, and each holder (labelled "Member record" or "Club sign-in account"; name;
+   status; whether they can sign in — a password, or a live invite / sign-in / reset link for that address; a link to
+   the record; its id). A **staff** holder and a legacy **duplicate** (several rows on one address) are moved from the
+   same panel since 12 Oct 2026: follow [OPERATOR-LOGIN-CONFLICTS.md](OPERATOR-LOGIN-CONFLICTS.md).
 2. **Verify the relationship independently.** A matching name is **not** proof that the member row is the owner, nor
    that the address is really the owner's. Call the club back on the number you already hold (never a number given in
    the request) or verify in person, exactly as in [SUPPORT-IDENTITY-VERIFICATION.md](SUPPORT-IDENTITY-VERIFICATION.md).
@@ -134,8 +139,9 @@ the operator console says who holds it.
    they need app access.
 
 **Half-done is stated honestly.** Steps 3 and 5 are separate transactions. If step 3 succeeded and step 5 did not, the
-panel says "Step 1 done, step 2 not done" and offers to resume; a reload of the page resumes at step 5 with a fresh
-check (the page address carries the member id, never a code or an address). A request is never retried automatically.
+panel says "Step 1 done, step 2 not done" and offers to resume; a reload of the page makes a fresh check and resumes at
+step 5 if the address is free, or at the review step with a "still held" notice if it is not (the page address carries
+the member id, never a code or an address). A request is never retried automatically.
 If a response is lost (network drop after you pressed the button), **Re-send the same confirmation**: the route answers
 "already applied" from its record instead of changing anything twice. A confirmation is spent once; a used one is never
 accepted again.
