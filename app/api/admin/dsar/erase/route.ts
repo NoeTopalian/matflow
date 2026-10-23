@@ -62,6 +62,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { teamupPersonKey } from "@/lib/importers/teamup";
+import { recordStatusEvent } from "@/lib/member-status";
 
 const querySchema = z.object({ memberId: z.string().min(1) });
 
@@ -453,11 +454,14 @@ export async function POST(req: Request) {
     // identity) changed in between, erasing now would release the NEW address with the OLD one digested and leave the
     // new address's tokens and imported history behind — refuse instead; the throw rolls the fulfilment row back with
     // everything else. The lock also holds off a concurrent change until the erasure commits.
-    const [locked] = await tx.$queryRaw<{ email: string; name: string; externalRef: string | null }[]>`
-      SELECT email, name, "externalRef" FROM "Member" WHERE id = ${memberId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+    // T8a: the status and cancellation date are read under the same lock, so the
+    // status event below records the transition this erasure really makes.
+    const [locked] = await tx.$queryRaw<{ email: string; name: string; externalRef: string | null; status: string; cancelledAt: Date | null }[]>`
+      SELECT email, name, "externalRef", status, "cancelledAt" FROM "Member" WHERE id = ${memberId} AND "tenantId" = ${tenantId} FOR UPDATE`;
     if (!locked || locked.email !== originalEmail || locked.externalRef !== originalExternalRef || locked.name !== member.name) {
       throw new ErasureSubjectChanged();
     }
+    const erasureCancels = locked.status !== "cancelled";
 
     // The children are resolved FIRST and inside the same transaction, so the
     // club can never end up with a scrubbed guardian and a child still pointing
@@ -526,9 +530,26 @@ export async function POST(req: Request) {
         totpSecret: null,
         totpRecoveryCodes: Prisma.DbNull,
         status: "cancelled",
+        // T8a: cancelled sets cancelledAt (spec §4.1(1)) — on the transition
+        // only, like the member PATCH. An already-cancelled member keeps the
+        // date they left.
+        ...(erasureCancels ? { cancelledAt: new Date() } : {}),
         // Bump sessionVersion to invalidate any existing JWT.
         sessionVersion: { increment: 1 },
       },
+    });
+
+    // T8a: the transition goes through the single status writer, in this
+    // transaction, so the history and the scrub commit or roll back together.
+    // The owner is the actor; an already-cancelled member writes nothing (the
+    // writer no-ops on from === to).
+    await recordStatusEvent(tx, {
+      tenantId,
+      memberId,
+      fromStatus: locked.status,
+      toStatus: "cancelled",
+      reason: "staff_edit",
+      changedById: ownerUserId,
     });
 
     // Face photos (including a junior member's, uploaded by a parent).

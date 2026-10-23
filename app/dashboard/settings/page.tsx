@@ -1,6 +1,7 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import SettingsPage from "@/components/dashboard/SettingsPage";
 import { requireRole } from "@/lib/authz";
+import { ACTIVE_MEMBER, CURRENT_MEMBER, GUARDIAN_ACCOUNT, ON_HOLD, TRAINING_MEMBER } from "@/lib/member-population";
 
 export type TenantSettings = {
   id: string;
@@ -14,6 +15,7 @@ export type TenantSettings = {
   subscriptionStatus: string;
   subscriptionTier: string;
   createdAt: string;
+  /** Active training members (lib/member-population.ts ACTIVE_MEMBER) — never guardians. */
   memberCount: number;
   staffCount: number;
   classCount: number;
@@ -55,15 +57,26 @@ export type StaffMember = {
   totpEnabled?: boolean;
 };
 
+/**
+ * Population counts shown beside the status rows (T1, 17 Oct 2026). A hold is
+ * the billing axis (paymentStatus "paused"), never a status row; guardian
+ * accounts are not members and are counted under their own label.
+ */
+/**
+ * onHold: current members on hold (any status). activeOnHold: the part of
+ * "Active members" that is on hold, which the tile marks (Q4 A-1).
+ */
+export type SettingsPopulationCounts = { onHold: number; guardians: number; activeOnHold?: number };
+
 async function getData(tenantId: string, userId: string) {
-  const [tenant, staff, memberStats, currentUser] = await withTenantContext(tenantId, (tx) =>
+  const [tenant, staff, memberStats, currentUser, onHold, guardians, activeOnHold] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       tx.tenant.findUniqueOrThrow({
         where: { id: tenantId },
         include: {
           _count: {
             select: {
-              members: true,
+              members: { where: { ...ACTIVE_MEMBER } },
               users: true,
               classes: { where: { isActive: true } },
             },
@@ -77,20 +90,25 @@ async function getData(tenantId: string, userId: string) {
       }),
       tx.member.groupBy({
         by: ["status"],
-        where: { tenantId },
+        where: { tenantId, ...TRAINING_MEMBER },
         _count: { status: true },
       }),
       tx.user.findUnique({
         where: { id: userId },
         select: { totpEnabled: true },
       }),
+      tx.member.count({ where: { tenantId, ...CURRENT_MEMBER, ...ON_HOLD } }),
+      tx.member.count({ where: { tenantId, ...GUARDIAN_ACCOUNT, status: { not: "cancelled" } } }),
+      tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER, ...ON_HOLD } }),
     ]),
   );
 
   const statusCounts: Record<string, number> = {};
   for (const s of memberStats) statusCounts[s.status] = s._count.status;
 
-  return { tenant, staff, statusCounts, totpEnabled: currentUser?.totpEnabled ?? false };
+  const populationCounts: SettingsPopulationCounts = { onHold, guardians, activeOnHold };
+
+  return { tenant, staff, statusCounts, populationCounts, totpEnabled: currentUser?.totpEnabled ?? false };
 }
 
 export default async function Settings() {
@@ -103,7 +121,7 @@ export default async function Settings() {
   // overwrite real configuration (waiver text, branding, billing contacts,
   // check-in windows) with defaults, turning a read failure into data loss.
   // A throw now reaches app/dashboard/error.tsx and there is no form to save.
-  const { tenant, staff: staffRows, statusCounts, totpEnabled } = await getData(
+  const { tenant, staff: staffRows, statusCounts, populationCounts, totpEnabled } = await getData(
     session.user.tenantId,
     session.user.id,
   );
@@ -161,6 +179,7 @@ export default async function Settings() {
       settings={settings}
       staff={staff}
       statusCounts={statusCounts}
+      populationCounts={populationCounts}
       primaryColor={session.user.primaryColor}
       role={session.user.role}
       currentUserId={session.user.id}

@@ -54,12 +54,14 @@ function tile(sub: string) {
 }
 
 describe("Members page — guardian accounts are not training members", () => {
-  it("Current Members, Paid, Waiver Missing and Missing Phone leave the guardian record out", () => {
+  it("Active members, Paid, Waiver Missing and Missing Phone leave the guardian record out", () => {
     render(<MembersList members={MEMBERS} primaryColor="#3b82f6" role="owner" />);
-    expect(tile("Excludes cancelled & guardians")).toBe("2"); // Current Members
-    expect(tile("Membership current")).toBe("2"); // Paid
+    // T1: the first tile is the landing population, Active members (Q4 A-1).
+    expect(tile("Excludes inactive members, tasters, cancelled members and guardians")).toBe("2"); // Active members
+    expect(tile("Of current members")).toBe("2"); // Paid
     expect(tile("Active & tasters")).toBe("0"); // Waivers Missing
-    expect(screen.getByRole("button", { name: "All · 2" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Active · 2" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "All current · 2" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Waiver Missing ·/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Missing Phone ·/ })).toBeNull();
     expect(screen.queryAllByText("Gina Guardian")).toHaveLength(0);

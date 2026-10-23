@@ -5,6 +5,7 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
+import { ACTIVE_MEMBER, LEFT_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 
 export async function GET() {
   const session = await auth();
@@ -35,9 +36,10 @@ export async function GET() {
       attendanceThisWeek,
     ] = await withTenantContext(tenantId, (tx) =>
       Promise.all([
-        tx.member.count({ where: { tenantId, status: "active" } }),
-        tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth } } }),
-        tx.member.count({ where: { tenantId, status: "cancelled", cancelledAt: { gte: startOfMonth } } }),
+        // Training members only (T1, lib/member-population.ts).
+        tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
+        tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth }, ...TRAINING_MEMBER } }),
+        tx.member.count({ where: { tenantId, ...LEFT_MEMBER, cancelledAt: { gte: startOfMonth } } }),
         tx.attendanceRecord.count({
           where: { tenantId, checkInTime: { gte: startOfMonth } },
         }),

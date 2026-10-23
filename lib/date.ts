@@ -63,3 +63,12 @@ export function formatWeekLabel(d: DateInput): string {
 export function formatDateTime(d: DateInput): string {
   return `${formatDate(d)}, ${formatTime(d)}`;
 }
+
+/**
+ * "October 2026" — a calendar month named in `timeZone` (default UTC, so a
+ * mid-month instant names its month whatever the reader's zone). Used for the
+ * club-zone month windows in lib/club-month.ts (review L4).
+ */
+export function formatMonthYear(d: DateInput, timeZone = "UTC"): string {
+  return toDate(d).toLocaleDateString(LOCALE, { month: "long", year: "numeric", timeZone });
+}

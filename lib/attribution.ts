@@ -1,4 +1,5 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { ratePct1dp } from "@/lib/percent";
 
 /**
  * Per-staff conversion analytics (M1) + the per-step funnel (Reports UX cycle,
@@ -86,7 +87,7 @@ export interface AttributionData {
  */
 export function computeRate(denominator: number, numerator: number): number | null {
   if (denominator < MIN_TRIALS_FOR_RATE) return null;
-  return Math.round((numerator / denominator) * 1000) / 10;
+  return ratePct1dp(numerator, denominator);
 }
 
 /** conversions / trialsRun — kept as a named function; the attribution tests pin it. */

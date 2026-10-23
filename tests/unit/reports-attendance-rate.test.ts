@@ -28,10 +28,16 @@ vi.mock("@/lib/prisma-tenant", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     class: { findMany: vi.fn(), count: vi.fn() },
+    // Review L4: getReportsData reads the club zone for its month windows.
+    tenant: { findUnique: vi.fn(async () => ({ timezone: "Europe/London" })) },
     classInstance: { findMany: vi.fn() },
     attendanceRecord: { findMany: vi.fn(), groupBy: vi.fn(), count: vi.fn() },
     member: { groupBy: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     payment: { count: vi.fn(), findMany: vi.fn() },
+    // T8c: the membership series reads (lib/membership-report.ts); it reads
+    // the club zone through the same `tenant` mock above.
+    memberStatusEvent: { findMany: vi.fn(async () => []) },
+    importedMembership: { findMany: vi.fn(async () => []) },
   },
 }));
 
@@ -121,6 +127,22 @@ describe("getReportsData — attendanceRateMode", () => {
     const data = await getReportsData("tenant-A", { attendanceRateMode: "attendance-percentage" });
     expect(data.attendanceRate.value).toBe(100);
     expect(data.attendanceRate.value).toBeLessThanOrEqual(100);
+  });
+
+  it("attendance-percentage: a guardian account's check-in is not in the numerator, as it is not in the denominator", async () => {
+    // Denominator = ACTIVE_MEMBER (3), which leaves guardians out. A guardian
+    // whose status is "active" used to be added to the numerator, so the
+    // printed "(n of m)" held a person who is not in m: (4 of 3).
+    vi.mocked(prisma.attendanceRecord.findMany).mockResolvedValue([
+      { checkInTime: new Date(), memberId: "m1", member: { status: "active", accountType: "adult" } },
+      { checkInTime: new Date(), memberId: "m2", member: { status: "active", accountType: "kids" } },
+      { checkInTime: new Date(), memberId: "g1", member: { status: "active", accountType: "parent" } },
+    ] as never);
+    vi.mocked(prisma.member.groupBy).mockResolvedValue([{ status: "active", _count: 3 }] as never);
+
+    const data = await getReportsData("tenant-A", { attendanceRateMode: "attendance-percentage" });
+    expect(data.attendanceRate.numerator).toBe(2);
+    expect(data.attendanceRate.denominator).toBe(3);
   });
 
   it("fill-rate: only capacity-bearing classes count on both sides (3 ÷ 10 = 30%, i2 excluded — no capacity)", async () => {

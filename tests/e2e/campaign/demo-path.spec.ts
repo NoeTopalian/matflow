@@ -314,7 +314,7 @@ test("3 · cash at the desk is saved, and drops the member off the outstanding l
   // "the name is absent" is trivially true while it is still loading.
   await page.goto("/dashboard/payments");
   await expect(
-    page.getByText(/outstanding across \d+ member|Nobody owes you right now/),
+    page.getByText(/outstanding across \d+ payer|Nobody owes you right now/),
   ).toBeVisible({ timeout: 60_000 });
   await expect(page.getByRole("link", { name: DEMO_NAME, exact: true })).toHaveCount(0);
 });

@@ -26,6 +26,29 @@ export const MEMBER_STATUS_EVENT_REASONS = [
 
 export type MemberStatusEventReason = (typeof MEMBER_STATUS_EVENT_REASONS)[number];
 
+/**
+ * What an import job was doing when it wrote an event (T8d). Mirrors the CHECK
+ * on `MemberStatusEvent.sourceAction` (migration
+ * 20261017022302_status_event_source_provenance). `import_create` is written
+ * by every create import (TeamUp or generic: the job id is true either way);
+ * refresh, rollback and back-fill are TeamUp-only operations. Every one of these is
+ * written with `reason = 'import'`, so conversion math and the create-import
+ * rollback guard, which key on the reason, keep treating them as machine writes.
+ *
+ * `import_backfill` (T8b) marks history reconstructed from a job's TeamUp
+ * ledger and dated BEFORE the member's first existing event. It is written only
+ * through `recordStatusEventsBulk(..., { placement: "before-first" })` and is
+ * what the back-fill's idempotency check and rollback key on.
+ */
+export const MEMBER_STATUS_EVENT_SOURCE_ACTIONS = [
+  "import_create",
+  "import_refresh",
+  "import_rollback",
+  "import_backfill",
+] as const;
+
+export type MemberStatusEventSourceAction = (typeof MEMBER_STATUS_EVENT_SOURCE_ACTIONS)[number];
+
 export interface RecordStatusEventInput {
   tenantId: string;
   memberId: string;
@@ -35,6 +58,117 @@ export interface RecordStatusEventInput {
   reason: MemberStatusEventReason;
   /** The staff User behind the change, or `null` for webhook / import writes. */
   changedById?: string | null;
+  /**
+   * When the transition happened, if not "now" (T8a). Clamped by the writer to
+   * no earlier than the member's latest existing event and no later than now,
+   * so a supplied date can never reorder the history behind the member's
+   * current status. Absent: the column default (write time) applies and the
+   * key is left out of the insert entirely.
+   */
+  occurredAt?: Date;
+  /**
+   * Provenance (T8d): the ImportJob that wrote this event. Given together with
+   * `sourceAction`, and only on `reason: "import"` events; the writer refuses
+   * anything else. Absent on every other writer: both keys are then left out
+   * of the insert and the columns stay null.
+   */
+  sourceJobId?: string;
+  sourceAction?: MemberStatusEventSourceAction;
+}
+
+/**
+ * Provenance is all-or-nothing and import-only. A violation is a programming
+ * error in a caller, so it throws inside the caller's transaction and the
+ * status write it belongs to rolls back with it.
+ */
+function assertProvenance(input: RecordStatusEventInput, placement: StatusEventPlacement = "clamp") {
+  const hasJob = input.sourceJobId !== undefined;
+  const hasAction = input.sourceAction !== undefined;
+  if (placement === "before-first" && input.sourceAction !== "import_backfill") {
+    throw new StatusEventPlacementRefused("[member-status] before-first placement is for import_backfill events only");
+  }
+  if (!hasJob && !hasAction) return;
+  if (hasJob !== hasAction || !input.sourceJobId) {
+    throw new Error("[member-status] sourceJobId and sourceAction are given together");
+  }
+  if (input.reason !== "import") {
+    throw new Error("[member-status] provenance is recorded on import events only");
+  }
+  if (!(MEMBER_STATUS_EVENT_SOURCE_ACTIONS as readonly string[]).includes(input.sourceAction!)) {
+    throw new Error("[member-status] unknown sourceAction");
+  }
+  // A back-filled event describes history, not "now": it may only go in
+  // before the member's first event, never through the clamp (which would
+  // move it forward to the latest event and reorder the history).
+  if (input.sourceAction === "import_backfill" && placement !== "before-first") {
+    throw new StatusEventPlacementRefused("[member-status] import_backfill events are written with placement before-first only");
+  }
+}
+
+/**
+ * How the bulk writer places supplied dates.
+ * - `clamp` (default, T8a): each date is clamped to [member's latest event, now].
+ * - `before-first` (T8b): every row must carry a date; per member the dates
+ *   must be strictly increasing in input order and strictly earlier than the
+ *   member's FIRST existing event. Nothing is clamped: a violation throws
+ *   StatusEventPlacementRefused inside the caller's transaction, so the whole
+ *   batch rolls back. The latest-event invariant holds because every row lands
+ *   before an event that is already on record.
+ */
+export type StatusEventPlacement = "clamp" | "before-first";
+
+export class StatusEventPlacementRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StatusEventPlacementRefused";
+  }
+}
+
+/*
+ * Ordering and the latest-event invariant (T8a).
+ *
+ * A member's history is replayed in the order `(occurredAt, createdAt, id)`:
+ * `occurredAt` is when the change happened, `createdAt` is when MatFlow wrote
+ * it (always the write time), and `id` breaks a tie inside one write. The
+ * invariant every writer keeps is: **the latest event's `toStatus` equals
+ * `Member.status`**. The clamp below is what keeps it when a caller supplies a
+ * date: an event written now describes the member's status now, so it may not
+ * be dated before an event that is already on record — at worst it ties with
+ * that event's `occurredAt` and sorts after it on `createdAt`.
+ *
+ * (A back-fill of history OLDER than every existing event is a different
+ * operation and does not go through this clamp.)
+ */
+
+/** Clamp one supplied date to `[latest, now]`. `latest` null = the member has no events yet. */
+export function clampOccurredAt(supplied: Date, latest: Date | null, now: Date): Date {
+  let t = supplied.getTime();
+  if (Number.isNaN(t)) return now;
+  if (latest && t < latest.getTime()) t = latest.getTime();
+  if (t > now.getTime()) t = now.getTime();
+  return new Date(t);
+}
+
+function warnClamped(tenantId: string, count: number) {
+  if (count === 0) return;
+  // Structured, no personal data: which club, how many dates moved.
+  console.warn("[member-status] supplied occurredAt clamped", { tenantId, count });
+}
+
+/** The data object one event inserts; `occurredAt` and provenance spread only when supplied. */
+function eventData(input: RecordStatusEventInput, occurredAt: Date | undefined) {
+  return {
+    tenantId: input.tenantId,
+    memberId: input.memberId,
+    fromStatus: input.fromStatus,
+    toStatus: input.toStatus,
+    reason: input.reason,
+    changedById: input.changedById ?? null,
+    ...(occurredAt ? { occurredAt } : {}),
+    ...(input.sourceJobId && input.sourceAction
+      ? { sourceJobId: input.sourceJobId, sourceAction: input.sourceAction }
+      : {}),
+  };
 }
 
 /**
@@ -54,16 +188,20 @@ export async function recordStatusEvent(
   tx: TxClient,
   input: RecordStatusEventInput,
 ): Promise<{ id: string } | null> {
+  assertProvenance(input);
   if (input.fromStatus === input.toStatus) return null;
+  let occurredAt: Date | undefined;
+  if (input.occurredAt) {
+    const latest = await tx.memberStatusEvent.findFirst({
+      where: { tenantId: input.tenantId, memberId: input.memberId },
+      orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+      select: { occurredAt: true },
+    });
+    occurredAt = clampOccurredAt(input.occurredAt, latest?.occurredAt ?? null, new Date());
+    warnClamped(input.tenantId, occurredAt.getTime() === input.occurredAt.getTime() ? 0 : 1);
+  }
   return tx.memberStatusEvent.create({
-    data: {
-      tenantId: input.tenantId,
-      memberId: input.memberId,
-      fromStatus: input.fromStatus,
-      toStatus: input.toStatus,
-      reason: input.reason,
-      changedById: input.changedById ?? null,
-    },
+    data: eventData(input, occurredAt),
     select: { id: true },
   });
 }
@@ -71,23 +209,88 @@ export async function recordStatusEvent(
 /**
  * Bulk variant for the importer: one `createMany` for a whole batch, inside the
  * caller's transaction. No-op transitions are filtered out first, same rule as
- * the single writer. Returns the number of rows actually written.
+ * the single writer. Returns the number of rows actually written. The TeamUp
+ * create, refresh and refresh-rollback call sites pass `sourceJobId` and
+ * `sourceAction` on every row (T8d).
  */
 export async function recordStatusEventsBulk(
   tx: TxClient,
   inputs: RecordStatusEventInput[],
+  options: { placement?: StatusEventPlacement } = {},
 ): Promise<number> {
+  const placement = options.placement ?? "clamp";
+  for (const input of inputs) assertProvenance(input, placement);
   const rows = inputs.filter((input) => input.fromStatus !== input.toStatus);
   if (rows.length === 0) return 0;
-  const result = await tx.memberStatusEvent.createMany({
-    data: rows.map((input) => ({
-      tenantId: input.tenantId,
-      memberId: input.memberId,
-      fromStatus: input.fromStatus,
-      toStatus: input.toStatus,
-      reason: input.reason,
-      changedById: input.changedById ?? null,
-    })),
+  if (placement === "before-first") return insertBeforeFirst(tx, rows);
+  // One lookup for the whole batch: the latest event per member that was
+  // given a date. Rows without a date need no lookup and keep the default.
+  const dated = rows.filter((r) => r.occurredAt);
+  const latestByMember = new Map<string, Date>();
+  if (dated.length > 0) {
+    const latest = await tx.memberStatusEvent.groupBy({
+      by: ["memberId"],
+      where: {
+        tenantId: { in: [...new Set(dated.map((r) => r.tenantId))] },
+        memberId: { in: [...new Set(dated.map((r) => r.memberId))] },
+      },
+      _max: { occurredAt: true },
+    });
+    for (const l of latest) if (l._max.occurredAt) latestByMember.set(l.memberId, l._max.occurredAt);
+  }
+  const now = new Date();
+  const clampedByTenant = new Map<string, number>();
+  // The floor moves with the batch: two dated rows for one member clamp
+  // against the latest of everything before them, the earlier row in this
+  // batch included, so the second can never land before the first.
+  const data = rows.map((input) => {
+    if (!input.occurredAt) return eventData(input, undefined);
+    const at = clampOccurredAt(input.occurredAt, latestByMember.get(input.memberId) ?? null, now);
+    if (at.getTime() !== input.occurredAt.getTime()) {
+      clampedByTenant.set(input.tenantId, (clampedByTenant.get(input.tenantId) ?? 0) + 1);
+    }
+    latestByMember.set(input.memberId, at);
+    return eventData(input, at);
   });
+  for (const [tenantId, count] of clampedByTenant) warnClamped(tenantId, count);
+  const result = await tx.memberStatusEvent.createMany({ data });
+  return result.count;
+}
+
+/** The before-first path (T8b): validate every date against the member's first event, then insert unchanged. */
+async function insertBeforeFirst(tx: TxClient, rows: RecordStatusEventInput[]): Promise<number> {
+  const lastSupplied = new Map<string, number>();
+  for (const r of rows) {
+    const t = r.occurredAt?.getTime();
+    if (t === undefined || Number.isNaN(t)) {
+      throw new StatusEventPlacementRefused("[member-status] before-first placement needs a valid occurredAt on every row");
+    }
+    const key = `${r.tenantId}:${r.memberId}`;
+    const prev = lastSupplied.get(key);
+    if (prev !== undefined && t <= prev) {
+      throw new StatusEventPlacementRefused("[member-status] before-first dates must be strictly increasing per member");
+    }
+    lastSupplied.set(key, t);
+  }
+  const first = await tx.memberStatusEvent.groupBy({
+    by: ["tenantId", "memberId"],
+    where: {
+      tenantId: { in: [...new Set(rows.map((r) => r.tenantId))] },
+      memberId: { in: [...new Set(rows.map((r) => r.memberId))] },
+    },
+    _min: { occurredAt: true },
+  });
+  const firstAt = new Map<string, number>();
+  for (const f of first) if (f._min.occurredAt) firstAt.set(`${f.tenantId}:${f.memberId}`, f._min.occurredAt.getTime());
+  for (const r of rows) {
+    const limit = firstAt.get(`${r.tenantId}:${r.memberId}`);
+    if (limit !== undefined && r.occurredAt!.getTime() >= limit) {
+      // No personal data: which club, and that a date was refused.
+      throw new StatusEventPlacementRefused(
+        `[member-status] supplied occurredAt is not earlier than the member's first event (club ${r.tenantId})`,
+      );
+    }
+  }
+  const result = await tx.memberStatusEvent.createMany({ data: rows.map((r) => eventData(r, r.occurredAt)) });
   return result.count;
 }
