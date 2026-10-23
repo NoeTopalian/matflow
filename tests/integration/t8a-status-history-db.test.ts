@@ -263,7 +263,8 @@ describe.skipIf(!HAS_DB)("T8a: refresh events are source-dated and clamped; roll
 
     const caraEvents = await eventsOf(club, cara);
     const caraCancel = caraEvents.find((e) => e.toStatus === "cancelled")!;
-    expect(caraCancel.occurredAt.toISOString()).toBe(`${CANCELLED}T00:00:00.000Z`);
+    // Midnight 5 Oct in the club's timezone (Europe/London, BST): 23:00Z on the 4th (review F2).
+    expect(caraCancel.occurredAt.toISOString()).toBe("2026-10-04T23:00:00.000Z");
     expect(caraCancel.createdAt.getTime()).toBeGreaterThanOrEqual(before - 5_000);
 
     const stanCancel = (await eventsOf(club, stan)).find((e) => e.toStatus === "cancelled")!;

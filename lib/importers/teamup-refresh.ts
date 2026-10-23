@@ -12,6 +12,8 @@
  */
 import type { MemberDraft } from "@/lib/importers";
 import { membershipTierWrite, type ResolvedMembershipTier } from "@/lib/membership-tier";
+import { usableTimezone } from "@/lib/class-time";
+import { clubMidnight } from "@/lib/status-backfill";
 
 /**
  * The only Member columns a refresh may write. Everything else — name, email,
@@ -309,20 +311,33 @@ export function refreshFieldLabel(f: RefreshOwnedField): string {
 /**
  * When a refresh's status change happened (T8a, Q6 D-7: the TeamUp source
  * date). A move INTO cancelled whose file carries a cancellation date is dated
- * that day at UTC midnight; anything else is dated by the export time of the
- * file. `undefined` (no export time recorded) leaves the event at write time.
- * The status writer then clamps it to no earlier than the member's latest
- * event and no later than now, so this is a request, never a reordering.
+ * that day at midnight in the CLUB's timezone — the rule the back-fill uses
+ * for the same TeamUp date (lib/status-backfill.ts clubMidnight; review F2,
+ * 23 Oct 2026: UTC midnight put a New York club's 1 Oct cancellation in
+ * September). Anything else is dated by the export time of the file.
+ * `undefined` (no export time recorded) leaves the event at write time. The
+ * status writer then clamps it to no earlier than the member's latest event
+ * and no later than now, so this is a request, never a reordering.
  */
-export function refreshEventOccurredAt(c: Pick<RefreshChange, "before" | "after">, sourceExportedAt: Date | null): Date | undefined {
+export function refreshEventOccurredAt(
+  c: Pick<RefreshChange, "before" | "after">,
+  sourceExportedAt: Date | null,
+  timeZone: string | null | undefined,
+): Date | undefined {
   if (c.after.status === "cancelled" && c.before.status !== "cancelled" && c.after.cancelledAt) {
-    const day = c.after.cancelledAt.slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-      const d = new Date(`${day}T00:00:00.000Z`);
-      if (!Number.isNaN(d.getTime())) return d;
-    }
+    const d = clubDay(c.after.cancelledAt, timeZone);
+    if (d) return d;
   }
   return sourceExportedAt ?? undefined;
+}
+
+/** Midnight, in the club's timezone, of the calendar day an ISO value starts with; null when it has none. */
+function clubDay(value: string, timeZone: string | null | undefined): Date | null {
+  const day = value.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const d = new Date(`${day}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  return clubMidnight(d, usableTimezone(timeZone));
 }
 
 /**

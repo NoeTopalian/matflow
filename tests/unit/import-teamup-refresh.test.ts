@@ -15,6 +15,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { parseTeamUp } from "@/lib/importers/teamup";
 import { planRefresh, REFRESH_OWNED_FIELDS, refreshEventOccurredAt, forwardEventDates } from "@/lib/importers/teamup-refresh";
+import { clubMonthKey } from "@/lib/club-month";
+import { clubMidnight } from "@/lib/status-backfill";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -535,9 +537,10 @@ describe("upload: the same-file refusal compares jobs of the same mode only", ()
 // ── Dating (T8a, Q6 D-7 and A-9) ─────────────────────────────────────────────
 
 describe("refresh and rollback dating (T8a)", () => {
-  const TOM_CANCELLED = new Date("2026-09-20T00:00:00.000Z");
+  // The club is in Europe/London: midnight 20 Sep (BST) is 23:00Z on the 19th.
+  const TOM_CANCELLED = new Date("2026-09-19T23:00:00.000Z");
 
-  it("dates a cancellation by the file's Cancelled Date at UTC midnight; createdAt stays the write time", async () => {
+  it("dates a cancellation by the file's Cancelled Date at the club's midnight; createdAt stays the write time", async () => {
     refreshJob({ status: "preview" });
     const before = Date.now();
     const res = (await commitPOST(req(), params("job_refresh"))) as unknown as Res;
@@ -547,7 +550,7 @@ describe("refresh and rollback dating (T8a)", () => {
     expect(tom[0].occurredAt.toISOString()).toBe(TOM_CANCELLED.toISOString());
     expect(tom[0].createdAt.getTime()).toBeGreaterThanOrEqual(before);
     // Replayed: active until the cancellation day, cancelled from it.
-    expect(statusOn("m_tom", new Date("2026-09-19T23:59:59Z"))).toBe("active");
+    expect(statusOn("m_tom", new Date("2026-09-19T22:59:59Z"))).toBe("active");
     expect(statusOn("m_tom", new Date())).toBe("cancelled");
   });
 
@@ -592,14 +595,26 @@ describe("refreshEventOccurredAt / forwardEventDates (pure, T8a)", () => {
     status, paymentStatus: "paid", cancelledAt, membershipType: null, membershipTierId: null, billingStatusAsOf: null, billingStatusSource: null,
   });
 
-  it("a move into cancelled with a file date takes that day; anything else takes the export time; no export time means write time", () => {
-    expect(refreshEventOccurredAt({ before: st("active"), after: st("cancelled", "2026-10-05T00:00:00.000Z") }, EXPORT_2)!.toISOString())
-      .toBe("2026-10-05T00:00:00.000Z");
-    expect(refreshEventOccurredAt({ before: st("active"), after: st("cancelled") }, EXPORT_2)).toEqual(EXPORT_2);
-    expect(refreshEventOccurredAt({ before: st("active"), after: st("inactive") }, EXPORT_2)).toEqual(EXPORT_2);
+  it("a move into cancelled with a file date takes that day at club midnight; anything else takes the export time; no export time means write time", () => {
+    const LONDON = "Europe/London";
+    // 5 Oct 2026 is BST: London midnight is 23:00Z the day before.
+    expect(refreshEventOccurredAt({ before: st("active"), after: st("cancelled", "2026-10-05T00:00:00.000Z") }, EXPORT_2, LONDON)!.toISOString())
+      .toBe("2026-10-04T23:00:00.000Z");
+    expect(refreshEventOccurredAt({ before: st("active"), after: st("cancelled") }, EXPORT_2, LONDON)).toEqual(EXPORT_2);
+    expect(refreshEventOccurredAt({ before: st("active"), after: st("inactive") }, EXPORT_2, LONDON)).toEqual(EXPORT_2);
     // Already cancelled: the cancellation is not this refresh's transition.
-    expect(refreshEventOccurredAt({ before: st("cancelled", "2026-01-01T00:00:00.000Z"), after: st("active") }, EXPORT_2)).toEqual(EXPORT_2);
-    expect(refreshEventOccurredAt({ before: st("active"), after: st("inactive") }, null)).toBeUndefined();
+    expect(refreshEventOccurredAt({ before: st("cancelled", "2026-01-01T00:00:00.000Z"), after: st("active") }, EXPORT_2, LONDON)).toEqual(EXPORT_2);
+    expect(refreshEventOccurredAt({ before: st("active"), after: st("inactive") }, null, LONDON)).toBeUndefined();
+  });
+
+  it("review F2: a cancellation is dated at the club's midnight, the same as the back-fill, so a New York club's 1 Oct loss lands in October", () => {
+    const NY = "America/New_York";
+    const at = refreshEventOccurredAt({ before: st("active"), after: st("cancelled", "2026-10-01T00:00:00.000Z") }, EXPORT_2, NY)!;
+    // Midnight 1 Oct in New York (EDT, UTC-4), not UTC midnight (30 Sep 20:00 local).
+    expect(at.toISOString()).toBe("2026-10-01T04:00:00.000Z");
+    expect(clubMonthKey(at, NY)).toBe("2026-10");
+    // The back-fill's rule for the same TeamUp date.
+    expect(at.getTime()).toBe(clubMidnight(new Date("2026-10-01"), NY).getTime());
   });
 
   it("finds the newest import event that made the forward move, and skips members with none", () => {

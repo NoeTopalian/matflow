@@ -806,12 +806,13 @@ async function commitRefresh({
         applied.push(change);
       }
       // T8a (Q6 D-7): each change is dated by the TeamUp source — the file's
-      // cancellation date for a move into cancelled, else the export time —
-      // and the writer clamps it to the member's latest event and to now.
+      // cancellation date (at the club's midnight) for a move into cancelled,
+      // else the export time — and the writer clamps it to the member's latest
+      // event and to now.
       await recordStatusEventsBulk(
         tx,
         applied.map((c) => {
-          const occurredAt = refreshEventOccurredAt(c, job.sourceExportedAt);
+          const occurredAt = refreshEventOccurredAt(c, job.sourceExportedAt, tzRow?.timezone);
           // T8d: provenance — this refresh job, doing a refresh.
           return { tenantId, memberId: c.memberId, fromStatus: c.before.status, toStatus: c.after.status, reason: "import" as const, changedById: null, sourceJobId: job.id, sourceAction: "import_refresh" as const, ...(occurredAt ? { occurredAt } : {}) };
         }),
