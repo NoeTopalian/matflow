@@ -617,6 +617,56 @@ describe("refreshEventOccurredAt / forwardEventDates (pure, T8a)", () => {
     expect(at.getTime()).toBe(clubMidnight(new Date("2026-10-01"), NY).getTime());
   });
 
+  it("review F3: a completed course is dated by the day the course ended, at club midnight, not by the export time", () => {
+    const LONDON = "Europe/London";
+    const NY = "America/New_York";
+    const EXPORT_NOV = new Date("2026-11-03T09:00:00Z");
+    // Completed At is an instant: its club day, at club midnight (28 Oct is GMT in London).
+    const done = refreshEventOccurredAt({ before: st("active"), after: st("inactive"), courseEndedAt: "2026-10-28T15:30:00.000Z" }, EXPORT_NOV, LONDON)!;
+    expect(done.toISOString()).toBe("2026-10-28T00:00:00.000Z");
+    expect(clubMonthKey(done, LONDON)).toBe("2026-10");
+    // An instant early on 1 Nov UTC is still 31 Oct in New York: the course ended in October there.
+    const late = refreshEventOccurredAt({ before: st("active"), after: st("inactive"), courseEndedAt: "2026-11-01T02:00:00.000Z" }, EXPORT_NOV, NY)!;
+    expect(late.toISOString()).toBe("2026-10-31T04:00:00.000Z");
+    expect(clubMonthKey(late, NY)).toBe("2026-10");
+    // A date-only end (the Cancelled Date fallback) is that day at club midnight.
+    expect(refreshEventOccurredAt({ before: st("active"), after: st("inactive"), courseEndedAt: "2026-10-28" }, EXPORT_NOV, NY)!.toISOString())
+      .toBe("2026-10-28T04:00:00.000Z");
+    // Already inactive: the completion is not this refresh's transition.
+    expect(refreshEventOccurredAt({ before: st("inactive"), after: st("inactive"), courseEndedAt: "2026-10-28" }, EXPORT_NOV, LONDON)).toEqual(EXPORT_NOV);
+    // No end date in the file: the export time, as before.
+    expect(refreshEventOccurredAt({ before: st("active"), after: st("inactive") }, EXPORT_NOV, LONDON)).toEqual(EXPORT_NOV);
+  });
+
+  it("review F3: the refresh plan carries a completed prepaid course's end from the file, and it dates the loss in October", () => {
+    const cols = (o: { status: string; type: string; start: string; expiry: string; cancelled?: string; completedAt?: string }) =>
+      ["Cora Course", "cora@example.test", "", "Ten-class pass", o.type, o.status, "Stripe", o.start, o.start, o.expiry, o.cancelled ?? "", "Yes", o.completedAt ?? "", "", "", "", "", "", "GB", "", "", "", "1990-02-02", "", "", ""].join(",");
+    const file = [HEADER, cols({ status: "Completed", type: "prepaid", start: "2026-09-01", expiry: "2026-12-01", completedAt: "2026-10-28T15:30:00+00:00" })].join("\n");
+    const { drafts, errors } = parseTeamUp(file, { asOf: "2026-11-03" });
+    expect(errors).toEqual([]);
+    const d = drafts.find((x) => x.name === "Cora Course")!;
+    expect(d.status).toBe("inactive");
+    expect(d.courseEndedAt).toBe("2026-10-28T15:30:00.000Z");
+
+    const EXPORT_NOV = new Date("2026-11-03T09:00:00Z");
+    const plan = planRefresh({
+      drafts,
+      errors,
+      members: [{ id: "m_cora", name: "Cora Course", externalRef: d.sourceKey!, billedBy: "teamup", status: "active", paymentStatus: "paid", cancelledAt: null, membershipType: "Ten-class pass", membershipTierId: null, billingStatusAsOf: EXPORT_1, billingStatusSource: CREATE_JOB }],
+      tiers: [],
+      job: { id: "job_nov", sourceExportedAt: EXPORT_NOV },
+    });
+    const c = plan.matched.find((x) => x.memberId === "m_cora")!;
+    expect(c.after.status).toBe("inactive");
+    expect(c.courseEndedAt).toBe("2026-10-28T15:30:00.000Z");
+    const at = refreshEventOccurredAt(c, EXPORT_NOV, "Europe/London")!;
+    expect(clubMonthKey(at, "Europe/London")).toBe("2026-10");
+
+    // Without a Completed At, the Cancelled Date is the end (the back-fill's fallback).
+    const noInstant = parseTeamUp([HEADER, cols({ status: "Completed", type: "prepaid", start: "2026-09-01", expiry: "2026-12-01", cancelled: "2026-10-27" })].join("\n"), { asOf: "2026-11-03" });
+    expect(noInstant.drafts.find((x) => x.name === "Cora Course")!.courseEndedAt).toBe("2026-10-27");
+  });
+
   it("finds the newest import event that made the forward move, and skips members with none", () => {
     const at = new Date("2026-09-20T00:00:00Z");
     const map = forwardEventDates(

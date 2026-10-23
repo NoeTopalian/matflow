@@ -806,9 +806,9 @@ async function commitRefresh({
         applied.push(change);
       }
       // T8a (Q6 D-7): each change is dated by the TeamUp source — the file's
-      // cancellation date (at the club's midnight) for a move into cancelled,
-      // else the export time — and the writer clamps it to the member's latest
-      // event and to now.
+      // cancellation date for a move into cancelled, the course's end for a
+      // completed course (both at the club's midnight), else the export time —
+      // and the writer clamps it to the member's latest event and to now.
       await recordStatusEventsBulk(
         tx,
         applied.map((c) => {
