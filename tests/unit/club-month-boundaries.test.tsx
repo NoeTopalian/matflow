@@ -185,6 +185,9 @@ describe("Reports tiles, CSV and drill-through agree on the club's month", () =>
     expect(data.churn.joined).toBe(2);
     expect(data.churn.cancelled).toBe(1);
     expect(data.monthlySignups.at(-1)).toEqual({ month: "Nov 26", count: 2, isCurrentMonth: true });
+    // The movement series (T8c) buckets on the same club month: with no status
+    // history it falls back to these join and cancel dates, so it agrees here.
+    expect(data.membership.movementsByMonth.at(-1)).toMatchObject({ month: data.period.monthKey, new: 2, lostCancelled: 1 });
     // CSV: the same numbers, and it says which month and zone.
     expect(csvValue("New members this month")).toBe("2");
     expect(csvValue("Joined this month")).toBe("2");
@@ -209,6 +212,7 @@ describe("Reports tiles, CSV and drill-through agree on the club's month", () =>
     const { data, csvValue, newRows, churnedRows } = await threeSurfaces("2026-11-01T05:00:00Z", "Pacific/Auckland", fixture);
 
     expect(data.period.monthKey).toBe("2026-10");
+    expect(data.membership.movementsByMonth.at(-1)).toMatchObject({ month: "2026-10", new: 2, lostCancelled: 1 });
     expect(data.summary.newMembersThisMonth).toBe(2);
     expect(data.churn.cancelled).toBe(1);
     expect(csvValue("Joined this month")).toBe("2");
