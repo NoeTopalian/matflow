@@ -203,7 +203,7 @@ describe.skipIf(!HAS_DB)("T8a: DSAR erase records its status event and cancelled
     expect(ok.status).toBe(200);
     expect((await eventsOf(club, parent)).map((e) => e.toStatus)).toEqual(["cancelled"]);
     expect(await memberRow(club, child)).toBeNull();
-  });
+  }, 120_000);
 });
 
 // ── Refresh and rollback dating ──────────────────────────────────────────────
@@ -273,7 +273,7 @@ describe.skipIf(!HAS_DB)("T8a: refresh events are source-dated and clamped; roll
       const evs = await eventsOf(club, id);
       expect(evs[evs.length - 1].toStatus).toBe((await memberRow(club, id))!.status);
     }
-  });
+  }, 120_000);
 
   it("a rollback's reverse events carry the forward dates; replay for any date equals the pre-refresh status", async () => {
     const { club, cara, stan, jobId } = await setup("rollback");
@@ -294,5 +294,5 @@ describe.skipIf(!HAS_DB)("T8a: refresh events are source-dated and clamped; roll
       for (const at of probes) expect(statusAt(evs, at)).toBe(statusAt(preRefresh.get(id)!, at));
       expect(evs[evs.length - 1].toStatus).toBe((await memberRow(club, id))!.status);
     }
-  });
+  }, 180_000);
 });

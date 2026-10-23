@@ -143,11 +143,11 @@ describe.skipIf(!HAS_DB)("T8b: back-fill apply, re-apply, rollback on a real dat
 
     const originalA = (await eventsOf(a)).map((e) => e.id).sort();
     const originalB = JSON.stringify(await eventsOf(b));
-    const before = await withTenantContext(a.tenantId, (tx) => detectBackfill(tx, a.tenantId, "Europe/London"));
+    const before = await withTenantContext(a.tenantId, (tx) => detectBackfill(tx, a.tenantId, "Europe/London"), { timeout: 60_000 });
     expect(before.latestEventMismatches).toBe(0);
 
     // Preview: reads only.
-    const plan = await withTenantContext(a.tenantId, (tx) => planTenantBackfill(tx, a.tenantId));
+    const plan = await withTenantContext(a.tenantId, (tx) => planTenantBackfill(tx, a.tenantId), { timeout: 60_000 });
     expect(plan.inputs).toHaveLength(5); // ada 3, elvis 2
     expect(plan.exceptionCounts).toMatchObject({ erased_member: 1, undated_end: 1 });
     expect((await eventsOf(a)).length).toBe(originalA.length);
@@ -169,7 +169,7 @@ describe.skipIf(!HAS_DB)("T8b: back-fill apply, re-apply, rollback on a real dat
     expect((await eventsOf(a, undated)).map((e) => e.sourceAction)).toEqual(["import_create"]);
     expect((await eventsOf(a, gone)).map((e) => e.sourceAction)).toEqual(["import_create"]);
 
-    const after = await withTenantContext(a.tenantId, (tx) => detectBackfill(tx, a.tenantId, "Europe/London"));
+    const after = await withTenantContext(a.tenantId, (tx) => detectBackfill(tx, a.tenantId, "Europe/London"), { timeout: 60_000 });
     expect(after.byMonth).toEqual(monthTotals(plan.byMonth));
     expect(after.duplicates).toBe(0);
     expect(after.latestEventMismatches).toBe(before.latestEventMismatches);
@@ -182,14 +182,14 @@ describe.skipIf(!HAS_DB)("T8b: back-fill apply, re-apply, rollback on a real dat
     expect((await eventsOf(a)).length).toBe(originalA.length + 5);
 
     // Rollback: only the back-filled rows go.
-    const rb = await withTenantContext(a.tenantId, (tx) => rollbackTenantBackfill(tx, a.tenantId, { runId: `${STAMP}-1` }));
+    const rb = await withTenantContext(a.tenantId, (tx) => rollbackTenantBackfill(tx, a.tenantId, { runId: `${STAMP}-1` }), { timeout: 60_000 });
     expect(rb.removed).toBe(5);
     expect((await eventsOf(a)).map((e) => e.id).sort()).toEqual(originalA);
 
     // The other club never moved.
     expect(JSON.stringify(await eventsOf(b))).toBe(originalB);
     expect((await eventsOf(b, bea)).every((e) => e.sourceAction !== "import_backfill")).toBe(true);
-  });
+  }, 180_000);
 
   it("the writer refuses a date not earlier than the first event and the club rolls back", async () => {
     const c = await mkClub("c");

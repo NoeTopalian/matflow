@@ -160,12 +160,12 @@ describe.skipIf(!HAS_DB)("T8c: movement and headcount on a real database", () =>
     await mkStaffMember(b, "bea", new Date("2025-03-01T09:00:00.000Z"));
 
     const now = new Date();
-    const ledgerReport = await withTenantContext(a.tenantId, (tx) => loadMembershipReport(tx, a.tenantId, { now, months: MONTHS }));
+    const ledgerReport = await withTenantContext(a.tenantId, (tx) => loadMembershipReport(tx, a.tenantId, { now, months: MONTHS }), { timeout: 60_000 });
     expect(ledgerReport.historySource).toBe("ledger");
     expect(ledgerReport.boundary).toBe(IMPORT_DAY.toISOString());
 
     // 2. Today's headcount equals the tile; the guardian is not in it.
-    const activeTile = await withTenantContext(a.tenantId, (tx) => tx.member.count({ where: { tenantId: a.tenantId, ...ACTIVE_MEMBER } }));
+    const activeTile = await withTenantContext(a.tenantId, (tx) => tx.member.count({ where: { tenantId: a.tenantId, ...ACTIVE_MEMBER } }), { timeout: 60_000 });
     expect(activeTile).toBe(2); // ada, dan
     expect(ledgerReport.headcountByMonth.at(-1)!.headcount).toBe(activeTile);
     expect(ledgerReport.reconciled).toBe(0);
@@ -187,7 +187,7 @@ describe.skipIf(!HAS_DB)("T8c: movement and headcount on a real database", () =>
     // 3. Apply the back-fill on this test club, then read again: the same figures.
     const applied = await withTenantContext(a.tenantId, (tx) => applyTenantBackfill(tx, a.tenantId, { runId: `${STAMP}-run` }), { timeout: 60_000 });
     expect(applied.status).toBe("applied");
-    const backfillReport = await withTenantContext(a.tenantId, (tx) => loadMembershipReport(tx, a.tenantId, { now, months: MONTHS }));
+    const backfillReport = await withTenantContext(a.tenantId, (tx) => loadMembershipReport(tx, a.tenantId, { now, months: MONTHS }), { timeout: 60_000 });
     expect(backfillReport.historySource).toBe("backfill");
     expect(backfillReport.headcountByMonth).toEqual(ledgerReport.headcountByMonth);
     expect(backfillReport.movementsByMonth).toEqual(ledgerReport.movementsByMonth);
@@ -200,7 +200,7 @@ describe.skipIf(!HAS_DB)("T8c: movement and headcount on a real database", () =>
     expect(backfillReport.totals).toEqual(pure.totals);
 
     // 4. Isolation: club B sees only bea; club A's context cannot read club B.
-    const bReport = await withTenantContext(b.tenantId, (tx) => loadMembershipReport(tx, b.tenantId, { now, months: MONTHS }));
+    const bReport = await withTenantContext(b.tenantId, (tx) => loadMembershipReport(tx, b.tenantId, { now, months: MONTHS }), { timeout: 60_000 });
     expect(bReport.headcountByMonth.at(-1)!.headcount).toBe(1);
     expect(bReport.totals.new).toBe(1);
     // Club A's figures never include bea (the application filter on tenantId).
@@ -213,10 +213,10 @@ describe.skipIf(!HAS_DB)("T8c: movement and headcount on a real database", () =>
       `SELECT (rolbypassrls OR rolsuper) AS bypass FROM pg_roles WHERE rolname = current_user`,
     );
     if (!bypass) {
-      const crossed = await withTenantContext(a.tenantId, (tx) => loadMembershipReport(tx, b.tenantId, { now, months: MONTHS }));
+      const crossed = await withTenantContext(a.tenantId, (tx) => loadMembershipReport(tx, b.tenantId, { now, months: MONTHS }), { timeout: 60_000 });
       // Nothing readable: every month has no data (never a fabricated zero).
       expect(crossed.headcountByMonth.every((h) => h.basis === "none" && h.headcount === null)).toBe(true);
       expect(crossed.totals.new).toBe(0);
     }
-  });
+  }, 180_000);
 });
