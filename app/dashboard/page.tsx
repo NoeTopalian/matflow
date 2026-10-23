@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { owesMoneyClause } from "@/lib/overdue";
+import { paymentsDueWhere } from "@/lib/payments-due";
 import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import WeeklyCalendar, { DayClass } from "@/components/dashboard/WeeklyCalendar";
@@ -98,7 +99,7 @@ async function getWeekClasses(tx: TxClient, tenantId: string): Promise<DayClass[
   }));
 }
 
-async function getStats(tx: TxClient, tenantId: string) {
+async function getStats(tx: TxClient, tenantId: string, role: string) {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const startOfWeek = new Date(now);
@@ -139,13 +140,11 @@ async function getStats(tx: TxClient, tenantId: string) {
         OR: [{ phone: null }, { phone: "" }],
       },
     }),
-    // Everyone Payments → Outstanding lists: overdue (derived, not only
-    // Stripe-pushed) plus "No payment yet" — see lib/overdue.ts. The same clause
-    // feeds the action list below, so the headline number, the list of names
-    // and the Outstanding tab can never disagree.
-    tx.member.count({
-      where: { tenantId, status: { in: ["active", "taster"] }, OR: owesMoneyClause(new Date()) },
-    }),
+    // Owner/manager: everyone Payments → Outstanding lists, overdue plus "No
+    // payment yet" (lib/overdue.ts) — the same clause feeds the action list
+    // below. Other roles: payers overdue only, the count of the Members chip
+    // their tile links to (round-3 review L5; lib/payments-due.ts).
+    tx.member.count({ where: paymentsDueWhere(tenantId, role, now) }),
     // Joined inside the window and not in yet = new, not at risk (lib/dashboard-action-items).
     tx.member.count({ where: atRiskMemberWhere(tenantId, now) }),
   ]);
@@ -271,7 +270,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
     (tx) =>
       Promise.all([
         getWeekClasses(tx, session!.user.tenantId),
-        getStats(tx, session!.user.tenantId),
+        getStats(tx, session!.user.tenantId, session!.user.role),
         getSetupGaps(tx, session!.user.tenantId, session!.user.role),
         getUserTasks(tx, session!.user.tenantId, session!.user.id),
         getActionItems(tx, session!.user.tenantId),

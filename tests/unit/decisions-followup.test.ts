@@ -80,7 +80,11 @@ describe("2. one definition of who owes (the Outstanding list's)", () => {
 
   it("the dashboard count and action list, and Outstanding, all use it", () => {
     const dashboard = source("app/dashboard/page.tsx");
-    expect(dashboard.match(/OR: owesMoneyClause\(/g)?.length).toBe(2);
+    // The action list here; the owner/manager tile count through lib/payments-due
+    // (round-3 review L5: other roles count payers overdue, their link's chip).
+    expect(dashboard.match(/OR: owesMoneyClause\(/g)?.length).toBe(1);
+    expect(dashboard).toContain("paymentsDueWhere(tenantId, role, now)");
+    expect(source("lib/payments-due.ts")).toMatch(/OR: owesMoneyClause\(now\)/);
     expect(dashboard).not.toMatch(/OR: overdueClause\(/);
     // Review L2: the payer form of the same rule (lib/overdue noPaymentYetPayerWhere spreads noPaymentYetWhere).
     expect(source("app/api/payments/outstanding/route.ts")).toMatch(/\.\.\.noPaymentYetPayerWhere\(\)/);
