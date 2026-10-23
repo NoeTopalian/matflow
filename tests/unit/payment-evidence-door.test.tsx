@@ -27,6 +27,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
       payment: { findFirst: paymentFindFirstMock },
       memberRank: { findFirst: vi.fn().mockResolvedValue(null) },
       classRoster: { count: vi.fn().mockResolvedValue(0), findUnique: vi.fn().mockResolvedValue(null) },
+      // The merged engine (batch-d) also reads the class membership list before the payment gate.
+      classMembershipTier: { findMany: vi.fn().mockResolvedValue([]) },
       classInstance: {
         findFirst: vi.fn().mockResolvedValue({
           id: "ci-1", classId: "c-1", isCancelled: false,
