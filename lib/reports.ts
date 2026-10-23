@@ -1,6 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { noPaymentYetPayerWhere, overduePayerWhere } from "@/lib/overdue";
+import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
 import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER, isActiveMember } from "@/lib/member-population";
 import { percent, ratePct1dp } from "@/lib/percent";
 import { clubMonthKey, clubMonthWindow, defaultClubMonthWindow, monthRange, type ClubMonthWindow } from "@/lib/club-month";
@@ -201,6 +202,14 @@ export interface ReportsData {
     noPaymentYetCount: number;
     /** How many of `noPaymentYetCount` are parent or guardian accounts. */
     noPaymentYetGuardianCount: number;
+    /**
+     * D9 (23 Oct 2026): inactive or cancelled accounts that still owe — a
+     * failed latest charge or marked overdue (lib/other-accounts-owing.ts).
+     * Not chased, not in `overdueCount`, not in any member total.
+     */
+    otherOwingCount: number;
+    /** How many of `otherOwingCount` are parent or guardian accounts. */
+    otherOwingGuardianCount: number;
     failedLast30Days: number;
     recoveryRate: number | null;
     /** T2b: the counts behind `recoveryRate` (members with a failed payment in 90 days, and how many are now paid). */
@@ -371,6 +380,8 @@ export function createEmptyReportsData(): ReportsData {
       overdueGuardianCount: 0,
       noPaymentYetCount: 0,
       noPaymentYetGuardianCount: 0,
+      otherOwingCount: 0,
+      otherOwingGuardianCount: 0,
       failedLast30Days: 0,
       recoveryRate: null,
       recovery: { ratePct: null, recovered: 0, failedMembers: 0 },
@@ -479,6 +490,7 @@ export async function getReportsData(
     membersWithRecentFailed,
     cancelledByMonth,
     activeOnHoldMembers,
+    otherOwingRows,
   ] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       tx.attendanceRecord.findMany({
@@ -593,6 +605,9 @@ export async function getReportsData(
       }),
       // Q4 A-1: members on hold stay inside "Active members" and are marked there.
       tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER, ...ON_HOLD } }),
+      // D9: inactive or cancelled accounts that still owe — counted beside
+      // the payers, never inside them or a member total.
+      loadOtherAccountsOwing(tx, tenantId),
     ]),
     // ~12 parallel aggregate queries in one transaction — needs more than the
     // default budget on large tenants (was expiring with P2028/commit-expired).
@@ -855,6 +870,8 @@ export async function getReportsData(
       overdueGuardianCount,
       noPaymentYetCount,
       noPaymentYetGuardianCount,
+      otherOwingCount: otherOwingTotals(otherOwingRows).count,
+      otherOwingGuardianCount: otherOwingTotals(otherOwingRows).guardians,
       failedLast30Days: failedLast30,
       recoveryRate,
       recovery: { ratePct: recoveryRate, recovered: recoveredCount, failedMembers: failedMemberIds.length },
@@ -881,8 +898,9 @@ export async function getReportsData(
  * "v3" = summary.activeOnHoldMembers (T1 review, 17 Oct 2026).
  * "v4" = period, the club-zone month window (review L4, 23 Oct 2026).
  * "v5" = paymentHealth payer counts and guardian counts (review L2, 23 Oct 2026).
+ * "v6" = paymentHealth.otherOwingCount / otherOwingGuardianCount (D9, 23 Oct 2026).
  */
-export const REPORTS_CACHE_VERSION = "v5";
+export const REPORTS_CACHE_VERSION = "v6";
 
 /**
  * The cached read the reports page and API use. Under 25 concurrent staff

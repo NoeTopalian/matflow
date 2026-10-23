@@ -6,6 +6,7 @@ import { getMemberListCounts } from "@/lib/member-list-counts-server";
 import PrintCardsLink from "@/components/dashboard/PrintCardsLink";
 import PromotionAlerts from "@/components/dashboard/PromotionAlerts";
 import { shownPaymentStatus } from "@/lib/overdue";
+import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
 
 // Lane 1 iter-1 P-01 [Critical] fix: hard cap on the SSR-rendered member
 // list. Previous code was unbounded — at 5 000 members the route transferred
@@ -157,6 +158,13 @@ export default async function MembersPage({ searchParams }: Props) {
   const { rows: members, truncated } = await getMembers(session!.user.tenantId, now);
   const monthWindow = await getMonthWindow(session!.user.tenantId, typeof month === "string" ? month : undefined);
   const counts = await getMemberListCounts(session!.user.tenantId, now, monthWindow);
+  // D9 (23 Oct 2026): inactive or cancelled accounts that still owe. Counted
+  // over the whole club (not the capped rows) for the payers sub-line and the
+  // "Other accounts owing" chip; the flag lets the chip list exactly them.
+  // Unguarded like the loads above (UI-RULES §7).
+  const otherOwingRows = await withTenantContext(session!.user.tenantId, (tx) => loadOtherAccountsOwing(tx, session!.user.tenantId));
+  const otherOwingIds = new Set(otherOwingRows.map((r) => r.memberId));
+  const listed = members.map((m) => (otherOwingIds.has(m.id) ? { ...m, otherOwing: true } : m));
 
   // Guardian links an import suggested and nobody has confirmed — counted
   // across the whole club for the header badge. Owner and manager only: the
@@ -186,13 +194,14 @@ export default async function MembersPage({ searchParams }: Props) {
           honest gate; an error state is not. */}
       {session!.user.role === "owner" && <PromotionAlerts />}
       <MembersList
-        members={members}
+        members={listed}
         primaryColor={session!.user.primaryColor}
         role={session!.user.role}
         guardianReviewCount={guardianReviewCount}
         truncatedAt={truncated ? MEMBERS_SSR_TAKE : null}
         monthWindow={monthWindow}
         serverCounts={counts}
+        otherOwing={otherOwingTotals(otherOwingRows)}
         supportScope={(session!.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
       />
     </>

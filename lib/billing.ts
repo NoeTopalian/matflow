@@ -163,6 +163,8 @@ export function totalOutstandingPence(rows: OutstandingRow[]): number {
 export function paymentHealthLine(h: {
   overdueCount: number;
   noPaymentYetCount?: number;
+  /** D9: inactive or cancelled accounts that still owe. Never "all in good standing" while any do. */
+  otherOwingCount?: number;
   failedLast30Days: number;
 }): { tone: "good" | "owed"; text: string } | null {
   const noPaymentYet = h.noPaymentYetCount ?? 0;
@@ -170,7 +172,7 @@ export function paymentHealthLine(h: {
     // Payer words (review L2), the same as Outstanding and the Members tile.
     return { tone: "owed", text: `${payersOverdueLabel(h.overdueCount)} · ${NO_PAYMENT_YET_REASON} ${noPaymentYet}` };
   }
-  if (h.overdueCount === 0 && h.failedLast30Days === 0) {
+  if (h.overdueCount === 0 && h.failedLast30Days === 0 && (h.otherOwingCount ?? 0) === 0) {
     return { tone: "good", text: "All payments are in good standing." };
   }
   return null;
