@@ -34,7 +34,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { verifyCardToken } from "@/lib/card-token";
-import { performCheckin } from "@/lib/checkin";
+import { loadCheckinInstance, performCheckin } from "@/lib/checkin";
 import { logAudit } from "@/lib/audit-log";
 import { allowanceAskSentence } from "@/lib/class-allowance";
 import { checkinRefusal } from "@/lib/checkin-refusal";
@@ -160,17 +160,17 @@ export async function POST(req: Request) {
   // The instance is resolved ONCE, under the same tenancy rule the manual
   // register applies. Doing it per token would let a coach's first rejected
   // scan be indistinguishable from a bad card.
-  const instance = await withTenantContext(tenantId, (tx) =>
-    tx.classInstance.findFirst({
-      where: {
-        id: classInstanceId,
-        // Any staff role may scan into any class in the club — a covering coach
-        // takes what they cover (Noe, 17 Sep 2026). Tenancy is the only filter.
-        class: { tenantId },
-      },
-      select: { id: true, isCancelled: true },
-    }),
-  );
+  //
+  // Any staff role may scan into any class in the club — a covering coach
+  // takes what they cover (Noe, 17 Sep 2026). Tenancy is the only filter.
+  //
+  // D6: read with the engine's own loader and handed to every card's
+  // check-in (`preloadedInstance`), so the engine does not read it again per
+  // card. Safe to reuse for the request: the session's identity, date, time
+  // and class are fixed; the scanner runs no rank, window, state or kids gate
+  // on the class row; and whether the session was cancelled is re-read under
+  // the Class lock inside each check-in (lib/checkin.ts capacityState).
+  const instance = await withTenantContext(tenantId, (tx) => loadCheckinInstance(tx, tenantId, classInstanceId));
   if (!instance) {
     return NextResponse.json({ error: "Class not found" }, { status: 404 });
   }
@@ -265,6 +265,11 @@ export async function POST(req: Request) {
       allowanceGate: "ask",
       allowanceOverrideConfirmed: allowanceConfirmed,
       checkedInByUserId: userId,
+      // D6: the session read once above; revocation judged under the Member
+      // lock against the version on the card (the read above is only the
+      // early answer for a card already revoked).
+      preloadedInstance: instance,
+      expectedCardVersion: v.cardVersion,
     });
 
     const base = { index: v.index, memberId: member.id, memberName: member.name };
@@ -311,6 +316,10 @@ export async function POST(req: Request) {
         break;
       case "member_not_found":
         results[v.index] = { ...base, status: "member_not_found" };
+        break;
+      case "card_revoked":
+        // D6: revoked while this scan waited on the Member lock.
+        results[v.index] = { ...base, status: "revoked" };
         break;
       default:
         // rank_below / rank_above / waiver_unsigned / on_hold /

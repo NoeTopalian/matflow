@@ -223,7 +223,49 @@ export type PerformCheckinArgs = {
   // Staff user id when method=admin (the person clicking "check in" in the
   // dashboard). Null/undefined for self / kiosk / auto / system.
   checkedInByUserId?: string | null;
+  /**
+   * D6: the session as the caller already read it IN THIS REQUEST with
+   * `loadCheckinInstance` (the card scanner reads it once for a stack of
+   * cards). Only its stable facts are relied on; the one gate input on it
+   * that can change — whether the session was cancelled — is re-read under
+   * the Class lock, so reusing it is never staler than the engine's own
+   * pre-transaction read was.
+   */
+  preloadedInstance?: CheckinInstance;
+  /**
+   * D6, the card scanner: the version printed on the card. Revocation is
+   * judged on the Member row as locked (FOR NO KEY UPDATE, the lock the
+   * revoke route's UPDATE conflicts with): a card revoked while its scan waits
+   * on that lock is refused "card_revoked", never admitted on the version the
+   * route read before the lock.
+   */
+  expectedCardVersion?: number;
 };
+
+/** The session row and the class facts every door reads before the write transaction. */
+export async function loadCheckinInstance(tx: Prisma.TransactionClient, tenantId: string, classInstanceId: string) {
+  return tx.classInstance.findFirst({
+    where: { id: classInstanceId, class: { tenantId } },
+    include: {
+      class: {
+        include: {
+          // `timezone` is what turns "18:00" into an instant. Without it the
+          // window below resolved in the SERVER's zone — UTC on Vercel — so a
+          // London club's check-in opened an hour late for the seven months of
+          // British Summer Time. The column has always existed and was read by
+          // nothing.
+          tenant: { select: { checkinWindowBeforeMin: true, checkinWindowAfterMin: true, timezone: true } },
+          requiredRank: { select: { order: true } },
+          maxRank: { select: { order: true } },
+          // Venue gate (ADR-001 D2 slice 2): the class's venue name for the refusal copy.
+          locationRef: { select: { name: true } },
+        },
+      },
+    },
+  });
+}
+
+export type CheckinInstance = NonNullable<Awaited<ReturnType<typeof loadCheckinInstance>>>;
 
 /**
  * A gate a staff door admitted past on confirmation. Only the allowance: the
@@ -281,6 +323,8 @@ export type PerformCheckinResult =
       state: "paused" | "archived";
     }
   | { kind: "member_not_found" }
+  /** D6: the card's version is not the member's (revoked and reprinted), judged under the Member lock. */
+  | { kind: "card_revoked" }
   | { kind: "rank_below" }
   | { kind: "rank_above" }
   | { kind: "roster_not_listed" }
@@ -392,19 +436,25 @@ async function capacityState(
   classId: string,
   classInstanceId: string,
   memberId: string,
-): Promise<{ taken: number; maxCapacity: number } | null> {
-  const locked = await tx.$queryRaw<{ maxCapacity: number | null }[]>`
-    SELECT "maxCapacity"
+): Promise<{ cap: { taken: number; maxCapacity: number } | null; cancelled: boolean }> {
+  // D6: the same statement also re-reads whether the session was cancelled,
+  // under the lock and at no extra round trip. The pre-transaction read (or a
+  // caller's preloaded one, `preloadedInstance`) can be older; a session
+  // cancelled since is refused here rather than admitted.
+  const locked = await tx.$queryRaw<{ maxCapacity: number | null; instanceCancelled?: boolean | null }[]>`
+    SELECT "maxCapacity",
+           (SELECT i."isCancelled" FROM "ClassInstance" i WHERE i."id" = ${classInstanceId} AND i."classId" = "Class"."id") AS "instanceCancelled"
       FROM "Class"
      WHERE "id" = ${classId} AND "tenantId" = ${tenantId}
      FOR UPDATE
   `;
+  const cancelled = locked[0]?.instanceCancelled === true;
   const maxCapacity = locked[0]?.maxCapacity ?? null;
-  if (maxCapacity === null) return null;
+  if (maxCapacity === null || cancelled) return { cap: null, cancelled };
   const taken = await tx.attendanceRecord.count({
     where: { classInstanceId, memberId: { not: memberId } },
   });
-  return { taken, maxCapacity };
+  return { cap: { taken, maxCapacity }, cancelled };
 }
 
 /** Why a class turned a member away on eligibility grounds; null = admitted. */
@@ -508,6 +558,8 @@ export type GateMemberView = {
 
 type MemberLockRow = {
   id: string;
+  /** D6: the card revocation handle, judged under this lock. */
+  cardVersion?: number | null;
   membershipTierId?: string | null;
   paymentStatus?: string | null;
   stripeSubscriptionId?: string | null;
@@ -582,7 +634,7 @@ export function memberChangedSince(pre: GateMemberView, locked: MemberLockRow): 
  */
 async function memberLock(tx: Prisma.TransactionClient, tenantId: string, memberId: string): Promise<MemberLockRow | null> {
   const rows = await tx.$queryRaw<MemberLockRow[]>`
-    SELECT "id", "membershipTierId", "paymentStatus", "stripeSubscriptionId",
+    SELECT "id", "cardVersion", "membershipTierId", "paymentStatus", "stripeSubscriptionId",
            (EXTRACT(EPOCH FROM "nextDueAt") * 1000)::float8 AS "nextDueAtMs",
            (EXTRACT(EPOCH FROM "holdUntil") * 1000)::float8 AS "holdUntilMs",
            "waiverAccepted", "accountType"
@@ -744,28 +796,14 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
   const { tenantId, memberId, classInstanceId, method } = args;
 
   // Validate the class instance belongs to this tenant + load rank requirements + tenant config.
-  const { instance, tenant } = await withTenantContext(tenantId, async (tx) => {
-    const i = await tx.classInstance.findFirst({
-      where: { id: classInstanceId, class: { tenantId } },
-      include: {
-        class: {
-          include: {
-            // `timezone` is what turns "18:00" into an instant. Without it the
-            // window below resolved in the SERVER's zone — UTC on Vercel — so a
-            // London club's check-in opened an hour late for the seven months of
-            // British Summer Time. The column has always existed and was read by
-            // nothing.
-            tenant: { select: { checkinWindowBeforeMin: true, checkinWindowAfterMin: true, timezone: true } },
-            requiredRank: { select: { order: true } },
-            maxRank: { select: { order: true } },
-            // Venue gate (ADR-001 D2 slice 2): the class's venue name for the refusal copy.
-            locationRef: { select: { name: true } },
-          },
-        },
-      },
-    });
-    return { instance: i, tenant: i?.class.tenant ?? null };
-  });
+  // D6: a caller that already read it in this request (the card scanner, once
+  // per stack of cards) hands it over; it must be this session of this club.
+  const preloaded =
+    args.preloadedInstance && args.preloadedInstance.id === classInstanceId && args.preloadedInstance.class.tenantId === tenantId
+      ? args.preloadedInstance
+      : null;
+  const instance = preloaded ?? (await withTenantContext(tenantId, (tx) => loadCheckinInstance(tx, tenantId, classInstanceId)));
+  const tenant = instance?.class.tenant ?? null;
   // A session an attendance-history import created is a record of the past,
   // not a class anyone can be checked into (3 Oct 2026): not found, whatever
   // the method — the desk and card paths do not enforce the time window.
@@ -839,21 +877,36 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
 
   // Coverage decision. The member row is read once and the waiver gate rides
   // on the same read, so the hard block costs no extra query.
-  const memberRecord = await withTenantContext(tenantId, (tx) =>
-    tx.member.findUnique({
-      where: { id: memberId },
-      select: {
-        paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true, membershipTierId: true, nextDueAt: true,
-        accountType: true, billedBy: true,
-        membershipTier: { select: { locationId: true, locationRef: { select: { name: true } } } },
-      },
-    }),
-  );
-  if (!memberRecord) return { kind: "member_not_found" };
+  //
+  // D6: that read feeds the member-decided gates (venue, kids, hold, waiver),
+  // the coverage requirement and the kiosk's pack-first choice. A door that
+  // runs none of them — the card scanner, a desk mark with its gates off —
+  // skips it: what it reports about coverage is read from the Member row AS
+  // LOCKED, which is never staler, and nothing is judged on an older copy.
+  const needsPreRead =
+    args.requireCoverage ||
+    args.enforceWaiverGate ||
+    !!args.enforceHoldGate ||
+    !!args.enforceVenueGate ||
+    (!!args.enforceKidsGate && instance.class.isKids) ||
+    method === "kiosk";
+  const memberRecord = needsPreRead
+    ? await withTenantContext(tenantId, (tx) =>
+        tx.member.findUnique({
+          where: { id: memberId },
+          select: {
+            paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true, membershipTierId: true, nextDueAt: true,
+            accountType: true, billedBy: true,
+            membershipTier: { select: { locationId: true, locationRef: { select: { name: true } } } },
+          },
+        }),
+      )
+    : null;
+  if (needsPreRead && !memberRecord) return { kind: "member_not_found" };
 
   // Venue gate. A tier bound to one venue does not cover a class held at
   // another; both names travel with the refusal so the tablet can say so.
-  if (args.enforceVenueGate) {
+  if (args.enforceVenueGate && memberRecord) {
     const classVenueId = instance.class.locationId ?? null;
     const tierVenueId = memberRecord.membershipTier?.locationId ?? null;
     if (classVenueId && tierVenueId && classVenueId !== tierVenueId) {
@@ -868,13 +921,13 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
   // Kids gate. An adult may not put themselves into a kids class; juniors
   // (13–17) and children may. The member here is whoever is being checked in,
   // so a parent checking in their child is judged as the child.
-  if (args.enforceKidsGate && instance.class.isKids && isAdultAccount(memberRecord.accountType)) {
+  if (args.enforceKidsGate && instance.class.isKids && memberRecord && isAdultAccount(memberRecord.accountType)) {
     return { kind: "kids_class" };
   }
 
   // Hold gate. A membership on hold is not training; the refusal names the
   // date so the tablet can say when they are back.
-  if (args.enforceHoldGate && isOnHold(memberRecord, new Date())) {
+  if (args.enforceHoldGate && memberRecord && isOnHold(memberRecord, new Date())) {
     return { kind: "on_hold", holdUntil: memberRecord.holdUntil ?? null };
   }
 
@@ -882,12 +935,12 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
   // included, so a refusal can never cost the member a paid credit — and
   // fail-closed: the flag is a non-null boolean in the schema, and anything
   // that is not exactly `true` is treated as unsigned.
-  if (args.enforceWaiverGate && memberRecord.waiverAccepted !== true) {
+  if (args.enforceWaiverGate && memberRecord?.waiverAccepted !== true) {
     return { kind: "waiver_unsigned" };
   }
 
   const hasActiveSubscription =
-    !!memberRecord.stripeSubscriptionId && memberRecord.paymentStatus === "paid";
+    !!memberRecord?.stripeSubscriptionId && memberRecord?.paymentStatus === "paid";
   // Club-life finding F-L5-1 (CLUBLIFE-CATALOGUE C5.03): coverage used to mean
   // "a Stripe subscription or a pack", so a member paying at the desk was
   // told to buy a pack on the portal while the kiosk admitted them. A desk
@@ -895,33 +948,42 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
   // its own is not enough), paid or comped, and not overdue by the derived
   // rule in lib/overdue.ts, which is the same rule the members list uses.
   const hasDeskMembership =
+    !!memberRecord &&
     !hasActiveSubscription &&
     !!memberRecord.membershipTierId &&
     // "pending" (No payment yet) is a member the desk has just added: their
-  // first class is normal, so the door treats them as it did when every new
-  // member was stamped "paid" (brief, 30 Sep 2026 — do not refuse at the door).
-  (memberRecord.paymentStatus === "paid" || memberRecord.paymentStatus === "free" || memberRecord.paymentStatus === "pending") &&
+    // first class is normal, so the door treats them as it did when every new
+    // member was stamped "paid" (brief, 30 Sep 2026 — do not refuse at the door).
+    (memberRecord.paymentStatus === "paid" || memberRecord.paymentStatus === "free" || memberRecord.paymentStatus === "pending") &&
     !isOverdue(memberRecord, new Date());
+  // Only read where it is decided: the coverage requirement and the kiosk
+  // pack-first choice, both of which have the pre-transaction read.
   const covered = hasActiveSubscription || hasDeskMembership;
 
   // The columns the gates above were judged on, re-checked under the Member
-  // lock inside each write transaction (R-ALLOW rule 2).
-  const gateView: GateMemberView = {
-    membershipTierId: memberRecord.membershipTierId ?? null,
-    paymentStatus: memberRecord.paymentStatus ?? null,
-    stripeSubscriptionId: memberRecord.stripeSubscriptionId ?? null,
-    nextDueAt: memberRecord.nextDueAt ?? null,
-    holdUntil: memberRecord.holdUntil ?? null,
-    waiverAccepted: memberRecord.waiverAccepted ?? null,
-    accountType: memberRecord.accountType ?? null,
-  };
+  // lock inside each write transaction (R-ALLOW rule 2). No pre-read, nothing
+  // to re-check: every value used is the locked row's own.
+  const gateView: GateMemberView | null = memberRecord
+    ? {
+        membershipTierId: memberRecord.membershipTierId ?? null,
+        paymentStatus: memberRecord.paymentStatus ?? null,
+        stripeSubscriptionId: memberRecord.stripeSubscriptionId ?? null,
+        nextDueAt: memberRecord.nextDueAt ?? null,
+        holdUntil: memberRecord.holdUntil ?? null,
+        waiverAccepted: memberRecord.waiverAccepted ?? null,
+        accountType: memberRecord.accountType ?? null,
+      }
+    : null;
   /** The Member lock, second in the order; restarts the check-in if the row moved. */
-  const lockMember = async (tx: Prisma.TransactionClient): Promise<boolean> => {
+  const lockMember = async (tx: Prisma.TransactionClient): Promise<MemberLockRow | null> => {
     const locked = await memberLock(tx, tenantId, memberId);
-    if (!locked) return false;
-    if (memberChangedSince(gateView, locked)) throw new MemberChangedMidCheckin();
-    return true;
+    if (!locked) return null;
+    if (gateView && memberChangedSince(gateView, locked)) throw new MemberChangedMidCheckin();
+    return locked;
   };
+  /** D6: the card's version against the row as locked (the scanner passes it; other doors do not). */
+  const cardRevoked = (locked: MemberLockRow) =>
+    args.expectedCardVersion !== undefined && Number(locked.cardVersion) !== args.expectedCardVersion;
 
   try {
     if (args.requireCoverage && !covered) {
@@ -933,7 +995,8 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         // Capacity first — inside this transaction, before a credit is spent.
         // Refusing after the decrement would cost the member a class they
         // never attended.
-        const cap = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
+        const { cap, cancelled } = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
+        if (cancelled) return { kind: "class_cancelled" as const };
         if (cap && args.enforceCapacity && cap.taken >= cap.maxCapacity) {
           return { kind: "class_full" as const, ...cap };
         }
@@ -941,7 +1004,9 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         // UNDER it, so a plan change that commits mid-check-in is either
         // seen here or makes the lock restart the check-in — never a stale
         // tier admitting someone (review gap 4, 21 Oct 2026).
-        if (!(await lockMember(tx))) return { kind: "member_not_found" as const };
+        const locked = await lockMember(tx);
+        if (!locked) return { kind: "member_not_found" as const };
+        if (cardRevoked(locked)) return { kind: "card_revoked" as const };
         const refused = await classEligibility(tx, tenantId, memberId, instance.classId, instance.class.name);
         if (refused) return refused;
         const pack = await claimPack(tx, tenantId, memberId);
@@ -968,13 +1033,15 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
 
       if (result.kind === "tier_not_included" || result.kind === "roster_not_listed") return result;
       if (result.kind === "member_not_found") return { kind: "member_not_found" };
+      if (result.kind === "class_cancelled") return { kind: "class_cancelled" };
+      if (result.kind === "card_revoked") return { kind: "card_revoked" };
       if (result.kind === "class_full") {
         return { kind: "class_full", taken: result.taken, maxCapacity: result.maxCapacity };
       }
       // TeamUp bridge: a member TeamUp bills who has no plan set here (two
       // plans at TeamUp, a plan label with no tier, a scheduled start) must
       // not be told to buy a pack — the desk decides (teamup-2, 2 Oct 2026).
-      if (result.kind === "no_coverage") return { kind: "no_coverage", billedBy: memberRecord.billedBy ?? null };
+      if (result.kind === "no_coverage") return { kind: "no_coverage", billedBy: memberRecord?.billedBy ?? null };
       return {
         kind: "success",
         record: result.record,
@@ -994,13 +1061,20 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     //  - staff doors (register, card scanner) never spend a pack: they ask.
     const kioskPackFirst = method === "kiosk" && !covered;
     const straight = await withTenantContext(tenantId, async (tx) => {
-      const cap = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
+      const { cap, cancelled } = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
+      if (cancelled) return { kind: "class_cancelled" as const };
       if (cap && args.enforceCapacity && cap.taken >= cap.maxCapacity) {
         return { kind: "class_full" as const, ...cap };
       }
       // T7: Member lock, then eligibility under it (see the pack path above),
       // then the pack or the allowance, then the insert.
-      if (!(await lockMember(tx))) return { kind: "member_not_found" as const };
+      const locked = await lockMember(tx);
+      if (!locked) return { kind: "member_not_found" as const };
+      if (cardRevoked(locked)) return { kind: "card_revoked" as const };
+      // D6: with no pre-read, the subscription the success reports is the locked row's.
+      const subscribed = memberRecord
+        ? hasActiveSubscription
+        : !!locked.stripeSubscriptionId && locked.paymentStatus === "paid";
       const refused = await classEligibility(tx, tenantId, memberId, instance.classId, instance.class.name);
       if (refused) return refused;
       let pack = kioskPackFirst ? await claimPack(tx, tenantId, memberId) : null;
@@ -1041,10 +1115,13 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         overCapacity: cap && cap.taken >= cap.maxCapacity ? cap : undefined,
         allowance,
         pack,
+        subscribed,
       };
     });
     if (straight.kind === "tier_not_included" || straight.kind === "roster_not_listed") return straight;
     if (straight.kind === "member_not_found") return { kind: "member_not_found" };
+    if (straight.kind === "class_cancelled") return { kind: "class_cancelled" };
+    if (straight.kind === "card_revoked") return { kind: "card_revoked" };
     if (straight.kind === "duplicate") return { kind: "duplicate" };
     if (straight.kind === "allowance_reached") {
       const { kind, askable, used, limit, basis, weeks, period, resetsOn, current, periodUnknown } = straight;
@@ -1073,7 +1150,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         ...overrides,
       };
     }
-    if (method === "kiosk" && !hasActiveSubscription) {
+    if (method === "kiosk" && !straight.subscribed) {
       return {
         kind: "success",
         record,
@@ -1086,7 +1163,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     return {
       kind: "success",
       record,
-      coverage: { kind: hasActiveSubscription ? "subscription" : "manual" },
+      coverage: { kind: straight.subscribed ? "subscription" : "manual" },
       ...(overCapacity ? { overCapacity } : {}),
       ...overrides,
     };

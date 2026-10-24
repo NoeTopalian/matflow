@@ -30,7 +30,10 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/auth", () => ({ auth: h.auth }));
-vi.mock("@/lib/checkin", () => ({ performCheckin: h.performCheckin }));
+vi.mock("@/lib/checkin", () => ({
+  performCheckin: h.performCheckin,
+  loadCheckinInstance: (tx: { classInstance: { findFirst: (a: unknown) => unknown } }, tenantId: string, id: string) => tx.classInstance.findFirst({ where: { id, class: { tenantId } } }),
+}));
 vi.mock("@/lib/audit-log", () => ({ logAudit: h.logAudit }));
 vi.mock("@/lib/api-authz", () => ({ requireApiStaff: h.requireApiStaff }));
 vi.mock("@/lib/rate-limit", () => ({
