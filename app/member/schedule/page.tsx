@@ -56,6 +56,11 @@ type ScheduleClass = {
   maxRankName?: string | null;
   /** Today's session for this slot is cancelled (api/member/schedule). */
   cancelled?: boolean;
+  /**
+   * D2: the member is booked on this class but its rules now turn them away
+   * (the booking is kept). `sentence` is the door's own refusal.
+   */
+  bookedIneligible?: { reason: string; sentence: string } | null;
 };
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -260,10 +265,27 @@ function EventSheet({
               🏆 Comp team — invite-only class
             </div>
           )}
+          {isSub && cls.bookedIneligible && (
+            // D2: the booking is kept, and the member is told what the door will say.
+            <div
+              className="rounded-xl px-3 py-2 text-xs"
+              data-testid="schedule-booked-ineligible"
+              role="status"
+              style={{
+                background: "color-mix(in srgb, var(--hue-warning) 10%, transparent)",
+                border: "1px solid color-mix(in srgb, var(--hue-warning) 25%, transparent)",
+                color: "var(--hue-warning)",
+              }}
+            >
+              <p className="font-semibold">Not eligible: {cls.bookedIneligible.sentence}</p>
+              <p className="mt-1">Your booking is kept, but check-in will turn you away until this changes.</p>
+            </div>
+          )}
 
           <button
             onClick={onToggle}
-            disabled={cls.eligibility === "rank_below" || cls.eligibility === "rank_above" || cls.eligibility === "tier_not_included"}
+            // A booked member can always cancel their own booking, eligible or not (D2).
+            disabled={!isSub && (cls.eligibility === "rank_below" || cls.eligibility === "rank_above" || cls.eligibility === "tier_not_included")}
             className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
               background: isSub ? hex(primaryColor, 0.12) : primaryColor,
@@ -578,6 +600,17 @@ function SessionBlock({
             Kids
           </span>
         )}
+        {isSub && cls.bookedIneligible && (
+          // D2: booked, but the door now refuses this member; the sheet says why.
+          <span
+            className="shrink-0 inline-flex items-center rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide leading-4"
+            style={{ color: ink, border: `1px solid color-mix(in srgb, ${ink} 30%, transparent)` }}
+            data-testid="schedule-cell-booked-ineligible"
+            title={`Not eligible: ${cls.bookedIneligible.sentence}`}
+          >
+            Not eligible
+          </span>
+        )}
         {cls.eligibility === "tier_not_included" && (
           // T6a: locked, not hidden; the sheet says why.
           <span
@@ -828,6 +861,7 @@ export default function MemberSchedulePage() {
         eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok" | "tier_not_included";
         requiredRankName?: string | null; maxRankName?: string | null;
         dayOfWeek: number; classInstanceId?: string | null; cancelled?: boolean;
+        bookedIneligible?: { reason: string; sentence: string } | null;
       }>) => {
         const mapped: ScheduleClass[] = (Array.isArray(data) ? data : []).map((c) => ({
           id: c.id,
@@ -860,6 +894,7 @@ export default function MemberSchedulePage() {
           eligibility: c.eligibility,
           requiredRankName: c.requiredRankName ?? null,
           maxRankName: c.maxRankName ?? null,
+          bookedIneligible: c.bookedIneligible ?? null,
         }));
         setAllClasses(mapped);
       });

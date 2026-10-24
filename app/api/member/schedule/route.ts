@@ -26,6 +26,7 @@ import { isAdultAccount } from "@/lib/account-type";
 import { classTierCovers } from "@/lib/class-tier-gate";
 import type { ScheduleEligibility } from "@/lib/member-home";
 import { liveClassWhere } from "@/lib/class-live";
+import { accessRefusals, accessRefusalSentence, highestRankOrder } from "@/lib/booking-eligibility";
 
 const DEMO_CLASSES = [
   { id: "m1",  name: "Fundamentals BJJ", startTime: "09:30", endTime: "10:30", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 1, color: "#3b82f6" },
@@ -59,7 +60,7 @@ export async function GET(req: Request) {
   const memberId = session.user.memberId;
 
   try {
-    const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts, viewerIsAdult, viewerTierId } = await withTenantContext(
+    const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts, viewerIsAdult, viewerTierId, viewerTierName, bookedClassIds } = await withTenantContext(
       session.user.tenantId,
       async (tx) => {
         const cls = await tx.class.findMany({
@@ -130,8 +131,20 @@ export async function GET(req: Request) {
           : [];
         const rosterIds = new Set(rosterMembershipsRaw.map((r) => r.classId));
         const me = memberId
-          ? await tx.member.findFirst({ where: { id: memberId, tenantId: session.user.tenantId }, select: { accountType: true, membershipTierId: true } })
+          ? await tx.member.findFirst({
+              where: { id: memberId, tenantId: session.user.tenantId },
+              select: { accountType: true, membershipTierId: true, membershipTier: { select: { name: true } } },
+            })
           : null;
+        // D2: the member's own bookings, so a booked class whose rules now
+        // turn them away is shown — marked "not eligible" with the door's
+        // sentence — rather than hidden or silently kept.
+        const booked = memberId
+          ? await tx.classSubscription.findMany({
+              where: { memberId, class: { tenantId: session.user.tenantId } },
+              select: { classId: true },
+            })
+          : [];
 
         // For each class, count whether it has ANY roster (i.e., is roster-only mode).
         const counts = await tx.classRoster.groupBy({
@@ -150,6 +163,8 @@ export async function GET(req: Request) {
           rosterCounts: countMap,
           viewerIsAdult: isAdultAccount(me?.accountType),
           viewerTierId: me?.membershipTierId ?? null,
+          viewerTierName: me?.membershipTier?.name ?? null,
+          bookedClassIds: new Set(booked.map((b) => b.classId)),
         };
       },
     );
@@ -161,9 +176,38 @@ export async function GET(req: Request) {
       .flatMap((cls: Cls) => {
         const isRosterMode = (rosterCounts.get(cls.id) ?? 0) > 0;
         const memberOnRoster = rosterClassIds.has(cls.id);
+        const isBooked = bookedClassIds.has(cls.id);
 
-        // Roster-only class member is NOT on → server-side hide entirely.
-        if (isRosterMode && !memberOnRoster) return [];
+        // Roster-only class member is NOT on → server-side hide entirely —
+        // unless they are booked on it (D2: a booking is kept when the squad
+        // list drops them, and the member sees it marked "not eligible").
+        if (isRosterMode && !memberOnRoster && !isBooked) return [];
+
+        // D2: a booked class the door would now refuse this member, with the
+        // door's own sentence (lib/booking-eligibility.ts: the door's rules —
+        // rank on the highest rank of any discipline, the squad list, the
+        // membership list). Null when admitted or not booked.
+        const refusals = isBooked
+          ? accessRefusals(
+              {
+                // Only this member's place on the list matters here: a list
+                // that exists without them is spelled as one other entry.
+                rosterMemberIds: !isRosterMode ? [] : memberOnRoster ? [memberId ?? ""] : ["(someone else)"],
+                allowedTierIds: cls.allowedTiers.map((t) => t.tierId),
+                requiredRankOrder: cls.requiredRank?.order ?? null,
+                maxRankOrder: cls.maxRank?.order ?? null,
+              },
+              {
+                memberId: memberId ?? "",
+                membershipTierId: viewerTierId,
+                tierName: viewerTierName,
+                rankOrder: highestRankOrder(memberRanks.map((mr) => mr.rankSystem)),
+              },
+            )
+          : [];
+        const bookedIneligible = refusals.length > 0
+          ? { reason: refusals[0], sentence: accessRefusalSentence(refusals[0], cls.name, viewerTierName) }
+          : null;
 
         // Compute eligibility per class (constant across schedule entries).
         let eligibility: ScheduleEligibility = "ok";
@@ -212,6 +256,8 @@ export async function GET(req: Request) {
           eligibility,
           requiredRankName: cls.requiredRank?.name ?? null,
           maxRankName: cls.maxRank?.name ?? null,
+          // D2: set only on a booked class the door now refuses; the booking is kept.
+          bookedIneligible,
         }));
       });
 

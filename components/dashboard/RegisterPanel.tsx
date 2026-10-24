@@ -62,6 +62,12 @@ type RegisterMember = {
   tierNotIncluded?: boolean;
   /** T6d: a squad class and this member is not on its roster — a mark will be refused. */
   notOnRoster?: boolean;
+  /**
+   * D2: booked, but the class's rules now turn this member away; the booking
+   * was kept. `staffDoorsAdmit` = rank only (refused at the member app and
+   * kiosk; a staff mark still admits).
+   */
+  bookedIneligible?: { reasons: string[]; sentence: string; staffDoorsAdmit: boolean } | null;
 };
 
 type RegisterResponse = {
@@ -580,6 +586,18 @@ export default function RegisterPanel({
                         {NOT_ON_SQUAD_LABEL}
                       </span>
                     )}
+                    {!m.walkIn && m.bookedIneligible && (
+                      // D2: the booking was kept when the class's rules changed;
+                      // the member is turned away at their own door.
+                      <span
+                        className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase"
+                        style={{ background: tint("var(--hue-warning)", 14), color: "var(--hue-warning-ink)" }}
+                        title={`Booked, but not eligible: ${m.bookedIneligible.sentence}`}
+                        data-testid="register-booked-ineligible"
+                      >
+                        Booked · not eligible
+                      </span>
+                    )}
                     {m.walkIn && (
                       // Not booked, but here: scanned in, marked from the search,
                       // or added this morning. Told apart from a no-show by this
@@ -631,6 +649,12 @@ export default function RegisterPanel({
                         : m.notOnRoster
                           ? "edit the squad list first."
                           : "change their membership first."}
+                    </p>
+                  )}
+                  {!m.attended && !m.walkIn && m.bookedIneligible?.staffDoorsAdmit && (
+                    // D2, rank only: visible on a phone, where the chip's title never shows.
+                    <p className="mt-1 text-[11px]" style={{ color: "var(--hue-warning-ink)" }} data-testid="register-booked-rank-note">
+                      Booked, but their own check-in is refused (&ldquo;{m.bookedIneligible.sentence}&rdquo;) — staff can still mark them in.
                     </p>
                   )}
                   {medicalNotesText(m.medicalConditions) && (
