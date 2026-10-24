@@ -20,7 +20,7 @@ vi.mock("@/auth", () => ({
   })),
 }));
 
-const logAudit = vi.hoisted(() => vi.fn(async (_entry: Record<string, unknown>) => ({})));
+const logAudit = vi.hoisted(() => vi.fn(async (entry: Record<string, unknown>) => (void entry, {})));
 vi.mock("@/lib/audit-log", () => ({ logAudit }));
 
 const mockPrisma = {
