@@ -1,5 +1,10 @@
 -- All-or-nothing (see tests/unit/migrations-are-atomic.test.ts).
 BEGIN;
+-- Bounded waits (see tests/unit/migrations-bounded-waits.test.ts): a lock this file needs that another session
+-- holds fails the deploy after 5 s (55P03) instead of queueing every later request on the table behind it; no
+-- statement runs past 15 s. Transaction-local: COMMIT or ROLLBACK resets both.
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '15s';
 
 -- Product decision (Noe, 20 Oct 2026): a plan's class allowance resets on an
 -- EXPLICIT basis, never a rolling window. "classLimit" classes per period:

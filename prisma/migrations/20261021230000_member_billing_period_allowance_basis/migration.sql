@@ -1,5 +1,10 @@
 -- All-or-nothing (see tests/unit/migrations-are-atomic.test.ts).
 BEGIN;
+-- Bounded waits (see tests/unit/migrations-bounded-waits.test.ts): a lock this file needs that another session
+-- holds fails the deploy after 5 s (55P03) instead of queueing every later request on the table behind it; no
+-- statement runs past 15 s. Transaction-local: COMMIT or ROLLBACK resets both.
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '15s';
 
 -- "N attendances per member's billing period" (owner scope, 21 Oct 2026).
 -- A fourth allowance basis, "billing": each member's own period, from one

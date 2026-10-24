@@ -1,8 +1,14 @@
 -- All-or-nothing (see tests/unit/migrations-are-atomic.test.ts).
 BEGIN;
+-- Bounded waits (see tests/unit/migrations-bounded-waits.test.ts): a lock this file needs that another session
+-- holds fails the deploy after 5 s (55P03) instead of queueing every later request on the table behind it; no
+-- statement runs past 15 s. Transaction-local: COMMIT or ROLLBACK resets both.
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '15s';
 
 -- T7c (Sean note 5): a membership tier's class allowance, "N classes every M
--- weeks" (rolling window; owner decision 17 Oct 2026). The columns are added
+-- weeks" (rolling window: agent default adopted 17 Oct 2026; not an owner decision.
+-- Superseded by the explicit reset basis of 20261021140000, Noe's instruction of 20 Oct 2026). The columns are added
 -- here; T7 (lib/checkin.ts, same release) enforces them at every door from the
 -- moment a plan has a limit. Through the reader rule it also enforces any tier
 -- whose existing "maxClassesPerWeek" is non-null from deploy (as N every 1
