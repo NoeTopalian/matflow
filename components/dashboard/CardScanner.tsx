@@ -17,12 +17,15 @@
 //    or already in), "need attention" is everything else. Neither number is
 //    ever mutated by hand; both are derived from the rows.
 //
-// 3. A CAMERA DECODES THE SAME QR MANY TIMES A SECOND. Without the `seen` set,
-//    holding one card still would fire dozens of identical requests. The
-//    de-duplication is by exact token string, which is sound only because
-//    lib/card-token.ts decodes canonically (one card is exactly one string).
-//    The short buzz fires on the newly-seen branch, after that guard — put it
-//    before the guard and a held card buzzes four times a second.
+// 3. A CAMERA DECODES THE SAME QR MANY TIMES A SECOND. Without the hold
+//    tracker (lib/scan-holds.ts), holding one card still would fire dozens of
+//    identical requests: one continuous hold sends at most one request, and
+//    after a retryable failure only a NEW hold (card lifted away, then held
+//    again) sends another. The de-duplication is by exact token string, which
+//    is sound only because lib/card-token.ts decodes canonically (one card is
+//    exactly one string). The short buzz fires on the "submit" branch, after
+//    that guard — put it before the guard and a held card buzzes four times a
+//    second.
 //
 // 4. "NOT SUPPORTED" AND "PERMISSION DENIED" ARE DIFFERENT PROBLEMS with
 //    different remedies, and collapsing them into "camera unavailable" tells a
@@ -45,6 +48,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { nextDetectorState, pickDetectorKind } from "@/lib/scan-detector";
 import { formatTimeRange } from "@/lib/class-time";
+import { HoldTracker } from "@/lib/scan-holds";
 
 /**
  * Frames wider than this are scaled down before decoding: jsQR over a full
@@ -190,14 +194,22 @@ function labelFor(status: ScanStatus, reason?: ConfirmReason): string {
  * decides whether they reprint it or check the member's account.
  *
  * Two kinds of failure hint on purpose. `error`, `class_not_found` and
- * `class_cancelled` arrive as a 200 body, so the token is NOT un-seen and
+ * `class_cancelled` arrive as a 200 body, so the token stays settled and
  * holding the card again does nothing: "try again" would be a silent dead end,
- * so those say "use the register". `request_failed` and `network` un-see the
- * token, so holding the card again genuinely retries.
+ * so those say "use the register". The RETRYABLE_BY_HOLDING statuses re-arm
+ * the token, so lifting the card away and holding it again genuinely retries —
+ * every time, and the hint says "lift" because a card left still under the lens
+ * is one hold and does not resend.
+ *
+ * `timed_out` never promises an outcome. The server may still be working on the
+ * abandoned request and may have recorded it; a repeat answers "Checked in" (it
+ * had not) or "Already in" (it had, or the member was already in the register),
+ * and either means the member is in. A repeat can also time out, in which case
+ * the register is the only reliable answer.
  */
 const STATUS_COPY: Record<ScanStatus, { label: string; hint?: string; tone: "ok" | "warn" | "bad" }> = {
   success: { label: "Checked in", tone: "ok" },
-  duplicate: { label: "Already in", hint: "Scanned twice — no harm done", tone: "ok" },
+  duplicate: { label: "Already in", hint: "Already in the register — nothing was added twice.", tone: "ok" },
   revoked: { label: "Card cancelled", hint: "This card was replaced. Print the new one.", tone: "warn" },
   expired: { label: "Card expired", hint: "Print a replacement.", tone: "warn" },
   invalid: { label: "Not a MatFlow card", hint: "Check you scanned the QR, not another code.", tone: "bad" },
@@ -208,9 +220,13 @@ const STATUS_COPY: Record<ScanStatus, { label: string; hint?: string; tone: "ok"
   needs_confirmation: { label: "Allowance used", tone: "warn" },
   refused: { label: "Refused", tone: "bad" },
   error: { label: "Didn't record", hint: "Use the register for this one — rescanning won't retry it.", tone: "bad" },
-  request_failed: { label: "Didn't record", hint: "Hold the card again once — if it fails twice, use the register.", tone: "bad" },
-  network: { label: "Didn't reach MatFlow", hint: "Check signal and hold the card again once — if it fails twice, use the register.", tone: "bad" },
-  timed_out: { label: "No answer yet", hint: "It may have been recorded. Hold the card again to check — it will say Already in if it was.", tone: "warn" },
+  request_failed: { label: "Didn't record", hint: "Lift the card away and hold it again — if it fails twice, use the register.", tone: "bad" },
+  network: { label: "Didn't reach MatFlow", hint: "Check signal, then lift the card away and hold it again — if it fails twice, use the register.", tone: "bad" },
+  timed_out: {
+    label: "No answer yet",
+    hint: "MatFlow may still have recorded it. Lift the card away and hold it again: Checked in or Already in means they're in. If there's still no answer, check the register before ticking them.",
+    tone: "warn",
+  },
   pending: { label: "Sending…", tone: "ok" },
   // Kept seen, so the remedy is the register, never "hold it again". A
   // captive-portal page on venue wifi lands here too, hence the clause.
@@ -219,9 +235,9 @@ const STATUS_COPY: Record<ScanStatus, { label: string; hint?: string; tone: "ok"
   // only one of those means "not your class" — so the sentence is neutral.
   not_allowed: { label: "MatFlow refused this scan", hint: "Use the register for this one.", tone: "bad" },
   class_gone: { label: "Class not found", hint: "Pick another session, or use the register.", tone: "bad" },
-  // NOT un-seen: holding the card again is exactly what re-trips the limiter.
+  // Not re-armed: holding the card again is exactly what re-trips the limiter.
   rate_limited: { label: "Too many at once", hint: "Wait a moment. Use the register for this one — rescanning won't retry it.", tone: "warn" },
-  server_down: { label: "MatFlow couldn't record this", hint: "Hold the card again once — if it fails twice, use the register.", tone: "bad" },
+  server_down: { label: "MatFlow couldn't record this", hint: "Lift the card away and hold it again — if it fails twice, use the register.", tone: "bad" },
 };
 
 /**
@@ -254,12 +270,13 @@ const NO_NAME: Record<ScanStatus, string> = {
 };
 
 /**
- * Failures after which the coach can hold the card again — ONCE per token per
- * stack (`retriedRef`). Un-seeing on settle while the card is still under the
- * lens means the loop re-submits it 250 ms later, so without the bound a card
- * held through a Neon blip is resubmitted at 4 Hz, one row per attempt, and
- * spends the 240-per-5-minute limiter inside a minute. Every other failure
- * keeps the token seen, because for those the copy sends the coach elsewhere.
+ * Failures after which the coach can hold the card again — every time, but
+ * only as a NEW hold (lib/scan-holds.ts). Un-seeing on settle while the card is
+ * still under the lens would make the loop re-submit it 250 ms later, so a card
+ * held through a Neon blip would be resubmitted at 4 Hz, one row per attempt,
+ * spending the 240-per-5-minute limiter inside a minute; a still card is one
+ * hold, so it is not. Every other outcome keeps the token settled, because for
+ * those the copy sends the coach elsewhere.
  */
 const RETRYABLE_BY_HOLDING: ReadonlySet<ScanStatus> = new Set(["request_failed", "network", "timed_out", "server_down"]);
 
@@ -304,16 +321,16 @@ const ANNOUNCE: Record<ScanStatus, (name?: string) => string> = {
   needs_confirmation: (n) => `${n ?? "That card"}, class allowance used. Admit anyway, or leave them out.`,
   refused: (n) => `${n ?? "That card"}, refused. This class isn't open to them.`,
   error: (n) => `${n ? `${n}'s card` : "That card"} didn't record. Use the register for this one.`,
-  request_failed: () => "That card didn't record. Hold the card again once.",
-  network: () => "That card didn't send. Check signal and hold the card again once.",
-  timed_out: (n) => `No answer yet for ${n ?? "that card"}. It may have been recorded. Hold the card again to check.`,
+  request_failed: () => "That card didn't record. Lift it away and hold it again.",
+  network: () => "That card didn't send. Check signal, then lift it away and hold it again.",
+  timed_out: (n) => `No answer yet for ${n ?? "that card"}. It may still have been recorded. Lift it away and hold it again to check.`,
   // Never announced (noise at 4 Hz); the outcome that replaces it is.
   pending: () => "",
   signed_out: () => "Signed out. Sign in again, then use the register for this one.",
   not_allowed: () => "MatFlow refused this scan. Use the register for this one.",
   class_gone: () => "Class not found. Pick another session.",
   rate_limited: () => "Too many at once. Use the register for this one.",
-  server_down: () => "That card didn't record. Hold the card again once.",
+  server_down: () => "That card didn't record. Lift it away and hold it again.",
 };
 
 /** Consecutive `detect()` rejections before the camera is declared dead. */
@@ -348,14 +365,12 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
   const streamRef = useRef<MediaStream | null>(null);
   const loopRef = useRef<number | null>(null);
   const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
-  /** Tokens already submitted this session — see design note 3. */
-  const seenRef = useRef<Set<string>>(new Set());
-  /** Tokens already un-seen once this stack; a second failure keeps them seen. */
-  const retriedRef = useRef<Set<string>>(new Set());
+  /** Which reads become requests this session — see design note 3. */
+  const holdsRef = useRef<HoldTracker>(new HoldTracker());
   /**
    * Mirrors the session for the detect loop, which closes over its first
    * render. The hub remounts this component per session (`key={instance.id}`),
-   * so a switch also resets the seen set, the rows and the camera — the
+   * so a switch also resets the hold tracker, the rows and the camera — the
    * guarantees the old in-component picker gave, without the picker.
    */
   const selectedRef = useRef<string | null>(instance.id);
@@ -374,10 +389,9 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
   const submitToken = useCallback(async (token: string, confirm?: { at: number; acknowledged: ConfirmReason[] }) => {
     const classInstanceId = selectedRef.current;
     if (!classInstanceId) return;
-    // Captured now: a late response must un-see from the Set this token was
-    // added to, never from a later session's fresh one.
-    const seen = seenRef.current;
-    const retried = retriedRef.current;
+    // Captured now: a late response must re-arm the tracker this token was
+    // read into, never a later session's fresh one.
+    const holds = holdsRef.current;
     // A confirm resend keeps the asked row's stamp, so it settles IN PLACE
     // rather than leaving the askable row behind and adding a second one.
     const at = confirm?.at ?? Date.now();
@@ -421,10 +435,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
       // The long buzz: the coach's eyes are on the stack, and this is the one
       // signal that says "look at the phone". Absent on iOS, inert on desktop.
       if (!IN_REGISTER.has(status)) navigator.vibrate?.(200);
-      if (RETRYABLE_BY_HOLDING.has(status) && !retried.has(token)) {
-        retried.add(token);
-        seen.delete(token);
-      }
+      holds.settled(token, RETRYABLE_BY_HOLDING.has(status));
     };
 
     try {
@@ -485,8 +496,10 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
       });
     } catch (e) {
       // The 10 s abort is not "didn't reach MatFlow": the request may have
-      // reached it and been recorded (round-3 review, L-1). Said as its own
-      // status; holding the card again answers "Already in" if it was.
+      // reached it, and the server keeps working after the client gives up,
+      // so it may yet be recorded (round-3 review, L-1). Said as its own
+      // status; a new hold resends, and "Checked in" or "Already in" from that
+      // repeat both mean the member is in.
       settle((e as { name?: string })?.name === "TimeoutError" ? "timed_out" : "network");
     }
   }, []);
@@ -657,11 +670,11 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
       }
       if (stale()) return;
       consecutiveFailures = 0;
+      const now = Date.now();
       for (const code of codes) {
         const token = code.rawValue?.trim();
-        if (!token || seenRef.current.has(token)) continue;
-        seenRef.current.add(token);
-        // The short buzz — "read" — on the newly-seen branch only (note 3).
+        if (!token || holdsRef.current.read(token, now) !== "submit") continue;
+        // The short buzz — "read" — on the submit branch only (note 3).
         navigator.vibrate?.(30);
         void submitToken(token);
       }
