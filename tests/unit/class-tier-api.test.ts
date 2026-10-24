@@ -120,6 +120,24 @@ describe("POST /api/classes", () => {
     expect(body.allowedTierIds).toEqual(["tier_adv"]);
   });
 
+  it("D2: ?dryRun=1 previews who a restricted new class would turn away and creates nothing", async () => {
+    db.member.findMany.mockResolvedValue([
+      { id: "m1", name: "Beg", accountType: "adult", status: "active", membershipTierId: "tier_beg", memberRanks: [] },
+      { id: "m2", name: "Adv", accountType: "adult", status: "active", membershipTierId: "tier_adv", memberRanks: [] },
+      { id: "m3", name: "Kid's Parent", accountType: "parent", status: "active", membershipTierId: null, memberRanks: [] },
+    ]);
+    db.attendanceRecord.groupBy.mockResolvedValue([{ memberId: "m1" }]);
+    const res = await POST(new Request("http://test/api/classes?dryRun=1", { method: "POST", body: JSON.stringify({ ...base, allowedTierIds: ["tier_adv"] }) }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ dryRun: true, restriction: { bookingsKept: true, booked: [], notBookedTotal: 1 } });
+    expect(body.restriction.notBooked).toEqual([
+      expect.objectContaining({ key: "plan_not_included", count: 1, recentlyActiveCount: 1, members: [{ memberId: "m1", name: "Beg", attendedThisClass: false, recentlyActive: true }] }),
+    ]);
+    expect(db.class.create).not.toHaveBeenCalled();
+    expect(db.classMembershipTier.createMany).not.toHaveBeenCalled();
+  });
+
   it("no tiers = everyone: no rows written", async () => {
     const res = await post(base);
     expect(res.status).toBe(201);

@@ -9,6 +9,8 @@ import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { usableTimezone } from "@/lib/class-time";
 import { classRefError, CLASS_REF_ERRORS } from "@/lib/class-refs";
+import { OPEN_RULES, rulesAfterEdit } from "@/lib/booking-eligibility";
+import { readRankOrders, restrictionPreview } from "@/lib/booking-eligibility-db";
 
 /** A tier vanished between the club check and the write: roll the class back. */
 class TierRefError extends Error {}
@@ -104,6 +106,29 @@ export async function POST(req: Request) {
       classRefError(tx, session.user.tenantId, { ...classData, allowedTierIds }),
     );
     if (refError) return NextResponse.json({ error: refError }, { status: 400 });
+  }
+
+  // D2: `?dryRun=1` is the owner's restriction preview for a new class — who
+  // its squad list, rank gate and membership list would turn away (members
+  // of this club, without guardian or payer accounts, grouped by reason).
+  // Nothing is written. A new class has no bookings yet.
+  if (new URL(req.url).searchParams.get("dryRun") === "1") {
+    const tenantId = session.user.tenantId;
+    const restriction = await withTenantContext(tenantId, async (tx) => {
+      const rosterIds = roster && roster.length > 0
+        ? (await tx.member.findMany({ where: { id: { in: roster.map((r) => r.memberId) }, tenantId }, select: { id: true } })).map((m) => m.id)
+        : [];
+      const orders = await readRankOrders(tx, tenantId, [classData.requiredRankId, classData.maxRankId]);
+      const after = rulesAfterEdit(OPEN_RULES, {
+        roster: rosterIds.length > 0 ? rosterIds : undefined,
+        namesRank: false,
+        requiredRankOrder: classData.requiredRankId ? (orders.get(classData.requiredRankId) ?? null) : null,
+        maxRankOrder: classData.maxRankId ? (orders.get(classData.maxRankId) ?? null) : null,
+        allowedTierIds: allowedTierIds ?? [],
+      });
+      return (await restrictionPreview(tx, tenantId, { classId: null, before: OPEN_RULES, after })).preview;
+    });
+    return NextResponse.json({ dryRun: true, restriction });
   }
 
   try {

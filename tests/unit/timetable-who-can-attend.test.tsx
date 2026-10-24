@@ -5,7 +5,7 @@
 // narrowing that would remove bookings is previewed (dryRun) and confirmed;
 // the class card shows who the class is for.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import React from "react";
 import TimetableManager from "@/components/dashboard/TimetableManager";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
@@ -34,11 +34,20 @@ const props = (cls: ClassRow) => ({
 
 type Call = { url: string; init?: RequestInit };
 let calls: Call[] = [];
-function stubFetch(dryRunAffected: string[] = []) {
+/** D2: the dry run's restriction preview; bookings are kept. */
+const restrictionFor = (booked: string[], notBooked = 0) => ({
+  bookingsKept: true,
+  booked: booked.map((id) => ({ memberId: id, name: `Member ${id}`, reasons: ["tier_not_included"], newlyRefused: true, staffDoorsAdmit: false })),
+  notBooked: notBooked > 0
+    ? [{ key: "no_plan", label: "No membership plan", count: notBooked, attendedThisClassCount: 1, recentlyActiveCount: 1, members: [{ memberId: "n1", name: "Nia Plan", attendedThisClass: true, recentlyActive: true }] }]
+    : [],
+  notBookedTotal: notBooked,
+});
+function stubFetch(dryRunAffected: string[] = [], notBooked = 0) {
   calls = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     calls.push({ url, init });
-    if (url.includes("dryRun=1")) return { ok: true, json: async () => ({ dryRun: true, tierAffectedMemberIds: dryRunAffected }) };
+    if (url.includes("dryRun=1")) return { ok: true, json: async () => ({ dryRun: true, tierAffectedMemberIds: dryRunAffected, restriction: restrictionFor(dryRunAffected, notBooked) }) };
     if (url.includes("/api/locations") || url.includes("/api/coach/today")) return { ok: true, json: async () => ({}) };
     return { ok: true, json: async () => ({ ...CLASS, allowedTiers: [TIERS[1]], scheduleChange: null }) };
   }));
@@ -98,16 +107,59 @@ describe("class form — Who can attend", () => {
     expect(box.getAttribute("aria-checked")).toBe("true");
   });
 
-  it("previews a narrowing that removes bookings and saves only once confirmed", async () => {
-    stubFetch(["m1", "m2"]);
+  it("D2: previews who a narrowing turns away — bookings kept — and saves only once confirmed", async () => {
+    stubFetch(["m1", "m2"], 3);
     render(<TimetableManager {...props(CLASS)} />);
     fireEvent.click(screen.getAllByLabelText("Edit Advanced")[0]);
     fireEvent.click(await screen.findByRole("checkbox", { name: "Advanced Unlimited" }));
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(await screen.findByText(/2 members are booked on this class but not on the memberships you ticked/)).toBeTruthy();
+    expect(await screen.findByText("Check who this change turns away")).toBeTruthy();
+    expect(screen.getByText(/Bookings are kept\./)).toBeTruthy();
+    expect(screen.getByText(/Booked and would not be admitted \(2\)/)).toBeTruthy();
+    expect(screen.getAllByTestId("restriction-booked-row").map((r) => r.textContent)).toEqual([
+      "Member m1 — Membership not included",
+      "Member m2 — Membership not included",
+    ]);
+    expect(screen.getByText(/Not booked but would be refused \(3\)/)).toBeTruthy();
+    expect(screen.getByTestId("restriction-group-no_plan").textContent).toMatch(/No membership plan — 3 members, 1 of them attended this class in the last 8 weeks/);
+    // Nothing promises a removal any more.
+    expect(screen.getByTestId("restriction-preview").textContent).not.toMatch(/remov/i);
     expect(patches()).toHaveLength(0);
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save and remove bookings" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save — bookings are kept" })); });
     await waitFor(() => expect(patches()).toHaveLength(1));
+  });
+
+  it("D2: cancelling the preview saves nothing", async () => {
+    stubFetch(["m1"]);
+    render(<TimetableManager {...props(CLASS)} />);
+    fireEvent.click(screen.getAllByLabelText("Edit Advanced")[0]);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Advanced Unlimited" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    const title = await screen.findByText("Check who this change turns away");
+    const dialog = title.closest("[role='dialog']") as HTMLElement;
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" })); });
+    await waitFor(() => expect(screen.queryByText("Check who this change turns away")).toBeNull());
+    expect(patches()).toHaveLength(0);
+  });
+
+  it("D2: a change that turns no one away saves without asking", async () => {
+    stubFetch([]);
+    render(<TimetableManager {...props(CLASS)} />);
+    fireEvent.click(screen.getAllByLabelText("Edit Advanced")[0]);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Advanced Unlimited" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(calls.filter((c) => c.url.includes("dryRun=1"))).toHaveLength(1);
+    expect(screen.queryByText("Check who this change turns away")).toBeNull();
+  });
+
+  it("D2: an edit that changes nothing about who can attend is not previewed", async () => {
+    stubFetch(["m1"]);
+    render(<TimetableManager {...props({ ...CLASS, allowedTiers: [TIERS[1]] })} />);
+    fireEvent.click(screen.getAllByLabelText("Edit Advanced")[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(calls.filter((c) => c.url.includes("dryRun=1"))).toHaveLength(0);
   });
 
   it("the class card says who the class is for", () => {
