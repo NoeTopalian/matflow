@@ -124,7 +124,7 @@
 import * as Sentry from "@sentry/nextjs";
 import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { parseTime, usableTimezone, DEFAULT_TIMEZONE } from "@/lib/class-time";
+import { checkinWindowVerdict, usableTimezone, DEFAULT_TIMEZONE } from "@/lib/class-time";
 import { isOnHold } from "@/lib/member-hold";
 import { isOverdue } from "@/lib/overdue";
 import { isAdultAccount } from "@/lib/account-type";
@@ -819,20 +819,21 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     // The club's zone, not the server's. Falls back to the same value
     // `Tenant.timezone` defaults to in the schema, so a tenant row that somehow
     // carries no zone behaves as a UK club rather than as UTC.
-    const zone = tenant?.timezone || DEFAULT_TIMEZONE;
-    const startsAt = parseTime(instance.startTime, instance.date, zone);
-    // A session with no recorded end (imported history) closes its window
-    // from the start: nothing is checked into it after the fact.
-    const endsAt = instance.endTime === null ? startsAt : parseTime(instance.endTime, instance.date, zone);
+    const zone = usableTimezone(tenant?.timezone || DEFAULT_TIMEZONE);
     const beforeMin = tenant?.checkinWindowBeforeMin ?? 30;
     const afterMin = tenant?.checkinWindowAfterMin ?? 30;
-    const windowOpen = new Date(startsAt.getTime() - beforeMin * 60_000);
-    const windowClose = new Date(endsAt.getTime() + afterMin * 60_000);
-    if (now < windowOpen || now > windowClose) {
+    // lib/class-time.ts sessionBounds: club wall clock on the session's date;
+    // an end at or before the start is on the next club day (23:00–00:30 was
+    // refused all evening, its end read as 00:30 BEFORE the start); the
+    // repeated DST hour is its first occurrence, the skipped one moves
+    // forward. A session with no recorded end (imported history) closes its
+    // window from the start: nothing is checked into it after the fact.
+    const verdict = checkinWindowVerdict(instance, zone, { beforeMin, afterMin }, now);
+    if (!verdict.open) {
       // Distinguish "too early" from "already finished" so the door tablet can
       // say the true thing — the same message for both used to tell a member
       // whose class had ENDED to "check back closer to class time".
-      return { kind: "outside_window", when: now < windowOpen ? "before" : "after", beforeMin, afterMin };
+      return { kind: "outside_window", when: verdict.when, beforeMin, afterMin };
     }
   }
 
