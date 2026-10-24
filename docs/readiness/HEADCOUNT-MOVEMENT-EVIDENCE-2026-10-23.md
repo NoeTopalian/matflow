@@ -26,10 +26,7 @@ Verdict on `778428bd`: APPROVED, on the condition that the F1 count was read bef
 
 **F1 (Medium): closed by the production count. No code change.** The concern was that refresh and refresh-rollback events written before provenance existed (`sourceAction` null) would be misread: a completed course as "other changes", and a rollback as a loss plus a rejoin. Such an event would show as `reason = 'import'` with a non-null `fromStatus`, because an import create is always `none → status`. Noe read the count on production, read-only, at 23 Oct 2026 03:29Z with `scripts/readiness/status-event-provenance-count.mjs` (one `READ ONLY` transaction, aggregates only):
 
-| Club | Import events | Import events with a `fromStatus` |
-|---|---|---|
-| totalbjj | 921 | 0 (all 921 are creates) |
-| ironpathbjj | 0 | 0 |
+Result (sanitised; club-level counts are kept privately by the owner): **0 import events carrying a `fromStatus` at every club.** At the customer club every import event is a create; the demo club has no import events.
 
 The count is 0, so production holds no refresh or rollback event without provenance, and F1 is closed. This holds as of 03:29Z on 23 Oct. A TeamUp refresh or rollback run on production by the deployed build before this branch ships would write such events. Re-run the count just before merge. If it is not 0, extend `scripts/backfill-status-event-provenance.ts` as the review describes, before merge.
 
@@ -58,3 +55,6 @@ The count is 0, so production holds no refresh or rollback event without provena
   - the browser journeys.
 
 **F7 (Low):** the PR body is out of date (it says cache v4, and its counts predate the merge). Updated text was handed to the coordinator. This evidence doc and the read-only count script are now committed.
+
+## F1 count re-read 23 Oct 2026 13:32Z
+Same script, same `READ ONLY` guard: still 0 import events carrying a `fromStatus` at every club (sanitised; counts kept privately). `sourceAction` does not exist yet (migration `20261017022302` pending). F1 stays closed as of 13:32Z. Repeat the count just before merge if a TeamUp refresh or rollback could have run on production since.

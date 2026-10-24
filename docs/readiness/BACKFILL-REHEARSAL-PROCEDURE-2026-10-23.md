@@ -20,7 +20,7 @@ Neon console → MatFlow project → Branches → create from the production roo
 - Nothing from the branch is exported: outputs are counts, month/kind tallies, ledger row ids and digests; no names, emails or phones.
 
 ## 4. Preview (read-only)
-`npx tsx scripts/backfill-status-events.ts --expect-host <branch endpoint id>` with `DATABASE_URL` = the branch URL (per club with `--tenant <id>` for Total BJJ `cmucpxc4c0000uctgouza06aj`). Record: per club, the proposed events per month and kind; the exceptions by ledger row id and reason (`undated_end`, `end_before_start`, …); the plan digest. Noe reads the plan (ticket T8b "Done when").
+`npx tsx scripts/backfill-status-events.ts --expect-host <branch endpoint id>` with `DATABASE_URL` = the branch URL (per club with `--tenant <id>`; the customer club's id is in the owner's private evidence). Record: per club, the proposed events per month and kind; the exceptions by ledger row id and reason (`undated_end`, `end_before_start`, …); the plan digest. Noe reads the plan (ticket T8b "Done when").
 
 ## 5. Snapshot, apply, reconcile **[AUTH]**
 - Snapshot: note the branch's point-in-time (Neon keeps history on the branch) — or create a child branch of the rehearsal branch before apply.
