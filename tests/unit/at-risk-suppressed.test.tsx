@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 //
-// T2a Part U (owner decision Q4 A-3 option (c), 17 Oct 2026): the dashboard
+// T2a Part U (agent default adopted 17 Oct 2026; not an owner decision),
+// extended 24 Oct 2026 for sparse check-ins after an import. The dashboard
 // At-Risk tile, its to-do row and the named "Not seen in 14+ days" list are
-// suppressed while the club has no MatFlow check-in. Imported attendance does
-// not count (marker: checkInMethod <> 'import' AND importJobId IS NULL, the
-// same one the attendance undo uses). The population is active TRAINING
-// members, so guardian drafts can never appear.
+// shown only once MatFlow has been the club's register for the whole 14-day
+// window: a check-in recorded in MatFlow before the window starts, and MatFlow
+// check-ins in each 7-day half of it. Imported attendance (marker:
+// checkInMethod <> 'import' AND importJobId IS NULL is a MatFlow check-in, the
+// same one the attendance undo uses) never opens the gate, but once it is open
+// imported visits count as visits. The population is active TRAINING members,
+// so guardian drafts can never appear.
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import React from "react";
@@ -23,90 +27,247 @@ import {
   AT_RISK_SUPPRESSED_NOTE,
   AT_RISK_SUPPRESSED_TODO_NOTE,
   MATFLOW_CHECKIN_WHERE,
+  atRiskClosedCopy,
   atRiskMemberWhere,
   atRiskSuppressed,
   buildActionItems,
   readAtRisk,
+  readAtRiskGate,
   type ActionItemsInput,
   type AtRiskGateClient,
   type AtRiskReadClient,
+  type AtRiskWhere,
 } from "@/lib/dashboard-action-items";
 import DashboardStats from "@/components/dashboard/DashboardStats";
 
-type Row = { id: string; tenantId: string; checkInMethod: string; importJobId: string | null };
+const NOW = new Date("2026-10-24T12:00:00Z");
+const DAY = 86_400_000;
+const daysAgo = (n: number) => new Date(NOW.getTime() - n * DAY);
 
-/** A fake client that applies the gate's `where` to fixture rows the way Postgres would. */
-function fakeTx(rows: Row[]) {
-  const calls: unknown[] = [];
-  const tx: AtRiskGateClient = {
+type Row = {
+  id: string;
+  tenantId: string;
+  memberId: string;
+  checkInMethod: string;
+  importJobId: string | null;
+  checkInTime: Date;
+};
+
+let seq = 0;
+function visit(memberId: string, ago: number, kind: "import" | "matflow", tenantId = "t1"): Row {
+  seq += 1;
+  return {
+    id: `r${seq}`,
+    tenantId,
+    memberId,
+    checkInMethod: kind === "import" ? "import" : "kiosk",
+    importJobId: kind === "import" ? "job-teamup" : null,
+    checkInTime: daysAgo(ago),
+  };
+}
+
+type Member = { id: string; name: string; tenantId: string; status: string; accountType: string; joinedAt: Date };
+
+/**
+ * A fake client that applies the gate's and the predicate's `where` to fixture
+ * rows the way Postgres would, so the tests exercise the real rule rather than
+ * a hard-coded answer.
+ */
+function fakeTx(rows: Row[], members: Member[] = []) {
+  const gateCalls: unknown[] = [];
+  const memberCalls: unknown[] = [];
+  const gate: AtRiskGateClient = {
     attendanceRecord: {
       async findFirst(args) {
-        calls.push(args);
-        const { where } = args;
-        const hit = rows.find(
-          (r) =>
-            r.tenantId === where.tenantId &&
-            r.checkInMethod !== where.checkInMethod.not &&
-            (where.importJobId === null ? r.importJobId === null : true),
-        );
-        return hit ? { id: hit.id } : null;
+        gateCalls.push(args);
+        const { where, orderBy } = args;
+        const hits = rows
+          .filter(
+            (r) =>
+              r.tenantId === where.tenantId &&
+              r.checkInMethod !== where.checkInMethod.not &&
+              (where.importJobId === null ? r.importJobId === null : true) &&
+              (where.checkInTime.lt === undefined || r.checkInTime < where.checkInTime.lt) &&
+              (where.checkInTime.gte === undefined || r.checkInTime >= where.checkInTime.gte),
+          )
+          .sort((a, b) => a.checkInTime.getTime() - b.checkInTime.getTime());
+        if (orderBy?.checkInTime === "desc") hits.reverse();
+        return hits[0] ? { checkInTime: hits[0].checkInTime } : null;
       },
     },
   };
-  return { tx, calls };
+  const matches = (where: AtRiskWhere) => {
+    const since = where.attendances.none.checkInTime.gte;
+    const joinedBefore = where.OR[0].joinedAt!.lt;
+    return members.filter((m) => {
+      const mine = rows.filter((r) => r.memberId === m.id && r.tenantId === m.tenantId);
+      return (
+        m.tenantId === where.tenantId &&
+        m.status === where.status &&
+        m.accountType !== where.accountType.not &&
+        !mine.some((r) => r.checkInTime >= since) &&
+        (m.joinedAt < joinedBefore || mine.length > 0)
+      );
+    });
+  };
+  const tx: AtRiskReadClient = {
+    ...gate,
+    member: {
+      async count(args) {
+        memberCalls.push({ count: args });
+        return matches(args.where).length;
+      },
+      async findMany(args) {
+        memberCalls.push({ findMany: args });
+        return matches(args.where).slice(0, args.take).map(({ id, name }) => ({ id, name }));
+      },
+    },
+  };
+  return { tx, gateCalls, memberCalls };
 }
 
-const NOW = new Date("2026-10-17T12:00:00Z");
-const LAPSED = [
-  { id: "m1", name: "Alex Lapsed" },
-  { id: "m2", name: "Sam Lapsed" },
-];
+function member(id: string, name: string, joinedDaysAgo = 400, extra: Partial<Member> = {}): Member {
+  return { id, name, tenantId: "t1", status: "active", accountType: "adult", joinedAt: daysAgo(joinedDaysAgo), ...extra };
+}
 
 function input(partial: Partial<ActionItemsInput>): ActionItemsInput {
   return { now: NOW, overdue: [], recentFailed: [], missingWaiver: [], atRisk: [], birthdayCandidates: [], ...partial };
 }
 
-const IMPORTED_ONLY: Row[] = [
-  { id: "a1", tenantId: "t1", checkInMethod: "import", importJobId: "job-3-oct" },
-  { id: "a2", tenantId: "t1", checkInMethod: "import", importJobId: "job-3-oct" },
-  // Imported by an older importer that kept the source method: still imported.
-  { id: "a3", tenantId: "t1", checkInMethod: "admin", importJobId: "job-3-oct" },
-  // Another club's live check-in must not switch this club's tile on.
-  { id: "b1", tenantId: "t2", checkInMethod: "kiosk", importJobId: null },
-];
+/** A club fresh off TeamUp: two years of imported visits that stop at the export, 30 days ago. */
+const MEMBERS = [member("m1", "Alex Regular"), member("m2", "Sam Regular"), member("m3", "Jo Regular"), member("m4", "Lee Lapsed")];
+function importedHistory(exportDaysAgo: number): Row[] {
+  const rows: Row[] = [];
+  for (const m of ["m1", "m2", "m3"]) for (let d = exportDaysAgo; d < exportDaysAgo + 60; d += 3) rows.push(visit(m, d, "import"));
+  // Lee stopped coming long before the export.
+  rows.push(visit("m4", exportDaysAgo + 60, "import"));
+  // An older importer kept the source method: still imported (importJobId set).
+  rows.push({ ...visit("m1", exportDaysAgo + 1, "import"), checkInMethod: "admin" });
+  // Another club's live check-in must not open this club's gate.
+  rows.push(visit("x1", 1, "matflow", "t2"));
+  return rows;
+}
 
 describe("At-Risk gate: no MatFlow check-ins", () => {
-  it("is suppressed when every visit on record is imported", async () => {
-    const { tx, calls } = fakeTx(IMPORTED_ONLY);
-    expect(await atRiskSuppressed(tx, "t1")).toBe(true);
-    // Tenant-scoped and uses the shared import marker.
-    expect(calls).toEqual([{ where: { tenantId: "t1", ...MATFLOW_CHECKIN_WHERE }, select: { id: true } }]);
+  it("stays closed ('none') when every visit on record is imported", async () => {
+    const { tx, gateCalls } = fakeTx(importedHistory(3));
+    expect(await readAtRiskGate(tx, "t1", NOW)).toEqual({ open: false, reason: "none" });
+    expect(await atRiskSuppressed(tx, "t1", NOW)).toBe(true);
+    // Tenant-scoped and uses the shared import marker on every probe.
+    for (const c of gateCalls as { where: Record<string, unknown> }[]) {
+      expect(c.where).toMatchObject({ tenantId: "t1", ...MATFLOW_CHECKIN_WHERE });
+    }
     expect(MATFLOW_CHECKIN_WHERE).toEqual({ checkInMethod: { not: "import" }, importJobId: null });
   });
 
-  it("is suppressed for a club with no attendance at all", async () => {
-    expect(await atRiskSuppressed(fakeTx([]).tx, "t1")).toBe(true);
+  it("stays closed for a club with no attendance at all", async () => {
+    expect(await readAtRiskGate(fakeTx([]).tx, "t1", NOW)).toEqual({ open: false, reason: "none" });
   });
 
-  it("drops every at-risk row from the named list even when members whose only visits are imported were passed in", () => {
+  it("drops every at-risk row from the named list even when members were passed in", () => {
     const items = buildActionItems(
-      input({ atRisk: LAPSED, missingWaiver: [{ id: "w1", name: "Wendy" }], atRiskSuppressed: true }),
+      input({ atRisk: [{ id: "m1", name: "Alex" }], missingWaiver: [{ id: "w1", name: "Wendy" }], atRiskSuppressed: true }),
     );
     expect(items.filter((i) => i.kind === "retention")).toEqual([]);
-    // Other signals are untouched.
     expect(items.map((i) => i.id)).toEqual(["admin-waiver-w1"]);
   });
 });
 
-describe("At-Risk gate: one MatFlow check-in", () => {
-  it("is computed again after a single register tick", async () => {
-    const rows = [...IMPORTED_ONLY, { id: "a9", tenantId: "t1", checkInMethod: "admin", importJobId: null }];
-    expect(await atRiskSuppressed(fakeTx(rows).tx, "t1")).toBe(false);
+describe("At-Risk after the first MatFlow check-in", () => {
+  it("one check-in today does not flag the whole club: the gate warms up for 14 days and no member query runs", async () => {
+    // The import stopped 30 days ago; the earlier gate opened on this one row
+    // and every member's last visit was already more than 14 days old.
+    const rows = [...importedHistory(30), visit("m1", 0, "matflow")];
+    const { tx, memberCalls } = fakeTx(rows, MEMBERS);
+
+    // What the earlier gate would have shown: the whole club.
+    const where = atRiskMemberWhere("t1", NOW);
+    expect(await tx.member.count({ where })).toBe(3); // m2, m3, m4 — everyone but the one who checked in
+    memberCalls.length = 0;
+
+    const read = await readAtRisk(tx, "t1", NOW, "Europe/London");
+    expect(read.suppressed).toBe(true);
+    expect(read.count).toBe(0);
+    expect(read.members).toEqual([]);
+    expect(memberCalls).toEqual([]);
+    // Starts 14 days after the first MatFlow check-in, said with the date.
+    expect(read.copy?.note).toBe("Starts 7 Nov");
+    expect(read.copy?.detail).toBe("Needs 14 days of check-ins recorded in MatFlow");
+  });
+
+  it("names the start date from the FIRST MatFlow check-in, not the latest", async () => {
+    const rows = [...importedHistory(20), visit("m1", 10, "matflow"), visit("m2", 2, "matflow")];
+    const gate = await readAtRiskGate(fakeTx(rows).tx, "t1", NOW);
+    // 14 calendar days (setDate), so a clock change in between keeps the wall time.
+    const startsAt = daysAgo(10);
+    startsAt.setDate(startsAt.getDate() + 14);
+    expect(gate).toEqual({ open: false, reason: "warming_up", startsAt });
+  });
+
+  it("sparse check-ins (one 20 days ago, none since) pause At-Risk instead of flagging everyone", async () => {
+    const rows = [...importedHistory(25), visit("m1", 20, "matflow")];
+    const { tx, memberCalls } = fakeTx(rows, MEMBERS);
+    const read = await readAtRisk(tx, "t1", NOW);
+    expect(read).toMatchObject({ suppressed: true, count: 0, members: [] });
+    expect(read.copy?.note).toBe("Paused");
+    expect(memberCalls).toEqual([]);
+  });
+
+  it("a week with no MatFlow check-ins (a closure) pauses At-Risk", async () => {
+    // Registers before the window and in the last 7 days, none in days 7–14.
+    const rows = [...importedHistory(40), visit("m1", 30, "matflow"), visit("m1", 20, "matflow"), visit("m2", 3, "matflow")];
+    expect(await readAtRiskGate(fakeTx(rows).tx, "t1", NOW)).toEqual({ open: false, reason: "paused" });
+  });
+});
+
+describe("At-Risk once MatFlow has been the register for the whole window", () => {
+  // Switched 30 days ago (export 31 days ago), registers taken every few days since.
+  function switchedClub(extraRows: Row[] = [], extraMembers: Member[] = []) {
+    const rows = [...importedHistory(31), ...extraRows];
+    for (const d of [29, 22, 16, 12, 9, 5, 2]) rows.push(visit("m1", d, "matflow"));
+    rows.push(visit("m2", 6, "matflow"));
+    return fakeTx(rows, [...MEMBERS, ...extraMembers]);
+  }
+
+  it("opens, and flags only members with no visit — imported or MatFlow — in 14 days", async () => {
+    const { tx, memberCalls } = switchedClub();
+    expect(await readAtRiskGate(tx, "t1", NOW)).toEqual({ open: true });
+    const read = await readAtRisk(tx, "t1", NOW);
+    expect(read.suppressed).toBe(false);
+    // m1 and m2 trained at MatFlow registers inside the window; m3's last
+    // visit is imported, 31 days ago; Lee's is imported, 91 days ago.
+    expect(read.members.map((m) => m.id).sort()).toEqual(["m3", "m4"]);
+    expect(read.count).toBe(2);
+    const where = atRiskMemberWhere("t1", NOW);
+    expect(memberCalls).toEqual([
+      { count: { where } },
+      { findMany: { where, select: { id: true, name: true }, take: AT_RISK_LIST_TAKE } },
+    ]);
+  });
+
+  it("a long-absent member whose only visits are imported is flagged", async () => {
+    const { tx } = switchedClub([visit("m9", 200, "import")], [member("m9", "Pat Long-Gone", 800)]);
+    const read = await readAtRisk(tx, "t1", NOW);
+    expect(read.members.map((m) => m.id)).toContain("m9");
+  });
+
+  it("an imported visit inside the window counts as a visit", async () => {
+    // A late import row (e.g. a refresh) dated 5 days ago keeps m3 off the list.
+    const { tx } = switchedClub([visit("m3", 5, "import")]);
+    const read = await readAtRisk(tx, "t1", NOW);
+    expect(read.members.map((m) => m.id)).toEqual(["m4"]);
+  });
+
+  it("never flags a new joiner inside the window, or a guardian account", async () => {
+    const { tx } = switchedClub([], [member("n1", "New Joiner", 3), member("g1", "Guardian Draft", 400, { accountType: "parent" })]);
+    const ids = (await readAtRisk(tx, "t1", NOW)).members.map((m) => m.id);
+    expect(ids).not.toContain("n1");
+    expect(ids).not.toContain("g1");
   });
 
   it("lists the lapsed members when not suppressed", () => {
-    const items = buildActionItems(input({ atRisk: LAPSED, atRiskSuppressed: false }));
-    expect(items.filter((i) => i.kind === "retention").map((i) => i.memberId)).toEqual(["m1", "m2"]);
+    const items = buildActionItems(input({ atRisk: [{ id: "m3", name: "Jo" }], atRiskSuppressed: false }));
+    expect(items.filter((i) => i.kind === "retention").map((i) => i.memberId)).toEqual(["m3"]);
     expect(items[0].detail).toBe("Not seen in 14+ days");
   });
 });
@@ -121,7 +282,7 @@ describe("At-Risk population: active training members only", () => {
 });
 
 const baseStats = {
-  totalActive: 312,
+  totalActive: 40,
   newThisMonth: 0,
   attendanceThisWeek: 0,
   attendanceThisMonth: 0,
@@ -131,7 +292,9 @@ const baseStats = {
   atRiskMembers: 0,
 };
 
-function renderStats(stats: typeof baseStats & { atRiskSuppressed?: boolean }) {
+type Stats = typeof baseStats & { atRiskSuppressed?: boolean; atRiskCopy?: ReturnType<typeof atRiskClosedCopy> };
+
+function renderStats(stats: Stats) {
   return render(
     <DashboardStats
       stats={stats}
@@ -148,20 +311,34 @@ function renderStats(stats: typeof baseStats & { atRiskSuppressed?: boolean }) {
 describe("DashboardStats At-Risk tile", () => {
   it("shows the neutral line, no number, no to-do row and no Quiet link while suppressed", () => {
     // A stale count must not leak through if one is ever passed alongside the flag.
-    const { container } = renderStats({ ...baseStats, atRiskMembers: 296, atRiskSuppressed: true });
+    const { container } = renderStats({ ...baseStats, atRiskMembers: 29, atRiskSuppressed: true });
     expect(screen.getByText(AT_RISK_SUPPRESSED_NOTE)).toBeTruthy();
-    expect(screen.queryByText("296")).toBeNull();
+    expect(screen.queryByText("29")).toBeNull();
     expect(screen.queryByText("Not seen in 14 days")).toBeNull();
     expect(screen.queryByText("Members not seen in 14 days")).toBeNull();
     expect(container.querySelector('a[href="/dashboard/members?filter=quiet"]')).toBeNull();
-    // Nothing else is due, so the to-do panel is caught up, but it says
-    // At-Risk is not yet known rather than implying it is zero (UI-RULES §7).
+    // At-Risk is not yet known rather than zero (UI-RULES §7).
     expect(screen.getByText("All caught up — nothing to action.")).toBeTruthy();
     expect(screen.getByText(AT_RISK_SUPPRESSED_TODO_NOTE)).toBeTruthy();
   });
 
+  it("says when At-Risk starts while warming up", () => {
+    const copy = atRiskClosedCopy({ open: false, reason: "warming_up", startsAt: new Date("2026-11-07T12:00:00Z") }, "Europe/London");
+    renderStats({ ...baseStats, atRiskMembers: 29, atRiskSuppressed: true, atRiskCopy: copy });
+    expect(screen.getByText("Starts 7 Nov")).toBeTruthy();
+    expect(screen.getByText("Needs 14 days of check-ins recorded in MatFlow")).toBeTruthy();
+    expect(screen.getByText("At-Risk members start on 7 Nov, after 14 days of check-ins recorded in MatFlow.")).toBeTruthy();
+    expect(screen.queryByText("29")).toBeNull();
+  });
+
+  it("says why while paused", () => {
+    renderStats({ ...baseStats, atRiskSuppressed: true, atRiskCopy: atRiskClosedCopy({ open: false, reason: "paused" }) });
+    expect(screen.getByText("Paused")).toBeTruthy();
+    expect(screen.getByText("No check-ins recorded in MatFlow for a week of the last 14 days")).toBeTruthy();
+  });
+
   it("drops the named 'Not seen in 14+ days' rows from the action list on the same flag", () => {
-    const actionItems = buildActionItems(input({ atRisk: LAPSED, atRiskSuppressed: true }));
+    const actionItems = buildActionItems(input({ atRisk: [{ id: "m1", name: "Alex Lapsed" }], atRiskSuppressed: true }));
     render(
       <DashboardStats
         stats={{ ...baseStats, atRiskSuppressed: true }}
@@ -176,10 +353,9 @@ describe("DashboardStats At-Risk tile", () => {
     );
     expect(screen.queryByText("Not seen in 14+ days")).toBeNull();
     expect(screen.queryByText("Alex Lapsed")).toBeNull();
-    expect(screen.queryByText("Sam Lapsed")).toBeNull();
   });
 
-  it("shows the count, the to-do row and the Quiet link once the club has a MatFlow check-in", () => {
+  it("shows the count, the to-do row and the Quiet link once the gate is open", () => {
     const { container } = renderStats({ ...baseStats, atRiskMembers: 3, atRiskSuppressed: false });
     expect(screen.queryByText(AT_RISK_SUPPRESSED_NOTE)).toBeNull();
     expect(screen.queryByText(AT_RISK_SUPPRESSED_TODO_NOTE)).toBeNull();
@@ -189,61 +365,15 @@ describe("DashboardStats At-Risk tile", () => {
   });
 });
 
-/** A read client whose member queries throw unless the test allows them. */
-function readTx(rows: Row[], member?: { count: number; list: { id: string; name: string }[] }) {
-  const { tx: gate } = fakeTx(rows);
-  const memberCalls: unknown[] = [];
-  const tx: AtRiskReadClient = {
-    ...gate,
-    member: {
-      async count(args) {
-        memberCalls.push({ count: args });
-        if (!member) throw new Error("member.count must not run while At-Risk is suppressed");
-        return member.count;
-      },
-      async findMany(args) {
-        memberCalls.push({ findMany: args });
-        if (!member) throw new Error("member.findMany must not run while At-Risk is suppressed");
-        return member.list;
-      },
-    },
-  };
-  return { tx, memberCalls };
-}
-
-describe("readAtRisk: one answer for the tile, the to-do row and the named list", () => {
-  it("returns suppressed, count 0 and no names without running any member query", async () => {
-    const { tx, memberCalls } = readTx(IMPORTED_ONLY);
-    const read = await readAtRisk(tx, "t1", NOW);
-    expect(read).toEqual({ suppressed: true, count: 0, members: [] });
-    expect(memberCalls).toEqual([]);
-    // Fed to the builder the way the page does, the named list is empty.
-    const items = buildActionItems(input({ atRisk: read.members, atRiskSuppressed: read.suppressed }));
-    expect(items.filter((i) => i.kind === "retention")).toEqual([]);
-  });
-
-  it("reads the count and the names from the same predicate once a MatFlow check-in exists", async () => {
-    const rows = [...IMPORTED_ONLY, { id: "a9", tenantId: "t1", checkInMethod: "kiosk", importJobId: null }];
-    const { tx, memberCalls } = readTx(rows, { count: 2, list: LAPSED });
-    const read = await readAtRisk(tx, "t1", NOW);
-    expect(read).toEqual({ suppressed: false, count: 2, members: LAPSED });
-    const where = atRiskMemberWhere("t1", NOW);
-    expect(memberCalls).toEqual([
-      { count: { where } },
-      { findMany: { where, select: { id: true, name: true }, take: AT_RISK_LIST_TAKE } },
-    ]);
-  });
-});
-
 describe("dashboard page wiring", () => {
   // The page is an async server component that needs a session and a database,
   // so its wiring is pinned at source level: At-Risk is read once by
   // readAtRisk and that one value reaches both the stats tile and the list.
   const src = readFileSync(path.join(process.cwd(), "app/dashboard/page.tsx"), "utf8");
 
-  it("reads At-Risk exactly once and hands the same value to getStats and getActionItems", () => {
+  it("reads At-Risk exactly once, in the club's zone, and hands the same value to getStats and getActionItems", () => {
     expect(src.match(/readAtRisk\(/g)).toHaveLength(1);
-    expect(src).toMatch(/const atRisk = await readAtRisk\(tx, session!\.user\.tenantId, new Date\(\)\);/);
+    expect(src).toMatch(/const atRisk = await readAtRisk\(tx, session!\.user\.tenantId, new Date\(\), club\?\.timezone\);/);
     expect(src).toMatch(/getStats\(tx, session!\.user\.tenantId, atRisk\)/);
     expect(src).toMatch(/getActionItems\(tx, session!\.user\.tenantId, atRisk\)/);
   });
@@ -251,23 +381,23 @@ describe("dashboard page wiring", () => {
   it("takes the tile and the list from that value, with no second at-risk query", () => {
     expect(src).not.toMatch(/atRiskMemberWhere/);
     expect(src).not.toMatch(/atRiskSuppressed\(/);
+    expect(src).not.toMatch(/readAtRiskGate\(/);
     expect(src).toMatch(/atRiskMembers: atRisk\.count/);
-    expect(src).toMatch(/atRiskSuppressed: atRisk\.suppressed/g);
+    expect(src).toMatch(/atRiskCopy: atRisk\.copy/);
     expect(src.match(/atRiskSuppressed: atRisk\.suppressed/g)).toHaveLength(2);
     expect(src).toMatch(/atRisk: atRisk\.members/);
   });
 });
 
-describe("suppressed copy names the real trigger", () => {
-  it("speaks of a check-in recorded in MatFlow, not only a register", () => {
-    // Any non-import row lifts the gate: register, kiosk, QR, self or auto check-in.
-    expect(AT_RISK_SUPPRESSED_NOTE).toBe("Starts after the first check-in recorded in MatFlow");
+describe("closed-gate copy names the real trigger", () => {
+  it("speaks of check-ins recorded in MatFlow, not only a register, and of the 14-day wait", () => {
+    expect(AT_RISK_SUPPRESSED_NOTE).toBe("Starts 14 days after the first check-in recorded in MatFlow");
     expect(AT_RISK_SUPPRESSED_NOTE).not.toMatch(/register/i);
-    expect(AT_RISK_SUPPRESSED_TODO_NOTE).toMatch(/first check-in recorded in MatFlow/);
+    expect(AT_RISK_SUPPRESSED_TODO_NOTE).toMatch(/14 days after the first check-in recorded in MatFlow/);
   });
 
-  it("describes the suppression, not a permanent exclusion of imported visits", () => {
-    // Once lifted, imported visits still count as visits (residual U2).
+  it("describes the wait, not a permanent exclusion of imported visits", () => {
+    // Once open, imported visits still count as visits (residual U2).
     expect(AT_RISK_SUPPRESSED_DETAIL).not.toMatch(/not counted/i);
     expect(AT_RISK_SUPPRESSED_DETAIL).toMatch(/^Hidden until then/);
   });

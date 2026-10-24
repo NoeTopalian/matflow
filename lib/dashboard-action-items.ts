@@ -7,6 +7,7 @@
  */
 
 import { TRAINING_MEMBER } from "@/lib/member-population";
+import { DEFAULT_TIMEZONE, usableTimezone } from "@/lib/class-time";
 
 export type ActionItemKind = "money" | "retention" | "admin" | "moment";
 
@@ -34,9 +35,9 @@ export type ActionItemsInput = {
   /** Active members not seen in 14+ days — never someone who joined inside the window and has not trained yet (see atRiskMemberWhere). */
   atRisk: { id: string; name: string }[];
   /**
-   * True while the club has no MatFlow check-in (see atRiskSuppressed). The
-   * at-risk rows are then dropped, whatever `atRisk` holds, so the named list
-   * and the headline tile are switched off by the same signal.
+   * True while the At-Risk gate is closed (see readAtRiskGate). The at-risk
+   * rows are then dropped, whatever `atRisk` holds, so the named list and the
+   * headline tile are switched off by the same signal.
    */
   atRiskSuppressed?: boolean;
   /** Active/taster members with a dateOfBirth (filtered to the next 7 days here). */
@@ -46,6 +47,13 @@ export type ActionItemsInput = {
 /** Days without a check-in before an active member counts as "not seen". */
 export const AT_RISK_DAYS = 14;
 
+/** The start of the At-Risk window: AT_RISK_DAYS calendar days before `now`. */
+export function atRiskWindowStart(now: Date): Date {
+  const since = new Date(now);
+  since.setDate(now.getDate() - AT_RISK_DAYS);
+  return since;
+}
+
 /**
  * The Prisma `where` for "active member not seen in {AT_RISK_DAYS}+ days" —
  * shared by the dashboard's headline count and its named action list so the
@@ -53,20 +61,24 @@ export const AT_RISK_DAYS = 14;
  * window is NEW, not lapsed: the end-user simulation (30 Sep 2026) saw eight
  * members who joined that morning listed as "Not seen in 14+ days".
  *
+ * A visit is ANY attendance row, imported or recorded in MatFlow: imported
+ * history is real attendance, and it is what shows a member who had already
+ * stopped coming before the club moved to MatFlow. Whether the window can be
+ * judged at all is the gate's question (readAtRiskGate), not this predicate's.
+ *
  * NOT yet the same rule as the Members "Quiet" chip (`isQuiet` in
  * components/dashboard/MembersList.tsx), which also requires `paid` and is
  * never suppressed; aligning the two is T2a Part F. Until then the chip shows
  * its own count.
  */
 export function atRiskMemberWhere(tenantId: string, now: Date) {
-  const since = new Date(now);
-  since.setDate(now.getDate() - AT_RISK_DAYS);
+  const since = atRiskWindowStart(now);
   return {
     tenantId,
     status: "active",
-    // Training members only: the TeamUp import made 219 no-login guardian
-    // drafts (active, never attend), and every one of them would otherwise be
-    // "not seen in 14 days" (T2a Part U, 17 Oct 2026; lib/member-population.ts).
+    // Training members only: an import creates no-login guardian drafts
+    // (active, never attend), and every one of them would otherwise be "not
+    // seen in 14 days" (T2a Part U; lib/member-population.ts).
     ...TRAINING_MEMBER,
     attendances: { none: { checkInTime: { gte: since } } },
     OR: [{ joinedAt: { lt: since } }, { attendances: { some: {} } }],
@@ -85,52 +97,143 @@ export const MATFLOW_CHECKIN_WHERE = {
 } as const;
 
 /**
- * What the At-Risk tile says in place of a number while it is suppressed.
- * The trigger is ANY check-in recorded in MatFlow (register, kiosk, QR,
- * member self check-in or auto check-in: MATFLOW_CHECKIN_WHERE), not only a
- * register, so the copy names a check-in. The detail line describes the
- * suppression only: once it lifts, imported visits still count as visits in
- * atRiskMemberWhere (T2a Part U residual U2).
+ * THE RULE for whether the dashboard can show At-Risk (T2a Part U: the
+ * suppression is an agent default adopted 17 Oct 2026; not an owner decision.
+ * Extended 24 Oct 2026 for sparse check-ins after an import).
+ *
+ * At-Risk says "not seen in 14 days". That is only true if MatFlow would have
+ * seen them: every day of the 14-day window must fall in time MatFlow was the
+ * club's register. A club fresh off TeamUp has years of imported visits that
+ * stop at the export, then a gap MatFlow knows nothing about (classes still
+ * registered in TeamUp), then its first MatFlow check-ins. Counting absence
+ * across that gap flags members who were training all along — the whole club,
+ * the moment one check-in lifts a "has any check-in" gate.
+ *
+ * So the window is judged only when ALL of these hold:
+ *   1. the club has a check-in recorded in MatFlow BEFORE the window starts
+ *      (MatFlow has been the register for the whole window); and
+ *   2. MatFlow recorded check-ins in EACH 7-day half of the window (the
+ *      register was in use throughout — a week with none, such as a closure
+ *      or registers taken elsewhere again, cannot show who stayed away).
+ * Otherwise the tile shows why it has no number:
+ *   - "none": no MatFlow check-in at all yet;
+ *   - "warming_up": the first MatFlow check-in is under 14 days old; At-Risk
+ *     starts 14 days after it (`startsAt`);
+ *   - "paused": a 7-day half of the window has no MatFlow check-in.
+ * When the gate is open, imported visits still count as visits in
+ * atRiskMemberWhere, so a member whose last visit was imported long before
+ * the switch is flagged, and a member seen at a MatFlow register is not.
+ *
+ * What the rule cannot know: a club that registers SOME classes in MatFlow
+ * every week and the rest elsewhere will see members of the unregistered
+ * classes flagged. Nothing in the data tells those apart from real absences;
+ * the tile's detail line says the count rests on check-ins recorded in MatFlow.
+ *
+ * Cost: three indexed probes on AttendanceRecord(tenantId, checkInTime).
+ * Probe 1 walks back from the window start and stops at the first MatFlow
+ * row, which is immediate for a club on MatFlow; for a club with none it
+ * walks the tenant's imported history, as the earlier gate did. A partial
+ * index on AttendanceRecord(tenantId, checkInTime) WHERE checkInMethod <>
+ * 'import' AND importJobId IS NULL belongs in a later schema batch if it shows
+ * in latency.
  */
-export const AT_RISK_SUPPRESSED_NOTE = "Starts after the first check-in recorded in MatFlow";
-export const AT_RISK_SUPPRESSED_DETAIL = "Hidden until then: imported history alone would flag the whole club";
-/** Muted line under "All caught up" while At-Risk is unknown rather than zero (UI-RULES §7). */
-export const AT_RISK_SUPPRESSED_TODO_NOTE = "At-Risk members start after the first check-in recorded in MatFlow.";
+export type AtRiskGate =
+  | { open: true }
+  | { open: false; reason: "none" }
+  | { open: false; reason: "warming_up"; startsAt: Date }
+  | { open: false; reason: "paused" };
+
+type CheckInTimeFilter = { lt?: Date; gte?: Date };
 
 /** The slice of a Prisma (transaction) client the at-risk gate reads. */
 export type AtRiskGateClient = {
   attendanceRecord: {
     findFirst(args: {
-      where: { tenantId: string; checkInMethod: { not: "import" }; importJobId: null };
-      select: { id: true };
-    }): Promise<{ id: string } | null>;
+      where: { tenantId: string; checkInMethod: { not: "import" }; importJobId: null; checkInTime: CheckInTimeFilter };
+      orderBy?: { checkInTime: "asc" | "desc" };
+      select: { checkInTime: true };
+    }): PromiseLike<{ checkInTime: Date } | null>;
   };
 };
 
-/**
- * THE one rule for whether the dashboard shows At-Risk at all (T2a Part U,
- * owner decision Q4 A-3 option (c), 17 Oct 2026): suppressed while the club
- * has no MatFlow check-in. Every visit on record for a club fresh off TeamUp
- * is imported and dated before the switch, so from 14 days after the import
- * the unsuppressed tile flags the whole club (about 312 active training
- * members; the 531 seen on 17 Oct also counted the 219 guardian drafts, which
- * atRiskMemberWhere now excludes). Imported attendance does not count. The
- * headline tile, the to-do row and the named action list all read this one
- * answer, through readAtRisk.
- *
- * Cost: while suppressed no row matches, so Postgres walks the tenant's
- * attendance through the (tenantId, checkInTime) index on each dashboard
- * render. Acceptable at Total BJJ's volume; if it shows up in latency, a
- * partial index on AttendanceRecord(tenantId) WHERE checkInMethod <> 'import'
- * AND importJobId IS NULL belongs in a later schema batch.
- */
-export async function atRiskSuppressed(tx: AtRiskGateClient, tenantId: string): Promise<boolean> {
-  const first = await tx.attendanceRecord.findFirst({
-    where: { tenantId, ...MATFLOW_CHECKIN_WHERE },
-    select: { id: true },
-  });
-  return first === null;
+export async function readAtRiskGate(tx: AtRiskGateClient, tenantId: string, now: Date): Promise<AtRiskGate> {
+  const since = atRiskWindowStart(now);
+  const probe = (checkInTime: CheckInTimeFilter, order: "asc" | "desc") =>
+    tx.attendanceRecord.findFirst({
+      where: { tenantId, ...MATFLOW_CHECKIN_WHERE, checkInTime },
+      orderBy: { checkInTime: order },
+      select: { checkInTime: true },
+    });
+
+  const before = await probe({ lt: since }, "desc");
+  if (!before) {
+    const first = await probe({ gte: since }, "asc");
+    if (!first) return { open: false, reason: "none" };
+    const startsAt = new Date(first.checkInTime);
+    startsAt.setDate(startsAt.getDate() + AT_RISK_DAYS);
+    return { open: false, reason: "warming_up", startsAt };
+  }
+  const mid = new Date(since);
+  mid.setDate(since.getDate() + Math.floor(AT_RISK_DAYS / 2));
+  const [firstHalf, secondHalf] = await Promise.all([
+    probe({ gte: since, lt: mid }, "asc"),
+    probe({ gte: mid }, "asc"),
+  ]);
+  if (!firstHalf || !secondHalf) return { open: false, reason: "paused" };
+  return { open: true };
 }
+
+/** Back-compatible boolean: true whenever the gate is closed, for any reason. */
+export async function atRiskSuppressed(tx: AtRiskGateClient, tenantId: string, now: Date = new Date()): Promise<boolean> {
+  return !(await readAtRiskGate(tx, tenantId, now)).open;
+}
+
+/** What the tile, its detail line and the to-do panel say while the gate is closed. */
+export type AtRiskCopy = { note: string; detail: string; todoNote: string };
+
+/** The tile's detail line while At-Risk is shown: what the count rests on. */
+export const AT_RISK_OPEN_DETAIL = "Not seen in 14 days";
+
+/** Day and month in British English in the club's zone, for "Starts 7 Nov". */
+function shortDate(d: Date, timeZone: string): string {
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: usableTimezone(timeZone) });
+}
+
+/**
+ * Copy for a closed gate. The trigger is ANY check-in recorded in MatFlow
+ * (register, kiosk, QR, member self check-in or auto check-in:
+ * MATFLOW_CHECKIN_WHERE), so the copy names a check-in, not a register. The
+ * detail line describes the wait only: once open, imported visits still count
+ * as visits in atRiskMemberWhere (T2a Part U residual U2).
+ */
+export function atRiskClosedCopy(gate: Exclude<AtRiskGate, { open: true }>, timeZone: string = DEFAULT_TIMEZONE): AtRiskCopy {
+  switch (gate.reason) {
+    case "none":
+      return {
+        note: AT_RISK_SUPPRESSED_NOTE,
+        detail: AT_RISK_SUPPRESSED_DETAIL,
+        todoNote: AT_RISK_SUPPRESSED_TODO_NOTE,
+      };
+    case "warming_up":
+      return {
+        note: `Starts ${shortDate(gate.startsAt, timeZone)}`,
+        detail: "Needs 14 days of check-ins recorded in MatFlow",
+        todoNote: `At-Risk members start on ${shortDate(gate.startsAt, timeZone)}, after 14 days of check-ins recorded in MatFlow.`,
+      };
+    case "paused":
+      return {
+        note: "Paused",
+        detail: "No check-ins recorded in MatFlow for a week of the last 14 days",
+        todoNote: "At-Risk members are paused: a week of the last 14 days has no check-ins recorded in MatFlow.",
+      };
+  }
+}
+
+/** The copy for a club with no MatFlow check-in yet ("none"). */
+export const AT_RISK_SUPPRESSED_NOTE = "Starts 14 days after the first check-in recorded in MatFlow";
+export const AT_RISK_SUPPRESSED_DETAIL = "Hidden until then: imported history alone can't show who has stopped coming";
+/** Muted line under "All caught up" while At-Risk is unknown rather than zero (UI-RULES §7). */
+export const AT_RISK_SUPPRESSED_TODO_NOTE = "At-Risk members start 14 days after the first check-in recorded in MatFlow.";
 
 export type AtRiskWhere = ReturnType<typeof atRiskMemberWhere>;
 
@@ -151,6 +254,8 @@ export type AtRiskRead = {
   suppressed: boolean;
   count: number;
   members: { id: string; name: string }[];
+  /** Present while suppressed: what the tile and the to-do panel say instead of a number. */
+  copy?: AtRiskCopy;
 };
 
 /** How many at-risk names the dashboard action list is fed. */
@@ -163,9 +268,15 @@ export const AT_RISK_LIST_TAKE = 25;
  * so the tile, the to-do row and the named list cannot disagree. While
  * suppressed, no member query runs at all.
  */
-export async function readAtRisk(tx: AtRiskReadClient, tenantId: string, now: Date): Promise<AtRiskRead> {
-  if (await atRiskSuppressed(tx, tenantId)) {
-    return { suppressed: true, count: 0, members: [] };
+export async function readAtRisk(
+  tx: AtRiskReadClient,
+  tenantId: string,
+  now: Date,
+  timeZone: string | null | undefined = DEFAULT_TIMEZONE,
+): Promise<AtRiskRead> {
+  const gate = await readAtRiskGate(tx, tenantId, now);
+  if (!gate.open) {
+    return { suppressed: true, count: 0, members: [], copy: atRiskClosedCopy(gate, usableTimezone(timeZone)) };
   }
   const where = atRiskMemberWhere(tenantId, now);
   const [count, members] = await Promise.all([

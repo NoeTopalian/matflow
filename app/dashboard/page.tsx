@@ -157,9 +157,11 @@ async function getStats(tx: TxClient, tenantId: string, atRisk: AtRiskRead) {
     missingPhone,
     paymentsDue,
     // Read once by readAtRisk (lib/dashboard-action-items): 0 and suppressed
-    // while the club has no MatFlow check-in, the same value the named list gets.
+    // while the gate is closed, the same value the named list gets; the copy
+    // says why there is no number yet.
     atRiskMembers: atRisk.count,
     atRiskSuppressed: atRisk.suppressed,
+    atRiskCopy: atRisk.copy,
   };
 }
 
@@ -265,12 +267,14 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
   // contention that caused "Unable to start a transaction in the given time".
   //
   // At-Risk is read once, club-wide, and handed to both the tile and the named
-  // list so they are switched off together (T2a Part U: suppressed while the
-  // club has no MatFlow check-in; imported attendance does not count).
+  // list so they are switched off together (readAtRiskGate: shown only once
+  // MatFlow has been the register for the whole 14-day window; imported
+  // visits count as visits once it is).
   const [classes, stats, setupGaps, userTasks, actionItems] = await withTenantContext(
     session!.user.tenantId,
     async (tx) => {
-      const atRisk = await readAtRisk(tx, session!.user.tenantId, new Date());
+      const club = await tx.tenant.findUnique({ where: { id: session!.user.tenantId }, select: { timezone: true } });
+      const atRisk = await readAtRisk(tx, session!.user.tenantId, new Date(), club?.timezone);
       return Promise.all([
         getWeekClasses(tx, session!.user.tenantId),
         getStats(tx, session!.user.tenantId, atRisk),
