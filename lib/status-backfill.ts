@@ -14,7 +14,8 @@ type TxClient = Prisma.TransactionClient;
  * TeamUp membership row with its own dates; this module turns those rows into
  * dated transitions that sit BEFORE the member's first existing event.
  *
- * Rules (ticket T8b, owner decisions Q6 of 17 Oct 2026):
+ * Rules (ticket T8b, Q6: agent default adopted 17 Oct 2026; not an owner
+ * decision):
  * - Only ledger rows with a member (`memberId` set, disposition
  *   member_history) count. A member's rows come from ONE import job: the job
  *   that created the member (`Member.importJobId`) when it holds rows for

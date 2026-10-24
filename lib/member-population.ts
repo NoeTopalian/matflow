@@ -13,10 +13,11 @@
  * T1 (17 Oct 2026): every named member population lives here, once, as a
  * Prisma `where` fragment for the server AND a plain predicate for the
  * browser, so the Members page, Reports, Settings, Analysis and Revenue can no
- * longer count different things under one word. Owner decision Q4 A-1 (Noe,
- * 17 Oct 2026): the headline "Active members" is ACTIVE_MEMBER — status
- * active, not a guardian account — and members on hold stay inside it, marked
- * as such. A hold is the billing axis (`paymentStatus` "paused") and is never
+ * longer count different things under one word. Q4 A-1 (agent default
+ * adopted 17 Oct 2026; not an owner decision): the headline "Active members"
+ * is ACTIVE_MEMBER — status active, not a guardian account — and members on
+ * hold stay inside it, marked as such. Keeping inactive members out of active
+ * totals is confirmed by owner instruction of 23 Oct 2026. A hold is the billing axis (`paymentStatus` "paused") and is never
  * a status row (docs/readiness/MATFLOW-SPECIFICATION-2026-10.md:102-103).
  *
  * Rules for callers:
@@ -84,21 +85,37 @@ export const PAYER_COPY = {
 
 /**
  * OTHER ACCOUNTS OWING (owner direction D9, 23 Oct 2026): inactive or
- * cancelled accounts with a genuine debt — a failed latest charge, or marked
- * overdue (lib/overdue otherOwingEvidence). Not chased and in no member
- * total, but never hidden: Reports, the Members payers view, Outstanding and
- * the Reports CSV all print this line beside "Payers overdue".
+ * cancelled accounts with a CONFIRMED debt — marked overdue (lib/overdue
+ * otherOwingEvidence). Not chased and in no member total, but never hidden:
+ * Reports, the Members payers view, Outstanding and the Reports CSV all print
+ * this line beside "Payers overdue".
+ *
+ * A failed latest charge alone is NOT a debt (owner instruction of 24 Oct
+ * 2026: never treated as unpaid without reconciliation). Those accounts are
+ * FAILED_TO_RECONCILE_COPY, printed apart and counted in no debt total.
  */
 export const OTHER_OWING_COPY = {
   label: "Other accounts owing",
-  short: "Inactive or left, not chased",
-  includes: "Inactive and cancelled accounts whose last charge failed or that are marked overdue, including parents and guardians",
+  short: "Inactive or left, marked overdue, not chased",
+  includes: "Inactive and cancelled accounts marked overdue (by Stripe or by staff), including parents and guardians",
   excludes: "Not chased, and not counted in Payers overdue or any member total",
 } as const;
 
-/** "Other accounts owing: 2 (inactive or left, not chased)". */
+export const FAILED_TO_RECONCILE_COPY = {
+  label: "Last charge failed — to reconcile",
+  short: "Inactive or left · check before treating as owed",
+  includes: "Inactive and cancelled accounts whose latest charge failed and that are not marked overdue, including parents and guardians",
+  excludes: "Not a confirmed debt: check the payment before treating it as owed. Not chased, and in no debt or member total",
+} as const;
+
+/** "Other accounts owing: 2 (inactive or left, marked overdue, not chased)". */
 export function otherAccountsOwingLine(n: number): string {
-  return `${OTHER_OWING_COPY.label}: ${n.toLocaleString("en-GB")} (inactive or left, not chased)`;
+  return `${OTHER_OWING_COPY.label}: ${n.toLocaleString("en-GB")} (inactive or left, marked overdue, not chased)`;
+}
+
+/** "Last charge failed — to reconcile: 1 (inactive or left, check before treating as owed)". */
+export function failedToReconcileLine(n: number): string {
+  return `${FAILED_TO_RECONCILE_COPY.label}: ${n.toLocaleString("en-GB")} (inactive or left, check before treating as owed)`;
 }
 
 /** "1 payer" / "3 payers". */

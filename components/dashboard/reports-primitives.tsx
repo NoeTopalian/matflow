@@ -18,7 +18,9 @@ export function formatNumber(value: number) {
 }
 
 /**
- * T2b (17 Oct 2026, owner decision Q6): every percentage on Reports and
+ * T2b (Q6: agent default adopted 17 Oct 2026; not an owner decision; required
+ * by Sean's note relayed 14 Oct and the owner instruction of 24 Oct 2026):
+ * every percentage on Reports and
  * Analysis shows its numerator and denominator — "10% (1 of 10)". One helper
  * so the screen and the CSV print the same text.
  *

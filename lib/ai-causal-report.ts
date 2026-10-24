@@ -204,8 +204,8 @@ export async function generateMonthlyReport(input: ReportInput): Promise<Generat
 # Metrics this period
 - Total members: ${metrics.totalMembers}
 - Active members: ${metrics.activeMembers}
-- New members this period: ${metrics.newThisPeriod} (last period: ${metrics.newPrevPeriod}, delta: ${metrics.newDelta >= 0 ? "+" : ""}${metrics.newDelta})
-- Cancelled members (cumulative): ${metrics.cancelledMembers}
+- New members this period, by join date (not the Reports "Joined" movement figure: rejoins are not counted, and imported members count on their join date): ${metrics.newThisPeriod} (last period: ${metrics.newPrevPeriod}, delta: ${metrics.newDelta >= 0 ? "+" : ""}${metrics.newDelta})
+- Cancelled members (cumulative, all time; not "left this month"): ${metrics.cancelledMembers}
 - Check-ins this period: ${metrics.checkInsThisPeriod} (last period: ${metrics.checkInsPrevPeriod}, ${metrics.checkInsPctChange >= 0 ? "+" : ""}${metrics.checkInsPctChange}%)
 - Active classes: ${metrics.activeClasses}
 
@@ -216,6 +216,8 @@ ${initiativeContext || "(none recorded)"}
 ${driveContext || "(no Drive files indexed)"}${driveNote}
 
 # Your task
+Whenever you give a percentage, give the two figures behind it as well, for example "+13% (45 vs 40)". Call the new-member figure "new members by join date", never "joined".
+
 Produce **exactly four sections** in this order, separated by markdown H2 headers, total ≤ 500 words:
 
 ## Summary

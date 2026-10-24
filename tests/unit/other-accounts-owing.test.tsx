@@ -5,16 +5,22 @@
 // must stay visible under its own label — "Other accounts owing" — on Reports
 // (tile and CSV), the Members payers view and Payments → Outstanding.
 //
+// Owner instruction of 24 Oct 2026: a failed payment must not automatically be
+// treated as an unpaid debt without reconciliation. A failed latest charge on
+// an inactive or cancelled account that is NOT marked overdue is "Last charge
+// failed — to reconcile": shown apart, in no debt total.
+//
 // Worked example:
 //   Ava   active, adult, cash plan, due five days ago        → Payers overdue
-//   Ian   INACTIVE, Stripe charge failed after he was set inactive
-//                                                            → Other accounts owing (failed charge)
+//   Ian   INACTIVE, marked overdue, his last Stripe charge failed
+//                                                            → Other accounts owing (confirmed)
 //   Gail  active GUARDIAN on her own plan, due five days ago → Payers overdue (guardian)
-//   Cole  CANCELLED by Stripe after his last charge failed   → Other accounts owing (failed charge)
-//   Ned   inactive, stale due date, last payment succeeded   → owes nothing (no invented debt)
-//   Rita  cancelled, a failed charge LATER paid              → owes nothing
-// So: Payers overdue 2 (1 guardian), Other accounts owing 2, Active members 1,
-// Current members 3 — the member counts are what they were before D9.
+//   Cole  CANCELLED by Stripe after his last charge failed, not marked overdue
+//                                                            → Last charge failed — to reconcile
+//   Ned   inactive, stale due date, last payment succeeded   → nothing (no invented debt)
+//   Rita  cancelled, a failed charge LATER paid              → nothing
+// So: Payers overdue 2 (1 guardian), Other accounts owing 1, to reconcile 1,
+// Active members 1, Current members 3 — the member counts are what they were.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, within } from "@testing-library/react";
@@ -33,9 +39,16 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
-import { ACTIVE_MEMBER, CURRENT_MEMBER, OTHER_OWING_COPY, otherAccountsOwingLine } from "@/lib/member-population";
+import {
+  ACTIVE_MEMBER,
+  CURRENT_MEMBER,
+  FAILED_TO_RECONCILE_COPY,
+  OTHER_OWING_COPY,
+  failedToReconcileLine,
+  otherAccountsOwingLine,
+} from "@/lib/member-population";
 import { otherOwingEvidence, overduePayerWhere, shownPaymentStatus } from "@/lib/overdue";
-import { loadOtherAccountsOwing, otherOwingTotals, type OtherOwingRow } from "@/lib/other-accounts-owing";
+import { isConfirmedDebt, loadOtherAccountsOwing, otherOwingTotals, type OtherOwingRow } from "@/lib/other-accounts-owing";
 import { countMemberRows, memberListCountWheres } from "@/lib/member-list-counts";
 import { clubMonthWindow } from "@/lib/club-month";
 import { getReportsData } from "@/lib/reports";
@@ -89,7 +102,8 @@ const NED = member({ id: "ned", name: "Ned Stale", status: "inactive", nextDueAt
 const RITA = member({ id: "rita", name: "Rita Repaid", status: "cancelled", paymentStatus: "cancelled", cancelledAt: ago(20), payments: [failed(100), paid(80)] });
 const CLUB = [AVA, IAN, GAIL, COLE, NED, RITA];
 
-function listRow(r: (typeof CLUB)[number], owing: Set<string>): MemberRow {
+function listRow(r: (typeof CLUB)[number], owing: OtherOwingRow[]): MemberRow {
+  const row = owing.find((o) => o.memberId === r.id);
   return {
     id: r.id,
     name: r.name,
@@ -104,7 +118,7 @@ function listRow(r: (typeof CLUB)[number], owing: Set<string>): MemberRow {
     joinedAt: r.joinedAt.toISOString(),
     cancelledAt: r.cancelledAt ? r.cancelledAt.toISOString() : null,
     lastVisitAt: null,
-    ...(owing.has(r.id) ? { otherOwing: true } : {}),
+    ...(row ? (isConfirmedDebt(row) ? { otherOwing: true } : { failedToReconcile: true }) : {}),
   };
 }
 
@@ -124,21 +138,29 @@ afterEach(() => {
   currentSearch = "";
 });
 
-describe("D9: debts on inactive and cancelled accounts are counted beside the payers, never in a member total", () => {
-  it("the rule: a failed latest charge or a stored overdue counts; a stale date or a repaid failure does not", async () => {
-    expect(otherOwingEvidence(IAN)).toMatchObject({ kind: "failed_charge", amountPence: 5000, reason: "Your card was declined." });
-    expect(otherOwingEvidence(COLE)).toMatchObject({ kind: "failed_charge" });
+describe("D9 + 24 Oct: confirmed debts and failed charges to reconcile, apart, beside the payers, never in a member total", () => {
+  it("the rule: marked overdue is a confirmed debt; a failed latest charge alone is to reconcile; a stale date or a repaid failure is nothing", async () => {
+    expect(otherOwingEvidence(IAN)).toMatchObject({ kind: "marked_overdue", failed: { amountPence: 5000, reason: "Your card was declined." } });
+    expect(otherOwingEvidence(COLE)).toMatchObject({ kind: "failed_charge", amountPence: 5000 });
     expect(otherOwingEvidence(NED)).toBeNull();
     expect(otherOwingEvidence(RITA)).toBeNull();
-    // Marked overdue with no failed charge on record still counts, and an active account never does.
-    expect(otherOwingEvidence({ status: "inactive", paymentStatus: "overdue", payments: [] })).toEqual({ kind: "marked_overdue" });
+    // Marked overdue with no failed charge on record is still a confirmed debt; an active account is never either.
+    expect(otherOwingEvidence({ status: "inactive", paymentStatus: "overdue", payments: [] })).toEqual({ kind: "marked_overdue", failed: null });
     expect(otherOwingEvidence({ status: "active", paymentStatus: "overdue", payments: [failed(1)] })).toBeNull();
+    // A failed charge is not turned into a debt by anything but a stored "overdue".
+    expect(otherOwingEvidence({ status: "cancelled", paymentStatus: "cancelled", payments: [failed(1)] })?.kind).toBe("failed_charge");
 
     const rows = await loadOwing();
-    expect(rows.map((r) => r.memberName)).toEqual(["Ian Inactive", "Cole Cancelled"]);
-    expect(rows[0]).toMatchObject({ status: "inactive", evidence: "failed_charge", amountPence: 5000 });
-    expect(otherOwingTotals(rows)).toEqual({ count: 2, guardians: 0 });
-    expect(otherAccountsOwingLine(2)).toBe("Other accounts owing: 2 (inactive or left, not chased)");
+    expect(rows.map((r) => [r.memberName, r.evidence])).toEqual([
+      ["Ian Inactive", "marked_overdue"],
+      ["Cole Cancelled", "failed_charge"],
+    ]);
+    // The confirmed debt keeps its failed charge's amount and date as context.
+    expect(rows[0]).toMatchObject({ status: "inactive", amountPence: 5000 });
+    expect(rows[0].failedAt).not.toBeNull();
+    expect(otherOwingTotals(rows)).toEqual({ count: 1, guardians: 0, toReconcile: 1, toReconcileGuardians: 0 });
+    expect(otherAccountsOwingLine(1)).toBe("Other accounts owing: 1 (inactive or left, marked overdue, not chased)");
+    expect(failedToReconcileLine(1)).toBe("Last charge failed — to reconcile: 1 (inactive or left, check before treating as owed)");
   });
 
   it("member and payer totals are unchanged: Payers overdue 2 (1 guardian), Active 1, Current 3", () => {
@@ -152,51 +174,64 @@ describe("D9: debts on inactive and cancelled accounts are counted beside the pa
     expect(matchRows(CLUB, server.all).length).toBe(3);
   });
 
-  it("Reports: the tile figure and the CSV row say 2 other accounts owing, beside 2 payers overdue", async () => {
+  it("Reports: 1 other account owing and 1 failed charge to reconcile, each its own figure and CSV row", async () => {
     members = CLUB;
     const data = await getReportsData("club");
     expect(data.paymentHealth.overdueCount).toBe(2);
     expect(data.paymentHealth.overdueGuardianCount).toBe(1);
-    expect(data.paymentHealth.otherOwingCount).toBe(2);
+    expect(data.paymentHealth.otherOwingCount).toBe(1);
     expect(data.paymentHealth.otherOwingGuardianCount).toBe(0);
+    expect(data.paymentHealth.failedToReconcileCount).toBe(1);
+    expect(data.paymentHealth.failedToReconcileGuardianCount).toBe(0);
     expect(data.summary.activeMembers).toBe(1);
     expect(data.summary.currentMembers).toBe(3);
     const csv = reportsCsv(data, ATTRIBUTION as never);
     expect(csv).toContain("Payments,Payers overdue,2,Includes 1 parent or guardian who pays");
-    expect(csv).toContain(`Payments,${OTHER_OWING_COPY.label},2,"Inactive or left, not chased"`);
-    // Never "all in good standing" while an inactive account owes.
-    expect(paymentHealthLine({ overdueCount: 0, failedLast30Days: 0, otherOwingCount: 2 })).toBeNull();
-    expect(paymentHealthLine({ overdueCount: 0, failedLast30Days: 0, otherOwingCount: 0 })?.tone).toBe("good");
+    expect(csv).toContain(`Payments,${OTHER_OWING_COPY.label},1,"Inactive or left, marked overdue, not chased"`);
+    expect(csv).toContain(`Payments,${FAILED_TO_RECONCILE_COPY.label},1,Inactive or left · check before treating as owed`);
+    // Never "all in good standing" while an inactive account owes or a failed charge is unreconciled.
+    expect(paymentHealthLine({ overdueCount: 0, failedLast30Days: 0, otherOwingCount: 1 })).toBeNull();
+    expect(paymentHealthLine({ overdueCount: 0, failedLast30Days: 0, otherOwingCount: 0, failedToReconcileCount: 1 })).toBeNull();
+    expect(paymentHealthLine({ overdueCount: 0, failedLast30Days: 0, otherOwingCount: 0, failedToReconcileCount: 0 })?.tone).toBe("good");
   });
 
-  it("Members, payers view: the sub-line and chip name 2 other accounts owing; the drill-through lists Ian and Cole only", async () => {
+  it("Members: the payers view names both lines; each chip and drill-through lists exactly its accounts", async () => {
     const owing = await loadOwing();
-    const ids = new Set(owing.map((r) => r.memberId));
-    const rows = CLUB.map((r) => listRow(r, ids));
+    const rows = CLUB.map((r) => listRow(r, owing));
     expect(countMemberRows(rows, NOW, MONTH).overdue).toBe(2);
-    expect(rows.filter((r) => inStatusView(r, "other-owing")).map((r) => r.name)).toEqual(["Ian Inactive", "Cole Cancelled"]);
+    expect(rows.filter((r) => inStatusView(r, "other-owing")).map((r) => r.name)).toEqual(["Ian Inactive"]);
+    expect(rows.filter((r) => inStatusView(r, "failed-to-reconcile")).map((r) => r.name)).toEqual(["Cole Cancelled"]);
 
+    const props = { members: rows, primaryColor: "#3b82f6", role: "coach", serverCounts: countMemberRows(rows, NOW, MONTH), otherOwing: otherOwingTotals(owing), monthWindow: { ...MONTH, isCurrent: true } };
     currentSearch = "filter=overdue";
-    const { unmount } = render(
-      <MembersList members={rows} primaryColor="#3b82f6" role="coach" serverCounts={countMemberRows(rows, NOW, MONTH)} otherOwing={otherOwingTotals(owing)} monthWindow={{ ...MONTH, isCurrent: true }} />,
-    );
+    const { unmount } = render(<MembersList {...props} />);
     expect(screen.getByTestId("members-headline").textContent).toBe("2 payers overdue");
-    expect(screen.getByTestId("members-other-owing-line").textContent).toBe("Other accounts owing: 2 (inactive or left, not chased)");
-    expect(screen.getByRole("button", { name: "Other accounts owing · 2" })).toBeTruthy();
+    expect(screen.getByTestId("members-other-owing-line").textContent).toBe("Other accounts owing: 1 (inactive or left, marked overdue, not chased)");
+    expect(screen.getByTestId("members-to-reconcile-line").textContent).toBe("Last charge failed — to reconcile: 1 (inactive or left, check before treating as owed)");
+    expect(screen.getByRole("button", { name: "Other accounts owing · 1" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Last charge failed — to reconcile · 1" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Active · 1" })).toBeTruthy();
     unmount();
 
     currentSearch = "filter=other-owing";
-    render(<MembersList members={rows} primaryColor="#3b82f6" role="coach" serverCounts={countMemberRows(rows, NOW, MONTH)} otherOwing={otherOwingTotals(owing)} monthWindow={{ ...MONTH, isCurrent: true }} />);
-    expect(screen.getByTestId("members-headline").textContent).toBe("2 other accounts owing");
-    expect(screen.getByTestId("members-headline-scope").textContent).toContain("Not chased");
+    const second = render(<MembersList {...props} />);
+    expect(screen.getByTestId("members-headline").textContent).toBe("1 other account owing");
+    expect(screen.getByTestId("members-headline-scope").textContent).toContain("marked overdue");
     expect(screen.queryAllByText("Ian Inactive").length).toBeGreaterThan(0);
+    expect(screen.queryAllByText("Cole Cancelled")).toHaveLength(0);
+    second.unmount();
+
+    currentSearch = "filter=failed-to-reconcile";
+    render(<MembersList {...props} />);
+    expect(screen.getByTestId("members-headline").textContent).toBe("1 account whose last charge failed — to reconcile");
+    expect(screen.getByTestId("members-headline-scope").textContent).toContain("Not a confirmed debt: check the payment before treating it as owed");
     expect(screen.queryAllByText("Cole Cancelled").length).toBeGreaterThan(0);
+    expect(screen.queryAllByText("Ian Inactive")).toHaveLength(0);
     expect(screen.queryAllByText("Ava Active")).toHaveLength(0);
     expect(screen.queryAllByText("Ned Stale")).toHaveLength(0);
   });
 
-  it("Payments → Outstanding: the chase list and its total are the payers; the 2 other accounts are named below with no Chase", async () => {
+  it("Payments → Outstanding: the chase list and its total are the payers; the confirmed debt and the failed charge are listed apart with no Chase", async () => {
     const otherOwing = await loadOwing();
     const rows = buildOutstandingRows({
       now: NOW,
@@ -214,13 +249,22 @@ describe("D9: debts on inactive and cancelled accounts are counted beside the pa
     await screen.findByText("Ava Active");
     expect(screen.getByTestId("outstanding-summary").textContent).toContain("outstanding across 2 payers");
     expect(screen.getByTestId("outstanding-split").textContent).toBe("2 payers overdue · 0 with no payment yet. Includes 1 parent or guardian who pays.");
-    expect(screen.getByTestId("outstanding-other-owing").textContent).toBe("Other accounts owing: 2 (inactive or left, not chased) — listed below, not in this total.");
+    expect(screen.getByTestId("outstanding-other-owing").textContent).toBe("Other accounts owing: 1 (inactive or left, marked overdue, not chased) — listed below, not in this total.");
+    expect(screen.getByTestId("outstanding-to-reconcile").textContent).toBe("Last charge failed — to reconcile: 1 (inactive or left, check before treating as owed) — listed below, not in this total.");
     expect(screen.getByText("£100.00")).toBeTruthy();
-    const list = screen.getByTestId("outstanding-other-owing-list");
-    expect(within(list).getByText("Ian Inactive")).toBeTruthy();
-    expect(within(list).getByText("Cole Cancelled")).toBeTruthy();
-    expect(list.textContent).toContain("Inactive · Last charge failed on");
-    expect(list.textContent).toContain("Cancelled · Last charge failed on");
-    expect(within(list).queryByRole("button", { name: /Chase/ })).toBeNull();
+
+    const owingList = screen.getByTestId("outstanding-other-owing-list");
+    expect(within(owingList).getByText("Ian Inactive")).toBeTruthy();
+    expect(within(owingList).queryByText("Cole Cancelled")).toBeNull();
+    expect(owingList.textContent).toContain("Inactive · Marked overdue · last charge failed on");
+    expect(within(owingList).queryByRole("button", { name: /Chase/ })).toBeNull();
+
+    const reconcileList = screen.getByTestId("outstanding-to-reconcile-list");
+    expect(within(reconcileList).getByText("Cole Cancelled")).toBeTruthy();
+    expect(within(reconcileList).queryByText("Ian Inactive")).toBeNull();
+    expect(reconcileList.textContent).toContain(FAILED_TO_RECONCILE_COPY.label);
+    expect(reconcileList.textContent).toContain("Cancelled · Last charge failed on");
+    expect(reconcileList.textContent).toContain("— check before treating as owed");
+    expect(within(reconcileList).queryByRole("button", { name: /Chase/ })).toBeNull();
   });
 });

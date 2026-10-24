@@ -119,8 +119,8 @@ export function headcountDomain(points: NetNewPoint[]): [0, number] {
 /**
  * The run of wholly estimated months at the start of the window (the months
  * before the first recorded event), for the shaded "estimated" band; null when
- * the first month is not estimated. A partly estimated month is marked in its
- * tooltip instead, so the band never covers a recorded month.
+ * the first month is not estimated. A partly estimated month is marked on its
+ * own (partlyEstimatedMonths), so the band never covers a recorded month.
  *
  * `next` is the month after the run (null when the run reaches the end). On a
  * point scale (the Net line and Members views have no bars) a band from
@@ -136,6 +136,17 @@ export function estimatedRange(
   while (end + 1 < points.length && points[end + 1][which] === "estimated") end += 1;
   if (end < 0) return null;
   return { from: points[0].month, to: points[end].month, next: points[end + 1]?.month ?? null };
+}
+
+/**
+ * The partly estimated months ("mixed": some moves or some of the headcount
+ * reconstructed), in order. The band above covers only the leading run of
+ * wholly estimated months, so these are marked on the chart one by one and
+ * named in the note under it — a partly estimated month never reads as a
+ * recorded one (24 Oct 2026).
+ */
+export function partlyEstimatedMonths(points: NetNewPoint[], which: "basis" | "headcountBasis" = "basis"): string[] {
+  return points.filter((p) => p[which] === "mixed").map((p) => p.month);
 }
 
 /**

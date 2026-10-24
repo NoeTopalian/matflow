@@ -2,7 +2,8 @@
 
 /**
  * Net New Members — one card, three ways of seeing the same twelve club
- * months (T8c, 17 Oct 2026, owner decisions Q6):
+ * months (T8c, Q6: agent default adopted 17 Oct 2026; not an owner decision;
+ * the movement definition is confirmed by owner instruction of 23 Oct 2026):
  *   Bars      joined (new + rejoined, green) and lost (cancelled or completed
  *             course, red) per month;
  *   Net line  net change per month on a symmetric axis with a centre zero
@@ -50,6 +51,7 @@ import {
   estimatedRange,
   headcountDomain,
   isNetNewEmpty,
+  partlyEstimatedMonths,
   readNetNewView,
   symmetricDomain,
   type NetNewPoint,
@@ -156,6 +158,32 @@ function SignedDot(props: { cx?: number; cy?: number; payload?: { net?: number }
  * covers it whole. The line views have a point scale, where that would give a
  * zero-width band for one month, so they run it to the next month's point.
  */
+/**
+ * Each partly estimated month marked on its own, behind the data: a lighter,
+ * dashed-edged band over the month on the bar view; a dashed vertical line at
+ * the month's point on the line views (a point scale has no width to shade).
+ * Unlabelled on the chart (twelve labels would collide); the note under the
+ * chart names the months, and the tooltip says "Partly estimated".
+ */
+function partlyEstimatedMarks(months: string[], pointScale: boolean) {
+  return months.map((month) =>
+    pointScale ? (
+      <ReferenceLine key={`mixed-${month}`} x={month} stroke="var(--tx-3)" strokeDasharray="2 3" />
+    ) : (
+      <ReferenceArea
+        key={`mixed-${month}`}
+        x1={month}
+        x2={month}
+        fill="var(--sf-2)"
+        fillOpacity={0.45}
+        stroke="var(--tx-3)"
+        strokeDasharray="2 3"
+        strokeOpacity={0.6}
+      />
+    ),
+  );
+}
+
 function estimatedBand(range: { from: string; to: string; next: string | null } | null, pointScale: boolean) {
   if (!range) return null;
   return (
@@ -178,6 +206,8 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
   const current = NET_NEW_VIEWS.find((v) => v.value === view) ?? NET_NEW_VIEWS[0];
   const band = estimatedBand(estimatedRange(points, view === "members" ? "headcountBasis" : "basis"), view !== "bars");
   const anyEstimated = points.some((p) => p.basis !== "recorded" || p.headcountBasis !== "recorded");
+  const mixedMonths = partlyEstimatedMonths(points, view === "members" ? "headcountBasis" : "basis");
+  const marks = partlyEstimatedMarks(mixedMonths, view !== "bars");
   const caption = estimatedCaption(membership);
   const t = membership.totals;
   const today = points[points.length - 1];
@@ -255,6 +285,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
               <BarChart data={points} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
                 <CartesianGrid vertical={false} stroke="var(--bd-default)" />
                 {band}
+                {marks}
                 <XAxis dataKey="month" tick={AXIS_TICK} axisLine={false} tickLine={false} />
                 <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip content={<NetNewTooltip mode="bars" caption={caption} />} cursor={{ fill: "var(--sf-2)" }} />
@@ -265,6 +296,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
               <ComposedChart data={points} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
                 <CartesianGrid vertical={false} stroke="var(--bd-default)" />
                 {band}
+                {marks}
                 <XAxis dataKey="month" tick={AXIS_TICK} axisLine={false} tickLine={false} />
                 <YAxis domain={symmetricDomain(points, "net")} tick={AXIS_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip content={<NetNewTooltip mode="net" caption={caption} />} cursor={{ stroke: "var(--bd-default)" }} />
@@ -277,6 +309,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
               <ComposedChart data={points} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
                 <CartesianGrid vertical={false} stroke="var(--bd-default)" />
                 {band}
+                {marks}
                 <XAxis dataKey="month" tick={AXIS_TICK} axisLine={false} tickLine={false} />
                 <YAxis
                   domain={headcountDomain(points)}
@@ -302,6 +335,11 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
               {membership.boundary
                 ? `${caption}: months before ${formatDate(membership.boundary)} are reconstructed, not recorded at the time.`
                 : `${caption}: nothing in this window was recorded at the time.`}
+            </p>
+          )}
+          {mixedMonths.length > 0 && (
+            <p data-testid="net-new-partly-estimated">
+              Partly estimated (dashed): {mixedMonths.join(", ")} — some {view === "members" ? "of the month-end count is" : "of the moves are"} reconstructed, not recorded at the time.
             </p>
           )}
           {membership.undatedHistory > 0 && (

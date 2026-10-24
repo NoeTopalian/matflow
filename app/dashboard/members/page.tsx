@@ -6,8 +6,8 @@ import { getMemberListCounts } from "@/lib/member-list-counts-server";
 import PrintCardsLink from "@/components/dashboard/PrintCardsLink";
 import PromotionAlerts from "@/components/dashboard/PromotionAlerts";
 import { PAYMENT_EVIDENCE_LABEL, latestSettledPayment, paymentEvidence, paymentEvidenceSentence, shownPaymentStatus } from "@/lib/overdue";
-import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
-import { loadMonthMovers } from "@/lib/membership-report";
+import { isConfirmedDebt, loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
+import { loadMonthMovement } from "@/lib/membership-report";
 import type { MovementBucket } from "@/lib/membership-movement";
 
 // Lane 1 iter-1 P-01 [Critical] fix: hard cap on the SSR-rendered member
@@ -174,12 +174,14 @@ export default async function MembersPage({ searchParams }: Props) {
   const monthWindow = await getMonthWindow(session!.user.tenantId, typeof month === "string" ? month : undefined);
   const { rows: members, truncated } = await getMembers(session!.user.tenantId, now, monthWindow.timeZone);
   const counts = await getMemberListCounts(session!.user.tenantId, now, monthWindow);
-  // D9 (23 Oct 2026): inactive or cancelled accounts that still owe. Counted
-  // over the whole club (not the capped rows) for the payers sub-line and the
-  // "Other accounts owing" chip; the flag lets the chip list exactly them.
-  // Unguarded like the loads above (UI-RULES §7).
+  // D9 (23 Oct 2026): inactive or cancelled accounts with a confirmed debt,
+  // and (owner instruction of 24 Oct 2026) those whose last charge failed with
+  // nothing confirming a debt, apart. Counted over the whole club (not the
+  // capped rows) for the payers sub-lines and the two chips; the flags let each
+  // chip list exactly its accounts. Unguarded like the loads above (UI-RULES §7).
   const otherOwingRows = await withTenantContext(session!.user.tenantId, (tx) => loadOtherAccountsOwing(tx, session!.user.tenantId));
-  const otherOwingIds = new Set(otherOwingRows.map((r) => r.memberId));
+  const otherOwingIds = new Set(otherOwingRows.filter(isConfirmedDebt).map((r) => r.memberId));
+  const toReconcileIds = new Set(otherOwingRows.filter((r) => !isConfirmedDebt(r)).map((r) => r.memberId));
   // D11: the members behind each movement figure for the club month in
   // `month=` — the same replay and window as the Reports Joined tile and the
   // Net New Members chart (the current month runs to now, a past month to
@@ -188,9 +190,9 @@ export default async function MembersPage({ searchParams }: Props) {
     start: new Date(monthWindow.monthStart),
     at: monthWindow.isCurrent ? now : new Date(new Date(monthWindow.nextMonthStart).getTime() - 1),
   };
-  const movers = await withTenantContext(
+  const { movers, basis: moversBasis, caption: moversCaption } = await withTenantContext(
     session!.user.tenantId,
-    (tx) => loadMonthMovers(tx, session!.user.tenantId, now, moveWindow),
+    (tx) => loadMonthMovement(tx, session!.user.tenantId, now, moveWindow),
     { maxWait: 10_000, timeout: 30_000 },
   );
   const movedBy = new Map<string, MovementBucket[]>();
@@ -198,7 +200,11 @@ export default async function MembersPage({ searchParams }: Props) {
     for (const id of movers[bucket]) movedBy.set(id, [...(movedBy.get(id) ?? []), bucket]);
   }
   const listed = members.map((m) => {
-    const flagged = otherOwingIds.has(m.id) ? { ...m, otherOwing: true } : m;
+    const flagged = otherOwingIds.has(m.id)
+      ? { ...m, otherOwing: true }
+      : toReconcileIds.has(m.id)
+        ? { ...m, failedToReconcile: true }
+        : m;
     const moved = movedBy.get(m.id);
     return moved ? { ...flagged, moved } : flagged;
   });
@@ -240,6 +246,7 @@ export default async function MembersPage({ searchParams }: Props) {
         serverCounts={counts}
         otherOwing={otherOwingTotals(otherOwingRows)}
         movers={{ new: movers.new.length, rejoined: movers.rejoined.length, lost: movers.lost.length, tasterAdded: movers.tasterAdded.length }}
+        moversBasis={{ basis: moversBasis, caption: moversCaption }}
         supportScope={(session!.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
       />
     </>

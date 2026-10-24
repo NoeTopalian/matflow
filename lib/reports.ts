@@ -6,7 +6,7 @@ import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER,
 import { percent, ratePct1dp } from "@/lib/percent";
 import { clubMonthKey, clubMonthWindow, defaultClubMonthWindow, monthRange, type ClubMonthWindow } from "@/lib/club-month";
 import { emptyMembershipReport, loadMembershipReport, type MembershipReport } from "@/lib/membership-report";
-import { joinedOf } from "@/lib/membership-movement";
+import { joinedOf, type MembershipBasis } from "@/lib/membership-movement";
 
 export type { MembershipReport } from "@/lib/membership-report";
 
@@ -54,8 +54,10 @@ export interface AttendanceRate {
 }
 
 /**
- * T2b (17 Oct 2026, owner decision Q6): every percentage on Reports carries
- * its numerator and denominator. `ratePct` is null exactly when the base is
+ * T2b (17 Oct 2026; agent default adopted 17 Oct 2026; not an owner
+ * decision; required by Sean's note relayed 14 Oct and the owner instruction
+ * of 24 Oct 2026): every percentage on Reports carries its numerator and
+ * denominator. `ratePct` is null exactly when the base is
  * 0 — the screen renders "—", never "0%" (MATFLOW-SPECIFICATION-2026-10.md
  * :144 "divide-by-zero → null", extended to every ratio here).
  */
@@ -145,8 +147,9 @@ export interface ReportsData {
     tasterMembers: number;
     /**
      * Active training members whose membership is on hold (ACTIVE_MEMBER +
-     * ON_HOLD). They stay inside activeMembers (owner decision Q4 A-1) and the
-     * tile marks them: "includes N on hold".
+     * ON_HOLD). They stay inside activeMembers (Q4 A-1: agent default adopted
+     * 17 Oct 2026; not an owner decision) and the tile marks them: "includes N
+     * on hold".
      */
     activeOnHoldMembers: number;
     totalCheckIns: number;
@@ -157,7 +160,12 @@ export interface ReportsData {
     newMembersLastMonth: number;
   };
   weeklyAttendance: { week: string; count: number; isCurrentWeek: boolean }[];
-  monthlySignups: { month: string; count: number; isCurrentMonth: boolean }[];
+  /**
+   * Joined (new + rejoined) per club month, last 6 months, by the movement
+   * definition. `basis` says whether the month was recorded at the time or is
+   * (partly) estimated, so the chart and the CSV can say so (24 Oct 2026).
+   */
+  monthlySignups: { month: string; count: number; isCurrentMonth: boolean; basis: MembershipBasis }[];
   /**
    * @deprecated All-time partition (percentages over every training member
    * ever recorded, cancelled included). Kept so the shape stays additive;
@@ -219,13 +227,21 @@ export interface ReportsData {
     /** How many of `noPaymentYetCount` are parent or guardian accounts. */
     noPaymentYetGuardianCount: number;
     /**
-     * D9 (23 Oct 2026): inactive or cancelled accounts that still owe — a
-     * failed latest charge or marked overdue (lib/other-accounts-owing.ts).
-     * Not chased, not in `overdueCount`, not in any member total.
+     * D9 (23 Oct 2026): inactive or cancelled accounts with a CONFIRMED debt —
+     * marked overdue (lib/other-accounts-owing.ts). Not chased, not in
+     * `overdueCount`, not in any member total.
      */
     otherOwingCount: number;
     /** How many of `otherOwingCount` are parent or guardian accounts. */
     otherOwingGuardianCount: number;
+    /**
+     * Owner instruction of 24 Oct 2026: inactive or cancelled accounts whose
+     * latest charge failed and that are NOT marked overdue — a failed charge to
+     * reconcile, never counted as a debt. Not in `otherOwingCount`.
+     */
+    failedToReconcileCount: number;
+    /** How many of `failedToReconcileCount` are parent or guardian accounts. */
+    failedToReconcileGuardianCount: number;
     failedLast30Days: number;
     recoveryRate: number | null;
     /** T2b: the counts behind `recoveryRate` (members with a failed payment in 90 days, and how many are now paid). */
@@ -399,6 +415,8 @@ export function createEmptyReportsData(): ReportsData {
       noPaymentYetGuardianCount: 0,
       otherOwingCount: 0,
       otherOwingGuardianCount: 0,
+      failedToReconcileCount: 0,
+      failedToReconcileGuardianCount: 0,
       failedLast30Days: 0,
       recoveryRate: null,
       recovery: { ratePct: null, recovered: 0, failedMembers: 0 },
@@ -668,13 +686,14 @@ export async function getReportsData(
 
   // Buckets keyed by the club-zone month ("2026-10") and labelled in that
   // zone: joined (new + rejoined) by the movement definition (D11).
-  const monthlyMap = new Map<string, { month: string; count: number; isCurrentMonth: boolean }>();
+  const monthlyMap = new Map<string, { month: string; count: number; isCurrentMonth: boolean; basis: MembershipBasis }>();
   for (const w of chartMonths) {
     const moves = moveIn(w.monthKey);
     monthlyMap.set(w.monthKey, {
       month: formatMonth(new Date(w.monthStart), period.timeZone),
       count: moves ? joinedOf(moves) : 0,
       isCurrentMonth: w.monthKey === period.monthKey,
+      basis: moves?.basis ?? "none",
     });
   }
 
@@ -768,7 +787,8 @@ export async function getReportsData(
 
   // ── Health metrics ───────────────────────────────────────────────────────
 
-  // Owner decision Q6 (17 Oct 2026): keep the existing formula — cancelled
+  // Q6 (agent default adopted 17 Oct 2026; not an owner decision; the churn
+  // formula is open as D4): keep the existing formula — cancelled
   // this month ÷ (active now + cancelled this month) — but return its counts
   // so every surface prints "x% (n of m)". An empty base is null ("—"), not
   // the "0%" the old Math.max(…, 1) produced; `churnRate` keeps that number
@@ -889,6 +909,8 @@ export async function getReportsData(
       noPaymentYetGuardianCount,
       otherOwingCount: otherOwingTotals(otherOwingRows).count,
       otherOwingGuardianCount: otherOwingTotals(otherOwingRows).guardians,
+      failedToReconcileCount: otherOwingTotals(otherOwingRows).toReconcile,
+      failedToReconcileGuardianCount: otherOwingTotals(otherOwingRows).toReconcileGuardians,
       failedLast30Days: failedLast30,
       recoveryRate,
       recovery: { ratePct: recoveryRate, recovered: recoveredCount, failedMembers: failedMemberIds.length },
@@ -923,8 +945,11 @@ export async function getReportsData(
  * different from this one.
  * "v7" = the merged shape: membership (T8c) + paymentHealth.otherOwingCount /
  * otherOwingGuardianCount (D9, 23 Oct 2026).
+ * "v8" = otherOwingCount narrowed to confirmed debts, plus
+ * paymentHealth.failedToReconcileCount / failedToReconcileGuardianCount and
+ * monthlySignups[].basis (24 Oct 2026).
  */
-export const REPORTS_CACHE_VERSION = "v7";
+export const REPORTS_CACHE_VERSION = "v8";
 
 /**
  * The cached read the reports page and API use. Under 25 concurrent staff

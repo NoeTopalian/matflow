@@ -1608,7 +1608,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="grid grid-cols-3 gap-3">
             {[
               // The same population as the Reports "Active members" tile and the
-              // Members page headline (T1, owner decision Q4 A-1, 17 Oct 2026).
+              // Members page headline (T1, Q4 A-1: agent default adopted 17 Oct
+              // 2026; not an owner decision; keeping inactive members out of
+              // active totals is confirmed by owner instruction of 23 Oct 2026).
               // Members on hold stay inside it and are marked; guardians are
               // left out — the same words as the Reports tile.
               {

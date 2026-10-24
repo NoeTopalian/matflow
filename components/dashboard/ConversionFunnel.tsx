@@ -115,7 +115,9 @@ function rateText(rate: number | null, suffix: string): string {
  * A drop-off share carries the SAME honesty guard as a rate: below `minTrials`
  * in the denominator it is noise ("1 of 2 = 50% lost" beside a conversion
  * rate that says "too few"), and 0/0 is not 0%. Returns null → count only.
- * Owner decision Q6 (17 Oct 2026): the share carries its base, "25% (3 of 12)".
+ * Q6 (agent default adopted 17 Oct 2026; not an owner decision; required by
+ * Sean's note relayed 14 Oct and the owner instruction of 24 Oct 2026): the
+ * share carries its base, "25% (3 of 12)".
  */
 export function pctOf(part: number, whole: number, minTrials: number): string | null {
   if (whole < Math.max(minTrials, 1)) return null;

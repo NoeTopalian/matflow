@@ -107,7 +107,10 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
   lines.push("");
   lines.push("## Member Growth");
   lines.push(
-    `**${metrics.newThisMonth} new members** joined this month, compared to ${metrics.newLastMonth} last month ` +
+    // By join date (Member.joinedAt), NOT the Reports movement definition:
+    // rejoins are not counted and an imported member counts on their join
+    // date, so the words say so rather than borrowing "joined" from Reports.
+    `**${metrics.newThisMonth} new members by join date** this month, compared to ${metrics.newLastMonth} last month ` +
     `(${growthDir === "up" ? `+${growthDiff} ↑` : `-${growthDiff} ↓`}). ` +
     (metrics.newThisMonth > 0
       ? `You reported that approximately ${referrals} of these came via referrals or word-of-mouth, which is a strong signal of community health.`
@@ -176,6 +179,15 @@ function delta(current: number, previous: number) {
   if (previous === 0) return null;
   const pct = Math.round(((current - previous) / previous) * 100);
   return pct;
+}
+
+/**
+ * A change pill always shows the two figures it compares (required by
+ * Sean's note relayed 14 Oct and the owner instruction of 24 Oct 2026):
+ * "+50% (6 vs 4)".
+ */
+export function changePillText(pct: number, current: number, previous: number): string {
+  return `${pct >= 0 ? "+" : ""}${pct}% (${current.toLocaleString("en-GB")} vs ${previous.toLocaleString("en-GB")})`;
 }
 
 function renderStrongText(text: string) {
@@ -394,10 +406,13 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             // Same population and wording as Reports and Members (T1).
             label: POPULATION_COPY.active.label,
             value: metrics.totalMembers,
-            // T2b: the change pill is a percentage, so its two counts sit here.
-            sub: `${metrics.newThisMonth} new this month · ${metrics.newLastMonth} last month`,
+            // The change pill is the change in NEW members (by join date, not
+            // the Reports movement definition), with its two counts.
+            sub: `${metrics.newThisMonth} new by join date this month · ${metrics.newLastMonth} last month`,
             icon: Users,
             pct: memberDelta,
+            counts: [metrics.newThisMonth, metrics.newLastMonth] as const,
+            pillLabel: "new members by join date, this month vs last",
           },
           {
             label: "Check-ins",
@@ -405,6 +420,8 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             sub: `this month · ${metrics.checkinsLastMonth} last month`,
             icon: CalendarCheck,
             pct: checkinDelta,
+            counts: [metrics.checkinsThisMonth, metrics.checkinsLastMonth] as const,
+            pillLabel: "check-ins, this month vs last",
           },
           {
             label: "Engagement",
@@ -416,6 +433,8 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               : "No active members yet",
             icon: TrendingUp,
             pct: null,
+            counts: null,
+            pillLabel: "",
           },
           {
             label: "Active Classes",
@@ -423,8 +442,10 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             sub: "on the schedule",
             icon: Dumbbell,
             pct: null,
+            counts: null,
+            pillLabel: "",
           },
-        ].map(({ label, value, sub, icon: Icon, pct }) => (
+        ].map(({ label, value, sub, icon: Icon, pct, counts, pillLabel }) => (
           <Card key={label} padding="tight">
             <div className="flex items-start justify-between mb-3">
               <div
@@ -433,16 +454,18 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               >
                 <Icon className="w-4 h-4" style={{ color: primaryColor }} />
               </div>
-              {pct !== null && (
+              {pct !== null && counts && (
                 <div
-                  className="flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full"
+                  data-testid="analysis-change-pill"
+                  aria-label={`${changePillText(pct, counts[0], counts[1])}: ${pillLabel}`}
+                  className="flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap"
                   style={{
                     background: pct >= 0 ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
                     color: pct >= 0 ? "var(--hue-success)" : "var(--hue-danger)",
                   }}
                 >
                   {pct >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                  {pct >= 0 ? "+" : ""}{pct}%
+                  {changePillText(pct, counts[0], counts[1])}
                 </div>
               )}
             </div>

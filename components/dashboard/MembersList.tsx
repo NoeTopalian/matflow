@@ -34,9 +34,12 @@ import { resolveSignupCredit } from "@/lib/signup-credit";
 import { BilledByTeamUpPill } from "@/components/dashboard/BilledByTeamUpPill";
 import { paymentStatusLabel } from "@/lib/payment-status";
 import type { PaymentEvidence } from "@/lib/overdue";
-import type { MovementBucket } from "@/lib/membership-movement";
+import type { MembershipBasis, MovementBucket } from "@/lib/membership-movement";
+import { basisNote } from "@/lib/net-new-series";
 import {
+  FAILED_TO_RECONCILE_COPY,
   OTHER_OWING_COPY,
+  failedToReconcileLine,
   PAYER_COPY,
   POPULATION_COPY,
   otherAccountsOwingLine,
@@ -91,10 +94,17 @@ export interface MemberRow {
   billedBy?: string | null;
   billingStatusAsOf?: string | null;
   /**
-   * D9: an inactive or cancelled account that still owes (lib/other-accounts-owing.ts),
-   * flagged by the server. Listed under "Other accounts owing", never under Payers overdue.
+   * D9: an inactive or cancelled account with a confirmed debt (marked overdue;
+   * lib/other-accounts-owing.ts), flagged by the server. Listed under "Other
+   * accounts owing", never under Payers overdue.
    */
   otherOwing?: boolean;
+  /**
+   * Owner instruction of 24 Oct 2026: an inactive or cancelled account whose
+   * last charge failed with nothing confirming a debt. Listed under "Last
+   * charge failed — to reconcile", never as owing.
+   */
+  failedToReconcile?: boolean;
   /**
    * D11: the movement figures this member was counted in for the page's club
    * month (new, rejoined, lost, tasterAdded), flagged by the server from the
@@ -182,13 +192,18 @@ interface Props {
    * over the whole club. Absent (tests, older callers): counted from the
    * flagged rows.
    */
-  otherOwing?: { count: number; guardians: number } | null;
+  otherOwing?: { count: number; guardians: number; toReconcile?: number; toReconcileGuardians?: number } | null;
   /**
    * D11: how many members each movement figure counted for the page's club
    * month — the Reports Joined tile's numbers. Absent: counted from the
    * flagged rows.
    */
   movers?: Record<MovementBucket, number> | null;
+  /**
+   * Whether the month's movement is recorded or (partly) estimated, and what
+   * an estimate came from — the same basis the Reports chart gives the month.
+   */
+  moversBasis?: { basis: MembershipBasis; caption: string } | null;
 }
 
 // ─── Belt colour map ──────────────────────────────────────────────────────────
@@ -444,7 +459,7 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest" | "last-visit";
-type StatusFilter = "all" | "attention" | "overdue" | "other-owing" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "rejoined-this-month" | "lost-this-month" | "tasters-this-month" | "churned-this-month" | "guardians" | "guardian-review";
+type StatusFilter = "all" | "attention" | "overdue" | "other-owing" | "failed-to-reconcile" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "rejoined-this-month" | "lost-this-month" | "tasters-this-month" | "churned-this-month" | "guardians" | "guardian-review";
 
 // "new-this-month" / "churned-this-month": deep-link-only filters (no visible
 // chip, same pattern as "active"/"inactive"/"cancelled" below) — the Reports
@@ -453,10 +468,12 @@ type StatusFilter = "all" | "attention" | "overdue" | "other-owing" | "waiver-mi
 // through). Review L4 (23 Oct 2026): the month is the CLUB's, resolved on the
 // server as [monthStart, nextMonthStart) (lib/club-month.ts) and passed in as
 // `monthWindow` — the same window Reports counted, never the browser's month.
-const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "other-owing", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "rejoined-this-month", "lost-this-month", "tasters-this-month", "churned-this-month", "guardians", "guardian-review"];
+const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "other-owing", "failed-to-reconcile", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "rejoined-this-month", "lost-this-month", "tasters-this-month", "churned-this-month", "guardians", "guardian-review"];
 
 /**
- * The landing view (T1, owner decision Q4 A-1, Noe 17 Oct 2026): the page
+ * The landing view (T1, Q4 A-1: agent default adopted 17 Oct 2026; not an
+ * owner decision; keeping inactive members out of the Active total is
+ * confirmed by owner instruction of 23 Oct 2026): the page
  * opens on Active — active training members, holds included and marked — so
  * its headline is the same number as the Reports "Active members" tile.
  * "All current" (active, inactive and tasters) stays one click away.
@@ -543,7 +560,7 @@ const MOVEMENT_FILTERS: Partial<Record<StatusFilter, MovementBucket>> = {
   "tasters-this-month": "tasterAdded",
 };
 
-type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing" | "moved">>;
+type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing" | "failedToReconcile" | "moved">>;
 
 /**
  * Whether a member belongs under a chip when nobody is searching. The single
@@ -563,6 +580,7 @@ export function inStatusView(
   // D9: inactive or cancelled accounts that still owe, any account type —
   // the server flags them (lib/other-accounts-owing.ts).
   if (f === "other-owing") return !!m.otherOwing;
+  if (f === "failed-to-reconcile") return !!m.failedToReconcile;
   if (m.status === "cancelled" && !INCLUDES_CANCELLED.includes(f)) return false;
   // Parent/guardian accounts are listed under their own chip only; every
   // other view is training members, matching its count.
@@ -665,7 +683,7 @@ const FILTER_LABELS: Partial<Record<StatusFilter, string>> = {
   guardians: "Parents & guardians",
 };
 
-export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null, monthWindow = null, serverCounts = null, otherOwing = null, movers = null }: Props) {
+export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null, monthWindow = null, serverCounts = null, otherOwing = null, movers = null, moversBasis = null }: Props) {
   const supportEdit = supportScope === "edit";
   // One month window for every "this month" slice on the page (review L4).
   const month = useMemo<MonthWindowProp>(() => monthWindow ?? { ...defaultClubMonthWindow(), isCurrent: true }, [monthWindow]);
@@ -829,10 +847,24 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   const payerCopy = statusFilter === "overdue" ? PAYER_COPY : null;
   // D9: debts on inactive or cancelled accounts — beside the payers, never in them.
   const otherOwingCount = otherOwing?.count ?? members.filter((m) => m.otherOwing).length;
-  const otherOwingCopy = statusFilter === "other-owing" ? OTHER_OWING_COPY : null;
+  const toReconcileCount = otherOwing?.toReconcile ?? members.filter((m) => m.failedToReconcile).length;
+  const otherOwingCopy =
+    statusFilter === "other-owing" ? OTHER_OWING_COPY : statusFilter === "failed-to-reconcile" ? FAILED_TO_RECONCILE_COPY : null;
+  // A movement drill-through for an estimated or partly estimated month says
+  // so, in the words the Reports chart and CSV use for that month.
+  const moversNote =
+    MOVEMENT_FILTERS[statusFilter] && moversBasis
+      ? moversBasis.basis === "estimated"
+        ? `${basisNote("estimated", moversBasis.caption)}: these moves are reconstructed, not recorded at the time.`
+        : moversBasis.basis === "mixed"
+          ? `${basisNote("mixed")}: some of these moves are reconstructed, not recorded at the time.`
+          : null
+      : null;
   const headlineCount =
     statusFilter === "other-owing"
       ? otherOwingCount
+      : statusFilter === "failed-to-reconcile"
+      ? toReconcileCount
       : MOVEMENT_FILTERS[statusFilter]
       ? (movers?.[MOVEMENT_FILTERS[statusFilter]!] ?? members.filter((m) => m.moved?.includes(MOVEMENT_FILTERS[statusFilter]!)).length)
       : statusFilter === "churned-this-month"
@@ -858,8 +890,10 @@ export default function MembersList({ members: initial, primaryColor, role, guar
             <span data-testid="members-headline">
               {payerCopy
                 ? payersOverdueLabel(headlineCount)
-                : otherOwingCopy
+                : statusFilter === "other-owing"
                   ? `${headlineCount} ${headlineCount === 1 ? "other account owing" : "other accounts owing"}`
+                  : statusFilter === "failed-to-reconcile"
+                  ? `${headlineCount} ${headlineCount === 1 ? "account" : "accounts"} whose last charge failed — to reconcile`
                   : `${headlineCount} ${headlineCopy.label.charAt(0).toLowerCase() + headlineCopy.label.slice(1)}`}
               {holdNote ? `, ${holdNote}` : ""}
             </span>
@@ -868,6 +902,11 @@ export default function MembersList({ members: initial, primaryColor, role, guar
             <span className="mt-0.5 block text-xs text-tx-3" data-testid="members-headline-scope">
               {headlineCopy.includes}. {headlineCopy.excludes}.
             </span>
+            {moversNote && (
+              <span className="mt-0.5 block text-xs text-tx-2" data-testid="members-headline-basis">
+                {moversNote}
+              </span>
+            )}
             {/* D9: the payers view names the debts it leaves out, with the way to them. */}
             {payerCopy && otherOwingCount > 0 && (
               <Link
@@ -880,6 +919,19 @@ export default function MembersList({ members: initial, primaryColor, role, guar
                 className="mt-0.5 block text-xs text-tx-2 underline underline-offset-2 hover:text-tx-1"
               >
                 {otherAccountsOwingLine(otherOwingCount)}
+              </Link>
+            )}
+            {payerCopy && toReconcileCount > 0 && (
+              <Link
+                href="/dashboard/members?filter=failed-to-reconcile"
+                onClick={(e) => {
+                  e.preventDefault();
+                  selectFilter("failed-to-reconcile");
+                }}
+                data-testid="members-to-reconcile-line"
+                className="mt-0.5 block text-xs text-tx-2 underline underline-offset-2 hover:text-tx-1"
+              >
+                {failedToReconcileLine(toReconcileCount)}
               </Link>
             )}
           </>
@@ -1006,6 +1058,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               { key: "attention", label: "Needs Attention", count: counts.attention },
               { key: "overdue", label: PAYER_COPY.label, count: counts.overdue },
               { key: "other-owing", label: OTHER_OWING_COPY.label, count: otherOwingCount },
+              { key: "failed-to-reconcile", label: FAILED_TO_RECONCILE_COPY.label, count: toReconcileCount },
               { key: "waiver-missing", label: "Waiver Missing", count: counts.waiverMissing },
               { key: "missing-phone", label: "Missing Phone", count: counts.missingPhone },
               { key: "quiet", label: `Quiet (${QUIET_THRESHOLD_DAYS}d+)`, count: counts.quiet },

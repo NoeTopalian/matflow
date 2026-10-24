@@ -4,10 +4,12 @@ import { TRAINING_MEMBER } from "./member-population";
 import {
   buildMembership,
   compareEvents,
+  estimatedCaption,
   isImportOpening,
   MEMBERSHIP_WINDOW_MONTHS,
-  moversInWindow,
+  moversAndBasisInWindow,
   type BuildMembershipInput,
+  type MembershipBasis,
   type MembershipSeries,
   type MovementBucket,
   type MovementEvent,
@@ -22,9 +24,10 @@ type TxClient = Prisma.TransactionClient;
  * Reads only. One findMany of events, no take cap: the series is replayed in
  * JS (lib/membership-movement.ts).
  *
- * Where history before the first recorded event comes from (owner decision
- * Q6, 17 Oct 2026; marked "estimated" on screen, with what it came from:
- * estimatedCaption in lib/membership-movement.ts):
+ * Where history before the first recorded event comes from (Q6: agent
+ * default adopted 17 Oct 2026; not an owner decision; marked "estimated" on
+ * screen, with what it came from: estimatedCaption in
+ * lib/membership-movement.ts):
  * 1. Back-filled events (T8b, sourceAction import_backfill) for the members
  *    who have them: they are events, replayed like any other, and flagged
  *    estimated.
@@ -154,8 +157,23 @@ export async function loadMonthMovers(
   now: Date,
   window: { start: Date; at: Date },
 ): Promise<Record<MovementBucket, string[]>> {
+  return (await loadMonthMovement(tx, tenantId, now, window)).movers;
+}
+
+/**
+ * loadMonthMovers plus whether that month's moves are recorded or (partly)
+ * estimated, and what an estimate came from (estimatedCaption), so a past
+ * month's drill-through is labelled exactly as the Reports chart labels it.
+ */
+export async function loadMonthMovement(
+  tx: TxClient,
+  tenantId: string,
+  now: Date,
+  window: { start: Date; at: Date },
+): Promise<{ movers: Record<MovementBucket, string[]>; basis: MembershipBasis; caption: string }> {
   const loaded = await loadMembershipInput(tx, tenantId, now);
-  return moversInWindow(loaded.input, window);
+  const { movers, basis } = moversAndBasisInWindow(loaded.input, window);
+  return { movers, basis, caption: estimatedCaption(loaded) };
 }
 
 export async function loadMembershipInput(tx: TxClient, tenantId: string, now: Date): Promise<MembershipInput> {

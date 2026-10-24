@@ -56,7 +56,9 @@ describe("getReportsDataCached", () => {
     // v5 (review L2): payer and guardian counts in paymentHealth.
     // v6 (T8c merged in): `membership`, movement and headcount by month.
     // v7 (D9 merged in): paymentHealth.otherOwingCount beside `membership`.
-    expect(REPORTS_CACHE_VERSION).toBe("v7");
+    // v8 (24 Oct): otherOwingCount = confirmed debts only, failedToReconcileCount
+    // beside it, and monthlySignups[].basis.
+    expect(REPORTS_CACHE_VERSION).toBe("v8");
     await getReportsDataCached("tenant-A");
     expect(calls[0].key[1]).toBe(REPORTS_CACHE_VERSION);
   });

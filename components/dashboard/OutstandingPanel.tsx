@@ -22,8 +22,8 @@ import { CHASE_ELSEWHERE_NOTE, isBilledElsewhere } from "@/lib/billing-source";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { useToast } from "@/components/ui/Toast";
-import { OTHER_OWING_COPY, otherAccountsOwingLine } from "@/lib/member-population";
-import type { OtherOwingRow } from "@/lib/other-accounts-owing";
+import { FAILED_TO_RECONCILE_COPY, OTHER_OWING_COPY, failedToReconcileLine, otherAccountsOwingLine } from "@/lib/member-population";
+import { isConfirmedDebt, type OtherOwingRow } from "@/lib/other-accounts-owing";
 
 /** `otherOwing` (D9): inactive or cancelled accounts that still owe — listed, never chased, not in the totals. */
 type ApiResponse = { rows: OutstandingRow[]; total: number; totalPence: number; otherOwing?: OtherOwingRow[] };
@@ -126,8 +126,17 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
 
   const rows = data?.rows ?? [];
   const summary = outstandingPayerSummary(rows);
-  const otherOwing = data?.otherOwing ?? [];
-  const otherOwingSection = otherOwing.length > 0 ? <OtherAccountsOwing rows={otherOwing} /> : null;
+  // D9 confirmed debts, and (owner instruction of 24 Oct 2026) failed charges
+  // to reconcile, listed apart: a failed charge is not treated as owed.
+  const otherOwing = (data?.otherOwing ?? []).filter(isConfirmedDebt);
+  const toReconcile = (data?.otherOwing ?? []).filter((r) => !isConfirmedDebt(r));
+  const otherOwingSection =
+    otherOwing.length > 0 || toReconcile.length > 0 ? (
+      <>
+        {otherOwing.length > 0 && <OtherAccountsOwing rows={otherOwing} kind="owing" />}
+        {toReconcile.length > 0 && <OtherAccountsOwing rows={toReconcile} kind="reconcile" />}
+      </>
+    ) : null;
 
   if (rows.length === 0) {
     return (
@@ -135,7 +144,7 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
         {/* "Nobody to chase", not "nobody owes": the accounts below still owe (D9). */}
         <EmptyState
           icon={<CheckCircle2 className="size-8" style={{ color: "var(--hue-success)" }} />}
-          title={otherOwing.length > 0 ? "Nobody to chase right now" : "Nobody owes you right now"}
+          title={otherOwing.length > 0 || toReconcile.length > 0 ? "Nobody to chase right now" : "Nobody owes you right now"}
           hint="Every active member is up to date. Failed and overdue payments, and members on a plan with no payment yet, appear here."
         />
         {otherOwingSection}
@@ -171,6 +180,11 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
           {otherOwing.length > 0 && (
             <p className="mt-0.5 text-xs text-tx-3" data-testid="outstanding-other-owing">
               {otherAccountsOwingLine(otherOwing.length)} — listed below, not in this total.
+            </p>
+          )}
+          {toReconcile.length > 0 && (
+            <p className="mt-0.5 text-xs text-tx-3" data-testid="outstanding-to-reconcile">
+              {failedToReconcileLine(toReconcile.length)} — listed below, not in this total.
             </p>
           )}
         </div>
@@ -273,24 +287,29 @@ function formatDay(iso: string): string {
 
 /**
  * D9 (owner direction, 23 Oct 2026): inactive or cancelled accounts that
- * still owe. Named so the debt is never lost; no Chase button — the club does
+ * still owe ("owing": marked overdue) or whose last charge failed with nothing
+ * confirming a debt ("reconcile": owner instruction of 24 Oct 2026, never
+ * treated as owed until checked), one list each. Named so the debt is never
+ * lost; no Chase button — the club does
  * not chase people who are inactive or have left — and not in the total
  * above. Open leads to the member's payments, where staff can record or
  * refund as for anyone.
  */
-function OtherAccountsOwing({ rows }: { rows: OtherOwingRow[] }) {
+function OtherAccountsOwing({ rows, kind }: { rows: OtherOwingRow[]; kind: "owing" | "reconcile" }) {
+  const copy = kind === "owing" ? OTHER_OWING_COPY : FAILED_TO_RECONCILE_COPY;
+  const headingId = kind === "owing" ? "other-owing-heading" : "to-reconcile-heading";
   return (
     <section
-      aria-labelledby="other-owing-heading"
-      data-testid="outstanding-other-owing-list"
+      aria-labelledby={headingId}
+      data-testid={kind === "owing" ? "outstanding-other-owing-list" : "outstanding-to-reconcile-list"}
       className="overflow-hidden rounded-[var(--r-md)] border"
       style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
     >
       <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--bd-default)" }}>
-        <h3 id="other-owing-heading" className="text-sm font-semibold text-tx-1">
-          {OTHER_OWING_COPY.label} · {rows.length.toLocaleString("en-GB")}
+        <h3 id={headingId} className="text-sm font-semibold text-tx-1">
+          {copy.label} · {rows.length.toLocaleString("en-GB")}
         </h3>
-        <p className="mt-0.5 text-xs text-tx-3">{OTHER_OWING_COPY.includes}. {OTHER_OWING_COPY.excludes}.</p>
+        <p className="mt-0.5 text-xs text-tx-3">{copy.includes}. {copy.excludes}.</p>
       </div>
       {rows.map((r) => (
         <div key={r.memberId} className="flex items-center justify-between gap-3 px-4 py-3" style={{ borderBottom: "1px solid var(--bd-default)" }}>
@@ -302,7 +321,9 @@ function OtherAccountsOwing({ rows }: { rows: OtherOwingRow[] }) {
               {r.status === "cancelled" ? "Cancelled" : "Inactive"}
               {r.accountType === "parent" ? " · Parent or guardian" : ""}
               {" · "}
-              {r.evidence === "failed_charge" && r.failedAt ? `Last charge failed on ${formatDay(r.failedAt)}` : "Marked overdue"}
+              {r.evidence === "failed_charge"
+                ? `Last charge failed${r.failedAt ? ` on ${formatDay(r.failedAt)}` : ""} — check before treating as owed`
+                : `Marked overdue${r.failedAt ? ` · last charge failed on ${formatDay(r.failedAt)}` : ""}`}
               {r.reason ? ` · ${r.reason}` : ""}
             </p>
           </div>

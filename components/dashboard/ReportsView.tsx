@@ -45,13 +45,13 @@ import {
   Users,
 } from "lucide-react";
 import type { ReportsData, AttendanceRateMode } from "@/lib/reports";
-import { OTHER_OWING_COPY, PAYER_COPY, POPULATION_COPY, payerGuardianNote } from "@/lib/member-population";
+import { FAILED_TO_RECONCILE_COPY, OTHER_OWING_COPY, PAYER_COPY, POPULATION_COPY, payerGuardianNote } from "@/lib/member-population";
 import type { AttributionData } from "@/lib/attribution";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import NetNewMembersCard from "./NetNewMembersCard";
-import { MEMBERSHIP_COPY, emptyTally, estimatedCaption } from "@/lib/membership-movement";
+import { MEMBERSHIP_COPY, combinedBasis, emptyTally, estimatedCaption, type MembershipBasis } from "@/lib/membership-movement";
 import type { MembershipReport } from "@/lib/membership-report";
 import { basisNote } from "@/lib/net-new-series";
 import {
@@ -73,10 +73,58 @@ import MonthlyReportView from "@/components/dashboard/MonthlyReportView";
 
 const WEEK_OPTIONS = [4, 8, 12, 16, 24] as const;
 
-/** D9: "Inactive or left, not chased", with the guardian count when any. Screen and CSV share it. */
+/** D9: "Inactive or left, marked overdue, not chased", with the guardian count when any. Screen and CSV share it. */
 export function otherOwingDetail(guardians: number): string {
-  if (guardians <= 0) return OTHER_OWING_COPY.short;
-  return `${OTHER_OWING_COPY.short} · ${guardians === 1 ? "includes 1 parent or guardian" : `includes ${guardians.toLocaleString("en-GB")} parents or guardians`}`;
+  return withGuardians(OTHER_OWING_COPY.short, guardians);
+}
+
+/** "Inactive or left · check before treating as owed", with the guardian count when any. Screen and CSV share it. */
+export function failedToReconcileDetail(guardians: number): string {
+  return withGuardians(FAILED_TO_RECONCILE_COPY.short, guardians);
+}
+
+function withGuardians(text: string, guardians: number): string {
+  if (guardians <= 0) return text;
+  return `${text} · ${guardians === 1 ? "includes 1 parent or guardian" : `includes ${guardians.toLocaleString("en-GB")} parents or guardians`}`;
+}
+
+/**
+ * The words for a figure that is not wholly recorded: "Partly estimated", or
+ * what a wholly estimated month came from ("Estimated from your TeamUp
+ * history"). Null when it is recorded, or there is no data. Every movement
+ * figure on screen and in the CSV goes through this (24 Oct 2026).
+ */
+export function estimateLabel(basis: MembershipBasis | undefined, caption: string): string | null {
+  if (basis === "estimated") return basisNote("estimated", caption);
+  if (basis === "mixed") return basisNote("mixed");
+  return null;
+}
+
+/** The basis of the current club month and the one before it ("none" when absent). */
+export function thisAndLastMonthBasis(m: Pick<MembershipReport, "movementsByMonth">): { current: MembershipBasis; previous: MembershipBasis } {
+  const i = m.movementsByMonth.findIndex((r) => r.isCurrentMonth);
+  return {
+    current: i >= 0 ? m.movementsByMonth[i].basis : "none",
+    previous: i > 0 ? m.movementsByMonth[i - 1].basis : "none",
+  };
+}
+
+/**
+ * The estimate line for a this-month figure compared with last month (the
+ * "New this month" tile and its CSV row): either month may be estimated, and
+ * the comparison is only as firm as the weaker of the two.
+ */
+export function monthPairEstimateNote(m: Pick<MembershipReport, "movementsByMonth" | "historySource" | "fromJoinDates">): string | null {
+  const caption = estimatedCaption(m);
+  const { current, previous } = thisAndLastMonthBasis(m);
+  const parts: string[] = [];
+  const now = estimateLabel(current, caption);
+  const before = estimateLabel(previous, caption);
+  if (now) parts.push(`this month ${now.charAt(0).toLowerCase()}${now.slice(1)}`);
+  if (before) parts.push(`last month ${before.charAt(0).toLowerCase()}${before.slice(1)}`);
+  if (parts.length === 0) return null;
+  const text = parts.join(" · ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541", "#F59E0B", "#38BDF8"];
@@ -233,13 +281,17 @@ export function joinedTileDetail(t: MembershipReport["totals"]): string {
 export const NEW_SCOPE = "First ever start. Rejoins, tasters and imports are counted apart";
 const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";
 
-/** Delta as display text, or null when nothing moved. */
-function trendDelta(current: number, previous: number) {
+/**
+ * Delta as display text, or null when nothing moved. A percentage always
+ * carries the two figures it compares (required by Sean's note relayed 14 Oct
+ * and the owner instruction of 24 Oct 2026): "+13% (45 vs 40)".
+ */
+export function trendDelta(current: number, previous: number) {
   const delta = current - previous;
   if (delta === 0) return null;
   if (previous === 0) return `${delta > 0 ? "+" : ""}${formatNumber(delta)}`;
   const pct = Math.round((delta / previous) * 100);
-  return `${pct > 0 ? "+" : ""}${pct}%`;
+  return `${pct > 0 ? "+" : ""}${pct}% (${formatNumber(current)} vs ${formatNumber(previous)})`;
 }
 
 function trendText(current: number, previous: number) {
@@ -318,7 +370,12 @@ export function membershipCsvRows(m: MembershipReport): (string | number | null)
   const split = (r: MembershipReport["totals"]) =>
     `New ${r.new} · Rejoined ${r.rejoined} · Left ${r.lost} (cancelled ${r.lostCancelled}, completed course ${r.lostCompleted}) · Tasters added ${r.tasterAdded ?? 0}`;
   return [
-    ["Membership movement", `${m.window.from} – ${m.window.to}`, t.net, `${split(t)} · ${MEMBERSHIP_COPY.definition} ${MEMBERSHIP_COPY.deletion}`],
+    [
+      "Membership movement",
+      `${m.window.from} – ${m.window.to}`,
+      t.net,
+      [`${split(t)} · ${MEMBERSHIP_COPY.definition} ${MEMBERSHIP_COPY.deletion}`, estimateLabel(combinedBasis(m.movementsByMonth.map((r) => r.basis)), caption)].filter(Boolean).join(" · "),
+    ],
     ...m.movementsByMonth.filter((r) => r.basis !== "none").map((r) => [
       "Membership movement by month",
       r.label,
@@ -360,6 +417,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
   const { churn, retention } = data;
   const recovery = data.paymentHealth.recovery;
   const shares = derivedShares(data);
+  const thisMonthEstimate = estimateLabel(thisAndLastMonthBasis(data.membership).current, estimatedCaption(data.membership));
   const rows: (string | number | null)[][] = [
     ["Section", "Metric", "Value", "Detail"],
     ["Report", "Generated at", validGeneratedAt(data.generatedAt) ? formatDateTime(data.generatedAt) : "—", "Figures cached for up to 60 seconds"],
@@ -371,7 +429,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // attendanceScope), so its export row must say so — it was the one scoped
     // number leaving the page unlabelled (assessment lane 5).
     ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Last week: ${data.summary.attendanceLastWeek}${filterSuffix ? ` · ${filterSuffix}` : ""}`],
-    ["Summary", "New members this month", data.summary.newMembersThisMonth, `Last month: ${data.summary.newMembersLastMonth} · ${NEW_SCOPE}`],
+    ["Summary", "New members this month", data.summary.newMembersThisMonth, [`Last month: ${data.summary.newMembersLastMonth}`, NEW_SCOPE, monthPairEstimateNote(data.membership)].filter(Boolean).join(" · ")],
     ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
     // The rate definition the owner chose on screen, with its formula — the
     // headline of the filter bar, previously missing from the file.
@@ -381,11 +439,11 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // screen agree. Club-wide — the class/age filters never scope them.
     ["Health", "Churn this month", formatRatio(churn.ratePct, churn.cancelled, churn.base), `${CHURN_FORMULA} · club-wide`],
     // D11: the Joined tile, line for line, and the members behind each figure.
-    ["Health", MEMBERSHIP_COPY.joinedLabel, churn.joined, `${joinedTileDetail(currentMonthMovement(data.membership))} · ${MEMBERSHIP_COPY.definition}`],
-    ["Health", "New this month", currentMonthMovement(data.membership).new, "First ever start"],
-    ["Health", "Rejoined this month", currentMonthMovement(data.membership).rejoined, "Started again after leaving"],
-    ["Health", "Tasters added this month", currentMonthMovement(data.membership).tasterAdded ?? 0, "Not in Joined or Net"],
-    ["Health", "Left this month", currentMonthMovement(data.membership).lost, "Cancelled, or finished a prepaid course"],
+    ["Health", MEMBERSHIP_COPY.joinedLabel, churn.joined, withEstimate(`${joinedTileDetail(currentMonthMovement(data.membership))} · ${MEMBERSHIP_COPY.definition}`, thisMonthEstimate)],
+    ["Health", "New this month", currentMonthMovement(data.membership).new, withEstimate("First ever start", thisMonthEstimate)],
+    ["Health", "Rejoined this month", currentMonthMovement(data.membership).rejoined, withEstimate("Started again after leaving", thisMonthEstimate)],
+    ["Health", "Tasters added this month", currentMonthMovement(data.membership).tasterAdded ?? 0, withEstimate("Not in Joined or Net", thisMonthEstimate)],
+    ["Health", "Left this month", currentMonthMovement(data.membership).lost, withEstimate("Cancelled, or finished a prepaid course", thisMonthEstimate)],
     ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), RECOVERY_SCOPE],
     // Review L2: payer totals, the Payments → Outstanding definition; the
     // detail says guardians who pay are counted, and how many.
@@ -394,10 +452,18 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // D9: debts on inactive or cancelled accounts, beside the payers and
     // never inside them or a member total.
     ["Payments", OTHER_OWING_COPY.label, data.paymentHealth.otherOwingCount ?? 0, otherOwingDetail(data.paymentHealth.otherOwingGuardianCount ?? 0)],
+    // Owner instruction of 24 Oct 2026: a failed charge is not a debt until it
+    // is reconciled, so it is its own row and in no debt total.
+    ["Payments", FAILED_TO_RECONCILE_COPY.label, data.paymentHealth.failedToReconcileCount ?? 0, failedToReconcileDetail(data.paymentHealth.failedToReconcileGuardianCount ?? 0)],
     ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
     ...membershipCsvRows(data.membership),
     ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
-    ...data.monthlySignups.map((row) => ["Monthly signups", row.month, row.count, row.isCurrentMonth ? "Current month" : ""]),
+    ...data.monthlySignups.map((row) => [
+      "Joined by month (new + rejoined)",
+      row.month,
+      row.count,
+      [row.isCurrentMonth ? "Current month" : null, estimateLabel(row.basis, estimatedCaption(data.membership))].filter(Boolean).join(" · "),
+    ]),
     ...(() => {
       const mix = classComposition(data.topClasses);
       return mix.top.map((row) => [
@@ -431,6 +497,11 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
   ];
 
   return csvDocument(rows);
+}
+
+/** A CSV detail with its estimate label appended, when there is one. */
+function withEstimate(detail: string, estimate: string | null): string {
+  return estimate ? `${detail} · ${estimate}` : detail;
 }
 
 function exportCsv(data: ReportsData, attribution: AttributionData) {
@@ -487,7 +558,18 @@ function TrendBadge({
  * that figure counted, for the report's club month. Net and the definition
  * underneath, in the words the Net New Members card uses.
  */
-function JoinedThisMonthTile({ joined, t, period }: { joined: number; t: MembershipReport["totals"]; period: ReportsData["period"] | undefined }) {
+function JoinedThisMonthTile({
+  joined,
+  t,
+  period,
+  estimate = null,
+}: {
+  joined: number;
+  t: MembershipReport["totals"];
+  period: ReportsData["period"] | undefined;
+  /** "Partly estimated" (or what an estimate came from) when this month is not wholly recorded. */
+  estimate?: string | null;
+}) {
   const lines: { label: string; value: number; filter: MonthDrillFilter }[] = [
     { label: "New", value: t.new, filter: "new-this-month" },
     { label: "Rejoined", value: t.rejoined, filter: "rejoined-this-month" },
@@ -524,6 +606,11 @@ function JoinedThisMonthTile({ joined, t, period }: { joined: number; t: Members
       <p className="mt-2 text-[11px] text-tx-2" data-testid="reports-joined-net">
         Net {formatSigned(t.net)} this month (new + rejoined − left)
       </p>
+      {estimate && (
+        <p className="mt-1 text-[11px] text-tx-3" data-testid="reports-joined-estimate">
+          {estimate}: some of this month&apos;s moves are reconstructed, not recorded at the time.
+        </p>
+      )}
     </Card>
   );
 }
@@ -615,19 +702,53 @@ function MetricCard({
   );
 }
 
+/**
+ * A month dot on the Joined chart: filled when the month was recorded at the
+ * time, hollow when it is estimated or partly estimated, so an estimate never
+ * reads as a record (the note under the chart names those months).
+ */
+function BasisDot(props: { cx?: number; cy?: number; color: string; payload?: { basis?: MembershipBasis } }) {
+  const { cx, cy, color, payload } = props;
+  if (cx === undefined || cy === undefined) return null;
+  const estimated = payload?.basis === "estimated" || payload?.basis === "mixed";
+  return estimated ? (
+    <circle cx={cx} cy={cy} r={4} fill="var(--sf-0)" stroke={color} strokeWidth={2} strokeDasharray="2 2" />
+  ) : (
+    <circle cx={cx} cy={cy} r={4} fill={color} strokeWidth={0} />
+  );
+}
+
+/**
+ * The line under the Joined chart naming the months that are not wholly
+ * recorded, or null when every month is: "Estimated from your TeamUp history:
+ * May 26, Jun 26. Partly estimated: Jul 26."
+ */
+export function joinedEstimateNote(rows: readonly { month: string; basis?: MembershipBasis }[], caption: string): string | null {
+  const estimated = rows.filter((r) => r.basis === "estimated").map((r) => r.month);
+  const mixed = rows.filter((r) => r.basis === "mixed").map((r) => r.month);
+  const parts: string[] = [];
+  if (estimated.length > 0) parts.push(`${caption}: ${estimated.join(", ")}.`);
+  if (mixed.length > 0) parts.push(`Partly estimated: ${mixed.join(", ")}.`);
+  return parts.length > 0 ? `${parts.join(" ")} Hollow dots are not wholly recorded at the time.` : null;
+}
+
 function ChartTooltip({
   active,
   payload,
   label,
   suffix,
+  noteFor,
 }: {
   active?: boolean;
   payload?: TooltipPayload[];
   label?: string;
   suffix: string;
+  /** A line under the value for this point (e.g. "Partly estimated"), or null. */
+  noteFor?: (point: unknown) => string | null;
 }) {
   if (!active || !payload?.length) return null;
   const value = Number(payload[0].value ?? 0);
+  const note = noteFor ? noteFor((payload[0] as { payload?: unknown }).payload ?? {}) : null;
   return (
     <div
       className="rounded-xl border px-3 py-2 text-sm shadow-xl"
@@ -637,6 +758,7 @@ function ChartTooltip({
       <p className="font-semibold" style={{ color: "var(--tx-1)" }}>
         {formatNumber(value)} {suffix}
       </p>
+      {note && <p className="text-xs text-tx-3">{note}</p>}
     </div>
   );
 }
@@ -1078,15 +1200,15 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           value={formatNumber(summary.attendanceThisWeek)}
           detail={filterSuffix ? `Check-ins since Monday · ${filterSuffix}` : "Check-ins since Monday"}
           primaryColor={primaryColor}
-          trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, label: `vs ${formatNumber(summary.attendanceLastWeek)} last week` }}
+          trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, label: "on last week" }}
         />
         <MetricCard
           icon={UserPlus}
           label="New this month"
           value={formatNumber(summary.newMembersThisMonth)}
-          detail={NEW_SCOPE}
+          detail={[NEW_SCOPE, monthPairEstimateNote(membership)].filter(Boolean).join(" · ")}
           primaryColor={primaryColor}
-          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: `vs ${formatNumber(summary.newMembersLastMonth)} last month` }}
+          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: "on last month" }}
           href={monthDrillHref("new-this-month", period)}
         />
         <MetricCard
@@ -1197,7 +1319,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <Card>
           <SectionTitle title="Joined" subtitle="Joined (new + rejoined) per month, last 6 months" icon={UserPlus} />
           {monthlySignups.every((row) => row.count === 0) ? (
-            <EmptyChart label="No signup data yet" />
+            <EmptyChart label="No joins yet" />
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={monthlySignups} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
@@ -1214,17 +1336,22 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   tickLine={false}
                   allowDecimals={false}
                 />
-                <Tooltip content={<ChartTooltip suffix="new members" />} />
+                <Tooltip content={<ChartTooltip suffix="joined (new + rejoined)" noteFor={(p) => estimateLabel((p as { basis?: MembershipBasis }).basis, estimatedCaption(membership))} />} />
                 <Line
                   type="monotone"
                   dataKey="count"
                   stroke={primaryColor}
                   strokeWidth={2.5}
-                  dot={{ fill: primaryColor, r: 4, strokeWidth: 0 }}
+                  dot={<BasisDot color={primaryColor} />}
                   activeDot={{ r: 6, fill: primaryColor }}
                 />
               </LineChart>
             </ResponsiveContainer>
+          )}
+          {joinedEstimateNote(monthlySignups, estimatedCaption(membership)) && (
+            <p className="mt-2 text-xs text-tx-3" data-testid="reports-joined-chart-estimate">
+              {joinedEstimateNote(monthlySignups, estimatedCaption(membership))}
+            </p>
           )}
         </Card>
 
@@ -1346,9 +1473,10 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             Retention still does NOT sit here: it read as "1 - churn" at a
             glance, which it is not (different cohort and window), so it
             keeps its own card below (Track A churn-honesty fix). Joined is
-            the other side of churn's ledger for the SAME month — owner
-            decision Q6 (17 Oct 2026) deliberately puts it immediately beside
-            churn, overriding the old "no neighbour" note for this tile only.
+            the other side of churn's ledger for the SAME month — Q6 (agent
+            default adopted 17 Oct 2026; not an owner decision) puts it
+            immediately beside churn, overriding the old "no neighbour" note
+            for this tile only.
             Every rate prints its counts, "x% (n of m)"; an empty base is "—". */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
           <MetricCard
@@ -1360,7 +1488,12 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             href={monthDrillHref("churned-this-month", period)}
             hrefLabel="Churn rate this month"
           />
-          <JoinedThisMonthTile joined={churn.joined} t={currentMonthMovement(membership)} period={period} />
+          <JoinedThisMonthTile
+            joined={churn.joined}
+            t={currentMonthMovement(membership)}
+            period={period}
+            estimate={estimateLabel(thisAndLastMonthBasis(membership).current, estimatedCaption(membership))}
+          />
           <MetricCard
             icon={RefreshCcw}
             label="Payment recovery rate"
@@ -1389,12 +1522,12 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
         {/* Net-new chart runs the full width (Noe, 25 Sep: "from the left side of
             the screen to the right"), with its own view switch; Payment Health
-            sits under it with its three figures side by side. */}
+            sits under it with its four figures side by side. */}
         <NetNewMembersCard membership={membership} />
         <div className="grid grid-cols-1 gap-4">
           <Card>
             <SectionTitle title="Payment Health" subtitle="Current overdue and recent failures" icon={CreditCard} />
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-6">
               <Link
                 href="/dashboard/members?filter=overdue"
                 aria-label={`${PAYER_COPY.label} — see the payers behind this number`}
@@ -1461,8 +1594,33 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />
                 </div>
               </Link>
+              {/* Owner instruction of 24 Oct 2026: a failed charge on an
+                  inactive or cancelled account is not a debt until someone has
+                  checked it — its own line, in no debt total. */}
+              <Link
+                href="/dashboard/members?filter=failed-to-reconcile"
+                aria-label={`${FAILED_TO_RECONCILE_COPY.label} — see the accounts behind this number`}
+                data-testid="reports-failed-to-reconcile"
+                className="flex items-center justify-between gap-3 py-3 -mx-1 px-1 rounded-lg transition-colors hover:bg-[var(--sf-2)]"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center" style={{ background: "var(--sf-2)" }}>
+                    <CreditCard className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-tx-1">{FAILED_TO_RECONCILE_COPY.label}</p>
+                    <p className="text-[11px] text-tx-3" data-testid="reports-failed-to-reconcile-detail">
+                      {failedToReconcileDetail(paymentHealth.failedToReconcileGuardianCount ?? 0)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xl font-bold tabular-nums text-tx-1">{formatNumber(paymentHealth.failedToReconcileCount ?? 0)}</span>
+                  <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />
+                </div>
+              </Link>
               {healthLine?.tone === "good" && (
-                <div className="flex items-center gap-2 rounded-xl px-3 py-2 border sm:col-span-3" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>
+                <div className="flex items-center gap-2 rounded-xl px-3 py-2 border sm:col-span-2 lg:col-span-4" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>
                   <ShieldCheck className="w-4 h-4" style={{ color: "#22c55e" }} />
                   <span className="text-sm">{healthLine.text}</span>
                 </div>
@@ -1470,7 +1628,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               {healthLine?.tone === "owed" && (
                 <Link
                   href="/dashboard/payments"
-                  className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 border sm:col-span-3 transition-colors hover:bg-[var(--sf-2)]"
+                  className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 border sm:col-span-2 lg:col-span-4 transition-colors hover:bg-[var(--sf-2)]"
                   style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
                 >
                   <span className="flex items-center gap-2">

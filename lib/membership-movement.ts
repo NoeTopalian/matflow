@@ -4,8 +4,10 @@
  * feeds it; Reports, the Net New Members card and the CSV only ever show what
  * this returns.
  *
- * THE MOVEMENT DEFINITION — the only one (owner decisions Q6, Noe 17 Oct
- * 2026, and D11, 23 Oct 2026). Every "joined", "left" and "net" MatFlow shows
+ * THE MOVEMENT DEFINITION — the only one (Q6: agent default adopted 17 Oct
+ * 2026; not an owner decision; confirmed by owner instruction of 23 Oct 2026:
+ * one definition, joins and rejoins separate or labelled, imports never
+ * manufacture joins. D11 sub-cases remain open). Every "joined", "left" and "net" MatFlow shows
  * — the Reports "Joined this month" and "New this month" tiles, the Net New
  * Members chart and its tally line, the "Joins" chart, the Reports CSV rows
  * and the Members drill-throughs (filter=new-this-month, rejoined-this-month,
@@ -414,16 +416,62 @@ export function moversInWindow(
   input: Pick<BuildMembershipInput, "events" | "live" | "now">,
   window: { start: Date; at: Date },
 ): Record<MovementBucket, string[]> {
+  return moversAndBasisInWindow({ ...input, boundary: null }, window).movers;
+}
+
+/**
+ * moversInWindow plus the window's basis, by the same rule buildMembership
+ * gives each month (movementWindowBasis): the Members drill-through for a past
+ * month says when the moves it lists are estimated, as the Reports chart does.
+ */
+export function moversAndBasisInWindow(
+  input: Pick<BuildMembershipInput, "events" | "live" | "now" | "boundary">,
+  window: { start: Date; at: Date },
+): { movers: Record<MovementBucket, string[]>; basis: MembershipBasis } {
   const out: Record<MovementBucket, Set<string>> = { new: new Set(), rejoined: new Set(), lost: new Set(), tasterAdded: new Set() };
+  let first: number | null = null;
+  let estimatedMoves = 0;
   for (const list of reconciledEvents(input).byMember.values()) {
+    const t0 = list[0]?.occurredAt.getTime();
+    if (t0 !== undefined && (first === null || t0 < first)) first = t0;
     for (const m of memberMovements(list)) {
       const t = m.at.getTime();
       if (t < window.start.getTime() || t > window.at.getTime()) continue;
+      if (m.estimated) estimatedMoves += 1;
       const bucket = movementBucket(m.kind);
       if (bucket) out[bucket].add(m.memberId);
     }
   }
-  return { new: [...out.new], rejoined: [...out.rejoined], lost: [...out.lost], tasterAdded: [...out.tasterAdded] };
+  return {
+    movers: { new: [...out.new], rejoined: [...out.rejoined], lost: [...out.lost], tasterAdded: [...out.tasterAdded] },
+    basis: movementWindowBasis(window, first, input.boundary?.getTime() ?? null, estimatedMoves),
+  };
+}
+
+/**
+ * A window's movement basis: "none" when it ended before the club's earliest
+ * event; "estimated" when it ended before the first recorded event (or none is
+ * recorded); "recorded" when it began on or after that event and none of its
+ * moves is reconstructed; otherwise "mixed" (partly estimated).
+ */
+export function movementWindowBasis(
+  w: { start: Date; at: Date },
+  firstEventAt: number | null,
+  boundaryAt: number | null,
+  estimatedMoves: number,
+): MembershipBasis {
+  if (firstEventAt === null || w.at.getTime() < firstEventAt) return "none";
+  if (boundaryAt === null || w.at.getTime() < boundaryAt) return "estimated";
+  return w.start.getTime() >= boundaryAt && estimatedMoves === 0 ? "recorded" : "mixed";
+}
+
+/** One basis for several months (a window total): ignores "none"; all the same, or "mixed". */
+export function combinedBasis(bases: readonly MembershipBasis[]): MembershipBasis {
+  const seen = bases.filter((b) => b !== "none");
+  if (seen.length === 0) return "none";
+  if (seen.every((b) => b === "recorded")) return "recorded";
+  if (seen.every((b) => b === "estimated")) return "estimated";
+  return "mixed";
 }
 
 export function buildMembership(input: BuildMembershipInput): MembershipSeries {
@@ -474,11 +522,7 @@ export function buildMembership(input: BuildMembershipInput): MembershipSeries {
   const noData = (w: MonthWindow) => first === null || w.at.getTime() < first;
 
   const b = boundary?.getTime() ?? null;
-  const movementBasis = (w: MonthWindow, i: number): MembershipBasis => {
-    if (noData(w)) return "none";
-    if (b === null || w.at.getTime() < b) return "estimated";
-    return w.start.getTime() >= b && estimatedMoves[i] === 0 ? "recorded" : "mixed";
-  };
+  const movementBasis = (w: MonthWindow, i: number): MembershipBasis => movementWindowBasis(w, first, b, estimatedMoves[i]);
   const headcountBasis = (w: MonthWindow, i: number): MembershipBasis => {
     if (noData(w)) return "none";
     if (b === null || w.at.getTime() < b) return "estimated";

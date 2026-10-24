@@ -156,12 +156,19 @@ export function overduePayerWhere(now: Date) {
  * anywhere. They are not chased and never join a member total; they are
  * counted beside the payers under their own label so the debt stays visible.
  *
- * The evidence must be a GENUINE debt, never a stale date:
- * - the account's latest settled payment (succeeded or failed) is a failed
- *   charge — a later successful payment clears it; or
- * - the stored payment status is "overdue" (Stripe said so, or staff marked
- *   it) — the same signal overdueClause trusts for payers.
- * A passed `nextDueAt` alone does NOT count here: an inactive or cancelled
+ * Two kinds of evidence, kept apart (owner instruction of 24 Oct 2026: a
+ * failed payment must not automatically be treated as an unpaid debt without
+ * reconciliation):
+ * - CONFIRMED DEBT ("marked_overdue"): the stored payment status is "overdue"
+ *   (Stripe said so, or staff marked it) — the same signal overdueClause
+ *   trusts for payers. This is what "Other accounts owing" counts.
+ * - TO RECONCILE ("failed_charge"): the account's latest settled payment
+ *   (succeeded or failed) is a failed charge and the status is NOT overdue. A
+ *   failed charge on a member who has left may have been settled another way
+ *   (cash, bank transfer, a retry recorded elsewhere) or may never have been
+ *   owed, so it is labelled "Last charge failed — check before treating as
+ *   owed" and counted in no debt total. A later successful payment clears it.
+ * A passed `nextDueAt` alone counts as neither: an inactive or cancelled
  * member's due date is not advanced by anything, so deriving a debt from it
  * would invent one (the NOT_CHASEABLE reasoning above).
  *
@@ -201,11 +208,20 @@ export function latestSettledPayment<T extends SettledPaymentInput>(payments: re
   return latest;
 }
 
-export type OtherOwingEvidence =
-  | { kind: "failed_charge"; at: Date; amountPence: number | null; reason: string | null }
-  | { kind: "marked_overdue" };
+/** The latest failed charge behind the evidence, when the latest settled payment is one. */
+export type FailedChargeDetail = { at: Date; amountPence: number | null; reason: string | null };
 
-/** Why an inactive or cancelled account still owes, or null when it does not (see OTHER_OWING_STATUSES). */
+export type OtherOwingEvidence =
+  /** To reconcile: the latest charge failed and nothing confirms a debt. Not owing. */
+  | ({ kind: "failed_charge" } & FailedChargeDetail)
+  /** Confirmed debt: marked overdue. `failed` is the latest failed charge, when there is one. */
+  | { kind: "marked_overdue"; failed: FailedChargeDetail | null };
+
+/**
+ * What an inactive or cancelled account's payments say, or null when nothing
+ * (see OTHER_OWING_STATUSES). A stored "overdue" is the confirmed debt and wins
+ * over a failed charge; a failed latest charge alone is "to reconcile".
+ */
 export function otherOwingEvidence(m: {
   status: string;
   paymentStatus: string;
@@ -213,10 +229,12 @@ export function otherOwingEvidence(m: {
 }): OtherOwingEvidence | null {
   if (!(OTHER_OWING_STATUSES as readonly string[]).includes(m.status)) return null;
   const latest = latestSettledPayment(m.payments ?? []);
-  if (latest?.status === "failed") {
-    return { kind: "failed_charge", at: latest.createdAt, amountPence: latest.amountPence ?? null, reason: latest.failureReason ?? null };
-  }
-  if (m.paymentStatus === "overdue") return { kind: "marked_overdue" };
+  const failed: FailedChargeDetail | null =
+    latest?.status === "failed"
+      ? { at: latest.createdAt, amountPence: latest.amountPence ?? null, reason: latest.failureReason ?? null }
+      : null;
+  if (m.paymentStatus === "overdue") return { kind: "marked_overdue", failed };
+  if (failed) return { kind: "failed_charge", ...failed };
   return null;
 }
 

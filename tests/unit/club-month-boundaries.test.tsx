@@ -202,7 +202,7 @@ describe("Reports tiles, CSV and drill-through agree on the club's month", () =>
     expect(data.summary.newMembersThisMonth).toBe(2);
     expect(data.churn.joined).toBe(2);
     expect(data.churn.cancelled).toBe(1);
-    expect(data.monthlySignups.at(-1)).toEqual({ month: "Nov 26", count: 2, isCurrentMonth: true });
+    expect(data.monthlySignups.at(-1)).toEqual({ month: "Nov 26", count: 2, isCurrentMonth: true, basis: data.membership.movementsByMonth.at(-1)!.basis });
     // The movement series (T8c) buckets on the same club month: with no status
     // history it falls back to these join and cancel dates, so it agrees here.
     expect(data.membership.movementsByMonth.at(-1)).toMatchObject({ month: data.period.monthKey, new: 2, lostCancelled: 1 });

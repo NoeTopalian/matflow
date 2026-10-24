@@ -112,7 +112,9 @@ export default function DonutChart({
 }
 
 /**
- * `showCounts` (owner decision Q6, 17 Oct 2026): each share reads
+ * `showCounts` (Q6: agent default adopted 17 Oct 2026; not an owner
+ * decision; required by Sean's note relayed 14 Oct and the owner instruction
+ * of 24 Oct 2026): each share reads
  * "x% (n of m)" over the slices shown, so the base of every percentage is on
  * screen. Without it the legend keeps the older "count (x%)" form.
  */
