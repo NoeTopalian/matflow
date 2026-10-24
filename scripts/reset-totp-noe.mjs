@@ -1,4 +1,4 @@
-// One-off operator TOTP reset for noetopalian@gmail.com.
+// One-off operator TOTP reset for the operator in $OPERATOR_EMAIL.
 // Run from matflow root: node scripts/reset-totp-noe.mjs
 // Reads .env directly. Bumps sessionVersion to invalidate existing sessions.
 
@@ -27,7 +27,8 @@ if (!url) { console.error('DATABASE_URL not set'); process.exit(1); }
 const adapter = new PrismaPg({ connectionString: url });
 const prisma = new PrismaClient({ adapter });
 
-const email = 'noetopalian@gmail.com';
+if (!process.env.OPERATOR_EMAIL) { console.error("Set OPERATOR_EMAIL to the operator's own login address."); process.exit(2); }
+const email = process.env.OPERATOR_EMAIL;
 
 const before = await prisma.operator.findUnique({
   where: { email },

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Log into NOETEST tenant as noetopalian@gmail.com, complete TOTP enrolment,
+ * Log into NOETEST tenant as $OPERATOR_EMAIL, complete TOTP enrolment,
  * land on /dashboard, then open a headed browser already authenticated.
  *
  * Pre-conditions:
- *   - DB: noetopalian@gmail.com has totpEnabled=false, totpSecret=null
+ *   - DB: $OPERATOR_EMAIL has totpEnabled=false, totpSecret=null
  *     (run scripts/reset-totp-noe.mjs if needed)
  *   - Vercel commit be8f599 + 93eb3b5 are live
  */
@@ -13,7 +13,8 @@ import { generateSync } from "otplib";
 
 const BASE_URL = "https://matflow.studio";
 const TENANT_SLUG = "noetest";
-const EMAIL = "noetopalian@gmail.com";
+if (!process.env.OPERATOR_EMAIL) { console.error("Set OPERATOR_EMAIL to the operator's own login address."); process.exit(2); }
+const EMAIL = process.env.OPERATOR_EMAIL;
 const PASSWORD = process.env.MATFLOW_PROD_PASSWORD;
 if (!PASSWORD) {
   console.error("MATFLOW_PROD_PASSWORD env var required (audit C-1).");

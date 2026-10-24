@@ -1,4 +1,4 @@
-// Seeds (or upserts) the Operator account for noetopalian@gmail.com on the
+// Seeds (or upserts) the Operator account for $OPERATOR_EMAIL on the
 // connected DB. Set OPERATOR_PASSWORD to avoid printing a generated password.
 //
 // Run from matflow root: node scripts/seed-operator-noe.mjs
@@ -30,7 +30,8 @@ if (!url) { console.error('DATABASE_URL not set'); process.exit(1); }
 const adapter = new PrismaPg({ connectionString: url });
 const prisma = new PrismaClient({ adapter });
 
-const EMAIL = 'noetopalian@gmail.com';
+if (!process.env.OPERATOR_EMAIL) { console.error("Set OPERATOR_EMAIL to the operator's own login address."); process.exit(2); }
+const EMAIL = process.env.OPERATOR_EMAIL;
 const NAME = 'Noe';
 
 // 24 url-safe chars (~144 bits entropy) when OPERATOR_PASSWORD is not supplied.
