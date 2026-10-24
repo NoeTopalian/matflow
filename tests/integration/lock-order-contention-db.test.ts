@@ -268,4 +268,36 @@ describe.skipIf(!HAS_DB)("D1 lock-order contention — real database", () => {
     const results = await Promise.allSettled([refresh, undo]);
     expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
   }, 60_000);
+
+  it("G (C-2): a member deletion's lock and roster cascade against a squad rewrite that keeps that member — no deadlock", async () => {
+    const squad = await withRlsBypass(async (tx) => {
+      const id = (await tx.class.create({ data: { tenantId, name: "Squad G", duration: 60 } })).id;
+      await tx.classRoster.createMany({ data: [lowId, highId].map((memberId) => ({ tenantId, classId: id, memberId })) });
+      return id;
+    });
+    // The deletion's first step: the Member row FOR UPDATE (lib/member-delete.ts).
+    let goCascade!: () => void;
+    const toCascade = new Promise<void>((r) => { goCascade = r; });
+    let held!: () => void;
+    const isHeld = new Promise<void>((r) => { held = r; });
+    const deletion = withRlsBypass(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "Member" WHERE "id" = ${lowId} FOR UPDATE`;
+      held();
+      await toCascade;
+      // What ON DELETE CASCADE does to the member's roster rows.
+      await tx.$executeRaw`DELETE FROM "ClassRoster" WHERE "memberId" = ${lowId} AND "classId" = ${squad}`;
+    }, { timeout: 90_000 });
+    await isHeld;
+    const edit = classPATCH(new Request(`http://test/api/classes/${squad}`, { method: "PATCH", body: JSON.stringify({ roster: [{ memberId: lowId }] }) }), {
+      params: Promise.resolve({ id: squad }),
+    });
+    // The rewrite parks on the member's KEY SHARE before it has touched a roster row.
+    await waitForLockWaiters('%FROM "Member"%FOR KEY SHARE%', 1);
+    goCascade();
+    const [del, res] = await Promise.allSettled([deletion, edit]);
+    expect(del.status).toBe("fulfilled");
+    expect(res.status).toBe("fulfilled");
+    expect((res as PromiseFulfilledResult<{ status: number }>).value.status).toBe(200);
+    expect(await withRlsBypass((tx) => tx.classRoster.findMany({ where: { classId: squad }, select: { memberId: true } }))).toEqual([{ memberId: lowId }]);
+  }, 90_000);
 });
