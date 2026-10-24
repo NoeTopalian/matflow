@@ -3,8 +3,8 @@ import { looksLikeSharedMailbox, SHARED_MAILBOX_WARNING } from "@/lib/email-shap
 
 describe("lib/email-shape — shared-mailbox advice for staff logins", () => {
   it.each([
-    "info@totalbjj.co.uk",
-    "INFO@totalbjj.co.uk",
+    "info@club.example.test",
+    "INFO@club.example.test",
     "hello@club.com",
     "admin@club.com",
     "contact@club.com",
@@ -17,7 +17,7 @@ describe("lib/email-shape — shared-mailbox advice for staff logins", () => {
   });
 
   it.each([
-    "sean@totalbjj.co.uk",
+    "sean@club.example.test",
     "sean.murphy@gmail.com",
     "s.murphy@club.com",
     "coach.dan@club.com",

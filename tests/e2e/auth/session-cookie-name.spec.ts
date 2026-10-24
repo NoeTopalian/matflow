@@ -32,7 +32,7 @@ test.describe("session cookie naming (runtime)", () => {
     const loginRes = await request.post("/api/auth/callback/credentials", {
       form: {
         csrfToken,
-        email: process.env.TEST_EMAIL ?? "owner@totalbjj.co.uk",
+        email: process.env.TEST_EMAIL ?? "owner@club.example.test",
         password: process.env.TEST_PASSWORD ?? "password123",
         json: "true",
       },
