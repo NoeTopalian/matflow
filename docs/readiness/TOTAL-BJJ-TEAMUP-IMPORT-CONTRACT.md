@@ -6,8 +6,8 @@ Phase A deliverable of the brief "MatFlow — real TeamUp import, family account
 
 | | Newer export (the candidate) | Older export (the refresh/delta pair) |
 |---|---|---|
-| File | `report-download-hdJocCUxn3aEXNGBdg22Dc.csv` | `report-download-HwnBEVtzVYW6gZEQgRS7W3.csv` |
-| SHA-256 | `90693f95228db57f39b9fd596e694fa62b57107fd63b6aa546a9275bf0aaed22` | `389ac61f…` (recorded in the restricted ledger) |
+| File | `<TeamUp export file>.csv` | `<TeamUp export file>.csv` |
+| SHA-256 | `<sha-256 held privately>` | `<hash held privately>` (recorded in the restricted ledger) |
 | Records (header excluded) | 1,082 | 1,065 |
 | Encoding / shape | UTF-8 with BOM, 26 columns, one row per membership ever held | same |
 | Export time | **absent from the file.** Provisional as-of = file mtime, 2 Oct 2026 12:27 UK — flagged provisional on every date-sensitive decision until Sean confirms the export time | 24 Sep 2026 (provisional) |

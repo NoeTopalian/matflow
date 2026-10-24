@@ -41,7 +41,7 @@ confirmed, how and when.
 
 ## 4. Data (production, imported 3–4 Oct; reconciled)
 
-- Source: `report-download-hdJocCUxn3aEXNGBdg22Dc.csv`, SHA-256 `90693f95228db57f39b9fd596e694fa62b57107fd63b6aa546a9275bf0aaed22`
+- Source: `<TeamUp export file>.csv`, SHA-256 `<sha-256 held privately>`
   (checksum re-verified 7 Oct). Controls reproduced exactly by an independent parser: 1,082 membership rows; 708 name/email
   groups; 302 active rows across 298 groups (4 groups with two actives); 78 shared emails across 172 groups; 15 missing-email
   rows across 5 groups; 3 exact duplicate excess rows (cancelled); 20 plan labels; statuses active 302 · hold 22 ·
@@ -154,7 +154,7 @@ sets his own. Lost authenticator: operator *Reset owner 2FA* → recovery codes 
 | Candidate (local, unpushed) | `aff668283c63aadf07c8e3d8e49560238ee871df` — handover gaps — on top of the operator remediation `2203087`, `b5c3b6a`, `3da3fdf` and the earlier `64c2657`, `8fb151a`, `d92435a` |
 | Unit (388 files / 4,273 tests), typecheck, lint | pass on the tree committed as `aff6682` |
 | Integration (test branch, owner role and restricted `matflow_app`) | login-email change 11/11 both roles; earlier remediation suites as recorded in the operator package |
-| Production build + browser E2E (H1–H3) | the same code, built 12:25 UTC as HEAD `3da3fdf` + uncommitted diff `145233e5…` (48 files) — every code change in `aff6682`; H4–H5 ran on the slightly earlier build `336b3209…` |
+| Production build + browser E2E (H1–H3) | the same code, built 12:25 UTC as HEAD `3da3fdf` + uncommitted diff `145233e5…` (48 files) — every code change in `aff6682`; H4–H5 ran on the slightly earlier build `<hash held privately>` |
 | Not run | multi-instance behaviour; real Google OAuth (not configured in production: absent and refused); anything against production except the read-only owner-account check |
 
 ## 12. Message Noe can send Sean (no password in it)

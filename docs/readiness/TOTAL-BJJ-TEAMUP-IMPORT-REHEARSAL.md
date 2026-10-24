@@ -8,9 +8,9 @@ Evidence for the brief "MatFlow — real TeamUp import, family accounts and bill
 |---|---|
 | Tree under test | `a72a347` (importer v2 `79981a5`, guardianship `8d2e696`, billing honesty `5e32586`, rehearsal fixes `a72a347`); schema through migration `20261002120000_imported_membership_and_guardianship` |
 | Mapping | `teamup-2@2026-10-02` |
-| Source file | `report-download-hdJocCUxn3aEXNGBdg22Dc.csv`, SHA-256 `90693f95228db57f39b9fd596e694fa62b57107fd63b6aa546a9275bf0aaed22`, 1,082 records |
+| Source file | `<TeamUp export file>.csv`, SHA-256 `<sha-256 held privately>`, 1,082 records |
 | As-of | `2026-10-02T11:27:00Z` entered at upload = the file's modification time (12:27 UK). **Provisional** — the export carries no timestamp; Sean confirms the real export time before production |
-| Older file (refresh pair) | `report-download-HwnBEVtzVYW6gZEQgRS7W3.csv`, 1,065 records, as-of entered `2026-09-24T12:00:00Z` (provisional) |
+| Older file (refresh pair) | `<TeamUp export file>.csv`, 1,065 records, as-of entered `2026-09-24T12:00:00Z` (provisional) |
 | Server | `next build` + `next start` on :3949 behind the TLS proxy :3950, launcher flag `isolated` |
 | Isolation (names only, printed by the launcher) | `DATABASE_URL=ep-hidden-salad…-pooler` · `TESTING_MODE=present` (local import storage only) · `STRIPE_SECRET_KEY=invalid-key` · `STRIPE_CLIENT_ID=invalid-key` · `RESEND_API_KEY=invalid-key` · `RESEND_FROM=absent` · `VAPID_PUBLIC_KEY=absent` · `VAPID_PRIVATE_KEY=absent` · `BLOB_READ_WRITE_TOKEN=absent`. The production env guard refuses to boot with the Stripe/mail keys absent, so they are present but unacceptable to the providers: any attempted call fails with 401 and appears in the server log. None appeared. |
 | Auth bypasses | `TESTING_MODE` was on in this process (the local storage adapter needs it), so elevated-role TOTP enforcement and the login throttle were not exercised here. They were verified separately on a bypass-off production build (owner-account release, 1 Oct). Recorded, not hidden. |

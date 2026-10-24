@@ -84,7 +84,7 @@ app code, READ ONLY): **RECONCILED 7/7** (21:13 Italy).
 
 | Check | Result |
 |---|---|
-| C1 source | sha256 `115373716468…`; 15,273 rows; Attended 13,795 · Registered 1,331 · Late Cancelled 82 · No show 65; 486 identities; 1,684 provisional sessions |
+| C1 source | sha256 `<hash held privately>`; 15,273 rows; Attended 13,795 · Registered 1,331 · Late Cancelled 82 · No show 65; 486 identities; 1,684 provisional sessions |
 | C2 one booking per row | ledger 15,273 = CSV 15,273; 0 missing; 0 phantom |
 | C3 statuses | identical |
 | C4 people | 472 matched · 14 pending · 0 disagreements |
@@ -93,7 +93,7 @@ app code, READ ONLY): **RECONCILED 7/7** (21:13 Italy).
 | C7 sessions | 1,684 → 1,613 created + 71 with no resolvable attendance; 0 with an end time |
 
 **Jobs:**
-- Members `htfc19`: complete; 926 rows; 922 imported; 4 refused; hash `90693f95…`.
+- Members `htfc19`: complete; 926 rows; 922 imported; 4 refused; hash `<hash held privately>`.
 - Attendance `dxekg9`: complete; 15,273 rows; 13,592 visits; 0 errors; mapping `attendance@2026-10-03`; 02:50Z–03:03Z.
 - Upload rows and chunks are already deleted (0 left).
 

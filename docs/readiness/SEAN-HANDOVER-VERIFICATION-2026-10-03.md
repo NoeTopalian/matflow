@@ -23,7 +23,7 @@ Verdict vocabulary: **READY FOR SEAN** (mechanism proven, no open P0/P1 for this
 
 ### Source file controls (independent parser, not the importer's)
 
-File `report-download-hdJocCUxn3aEXNGBdg22Dc.csv`, SHA-256 `90693f95228db57f39b9fd596e694fa62b57107fd63b6aa546a9275bf0aaed22`, 266,080 bytes, BOM + CRLF, 26 columns, 1,082 data rows, no embedded newlines, all dates `YYYY-MM-DD`. Script: `.omc/scratch/teamup-controls-independent.mjs` (RFC-4180 state machine written for this check; aggregates only).
+File `<TeamUp export file>.csv`, SHA-256 `<sha-256 held privately>`, 266,080 bytes, BOM + CRLF, 26 columns, 1,082 data rows, no embedded newlines, all dates `YYYY-MM-DD`. Script: `.omc/scratch/teamup-controls-independent.mjs` (RFC-4180 state machine written for this check; aggregates only).
 
 | Measure | Expected | Observed |
 | --- | ---: | ---: |

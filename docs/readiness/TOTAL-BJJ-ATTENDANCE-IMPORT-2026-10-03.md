@@ -35,7 +35,7 @@ invented. Commits: see §9.
 
 ## 2. Source file and controls
 
-`report-download-rKihmxrY6z4fvoA5wZTPNn.csv`, SHA-256 `115373716468cb4694e5457ca6552667f5643764f126222e1a9ea28a5f5b3ee0`,
+`<TeamUp export file>.csv`, SHA-256 `<sha-256 held privately>`,
 4,508,479 bytes, UTF-8 with BOM, CRLF, 26 columns, 15,273 data rows. Counted three ways (my independent script, the
 app's preview, the reconciler) with identical results:
 
@@ -183,7 +183,7 @@ Rehearsal:
 ## 8. Steps for Noe, after 1–3
 
 Settings → Import → **Attendance history**:
-1. Choose `report-download-rKihmxrY6z4fvoA5wZTPNn.csv`.
+1. Choose `<TeamUp export file>.csv`.
 2. Set export time `03/10/2026 13:51` and tick *estimate*.
 3. Upload and preview. Expect: 15,273 rows · 486 people · 1,684 sessions · 13,795 / 1,331 / 82 / 65.
 4. Venue *Total BJJ* → **This club**.
