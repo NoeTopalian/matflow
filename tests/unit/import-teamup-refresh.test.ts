@@ -168,6 +168,8 @@ function pick(row: Record<string, unknown>, select?: Record<string, unknown>) {
 
 function makeTx() {
   return {
+    // lib/migration-lock.ts holdOffMigrations: no schema migration ever runs in the fake database.
+    $queryRaw: async (strings: TemplateStringsArray) => (strings.join("?").includes("pg_try_advisory_xact_lock_shared") ? [{ ok: true }] : []),
     member: {
       findMany: async ({ where, select }: { where: Record<string, unknown>; select?: Record<string, unknown> }) =>
         db.members.filter((m) => matches(m, where)).map((m) => pick(m, select)),

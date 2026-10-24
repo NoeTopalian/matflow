@@ -27,6 +27,12 @@ import {
   standingOf,
   type RefreshChange,
 } from "@/lib/importers/teamup-refresh";
+import { holdOffMigrations, isMigrationInProgress, MIGRATION_IN_PROGRESS_MESSAGE } from "@/lib/migration-lock";
+
+/** A schema migration holds Prisma Migrate's lock (lib/migration-lock.ts): nothing was written; retry shortly. */
+function migrationInProgress() {
+  return NextResponse.json({ error: MIGRATION_IN_PROGRESS_MESSAGE, migrationInProgress: true }, { status: 503, headers: { "Retry-After": "120" } });
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -99,18 +105,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // 2026): the status check above and a plain update were two statements, so
   // two commits of one job could both start. Only a job that is not complete
   // and not running (or running but stale) can be claimed.
-  const claimed = await withTenantContext(tenantId, (tx) =>
-    tx.importJob.updateMany({
-      where: {
-        id: job.id, tenantId,
-        OR: [
-          { status: { notIn: ["running", "complete"] } },
-          { status: "running", OR: [{ startedAt: null }, { startedAt: { lt: new Date(Date.now() - STALE_RUN_MS) } }] },
-        ],
-      },
-      data: { status: "running", startedAt: new Date(), processedRows: 0, importedRows: 0, skippedRows: 0 },
-    }),
-  );
+  // Not while a schema migration runs (lib/migration-lock.ts): refused before the claim, so the job is untouched.
+  let claimed: { count: number };
+  try {
+    claimed = await withTenantContext(tenantId, async (tx) => {
+      await holdOffMigrations(tx);
+      return tx.importJob.updateMany({
+        where: {
+          id: job.id, tenantId,
+          OR: [
+            { status: { notIn: ["running", "complete"] } },
+            { status: "running", OR: [{ startedAt: null }, { startedAt: { lt: new Date(Date.now() - STALE_RUN_MS) } }] },
+          ],
+        },
+        data: { status: "running", startedAt: new Date(), processedRows: 0, importedRows: 0, skippedRows: 0 },
+      });
+    });
+  } catch (e) {
+    if (isMigrationInProgress(e)) return migrationInProgress();
+    throw e;
+  }
   if (claimed.count !== 1) {
     return NextResponse.json({ error: "Job already running" }, { status: 409 });
   }
@@ -302,6 +316,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const sliceEmails = slice.map((d) => d.email).filter(Boolean);
       try {
         const { inserted, refused } = await withTenantContext(tenantId, async (tx) => {
+          await holdOffMigrations(tx);
           // Login identity is one per club across staff AND members (AH-01,
           // 9 Oct 2026): lock every real address in this slice (sorted, so
           // two slices cannot deadlock) before reading or writing, and refuse
@@ -388,6 +403,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           commitErrors.push({ row: i + slice.indexOf(d), email: d.email, error: `${d.name}: ${STAFF_LOGIN_REFUSAL}` });
         }
       } catch (e: unknown) {
+        // A migration started: stop the whole run here (the outer catch says so); rows saved so far are recognised
+        // when the import is run again.
+        if (isMigrationInProgress(e)) throw e;
         // Bulk failure — fall back to per-row error reporting so the
         // operator can see which rows broke. We don't retry; this branch
         // is a defensive fallback for unexpected DB errors (e.g. a
@@ -413,6 +431,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const slice = kidPass.slice(i, i + BATCH);
       try {
         const { inserted, refused } = await withTenantContext(tenantId, async (tx) => {
+          await holdOffMigrations(tx);
           // Children normally carry synthesised logins (never locked); a child
           // row that carries a real address is claimed like an adult's.
           const claims = await claimLoginIdentities(tx, tenantId, slice.map((d) => d.email).filter(Boolean));
@@ -470,6 +489,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           commitErrors.push({ row: i + slice.indexOf(d), email: d.email, error: `${d.name}: ${STAFF_LOGIN_REFUSAL}` });
         }
       } catch (e: unknown) {
+        if (isMigrationInProgress(e)) throw e; // as above: the run stops, resumable
         const msg = e instanceof Error ? e.message : "Unknown error";
         console.error("[import-commit] slice failed", e);
         systemFailedRows += slice.length;
@@ -525,7 +545,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         disposition: r.disposition,
       }));
       for (let i = 0; i < data.length; i += 500) {
-        await withTenantContext(tenantId, (tx) => tx.importedMembership.createMany({ data: data.slice(i, i + 500), skipDuplicates: true }));
+        await withTenantContext(tenantId, async (tx) => {
+          await holdOffMigrations(tx);
+          return tx.importedMembership.createMany({ data: data.slice(i, i + 500), skipDuplicates: true });
+        });
       }
     }
 
@@ -718,6 +741,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         data: { status: "failed", completedAt: new Date(), errorLog: [{ row: 0, reason: msg }] as unknown as object },
       }),
     );
+    // Stopped by a schema migration (lib/migration-lock.ts): the run is re-runnable at once ("failed" is claimable)
+    // and recognises what it already saved.
+    if (isMigrationInProgress(e)) return migrationInProgress();
     return NextResponse.json({ error: "Import failed — see import history for details" }, { status: 500 });
   }
 }
@@ -781,6 +807,7 @@ async function commitRefresh({
   for (let i = 0; i < todo.length; i += BATCH) {
     const slice = todo.slice(i, i + BATCH);
     written = await withTenantContext(tenantId, async (tx) => {
+      await holdOffMigrations(tx);
       // Re-read inside the write's own transaction: the before-values recorded
       // are the ones this write replaces, not the ones the plan saw.
       const fresh = await tx.member.findMany({

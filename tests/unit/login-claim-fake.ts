@@ -57,6 +57,8 @@ export function addLoginClaimSql<T extends object>(
     },
     $queryRaw: async (strings: TemplateStringsArray | string, ...values: unknown[]) => {
       const sql = Array.isArray(strings) ? (strings as TemplateStringsArray).join("?") : String(strings);
+      // lib/migration-lock.ts holdOffMigrations: no schema migration ever runs in the fake database.
+      if (sql.includes("pg_try_advisory_xact_lock_shared")) return [{ ok: true }];
       const [tenantId, emails] = values as [string, string[]];
       const isUser = /FROM "User"/.test(sql);
       const isMember = /FROM "Member"/.test(sql);

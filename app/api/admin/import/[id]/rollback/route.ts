@@ -24,6 +24,12 @@ import {
   REFRESH_MEMBER_SELECT,
   type RefreshChange,
 } from "@/lib/importers/teamup-refresh";
+import { holdOffMigrations, isMigrationInProgress, MIGRATION_IN_PROGRESS_MESSAGE } from "@/lib/migration-lock";
+
+/** A schema migration holds Prisma Migrate's lock (lib/migration-lock.ts): the rollback transaction wrote nothing. */
+function migrationInProgress() {
+  return NextResponse.json({ error: MIGRATION_IN_PROGRESS_MESSAGE, migrationInProgress: true }, { status: 503, headers: { "Retry-After": "120" } });
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -70,6 +76,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   try {
     const result = await withTenantContext(tenantId, async (tx) => {
+      await holdOffMigrations(tx);
       const candidates = await tx.member.findMany({
         where: { tenantId, importJobId: job.id },
         select: {
@@ -230,6 +237,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     return NextResponse.json({ ok: true, removed: result.removed.length, kept: result.kept, attendanceRemoved: result.attendanceRemoved });
   } catch (e) {
+    if (isMigrationInProgress(e)) return migrationInProgress();
     return apiError("Rollback failed — nothing was removed", 500, e, "[admin/import/rollback]");
   }
 }
@@ -257,6 +265,7 @@ async function rollbackRefresh(
   }
   try {
     const result = await withTenantContext(tenantId, async (tx) => {
+      await holdOffMigrations(tx);
       const current = await tx.member.findMany({
         where: { tenantId, id: { in: changes.map((c) => c.memberId) } },
         select: REFRESH_MEMBER_SELECT,
@@ -294,6 +303,7 @@ async function rollbackRefresh(
     });
     return NextResponse.json({ ok: true, mode: "refresh", restored: result.restored, kept: result.kept });
   } catch (e) {
+    if (isMigrationInProgress(e)) return migrationInProgress();
     return apiError("Rollback failed — nothing was changed", 500, e, "[admin/import/rollback]");
   }
 }
