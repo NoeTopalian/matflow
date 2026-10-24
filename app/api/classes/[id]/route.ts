@@ -567,6 +567,20 @@ export async function PATCH(req: Request, { params }: Params) {
         await tx.classRoster.deleteMany({ where: { classId: id, tenantId } });
       }
       if (wantsRoster) {
+        // D1 lock order (docs/design/LOCK-ORDER-2026-10-24.md, cycle C-2): the
+        // new squad's Member rows, KEY SHARE in id order, BEFORE any roster row
+        // is touched. A member deletion holds its Member row FOR UPDATE and
+        // then deletes that member's roster rows (ON DELETE CASCADE); this
+        // rewrite used to delete the class's roster rows first and then wait
+        // for KEY SHARE on the member to re-insert one — each waiting for the
+        // other. Now the rewrite waits on the Member row while holding no
+        // roster row, so the deletion finishes first (or waits for us).
+        if (rosterIds.length > 0) {
+          await tx.$queryRaw`
+            SELECT "id" FROM "Member" WHERE "id" = ANY(${[...rosterIds].sort()}::text[]) AND "tenantId" = ${tenantId}
+             ORDER BY "id" FOR KEY SHARE
+          `;
+        }
         await tx.classRoster.deleteMany({ where: { classId: id, tenantId } });
         const rows = rosterIds.map((memberId) => ({
           tenantId,

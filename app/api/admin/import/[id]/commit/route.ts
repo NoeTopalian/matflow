@@ -789,7 +789,11 @@ async function commitRefresh({
       });
       const byId = new Map(fresh.map((f) => [f.id, f]));
       const applied: RefreshChange[] = [];
-      for (const c of slice) {
+      // D1 lock order (docs/design/LOCK-ORDER-2026-10-24.md): the Member rows
+      // are updated in id order, the order the owner's undo batch locks them
+      // (lib/undo-batch.ts). In file order the two could take two members in
+      // opposite orders and deadlock.
+      for (const c of [...slice].sort((a, b) => (a.memberId < b.memberId ? -1 : a.memberId > b.memberId ? 1 : 0))) {
         const f = byId.get(c.memberId);
         if (!f) continue;
         const before = standingOf(f);

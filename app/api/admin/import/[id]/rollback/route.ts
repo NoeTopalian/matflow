@@ -262,7 +262,8 @@ async function rollbackRefresh(
         select: REFRESH_MEMBER_SELECT,
       });
       const { restore, kept } = planRefreshRollback(changes, current, alreadyRestored);
-      for (const c of restore) {
+      // D1 lock order: Member rows in id order, as the undo batch locks them.
+      for (const c of [...restore].sort((a, b) => (a.memberId < b.memberId ? -1 : a.memberId > b.memberId ? 1 : 0))) {
         await tx.member.updateMany({ where: { id: c.memberId, tenantId }, data: refreshWrite(c.before) });
       }
       await recordStatusEventsBulk(
