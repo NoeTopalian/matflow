@@ -19,7 +19,7 @@ the test branch, using the unmodified file (`scratchpad/att/repro-root-causes.md
 | Layer | What happened at 5aed6c9 | Fix |
 |---|---|---|
 | Detection | `lib/importers/sniff.ts` read Customer Name + Membership Name + Status as a **memberships** export, because `Offering Type Name` was not a class header. The Attendance panel disabled submit with "This is a TeamUp memberships export…"; the API answered **400**. | Attendance aliases (`offering type name`, `event starts at`, `customer name`). The real file now sniffs as `teamup_attendance`, and both memberships exports still sniff as memberships. |
-| Wrong slot | The Members path accepted it under Source TeamUp and previewed **632 members** from 15,273 "membership rows". Not committed. | The members upload refuses an attendance export; the attendance preview refuses a memberships export. |
+| Wrong slot | The Members path accepted it under Source TeamUp and previewed **N members** from 15,273 "membership rows". Not committed. | The members upload refuses an attendance export; the attendance preview refuses a memberships export. |
 | Header contract | No alias for `Offering Type Name`; `Event Starts At` matched nothing. | All 13 data columns mapped. The 13 profile columns are reported as *not imported*. Unknown columns are disclosed. A repeated column, a row with the wrong cell count, a bad date or an unknown status is an error before any write. |
 | Time | Every start carries an offset (`+01:00` ×8,773, `+00:00` ×6,500); offsets were refused. | Exact instant from the offset, raw text kept, club date/time from `Europe/London`. DST and the autumn repeated hour are tested; a repeated-hour collision is held as a conflict. |
 | States | Only Attended was kept; 1,478 Registered / Late Cancelled / No show rows were dropped. | Source-booking ledger `ImportedBooking`: every booking is kept with its status. Only Attended becomes attendance. |
@@ -36,7 +36,7 @@ invented. Commits: see §9.
 ## 2. Source file and controls
 
 `<TeamUp export file>.csv`, SHA-256 `<sha-256 held privately>`,
-4,508,479 bytes, UTF-8 with BOM, CRLF, 26 columns, 15,273 data rows. Counted three ways (my independent script, the
+4,508,479 bytes, UTF-8 with BOM, CRLF, 26 columns, N data rows. Counted three ways (my independent script, the
 app's preview, the reconciler) with identical results:
 
 | Control | Count |
@@ -52,7 +52,7 @@ app's preview, the reconciler) with identical results:
 
 Facts found in the data:
 - All 1,331 Registered rows are in the past (booked, never resolved by TeamUp): kept as bookings, never attendance.
-- 45 person/start pairs are Attended in two offerings at the same instant: one visit each, the second booking linked.
+- N person/start pairs are Attended in two offerings at the same instant: one visit each, the second booking linked.
 - No exact duplicates. No row is unreadable.
 
 ## 3. Upload and browser rehearsal (hosted path)
@@ -63,7 +63,7 @@ every request.
 
 - Unmodified file through Settings → Import → Attendance history. Header recognised; uploaded in 5 parts; preview
   showed every control in §2; venue and 14 offerings decided; import confirmed.
-- **Server killed mid-commit at 6,000 / 15,273**. The checkpoint was exact (6,000 bookings, the in-flight batch rolled
+- **Server killed mid-commit at 6,000 / 15,273**. The checkpoint was exact (N bookings, the in-flight batch rolled
   back). The reloaded panel showed "Resume from where it stopped"; it resumed to completion with outcome counters intact.
 - Edge measurements:
   - largest request **1,048,576 bytes** (one part);
@@ -77,15 +77,15 @@ every request.
 Second full cycle after the acceptance-review fixes (rebuilt candidate), on a degraded home link (connect about 1.2 s,
 queries 100–300 ms), 21:39–22:11 Italy:
 - import → RECONCILED 7/7;
-- full-import rollback through the history row's own button: **DELETE 200 in 32.8 s**, removing 15,273 bookings,
-  13,140 visits, 1,605 sessions and 14 classes, leaving 0 rows;
+- full-import rollback through the history row's own button: **DELETE 200 in 32.8 s**, removing N bookings,
+  N visits, N sessions and N classes, leaving N rows;
 - re-import → RECONCILED 7/7;
 - ledger export in 4 parts (largest 1,490,735 B, rows = database);
 - identical replay → RECONCILED 7/7.
 
-That cycle ran on 894 members, not 922. The members import itself hit 28 slice timeouts on the slow link — see "Found
+That cycle ran on N members, not 922. The members import itself hit 28 slice timeouts on the slow link — see "Found
 on the way" below. The reconciler derives its expectations from the roster actually present, so the cycle is valid:
-457 matched, 29 pending.
+N matched, 29 pending.
 
 On that link the slowest single calls were: one part PUT 43 s (route limit 60 s), one attendance call 63 s (route limit
 now 300 s), "complete" 31 s. On Vercel the database leg is in the datacentre; even so, every budget was raised to fit
@@ -103,18 +103,18 @@ imports no app code.
 
 | Check | Result |
 |---|---|
-| C1 source controls | rows 15,273; 13,795 / 1,331 / 82 / 65; identities 486; provisional sessions 1,684 |
+| C1 source controls | rows N; 13,795 / 1,331 / 82 / 65; identities 486; provisional sessions 1,684 |
 | C2 one booking per row | ledger 15,273; CSV rows without a booking 0; bookings without a CSV row 0 |
 | C3 statuses | identical, 0 differences |
-| C4 people | 486 identities; 472 matched; 14 pending; 0 disagreements |
+| C4 people | 486 identities; N matched; 14 pending; 0 disagreements |
 | C5 visits | 13,592 distinct (member, instant) = 13,592 linked records; 0 wrong or missing |
-| C6 no phantom attendance | 13,592 imported records; 0 on non-visits; 0 unreferenced |
+| C6 no phantom attendance | N imported records; 0 on non-visits; 0 unreferenced |
 | C7 sessions | 1,684 → 1,613 created + 71 with no resolvable attendance; 0 with an invented end time |
 
-**The 14 pending identities (165 rows):**
-- 9 are in the attendance export only (20 rows). This matches the brief.
-- 5 are children with a Kids plan and no email (145 rows). The members import refused to create them because no parent
-  could be identified (7 membership rows quarantined `kid_without_parent`).
+**The 14 pending identities (N rows):**
+- 9 are in the attendance export only (N rows). This matches the brief.
+- 5 are children with a Kids plan and no email (N rows). The members import refused to create them because no parent
+  could be identified (N membership rows quarantined `kid_without_parent`).
 
 They are kept privately as pending, never matched by name or shared email. Resolution: staff add the parent and then the
 child under Members, then map them here.
@@ -124,7 +124,7 @@ child under Members, then map them here.
 Covered by `tests/integration/attendance-import-engine.test.ts` (19/19 on the test branch) and by the rehearsal:
 
 - identical replay, reordered file and overlapping export create nothing new;
-- a newer export turns Registered → Attended on the same booking (+1 visit), and an older one is "stale";
+- a newer export turns Registered → Attended on the same booking (+N visit), and an older one is "stale";
 - a live check-in at the same instant is linked, not duplicated;
 - a staff-removed visit stays removed through replays **and rollbacks**;
 - a corrected booking that owned a shared visit hands it to its partner;
@@ -137,7 +137,7 @@ Covered by `tests/integration/attendance-import-engine.test.ts` (19/19 on the te
 Rehearsal:
 - replay = "15,273 already imported" / "already up to date", nothing new;
 - replay rollback removed nothing;
-- full-import rollback removed exactly 15,273 bookings, 13,592 visits, 1,613 sessions and 14 historical classes, and kept
+- full-import rollback removed exactly N bookings, N visits, N sessions and 14 historical classes, and kept
   the owner's decisions (first cycle by the history button; second cycle measured at 32.8 s, §3).
 
 ## 6. Security, preservation, reports, export
@@ -159,10 +159,10 @@ Rehearsal:
   - check-in refuses import-made sessions;
   - imported visits are excluded from the public TV leaderboard;
   - undo of a staff tick never deletes an imported visit.
-- **Reports and profiles:** reports label the method "Imported" (6,381 visits in the 24-week window). A member profile
+- **Reports and profiles:** reports label the method "Imported" (N visits in the 24-week window). A member profile
   shows the true visit count (no longer capped at 50) and an imported booking-history line. The check-in time of an
   imported visit is shown as not recorded.
-- **Export:** 4 parts, 15,273 rows = database, BOM + CRLF, formula-injection guard via `lib/csv`.
+- **Export:** 4 parts, N rows = database, BOM + CRLF, formula-injection guard via `lib/csv`.
 - **Consumer audit** (read-only, before implementation): an import triggers no send, credit, rank, payment or status
   change. It found and led to the fixes for:
   - a null end time crashing coach today;
@@ -175,7 +175,7 @@ Rehearsal:
 
 1. **Push = deploy + migrate production.** `main` auto-deploys and runs `prisma migrate deploy`. The migration is additive.
    The push is yours to make; I have not pushed.
-2. **Members first.** Production `totalbjj` has 0 members until the members import runs (operator sequence in
+2. **Members first.** Production `totalbjj` has N members until the members import runs (operator sequence in
    `SEAN-HANDOVER-VERIFICATION-2026-10-03.md`).
 3. **Export time.** The file carries none. The download time **3 Oct 2026 13:51 (UK)** is the provisional value; tick
    "This is an estimate".
@@ -185,14 +185,14 @@ Rehearsal:
 Settings → Import → **Attendance history**:
 1. Choose `<TeamUp export file>.csv`.
 2. Set export time `03/10/2026 13:51` and tick *estimate*.
-3. Upload and preview. Expect: 15,273 rows · 486 people · 1,684 sessions · 13,795 / 1,331 / 82 / 65.
+3. Upload and preview. Expect: N rows · N people · N sessions · 13,795 / 1,331 / 82 / 65.
 4. Venue *Total BJJ* → **This club**.
 5. Each of the 14 offerings → **Historical class** (or a timetable class, if Sean has built one with that name).
 6. **Save** → **Import attendance history** → **Import**.
-7. Expect: 13,592 visits recorded, 45 linked, 1,471 bookings only, 165 waiting (14 people), "every one of the 15,273 rows
+7. Expect: N visits recorded, 45 linked, N bookings only, 165 waiting (N people), "every one of the N rows
    is accounted for".
 8. Download the 4 ledger parts.
-9. Later: add the 5 children (parent first) and map them and the 9 attendance-only people under People, then import the
+9. Later: add the N children (parent first) and map them and the N attendance-only people under People, then import the
    same file again. Only their bookings change.
 
 Sean's own login handover is separate and unchanged by this work: password reset → own password → TOTP, per the

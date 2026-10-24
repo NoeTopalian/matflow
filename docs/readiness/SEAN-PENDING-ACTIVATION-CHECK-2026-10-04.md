@@ -84,37 +84,37 @@ app code, READ ONLY): **RECONCILED 7/7** (21:13 Italy).
 
 | Check | Result |
 |---|---|
-| C1 source | sha256 `<hash held privately>`; 15,273 rows; Attended 13,795 · Registered 1,331 · Late Cancelled 82 · No show 65; 486 identities; 1,684 provisional sessions |
+| C1 source | sha256 `<hash held privately>`; N rows; Attended 13,795 · Registered 1,331 · Late Cancelled 82 · No show 65; 486 identities; 1,684 provisional sessions |
 | C2 one booking per row | ledger 15,273 = CSV 15,273; 0 missing; 0 phantom |
 | C3 statuses | identical |
-| C4 people | 472 matched · 14 pending · 0 disagreements |
+| C4 people | N matched · 14 pending · 0 disagreements |
 | C5 visits | 13,592 distinct (member, instant) = 13,592 linked records |
-| C6 no phantom attendance | 13,592 imported records; 0 on non-visits; 0 unreferenced; 0 live check-ins |
+| C6 no phantom attendance | N imported records; 0 on non-visits; 0 unreferenced; 0 live check-ins |
 | C7 sessions | 1,684 → 1,613 created + 71 with no resolvable attendance; 0 with an end time |
 
 **Jobs:**
-- Members `htfc19`: complete; 926 rows; 922 imported; 4 refused; hash `<hash held privately>`.
-- Attendance `dxekg9`: complete; 15,273 rows; 13,592 visits; 0 errors; mapping `attendance@2026-10-03`; 02:50Z–03:03Z.
+- Members `htfc19`: complete; N rows; N imported; N refused; hash `<hash held privately>`.
+- Attendance `dxekg9`: complete; N rows; N visits; 0 errors; mapping `attendance@2026-10-03`; 02:50Z–03:03Z.
 - Upload rows and chunks are already deleted (0 left).
 
 **The preview prediction was 13,592 + 1,471 + 165 + 45 = 15,273. Verified exactly.**
 
-**Time:** 14,904 bookings with a session; 0 date and 0 time mismatches against Europe/London. Around 26 Oct 2025 there
-are 508 bookings and 0 mismatches; around 29 Mar 2026, 501 and 0. Raw `startsAtRaw` re-parses to the stored instant
+**Time:** N bookings with a session; 0 date and 0 time mismatches against Europe/London. Around 26 Oct 2025 there
+are N bookings and 0 mismatches; around 29 Mar 2026, 501 and 0. Raw `startsAtRaw` re-parses to the stored instant
 15,273/15,273. Instructors and Checkin Timestamp are null for all rows. Visits are dated by the session start and
 labelled "Not recorded" (profile) and "Class at HH:MM" (family page). The 14 historical classes have no duration,
-capacity, instructor or schedule; all 1,613 sessions have no end time.
+capacity, instructor or schedule; all N sessions have no end time.
 
-**Pending (VERIFIED: 14 identities / 165 rows / 158 attended):**
-- 9 attendance-only identities: 20 rows, 18 attended.
-- 4 children the members import refused (`kid_without_parent`): 140 rows, 136 attended.
-- 1 deleted customer, kept pending by decision: 5 rows, 4 attended.
+**Pending (VERIFIED: 14 identities / N rows / 158 attended):**
+- N attendance-only identities: N rows, 18 attended.
+- N children the members import refused (`kid_without_parent`): N rows, 136 attended.
+- N deleted customer, kept pending by decision: N rows, 4 attended.
 
 **No side effects (VERIFIED, read-only):**
-- 0 rows in each of: Payment, Notification, MemberClassPack, ClassPackRedemption, MemberRank, RankHistory,
+- N rows in each of: Payment, Notification, MemberClassPack, ClassPackRedemption, MemberRank, RankHistory,
   ClassWaitlist, Order, Dispute, PushSubscription.
 - 0 Member or MembershipTier rows updated during the attendance job.
-- EmailLog has 2 rows, both before the job: a 23 Sep demo-era row, and the members import's owner notice (3 Oct 12:39Z).
+- EmailLog has N rows, both before the job: a 23 Sep demo-era row, and the members import's owner notice (3 Oct 12:39Z).
 - Every imported AttendanceRecord has `checkInMethod` import and no actor.
 
 ### The 45 same-start overlaps — verdict: bookings preserved, visits counted once, class attribution partial (ISSUE, Medium)
@@ -123,7 +123,7 @@ capacity, instructor or schedule; all 1,613 sessions have no end time.
 Practice / Judo for BJJ 16.
 
 **What is stored:**
-- All 90 bookings are kept, each with its own offering and status `attended`.
+- All N bookings are kept, each with its own offering and status `attended`.
 - In every pair one booking is `attendance_created` and the other `attendance_existing`, and both point at the same
   AttendanceRecord.
 - Each booking keeps its own class's session (90/90).
@@ -144,8 +144,8 @@ Practice / Judo for BJJ 16.
 - class registers and per-class reports, which read AttendanceRecord;
 - the member attendance list.
 
-On those class-level surfaces, 45 bookings appear only under the other class. 2 Judo for BJJ sessions show nobody
-although the source says this person attended. 31 member profiles show more attended bookings than visits, which the
+On those class-level surfaces, N bookings appear only under the other class. 2 Judo for BJJ sessions show nobody
+although the source says this person attended. N member profiles show more attended bookings than visits, which the
 profile line only partly explains.
 
 **Decision for Noe** (not changed in this run, because it alters what every report counts):
@@ -159,7 +159,7 @@ Recommendation: **(b)** before Sean relies on per-class history.
 
 | Id | Finding | Status |
 |---|---|---|
-| R1 | 922 members = members job `htfc19` imported rows (703 people + 219 guardian records); 4 refused; 1,082 membership-ledger rows | VERIFIED |
+| R1 | N members = members job `htfc19` imported rows (N people + N guardian records); N refused; N membership-ledger rows | VERIFIED |
 | F1 | 307 parent links, all **suggested** (265 emergency contact, 42 shared email), 0 confirmed; the attendance import created none | VERIFIED |
 | F2 | A member cannot claim a child or change family authority: self-PATCH refuses family fields (`member/me:298`, `lib/family-authority.ts:52-56`); child edit/delete and billing/waiver/photo/check-in routes require a confirmed guardian; link/confirm/unlink are owner/manager only | VERIFIED (code) |
 | F3 | Kiosk listed children under a merely suggested parent (`kiosk/[token]/members` `children` include) | ISSUE (Low, latent: no kiosk token) — **fixed locally**: confirmed-guardian filter (tested). The `selfTrainable` change in the same file is policy-consistent but effectively a no-op: the client reads it only in the pick-attendees step, which a junior without children never enters. |
@@ -272,5 +272,5 @@ change.
 2. **Agreement.** Whether there is a written or verbal agreement, including any trial period or discount.
 3. **Invoicing entity.** Noe as sole trader, or Arevix (incorporation status unconfirmed here). It decides whose Stripe
    account and legal pages apply.
-4. **Membership prices.** The 16 tier prices in production were entered by the operator from the 24 Sep catalogue.
+4. **Membership prices.** The N tier prices in production were entered by the operator from the 24 Sep catalogue.
    Sean has not confirmed them. They create no charge, because members are billed by TeamUp.
