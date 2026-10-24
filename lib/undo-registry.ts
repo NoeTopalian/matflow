@@ -669,6 +669,8 @@ const IRREVERSIBLE: [RegExp, string][] = [
   [/^member\.delete$/, REASON.deleteNoRestore],
   [/^waiver\./, REASON.record],
   [/^(report\.|drive\.|onboarding\.|class\.instances_generated|member\.invite_link|member\.waiver_link|member\.waiver\.)/, REASON.record],
+  // D2: the record of bookings an access change kept; undo the change itself instead.
+  [/^class\.bookings\.kept_ineligible$/, REASON.record],
 ];
 
 export function decideUndo(row: AuditRowLike, alreadyUndone: boolean): UndoDecision {

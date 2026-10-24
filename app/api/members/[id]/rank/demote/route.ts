@@ -7,6 +7,8 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { STAFF_ROLES } from "@/lib/authz";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
+import { OPEN_RULES, accessRefusals, highestRankOrder } from "@/lib/booking-eligibility";
+import { recordKeptBookings } from "@/lib/booking-eligibility-db";
 
 const demoteSchema = z.object({
   toRankId: z.string().min(1),
@@ -75,6 +77,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         include: { rankSystem: true },
       });
 
+      // D2: the member's highest rank order (any discipline, the door's read)
+      // before this demotion, so the classes it NEWLY turns them away from
+      // can be told apart from ones that already refused them.
+      const orderBefore = highestRankOrder(
+        (await tx.memberRank.findMany({ where: { memberId, member: { tenantId } }, select: { rankSystem: { select: { order: true } } } }))
+          .map((r) => r.rankSystem),
+      );
+
       const updated = existingRank
         ? await tx.memberRank.update({
             where: { id: existingRank.id },
@@ -112,35 +122,49 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             include: { rankSystem: true },
           });
 
-      // Cascade-cancel ClassSubscription for classes the member is no longer eligible for.
-      // Eligibility lost when class.requiredRank is in the same discipline AND order > newRank.order
-      // (or class.maxRank order < newRank.order — though demotion below max is rarely the trigger).
-      const ineligibleClasses = await tx.class.findMany({
-        where: {
-          tenantId,
-          OR: [
-            {
-              requiredRank: {
-                discipline: newRank.discipline,
-                order: { gt: newRank.order },
-              },
-            },
-            {
-              maxRank: {
-                discipline: newRank.discipline,
-                order: { lt: newRank.order },
-              },
-            },
-          ],
+      // D2 (approved 21 Oct 2026): bookings are KEPT. This used to delete the
+      // member's bookings on every class whose rank gate the new rank no
+      // longer meets. Now the booked classes the demotion newly turns them
+      // away from are recorded durably in this transaction, judged as the
+      // door judges (lib/booking-eligibility.ts: the highest rank order of any
+      // discipline, at the member app, parent and kiosk doors), and the
+      // member sees each one marked "not eligible".
+      const orderAfter = highestRankOrder(
+        (await tx.memberRank.findMany({ where: { memberId, member: { tenantId } }, select: { rankSystem: { select: { order: true } } } }))
+          .map((r) => r.rankSystem),
+      );
+      const booked = await tx.classSubscription.findMany({
+        where: { memberId, member: { tenantId }, class: { tenantId } },
+        select: {
+          classId: true,
+          class: { select: { requiredRank: { select: { order: true } }, maxRank: { select: { order: true } } } },
         },
-        select: { id: true },
       });
-
-      const cancelled = ineligibleClasses.length
-        ? await tx.classSubscription.deleteMany({
-            where: { memberId, classId: { in: ineligibleClasses.map((c) => c.id) } },
-          })
-        : { count: 0 };
+      const turnedAwayFrom = booked
+        .filter((b) => {
+          const rules = {
+            ...OPEN_RULES,
+            requiredRankOrder: b.class.requiredRank?.order ?? null,
+            maxRankOrder: b.class.maxRank?.order ?? null,
+          };
+          const facts = (rankOrder: number | null) => ({ memberId, membershipTierId: null, tierName: null, rankOrder });
+          const refusedNow = accessRefusals(rules, facts(orderAfter)).some((r) => r === "rank_below" || r === "rank_above");
+          const refusedBefore = accessRefusals(rules, facts(orderBefore)).some((r) => r === "rank_below" || r === "rank_above");
+          return refusedNow && !refusedBefore;
+        })
+        .map((b) => b.classId)
+        .sort();
+      for (const classId of turnedAwayFrom) {
+        await recordKeptBookings(tx, {
+          tenantId,
+          userId: session.user.id,
+          classId,
+          cause: "member.rank.demote",
+          byTrigger: { rank: [memberId] },
+          req,
+          extra: { toRankId },
+        });
+      }
 
       return {
         kind: "ok" as const,
@@ -148,7 +172,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         fromRankId: existingRank?.rankSystemId ?? null,
         // The previous stripe count, so the owner's Undo restores it exactly.
         fromStripes: existingRank?.stripes ?? null,
-        cancelledSubscriptions: cancelled.count,
+        bookingsKeptIneligibleClassIds: turnedAwayFrom,
         memberEmail: member.email,
         memberName: member.name,
       };
@@ -171,7 +195,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         stripes: 0,
         toRankId,
         reason: reason ?? null,
-        cancelledSubscriptions: result.cancelledSubscriptions,
+        // D2: no booking is cancelled any more; the classes whose rank gate
+        // now turns the member away (bookings kept) are listed, and each has a
+        // durable class.bookings.kept_ineligible row from the transaction.
+        bookingsKeptIneligibleClassIds: result.bookingsKeptIneligibleClassIds,
       },
       req,
     });
@@ -197,7 +224,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({
       ok: true,
       memberRank: result.value,
-      cancelledSubscriptions: result.cancelledSubscriptions,
+      // Always 0 since D2 (bookings are kept); kept for older clients.
+      cancelledSubscriptions: 0,
+      bookingsKeptIneligibleClassIds: result.bookingsKeptIneligibleClassIds,
     });
   } catch {
     return NextResponse.json({ error: "Failed to demote" }, { status: 500 });

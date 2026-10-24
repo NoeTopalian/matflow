@@ -7,7 +7,15 @@ import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { scheduleSchema, allowedTierIdsSchema } from "@/lib/schemas/class";
 import { classCategorySchema } from "@/lib/class-category";
-import { classTierCovers } from "@/lib/class-tier-gate";
+import { rulesAfterEdit, type ClassAccessRules, type RestrictionPreview } from "@/lib/booking-eligibility";
+import {
+  newlyRefusedByTrigger,
+  readBookedFacts,
+  readClassRules,
+  readRankOrders,
+  recordKeptBookings,
+  restrictionPreview,
+} from "@/lib/booking-eligibility-db";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { dayMarkerUtc, usableTimezone } from "@/lib/class-time";
@@ -64,31 +72,6 @@ type ScheduleInput = z.infer<typeof scheduleSchema>;
 
 type Tx = Parameters<Parameters<typeof withTenantContext>[1]>[0];
 
-/**
- * T6a narrowing cascade: members booked on the class (ClassSubscription) whose
- * plan the NEW membership list does not include. An empty list is open, so no
- * one loses a booking. A rostered class is narrowed exactly the same way:
- * the roster and the list must BOTH hold (owner decision, 20 Oct 2026), so a
- * rostered member on an excluded plan loses the booking too.
- * Run in the pre-flight for the dry-run preview, and again INSIDE the write
- * transaction after the Class lock, which is the set actually removed.
- */
-async function tierLosers(
-  tx: Tx,
-  tenantId: string,
-  classId: string,
-  allowedTierIds: readonly string[],
-): Promise<string[]> {
-  if (allowedTierIds.length === 0) return [];
-  const subs = await tx.classSubscription.findMany({
-    where: { classId, member: { tenantId } },
-    select: { memberId: true, member: { select: { membershipTierId: true } } },
-  });
-  return subs
-    .filter((s) => !classTierCovers({ allowedTierIds, memberTierId: s.member.membershipTierId }))
-    .map((s) => s.memberId);
-}
-
 /** Same set of ids, order ignored. */
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
@@ -96,29 +79,45 @@ function sameIds(a: readonly string[], b: readonly string[]): boolean {
   return b.every((x) => s.has(x));
 }
 
+type AccessBody = {
+  wantsRoster: boolean;
+  wantsRankGate: boolean;
+  rosterIds: readonly string[];
+  requiredRankId?: string | null;
+  maxRankId?: string | null;
+  /** The membership list this edit writes, or undefined when it leaves the list alone. */
+  allowedTierIds?: readonly string[];
+};
+
+/** Whether the body can change who the class admits (squad list, rank gate or membership list). */
+function touchesAccess(b: AccessBody): boolean {
+  return b.wantsRoster || b.wantsRankGate || b.allowedTierIds !== undefined || b.requiredRankId !== undefined || b.maxRankId !== undefined;
+}
+
 /**
- * T6a: the members whose booking this edit removes on membership grounds —
- * only when the list actually changes, judged against the new list. A roster
- * edit does not change who the list admits (the list applies with or without
- * a roster), so it cascades nothing here; the roster's own cascade (bookings
- * of members not on a new roster) is the `wantsRoster` branch of the PATCH.
+ * D2: the class's access rules before this edit and after it. Read in the
+ * caller's transaction — after the Class row lock in the write path, so it
+ * is the pair the write actually replaces (the pre-lock race the 21 Oct
+ * review found: a booking or roster change committing between the
+ * pre-flight and the lock was judged on stale rows).
  */
-async function tierCascade(
+async function accessRulesOf(
   tx: Tx,
   tenantId: string,
-  classId: string,
-  edit: {
-    wantsTiers: boolean;
-    nextTierIds: readonly string[];
-    /** The list before this edit, when the caller already read it. */
-    currentTierIds?: readonly string[];
-  },
-): Promise<string[]> {
-  if (!edit.wantsTiers) return [];
-  const before = edit.currentTierIds
-    ?? (await tx.classMembershipTier.findMany({ where: { classId, tenantId }, select: { tierId: true } })).map((t) => t.tierId);
-  if (sameIds(before, edit.nextTierIds)) return [];
-  return tierLosers(tx, tenantId, classId, edit.nextTierIds);
+  cls: { id: string; requiredRankId: string | null; maxRankId: string | null },
+  body: AccessBody,
+): Promise<{ before: ClassAccessRules; after: ClassAccessRules }> {
+  const before = await readClassRules(tx, tenantId, cls);
+  const orders = await readRankOrders(tx, tenantId, [body.requiredRankId, body.maxRankId]);
+  const orderOf = (v: string | null | undefined) => (v === undefined ? undefined : v ? (orders.get(v) ?? null) : null);
+  const after = rulesAfterEdit(before, {
+    roster: body.wantsRoster ? body.rosterIds : undefined,
+    namesRank: body.wantsRankGate,
+    requiredRankOrder: orderOf(body.requiredRankId),
+    maxRankOrder: orderOf(body.maxRankId),
+    allowedTierIds: body.allowedTierIds,
+  });
+  return { before, after };
 }
 
 /**
@@ -399,8 +398,9 @@ export async function PATCH(req: Request, { params }: Params) {
   const dryRun = new URL(req.url).searchParams.get("dryRun") === "1";
 
   try {
-    // Pre-flight: ownership, then every foreign id in the body, then the
-    // subscribers who would lose access (for the warning UI and the cascade).
+    // Pre-flight: ownership, then every foreign id in the body, then (dry run
+    // only) the owner's preview of who the change turns away (D2: bookings
+    // are kept; the real save recomputes under the Class lock).
     //
     // OWNERSHIP FIRST (finding E-1, 6 Oct 2026). The subscriber lookups below
     // used to run before any ownership check, with no tenant predicate —
@@ -411,7 +411,7 @@ export async function PATCH(req: Request, { params }: Params) {
     const pre = await withTenantContext(tenantId, async (tx) => {
       const owned = await tx.class.findFirst({
         where: { id, tenantId },
-        select: { id: true, sourceImportJobId: true },
+        select: { id: true, sourceImportJobId: true, requiredRankId: true, maxRankId: true },
       });
       if (!owned) return { kind: "not_found" as const };
 
@@ -444,58 +444,21 @@ export async function PATCH(req: Request, { params }: Params) {
         }
       }
 
-      let losers: string[] = [];
-      if (wantsRankGate && parsed.data.requiredRankId) {
-        const newRank = await tx.rankSystem.findFirst({
-          where: { id: parsed.data.requiredRankId, tenantId, deletedAt: null },
-          select: { id: true, order: true, discipline: true },
-        });
-        if (newRank) {
-          // Lane 1 iter-2 L1-I2-S-03 [Critical] fix: P-07 narrowed select.
-          // The previous bare `include: { member: ... }` pulled every Member
-          // scalar including passwordHash, totpSecret, totpRecoveryCodes,
-          // sessionVersion, failedLoginCount, lockedUntil, waiverIpAddress —
-          // into process memory. Not exposed in the response today, but
-          // sits in heap dumps and Vercel error stacks. Narrow to only the
-          // fields the loser-calculation actually reads.
-          const subs = await tx.classSubscription.findMany({
-            // ClassSubscription has no tenantId column: scope through the
-            // member, so this cannot read another club's subscribers even if
-            // the ownership check above is ever moved.
-            where: { classId: id, member: { tenantId } },
-            select: {
-              memberId: true,
-              member: {
-                select: {
-                  memberRanks: {
-                    select: {
-                      rankSystem: {
-                        select: { discipline: true, order: true },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          });
-          losers = subs
-            .filter((s) => {
-              const r = s.member.memberRanks.find((mr) => mr.rankSystem.discipline === newRank.discipline);
-              return !r || r.rankSystem.order < newRank.order;
-            })
-            .map((s) => s.memberId);
-        }
-      }
-      if (wantsRoster) {
-        const subs = await tx.classSubscription.findMany({
-          where: { classId: id, memberId: { notIn: rosterIds }, member: { tenantId } },
-          select: { memberId: true },
-        });
-        losers = [...losers, ...subs.map((s) => s.memberId)];
-      }
-      // T6a preview only: the authoritative set is recomputed after the lock.
-      const tierPreview = await tierCascade(tx, tenantId, id, { wantsTiers, nextTierIds });
-      return { kind: "ok" as const, affected: Array.from(new Set(losers)), rosterIds, tierPreview };
+      // D2 (booking preservation, approved 21 Oct 2026): the dry run is the
+      // owner's preview of who the change turns away — booked members (their
+      // bookings are KEPT, never deleted) and members who are not booked but
+      // would be refused. Nothing is computed for a real save here: the write
+      // transaction reads the rules and bookings again after the Class lock.
+      if (!dryRun) return { kind: "ok" as const, rosterIds, preview: null };
+      const body: AccessBody = {
+        wantsRoster, wantsRankGate, rosterIds,
+        requiredRankId: parsed.data.requiredRankId, maxRankId: parsed.data.maxRankId,
+        allowedTierIds: wantsTiers ? nextTierIds : undefined,
+      };
+      if (!touchesAccess(body)) return { kind: "ok" as const, rosterIds, preview: null };
+      const { before, after } = await accessRulesOf(tx, tenantId, owned, body);
+      const { preview, byTrigger } = await restrictionPreview(tx, tenantId, { classId: id, before, after });
+      return { kind: "ok" as const, rosterIds, preview: { ...preview, byTrigger } };
     });
 
     if (pre.kind === "not_found") return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -503,13 +466,21 @@ export async function PATCH(req: Request, { params }: Params) {
     if (pre.kind === "imported") {
       return NextResponse.json({ error: IMPORTED_CLASS_REACTIVATE_REFUSAL, reason: "imported_class" }, { status: 409 });
     }
-    const { affected, rosterIds, tierPreview } = pre;
+    const { rosterIds } = pre;
 
     if (dryRun) {
+      const p = pre.preview;
+      const byTrigger = p?.byTrigger ?? { rank: [], squad: [], membership: [] };
+      const restriction: RestrictionPreview = p
+        ? { bookingsKept: true, booked: p.booked, notBooked: p.notBooked, notBookedTotal: p.notBookedTotal }
+        : { bookingsKept: true, booked: [], notBooked: [], notBookedTotal: 0 };
       return NextResponse.json({
         dryRun: true,
-        affectedMemberIds: Array.from(new Set([...affected, ...tierPreview])),
-        tierAffectedMemberIds: tierPreview,
+        // Booked members this edit newly turns away, any trigger. Their
+        // bookings are kept (D2); the field keeps its old name for old clients.
+        affectedMemberIds: Array.from(new Set([...byTrigger.squad, ...byTrigger.rank, ...byTrigger.membership])).sort(),
+        tierAffectedMemberIds: byTrigger.membership,
+        restriction,
       });
     }
 
@@ -531,8 +502,10 @@ export async function PATCH(req: Request, { params }: Params) {
       // roster, tier or booking write. A check-in takes the same lock before it
       // reads the tier list (lib/checkin.ts), so it is judged against whichever
       // list committed first, never a half-written one.
-      const owned = await tx.$queryRaw<{ id: string; isActive?: boolean; deletedAt?: Date | null }[]>`
-        SELECT "id", "isActive", "deletedAt" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
+      const owned = await tx.$queryRaw<{
+        id: string; isActive?: boolean; deletedAt?: Date | null; requiredRankId?: string | null; maxRankId?: string | null;
+      }[]>`
+        SELECT "id", "isActive", "deletedAt", "requiredRankId", "maxRankId" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
       `;
       if (owned.length === 0) return null;
       // T6b: whether the class is live once this edit lands. A Resume /
@@ -542,6 +515,27 @@ export async function PATCH(req: Request, { params }: Params) {
         : parsed.data.isActive === false
           ? false
           : owned[0].isActive !== false && owned[0].deletedAt == null;
+
+      // D2: who this edit newly turns away, judged UNDER the Class lock on the
+      // rules and the bookings it replaces (read before any rewrite below), so
+      // a booking or squad change that committed after the pre-flight is
+      // counted. Their bookings are KEPT; the doors refuse at attendance.
+      const accessBody: AccessBody = {
+        wantsRoster, wantsRankGate, rosterIds,
+        requiredRankId: parsed.data.requiredRankId, maxRankId: parsed.data.maxRankId,
+        allowedTierIds: wantsTiers ? nextTierIds : undefined,
+      };
+      const newlyRefused = touchesAccess(accessBody)
+        ? await (async () => {
+            const { before, after } = await accessRulesOf(
+              tx,
+              tenantId,
+              { id, requiredRankId: owned[0].requiredRankId ?? null, maxRankId: owned[0].maxRankId ?? null },
+              accessBody,
+            );
+            return newlyRefusedByTrigger(before, after, await readBookedFacts(tx, tenantId, id));
+          })()
+        : { rank: [], squad: [], membership: [] };
 
       // T6a: replace the membership list inside the lock. The ids were proved
       // to be this club's in the pre-flight; re-read here so a tier deleted in
@@ -557,8 +551,7 @@ export async function PATCH(req: Request, { params }: Params) {
           : [];
         if (ours.length !== nextTierIds.length) throw new TierRefError();
         tiersAfter = ours.map((t) => t.id).sort();
-        // An unchanged list (the form sends it on every save) is not rewritten
-        // and cascades nothing.
+        // An unchanged list (the form sends it on every save) is not rewritten.
         if (!sameIds(tiersBefore, tiersAfter)) {
           await tx.classMembershipTier.deleteMany({ where: { classId: id, tenantId } });
           if (ours.length > 0) {
@@ -569,14 +562,6 @@ export async function PATCH(req: Request, { params }: Params) {
           }
         }
       }
-      // The narrowing cascade's members, computed after the lock, when the
-      // list actually changed — rostered class or not.
-      const tierAffected = await tierCascade(tx, tenantId, id, {
-        wantsTiers,
-        nextTierIds: tiersAfter,
-        currentTierIds: wantsTiers ? tiersBefore : undefined,
-      });
-
       // Mutual exclusion: setting rank fields clears roster; setting roster clears rank fields.
       if (wantsRankGate) {
         await tx.classRoster.deleteMany({ where: { classId: id, tenantId } });
@@ -593,15 +578,20 @@ export async function PATCH(req: Request, { params }: Params) {
           await tx.classRoster.createMany({ data: rows, skipDuplicates: true });
         }
       }
-      // Cascade-cancel ClassSubscription rows for members losing access.
-      const allAffected = Array.from(new Set([...affected, ...tierAffected]));
-      if (allAffected.length > 0) {
-        await tx.classSubscription.deleteMany({
-          // ClassSubscription carries no tenantId column, so it scopes through
-          // the member relation.
-          where: { classId: id, memberId: { in: allAffected }, member: { tenantId } },
-        });
-      }
+      // D2 (approved 21 Oct 2026): bookings are NOT deleted on loss of
+      // access. This used to cascade-cancel the ClassSubscription rows of
+      // every squad, rank and membership "loser" — silently, with the ids on a
+      // best-effort audit row only. Now the members a rule change turns away
+      // are recorded durably here, one row per trigger, committing with the
+      // change; their bookings stay and every door judges them at attendance.
+      const keptBookings = await recordKeptBookings(tx, {
+        tenantId,
+        userId: session.user.id,
+        classId: id,
+        cause: "class.updated",
+        byTrigger: newlyRefused,
+        req,
+      });
       // Task 3c: reconcile the recurring slots, then the instances they
       // generated. Runs before class.updateMany so a failure anywhere in here
       // rolls the whole edit back rather than leaving a class whose name
@@ -693,7 +683,7 @@ export async function PATCH(req: Request, { params }: Params) {
       const { allowedTiers, ...rest } = found;
       const cls = { ...rest, allowedTiers: (allowedTiers ?? []).map((t) => t.tier) };
       return {
-        cls, scheduleChange, before, tiersBefore, tiersAfter, tierAffected, allAffected, sessionsCreatedOnResume,
+        cls, scheduleChange, before, tiersBefore, tiersAfter, keptBookings, sessionsCreatedOnResume,
         lifecycleChange, legacyArchivedOn,
       };
     });
@@ -707,25 +697,14 @@ export async function PATCH(req: Request, { params }: Params) {
       entityId: id,
       metadata: {
         fields: Object.keys(parsed.data),
-        cascadeCancelledSubscriptions: updated.allAffected.length,
-        // The member IDS, not just the count. This cascade hard-deletes
-        // ClassSubscription rows and there is no undo; recording only a number
-        // meant a mis-save could not be reversed even once noticed. The common
-        // path is a staff member enabling roster mode, ticking nobody, and
-        // saving — `roster: []` makes every existing subscriber a "loser".
-        cascadeCancelledMemberIds: updated.allAffected,
-        // T6a: the membership list before and after, and the members whose
-        // booking the narrowing removed (computed inside the write lock). The
-        // class.updated undo stays scalar: tier ids are recorded, not undone.
-        ...(wantsTiers
-          ? {
-              allowedTierIds: { before: updated.tiersBefore, after: updated.tiersAfter },
-              tierCascadeMemberIds: updated.tierAffected,
-            }
-          : updated.tierAffected.length > 0
-            // The roster was removed and the existing list started to apply.
-            ? { tierCascadeMemberIds: updated.tierAffected }
-            : {}),
+        // D2: no booking is cancelled by an edit any more. The members it newly
+        // turns away (bookings kept) are on the durable
+        // class.bookings.kept_ineligible rows written inside the transaction;
+        // repeated here, by trigger, so this row reads whole on its own.
+        ...(Object.keys(updated.keptBookings).length > 0 ? { bookingsKeptIneligible: updated.keptBookings } : {}),
+        // T6a: the membership list before and after. The class.updated undo
+        // stays scalar: tier ids are recorded, not undone.
+        ...(wantsTiers ? { allowedTierIds: { before: updated.tiersBefore, after: updated.tiersAfter } } : {}),
         // Same rule for the timetable cascade: the ids of every upcoming
         // session the schedule edit deleted, not just how many (RULES §5 — a
         // count cannot restore anything).
@@ -759,6 +738,8 @@ export async function PATCH(req: Request, { params }: Params) {
       ...updated.cls,
       scheduleChange: updated.scheduleChange,
       sessionsCreatedOnResume: updated.sessionsCreatedOnResume,
+      // D2: booked members this save newly turns away, by trigger; bookings kept.
+      bookingsKeptIneligible: updated.keptBookings,
     });
   } catch (e) {
     // Thrown, not returned, so the transaction rolls back: no roster, tier or

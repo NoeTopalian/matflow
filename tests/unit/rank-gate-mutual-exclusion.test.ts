@@ -21,11 +21,13 @@ vi.mock("@/lib/audit-log", () => ({
 
 const mockPrisma = {
   class: { findFirst: vi.fn(), updateMany: vi.fn() },
-  classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn() },
+  classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
   // T6b: the archive confirmation also counts bookings.
   classSubscription: { findMany: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
-  rankSystem: { findFirst: vi.fn() },
-  attendanceRecord: { count: vi.fn() },
+  rankSystem: { findFirst: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+  attendanceRecord: { count: vi.fn(), groupBy: vi.fn().mockResolvedValue([]) },
+  classMembershipTier: { findMany: vi.fn().mockResolvedValue([]) },
+  member: { findMany: vi.fn().mockResolvedValue([]) },
   // T6a: the PATCH write transaction opens with a Class row lock.
   $queryRaw: vi.fn().mockResolvedValue([{ id: "c1" }]),
 };
@@ -56,10 +58,13 @@ describe("PATCH /api/classes/[id] mutual exclusion", () => {
     });
   });
 
-  it("?dryRun=1 returns affected member IDs without committing", async () => {
+  it("?dryRun=1 returns affected member IDs without committing (D2: the bookings are kept)", async () => {
+    mockPrisma.class.findFirst.mockResolvedValue({ id: "c1", requiredRankId: null, maxRankId: null });
     mockPrisma.rankSystem.findFirst.mockResolvedValue({ id: "r-blue", order: 2, discipline: "BJJ" });
+    mockPrisma.rankSystem.findMany.mockResolvedValue([{ id: "r-blue", order: 2 }]);
     mockPrisma.classSubscription.findMany.mockResolvedValue([
       { memberId: "m1", member: { memberRanks: [{ rankSystem: { discipline: "BJJ", order: 1 } }] } },
+      { memberId: "m2", member: { memberRanks: [{ rankSystem: { discipline: "BJJ", order: 3 } }] } },
     ]);
 
     const { PATCH } = await import("@/app/api/classes/[id]/route");
@@ -72,7 +77,12 @@ describe("PATCH /api/classes/[id] mutual exclusion", () => {
     const body = await res.json();
     expect(body.dryRun).toBe(true);
     expect(body.affectedMemberIds).toEqual(["m1"]);
+    expect(body.restriction.booked).toEqual([
+      // Rank is refused at the member's own doors only; staff can still mark them.
+      expect.objectContaining({ memberId: "m1", reasons: ["rank_below"], newlyRefused: true, staffDoorsAdmit: true }),
+    ]);
     expect(mockPrisma.class.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.classSubscription.deleteMany).not.toHaveBeenCalled();
   });
 });
 

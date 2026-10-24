@@ -25,7 +25,7 @@ vi.mock("@/auth", () => ({
 
 const mockPrisma = {
   class: { findMany: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
-  classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn() },
+  classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
   classSubscription: { findMany: vi.fn(), deleteMany: vi.fn() },
   classSchedule: { findMany: vi.fn(), updateMany: vi.fn(), createMany: vi.fn() },
   classInstance: { findMany: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
