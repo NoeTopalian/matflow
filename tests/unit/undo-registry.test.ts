@@ -10,6 +10,19 @@ import { updateMetadata } from "@/lib/audit-snapshot";
  */
 vi.mock("@/lib/checkin", () => ({ restorePackCreditsForAttendance: vi.fn(async () => 0) }));
 import { restorePackCreditsForAttendance } from "@/lib/checkin";
+// The billing-period release gate is a constant (false while it ships dark);
+// a getter lets one case prove the guard follows the gate rather than the word "billing".
+const billingGate = vi.hoisted(() => ({ available: false }));
+vi.mock("@/lib/class-allowance", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/class-allowance")>();
+  return {
+    ...real,
+    get BILLING_BASIS_AVAILABLE() {
+      return billingGate.available;
+    },
+  };
+});
+import { BILLING_BASIS_UNDO_REFUSAL } from "@/lib/undo-registry";
 
 const row = (action: string, metadata: unknown, extra: Partial<AuditRowLike> = {}): AuditRowLike => ({
   id: "a1",
@@ -313,6 +326,74 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
       fake.membershipTier.findFirst.mockResolvedValue(tierRow(NONE));
       await expect(applyUndo(tx, asRow(m))).rejects.toThrow(/class allowance has changed since/);
       expect(fake.membershipTier.update).not.toHaveBeenCalled();
+    });
+
+    // D3 (24 Oct 2026): the billing-period basis ships dark (BILLING_BASIS_AVAILABLE
+    // false) and both membership routes refuse to save it; Undo must not put it back.
+    describe("the billing-period basis while it ships dark", () => {
+      const BILLING3 = { maxClassesPerWeek: null, classLimit: 3, classLimitBasis: "billing", classLimitWeeks: null, classLimitAnchor: null };
+
+      it("billing -> weekly: Undo would switch the plan back to billing, so it is refused and nothing is written", async () => {
+        const before = tierRow(BILLING3);
+        const after = tierRow(WEEKLY3);
+        const r = asRow(updateMetadata(ALLOWANCE, before, after, FIELDS));
+        expect(r.metadata).toMatchObject({ before: { classLimitBasis: "billing" }, after: { classLimitBasis: "week" } });
+        fake.membershipTier.findFirst.mockResolvedValue(after);
+        await expect(applyUndo(tx, r)).rejects.toThrow(BILLING_BASIS_UNDO_REFUSAL);
+        await expect(applyUndo(tx, r)).rejects.toBeInstanceOf(UndoStale);
+        expect(fake.membershipTier.update).not.toHaveBeenCalled();
+      });
+
+      it("Unlimited -> ... a row whose before-state was billing is refused the same way", async () => {
+        const r = asRow(updateMetadata(ALLOWANCE, tierRow(BILLING3), tierRow(NONE), FIELDS));
+        fake.membershipTier.findFirst.mockResolvedValue(tierRow(NONE));
+        await expect(applyUndo(tx, r)).rejects.toThrow(BILLING_BASIS_UNDO_REFUSAL);
+        expect(fake.membershipTier.update).not.toHaveBeenCalled();
+      });
+
+      it("an unrelated restore on a plan whose stored basis is billing still works (a rename)", async () => {
+        const before = tierRow({ ...BILLING3, name: "Plan A" });
+        const after = tierRow({ ...BILLING3, name: "Plan B" });
+        const r = asRow(updateMetadata(["name"], before, after, FIELDS));
+        expect(r.metadata).toMatchObject({ before: { name: "Plan A" }, after: { name: "Plan B" } });
+        fake.membershipTier.findFirst.mockResolvedValue(after);
+        await applyUndo(tx, r);
+        expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { name: "Plan A" } });
+      });
+
+      it("a limit restore on a plan already counting per billing period works (3 -> 5 per billing period, undone to 3)", async () => {
+        const before = tierRow(BILLING3);
+        const after = tierRow({ ...BILLING3, classLimit: 5 });
+        const r = asRow(updateMetadata(ALLOWANCE, before, after, FIELDS));
+        expect(r.metadata).toMatchObject({ before: { classLimit: 3 }, after: { classLimit: 5 } });
+        fake.membershipTier.findFirst.mockResolvedValue(after);
+        await applyUndo(tx, r);
+        expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { classLimit: 3 } });
+      });
+
+      it("moving a plan OFF billing is undoable in the other direction: weekly -> billing undone back to weekly", async () => {
+        // A plan saved as billing before the gate (or by a script) and changed
+        // to weekly can have THAT change undone: it restores "week", not "billing".
+        const before = tierRow(WEEKLY3);
+        const after = tierRow(BILLING3);
+        const r = asRow(updateMetadata(ALLOWANCE, before, after, FIELDS));
+        fake.membershipTier.findFirst.mockResolvedValue(after);
+        await applyUndo(tx, r);
+        expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { maxClassesPerWeek: 3, classLimitBasis: "week" } });
+      });
+
+      it("the refusal follows the release gate: with the basis available, the same restore goes through", async () => {
+        billingGate.available = true;
+        try {
+          const after = tierRow(WEEKLY3);
+          const r = asRow(updateMetadata(ALLOWANCE, tierRow(BILLING3), after, FIELDS));
+          fake.membershipTier.findFirst.mockResolvedValue(after);
+          await applyUndo(tx, r);
+          expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { maxClassesPerWeek: null, classLimitBasis: "billing" } });
+        } finally {
+          billingGate.available = false;
+        }
+      });
     });
   });
 

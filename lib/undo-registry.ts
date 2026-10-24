@@ -24,6 +24,11 @@ import { restorePackCreditsForAttendance } from "@/lib/checkin";
 import { CONFIRMED_BY } from "@/lib/guardianship";
 import { mintUpcomingSessions } from "@/lib/class-lifecycle";
 import { IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
+import { BILLING_BASIS_AVAILABLE } from "@/lib/class-allowance";
+
+/** What the owner reads when an undo would switch a plan to the billing-period basis while it ships dark. */
+export const BILLING_BASIS_UNDO_REFUSAL =
+  "This would put back counting classes per member's billing period, which is not available yet. Set the plan's allowance from the Memberships page.";
 
 export type TxLike = Prisma.TransactionClient;
 
@@ -415,6 +420,20 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
         (weeksSet ? weeks != null && anchor != null : weeks == null && anchor == null);
       if (!consistent) {
         throw new UndoStale("This plan's class allowance has changed since; set it again from the Memberships page.");
+      }
+      // Release gate (22 Oct 2026): the billing-period basis ships dark and
+      // both membership routes refuse to save it, so an undo must not put it
+      // back either. Refused only when this restore WRITES "billing" onto a
+      // plan that does not already count that way; every other restore (a
+      // name, a price, or any field of a plan whose stored basis is already
+      // "billing") goes through unchanged.
+      if (
+        !BILLING_BASIS_AVAILABLE &&
+        "classLimitBasis" in restore &&
+        restore.classLimitBasis === "billing" &&
+        current.classLimitBasis !== "billing"
+      ) {
+        throw new UndoStale(BILLING_BASIS_UNDO_REFUSAL);
       }
     },
   }),
