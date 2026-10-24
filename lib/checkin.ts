@@ -26,7 +26,9 @@
 // neither is open to everyone. Staff who want someone in change the
 // membership or the squad list through the audited routes instead.
 //
-// ALLOWANCE (T7, Sean note 5; owner decisions 17 and 20 Oct 2026): a plan
+// ALLOWANCE (T7, Sean note 5; agent default adopted 17 Oct 2026; not an owner
+// decision; the fixed reset basis, never a rolling window, confirmed by owner
+// instruction of 20 Oct 2026): a plan
 // with "N classes each week / each month / every M weeks" (the period model
 // in lib/class-allowance.ts: an explicit reset basis, never a rolling window)
 // is enforced as soon as the owner sets it. A session is judged against the
@@ -72,8 +74,8 @@
 // a plan, payment or hold change committed in between restarts the check-in
 // from the top (memberChangedSince / MemberChangedMidCheckin).
 //
-// Class packs and the allowance (owner decision: a pack redemption does not
-// count against the plan). Which pays is decided in ONE write transaction:
+// Class packs and the allowance (agent default adopted 17 Oct 2026; not an
+// owner decision: a pack redemption does not count against the plan). Which pays is decided in ONE write transaction:
 //  - a member the plan does not cover pays with a pack where they have one,
 //    at the member app and the kiosk alike: not counted, not gated;
 //  - a covered member is counted against the allowance; once it is used up
@@ -566,7 +568,8 @@ export function memberChangedSince(pre: GateMemberView, locked: MemberLockRow): 
  * the gates read, for memberChangedSince.
  *
  * Strength: FOR NO KEY UPDATE, the row-write lock an ordinary UPDATE takes.
- * The owner decision (17 Oct 2026) said "FOR UPDATE"; NO KEY UPDATE gives the
+ * The 17 Oct 2026 plan said "FOR UPDATE" (agent default adopted 17 Oct 2026;
+ * not an owner decision); NO KEY UPDATE gives the
  * same serialisation between check-ins (it conflicts with itself, with every
  * UPDATE and with DELETE), and differs in one way only: it does NOT conflict
  * with the FOR KEY SHARE that every foreign-key insert referencing this member
@@ -923,7 +926,8 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     if (args.requireCoverage && !covered) {
       // Not covered by the plan (member app, parent): a class pack pays, or
       // nothing does. A check-in a pack pays for is not counted against the
-      // plan allowance (owner decision), so it is not gated.
+      // plan allowance (agent default adopted 17 Oct 2026; not an owner
+      // decision), so it is not gated.
       const result = await withTenantContext(tenantId, async (tx) => {
         // Capacity first — inside this transaction, before a credit is spent.
         // Refusing after the decrement would cost the member a class they
@@ -1005,7 +1009,8 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         if (allowance.kind === "member_not_found" || allowance.kind === "duplicate") return allowance;
         if (allowance.kind === "allowance_reached") {
           // A used-up allowance falls through to a usable pack on a refusing
-          // door (owner decision, 17 Oct 2026). An UNKNOWN billing period is
+          // door (agent default adopted 17 Oct 2026; not an owner decision;
+          // open as PK1). An UNKNOWN billing period is
           // not a used-up allowance: nothing is spent, the member is refused
           // (review round 3, M-4).
           if (!allowance.askable && !allowance.periodUnknown) pack = await claimPack(tx, tenantId, memberId);
