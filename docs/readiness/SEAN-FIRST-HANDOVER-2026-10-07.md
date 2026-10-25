@@ -29,7 +29,7 @@ authenticator, no recovery codes, 0 sign-in records, not locked, 0 credential ch
 | | |
 |---|---|
 | Role | Club owner (named, not an operator, not a shared desk account) |
-| Login email | `se***@totalbjj.co.uk` — the address Noe supplied (Noe holds it in full). **Provisional, unverified**: MatFlow has never proven Sean controls that mailbox. After the deploy the operator marks it provisional (§10 step 8); from then no reset code, sign-in link, invitation or alert is ever sent to it, and Google/sign-in links cannot be used with it. |
+| Login email | the owner's address — the address Noe supplied (Noe holds it in full). **Provisional, unverified**: MatFlow has never proven Sean controls that mailbox. After the deploy the operator marks it provisional (§10 step 8); from then no reset code, sign-in link, invitation or alert is ever sent to it, and Google/sign-in links cannot be used with it. |
 | Password | A temporary password was set by the operator on 5 Oct. It cannot be proven who holds a copy of it (4 Oct record, A9), so §10 replaces it with a fresh one after the provisional mark; only that one goes to Sean. Forced change before anything else; operator-issued temporary passwords expire after 72 h (legacy ones on 20 Oct 2026 23:59 UTC after the deploy). |
 | Authenticator | Not enrolled. Sean enrols his own; MatFlow never generated or kept his seed or codes. Mandatory at page and API level. |
 | Real email later | Settings → Account → Login email (current password + a fresh authenticator code) or operator-assisted (Danger Zone card, step-up + reason). Same account id, role, club, authenticator and history; old address stops working; every device signed out; the new address stays provisional until mailbox verification exists. Runbook: `docs/runbooks/OWNER-LOGIN-EMAIL-CHANGE.md`. Transition and rollback tested (§8). |
@@ -39,21 +39,21 @@ How his activation will read: because the operator created and reset the account
 a phone call (not by email): did you choose your own password and scan the QR code on your own phone? Record who
 confirmed, how and when.
 
-## 4. Data (production, imported N–4 Oct; reconciled)
+## 4. Data (production, imported 3–4 Oct; reconciled)
 
 - Source: `<TeamUp export file>.csv`, SHA-256 `<sha-256 held privately>`
-  (checksum re-verified 7 Oct). Controls reproduced exactly by an independent parser: N membership rows; 708 name/email
+  (checksum re-verified 7 Oct). Controls reproduced exactly by an independent parser: 1,082 membership rows; 708 name/email
   groups; 302 active rows across 298 groups (4 groups with two actives); 78 shared emails across 172 groups; 15 missing-email
-  rows across 5 groups; 3 exact duplicate excess rows (cancelled); N plan labels; statuses active 302 · hold 22 ·
+  rows across 5 groups; 3 exact duplicate excess rows (cancelled); 20 plan labels; statuses active 302 · hold 22 ·
   cancelled 505 · completed 163 · upgraded 60 · downgraded 30; 2 starts after the export (5 and 19 Oct).
 - As-of: Noe confirms the export is recent; TeamUp writes no export time. Recorded as **provisional 2 Oct 2026 12:27
   BST** (the file's save time, labelled as an estimate everywhere it is shown). Import time recorded separately.
-- Members import (job `htfc19`): 926 import rows → **N members** (N people + N guardian records), **N
-  refused** (children with no parent on file — named in the owner's exceptions CSV), **N membership-history rows** kept
-  whole. N tiers named exactly as the plan labels. Their **prices were entered by the operator from the 24 Sep catalogue and Sean has not confirmed them**; none is linked to Stripe and they charge nobody (members are billed by TeamUp).
+- Members import (job `htfc19`): 926 import rows → **922 members** (703 people + 219 guardian records), **4
+  refused** (children with no parent on file — named in the owner's exceptions CSV), **1,082 membership-history rows** kept
+  whole. 16 tiers named exactly as the plan labels. Their **prices were entered by the operator from the 24 Sep catalogue and Sean has not confirmed them**; none is linked to Stripe and they charge nobody (members are billed by TeamUp).
 - Families: **307 suggested guardian links awaiting Sean's review** (shared email / emergency contact). Suggested links give
   the parent no access until a club admin confirms them.
-- Attendance (separate TeamUp export, N rows): N visits imported; independent reconciliation **7/7** on
+- Attendance (separate TeamUp export, 15,273 rows): 13,592 visits imported; independent reconciliation **7/7** on
   production.
 - Billing: all 922 billed by TeamUp; 0 payments, 0 Stripe ids, 0 due dates, nobody shown as owing. MatFlow charges no one.
 
@@ -85,8 +85,8 @@ tiers, classes (create/edit), registers and check-in, attendance history, report
 staff management, the import exceptions CSV, Settings.
 
 Not in the source and therefore empty: **the class timetable** (the attendance import created inactive historical classes
-only — Sean sets up the live timetable under Timetable), **signed waivers** (members re-sign in MatFlow), **confirming the N tier prices**
-(entered by the operator from the 24 Sep catalogue; nothing is charged either way), **the N refused children** (Sean names the parents; staff add them).
+only — Sean sets up the live timetable under Timetable), **signed waivers** (members re-sign in MatFlow), **confirming the 16 tier prices**
+(entered by the operator from the 24 Sep catalogue; nothing is charged either way), **the 4 refused children** (Sean names the parents; staff add them).
 
 While email is off: no invitations, password-reset emails, sign-in links, receipts or owner alerts (chargeback, Stripe
 disconnected, payment failed) are sent — the dashboard is the only signal. Invite links can still be copied and handed
@@ -160,7 +160,7 @@ sets his own. Lost authenticator: operator *Reset owner 2FA* → recovery codes 
 ## 12. Message Noe can send Sean (no password in it)
 
 > Hi Sean — your MatFlow account for Total BJJ is ready.
-> Go to https://matflow.studio/login?club=totalbjj and sign in with **se***@totalbjj.co.uk** (I'll send the full address
+> Go to https://matflow.studio/login?club=totalbjj and sign in with **the address Noe gave you** (I'll send the full address
 > and your temporary password separately).
 > You'll be asked to choose your own password first, then to set up an authenticator app (Google Authenticator, Microsoft
 > Authenticator or 1Password) by scanning a QR code with your phone. Please do both in one go.
@@ -169,13 +169,13 @@ sets his own. Lost authenticator: operator *Reset owner 2FA* → recovery codes 
 > reset your access.
 > Your members, their plans and history, and your attendance history are already in. The class timetable isn't — you can
 > set it up under Timetable — and there are about 300 suggested parent–child links waiting for you under Members to
-> confirm or reject. Please also check the prices on your N membership plans (Memberships, in the left-hand menu) — I entered them from
+> confirm or reject. Please also check the prices on your 16 membership plans (Memberships, in the left-hand menu) — I entered them from
 > your price list; nothing is charged through MatFlow either way.
 
 ## 13. Update — 9 Oct 2026 (supersedes §1, §3 and §10 where they differ)
 
 **Sean has signed in and activated himself on production (8 Oct).** Read-only check of owner
-`cmucpxcl70001uctgd60sfqec`: own password set (no forced change), authenticator enrolled, 8 recovery codes,
+`<owner user id>`: own password set (no forced change), authenticator enrolled, 8 recovery codes,
 sessionVersion 6, not locked. The script reports "ACTIVATED AFTER OPERATOR RESET — confirm with the owner"; it becomes
 ACTIVATED after Noe's phone confirmation (§3). Production still runs `e8afb6a`, which records no sign-in rows.
 
@@ -183,7 +183,7 @@ ACTIVATED after Noe's phone confirmation (§3). Production still runs `e8afb6a`,
 replaced by the login-email change below.
 
 **Real login email.** Noe supplied Sean's real address (kept out of this file). It is already held, in Total BJJ, by
-Sean's own imported member record (same full name; cancelled; no login of its own; N attendance; N membership-history
+Sean's own imported member record (same full name; cancelled; no login of its own; 0 attendance; 4 membership-history
 rows). A staff login may not share an address with a member of the same club, so the operator change answers 409 —
 correctly. Accounts are never merged to resolve this. Options for Noe: (a) **recommended** — use a "+" variant of the
 same Gmail address for the owner login (same mailbox, no collision, nothing else changes); (b) clear the email on the
