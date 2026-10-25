@@ -242,7 +242,7 @@ export function ReviewList({ jobId, count }: { jobId: string; count: number }) {
                   {c.member.href ? (
                     <a className="font-semibold text-tx-1 underline" href={c.member.href}>{c.member.name}</a>
                   ) : (
-                    <strong className="text-tx-1">{c.name} (since deleted)</strong>
+                    <strong className="text-tx-1">{c.name}</strong>
                   )}
                   <ul className="mt-0.5 space-y-0.5">
                     {c.fields.map((f) => (
