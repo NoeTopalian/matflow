@@ -227,9 +227,10 @@ export type PerformCheckinArgs = {
    * D6: the session as the caller already read it IN THIS REQUEST with
    * `loadCheckinInstance` (the card scanner reads it once for a stack of
    * cards). Only its stable facts are relied on; the one gate input on it
-   * that can change — whether the session was cancelled — is re-read under
-   * the Class lock, so reusing it is never staler than the engine's own
-   * pre-transaction read was.
+   * that can change — whether the session was cancelled — is re-read in the
+   * Class-lock statement, so reusing it is never staler than the engine's own
+   * pre-transaction read was. That re-read is fresher, not serialised: the
+   * cancel route does not take the Class lock (review 25 Oct, L-3).
    */
   preloadedInstance?: CheckinInstance;
   /**
@@ -438,9 +439,11 @@ async function capacityState(
   memberId: string,
 ): Promise<{ cap: { taken: number; maxCapacity: number } | null; cancelled: boolean }> {
   // D6: the same statement also re-reads whether the session was cancelled,
-  // under the lock and at no extra round trip. The pre-transaction read (or a
-  // caller's preloaded one, `preloadedInstance`) can be older; a session
-  // cancelled since is refused here rather than admitted.
+  // at no extra round trip. The pre-transaction read (or a caller's preloaded
+  // one, `preloadedInstance`) can be older; a session cancelled before this
+  // statement is refused here rather than admitted. Not serialised: the cancel
+  // route does not take the Class lock, and the subquery reads the statement's
+  // snapshot, so a cancel committing just after it can still be admitted.
   const locked = await tx.$queryRaw<{ maxCapacity: number | null; instanceCancelled?: boolean | null }[]>`
     SELECT "maxCapacity",
            (SELECT i."isCancelled" FROM "ClassInstance" i WHERE i."id" = ${classInstanceId} AND i."classId" = "Class"."id") AS "instanceCancelled"
