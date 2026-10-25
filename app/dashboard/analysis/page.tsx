@@ -3,6 +3,8 @@ import AnalysisView from "@/components/dashboard/AnalysisView";
 import { requireRole } from "@/lib/authz";
 import { ACTIVE_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { monthWindows } from "@/lib/month-windows";
+import { clubMonthWindow } from "@/lib/club-month";
+import { loadJoinedInWindows } from "@/lib/membership-report";
 
 export const metadata = { title: "Analysis | MatFlow" };
 
@@ -19,8 +21,6 @@ export default async function AnalysisPage() {
 
   const [
     totalMembers,
-    newThisMonth,
-    newLastMonth,
     checkinsThisMonth,
     checkinsLastMonth,
     activeClasses,
@@ -35,8 +35,6 @@ export default async function AnalysisPage() {
       // Training members only (T1): guardian accounts are not members, so
       // they are neither "active members" nor "new this month".
       tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
-      tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth }, ...TRAINING_MEMBER } }),
-      tx.member.count({ where: { tenantId, joinedAt: { gte: startOfLastMonth, lt: startOfMonth }, ...TRAINING_MEMBER } }),
       tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: startOfMonth } } }),
       tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: startOfLastMonth, lt: startOfMonth } } }),
       tx.class.count({ where: { tenantId, isActive: true } }),
@@ -75,6 +73,27 @@ export default async function AnalysisPage() {
   // Lane 1 iter-1 P-04 fix: now a count number directly, not an array.
   const activeMembersThisMonth = activeMemberIdsThisMonth;
 
+  // Joined (new + rejoined) by the movement definition, in the club's months
+  // (review 25 Oct): Member.joinedAt defaults to the import time, so counting
+  // by it made every undated imported member a "new member" this month.
+  // Its own read, after the block above: one pooled connection at a time.
+  const [joinedThis, joinedLast] = await withTenantContext(
+    tenantId,
+    async (tx) => {
+      const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+      const cur = clubMonthWindow(now, tenant?.timezone, 0);
+      const prev = clubMonthWindow(now, tenant?.timezone, -1);
+      return loadJoinedInWindows(tx, tenantId, now, [
+        { start: new Date(cur.monthStart), at: now },
+        { start: new Date(prev.monthStart), at: new Date(new Date(prev.nextMonthStart).getTime() - 1) },
+      ]);
+    },
+    { maxWait: 10_000, timeout: 30_000 },
+  );
+  const newThisMonth = joinedThis.joined;
+  const newLastMonth = joinedLast.joined;
+  const joinedEstimated = joinedThis.basis === "estimated" || joinedThis.basis === "mixed" || joinedLast.basis === "estimated" || joinedLast.basis === "mixed";
+
   const monthlyTrend: { label: string; value: number }[] = [];
   for (let i = 5; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -104,6 +123,7 @@ export default async function AnalysisPage() {
     totalMembers,
     newThisMonth,
     newLastMonth,
+    joinedEstimated,
     checkinsThisMonth,
     checkinsLastMonth,
     activeClasses,

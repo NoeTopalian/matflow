@@ -89,12 +89,13 @@ describe("member population counts", () => {
   // keeps its tenantId.
   const SWITCHED: { file: string; minQueries: number }[] = [
     { file: "app/dashboard/settings/page.tsx", minQueries: 3 },
-    { file: "app/dashboard/analysis/page.tsx", minQueries: 4 },
+    // Review 25 Oct: Analysis and the AI report read Joined from the movement
+    // replay (loadJoinedInWindows, TRAINING_MEMBER inside), not two joinedAt counts.
+    { file: "app/dashboard/analysis/page.tsx", minQueries: 2 },
     { file: "app/api/revenue/summary/route.ts", minQueries: 2 },
     { file: "app/api/dashboard/stats/route.ts", minQueries: 3 },
-    // T2c: the AI monthly report's five people counts (total, active, new
-    // this period, new last period, cancelled).
-    { file: "lib/ai-causal-report.ts", minQueries: 5 },
+    // T2c: the AI monthly report's three people counts (total, active, cancelled).
+    { file: "lib/ai-causal-report.ts", minQueries: 3 },
   ];
   for (const { file, minQueries } of SWITCHED) {
     it(`${file}: every Member query carries a named population and an explicit tenantId`, () => {
@@ -128,7 +129,8 @@ describe("member population counts", () => {
     expect(src).toContain("tx.member.count({ where: { tenantId, ...TRAINING_MEMBER } })");
     expect(src).toContain("tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } })");
     expect(src).toContain("tx.member.count({ where: { tenantId, ...LEFT_MEMBER } })");
-    expect((src.match(/joinedAt: \{[^}]*\}, \.\.\.TRAINING_MEMBER/g) ?? []).length).toBe(2);
+    expect(src).not.toMatch(/joinedAt:/);
+    expect(src).toContain("loadJoinedInWindows(");
     expect(src).not.toMatch(/status: "(active|cancelled)"/);
   });
 
@@ -136,7 +138,9 @@ describe("member population counts", () => {
     const src = readFileSync("app/dashboard/analysis/page.tsx", "utf8");
     expect(src).not.toContain("endOfLastMonth");
     expect(src).not.toMatch(/lte:/);
-    expect((src.match(/gte: startOfLastMonth, lt: startOfMonth/g) ?? []).length).toBe(2);
+    // Check-ins last month; Joined last month ends 1 ms before the club's next month.
+    expect((src.match(/gte: startOfLastMonth, lt: startOfMonth/g) ?? []).length).toBe(1);
+    expect(src).toContain("new Date(new Date(prev.nextMonthStart).getTime() - 1)");
     expect(src).toContain("monthWindows(now)");
   });
 

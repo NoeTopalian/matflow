@@ -10,9 +10,10 @@
  */
 import { vi, describe, it, expect } from "vitest";
 
-type Row = { tenantId: string; status: string; accountType: string; joinedAt: Date };
+type Row = { id: string; tenantId: string; status: string; accountType: string; joinedAt: Date; cancelledAt?: Date | null };
+type Ev = { id: string; memberId: string; fromStatus: string | null; toStatus: string; reason: string; sourceAction: string | null; occurredAt: Date; createdAt: Date };
 
-const { state } = vi.hoisted(() => ({ state: { members: [] as Row[] } }));
+const { state } = vi.hoisted(() => ({ state: { members: [] as Row[], events: [] as Ev[] } }));
 
 type Cond = string | { not?: string; in?: string[]; gte?: Date; lte?: Date; lt?: Date };
 
@@ -35,7 +36,15 @@ vi.mock("@/lib/prisma-tenant", () => ({
     fn({
       member: {
         count: async ({ where }: { where: Record<string, Cond> }) => state.members.filter((m) => matches(m, where)).length,
+        // Joined is read through the movement replay (lib/membership-report loadJoinedInWindows).
+        findMany: async ({ where }: { where: Record<string, Cond> }) =>
+          state.members.filter((m) => matches(m, where)).map((m) => ({ id: m.id, status: m.status, joinedAt: m.joinedAt, cancelledAt: m.cancelledAt ?? null })),
       },
+      tenant: { findUnique: async () => ({ timezone: "Europe/London" }) },
+      memberStatusEvent: {
+        findMany: async () => state.events.filter((e) => state.members.some((m) => m.id === e.memberId && m.tenantId === T && m.accountType !== "parent")),
+      },
+      importedMembership: { findMany: async () => [] },
       attendanceRecord: { count: async () => 0 },
       class: { count: async () => 2 },
     }),
@@ -50,7 +59,8 @@ const periodEnd = new Date("2026-09-30T23:59:59Z");
 const inPeriod = new Date("2026-09-15T12:00:00Z");
 const longAgo = new Date("2025-01-10T12:00:00Z");
 
-const member = (over: Partial<Row>): Row => ({ tenantId: T, status: "active", accountType: "adult", joinedAt: longAgo, ...over });
+let seq = 0;
+const member = (over: Partial<Row>): Row => ({ id: `m${++seq}`, tenantId: T, status: "active", accountType: "adult", joinedAt: longAgo, ...over });
 
 describe("AI monthly report — metric snapshot population", () => {
   it("3 active training members and 2 active guardian accounts → 3 active, guardians in no total or new count", async () => {
@@ -95,6 +105,19 @@ describe("AI monthly report — metric snapshot population", () => {
     expect(report.metricSnapshot.newPrevPeriod).toBe(1);
     expect(report.metricSnapshot.newThisPeriod).toBe(0);
     expect(report.metricSnapshot.newDelta).toBe(-1);
+  });
+});
+
+describe("AI monthly report — imports are never joins (review 25 Oct)", () => {
+  it("a member the import created this period, with the import time as join date, is not a join", async () => {
+    const imported = member({ joinedAt: inPeriod });
+    state.members = [member({ joinedAt: inPeriod }), imported];
+    state.events = [
+      { id: "e1", memberId: imported.id, fromStatus: null, toStatus: "active", reason: "import", sourceAction: "import_create", occurredAt: inPeriod, createdAt: inPeriod },
+    ];
+    const report = await generateMonthlyReport({ tenantId: T, tenantName: "Total BJJ", periodStart, periodEnd });
+    expect(report.metricSnapshot.newThisPeriod).toBe(1);
+    state.events = [];
   });
 });
 

@@ -32,8 +32,11 @@ const STATUS_COLORS: Record<string, string> = { active: "#67BA90", taster: "#C9F
 
 interface Metrics {
   totalMembers: number;
+  /** Joined (new + rejoined) by the movement definition, this club month and last. */
   newThisMonth: number;
   newLastMonth: number;
+  /** Either month's joined figure is (partly) reconstructed rather than recorded. */
+  joinedEstimated?: boolean;
   checkinsThisMonth: number;
   checkinsLastMonth: number;
   activeClasses: number;
@@ -107,10 +110,9 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
   lines.push("");
   lines.push("## Member Growth");
   lines.push(
-    // By join date (Member.joinedAt), NOT the Reports movement definition:
-    // rejoins are not counted and an imported member counts on their join
-    // date, so the words say so rather than borrowing "joined" from Reports.
-    `**${metrics.newThisMonth} new members by join date** this month, compared to ${metrics.newLastMonth} last month ` +
+    // The Reports "Joined" figure (new + rejoined, lib/membership-movement):
+    // an import is never a join (review 25 Oct; it used to count by joinedAt).
+    `**${metrics.newThisMonth} joined** (new + rejoined) this month${metrics.joinedEstimated ? " (partly estimated)" : ""}, compared to ${metrics.newLastMonth} last month ` +
     `(${growthDir === "up" ? `+${growthDiff} ↑` : `-${growthDiff} ↓`}). ` +
     (metrics.newThisMonth > 0
       ? `You reported that approximately ${referrals} of these came via referrals or word-of-mouth, which is a strong signal of community health.`
@@ -406,13 +408,13 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             // Same population and wording as Reports and Members (T1).
             label: POPULATION_COPY.active.label,
             value: metrics.totalMembers,
-            // The change pill is the change in NEW members (by join date, not
-            // the Reports movement definition), with its two counts.
-            sub: `${metrics.newThisMonth} new by join date this month · ${metrics.newLastMonth} last month`,
+            // The change pill is the change in members JOINED (the Reports
+            // movement definition: new + rejoined, imports never), with its two counts.
+            sub: `${metrics.newThisMonth} joined this month · ${metrics.newLastMonth} last month${metrics.joinedEstimated ? " · partly estimated" : ""}`,
             icon: Users,
             pct: memberDelta,
             counts: [metrics.newThisMonth, metrics.newLastMonth] as const,
-            pillLabel: "new members by join date, this month vs last",
+            pillLabel: "members joined, this month vs last",
           },
           {
             label: "Check-ins",

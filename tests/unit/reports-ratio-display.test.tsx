@@ -216,7 +216,7 @@ describe("AnalysisView — engagement shows its counts", () => {
     render(<AnalysisView metrics={metrics} primaryColor="#3b82f6" />);
     expect(screen.getByText("10%")).toBeTruthy();
     expect(screen.getByText("(31 of 312) active members checked in this month")).toBeTruthy();
-    expect(screen.getByText("7 new by join date this month · 4 last month")).toBeTruthy();
+    expect(screen.getByText("7 joined this month · 4 last month")).toBeTruthy();
     expect(screen.getByText("this month · 40 last month")).toBeTruthy();
     // Every change pill shows the two figures it compares, never a bare "+x%".
     const pills = screen.getAllByTestId("analysis-change-pill").map((p) => p.textContent);

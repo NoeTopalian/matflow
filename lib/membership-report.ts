@@ -176,6 +176,26 @@ export async function loadMonthMovement(
   return { movers, basis, caption: estimatedCaption(loaded) };
 }
 
+/**
+ * D11 "Joined" (new + rejoined) for each window, from one read and replay:
+ * the figure Analysis and the AI monthly report show, so neither counts an
+ * import (whose `joinedAt` defaults to the import time) as a join, and both
+ * agree with the Reports "Joined this month" tile for the same window.
+ */
+export async function loadJoinedInWindows(
+  tx: TxClient,
+  tenantId: string,
+  now: Date,
+  windows: readonly { start: Date; at: Date }[],
+): Promise<{ joined: number; basis: MembershipBasis; caption: string }[]> {
+  const loaded = await loadMembershipInput(tx, tenantId, now);
+  const caption = estimatedCaption(loaded);
+  return windows.map((w) => {
+    const { movers, basis } = moversAndBasisInWindow(loaded.input, w);
+    return { joined: movers.new.length + movers.rejoined.length, basis, caption };
+  });
+}
+
 export async function loadMembershipInput(tx: TxClient, tenantId: string, now: Date): Promise<MembershipInput> {
   if (!tenantId) throw new Error("loadMembershipReport requires a tenantId");
   // Sequential, not Promise.all: one interactive transaction is one connection.

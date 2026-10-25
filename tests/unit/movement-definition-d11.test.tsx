@@ -42,7 +42,7 @@ vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: vi.fn() }) }
 
 import { clubMonthWindow } from "@/lib/club-month";
 import { MEMBERSHIP_COPY, memberMovements, type MovementEvent } from "@/lib/membership-movement";
-import { joinDateHistory, loadMonthMovers } from "@/lib/membership-report";
+import { joinDateHistory, loadJoinedInWindows, loadMonthMovers } from "@/lib/membership-report";
 import { getReportsData } from "@/lib/reports";
 import { currentMonthMovement, joinedTileDetail, monthDrillHref, reportsCsv } from "@/components/dashboard/ReportsView";
 import MembersList, { inStatusView, type MemberRow } from "@/components/dashboard/MembersList";
@@ -138,6 +138,15 @@ describe("D11: one movement definition", () => {
     expect(csv).toContain("Health,Left this month,2,\"Cancelled, or finished a prepaid course\"");
     expect(csv).toContain("New 1 · Rejoined 1 · Left 2 (cancelled 1, completed course 1) · Tasters added 1");
     expect(csv).toContain("Brought over by an import without dated history 1");
+  });
+
+  it("Analysis and the AI report: Joined equals the Reports tile, and the imported member is not a join (review 25 Oct)", async () => {
+    members = CLUB;
+    events = EVENTS;
+    const [cur] = await loadJoinedInWindows(tx() as never, "club", NOW, [{ start: at(START), at: NOW }]);
+    // Ana (new) + Cara (rejoined); Ivy's import-stamped join date and Ben the taster are not joins.
+    expect(cur.joined).toBe(2);
+    expect(cur.basis).toBe("recorded");
   });
 
   it("Members drill-throughs list exactly the members the tile counted, for the month in month=", async () => {

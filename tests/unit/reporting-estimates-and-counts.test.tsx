@@ -285,21 +285,31 @@ describe("estimate labels: a past month's Members drill-through", () => {
   });
 });
 
-describe("screens that count by join date say so", () => {
-  it("the AI monthly report's prompt names the figure 'new members by join date' and asks for counts with every percentage", () => {
+describe("Analysis and the AI report show the Reports Joined figure (review 25 Oct: never Member.joinedAt)", () => {
+  it("the AI monthly report reads Joined from the movement replay and asks for counts with every percentage", () => {
     const src = readFileSync(path.join(process.cwd(), "lib/ai-causal-report.ts"), "utf8");
-    expect(src).toMatch(/- New members this period, by join date \(not the Reports "Joined" movement figure/);
+    expect(src).toMatch(/- Members joined this period \(new \+ rejoined, the Reports "Joined" figure; imports are never joins/);
+    expect(src).toMatch(/loadJoinedInWindows\(/);
+    expect(src).not.toMatch(/joinedAt:/);
     expect(src).toMatch(/Whenever you give a percentage, give the two figures behind it as well/);
   });
 
-  it("the Analysis monthly report says 'new members by join date', never 'joined'", async () => {
+  it("the Analysis page counts Joined by movement in the club's months, and its report says so", async () => {
+    const page = readFileSync(path.join(process.cwd(), "app/dashboard/analysis/page.tsx"), "utf8");
+    expect(page).toMatch(/loadJoinedInWindows\(/);
+    expect(page).toMatch(/clubMonthWindow\(now, tenant\?\.timezone/);
+    expect(page).not.toMatch(/joinedAt:/);
     const { buildReport } = await import("@/components/dashboard/AnalysisView");
     const text = buildReport(
       { totalMembers: 20, newThisMonth: 3, newLastMonth: 2, checkinsThisMonth: 50, checkinsLastMonth: 40, activeClasses: 4, activeMembersThisMonth: 10, monthLabel: "October 2026", gymName: "Test club" },
       [],
     );
-    expect(text).toContain("**3 new members by join date** this month, compared to 2 last month");
-    expect(text).not.toMatch(/new members\*\* joined/);
+    expect(text).toContain("**3 joined** (new + rejoined) this month, compared to 2 last month");
+    const estimated = buildReport(
+      { totalMembers: 20, newThisMonth: 3, newLastMonth: 2, joinedEstimated: true, checkinsThisMonth: 50, checkinsLastMonth: 40, activeClasses: 4, activeMembersThisMonth: 10, monthLabel: "October 2026", gymName: "Test club" },
+      [],
+    );
+    expect(estimated).toContain("**3 joined** (new + rejoined) this month (partly estimated)");
   });
 
   it("the club month window used above is the club's (sanity)", () => {

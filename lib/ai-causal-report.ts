@@ -12,6 +12,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { ACTIVE_MEMBER, LEFT_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
+import { loadJoinedInWindows } from "@/lib/membership-report";
 
 const MODEL = "claude-haiku-4-5-20251001";
 const MAX_OUTPUT_TOKENS = 1200;
@@ -57,8 +58,6 @@ async function gatherMetrics(input: ReportInput): Promise<Record<string, number>
   const [
     totalMembers,
     activeMembers,
-    newThisPeriod,
-    newPrevPeriod,
     cancelledMembers,
     checkInsThisPeriod,
     checkInsPrevPeriod,
@@ -71,8 +70,6 @@ async function gatherMetrics(input: ReportInput): Promise<Record<string, number>
       // from lib/member-population.ts, the same ones Reports uses.
       tx.member.count({ where: { tenantId, ...TRAINING_MEMBER } }),
       tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
-      tx.member.count({ where: { tenantId, joinedAt: { gte: periodStart, lte: periodEnd }, ...TRAINING_MEMBER } }),
-      tx.member.count({ where: { tenantId, joinedAt: { gte: prevStart, lt: periodStart }, ...TRAINING_MEMBER } }),
       tx.member.count({ where: { tenantId, ...LEFT_MEMBER } }),
       tx.attendanceRecord.count({
         where: { tenantId, checkInTime: { gte: periodStart, lte: periodEnd } },
@@ -83,6 +80,22 @@ async function gatherMetrics(input: ReportInput): Promise<Record<string, number>
       tx.class.count({ where: { tenantId, isActive: true } }),
     ]),
   );
+
+  // Joined (new + rejoined) by the movement definition, the Reports figure:
+  // counting by Member.joinedAt made every undated imported member "new"
+  // (it defaults to the import time; review 25 Oct). Its own read.
+  const [joinedThis, joinedPrev] = await withTenantContext(
+    tenantId,
+    (tx) => loadJoinedInWindows(tx, tenantId, new Date(), [
+      { start: periodStart, at: periodEnd },
+      { start: prevStart, at: new Date(periodStart.getTime() - 1) },
+    ]),
+    { maxWait: 10_000, timeout: 30_000 },
+  );
+  const newThisPeriod = joinedThis.joined;
+  const newPrevPeriod = joinedPrev.joined;
+  const estimated = (b: string) => b === "estimated" || b === "mixed";
+  const newEstimated = estimated(joinedThis.basis) || estimated(joinedPrev.basis) ? 1 : 0;
 
   const checkInsDelta = checkInsThisPeriod - checkInsPrevPeriod;
   const checkInsPctChange = checkInsPrevPeriod > 0
@@ -96,6 +109,7 @@ async function gatherMetrics(input: ReportInput): Promise<Record<string, number>
     newThisPeriod,
     newPrevPeriod,
     newDelta,
+    newEstimated,
     cancelledMembers,
     checkInsThisPeriod,
     checkInsPrevPeriod,
@@ -204,7 +218,7 @@ export async function generateMonthlyReport(input: ReportInput): Promise<Generat
 # Metrics this period
 - Total members: ${metrics.totalMembers}
 - Active members: ${metrics.activeMembers}
-- New members this period, by join date (not the Reports "Joined" movement figure: rejoins are not counted, and imported members count on their join date): ${metrics.newThisPeriod} (last period: ${metrics.newPrevPeriod}, delta: ${metrics.newDelta >= 0 ? "+" : ""}${metrics.newDelta})
+- Members joined this period (new + rejoined, the Reports "Joined" figure; imports are never joins${metrics.newEstimated ? "; partly estimated from imported history" : ""}): ${metrics.newThisPeriod} (last period: ${metrics.newPrevPeriod}, delta: ${metrics.newDelta >= 0 ? "+" : ""}${metrics.newDelta})
 - Cancelled members (cumulative, all time; not "left this month"): ${metrics.cancelledMembers}
 - Check-ins this period: ${metrics.checkInsThisPeriod} (last period: ${metrics.checkInsPrevPeriod}, ${metrics.checkInsPctChange >= 0 ? "+" : ""}${metrics.checkInsPctChange}%)
 - Active classes: ${metrics.activeClasses}
@@ -216,7 +230,7 @@ ${initiativeContext || "(none recorded)"}
 ${driveContext || "(no Drive files indexed)"}${driveNote}
 
 # Your task
-Whenever you give a percentage, give the two figures behind it as well, for example "+13% (45 vs 40)". Call the new-member figure "new members by join date", never "joined".
+Whenever you give a percentage, give the two figures behind it as well, for example "+13% (45 vs 40)". Call the joined figure "members joined (new + rejoined)", and say "partly estimated" whenever the metrics say so.
 
 Produce **exactly four sections** in this order, separated by markdown H2 headers, total ≤ 500 words:
 
