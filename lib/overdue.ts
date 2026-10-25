@@ -160,10 +160,14 @@ export function overduePayerWhere(now: Date) {
  * failed payment must not automatically be treated as an unpaid debt without
  * reconciliation):
  * - CONFIRMED DEBT ("marked_overdue"): the stored payment status is "overdue"
- *   (Stripe said so, or staff marked it) — the same signal overdueClause
- *   trusts for payers. This is what "Other accounts owing" counts.
+ *   and the latest settled payment is NOT a failed charge (staff marked it, or
+ *   it is overdue without a recorded failure). This is what "Other accounts
+ *   owing" counts.
  * - TO RECONCILE ("failed_charge"): the account's latest settled payment
- *   (succeeded or failed) is a failed charge and the status is NOT overdue. A
+ *   (succeeded or failed) is a failed charge, whatever the stored status. The
+ *   Stripe webhook writes "overdue" in the same transaction as the failed
+ *   payment (app/api/stripe/webhook, invoice.payment_failed), so that "overdue"
+ *   is the failure itself, not a reconciliation (review H1, 25 Oct 2026). A
  *   failed charge on a member who has left may have been settled another way
  *   (cash, bank transfer, a retry recorded elsewhere) or may never have been
  *   owed, so it is labelled "Last charge failed — check before treating as
@@ -214,13 +218,13 @@ export type FailedChargeDetail = { at: Date; amountPence: number | null; reason:
 export type OtherOwingEvidence =
   /** To reconcile: the latest charge failed and nothing confirms a debt. Not owing. */
   | ({ kind: "failed_charge" } & FailedChargeDetail)
-  /** Confirmed debt: marked overdue. `failed` is the latest failed charge, when there is one. */
+  /** Confirmed debt: marked overdue, latest charge not failed. `failed` is always null now (kept for callers). */
   | { kind: "marked_overdue"; failed: FailedChargeDetail | null };
 
 /**
  * What an inactive or cancelled account's payments say, or null when nothing
- * (see OTHER_OWING_STATUSES). A stored "overdue" is the confirmed debt and wins
- * over a failed charge; a failed latest charge alone is "to reconcile".
+ * (see OTHER_OWING_STATUSES). A failed latest charge is "to reconcile" even when
+ * the status reads "overdue"; a stored "overdue" without one is the confirmed debt.
  */
 export function otherOwingEvidence(m: {
   status: string;
@@ -233,8 +237,8 @@ export function otherOwingEvidence(m: {
     latest?.status === "failed"
       ? { at: latest.createdAt, amountPence: latest.amountPence ?? null, reason: latest.failureReason ?? null }
       : null;
-  if (m.paymentStatus === "overdue") return { kind: "marked_overdue", failed };
   if (failed) return { kind: "failed_charge", ...failed };
+  if (m.paymentStatus === "overdue") return { kind: "marked_overdue", failed: null };
   return null;
 }
 

@@ -97,14 +97,14 @@ export const PAYER_COPY = {
 export const OTHER_OWING_COPY = {
   label: "Other accounts owing",
   short: "Inactive or left, marked overdue, not chased",
-  includes: "Inactive and cancelled accounts marked overdue (by Stripe or by staff), including parents and guardians",
+  includes: "Inactive and cancelled accounts marked overdue whose latest charge did not fail, including parents and guardians",
   excludes: "Not chased, and not counted in Payers overdue or any member total",
 } as const;
 
 export const FAILED_TO_RECONCILE_COPY = {
   label: "Last charge failed — to reconcile",
   short: "Inactive or left · check before treating as owed",
-  includes: "Inactive and cancelled accounts whose latest charge failed and that are not marked overdue, including parents and guardians",
+  includes: "Inactive and cancelled accounts whose latest charge failed, even if marked overdue, including parents and guardians",
   excludes: "Not a confirmed debt: check the payment before treating it as owed. Not chased, and in no debt or member total",
 } as const;
 

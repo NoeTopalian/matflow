@@ -12,7 +12,7 @@
 //
 // Worked example:
 //   Ava   active, adult, cash plan, due five days ago        → Payers overdue
-//   Ian   INACTIVE, marked overdue, his last Stripe charge failed
+//   Ian   INACTIVE, marked overdue by staff, his last payment succeeded
 //                                                            → Other accounts owing (confirmed)
 //   Gail  active GUARDIAN on her own plan, due five days ago → Payers overdue (guardian)
 //   Cole  CANCELLED by Stripe after his last charge failed, not marked overdue
@@ -95,7 +95,7 @@ function member(over: { id: string; name: string } & Record<string, unknown>) {
 }
 
 const AVA = member({ id: "ava", name: "Ava Active", nextDueAt: ago(5) });
-const IAN = member({ id: "ian", name: "Ian Inactive", status: "inactive", paymentStatus: "overdue", stripeSubscriptionId: "sub_ian", payments: [paid(40), failed(3)] });
+const IAN = member({ id: "ian", name: "Ian Inactive", status: "inactive", paymentStatus: "overdue", payments: [failed(60), paid(40)] });
 const GAIL = member({ id: "gail", name: "Gail Guardian", accountType: "parent", nextDueAt: ago(5) });
 const COLE = member({ id: "cole", name: "Cole Cancelled", status: "cancelled", paymentStatus: "cancelled", cancelledAt: ago(30), payments: [paid(70), failed(35)] });
 const NED = member({ id: "ned", name: "Ned Stale", status: "inactive", nextDueAt: ago(60), payments: [paid(90)] });
@@ -140,24 +140,31 @@ afterEach(() => {
 
 describe("D9 + 24 Oct: confirmed debts and failed charges to reconcile, apart, beside the payers, never in a member total", () => {
   it("the rule: marked overdue is a confirmed debt; a failed latest charge alone is to reconcile; a stale date or a repaid failure is nothing", async () => {
-    expect(otherOwingEvidence(IAN)).toMatchObject({ kind: "marked_overdue", failed: { amountPence: 5000, reason: "Your card was declined." } });
+    expect(otherOwingEvidence(IAN)).toEqual({ kind: "marked_overdue", failed: null });
+    // Review H1 (25 Oct): the Stripe webhook writes "overdue" with the failed payment, so an
+    // "overdue" whose latest charge failed is that failure, to reconcile, never a confirmed debt.
+    expect(otherOwingEvidence({ status: "inactive", paymentStatus: "overdue", payments: [paid(40), failed(3)] })).toMatchObject({
+      kind: "failed_charge",
+      amountPence: 5000,
+      reason: "Your card was declined.",
+    });
     expect(otherOwingEvidence(COLE)).toMatchObject({ kind: "failed_charge", amountPence: 5000 });
     expect(otherOwingEvidence(NED)).toBeNull();
     expect(otherOwingEvidence(RITA)).toBeNull();
     // Marked overdue with no failed charge on record is still a confirmed debt; an active account is never either.
     expect(otherOwingEvidence({ status: "inactive", paymentStatus: "overdue", payments: [] })).toEqual({ kind: "marked_overdue", failed: null });
     expect(otherOwingEvidence({ status: "active", paymentStatus: "overdue", payments: [failed(1)] })).toBeNull();
-    // A failed charge is not turned into a debt by anything but a stored "overdue".
+    // A failed latest charge is never turned into a debt, whatever the stored status.
     expect(otherOwingEvidence({ status: "cancelled", paymentStatus: "cancelled", payments: [failed(1)] })?.kind).toBe("failed_charge");
 
     const rows = await loadOwing();
+    // Most recent failure first: the confirmed debt has no failed latest charge, so it sorts after.
     expect(rows.map((r) => [r.memberName, r.evidence])).toEqual([
-      ["Ian Inactive", "marked_overdue"],
       ["Cole Cancelled", "failed_charge"],
+      ["Ian Inactive", "marked_overdue"],
     ]);
-    // The confirmed debt keeps its failed charge's amount and date as context.
-    expect(rows[0]).toMatchObject({ status: "inactive", amountPence: 5000 });
-    expect(rows[0].failedAt).not.toBeNull();
+    expect(rows[0]).toMatchObject({ status: "cancelled", amountPence: 5000 });
+    expect(rows[1]).toMatchObject({ status: "inactive", amountPence: null, failedAt: null });
     expect(otherOwingTotals(rows)).toEqual({ count: 1, guardians: 0, toReconcile: 1, toReconcileGuardians: 0 });
     expect(otherAccountsOwingLine(1)).toBe("Other accounts owing: 1 (inactive or left, marked overdue, not chased)");
     expect(failedToReconcileLine(1)).toBe("Last charge failed — to reconcile: 1 (inactive or left, check before treating as owed)");
@@ -256,7 +263,8 @@ describe("D9 + 24 Oct: confirmed debts and failed charges to reconcile, apart, b
     const owingList = screen.getByTestId("outstanding-other-owing-list");
     expect(within(owingList).getByText("Ian Inactive")).toBeTruthy();
     expect(within(owingList).queryByText("Cole Cancelled")).toBeNull();
-    expect(owingList.textContent).toContain("Inactive · Marked overdue · last charge failed on");
+    expect(owingList.textContent).toContain("Inactive · Marked overdue");
+    expect(owingList.textContent).not.toContain("last charge failed");
     expect(within(owingList).queryByRole("button", { name: /Chase/ })).toBeNull();
 
     const reconcileList = screen.getByTestId("outstanding-to-reconcile-list");
