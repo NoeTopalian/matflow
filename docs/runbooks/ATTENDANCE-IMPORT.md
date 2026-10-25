@@ -1,7 +1,7 @@
 # Importing a club's attendance history
 
 Settings → Import → **Attendance history**. Owner only (authenticator code required). Built against the real Total BJJ
-TeamUp attendance export on 3 Oct 2026 (26 columns, 15,273 rows, one row per booking). Engine:
+TeamUp attendance export on 3 Oct 2026 (26 columns, one row per booking). Engine:
 `lib/attendance-import.ts`; parser and planner: `lib/importers/attendance.ts`; route: `app/api/admin/import/attendance`.
 
 Import the **members first** (Settings → Import → Members, Source TeamUp). People are matched by the TeamUp identity the

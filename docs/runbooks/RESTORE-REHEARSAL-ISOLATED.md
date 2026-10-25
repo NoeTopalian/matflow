@@ -54,7 +54,7 @@ Storage outside Postgres:
 
 ## 1. Authorisation gate **[AUTH]**
 
-The rehearsal copies **real personal data** (922 members, including juniors, attendance history) into a new
+The rehearsal copies **real personal data** (every member, including juniors, and attendance history) into a new
 branch. Before step 3, Noe records in §8:
 
 1. Approval to create **one** Neon branch from the production root branch, named `rr-<yyyymmdd>`, with a hard deletion deadline of **24 hours** after creation.
@@ -173,13 +173,14 @@ try {
     migrations: await one(`SELECT count(*)::int FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`),
     lastMigration: await one(`SELECT migration_name FROM "_prisma_migrations" ORDER BY finished_at DESC NULLS LAST LIMIT 1`),
   };
-  const want = { members: 922, attendance: 13592, importedBookings: 15273, importedMemberships: 1082, users: 1, migrations: 94 };
+  // The expected counts are production figures, held privately (25 Oct 2026): pass them in, never commit them.
+  const want = JSON.parse(process.env.REHEARSAL_EXPECTED ?? "{}");
   for (const [k, v] of Object.entries(got)) console.log((k in want ? (want[k] === v ? "PASS " : "FAIL ") : "INFO ") + k + " = " + v + (k in want ? " (expected " + want[k] + ")" : ""));
 } finally { await c.query("ROLLBACK").catch(() => {}); await c.end(); }
 ```
 
-Expected (production on 4 Oct 2026, if T_target is after the imports and nothing has changed since): members
-922, AttendanceRecord 13,592, ImportedBooking 15,273, ImportedMembership 1,082, users 1, migrations 94. If
+Expected: the same script's figures from production at T_target, held in Noe's private evidence folder (the
+4 Oct 2026 figures are there; they are customer totals and are not kept in this repository). If
 production changed after T_target, compare with the same script's figures from production at T_target instead.
 The operator gets those with the existing read-only scripts. Any difference must be explained before PASS.
 
@@ -190,8 +191,7 @@ hosts, and stays inside a READ ONLY transaction:
 set RECONCILE_DATABASE_URL=<branch pooled URL>
 node scripts/readiness/attendance-reconcile.mjs --csv <source attendance CSV> --tenant totalbjj --restore-branch --ledger %TEMP%\matflow-rr\private-ledger.json
 ```
-Expected: RECONCILED 7/7 with the figures recorded for production (15,273 bookings; 13,592 visits; 1,613
-sessions created). The source CSV is real personal data: read it from where the operator keeps it, and never copy it into the repo.
+Expected: RECONCILED 7/7 with the figures recorded for production (bookings, visits and sessions created; held privately). The source CSV is real personal data: read it from where the operator keeps it, and never copy it into the repo.
 
 Record **T2** when the checks finish.
 
