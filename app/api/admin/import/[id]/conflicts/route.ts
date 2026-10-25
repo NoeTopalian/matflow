@@ -33,6 +33,9 @@ export type ConflictView =
     }
   | { kind: "ambiguous"; name: string; rows: number[]; reason: string; members: ConflictMemberView[] };
 
+/** A person this import created with a plan name that matched no single MatFlow plan (25 Oct 2026: import and flag). */
+export type WithoutPlanView = { id: string; name: string; href: string; planLabel: string };
+
 function conflictsOf(manifest: unknown): ImportConflict[] {
   const list = manifest && typeof manifest === "object" ? (manifest as { conflicts?: unknown }).conflicts : undefined;
   return Array.isArray(list) ? (list as ImportConflict[]) : [];
@@ -53,7 +56,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       const members = ids.length
         ? await tx.member.findMany({ where: { tenantId, id: { in: ids } }, select: CANDIDATE_SELECT })
         : [];
-      return { conflicts, members: new Map(members.map((m) => [m.id, m])) };
+      // Read live: once staff set the plan on the member's page, they drop off.
+      const withoutPlan = await tx.member.findMany({
+        where: { tenantId, importJobId: job.id, membershipTierId: null, membershipType: { not: null } },
+        select: { id: true, name: true, membershipType: true },
+        orderBy: { name: "asc" },
+        take: 500,
+      });
+      return { conflicts, members: new Map(members.map((m) => [m.id, m])), withoutPlan };
     });
     if (!out) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -86,11 +96,19 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         }),
       };
     });
+    const withoutPlan: WithoutPlanView[] = out.withoutPlan.map((m) => ({
+      id: m.id,
+      name: m.name,
+      href: `/dashboard/members/${encodeURIComponent(m.id)}`,
+      planLabel: m.membershipType ?? "",
+    }));
     return NextResponse.json({
       conflicts: items,
+      withoutPlan,
       counts: {
         conflicts: items.filter((i) => i.kind === "conflict").length,
         ambiguous: items.filter((i) => i.kind === "ambiguous").length,
+        withoutPlan: withoutPlan.length,
       },
     });
   } catch (e) {

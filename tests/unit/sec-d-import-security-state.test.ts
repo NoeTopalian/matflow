@@ -67,7 +67,11 @@ describe("SEC-054 members-import commit never rewrites an existing member's secu
   });
   it("existing addresses are never overwritten: createMany with skipDuplicates, and every match is compared, not skipped blind", () => {
     expect(src).toMatch(/skipDuplicates:\s*true/);
-    expect(src).toMatch(/existingEmails\.has\(d\.email\)/);
-    expect(src).toMatch(/classify\(\{ draft: d/);
+    // Every match goes through the shared matcher (also used by the preview), which compares, never skips blind.
+    expect(src).toMatch(/await classifyAdults\(tx, tenantId, slice/);
+    expect(src).toMatch(/await classifyChildren\(tx, tenantId, slice/);
+    const matcher = readFileSync(path.resolve(__dirname, "../../lib/importers/import-match.ts"), "utf8");
+    expect(matcher).toMatch(/byEmail\.has\(d\.email\)/);
+    expect(matcher).toMatch(/classify\(\{ draft: d/);
   });
 });

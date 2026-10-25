@@ -19,7 +19,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { describeApiError } from "@/lib/api-field-errors";
 import { formatDate, formatDateTime } from "@/lib/date";
 import type { ImportHistoryItem } from "@/app/api/admin/import/route";
-import type { ConflictView } from "@/app/api/admin/import/[id]/conflicts/route";
+import type { ConflictView, WithoutPlanView } from "@/app/api/admin/import/[id]/conflicts/route";
 
 /** "1 member" / "2 members". */
 export function plural(n: number, one: string, many: string): string {
@@ -49,7 +49,7 @@ function statusInWords(job: ImportHistoryItem): string {
 
 /** People a job did not write: they differ from MatFlow or could not be matched with certainty (25 Oct 2026). */
 function toReviewCount(job: ImportHistoryItem): number {
-  return job.toReview ? job.toReview.conflicts + job.toReview.ambiguous : 0;
+  return (job.toReview ? job.toReview.conflicts + job.toReview.ambiguous : 0) + (job.withoutPlan ?? 0);
 }
 
 function countsInWords(job: ImportHistoryItem): string | null {
@@ -159,7 +159,7 @@ type ReviewState =
   | { phase: "closed" }
   | { phase: "loading" }
   | { phase: "error" }
-  | { phase: "ready"; items: ConflictView[] };
+  | { phase: "ready"; items: ConflictView[]; withoutPlan: WithoutPlanView[] };
 
 export const REVIEW_ERROR = "Couldn't load the people to review — try again";
 
@@ -176,9 +176,9 @@ export function ReviewList({ jobId, count }: { jobId: string; count: number }) {
     try {
       const res = await fetch(`/api/admin/import/${encodeURIComponent(jobId)}/conflicts`, { cache: "no-store" });
       if (!res.ok) { setState({ phase: "error" }); return; }
-      const data = (await res.json()) as { conflicts?: ConflictView[] };
+      const data = (await res.json()) as { conflicts?: ConflictView[]; withoutPlan?: WithoutPlanView[] };
       if (!Array.isArray(data.conflicts)) { setState({ phase: "error" }); return; }
-      setState({ phase: "ready", items: data.conflicts });
+      setState({ phase: "ready", items: data.conflicts, withoutPlan: Array.isArray(data.withoutPlan) ? data.withoutPlan : [] });
     } catch {
       setState({ phase: "error" });
     }
@@ -210,7 +210,20 @@ export function ReviewList({ jobId, count }: { jobId: string; count: number }) {
           <p className="mb-1">
             Nothing was changed for these people. MatFlow&rsquo;s values stand; open a person to change their record by hand if the file is right.
           </p>
-          {state.items.length === 0 && <p data-testid="import-review-empty">Nobody is left to review for this import.</p>}
+          {state.items.length === 0 && state.withoutPlan.length === 0 && <p data-testid="import-review-empty">Nobody is left to review for this import.</p>}
+          {state.withoutPlan.length > 0 && (
+            <div className="mb-2" data-testid="import-review-without-plan">
+              <p className="font-semibold text-tx-1">Imported without a plan ({state.withoutPlan.length.toLocaleString("en-GB")})</p>
+              <p>Their plan name matched no single MatFlow plan, so none was set. Plan-restricted classes may refuse them until you set one on their page.</p>
+              <ul className="mt-0.5 space-y-0.5">
+                {state.withoutPlan.map((m) => (
+                  <li key={m.id}>
+                    <a className="underline" href={m.href}>{m.name}</a> — file says <strong>{m.planLabel}</strong>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <ul className="space-y-2" data-testid="import-review-list">
             {state.items.map((c, i) =>
               c.kind === "ambiguous" ? (

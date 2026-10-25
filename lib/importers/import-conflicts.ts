@@ -247,14 +247,23 @@ export function classify(input: {
   const m = [...ids.values()][0];
   // A TeamUp key for a person with no email ("teamup:|<name>") is itself a
   // name-only key: matching it proves no more than the name does.
-  const keyMatched = !!input.byKey && input.byKey.id === m.id && !(d.sourceKey ?? "").includes(":|");
+  const nameOnlyKey = (d.sourceKey ?? "").startsWith("teamup:|");
+  const keyMatched = !!input.byKey && input.byKey.id === m.id && !nameOnlyKey;
   if (input.nameOnly && !keyMatched) {
     return { kind: "ambiguous", memberIds: [m.id], ...base, reason: "matched by name only (no email or date of birth to tell them apart)" };
   }
-  // Same login address, different name, and no record key to say it is them:
-  // most likely two people sharing an address, so nobody is guessed.
+  // Only a name-only record key points at this member — their details (date of
+  // birth) did not: probably a different person with the same name.
+  if (nameOnlyKey && input.byKey?.id === m.id && !input.byIdentity.some((x) => x.id === m.id)) {
+    return { kind: "ambiguous", memberIds: [m.id], ...base, reason: "only the name matches this member; the date of birth does not" };
+  }
+  // Same identity, different name, and no record key to say it is them: most
+  // likely two people sharing an address, so nobody is guessed.
   if (!keyMatched && squash(m.name) !== squash(d.name)) {
-    return { kind: "ambiguous", memberIds: [m.id], ...base, reason: "the same email belongs to a member with a different name" };
+    const reason = d.nonContactable || isSynthesisedEmail(d.email)
+      ? "matched a member with a different name"
+      : "the same email belongs to a member with a different name";
+    return { kind: "ambiguous", memberIds: [m.id], ...base, reason };
   }
   // Same identity, but the member already carries a DIFFERENT record key from an
   // earlier import: two source records claim one member.

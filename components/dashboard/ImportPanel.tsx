@@ -83,6 +83,12 @@ type PreviewSummary = {
   existingMatches: number;
   willImport: number;
   willSkip: number;
+  /** Shared with the commit (lib/importers/import-match, 25 Oct 2026); absent on a preview from before it. */
+  sameAsMatFlow?: number;
+  toReviewDiffers?: number;
+  toReviewUncertain?: number;
+  staffLoginRefused?: number;
+  childrenWithoutParent?: number;
   sampleDrafts: {
     name: string;
     email: string;
@@ -303,7 +309,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
         })
       : await ask({
           title: `Import ${plural(count, "member", "members")}?`,
-          body: `New people are added straight away; you can roll the import back afterwards for anyone nobody has touched yet. People already in MatFlow are never changed: an exact match is skipped, and anyone who differs, or could be more than one member, is listed in the import history for you to review. Nobody is emailed.${missingTiers > 0 ? ` ${missingTiers === 1 ? "1 live plan has" : `${missingTiers} live plans have`} no tier yet: those members are imported with the plan name only; set their tier on their page once it exists.` : ""}`,
+          body: `${preview?.sameAsMatFlow !== undefined ? `${plural(count, "new person", "new people")} will be added; ${(preview.sameAsMatFlow ?? 0).toLocaleString("en-GB")} already match MatFlow exactly and are skipped; ${plural((preview.toReviewDiffers ?? 0) + (preview.toReviewUncertain ?? 0), "person", "people")} will be listed for you to review (${(preview.toReviewDiffers ?? 0).toLocaleString("en-GB")} differ, ${(preview.toReviewUncertain ?? 0).toLocaleString("en-GB")} uncertain). ` : ""}New people are added straight away; you can roll the import back afterwards for anyone nobody has touched yet. People already in MatFlow are never changed: an exact match is skipped, and anyone who differs, or could be more than one member, is listed in the import history for you to review. Nobody is emailed.${missingTiers > 0 ? ` ${missingTiers === 1 ? "1 live plan has" : `${missingTiers} live plans have`} no tier yet: those members are imported with the plan name only; set their tier on their page once it exists.` : ""}`,
           confirmLabel: "Import",
         });
     if (!ok) return;
@@ -653,9 +659,21 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
                 <Stat label="Total rows" value={preview.totalRows} />
                 <Stat label="Will import" value={preview.willImport} tone="success" />
-                <Stat label="Existing (skip)" value={preview.existingMatches} />
+                {preview.sameAsMatFlow === undefined ? (
+                  <Stat label="Existing (skip)" value={preview.existingMatches} />
+                ) : (
+                  <Stat label="Same as MatFlow" value={preview.sameAsMatFlow} tone="muted" />
+                )}
                 <Stat label="Errors" value={preview.errorRows} tone={preview.errorRows > 0 ? "danger" : "muted"} />
               </div>
+              {preview.sameAsMatFlow !== undefined && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm" data-testid="preview-review-counts">
+                  <Stat label="To review — differs" value={preview.toReviewDiffers ?? 0} />
+                  <Stat label="To review — uncertain" value={preview.toReviewUncertain ?? 0} />
+                  <Stat label="Staff login (refused)" value={preview.staffLoginRefused ?? 0} tone="muted" />
+                  <Stat label="Child without parent" value={preview.childrenWithoutParent ?? 0} tone="muted" />
+                </div>
+              )}
 
               {preview.source && (
                 <div className="space-y-2" data-testid="import-reconciliation">

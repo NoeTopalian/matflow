@@ -6,6 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { classify, differences, stillDiffers, uploadValues, type CandidateMember } from "@/lib/importers/import-conflicts";
 import type { MemberDraft } from "@/lib/importers";
+import { tierMap } from "@/lib/importers/teamup-refresh";
 
 const JOB = "job_now";
 const draft = (over: Partial<MemberDraft> = {}): MemberDraft => ({
@@ -126,6 +127,18 @@ describe("review 25 Oct (5): nothing guessed, nothing hidden", () => {
     expect(classify({ draft: d, plan, byIdentity: [m], byKey: m, jobId: JOB, nameOnly: true })).toMatchObject({ kind: "ambiguous", reason: expect.stringMatching(/name only/) });
   });
 
+  it("only a name-only TeamUp key matches and the date of birth differs: ambiguous, not a field to fix (review 6, M-1)", () => {
+    const m = member({ email: "a@no-login.matflow.local", externalRef: "teamup:|jo bloggs", dateOfBirth: new Date("1990-01-01T00:00:00Z") });
+    const d = draft({ email: "b@no-login.matflow.local", nonContactable: true, sourceKey: "teamup:|jo bloggs", dateOfBirth: "2001-05-05" });
+    expect(classify({ draft: d, plan, byIdentity: [], byKey: m, jobId: JOB })).toMatchObject({ kind: "ambiguous", reason: expect.stringMatching(/date of birth does not/) });
+  });
+
+  it("a no-email person with a different name is not described as sharing an email (review 6, L-1)", () => {
+    const m = member({ name: "Joanne Bloggs", email: "a@no-login.matflow.local", externalRef: null, dateOfBirth: new Date("1990-01-01T00:00:00Z") });
+    const d = draft({ email: "b@no-login.matflow.local", nonContactable: true, sourceKey: undefined, dateOfBirth: "1990-01-01" });
+    expect(classify({ draft: d, plan, byIdentity: [m], byKey: null, jobId: JOB })).toMatchObject({ kind: "ambiguous", reason: "matched a member with a different name" });
+  });
+
   it("the same email on a member with a different name and no record key is ambiguous (two people sharing an address)", () => {
     const m = member({ name: "Sam Bloggs", externalRef: null });
     expect(classify({ draft: draft(), plan, byIdentity: [m], byKey: null, jobId: JOB }).kind).toBe("ambiguous");
@@ -149,5 +162,13 @@ describe("stillDiffers (what the review list shows against MatFlow now)", () => 
     expect(stillDiffers("status", "cancelled", "cancelled")).toBe(false);
     expect(stillDiffers("status", "cancelled", "active")).toBe(true);
     expect(stillDiffers("plan", "Beginners", "beginners")).toBe(false);
+  });
+});
+
+describe("tierMap: a plan name two plans share matches neither (25 Oct)", () => {
+  it("keeps unique names, drops names that differ only by case or outer spacing", () => {
+    const m = tierMap([{ id: "a", name: "Beginners" }, { id: "b", name: "Juniors" }, { id: "c", name: " JUNIORS " }]);
+    expect(m.get("beginners")?.id).toBe("a");
+    expect(m.has("juniors")).toBe(false);
   });
 });

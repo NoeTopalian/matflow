@@ -68,6 +68,8 @@ export type ImportHistoryItem = {
    * GET admin/import/[id]/conflicts. Null for a job from before the rule.
    */
   toReview: { conflicts: number; ambiguous: number } | null;
+  /** People this import created with no matching plan, at the time it ran (the review list reads them live). */
+  withoutPlan: number;
 };
 
 function num(v: unknown): number {
@@ -150,6 +152,7 @@ function project(job: Parameters<typeof publicJobView>[0]): ImportHistoryItem {
     rollback,
     refresh,
     rowErrors,
+    withoutPlan: created && typeof (created as { unmatchedPlan?: unknown }).unmatchedPlan === "number" ? (created as { unmatchedPlan: number }).unmatchedPlan : 0,
     toReview: Array.isArray(manifest.conflicts)
       ? {
           conflicts: (manifest.conflicts as { kind?: unknown }[]).filter((c) => c?.kind === "conflict").length,

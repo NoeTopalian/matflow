@@ -22,10 +22,13 @@ import { parseTeamUp } from "@/lib/importers/teamup";
 import {
   planRefresh,
   REFRESH_MEMBER_SELECT,
+  tierMap,
   type RefreshChange,
 } from "@/lib/importers/teamup-refresh";
 import { holdOffMigrations, isMigrationInProgress, MIGRATION_IN_PROGRESS_MESSAGE } from "@/lib/migration-lock";
-import { CANDIDATE_SELECT, classify, type CandidateMember, type ImportConflict } from "@/lib/importers/import-conflicts";
+import { type ImportConflict } from "@/lib/importers/import-conflicts";
+import { withoutConflictDetail } from "@/app/api/admin/import/upload/route";
+import { classifyAdults, classifyChildren, needsParent } from "@/lib/importers/import-match";
 
 /** A schema migration holds Prisma Migrate's lock (lib/migration-lock.ts): nothing was written; retry shortly. */
 function migrationInProgress() {
@@ -192,7 +195,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         catch (e) { console.warn("[import-commit] blob del failed", e); }
       }
       // No completion email, no invitations, no Stripe, and (25 Oct 2026) no member writes: a refresh lists differences.
-      return NextResponse.json({ ok: true, mode: "refresh", changed: out.changed, unchanged: out.unchanged, toReview: out.toReview, exceptions: out.exceptionCount, manifest: out.manifest });
+      return NextResponse.json({ ok: true, mode: "refresh", changed: out.changed, unchanged: out.unchanged, toReview: out.toReview, exceptions: out.exceptionCount, manifest: withoutConflictDetail(out.manifest) });
     }
 
     // TeamUp entitlement is read at the export snapshot date in the club zone
@@ -213,9 +216,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         select: { id: true, name: true, billingCycle: true },
       }),
     );
-    const tierByName = new Map<string, ResolvedMembershipTier>(
-      tiers.map((t) => [t.name.trim().toLowerCase(), t]),
-    );
+    // A name two plans share (case or spacing apart) matches neither (tierMap).
+    const tierByName: Map<string, ResolvedMembershipTier> = tierMap(tiers);
 
     let imported = 0;
     let skippedExisting = 0;
@@ -305,7 +307,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // parent-pays path and the parent-signed waiver all lost for a third of a
     // club's under-18s. A junior may stand alone (no CHECK forces a parent), but
     // one that carries a parentEmail is linked exactly like a kid.
-    const needsParent = (d: MemberDraft) => d.accountType === "kids" || (d.accountType === "junior" && !!d.parentEmail);
     const firstPass = drafts.filter((d) => !needsParent(d));
     const kidPass = drafts.filter(needsParent);
 
@@ -336,65 +337,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           const refused = slice.filter((d) => holdsStaffLogin(claims.get(normaliseEmail(d.email ?? ""))));
           const staffHeld = new Set(refused.map((d) => d.email));
           // 25 Oct 2026 (owner decision): an existing person is never skipped
-          // blind. Every match is compared (lib/importers/import-conflicts): an
-          // exact duplicate is skipped, a difference or an ambiguous match is
-          // listed for the owner and nothing is written to that member.
-          const existing = sliceEmails.length
-            ? await tx.member.findMany({
-                where: { tenantId, email: { in: sliceEmails } },
-                select: CANDIDATE_SELECT,
-              })
-            : [];
-          const existingEmails = new Set(existing.map((m) => m.email));
-          const byEmail = new Map(existing.map((m) => [m.email, m]));
-          const sliceKeys = slice.map((d) => d.sourceKey).filter((k): k is string => !!k);
-          const byKey = new Map(
-            (sliceKeys.length
-              ? await tx.member.findMany({ where: { tenantId, externalRef: { in: sliceKeys } }, select: CANDIDATE_SELECT })
-              : []
-            ).map((m) => [m.externalRef!, m]),
-          );
-          // A no-email adult has a fresh synthesised address every run; dedupe
-          // them by name + date of birth among the tenant's other
-          // non-contactable adults so a re-import cannot double them.
-          // Guardian drafts are excluded here: they carry no date of birth and a
-          // bare first name is not identity (real-data rehearsal F-R5-2, 2 Oct
-          // 2026 — two emergency contacts with the same first name collapsed
-          // into one and the second child was never imported). They are
-          // identified by unverifiedEmail below.
-          const nonContactable = slice.filter((d) => d.nonContactable && !d.unverified && !existingEmails.has(d.email));
-          const nameDobKey = (name: string, dob: string | null | undefined) => `${name.toLowerCase()}|${dob ?? ""}`;
-          const existingByNameDob = new Map<string, CandidateMember[]>();
-          if (nonContactable.length > 0) {
-            const rows = await tx.member.findMany({
-              where: { tenantId, email: { endsWith: "@no-login.matflow.local" }, name: { in: nonContactable.map((d) => d.name), mode: "insensitive" }, parentMemberId: null },
-              select: CANDIDATE_SELECT,
-            });
-            for (const r of rows) {
-              const k = nameDobKey(r.name, r.dateOfBirth?.toISOString().slice(0, 10));
-              existingByNameDob.set(k, [...(existingByNameDob.get(k) ?? []), r]);
-            }
-          }
-          // A guardian draft is identified by the payer address it keeps as
-          // unverifiedEmail; a re-run must not make a second one.
-          const unverified = slice.map((d) => d.unverifiedEmail).filter((e): e is string => !!e);
-          const existingUnverified = new Map<string, CandidateMember[]>();
-          if (unverified.length) {
-            // Guardian drafts only: a shared-address adult keeps the same unverifiedEmail and is not this person.
-            const rows = await tx.member.findMany({ where: { tenantId, accountType: "parent", unverifiedEmail: { in: unverified } }, select: { ...CANDIDATE_SELECT, unverifiedEmail: true } });
-            for (const r of rows) existingUnverified.set(r.unverifiedEmail!, [...(existingUnverified.get(r.unverifiedEmail!) ?? []), r]);
-          }
+          // blind. Every match is compared (lib/importers/import-match, shared
+          // with the preview): an exact duplicate is skipped, a difference or an
+          // uncertain match is listed for the owner and nothing is written to
+          // that member.
+          const outcomes = await classifyAdults(tx, tenantId, slice, { jobId, planOf, skipEmails: staffHeld });
           const fresh: MemberDraft[] = [];
-          for (const d of slice) {
-            if (staffHeld.has(d.email)) continue;
-            const byIdentity =
-              d.unverified && d.unverifiedEmail
-                ? existingUnverified.get(d.unverifiedEmail) ?? []
-                : d.nonContactable && !d.unverified && !existingEmails.has(d.email)
-                  ? existingByNameDob.get(nameDobKey(d.name, d.dateOfBirth)) ?? []
-                  : byEmail.has(d.email) ? [byEmail.get(d.email)!] : [];
-            const nameOnly = !!(d.nonContactable && !d.unverified && !d.dateOfBirth);
-            const c = classify({ draft: d, plan: planOf(d), byIdentity, byKey: d.sourceKey ? byKey.get(d.sourceKey) ?? null : null, jobId, nameOnly });
+          for (const [d, c] of outcomes) {
             if (c.kind === "new") fresh.push(d);
             else if (c.kind === "duplicate") duplicates += 1;
             else if (c.kind === "conflict" || c.kind === "ambiguous") conflicts.push(c);
@@ -470,43 +419,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // row that carries a real address is claimed like an adult's.
           const claims = await claimLoginIdentities(tx, tenantId, slice.map((d) => d.email).filter(Boolean));
           const refused = slice.filter((d) => holdsStaffLogin(claims.get(normaliseEmail(d.email ?? ""))));
-          const parentEmails = [...new Set(slice.map((d) => d.parentEmail).filter((e): e is string => !!e))];
-          const parents = parentEmails.length
-            ? await tx.member.findMany({
-                // An adult member by their login address, or a guardian draft by
-                // the payer address it keeps as unverifiedEmail (its login is
-                // synthesised and never matches a source email).
-                where: { tenantId, OR: [{ email: { in: parentEmails } }, { unverifiedEmail: { in: parentEmails } }] },
-                select: { id: true, email: true, unverifiedEmail: true, children: { select: CANDIDATE_SELECT } },
-              })
-            : [];
-          const kidKeys = slice.map((d) => d.sourceKey).filter((k): k is string => !!k);
-          const kidByKey = new Map(
-            (kidKeys.length
-              ? await tx.member.findMany({ where: { tenantId, externalRef: { in: kidKeys } }, select: CANDIDATE_SELECT })
-              : []
-            ).map((m) => [m.externalRef!, m]),
-          );
-          const parentByEmail = new Map<string, (typeof parents)[number]>();
-          for (const p of parents) {
-            if (p.unverifiedEmail && !parentByEmail.has(p.unverifiedEmail)) parentByEmail.set(p.unverifiedEmail, p);
-          }
-          // A real adult on the address wins over a draft (the parser only makes a
-          // draft when no adult row shares the address, but a later import may add one).
-          for (const p of parents) parentByEmail.set(p.email, p);
+          const outcomes = await classifyChildren(tx, tenantId, slice, { jobId, planOf, skipEmails: new Set(refused.map((d) => d.email)) });
           const fresh: Array<{ d: MemberDraft; parentId: string }> = [];
           for (const [idx, d] of slice.entries()) {
-            if (refused.includes(d)) continue;
-            const parent = d.parentEmail ? parentByEmail.get(d.parentEmail) : undefined;
-            if (!parent) {
+            const o = outcomes.get(d);
+            if (!o) continue; // refused (staff login)
+            if (!o.classification || !o.parentId) {
               commitErrors.push({ row: i + idx, email: d.parentEmail, error: `${d.name}: parent ${d.parentEmail ?? "(none)"} was not imported, so this child was not either.` });
               continue;
             }
-            const sameChild = parent.children.filter(
-              (c) => c.name.toLowerCase() === d.name.toLowerCase() && (c.dateOfBirth?.toISOString().slice(0, 10) ?? "") === (d.dateOfBirth ?? ""),
-            );
-            const c = classify({ draft: d, plan: planOf(d), byIdentity: sameChild, byKey: d.sourceKey ? kidByKey.get(d.sourceKey) ?? null : null, jobId });
-            if (c.kind === "new") { fresh.push({ d, parentId: parent.id }); continue; }
+            const c = o.classification;
+            if (c.kind === "new") { fresh.push({ d, parentId: o.parentId }); continue; }
             skippedExisting += 1;
             if (c.kind === "duplicate") duplicates += 1;
             else if (c.kind === "conflict" || c.kind === "ambiguous") conflicts.push(c);
@@ -777,12 +700,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ok: false,
           incomplete: true,
           error: `${systemFailedRows} ${systemFailedRows === 1 ? "person" : "people"} couldn't be saved because of a system error; ${imported} were imported. Run the import again — people already imported are recognised and not created twice.`,
-          imported, skipped: skippedExisting + errors.length, errors: allErrors.length, manifest,
+          imported, skipped: skippedExisting + errors.length, errors: allErrors.length, manifest: withoutConflictDetail(manifest),
         },
         { status: 500 },
       );
     }
-    return NextResponse.json({ ok: true, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, toReview: conflicts.length, manifest });
+    return NextResponse.json({ ok: true, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, toReview: conflicts.length, manifest: withoutConflictDetail(manifest) });
   } catch (e) {
     // WP-J: keep the detailed error in our own DB row + server logs but
     // return a generic message to the client (could leak Prisma constraint

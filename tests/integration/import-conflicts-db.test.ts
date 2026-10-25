@@ -36,6 +36,7 @@ import { teamupPersonKey } from "@/lib/importers/teamup";
 import { POST as commit } from "@/app/api/admin/import/[id]/commit/route";
 import { GET as conflictsGET } from "@/app/api/admin/import/[id]/conflicts/route";
 import { GET as jobGET } from "@/app/api/admin/import/[id]/route";
+import { POST as previewPOST } from "@/app/api/admin/import/[id]/preview/route";
 
 const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -239,6 +240,60 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     expect(jobText).not.toContain("07700 900999");
     expect(jobText).toContain('"conflicts":[{"kind":"conflict"}]');
   }, 60_000);
+
+  it("the preview's counts are what the commit then does with the same file (task 2, 25 Oct)", async () => {
+    // A mix: exact repeats, staff-edited people, an uncertain match and a new person.
+    const gil = { name: "Gil Hart", email: E("gil"), plan: BEG, dob: "1996-07-07" };
+    const csv = fileOf([...Object.values(PEOPLE), gil, { name: "Eve Sol", email: E("eve-now"), plan: BEG, dob: "1994-05-05" }]);
+    const url = `https://blob.test.local/${STAMP}/${++seq}.csv`;
+    FILES.set(url, csv);
+    const job = await withRlsBypass((tx) =>
+      tx.importJob.create({
+        data: { tenantId: A.tenantId, createdById: A.userId, source: "teamup", mode: "create", fileName: `f${seq}.csv`, fileBlobUrl: url, status: "pending", fileHash: `${STAMP}-${seq}`, sourceExportedAt: new Date(`2026-10-${String(10 + seq).padStart(2, "0")}T08:00:00Z`), sourceExportedAtProvenance: "owner_stated" },
+      }),
+    );
+    as(A);
+    const req = (path: string) => new Request(`https://test.local/api/admin/import/${job.id}/${path}`, { method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: "{}" });
+    const pv = await previewPOST(req("preview"), { params: Promise.resolve({ id: job.id }) });
+    const p = (await pv.json()) as { willImport: number; sameAsMatFlow: number; toReviewDiffers: number; toReviewUncertain: number };
+    expect(pv.status).toBe(200);
+    const cm = await commit(req("commit"), { params: Promise.resolve({ id: job.id }) });
+    const c = (await cm.json()) as { imported: number; manifest: { existing: { duplicates: number; conflicts: number; ambiguous: number } } };
+    expect(cm.status).toBe(200);
+    expect(p.willImport).toBe(c.imported);
+    expect(p.willImport).toBe(1); // Gil
+    expect(p.sameAsMatFlow).toBe(c.manifest.existing.duplicates);
+    expect(p.toReviewDiffers).toBe(c.manifest.existing.conflicts);
+    expect(p.toReviewUncertain).toBe(c.manifest.existing.ambiguous);
+    expect(p.toReviewUncertain).toBeGreaterThanOrEqual(1); // Eve
+  }, 90_000);
+
+  it("a clear new person whose plan matches no single MatFlow plan is imported without one and listed (import and flag, 25 Oct)", async () => {
+    // Two plans whose names differ only by case: a name that fits both matches neither.
+    await withRlsBypass(async (tx) => {
+      for (const name of ["Juniors 2026", "JUNIORS 2026"]) {
+        await tx.membershipTier.create({ data: { tenantId: A.tenantId, name, pricePence: 5000, currency: "GBP", billingCycle: "monthly", isKids: false, isActive: true } });
+      }
+    });
+    const hal = { name: "Hal Lowe", email: E("hal"), plan: "Juniors 2026", dob: "1997-08-08" };
+    const ivy = { name: "Ivy Moss", email: E("ivy"), plan: "Open Mat Only", dob: "1998-09-09" };
+    const { jobId, body } = await importFile(A, fileOf([hal, ivy]));
+    expect(body.imported).toBe(2);
+    for (const p of [hal, ivy]) {
+      const m = await memberBy(A.tenantId, p.email);
+      expect(m.membershipTierId, p.name).toBeNull();
+      expect(m.membershipType, p.name).toBe(p.plan);
+    }
+    const r = await review(A, jobId);
+    const listed = (r.body as unknown as { withoutPlan: { name: string; planLabel: string; href: string }[] }).withoutPlan;
+    expect(listed.map((x) => x.name).sort()).toEqual(["Hal Lowe", "Ivy Moss"]);
+    expect(listed.every((x) => x.href.startsWith("/dashboard/members/"))).toBe(true);
+    // Once staff set a plan, the person drops off the list (read live).
+    const beg = await withRlsBypass((tx) => tx.membershipTier.findFirstOrThrow({ where: { tenantId: A.tenantId, name: BEG } }));
+    await withRlsBypass((tx) => tx.member.updateMany({ where: { tenantId: A.tenantId, email: ivy.email }, data: { membershipTierId: beg.id, membershipType: BEG } }));
+    const again = (await review(A, jobId)).body as unknown as { withoutPlan: { name: string }[] };
+    expect(again.withoutPlan.map((x) => x.name)).toEqual(["Hal Lowe"]);
+  }, 90_000);
 
   it("the review list is owner-only and never shows another club's job", async () => {
     // A manager of the same club is refused.

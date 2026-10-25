@@ -70,7 +70,7 @@ function publicJobView(job: {
     // NOTE: fileBlobUrl deliberately omitted.
   };
 }
-export { publicJobView };
+export { publicJobView, withoutConflictDetail };
 
 /**
  * The people a job listed for review (owner decision 25 Oct 2026) are served
