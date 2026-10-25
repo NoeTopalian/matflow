@@ -93,7 +93,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "This exact file was already imported by another run. Roll that import back first.", priorJobId: prior.id }, { status: 409 });
     }
   }
-  const resumed = job.status === "running";
+  // A run that stopped part-way ("running" if it died, "failed" if it was stopped,
+  // e.g. by a schema migration) is resumed: what it saved is its own work.
+  const resumed = job.status === "running" || job.status === "failed";
   const jobId = job.id;
   const jobSource = job.source;
   const jobExportedAt = job.sourceExportedAt ?? null;
@@ -152,7 +154,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   // A resumed run finds the people it created before it stopped; those are its
   // own work, not "already in the club" (functional review F2, 30 Sep 2026).
-  const ownRowsBeforeRun = statusBeforeClaim === "running"
+  const ownRowsBeforeRun = resumed
     ? await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, importJobId: job.id } }))
     : 0;
 

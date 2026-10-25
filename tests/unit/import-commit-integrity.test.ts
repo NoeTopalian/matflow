@@ -212,6 +212,12 @@ describe("member import commit", () => {
     expect(db.jobs[0].status).toBe("complete");
     expect(db.members).toHaveLength(60);
     expect(new Set(db.members.map((m) => m.email)).size).toBe(60);
+    // The 25 saved before the stop are the run's own work, not "already in the club".
+    const body = (await second.json()) as { skipped: number; manifest: { reconciles: boolean } };
+    expect(body.skipped).toBe(0);
+    expect(body.manifest.reconciles).toBe(true);
+    expect(db.jobs[0].importedRows).toBe(60);
+    expect(db.jobs[0].skippedRows).toBe(0);
   });
 
   it("a commit that loses the claim to another tab writes nothing and answers 409 (gap 13)", async () => {
