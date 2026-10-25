@@ -21,6 +21,9 @@ const { PrismaClient } = require("@prisma/client");
 const { PrismaPg } = require("@prisma/adapter-pg");
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: DB_URL }) });
 const bypass = (fn) => prisma.$transaction(async (tx) => { await tx.$executeRaw`select set_config('app.bypass_rls','on',true)`; return fn(tx); }, { timeout: 60000, maxWait: 20000 });
+// Tenant has FORCE row-level security: an ownership check read without the bypass sees nothing under a role
+// without BYPASSRLS, and every refusal below would silently pass (review 25 Oct, L8).
+const tenantRead = (args) => bypass((tx) => tx.tenant.findUnique(args));
 const FAULT = process.env.MF_HARNESS_FAULT ?? "";
 const runId = RUN.runId;
 const prefix = `mfv-${runId}-`;
@@ -71,8 +74,8 @@ async function ownedTargets() {
   if (state.club && !open.some((f) => f.slug === state.club.slug)) {
     // A state file naming a fixture the ledger does not hold open: stale (restored from a copy, or left by a crash
     // after the ledger line) if nothing with that id or slug exists; otherwise someone else's — refuse.
-    const byId = state.club.tenantId ? await prisma.tenant.findUnique({ where: { id: state.club.tenantId }, select: { id: true } }) : null;
-    const bySlug = await prisma.tenant.findUnique({ where: { slug: state.club.slug }, select: { id: true } });
+    const byId = state.club.tenantId ? await tenantRead({ where: { id: state.club.tenantId }, select: { id: true } }) : null;
+    const bySlug = await tenantRead({ where: { slug: state.club.slug }, select: { id: true } });
     if (byId || bySlug) return { refused: `state names ${state.club.slug}, which this run's ledger does not hold open, and its tenant id or slug exists in the database — ownership uncertain` };
     if (open.length) return { refused: `state names ${state.club.slug} but this run's ledger holds ${open.map((f) => f.slug).join(", ")} open — state and ledger disagree` };
     return { targets: [], staleState: state.club.slug };
@@ -80,8 +83,8 @@ async function ownedTargets() {
   const targets = [];
   for (const f of open) {
     if (!f.slug.startsWith(prefix)) return { refused: `ledger entry ${f.slug} does not carry run id ${runId}` };
-    const bySlug = await prisma.tenant.findUnique({ where: { slug: f.slug }, select: { id: true, slug: true } });
-    const byId = f.tenantId ? await prisma.tenant.findUnique({ where: { id: f.tenantId }, select: { id: true, slug: true } }) : null;
+    const bySlug = await tenantRead({ where: { slug: f.slug }, select: { id: true, slug: true } });
+    const byId = f.tenantId ? await tenantRead({ where: { id: f.tenantId }, select: { id: true, slug: true } }) : null;
     if (byId && byId.slug !== f.slug) return { refused: `tenant ${f.tenantId} now has slug ${byId.slug}, not ${f.slug} — ownership uncertain` };
     if (f.tenantId && bySlug && bySlug.id !== f.tenantId) return { refused: `slug ${f.slug} now belongs to tenant ${bySlug.id}, not ${f.tenantId} — ownership uncertain` };
     if (state.club && state.club.slug === f.slug && f.tenantId && state.club.tenantId !== f.tenantId) return { refused: `state and ledger disagree on the tenant of ${f.slug}` };
@@ -141,7 +144,7 @@ try {
   } else if (cmd === "status") {
     const open = openFixtures(runId);
     const rows = [];
-    for (const f of open) rows.push({ slug: f.slug, tenantId: f.tenantId, inDatabase: !!(await prisma.tenant.findUnique({ where: { slug: f.slug }, select: { id: true } })) });
+    for (const f of open) rows.push({ slug: f.slug, tenantId: f.tenantId, inDatabase: !!(await tenantRead({ where: { slug: f.slug }, select: { id: true } })) });
     console.log(JSON.stringify({ runId, state: state.club?.slug ?? null, open: rows, ledgerEvents: ledgerRead().filter((e) => e.runId === runId).length }));
   } else {
     console.log("usage: node fixture.mjs create [--onboarding] | teardown | status");
