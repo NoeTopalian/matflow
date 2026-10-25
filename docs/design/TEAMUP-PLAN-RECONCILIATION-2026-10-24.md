@@ -1,9 +1,18 @@
 # TeamUp plan reconciliation (design, 24 Oct 2026)
 
-> **Superseded (25 Oct 2026).** Written before Noe's decisions of 24 Oct, 15:09–15:12 UK: imported data becomes
-> MatFlow's own; a later upload never overwrites an existing member and never blocks; differences are listed
-> ("TeamUp now says X; MatFlow has Y") with a per-member, audited Apply. Where §3 and §7 below let TeamUp's
-> values win (rules 1, 4 and 6), they are withdrawn. The rule to implement is in the release task record §5.
+> **Superseded (25 Oct 2026).** Withdrawn wherever it lets TeamUp's values win (§3 rules 1, 4 and 6; §7).
+> Noe's decisions, in his words:
+> - 24 Oct, 15:09–15:12 UK: "It just imports it once in matflow the coach should be able to change it if they
+>   want"; once imported, "all that information should be taken as Matflow information".
+> - 25 Oct, 06:09 UK: "A later upload must not silently overwrite existing MatFlow values. Add genuinely new
+>   records, skip exact duplicates, and show conflicting or ambiguous records for an authorised person to
+>   resolve. Where previous ownership or edit history is unknown, preserve the current value and flag the
+>   conflict." And: "Keep the existing role permissions. When I said 'coach,' I meant the person managing the
+>   club, not approval to expand the coach role."
+>
+> An earlier version of this note described a per-member "[Apply]" button as Noe's decision. That was the
+> agent's recommendation, not his instruction, and it is not what is built: conflicts are resolved through
+> the member's normal edit, with its existing permission check (branch `sean/c1-import`).
 
 Status: **proposal only — nothing here is implemented.** It replaces today's
 "the refresh overwrites the plan" with one rule that reconciles four facts.
