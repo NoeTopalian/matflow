@@ -575,14 +575,19 @@ export async function PATCH(req: Request, { params }: Params) {
         // for KEY SHARE on the member to re-insert one — each waiting for the
         // other. Now the rewrite waits on the Member row while holding no
         // roster row, so the deletion finishes first (or waits for us).
+        // A member deleted while we waited is skipped by the lock read; leave
+        // them out rather than fail the save on the roster's foreign key.
+        let squadIds: string[] = [];
         if (rosterIds.length > 0) {
-          await tx.$queryRaw`
+          const locked = (await tx.$queryRaw`
             SELECT "id" FROM "Member" WHERE "id" = ANY(${[...rosterIds].sort()}::text[]) AND "tenantId" = ${tenantId}
              ORDER BY "id" FOR KEY SHARE
-          `;
+          `) as { id: string }[];
+          const alive = new Set(locked.map((r) => r.id));
+          squadIds = rosterIds.filter((m) => alive.has(m));
         }
         await tx.classRoster.deleteMany({ where: { classId: id, tenantId } });
-        const rows = rosterIds.map((memberId) => ({
+        const rows = squadIds.map((memberId) => ({
           tenantId,
           classId: id,
           memberId,

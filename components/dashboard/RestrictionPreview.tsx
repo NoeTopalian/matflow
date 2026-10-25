@@ -36,7 +36,8 @@ export function RestrictionPreviewBody({ preview, editing }: { preview: Restrict
       {editing && preview.booked.length > 0 && (
         <p>
           <strong className="text-tx-1">Bookings are kept.</strong> These members stay booked; the doors turn them away when they
-          try to check in, and they see the class marked &ldquo;Not eligible&rdquo; with the reason.
+          try to check in, and they see the class marked &ldquo;Not eligible&rdquo; with the reason. Their bookings still count
+          towards the class&rsquo;s capacity, so a full class stays full for new bookings.
         </p>
       )}
 
@@ -52,7 +53,7 @@ export function RestrictionPreviewBody({ preview, editing }: { preview: Restrict
                 {" — "}
                 {reasonsText(b.reasons)}
                 {b.staffDoorsAdmit ? " (refused at the member app and kiosk; staff can still mark them in)" : ""}
-                {!b.newlyRefused ? " (already turned away today)" : ""}
+                {!b.newlyRefused ? " (already refused under the current rules)" : ""}
               </li>
             ))}
           </ul>

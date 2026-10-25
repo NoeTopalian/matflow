@@ -35,7 +35,10 @@ const mockPrisma = {
   user: { findMany: vi.fn() },
   member: { findMany: vi.fn() },
   // T6a: the PATCH write transaction opens with a Class row lock; the page reads tiers.
-  $queryRaw: vi.fn().mockResolvedValue([{ id: "c1" }]),
+  // The squad rewrite's Member KEY SHARE read returns the members still there (all of them here).
+  $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    strings.join("?").includes("FOR KEY SHARE") ? (values[0] as string[]).map((id) => ({ id })) : [{ id: "c1" }],
+  ),
   classMembershipTier: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn(), createMany: vi.fn() },
   membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
 };

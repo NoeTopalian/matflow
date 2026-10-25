@@ -30,7 +30,7 @@
  * This file works in WALL-CLOCK minutes, so on a DST changeover night it
  * differs from the door in one stated way: in the repeated hour a session
  * inside that hour reads live during both occurrences (the device clock shows
- * the same minutes twice), while the door times it by its first occurrence.
+ * the same minutes twice), while the door times it by its later occurrence.
  * The door (lib/checkin.ts) is the authority on admission; this is display.
  *
  * ## Lane packing

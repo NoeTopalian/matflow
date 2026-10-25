@@ -863,7 +863,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     // lib/class-time.ts sessionBounds: club wall clock on the session's date;
     // an end at or before the start is on the next club day (23:00–00:30 was
     // refused all evening, its end read as 00:30 BEFORE the start); the
-    // repeated DST hour is its first occurrence, the skipped one moves
+    // repeated DST hour is its later occurrence, the skipped one moves
     // forward. A session with no recorded end (imported history) closes its
     // window from the start: nothing is checked into it after the fact.
     const verdict = checkinWindowVerdict(instance, zone, { beforeMin, afterMin }, now);

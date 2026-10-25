@@ -300,4 +300,37 @@ describe.skipIf(!HAS_DB)("D1 lock-order contention — real database", () => {
     expect((res as PromiseFulfilledResult<{ status: number }>).value.status).toBe(200);
     expect(await withRlsBypass((tx) => tx.classRoster.findMany({ where: { classId: squad }, select: { memberId: true } }))).toEqual([{ memberId: lowId }]);
   }, 90_000);
+
+  it("G2 (C-2, review 25 Oct): the member is really deleted while the rewrite waits — the save succeeds without them", async () => {
+    const { squad, goneId } = await withRlsBypass(async (tx) => {
+      const goneId = (await tx.member.create({
+        data: { tenantId, name: "D1 gone", email: `d1-gone-${STAMP}@example.test`, waiverAccepted: true, paymentStatus: "paid" },
+      })).id;
+      const squad = (await tx.class.create({ data: { tenantId, name: "Squad G2", duration: 60 } })).id;
+      await tx.classRoster.createMany({ data: [goneId, highId].map((memberId) => ({ tenantId, classId: squad, memberId })) });
+      return { squad, goneId };
+    });
+    let goDelete!: () => void;
+    const toDelete = new Promise<void>((r) => { goDelete = r; });
+    let held!: () => void;
+    const isHeld = new Promise<void>((r) => { held = r; });
+    const deletion = withRlsBypass(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "Member" WHERE "id" = ${goneId} FOR UPDATE`;
+      held();
+      await toDelete;
+      await tx.member.delete({ where: { id: goneId } });
+    }, { timeout: 90_000 });
+    await isHeld;
+    const edit = classPATCH(new Request(`http://test/api/classes/${squad}`, {
+      method: "PATCH",
+      body: JSON.stringify({ roster: [{ memberId: goneId }, { memberId: highId }] }),
+    }), { params: Promise.resolve({ id: squad }) });
+    await waitForLockWaiters('%FROM "Member"%FOR KEY SHARE%', 1);
+    goDelete();
+    const [del, res] = await Promise.allSettled([deletion, edit]);
+    expect(del.status).toBe("fulfilled");
+    expect(res.status).toBe("fulfilled");
+    expect((res as PromiseFulfilledResult<{ status: number }>).value.status).toBe(200);
+    expect(await withRlsBypass((tx) => tx.classRoster.findMany({ where: { classId: squad }, select: { memberId: true } }))).toEqual([{ memberId: highId }]);
+  }, 90_000);
 });

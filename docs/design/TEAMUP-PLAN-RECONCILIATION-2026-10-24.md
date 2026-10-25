@@ -1,5 +1,10 @@
 # TeamUp plan reconciliation (design, 24 Oct 2026)
 
+> **Superseded (25 Oct 2026).** Written before Noe's decisions of 24 Oct, 15:09–15:12 UK: imported data becomes
+> MatFlow's own; a later upload never overwrites an existing member and never blocks; differences are listed
+> ("TeamUp now says X; MatFlow has Y") with a per-member, audited Apply. Where §3 and §7 below let TeamUp's
+> values win (rules 1, 4 and 6), they are withdrawn. The rule to implement is in the release task record §5.
+
 Status: **proposal only — nothing here is implemented.** It replaces today's
 "the refresh overwrites the plan" with one rule that reconciles four facts.
 No production data; examples are synthetic.

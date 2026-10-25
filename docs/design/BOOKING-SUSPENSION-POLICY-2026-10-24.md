@@ -25,7 +25,8 @@ at attendance. No production data.
 
 **P1. States.** A booking is `active` or `suspended`. Suspended = kept, shown,
 not counted. No other states; deletion stays only for the member's own cancel,
-staff removing the booking explicitly, and member deletion.
+member deletion (`lib/member-delete.ts`) and the club purge (`lib/tenant-purge.ts`). There is no staff route that
+removes a single booking today.
 
 **P2. What suspends.** A booking is suspended — in the same transaction as the
 change, recorded per trigger as today's `class.bookings.kept_ineligible` rows —
@@ -77,9 +78,11 @@ and needs its own decision.
 A `status` (and `suspendedAt`, `suspendedBy` trigger) on `ClassSubscription`;
 the booking count filters `status = active`; the D2 write paths set
 `suspended` instead of only recording; the member schedule and register read
-the status; a "Book again" action. One migration; the lock order is unchanged
-(the suspension is written under the Class lock the paths already take,
-`docs/design/LOCK-ORDER-2026-10-24.md`).
+the status; a "Book again" action. One migration. **Locks (corrected 25 Oct):** the class-edit paths already hold
+the Class lock, but demotion takes no Class lock and the member PATCH (plan change, cancellation) holds the Member
+row, so locking a Class row there would break rule 2 of `docs/design/LOCK-ORDER-2026-10-24.md` (never a Class row
+after a Member row). Those two paths would have to take the booked classes' Class rows `FOR UPDATE`, in id order,
+before the Member or rank write.
 
 ## 5. Decision for Noe
 
