@@ -101,7 +101,7 @@ export default function TeamUpHistory({ memberId }: { memberId: string }) {
           )}
           {data.standing.scheduled?.map((s) => (
             <p key={`${s.planLabel}-${s.startDate}`} className="text-xs mb-2 text-tx-2" data-testid="teamup-scheduled">
-              Starts later at TeamUp: <strong>{s.planLabel}</strong>{s.startDate ? ` from ${formatDate(s.startDate)}` : ""}. A status refresh after that date moves them onto it.
+              Starts later at TeamUp: <strong>{s.planLabel}</strong>{s.startDate ? ` from ${formatDate(s.startDate)}` : ""}. MatFlow does not move them automatically: change their plan here once it starts.
             </p>
           ))}
           {data.rows.length === 0 ? (

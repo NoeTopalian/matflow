@@ -18,7 +18,7 @@ export type BilledBy = (typeof BILLED_BY)[number];
 export const BILLING_STATUS_STALE_AFTER_DAYS = 8;
 
 export const BILLED_ELSEWHERE_REFUSAL =
-  "Billed by TeamUp — change this in TeamUp; MatFlow updates at the next status refresh.";
+  "Billed by TeamUp — change the billing in TeamUp. MatFlow is not updated automatically: a later TeamUp upload lists any difference for you to review.";
 
 export const HOLD_ACCESS_ONLY_NOTE =
   "This pauses access in MatFlow only. Pause the membership in TeamUp too, or TeamUp keeps collecting.";

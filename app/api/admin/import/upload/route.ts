@@ -184,7 +184,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "The export date must be a real date that is not in the future." }, { status: 400 });
     }
     // How that time is known: stated by the owner (the default when a time is
-    // given) or a provisional estimate to be confirmed by a status refresh.
+    // given) or a provisional estimate (shown as such on each member; a later upload does not change it).
     const provenanceRaw = String(formData.get("sourceExportedAtProvenance") ?? "").trim();
     if (provenanceRaw && !EXPORT_TIME_PROVENANCES.includes(provenanceRaw as ExportTimeProvenance)) {
       return NextResponse.json({ error: "Invalid export-time provenance." }, { status: 400 });

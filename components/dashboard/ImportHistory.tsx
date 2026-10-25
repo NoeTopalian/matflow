@@ -184,7 +184,18 @@ export function ReviewList({ jobId, count }: { jobId: string; count: number }) {
     }
   }, [jobId]);
 
-  const show = (v: string | null) => (v === null || v === "" ? "(none)" : v);
+  const DATE_FIELDS = new Set(["dateOfBirth", "cancelledAt", "joinedAt"]);
+  const WORDS: Record<string, string> = {
+    active: "active", inactive: "inactive", cancelled: "cancelled", taster: "taster",
+    paid: "paid", overdue: "overdue", paused: "on hold", pending: "no payment yet", free: "free",
+    adult: "adult", junior: "junior", kids: "child", parent: "parent or guardian",
+  };
+  const show = (field: string, v: string | null) => {
+    if (v === null || v === "") return "(none)";
+    if (DATE_FIELDS.has(field)) return formatDate(v);
+    if (field === "status" || field === "paymentStatus" || field === "accountType") return WORDS[v] ?? v;
+    return v;
+  };
   return (
     <div className="mt-2" data-testid="import-review">
       {state.phase === "closed" && (
@@ -197,8 +208,9 @@ export function ReviewList({ jobId, count }: { jobId: string; count: number }) {
       {state.phase === "ready" && (
         <div className="text-xs text-tx-2">
           <p className="mb-1">
-            Nothing was changed for these people. MatFlow&rsquo;s values stand; open a person to change anything by hand.
+            Nothing was changed for these people. MatFlow&rsquo;s values stand; open a person to change their record by hand if the file is right.
           </p>
+          {state.items.length === 0 && <p data-testid="import-review-empty">Nobody is left to review for this import.</p>}
           <ul className="space-y-2" data-testid="import-review-list">
             {state.items.map((c, i) =>
               c.kind === "ambiguous" ? (
@@ -222,7 +234,7 @@ export function ReviewList({ jobId, count }: { jobId: string; count: number }) {
                   <ul className="mt-0.5 space-y-0.5">
                     {c.fields.map((f) => (
                       <li key={f.field}>
-                        {f.label}: file says <strong>{show(f.upload)}</strong>; MatFlow now <strong>{show(f.now)}</strong>
+                        {f.label}: file says <strong>{show(f.field, f.upload)}</strong>; MatFlow now <strong>{show(f.field, f.now)}</strong>
                         {f.stillDiffers ? "" : " — matches now"}
                       </li>
                     ))}

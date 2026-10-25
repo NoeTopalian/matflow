@@ -380,7 +380,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           const unverified = slice.map((d) => d.unverifiedEmail).filter((e): e is string => !!e);
           const existingUnverified = new Map<string, CandidateMember[]>();
           if (unverified.length) {
-            const rows = await tx.member.findMany({ where: { tenantId, unverifiedEmail: { in: unverified } }, select: { ...CANDIDATE_SELECT, unverifiedEmail: true } });
+            // Guardian drafts only: a shared-address adult keeps the same unverifiedEmail and is not this person.
+            const rows = await tx.member.findMany({ where: { tenantId, accountType: "parent", unverifiedEmail: { in: unverified } }, select: { ...CANDIDATE_SELECT, unverifiedEmail: true } });
             for (const r of rows) existingUnverified.set(r.unverifiedEmail!, [...(existingUnverified.get(r.unverifiedEmail!) ?? []), r]);
           }
           const fresh: MemberDraft[] = [];
@@ -392,7 +393,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 : d.nonContactable && !d.unverified && !existingEmails.has(d.email)
                   ? existingByNameDob.get(nameDobKey(d.name, d.dateOfBirth)) ?? []
                   : byEmail.has(d.email) ? [byEmail.get(d.email)!] : [];
-            const c = classify({ draft: d, plan: planOf(d), byIdentity, byKey: d.sourceKey ? byKey.get(d.sourceKey) ?? null : null, jobId });
+            const nameOnly = !!(d.nonContactable && !d.unverified && !d.dateOfBirth);
+            const c = classify({ draft: d, plan: planOf(d), byIdentity, byKey: d.sourceKey ? byKey.get(d.sourceKey) ?? null : null, jobId, nameOnly });
             if (c.kind === "new") fresh.push(d);
             else if (c.kind === "duplicate") duplicates += 1;
             else if (c.kind === "conflict" || c.kind === "ambiguous") conflicts.push(c);
@@ -552,16 +554,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // above: it states what this job's rows actually are.
     skippedExisting = Math.max(0, skippedExisting - ownRowsBeforeRun);
     // teamup-2: every CSV record becomes one ImportedMembership row — attached
-    // to the member it belongs to (created now, created by a resumed run, or
-    // already in the club) or to no member (duplicate, deleted customer,
+    // to the member THIS job created (now, or on an interrupted earlier call)
+    // or to no member (already in the club, duplicate, deleted customer,
     // quarantined, refused). The unique (importJobId, sourceRow) key makes a
-    // resumed run idempotent here too.
+    // resumed run idempotent here too. A person already in the club is never
+    // given this file's history (owner decision 25 Oct 2026: a later upload
+    // writes nothing to an existing member; their history page would otherwise
+    // show the file's current plan as a second active TeamUp plan).
     if (ledgerRows && ledgerRows.length > 0) {
       const keys = [...new Set(ledgerRows.map((r) => r.sourceKey).filter((k): k is string => !!k))];
       const byKey = new Map<string, string>();
       for (let i = 0; i < keys.length; i += 500) {
         const found = await withTenantContext(tenantId, (tx) =>
-          tx.member.findMany({ where: { tenantId, externalRef: { in: keys.slice(i, i + 500) } }, select: { id: true, externalRef: true } }),
+          tx.member.findMany({ where: { tenantId, importJobId: job.id, externalRef: { in: keys.slice(i, i + 500) } }, select: { id: true, externalRef: true } }),
         );
         for (const m of found) if (m.externalRef) byKey.set(m.externalRef, m.id);
       }
@@ -698,8 +703,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           totalRows,
           processedRows: drafts.length,
           // The whole run's creations, including those an interrupted earlier
-          // call made (acceptance S9, 2 Oct 2026: a resumed run said "447
-          // imported" for 922 people). The response's `imported` stays this
+          // call made (acceptance S9, 2 Oct 2026: a resumed run reported only
+          // its own call's share of the people). The response's `imported` stays this
           // call's own count; the manifest carries both.
           importedRows: imported + ownRowsBeforeRun,
           skippedRows: skippedExisting,
@@ -855,8 +860,8 @@ async function commitRefresh({
   // `recorded` is a job from before this rule (its changes stay rollbackable).
   const written = recorded;
   const conflicts: ImportConflict[] = plan.matched
-    .filter((c) => c.fields.length > 0)
-    .map((c) => ({ kind: "conflict" as const, memberId: c.memberId, name: c.name, sourceKey: c.sourceKey, rows: [], fields: refreshConflictFields(c) }));
+    .map((c) => ({ kind: "conflict" as const, memberId: c.memberId, name: c.name, sourceKey: c.sourceKey, rows: [], fields: refreshConflictFields(c) }))
+    .filter((c) => c.fields.length > 0);
   const changed = 0;
   const unchanged = plan.matched.length - conflicts.length;
   const ex = plan.exceptions;
@@ -907,7 +912,10 @@ function refreshConflictFields(c: RefreshChange) {
   if (c.fields.includes("status")) out.push({ field: "status", upload: c.after.status, matflow: c.before.status });
   if (c.fields.includes("paymentStatus")) out.push({ field: "paymentStatus", upload: c.after.paymentStatus, matflow: c.before.paymentStatus });
   if (c.fields.includes("cancelledAt")) out.push({ field: "cancelledAt", upload: dayOf(c.after.cancelledAt), matflow: dayOf(c.before.cancelledAt) });
-  if (c.fields.includes("membershipType") || c.fields.includes("membershipTierId")) {
+  // A tier-only difference with the same plan name (imported before the tier
+  // existed) is not a difference a person can see; it is not listed.
+  const sameLabel = (c.after.membershipType ?? "").trim().toLowerCase() === (c.before.membershipType ?? "").trim().toLowerCase();
+  if ((c.fields.includes("membershipType") || c.fields.includes("membershipTierId")) && !sameLabel) {
     out.push({ field: "plan", upload: c.after.membershipType, matflow: c.before.membershipType });
   }
   return out;

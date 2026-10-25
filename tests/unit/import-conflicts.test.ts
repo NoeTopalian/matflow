@@ -31,6 +31,10 @@ const member = (over: Partial<CandidateMember> = {}): CandidateMember => ({
   status: "active",
   paymentStatus: "paid",
   cancelledAt: null,
+  joinedAt: null,
+  emergencyContactName: null,
+  emergencyContactPhone: null,
+  emergencyContactRelation: null,
   externalRef: "teamup:jo@example.test|jo bloggs",
   importJobId: "job_first",
   ...over,
@@ -106,6 +110,31 @@ describe("classify", () => {
   it("a synthesised no-login address is never compared as an email", () => {
     const m = member({ email: "abc@no-login.matflow.local" });
     expect(differences(uploadValues(draft({ email: "xyz@no-login.matflow.local", nonContactable: true }), plan), m).map((f) => f.field)).not.toContain("email");
+  });
+});
+
+describe("review 25 Oct (5): nothing guessed, nothing hidden", () => {
+  it("a no-email person with no date of birth matched by name alone is ambiguous, never a duplicate", () => {
+    const m = member({ email: "a@no-login.matflow.local", externalRef: null });
+    const d = draft({ email: "b@no-login.matflow.local", nonContactable: true, sourceKey: "teamup:|jo bloggs" });
+    expect(classify({ draft: d, plan, byIdentity: [m], byKey: null, jobId: JOB, nameOnly: true })).toMatchObject({ kind: "ambiguous", reason: expect.stringMatching(/name only/) });
+  });
+
+  it("the same email on a member with a different name and no record key is ambiguous (two people sharing an address)", () => {
+    const m = member({ name: "Sam Bloggs", externalRef: null });
+    expect(classify({ draft: draft(), plan, byIdentity: [m], byKey: null, jobId: JOB }).kind).toBe("ambiguous");
+  });
+
+  it("a changed emergency-contact phone or join date is a listed difference, not a duplicate", () => {
+    const m = member({ emergencyContactPhone: "07700 900111", joinedAt: new Date("2025-01-01T00:00:00Z") });
+    const c = classify({ draft: draft({ emergencyContactPhone: "07700900222", joinedAt: "2025-01-01" }), plan, byIdentity: [m], byKey: m, jobId: JOB });
+    expect(c.kind === "conflict" && c.fields).toEqual([{ field: "emergencyContactPhone", upload: "07700900222", matflow: "07700 900111" }]);
+  });
+
+  it("a resumed run recognises its own row even when another member also matches", () => {
+    const mine = member({ id: "mine", importJobId: JOB });
+    const other = member({ id: "other" });
+    expect(classify({ draft: draft({ email: "x@no-login.matflow.local", nonContactable: true }), plan, byIdentity: [mine, other], byKey: null, jobId: JOB })).toEqual({ kind: "own", memberId: "mine" });
   });
 });
 

@@ -52,6 +52,8 @@ type Job = {
     created?: { total: number; unmatchedPlan: number };
     rollback?: { removed: number; kept: { memberId: string; name: string; reasons: string[] }[] };
     teamup2?: TeamUp2Facts;
+    /** Owner decision 25 Oct 2026: people not written because they differ or could not be matched with certainty. */
+    conflicts?: unknown[];
   } | null;
 };
 
@@ -207,7 +209,8 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
   const [error, setError] = useState<string | null>(null);
   const [exportedAt, setExportedAt] = useState("");
   // The owner does not know the exact export time yet: the time is sent as
-  // provisional and a status refresh with the real time corrects it.
+  // provisional and each member's standing says so (a later upload changes
+  // nobody since 25 Oct 2026, so it cannot correct it).
   const [exportedAtEstimate, setExportedAtEstimate] = useState(false);
   const [rollbackBusy, setRollbackBusy] = useState(false);
 
@@ -607,7 +610,24 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
             />
           )}
 
-          {job.mode === "refresh" && job.status === "complete" && !job.rolledBackAt && (
+          {/* A check under the 25 Oct 2026 rule changed nobody: nothing is re-dated, nothing to roll back. */}
+          {job.mode === "refresh" && job.status === "complete" && !job.rolledBackAt && Array.isArray(job.manifest?.conflicts) && (
+            <div className="rounded-xl border border-bd-default bg-sf-1 p-4" data-testid="refresh-checked">
+              <p className="font-semibold text-sm flex items-center gap-2 text-tx-1">
+                <CheckCircle2 className="w-4 h-4" />
+                Check complete — nothing in MatFlow was changed
+              </p>
+              <p className="text-xs mt-1 text-tx-2">
+                {job.manifest!.conflicts!.length > 0
+                  ? `${plural(job.manifest!.conflicts!.length, "person differs", "people differ")} from this export: review them in the import history below. MatFlow's values stand until someone changes them by hand.`
+                  : "Everyone matched is the same as in MatFlow."}
+                {" "}Nobody was created, emailed or charged.
+              </p>
+              {job.manifest?.refresh?.exceptions && <RefreshExceptionList exceptions={job.manifest.refresh.exceptions} />}
+            </div>
+          )}
+
+          {job.mode === "refresh" && job.status === "complete" && !job.rolledBackAt && !Array.isArray(job.manifest?.conflicts) && (
             <div className="rounded-xl border border-[color-mix(in_srgb,var(--hue-success)_25%,transparent)] bg-[color-mix(in_srgb,var(--hue-success)_6%,transparent)] p-4" data-testid="refresh-complete">
               <p className="font-semibold text-sm flex items-center gap-2 text-[var(--hue-success-ink)]">
                 <CheckCircle2 className="w-4 h-4" />
@@ -755,7 +775,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                   {job.manifest.reconciles
                     ? "Every person in the file is accounted for: created, already here, or listed as an error."
                     : "Warning: the counts below do not add up to the people in the file — check the errors before relying on this import."}
-                  {job.sourceExportedAt ? ` Source exported ${formatDateTime(job.sourceExportedAt)}${job.sourceExportedAtProvenance === "provisional" ? " — export time provisional (an estimate): run a Status refresh with the real export time to confirm it" : ""}.` : ""}
+                  {job.sourceExportedAt ? ` Source exported ${formatDateTime(job.sourceExportedAt)}${job.sourceExportedAtProvenance === "provisional" ? " — export time provisional (an estimate); each member's standing is marked provisional" : ""}.` : ""}
                   {job.manifest.created.unmatchedPlan > 0
                     ? ` ${job.manifest.created.unmatchedPlan === 1 ? "1 member has" : `${job.manifest.created.unmatchedPlan} members have`} a plan name with no matching membership tier yet.`
                     : ""}

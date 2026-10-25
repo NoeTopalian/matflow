@@ -65,21 +65,23 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const items: ConflictView[] = out.conflicts.map((c) => {
       if (c.kind === "ambiguous") return { kind: "ambiguous", name: c.name, rows: c.rows ?? [], reason: c.reason, members: c.memberIds.map(view) };
       const m = out.members.get(c.memberId);
-      const now = m ? memberValues(m) : null;
+      // A member deleted (or erased) since the import: no name, no values — their data is not served from the manifest.
+      if (!m) return { kind: "conflict", name: "A member since deleted", rows: c.rows ?? [], member: view(c.memberId), fields: [] };
+      const now = memberValues(m);
       return {
         kind: "conflict",
         name: c.name,
         rows: c.rows ?? [],
         member: view(c.memberId),
         fields: c.fields.map((f) => {
-          const current = now ? now[f.field] : null;
+          const current = now[f.field];
           return {
             field: f.field,
             label: comparedFieldLabel(f.field),
             upload: f.upload,
             atImport: f.matflow,
             now: current,
-            stillDiffers: now ? stillDiffers(f.field, f.upload, current) : false,
+            stillDiffers: stillDiffers(f.field, f.upload, current),
           };
         }),
       };

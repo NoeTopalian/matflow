@@ -14,7 +14,14 @@ import type { MemberDraft } from "@/lib/importers";
 import { normaliseEmail } from "@/lib/email-normalise";
 
 /** The values an upload is compared on. Everything else on a member is never compared or written by a re-upload. */
-export const COMPARED_FIELDS = ["name", "email", "phone", "dateOfBirth", "accountType", "plan", "status", "paymentStatus", "cancelledAt"] as const;
+export const COMPARED_FIELDS = [
+  "name", "email", "phone", "dateOfBirth", "accountType", "plan", "status", "paymentStatus", "cancelledAt", "joinedAt",
+  "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation",
+] as const;
+// Not compared (decided exclusions, 25 Oct 2026): notes (free text the importer
+// composes, and staff add to), nextDueAt (a billing date MatFlow owns), the
+// guardian link and the payer address (handled by the family review), and
+// anything the importer never writes.
 export type ComparedField = (typeof COMPARED_FIELDS)[number];
 
 const FIELD_LABEL: Record<ComparedField, string> = {
@@ -27,6 +34,10 @@ const FIELD_LABEL: Record<ComparedField, string> = {
   status: "status",
   paymentStatus: "payment status",
   cancelledAt: "cancellation date",
+  joinedAt: "join date",
+  emergencyContactName: "emergency contact",
+  emergencyContactPhone: "emergency contact phone",
+  emergencyContactRelation: "emergency contact relationship",
 };
 
 export function comparedFieldLabel(f: ComparedField): string {
@@ -69,6 +80,10 @@ export type CandidateMember = {
   status: string;
   paymentStatus: string;
   cancelledAt: Date | null;
+  joinedAt: Date | null;
+  emergencyContactName: string | null;
+  emergencyContactPhone: string | null;
+  emergencyContactRelation: string | null;
   externalRef: string | null;
   importJobId: string | null;
 };
@@ -85,6 +100,10 @@ export const CANDIDATE_SELECT = {
   status: true,
   paymentStatus: true,
   cancelledAt: true,
+  joinedAt: true,
+  emergencyContactName: true,
+  emergencyContactPhone: true,
+  emergencyContactRelation: true,
   externalRef: true,
   importJobId: true,
 } as const;
@@ -118,6 +137,10 @@ export function uploadValues(d: MemberDraft, plan: Plan): Partial<Record<Compare
   if (d.status) out.status = d.status;
   if (d.paymentStatus) out.paymentStatus = d.paymentStatus;
   if (d.cancelledAt) out.cancelledAt = day(d.cancelledAt);
+  if (d.joinedAt) out.joinedAt = day(d.joinedAt);
+  if (d.emergencyContactName?.trim()) out.emergencyContactName = d.emergencyContactName.trim();
+  if (d.emergencyContactPhone?.trim()) out.emergencyContactPhone = d.emergencyContactPhone.trim();
+  if (d.emergencyContactRelation?.trim()) out.emergencyContactRelation = d.emergencyContactRelation.trim();
   return out;
 }
 
@@ -134,6 +157,10 @@ export function memberValues(m: CandidateMember): Record<ComparedField, string |
     status: m.status,
     paymentStatus: m.paymentStatus,
     cancelledAt: day(m.cancelledAt),
+    joinedAt: day(m.joinedAt),
+    emergencyContactName: m.emergencyContactName ?? null,
+    emergencyContactPhone: m.emergencyContactPhone ?? null,
+    emergencyContactRelation: m.emergencyContactRelation ?? null,
   };
 }
 
@@ -147,8 +174,8 @@ function same(field: ComparedField, upload: string | null, current: string | nul
     return squash(plans.upload.label ?? "") === squash(plans.current.label ?? "");
   }
   if (upload === null || current === null) return upload === current;
-  if (field === "name") return squash(upload) === squash(current);
-  if (field === "phone") return digits(upload) === digits(current);
+  if (field === "name" || field === "emergencyContactName" || field === "emergencyContactRelation") return squash(upload) === squash(current);
+  if (field === "phone" || field === "emergencyContactPhone") return digits(upload) === digits(current);
   return upload === current;
 }
 
@@ -198,6 +225,8 @@ export function classify(input: {
   byIdentity: CandidateMember[];
   byKey: CandidateMember | null;
   jobId: string;
+  /** The identity match is by name alone (a no-email person with no date of birth): never enough to call it the same person. */
+  nameOnly?: boolean;
 }): Classification {
   const { draft: d } = input;
   const ids = new Map<string, CandidateMember>();
@@ -205,6 +234,9 @@ export function classify(input: {
   if (input.byKey) ids.set(input.byKey.id, input.byKey);
   const base = { name: d.name, sourceKey: d.sourceKey ?? null, rows: d.sourceRows ?? [] };
   if (ids.size === 0) return { kind: "new" };
+  // A member this same job created on an interrupted call is its own work, whatever else matches.
+  const own = [...ids.values()].find((m) => m.importJobId === input.jobId);
+  if (own) return { kind: "own", memberId: own.id };
   if (ids.size > 1) {
     const reason =
       input.byIdentity.length > 1
@@ -213,7 +245,15 @@ export function classify(input: {
     return { kind: "ambiguous", memberIds: [...ids.keys()], ...base, reason };
   }
   const m = [...ids.values()][0];
-  if (m.importJobId === input.jobId) return { kind: "own", memberId: m.id };
+  const keyMatched = !!input.byKey && input.byKey.id === m.id;
+  if (input.nameOnly && !keyMatched) {
+    return { kind: "ambiguous", memberIds: [m.id], ...base, reason: "matched by name only (no email or date of birth to tell them apart)" };
+  }
+  // Same login address, different name, and no record key to say it is them:
+  // most likely two people sharing an address, so nobody is guessed.
+  if (!keyMatched && squash(m.name) !== squash(d.name)) {
+    return { kind: "ambiguous", memberIds: [m.id], ...base, reason: "the same email belongs to a member with a different name" };
+  }
   // Same identity, but the member already carries a DIFFERENT record key from an
   // earlier import: two source records claim one member.
   if (d.sourceKey && m.externalRef && m.externalRef !== d.sourceKey) {

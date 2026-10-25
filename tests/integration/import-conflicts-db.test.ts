@@ -134,6 +134,18 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     expect(body.manifest.existing).toEqual({ duplicates: 3, conflicts: 0, ambiguous: 0 });
   }, 60_000);
 
+  it("a later upload never attaches its membership history to people already in the club (review 25 Oct, H-1)", async () => {
+    const { jobId } = await importFile(A, fileOf(Object.values(PEOPLE)));
+    const attached = await withRlsBypass((tx) => tx.importedMembership.count({ where: { tenantId: A.tenantId, importJobId: jobId, memberId: { not: null } } }));
+    expect(attached).toBe(0);
+    // The rows are still kept (every CSV record has a disposition), just attached to nobody.
+    expect(await withRlsBypass((tx) => tx.importedMembership.count({ where: { tenantId: A.tenantId, importJobId: jobId } }))).toBeGreaterThan(0);
+    // The first import's own history is still attached to the people it created.
+    const ann = await memberBy(A.tenantId, PEOPLE.ann.email);
+    expect(await withRlsBypass((tx) => tx.importedMembership.count({ where: { tenantId: A.tenantId, memberId: ann.id } }))).toBeGreaterThan(0);
+    expect(await withRlsBypass((tx) => tx.importedMembership.count({ where: { tenantId: A.tenantId, memberId: ann.id, importJobId: { not: firstJob } } }))).toBe(0);
+  }, 60_000);
+
   it("staff-edited plan and status, and a MatFlow cancellation, survive a later upload, which lists them instead", async () => {
     const adv = await withRlsBypass((tx) => tx.membershipTier.findFirstOrThrow({ where: { tenantId: A.tenantId, name: ADV } }));
     await withRlsBypass(async (tx) => {
@@ -164,6 +176,17 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     expect(ben.fields as unknown[]).toContainEqual(expect.objectContaining({ field: "status", now: "active", stillDiffers: false }));
   }, 90_000);
 
+  it("a status refresh (real route, refresh mode) changes nobody and lists the staff-edited people", async () => {
+    const before = await withRlsBypass((tx) => tx.member.findMany({ where: { tenantId: A.tenantId }, orderBy: { id: "asc" } }));
+    const { jobId, body } = await importFile(A, fileOf(Object.values(PEOPLE)), "refresh");
+    expect(await withRlsBypass((tx) => tx.member.findMany({ where: { tenantId: A.tenantId }, orderBy: { id: "asc" } }))).toEqual(before);
+    expect(await withRlsBypass((tx) => tx.member.count({ where: { tenantId: A.tenantId, billingStatusSource: jobId } }))).toBe(0);
+    expect((body as unknown as { toReview: number }).toReview).toBeGreaterThanOrEqual(2); // Ann's plan, Cat's cancellation (Ben was resolved above)
+    const r = await review(A, jobId);
+    const names = (r.body.conflicts ?? []).map((c) => c.name);
+    expect(names).toEqual(expect.arrayContaining(["Ann Lee", "Cat Ode"]));
+  }, 60_000);
+
   it("a member created in MatFlow (no import history) is preserved and flagged", async () => {
     const dee = { name: "Dee Ray", email: E("dee"), plan: BEG, dob: "1993-04-04" };
     await withRlsBypass((tx) => tx.member.create({ data: { tenantId: A.tenantId, name: "Dee Ray", email: dee.email, status: "active", paymentStatus: "overdue" } }));
@@ -187,6 +210,26 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     expect(body.imported).toBe(0);
     expect(await count(A.tenantId)).toBe(n);
     expect(body.manifest.existing).toMatchObject({ ambiguous: 1 });
+  }, 60_000);
+
+  it("a member deleted since the import is listed without a name or any values (review 25 Oct, M-5)", async () => {
+    const fox = { name: "Fox Ward", email: E("fox"), plan: BEG, dob: "1995-06-06" };
+    await importFile(A, fileOf([fox]));
+    await withRlsBypass((tx) => tx.member.updateMany({ where: { tenantId: A.tenantId, email: fox.email }, data: { phone: "07700 900456" } }));
+    const { jobId } = await importFile(A, fileOf([{ ...fox }]).replace(",GB,,,", ",GB,,07700 900999,"));
+    const id = (await memberBy(A.tenantId, fox.email)).id;
+    await withRlsBypass(async (tx) => {
+      await tx.importedMembership.updateMany({ where: { memberId: id }, data: { memberId: null } });
+      await tx.memberStatusEvent.deleteMany({ where: { memberId: id } });
+      await tx.member.delete({ where: { id } });
+    });
+    const r = await review(A, jobId);
+    expect(r.status).toBe(200);
+    const text = JSON.stringify(r.body);
+    expect(text).not.toContain("Fox Ward");
+    expect(text).not.toContain("07700 900456");
+    expect(text).not.toContain("07700 900999");
+    expect(r.body.conflicts).toEqual([expect.objectContaining({ name: "A member since deleted", fields: [] })]);
   }, 60_000);
 
   it("the review list is owner-only and never shows another club's job", async () => {
