@@ -32,7 +32,9 @@ if (!from || !/^[\w./-]+$/.test(from)) refuse("--from <git ref> (the commit whos
 if (!names.length || names.some((n) => !/^\d{14}_[a-z0-9_]+$/.test(n))) refuse("list migration directory names");
 if (database !== null && !/^matflow_rehearsal_\d{14}$/.test(database)) refuse("--database admits only a matflow_rehearsal_<digits> scratch database");
 
-const u = new URL(process.env[varName] ?? "");
+// Node's invalid-URL error quotes its input, so a malformed value would print the credential.
+let u;
+try { u = new URL(process.env[varName] ?? ""); } catch { refuse(`${varName} is not a valid URL (value not shown)`); }
 if (database) u.pathname = `/${database}`;
 try {
   resolveDbTarget(u.toString(), { expectHost: "ep-hidden-salad" });

@@ -217,5 +217,11 @@ async function main() {
 }
 
 // Run only when executed (`node scripts/maybe-migrate.mjs`), never when a test imports the helpers.
+// `import.meta.main` (Node >= 24.2) is true for the entry module however it was reached. Comparing
+// paths instead skipped migrating silently when run through a symlinked directory (the module URL
+// is realpath'd, argv[1] is not), and `next build` then shipped against an unmigrated schema.
 const same = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
-if (process.argv[1] && same(fileURLToPath(import.meta.url), path.resolve(process.argv[1]))) await main();
+const isEntry =
+  import.meta.main ??
+  Boolean(process.argv[1] && same(fs.realpathSync(fileURLToPath(import.meta.url)), fs.realpathSync(path.resolve(process.argv[1]))));
+if (isEntry) await main();

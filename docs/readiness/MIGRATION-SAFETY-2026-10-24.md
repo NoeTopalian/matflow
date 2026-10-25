@@ -40,6 +40,10 @@ Added on this branch (applied in every context that runs `maybe-migrate.mjs`):
 - **5 s lock wait.** An `ALTER TABLE` waiting for ACCESS EXCLUSIVE queues every later request on that table behind it.
   5 s is below the app's own lock bound (`TENANT_LOCK_BOUND_MS`, 10 s), so a request queued behind a waiting migration
   is delayed rather than failed by its own bound, and it outlasts the app's ordinary short transactions.
+  **Qualification (review 25 Oct):** the bound is per lock wait, not per file. A file that locks several tables in turn
+  can hold one while it waits up to 5 s for the next: `20261021230000` (`Member`, then `MembershipTier`) can keep a
+  check-in queued on `Member` for about 10 s, at the app's own bound; `20261017020102` takes four foreign-key locks in
+  sequence. The preflight (§4) makes a long blocker at the start unlikely, so this is a low risk, not a guarantee.
 - **15 s statement bound.** Above the lock bound (a lock wait counts toward `statement_timeout`; equal values would end
   a lock wait as 57014 instead of 55P03) and more than a hundred times the longest statement measured (§3.2).
 - Verified on PostgreSQL 17.11: `SET LOCAL statement_timeout` bounds each later statement of the same simple-query
@@ -124,6 +128,14 @@ resolve --rolled-back <name>` against production, redeploy. `maybe-migrate.mjs` 
   `lockClub` uses the single-bigint key space `pg_advisory_xact_lock(hashtext(key))` that Prisma's 72707369 lives in;
   the two-int4 form with a namespace (as `lib/login-email.ts` does) removes the (remote) chance of a club's hash
   colliding with Prisma's key.
+- **A leaked lock in production (check before merging; Noe, read-only).** Every production deploy so far migrated
+  through the pooled URL, which §3.3 shows can leave an idle backend holding 72707369. If one is held, the first
+  direct-host deploy fails `P1002` (nothing applied), and once this code is live every import is refused as "a
+  database update is being applied" for as long as that backend lives. Before the merge, run
+  `SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 AND objid = 72707369 AND objsubid = 1 AND granted;`
+  expecting **0**. If it is not 0: wait for the pooler to recycle the backend, or end that one idle backend
+  (`pg_terminate_backend` on its pid from `pg_locks`). Merge this branch before any other branch that would still
+  deploy with the old script.
 - **Test branch checksums.** §2.
 - **`migrate dev` on a modified history** was not observed to complete: on a scratch database with one checksum
   changed it did not return within 180 s (non-interactive), and created nothing.
