@@ -75,13 +75,16 @@ export async function migrationPreflight(db, migrationDirs, maxSeconds = PREFLIG
   // Other sessions on this database with a transaction open longer than the bound. A role without pg_read_all_stats
   // sees NULL xact_start for other roles' sessions: those are counted as "unseen", never silently ignored.
   const r = await db.query(
-    `SELECT state, extract(epoch FROM (clock_timestamp() - xact_start))::int AS age_s, xact_start IS NULL AND backend_type = 'client backend' AS unseen
+    `SELECT pid, usename, application_name, state, extract(epoch FROM (clock_timestamp() - xact_start))::int AS age_s, xact_start IS NULL AND backend_type = 'client backend' AS unseen
        FROM pg_stat_activity
       WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'
         AND (xact_start IS NULL OR xact_start < clock_timestamp() - make_interval(secs => $1))`,
     [maxSeconds],
   );
-  const blockers = r.rows.filter((x) => !x.unseen && x.age_s !== null).map((x) => ({ state: x.state, ageS: x.age_s }));
+  // pid, role name and application name identify the session to end; none is a credential.
+  const blockers = r.rows
+    .filter((x) => !x.unseen && x.age_s !== null)
+    .map((x) => ({ state: x.state, ageS: x.age_s, pid: x.pid ?? null, role: x.usename ?? null, app: x.application_name || null }));
   const unseen = r.rows.filter((x) => x.unseen && x.state === null).length;
   return { pending, blockers, unseen };
 }
@@ -187,7 +190,8 @@ async function main() {
         const oldest = Math.max(...pf.blockers.map((b) => b.ageS));
         console.error(
           `[build] REFUSING to migrate: ${pf.blockers.length} other transaction(s) open longer than ${PREFLIGHT_MAX_TRANSACTION_SECONDS} s (oldest ${oldest} s; states ${[...new Set(pf.blockers.map((b) => b.state))].join(", ")}). ` +
-            "Nothing was migrated. Redeploy in a few minutes.",
+            `Sessions: ${pf.blockers.map((b) => `pid ${b.pid} (${b.role ?? "?"}, ${b.app ?? "no application name"}, ${b.ageS} s)`).join("; ")}. ` +
+            "Nothing was migrated. Redeploy in a few minutes, or end the named session if it is stuck.",
         );
         process.exit(1);
       }

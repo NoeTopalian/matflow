@@ -33,7 +33,7 @@ describe("directNeonUrl", () => {
 });
 
 type Q = { sql: string; params?: unknown[] };
-function fakeDb(opts: { table: boolean; applied: string[]; activity: Array<{ state: string | null; age_s: number | null; unseen: boolean }> }) {
+function fakeDb(opts: { table: boolean; applied: string[]; activity: Array<{ pid?: number; usename?: string; application_name?: string; state: string | null; age_s: number | null; unseen: boolean }> }) {
   const calls: Q[] = [];
   return {
     calls,
@@ -62,14 +62,18 @@ describe("migrationPreflight", () => {
       table: true,
       applied: ["20261009010000_a"],
       activity: [
-        { state: "idle in transaction", age_s: 42, unseen: false },
-        { state: "active", age_s: 7, unseen: false },
+        { pid: 4101, usename: "app_role", application_name: "psql", state: "idle in transaction", age_s: 42, unseen: false },
+        { pid: 4102, usename: "app_role", application_name: "", state: "active", age_s: 7, unseen: false },
         { state: null, age_s: null, unseen: true },
       ],
     });
     const r = await migrationPreflight(db, dirs);
     expect(r.pending).toEqual(["20261017020102_b", "20261021230000_c"]);
-    expect(r.blockers).toEqual([{ state: "idle in transaction", ageS: 42 }, { state: "active", ageS: 7 }]);
+    // Identified so the session can be ended (review 25 Oct, L-2); none of these is a credential.
+    expect(r.blockers).toEqual([
+      { state: "idle in transaction", ageS: 42, pid: 4101, role: "app_role", app: "psql" },
+      { state: "active", ageS: 7, pid: 4102, role: "app_role", app: null },
+    ]);
     expect(r.unseen).toBe(1);
     const activity = db.calls.find((c) => c.sql.includes("pg_stat_activity"))!;
     expect(activity.params).toEqual([PREFLIGHT_MAX_TRANSACTION_SECONDS]);
