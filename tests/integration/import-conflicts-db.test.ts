@@ -35,6 +35,7 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { teamupPersonKey } from "@/lib/importers/teamup";
 import { POST as commit } from "@/app/api/admin/import/[id]/commit/route";
 import { GET as conflictsGET } from "@/app/api/admin/import/[id]/conflicts/route";
+import { GET as jobGET } from "@/app/api/admin/import/[id]/route";
 
 const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -230,6 +231,13 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     expect(text).not.toContain("07700 900456");
     expect(text).not.toContain("07700 900999");
     expect(r.body.conflicts).toEqual([expect.objectContaining({ name: "A member since deleted", fields: [] })]);
+    // The job's own view carries the count, never the person (re-review M-5).
+    as(A);
+    const job = await jobGET(new Request(`https://test.local/api/admin/import/${jobId}`), { params: Promise.resolve({ id: jobId }) });
+    const jobText = JSON.stringify(await job.json());
+    expect(jobText).not.toContain("Fox Ward");
+    expect(jobText).not.toContain("07700 900999");
+    expect(jobText).toContain('"conflicts":[{"kind":"conflict"}]');
   }, 60_000);
 
   it("the review list is owner-only and never shows another club's job", async () => {

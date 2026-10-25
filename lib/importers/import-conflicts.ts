@@ -245,7 +245,9 @@ export function classify(input: {
     return { kind: "ambiguous", memberIds: [...ids.keys()], ...base, reason };
   }
   const m = [...ids.values()][0];
-  const keyMatched = !!input.byKey && input.byKey.id === m.id;
+  // A TeamUp key for a person with no email ("teamup:|<name>") is itself a
+  // name-only key: matching it proves no more than the name does.
+  const keyMatched = !!input.byKey && input.byKey.id === m.id && !(d.sourceKey ?? "").includes(":|");
   if (input.nameOnly && !keyMatched) {
     return { kind: "ambiguous", memberIds: [m.id], ...base, reason: "matched by name only (no email or date of birth to tell them apart)" };
   }

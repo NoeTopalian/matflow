@@ -120,6 +120,12 @@ describe("review 25 Oct (5): nothing guessed, nothing hidden", () => {
     expect(classify({ draft: d, plan, byIdentity: [m], byKey: null, jobId: JOB, nameOnly: true })).toMatchObject({ kind: "ambiguous", reason: expect.stringMatching(/name only/) });
   });
 
+  it("a TeamUp record key with no email in it ('teamup:|name') is a name-only key: still ambiguous (re-review M-3)", () => {
+    const m = member({ email: "a@no-login.matflow.local", externalRef: "teamup:|jo bloggs" });
+    const d = draft({ email: "b@no-login.matflow.local", nonContactable: true, sourceKey: "teamup:|jo bloggs" });
+    expect(classify({ draft: d, plan, byIdentity: [m], byKey: m, jobId: JOB, nameOnly: true })).toMatchObject({ kind: "ambiguous", reason: expect.stringMatching(/name only/) });
+  });
+
   it("the same email on a member with a different name and no record key is ambiguous (two people sharing an address)", () => {
     const m = member({ name: "Sam Bloggs", externalRef: null });
     expect(classify({ draft: draft(), plan, byIdentity: [m], byKey: null, jobId: JOB }).kind).toBe("ambiguous");

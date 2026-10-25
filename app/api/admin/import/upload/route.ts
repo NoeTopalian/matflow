@@ -65,12 +65,25 @@ function publicJobView(job: {
     // "owner_stated" | "provisional" | null (no time given).
     sourceExportedAtProvenance: job.sourceExportedAtProvenance ?? null,
     mappingVersion: job.mappingVersion ?? null,
-    manifest: job.manifest ?? null,
+    manifest: withoutConflictDetail(job.manifest ?? null),
     rolledBackAt: job.rolledBackAt ?? null,
     // NOTE: fileBlobUrl deliberately omitted.
   };
 }
 export { publicJobView };
+
+/**
+ * The people a job listed for review (owner decision 25 Oct 2026) are served
+ * only by GET admin/import/[id]/conflicts, which re-reads each member and
+ * withholds a deleted member's data. Every other job view keeps the kind of
+ * each entry (for counts) and nothing personal.
+ */
+function withoutConflictDetail(manifest: unknown): unknown {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return manifest;
+  const m = manifest as Record<string, unknown>;
+  if (!Array.isArray(m.conflicts)) return manifest;
+  return { ...m, conflicts: (m.conflicts as { kind?: unknown }[]).map((c) => ({ kind: c?.kind === "ambiguous" ? "ambiguous" : "conflict" })) };
+}
 
 export async function POST(req: Request) {
   const csrf = assertSameOrigin(req);
