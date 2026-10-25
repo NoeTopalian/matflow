@@ -31,6 +31,7 @@ function makeTx() {
     loginEvent: { deleteMany: rec("loginEvent.deleteMany") },
     importedBooking: { deleteMany: rec("importedBooking.deleteMany") },
     importSourceMapping: { deleteMany: rec("importSourceMapping.deleteMany") },
+    importJob: { findMany: async () => [], updateMany: rec("importJob.updateMany") },
   } as unknown as Prisma.TransactionClient;
 }
 

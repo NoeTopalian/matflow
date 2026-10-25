@@ -23,6 +23,7 @@ const fake = {
   loginEvent: { deleteMany: vi.fn() },
   importedBooking: { deleteMany: vi.fn() },
   importSourceMapping: { deleteMany: vi.fn() },
+  importJob: { findMany: vi.fn(async () => []), updateMany: vi.fn() },
 };
 // T7: the cascade locks the Member row first (a row back = still there).
 const queryRaw = vi.fn(async () => [{ id: "m1" }]);

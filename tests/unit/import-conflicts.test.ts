@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import { classify, differences, stillDiffers, uploadValues, type CandidateMember } from "@/lib/importers/import-conflicts";
 import type { MemberDraft } from "@/lib/importers";
 import { tierMap } from "@/lib/importers/teamup-refresh";
+import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
 
 const JOB = "job_now";
 const draft = (over: Partial<MemberDraft> = {}): MemberDraft => ({
@@ -170,5 +171,31 @@ describe("tierMap: a plan name two plans share matches neither (25 Oct)", () => 
     const m = tierMap([{ id: "a", name: "Beginners" }, { id: "b", name: "Juniors" }, { id: "c", name: " JUNIORS " }]);
     expect(m.get("beginners")?.id).toBe("a");
     expect(m.has("juniors")).toBe(false);
+  });
+});
+
+describe("scrubImportConflictsFor: a deleted or erased member leaves no trace in the review lists (task 4)", () => {
+  it("reduces every entry naming the member to its kind, leaves others alone, and is tenant-scoped", async () => {
+    const jobs = [
+      { id: "j1", manifest: { mode: "create", conflicts: [
+        { kind: "conflict", memberId: "gone", name: "Fox Ward", fields: [{ field: "phone", upload: "07700 900999", matflow: "07700 900456" }] },
+        { kind: "conflict", memberId: "stays", name: "Ann Lee", fields: [] },
+        { kind: "ambiguous", memberIds: ["x", "gone"], name: "Fox Ward", reason: "two" },
+      ] } },
+      { id: "j2", manifest: { mode: "create" } },
+    ];
+    const updates: { where: unknown; data: { manifest: { conflicts: unknown[] } } }[] = [];
+    const tx = {
+      importJob: {
+        findMany: async (args: { where: { tenantId: string } }) => (args.where.tenantId === "t1" ? jobs : []),
+        updateMany: async (args: { where: unknown; data: { manifest: { conflicts: unknown[] } } }) => { updates.push(args); return { count: 1 }; },
+      },
+    };
+    expect(await scrubImportConflictsFor(tx as never, "t1", "gone")).toBe(2);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].where).toEqual({ id: "j1", tenantId: "t1" });
+    expect(updates[0].data.manifest.conflicts).toEqual([{ kind: "conflict" }, jobs[0].manifest.conflicts![1], { kind: "ambiguous" }]);
+    expect(JSON.stringify(updates[0].data)).not.toContain("Fox Ward");
+    expect(await scrubImportConflictsFor(tx as never, "other-club", "gone")).toBe(0);
   });
 });

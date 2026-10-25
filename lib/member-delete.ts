@@ -50,6 +50,7 @@
  */
 
 import type { Prisma } from "@prisma/client";
+import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
 
 export type DeleteMemberCascadeOutcome =
   | { kind: "ok"; name: string }
@@ -123,6 +124,9 @@ export async function deleteMemberCascade(
       OR: [{ targetId: memberId }, ...(member.externalRef ? [{ sourceKey: member.externalRef }] : [])],
     },
   });
+
+  // The people an import listed for review keep no trace of this member (25 Oct 2026).
+  await scrubImportConflictsFor(tx, where.tenantId, memberId);
 
   // Order matters: every table below RESTRICTs Member deletion until empty.
   // RankHistory references MemberRank, so wipe that first.

@@ -37,6 +37,7 @@ import { POST as commit } from "@/app/api/admin/import/[id]/commit/route";
 import { GET as conflictsGET } from "@/app/api/admin/import/[id]/conflicts/route";
 import { GET as jobGET } from "@/app/api/admin/import/[id]/route";
 import { POST as previewPOST } from "@/app/api/admin/import/[id]/preview/route";
+import { deleteMemberCascade } from "@/lib/member-delete";
 
 const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -220,11 +221,16 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     await withRlsBypass((tx) => tx.member.updateMany({ where: { tenantId: A.tenantId, email: fox.email }, data: { phone: "07700 900456" } }));
     const { jobId } = await importFile(A, fileOf([{ ...fox }]).replace(",GB,,,", ",GB,,07700 900999,"));
     const id = (await memberBy(A.tenantId, fox.email)).id;
+    // The real deletion path (lib/member-delete), which also scrubs the import review lists (task 4).
     await withRlsBypass(async (tx) => {
       await tx.importedMembership.updateMany({ where: { memberId: id }, data: { memberId: null } });
       await tx.memberStatusEvent.deleteMany({ where: { memberId: id } });
-      await tx.member.delete({ where: { id } });
+      expect((await deleteMemberCascade(tx, { id, tenantId: A.tenantId })).kind).toBe("ok");
     });
+    // Nothing of Fox is left in ANY stored import record of the club.
+    const stored = JSON.stringify(await withRlsBypass((tx) => tx.importJob.findMany({ where: { tenantId: A.tenantId }, select: { manifest: true } })));
+    expect(stored).not.toContain("07700 900999");
+    expect(stored).not.toContain(id);
     const r = await review(A, jobId);
     expect(r.status).toBe(200);
     const text = JSON.stringify(r.body);

@@ -52,7 +52,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       const job = await tx.importJob.findFirst({ where: { id, tenantId }, select: { id: true, manifest: true } });
       if (!job) return null;
       const conflicts = conflictsOf(job.manifest);
-      const ids = [...new Set(conflicts.flatMap((c) => (c.kind === "conflict" ? [c.memberId] : c.memberIds)))];
+      // An entry scrubbed after a deletion or erasure keeps only its kind (lib/importers/import-conflicts-scrub).
+      const ids = [...new Set(conflicts.flatMap((c) => (c.kind === "conflict" ? [c.memberId] : c.memberIds ?? [])))].filter((x): x is string => typeof x === "string");
       const members = ids.length
         ? await tx.member.findMany({ where: { tenantId, id: { in: ids } }, select: CANDIDATE_SELECT })
         : [];
@@ -73,10 +74,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       return m ? { id: m.id, name: m.name, href: `/dashboard/members/${encodeURIComponent(m.id)}` } : { id: memberId, name: null, href: null };
     };
     const items: ConflictView[] = out.conflicts.map((c) => {
-      if (c.kind === "ambiguous") return { kind: "ambiguous", name: c.name, rows: c.rows ?? [], reason: c.reason, members: c.memberIds.map(view) };
-      const m = out.members.get(c.memberId);
+      if (c.kind === "ambiguous") {
+        if (!Array.isArray(c.memberIds)) return { kind: "ambiguous", name: "A member since deleted", rows: [], reason: "removed when the member was deleted", members: [] };
+        return { kind: "ambiguous", name: c.name, rows: c.rows ?? [], reason: c.reason, members: c.memberIds.map(view) };
+      }
+      const m = typeof c.memberId === "string" ? out.members.get(c.memberId) : undefined;
       // A member deleted (or erased) since the import: no name, no values — their data is not served from the manifest.
-      if (!m) return { kind: "conflict", name: "A member since deleted", rows: c.rows ?? [], member: view(c.memberId), fields: [] };
+      if (!m) return { kind: "conflict", name: "A member since deleted", rows: [], member: { id: "", name: null, href: null }, fields: [] };
       const now = memberValues(m);
       return {
         kind: "conflict",
