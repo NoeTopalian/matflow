@@ -173,8 +173,11 @@ try {
     migrations: await one(`SELECT count(*)::int FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`),
     lastMigration: await one(`SELECT migration_name FROM "_prisma_migrations" ORDER BY finished_at DESC NULLS LAST LIMIT 1`),
   };
-  // The expected counts are production figures, held privately (25 Oct 2026): pass them in, never commit them.
-  const want = JSON.parse(process.env.REHEARSAL_EXPECTED ?? "{}");
+  // The expected counts are production figures, held privately (25 Oct 2026): pass them in, never commit them,
+  // e.g. REHEARSAL_EXPECTED='{"members":…,"attendance":…,"importedBookings":…,"importedMemberships":…,"users":…,"migrations":…}'
+  // copied from Noe's private evidence folder. Without them the check cannot pass.
+  if (!process.env.REHEARSAL_EXPECTED) throw new Error("set REHEARSAL_EXPECTED to the expected counts (private evidence folder)");
+  const want = JSON.parse(process.env.REHEARSAL_EXPECTED);
   for (const [k, v] of Object.entries(got)) console.log((k in want ? (want[k] === v ? "PASS " : "FAIL ") : "INFO ") + k + " = " + v + (k in want ? " (expected " + want[k] + ")" : ""));
 } finally { await c.query("ROLLBACK").catch(() => {}); await c.end(); }
 ```

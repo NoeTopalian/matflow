@@ -12,7 +12,7 @@ import { shownPaymentStatus } from "@/lib/overdue";
 // cursor-based pagination in MembersList so the cap can be a true page size.
 //
 // 3 Oct 2026: raised from 500. A first TeamUp import of one real club makes
-// over 900 rows (~700 people, cancelled history included, plus ~219 guardian
+// many hundreds of rows (people, cancelled history included, plus guardian
 // records), so 500 silently dropped everyone after roughly "L" — from the
 // list, the search and every count, with nothing on screen to say so. The
 // row select is narrow (no wide columns, one rank, one visit, one photo), so

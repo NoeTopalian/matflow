@@ -625,8 +625,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           totalRows,
           processedRows: drafts.length,
           // The whole run's creations, including those an interrupted earlier
-          // call made (acceptance S9, 2 Oct 2026: a resumed run said "447
-          // imported" for 922 people). The response's `imported` stays this
+          // call made (acceptance S9, 2 Oct 2026: a resumed run reported only
+          // its own call's share of the people). The response's `imported` stays this
           // call's own count; the manifest carries both.
           importedRows: imported + ownRowsBeforeRun,
           skippedRows: skippedExisting,

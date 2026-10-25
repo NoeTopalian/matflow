@@ -75,14 +75,14 @@ beforeEach(() => {
 describe("GET /api/members?guardianReview=1", () => {
   it("lists only unconfirmed parent links in this tenant, and counts with the same predicate", async () => {
     findManyMock.mockResolvedValueOnce([row()]);
-    countMock.mockResolvedValueOnce(219);
+    countMock.mockResolvedValueOnce(37);
     const res = await GET(req());
     expect(res.status).toBe(200);
     const where = findManyMock.mock.calls[0][0].where;
     expect(where).toEqual({ tenantId: "t-A", parentMemberId: { not: null }, guardianConfirmedAt: null });
     expect(countMock.mock.calls[0][0].where).toEqual(where);
     const body = await res.json();
-    expect(body.total).toBe(219);
+    expect(body.total).toBe(37);
     expect(body.suggestions).toEqual([
       {
         childId: "kid-1",
