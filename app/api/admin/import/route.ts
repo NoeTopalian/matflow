@@ -62,6 +62,12 @@ export type ImportHistoryItem = {
   refresh: { changed: number; unchanged: number; exceptions: number } | null;
   /** Row-level problems (row > 0), capped, for a failed or partly failed job. */
   rowErrors: { row: number; reason: string }[];
+  /**
+   * People this job did not write because they differ from MatFlow or could
+   * not be matched with certainty (owner decision 25 Oct 2026); listed by
+   * GET admin/import/[id]/conflicts. Null for a job from before the rule.
+   */
+  toReview: { conflicts: number; ambiguous: number } | null;
 };
 
 function num(v: unknown): number {
@@ -144,6 +150,12 @@ function project(job: Parameters<typeof publicJobView>[0]): ImportHistoryItem {
     rollback,
     refresh,
     rowErrors,
+    toReview: Array.isArray(manifest.conflicts)
+      ? {
+          conflicts: (manifest.conflicts as { kind?: unknown }[]).filter((c) => c?.kind === "conflict").length,
+          ambiguous: (manifest.conflicts as { kind?: unknown }[]).filter((c) => c?.kind === "ambiguous").length,
+        }
+      : null,
   };
 }
 

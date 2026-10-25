@@ -184,7 +184,7 @@ describe("ImportHistory", () => {
     expect(screen.getByText("members.csv")).toBeTruthy();
     expect(screen.getByText("attendance.csv")).toBeTruthy();
     expect(screen.getByText(/Attendance history ·/)).toBeTruthy();
-    expect(screen.getByText("8 members imported · 1 skipped")).toBeTruthy();
+    expect(screen.getByText("8 members imported · 1 already in MatFlow")).toBeTruthy();
     expect(screen.getByText("1 record imported")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /Roll back/ })).toHaveLength(2);
   });

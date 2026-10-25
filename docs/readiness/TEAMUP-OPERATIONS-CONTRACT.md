@@ -2,6 +2,18 @@
 
 Status: **PROPOSED — awaiting Noe's and Sean's confirmation** (readiness spec v3 §7). Prepared 30 Sep 2026. Until both confirm the field table and the refresh procedure, daily operations on real data are **NO-GO** (spec §7: "a billing split without an agreed maintenance procedure is a daily-operations NO-GO").
 
+> **Superseded in part (25 Oct 2026).** Noe's decision, in his words: "A later upload must not silently
+> overwrite existing MatFlow values. Add genuinely new records, skip exact duplicates, and show conflicting or
+> ambiguous records for an authorised person to resolve. Where previous ownership or edit history is unknown,
+> preserve the current value and flag the conflict." (24 Oct: once imported, "all that information should be
+> taken as Matflow information".) So, from branch `sean/c1-import`:
+> - a status refresh **writes nothing** to existing members: where the export differs from MatFlow (status,
+>   payment standing, cancellation date, plan), the person is listed in the import history for the owner, with
+>   the file's value and MatFlow's current one, linked to the member's normal edit;
+> - a members import adds new people, skips exact duplicates, and lists differences and ambiguous matches;
+> - "status as of" is no longer moved by a refresh, and a refresh made under this rule has nothing to roll back.
+> Where §2, §3 and §5 below say a refresh changes standing or plan, they describe the earlier design.
+
 ## 1. What this contract covers
 During the bridge, Total BJJ runs its day in MatFlow — roster, classes, check-in, attendance, waivers, holds, cash taken at the desk — while **TeamUp and Sean's Stripe keep collecting every existing recurring membership**. MatFlow must never start, change or stop that collection, and must never suggest it has.
 
@@ -25,7 +37,7 @@ During the bridge, Total BJJ runs its day in MatFlow — roster, classes, check-
 - **Who:** Noe (named operator) until handed to Sean in writing.
 - **How often:** weekly, Monday before the first class; and on the day of any bulk change in TeamUp.
 - **Steps:** export TeamUp memberships (all statuses) → note the export time → Settings → Import → TeamUp → *Status refresh* → read the preview: counts changed, exceptions → commit → read the exception list and resolve each (usually a name or email changed in TeamUp).
-- **What it changes:** status, payment standing, cancellation date, plan, "status as of". Not the hold date: the TeamUp export carries no resume date, so a hold end is set in MatFlow. A refresh upload needs the export time; without it the standing would read "as of unknown". **What it never changes:** anything in the MatFlow-owned rows above.
+- **What it changes (earlier design; since 25 Oct 2026 it changes nothing and lists the differences):** status, payment standing, cancellation date, plan, "status as of". Not the hold date: the TeamUp export carries no resume date, so a hold end is set in MatFlow. A refresh upload needs the export time; without it the standing would read "as of unknown". **What it never changes:** anything in the MatFlow-owned rows above.
 - **Matching:** by the same person key the first import used (email + name, stored as the member's external reference). A person whose name or email changed in TeamUp is listed as an exception — never matched by a guess, never created twice.
 - **Workload:** about 10 minutes a week plus exceptions.
 - **Last successful refresh:** shown on the import history; staff see the staleness warning once it is more than 8 days old.

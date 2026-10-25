@@ -294,13 +294,13 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
     const missingTiers = preview?.teamup2?.exceptions.unmatchedPlanLabels.length ?? 0;
     const ok = refreshPreview
       ? await ask({
-          title: `Update ${plural(refreshPreview.willChange, "member", "members")} from TeamUp?`,
-          body: "Only status, payment standing and plan change, and every matched member's standing is dated to this export. Contact details, internal notes, medical notes, waivers, holds and guardian links (suggested or confirmed) are never touched. Nobody is created, emailed or charged. You can roll this refresh back from the import history.",
-          confirmLabel: "Refresh",
+          title: `Check ${plural(refreshPreview.matched, "member", "members")} against this TeamUp export?`,
+          body: "Nothing in MatFlow is changed. Where the export differs from MatFlow, the person is listed in the import history for you to review; MatFlow's values stand until someone changes them by hand. Nobody is created, emailed or charged.",
+          confirmLabel: "Check",
         })
       : await ask({
           title: `Import ${plural(count, "member", "members")}?`,
-          body: `Members already on file are matched by email and skipped, never overwritten. Nobody is emailed. Imported members are added straight away; you can roll the import back afterwards for anyone nobody has touched yet.${missingTiers > 0 ? ` ${missingTiers === 1 ? "1 live plan has" : `${missingTiers} live plans have`} no tier yet: those members are imported with the plan name only, and a Status refresh links them once the tiers exist.` : ""}`,
+          body: `New people are added straight away; you can roll the import back afterwards for anyone nobody has touched yet. People already in MatFlow are never changed: an exact match is skipped, and anyone who differs, or could be more than one member, is listed in the import history for you to review. Nobody is emailed.${missingTiers > 0 ? ` ${missingTiers === 1 ? "1 live plan has" : `${missingTiers} live plans have`} no tier yet: those members are imported with the plan name only; set their tier on their page once it exists.` : ""}`,
           confirmLabel: "Import",
         });
     if (!ok) return;
@@ -419,7 +419,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
               This is an estimate — I will confirm the real export time later
             </label>
             <p id="import-exported-at-estimate-hint" className="text-[11px] text-tx-4">
-              The import is marked &ldquo;export time provisional&rdquo;. Once you know the real time, run a Status refresh from the same file with it.
+              The import is marked &ldquo;export time provisional&rdquo;, and each member&rsquo;s standing says so. Enter the real time if you know it.
             </p>
           </div>
         </div>
@@ -706,7 +706,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                     {preview.teamup2!.exceptions.unmatchedPlanLabels.map((l) => <li key={l}>{l}</li>)}
                   </ul>
                   <p className="text-tx-2">
-                    Add each under Memberships with exactly this name, then start over and upload the file again. You can still import now: those members keep the plan name as text with no tier, and a Status refresh links them once the tiers exist.
+                    Add each under Memberships with exactly this name, then start over and upload the file again. You can still import now: those members keep the plan name as text with no tier; once the tier exists, set it on each member&rsquo;s page (a later upload changes nobody in MatFlow).
                   </p>
                 </div>
               )}
@@ -818,7 +818,7 @@ function TeamUpFacts({ jobId, facts, committed = false }: { jobId: string; facts
       <p>
         Standing is read <strong>as of {formatDate(facts.asOf)}</strong>
         {facts.asOfProvenance === "provisional"
-          ? " — export time provisional: the time you entered is an estimate. Once you know the real export time, run a Status refresh from the same file with it; standing is re-read as of that date."
+          ? " — export time provisional: the time you entered is an estimate, and each member's standing is marked provisional. A later upload does not change it."
           : facts.asOfIsProvisional
             ? " — the file carries no export time, so this is the upload date; enter the export time if a membership starts or ends around it."
             : " (the export time you entered)."}
@@ -951,15 +951,15 @@ export function RefreshPreviewPanel({
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
         <Stat label="Rows in file" value={preview.totalRows} />
         <Stat label="Matched" value={preview.matched} />
-        <Stat label="Will change" value={preview.willChange} tone="success" />
-        <Stat label="Unchanged" value={preview.unchanged} tone="muted" />
+        <Stat label="Differ — to review" value={preview.willChange} />
+        <Stat label="Same as MatFlow" value={preview.unchanged} tone="muted" />
       </div>
       {!preview.reconciles && (
         <p className="text-xs text-[var(--hue-danger-ink)]">Warning: these counts do not add up to the people in the file.</p>
       )}
       {preview.changes.length > 0 && (
         <details open={preview.changes.length <= 20}>
-          <summary className="text-xs cursor-pointer text-tx-3">What changes, person by person</summary>
+          <summary className="text-xs cursor-pointer text-tx-3">What differs, person by person (MatFlow → export)</summary>
           <ul className="mt-2 text-xs space-y-1" data-testid="refresh-changes">
             {preview.changes.map((c) => (
               <li key={c.memberId} className="text-tx-2">
@@ -976,7 +976,7 @@ export function RefreshPreviewPanel({
       )}
       <RefreshExceptionList exceptions={preview.exceptions} />
       <p className="text-xs font-medium text-tx-1">
-        A refresh changes only status, payment standing and plan. It never creates anyone, sends anything or charges anyone.
+        A refresh changes nothing in MatFlow. It lists the people whose status, payment standing or plan differ, for you to review; it never creates anyone, sends anything or charges anyone.
       </p>
       <Button
         type="button"
@@ -986,7 +986,7 @@ export function RefreshPreviewPanel({
         style={{ background: primaryColor }}
       >
         {!busy && <CheckCircle2 className="w-4 h-4" />}
-        {busy ? "Refreshing…" : `Refresh ${plural(preview.matched, "member", "members")}`}
+        {busy ? "Checking…" : `Check ${plural(preview.matched, "member", "members")}`}
       </Button>
     </div>
   );

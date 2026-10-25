@@ -20,14 +20,12 @@ import { claimLoginIdentities, type LoginIdentityClaim } from "@/lib/login-email
 import { normaliseEmail } from "@/lib/email-normalise";
 import { parseTeamUp } from "@/lib/importers/teamup";
 import {
-  changedFields,
   planRefresh,
-  refreshWrite,
   REFRESH_MEMBER_SELECT,
-  standingOf,
   type RefreshChange,
 } from "@/lib/importers/teamup-refresh";
 import { holdOffMigrations, isMigrationInProgress, MIGRATION_IN_PROGRESS_MESSAGE } from "@/lib/migration-lock";
+import { CANDIDATE_SELECT, classify, type CandidateMember, type ImportConflict } from "@/lib/importers/import-conflicts";
 
 /** A schema migration holds Prisma Migrate's lock (lib/migration-lock.ts): nothing was written; retry shortly. */
 function migrationInProgress() {
@@ -186,15 +184,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         action: "import.refresh",
         entityType: "ImportJob",
         entityId: job.id,
-        metadata: { source: job.source, fileName: job.fileName, mappingVersion: job.mappingVersion ?? null, sourceExportedAt: job.sourceExportedAt ? job.sourceExportedAt.toISOString() : null, sourceExportedAtProvenance: job.sourceExportedAtProvenance ?? null, changed: out.changed, unchanged: out.unchanged, exceptions: out.exceptionCount, reconciles: out.manifest.reconciles, resumed },
+        metadata: { source: job.source, fileName: job.fileName, mappingVersion: job.mappingVersion ?? null, sourceExportedAt: job.sourceExportedAt ? job.sourceExportedAt.toISOString() : null, sourceExportedAtProvenance: job.sourceExportedAtProvenance ?? null, changed: out.changed, unchanged: out.unchanged, toReview: out.toReview, exceptions: out.exceptionCount, reconciles: out.manifest.reconciles, resumed },
         req,
       });
       if (job.fileBlobUrl) {
         try { await deleteImportFile(job.fileBlobUrl, tenantId); }
         catch (e) { console.warn("[import-commit] blob del failed", e); }
       }
-      // No completion email, no invitations, no Stripe: a refresh only moves standing.
-      return NextResponse.json({ ok: true, mode: "refresh", changed: out.changed, unchanged: out.unchanged, exceptions: out.exceptionCount, manifest: out.manifest });
+      // No completion email, no invitations, no Stripe, and (25 Oct 2026) no member writes: a refresh lists differences.
+      return NextResponse.json({ ok: true, mode: "refresh", changed: out.changed, unchanged: out.unchanged, toReview: out.toReview, exceptions: out.exceptionCount, manifest: out.manifest });
     }
 
     // TeamUp entitlement is read at the export snapshot date in the club zone
@@ -221,6 +219,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     let imported = 0;
     let skippedExisting = 0;
+    // Existing people this file names (owner decision 25 Oct 2026): exact
+    // duplicates are counted; differences and ambiguous matches are listed for
+    // the owner. Neither writes anything to the member.
+    let duplicates = 0;
+    const conflicts: ImportConflict[] = [];
+    const planOf = (d: MemberDraft) => {
+      const t = d.membershipType ? tierByName.get(d.membershipType.trim().toLowerCase()) : undefined;
+      return { tierId: t?.id ?? null, label: t?.name ?? d.membershipType ?? null };
+    };
     const commitErrors: { row: number; email?: string; error: string }[] = [];
     // Rows lost to a system error (a whole slice's write failed), as opposed to
     // rows refused for a reason. Any of these and the run did not finish.
@@ -328,13 +335,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           const claims = await claimLoginIdentities(tx, tenantId, sliceEmails);
           const refused = slice.filter((d) => holdsStaffLogin(claims.get(normaliseEmail(d.email ?? ""))));
           const staffHeld = new Set(refused.map((d) => d.email));
+          // 25 Oct 2026 (owner decision): an existing person is never skipped
+          // blind. Every match is compared (lib/importers/import-conflicts): an
+          // exact duplicate is skipped, a difference or an ambiguous match is
+          // listed for the owner and nothing is written to that member.
           const existing = sliceEmails.length
             ? await tx.member.findMany({
                 where: { tenantId, email: { in: sliceEmails } },
-                select: { email: true },
+                select: CANDIDATE_SELECT,
               })
             : [];
           const existingEmails = new Set(existing.map((m) => m.email));
+          const byEmail = new Map(existing.map((m) => [m.email, m]));
+          const sliceKeys = slice.map((d) => d.sourceKey).filter((k): k is string => !!k);
+          const byKey = new Map(
+            (sliceKeys.length
+              ? await tx.member.findMany({ where: { tenantId, externalRef: { in: sliceKeys } }, select: CANDIDATE_SELECT })
+              : []
+            ).map((m) => [m.externalRef!, m]),
+          );
           // A no-email adult has a fresh synthesised address every run; dedupe
           // them by name + date of birth among the tenant's other
           // non-contactable adults so a re-import cannot double them.
@@ -344,29 +363,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // into one and the second child was never imported). They are
           // identified by unverifiedEmail below.
           const nonContactable = slice.filter((d) => d.nonContactable && !d.unverified && !existingEmails.has(d.email));
-          const existingByNameDob = new Set<string>();
+          const nameDobKey = (name: string, dob: string | null | undefined) => `${name.toLowerCase()}|${dob ?? ""}`;
+          const existingByNameDob = new Map<string, CandidateMember[]>();
           if (nonContactable.length > 0) {
             const rows = await tx.member.findMany({
               where: { tenantId, email: { endsWith: "@no-login.matflow.local" }, name: { in: nonContactable.map((d) => d.name), mode: "insensitive" }, parentMemberId: null },
-              select: { name: true, dateOfBirth: true },
+              select: CANDIDATE_SELECT,
             });
-            for (const r of rows) existingByNameDob.add(`${r.name.toLowerCase()}|${r.dateOfBirth?.toISOString().slice(0, 10) ?? ""}`);
+            for (const r of rows) {
+              const k = nameDobKey(r.name, r.dateOfBirth?.toISOString().slice(0, 10));
+              existingByNameDob.set(k, [...(existingByNameDob.get(k) ?? []), r]);
+            }
           }
           // A guardian draft is identified by the payer address it keeps as
           // unverifiedEmail; a re-run must not make a second one.
           const unverified = slice.map((d) => d.unverifiedEmail).filter((e): e is string => !!e);
-          const existingUnverified = new Set(
-            unverified.length
-              ? (await tx.member.findMany({ where: { tenantId, unverifiedEmail: { in: unverified } }, select: { unverifiedEmail: true } })).map((m) => m.unverifiedEmail)
-              : [],
-          );
-          const fresh = slice.filter(
-            (d) =>
-              !staffHeld.has(d.email) &&
-              !existingEmails.has(d.email) &&
-              !(d.nonContactable && !d.unverified && existingByNameDob.has(`${d.name.toLowerCase()}|${d.dateOfBirth ?? ""}`)) &&
-              !(d.unverified && d.unverifiedEmail && existingUnverified.has(d.unverifiedEmail)),
-          );
+          const existingUnverified = new Map<string, CandidateMember[]>();
+          if (unverified.length) {
+            const rows = await tx.member.findMany({ where: { tenantId, unverifiedEmail: { in: unverified } }, select: { ...CANDIDATE_SELECT, unverifiedEmail: true } });
+            for (const r of rows) existingUnverified.set(r.unverifiedEmail!, [...(existingUnverified.get(r.unverifiedEmail!) ?? []), r]);
+          }
+          const fresh: MemberDraft[] = [];
+          for (const d of slice) {
+            if (staffHeld.has(d.email)) continue;
+            const byIdentity =
+              d.unverified && d.unverifiedEmail
+                ? existingUnverified.get(d.unverifiedEmail) ?? []
+                : d.nonContactable && !d.unverified && !existingEmails.has(d.email)
+                  ? existingByNameDob.get(nameDobKey(d.name, d.dateOfBirth)) ?? []
+                  : byEmail.has(d.email) ? [byEmail.get(d.email)!] : [];
+            const c = classify({ draft: d, plan: planOf(d), byIdentity, byKey: d.sourceKey ? byKey.get(d.sourceKey) ?? null : null, jobId });
+            if (c.kind === "new") fresh.push(d);
+            else if (c.kind === "duplicate") duplicates += 1;
+            else if (c.kind === "conflict" || c.kind === "ambiguous") conflicts.push(c);
+          }
           if (fresh.length === 0) return { inserted: 0, refused };
           const result = await tx.member.createMany({
             data: fresh.map((d) => columnsFor(d, null)),
@@ -445,9 +475,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 // the payer address it keeps as unverifiedEmail (its login is
                 // synthesised and never matches a source email).
                 where: { tenantId, OR: [{ email: { in: parentEmails } }, { unverifiedEmail: { in: parentEmails } }] },
-                select: { id: true, email: true, unverifiedEmail: true, children: { select: { name: true, dateOfBirth: true } } },
+                select: { id: true, email: true, unverifiedEmail: true, children: { select: CANDIDATE_SELECT } },
               })
             : [];
+          const kidKeys = slice.map((d) => d.sourceKey).filter((k): k is string => !!k);
+          const kidByKey = new Map(
+            (kidKeys.length
+              ? await tx.member.findMany({ where: { tenantId, externalRef: { in: kidKeys } }, select: CANDIDATE_SELECT })
+              : []
+            ).map((m) => [m.externalRef!, m]),
+          );
           const parentByEmail = new Map<string, (typeof parents)[number]>();
           for (const p of parents) {
             if (p.unverifiedEmail && !parentByEmail.has(p.unverifiedEmail)) parentByEmail.set(p.unverifiedEmail, p);
@@ -463,11 +500,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               commitErrors.push({ row: i + idx, email: d.parentEmail, error: `${d.name}: parent ${d.parentEmail ?? "(none)"} was not imported, so this child was not either.` });
               continue;
             }
-            const dup = parent.children.some(
+            const sameChild = parent.children.filter(
               (c) => c.name.toLowerCase() === d.name.toLowerCase() && (c.dateOfBirth?.toISOString().slice(0, 10) ?? "") === (d.dateOfBirth ?? ""),
             );
-            if (dup) { skippedExisting += 1; continue; }
-            fresh.push({ d, parentId: parent.id });
+            const c = classify({ draft: d, plan: planOf(d), byIdentity: sameChild, byKey: d.sourceKey ? kidByKey.get(d.sourceKey) ?? null : null, jobId });
+            if (c.kind === "new") { fresh.push({ d, parentId: parent.id }); continue; }
+            skippedExisting += 1;
+            if (c.kind === "duplicate") duplicates += 1;
+            else if (c.kind === "conflict" || c.kind === "ambiguous") conflicts.push(c);
           }
           if (fresh.length === 0) return { inserted: 0, refused };
           const result = await tx.member.createMany({
@@ -626,6 +666,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           unmatchedPlan: created.filter((m) => m.membershipType && !m.membershipTierId).length,
         },
         skippedExisting,
+        // Of those already in the club: exact duplicates, and the people listed
+        // for the owner to resolve (nothing written to them; owner decision 25 Oct 2026).
+        existing: {
+          duplicates,
+          conflicts: conflicts.filter((c) => c.kind === "conflict").length,
+          ambiguous: conflicts.filter((c) => c.kind === "ambiguous").length,
+        },
+        conflicts,
         commitErrors: commitErrors.length,
         // Every person in the file is exactly one of: created by this job,
         // already in the club, or refused with a reason — and (teamup-2) every
@@ -729,7 +777,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         { status: 500 },
       );
     }
-    return NextResponse.json({ ok: true, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, manifest });
+    return NextResponse.json({ ok: true, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, toReview: conflicts.length, manifest });
   } catch (e) {
     // WP-J: keep the detailed error in our own DB row + server logs but
     // return a generic message to the client (could leak Prisma constraint
@@ -751,13 +799,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 }
 
 /**
- * Status refresh commit (TeamUp only, readiness spec v3 §7). Updates ONLY the
- * TeamUp-owned standing (lib/importers/teamup-refresh REFRESH_OWNED_FIELDS)
- * plus "status as of" and its source job, on members matched by the key the
- * first import stored. Creates nobody. Every write's before and after values
- * are appended to the job manifest in the same transaction as the write, so a
- * run that dies part-way can be resumed (members already carrying this job as
- * their source are skipped) and every change can be rolled back.
+ * Status refresh commit (TeamUp only). Since 25 Oct 2026 (owner decision: a
+ * later upload never silently overwrites MatFlow) it WRITES NO MEMBER: it
+ * matches the file to members by the key the first import stored, and lists
+ * every difference in the TeamUp-owned standing (status, payment standing,
+ * cancellation date, plan) as a conflict for the owner. Creates nobody. A
+ * refresh recorded before the rule keeps its `refresh.changes` and still rolls
+ * back through the rollback route.
  */
 async function commitRefresh({
   tenantId,
@@ -799,54 +847,18 @@ async function commitRefresh({
     } as const;
   }
 
-  // A resumed run: whatever an earlier run already wrote is in the manifest
-  // with its true before-values and is not written again.
-  const done = new Set(recorded.map((c) => c.memberId));
-  const todo = plan.matched.filter((c) => !done.has(c.memberId) && c.before.billingStatusSource !== job.id);
-
-  const BATCH = 25;
-  let written = [...recorded];
-  for (let i = 0; i < todo.length; i += BATCH) {
-    const slice = todo.slice(i, i + BATCH);
-    written = await withTenantContext(tenantId, async (tx) => {
-      await holdOffMigrations(tx);
-      // Re-read inside the write's own transaction: the before-values recorded
-      // are the ones this write replaces, not the ones the plan saw.
-      const fresh = await tx.member.findMany({
-        where: { tenantId, id: { in: slice.map((c) => c.memberId) }, billedBy: "teamup" },
-        select: REFRESH_MEMBER_SELECT,
-      });
-      const byId = new Map(fresh.map((f) => [f.id, f]));
-      const applied: RefreshChange[] = [];
-      for (const c of slice) {
-        const f = byId.get(c.memberId);
-        if (!f) continue;
-        const before = standingOf(f);
-        const change: RefreshChange = { ...c, before, fields: changedFields(before, c.after) };
-        await tx.member.updateMany({ where: { id: c.memberId, tenantId, billedBy: "teamup" }, data: refreshWrite(c.after) });
-        applied.push(change);
-      }
-      await recordStatusEventsBulk(
-        tx,
-        applied.map((c) => ({ tenantId, memberId: c.memberId, fromStatus: c.before.status, toStatus: c.after.status, reason: "import" as const, changedById: null })),
-      );
-      const cur = await tx.importJob.findUnique({ where: { id: job.id }, select: { manifest: true } });
-      const man = (cur?.manifest ?? {}) as Record<string, unknown>;
-      const prevRefresh = (man.refresh ?? {}) as { changes?: RefreshChange[] };
-      const all = [...(prevRefresh.changes ?? []), ...applied];
-      await tx.importJob.update({
-        where: { id: job.id },
-        data: {
-          processedRows: Math.min(i + slice.length, todo.length),
-          manifest: { ...man, mode: "refresh", refresh: { ...prevRefresh, changes: all } } as unknown as Prisma.InputJsonValue,
-        },
-      });
-      return all;
-    });
-  }
-
-  const changed = written.filter((c) => c.fields.length > 0).length;
-  const unchanged = written.length - changed;
+  // Owner decision 25 Oct 2026: a refresh never writes to an existing member.
+  // Every difference between the file and MatFlow is listed for the owner,
+  // who changes the member (or not) through the normal edit, with its own
+  // permission check; MatFlow's value stands until then. This replaces the
+  // write loop that overwrote status, payment status, cancellation and plan.
+  // `recorded` is a job from before this rule (its changes stay rollbackable).
+  const written = recorded;
+  const conflicts: ImportConflict[] = plan.matched
+    .filter((c) => c.fields.length > 0)
+    .map((c) => ({ kind: "conflict" as const, memberId: c.memberId, name: c.name, sourceKey: c.sourceKey, rows: [], fields: refreshConflictFields(c) }));
+  const changed = 0;
+  const unchanged = plan.matched.length - conflicts.length;
   const ex = plan.exceptions;
   const exceptionCount = ex.notInMatFlow.length + ex.notInFile.length + ex.billedByMatFlow.length + ex.refused.length + (ex.holdKept?.length ?? 0) + (ex.decisions?.length ?? 0);
   const manifest = {
@@ -861,10 +873,12 @@ async function commitRefresh({
       matched: plan.matched.length,
       changed,
       unchanged,
+      toReview: conflicts.length,
       payerRecords: plan.payerRecords,
       changes: written,
       exceptions: ex,
     },
+    conflicts,
     reconciles: plan.reconciles,
   };
   await withTenantContext(tenantId, (tx) =>
@@ -883,5 +897,18 @@ async function commitRefresh({
       },
     }),
   );
-  return { changed, unchanged, exceptionCount, manifest };
+  return { changed, unchanged, exceptionCount, toReview: conflicts.length, manifest };
+}
+
+/** A refresh difference in the conflict shape: plan once (label), the other owned fields as stated. */
+function refreshConflictFields(c: RefreshChange) {
+  const out: { field: "status" | "paymentStatus" | "cancelledAt" | "plan"; upload: string | null; matflow: string | null }[] = [];
+  const dayOf = (v: string | null) => (v ? v.slice(0, 10) : null);
+  if (c.fields.includes("status")) out.push({ field: "status", upload: c.after.status, matflow: c.before.status });
+  if (c.fields.includes("paymentStatus")) out.push({ field: "paymentStatus", upload: c.after.paymentStatus, matflow: c.before.paymentStatus });
+  if (c.fields.includes("cancelledAt")) out.push({ field: "cancelledAt", upload: dayOf(c.after.cancelledAt), matflow: dayOf(c.before.cancelledAt) });
+  if (c.fields.includes("membershipType") || c.fields.includes("membershipTierId")) {
+    out.push({ field: "plan", upload: c.after.membershipType, matflow: c.before.membershipType });
+  }
+  return out;
 }

@@ -14,9 +14,10 @@
 //     corrected address;
 //   - an attendance import (lib/attendance-import, driven as its route drives
 //     it) resolves the original row by external_ref and pins every fallback;
-//   - refresh and PATCH racing on the same rows, both interleavings forced
-//     deterministically (each side holding the row lock while the other
-//     waits), end in one consistent state.
+//   - a staff edit holding a member's row lock while a whole refresh runs: the
+//     refresh neither waits nor writes (owner decision 25 Oct 2026: a later
+//     upload never overwrites MatFlow; differences are listed), and the staff
+//     edit stands.
 // Only the file store, the owner gate, CSRF, audit, mail and the rate limiter
 // are stubbed. Every scenario asserts database rows. afterAll removes the
 // throwaway clubs and checks nothing is left.
@@ -50,22 +51,10 @@ vi.mock("@/lib/import-storage", async (importOriginal) => ({
   readImportFile: vi.fn(async (url: string) => FILES.get(url) ?? null),
   deleteImportFile: vi.fn(async () => {}),
 }));
-// Interleaving hooks. recordStatusEventsBulk runs INSIDE the refresh's write
-// transaction, after its member.updateMany (the refresh holds the row locks);
-// retireEmailBoundTokens runs INSIDE the PATCH transaction, after its
-// member.updateMany (the PATCH holds the row lock). An armed hook runs once.
-const hooks = vi.hoisted(() => ({ insideRefresh: null as null | (() => Promise<void>), insidePatch: null as null | (() => Promise<void>) }));
-vi.mock("@/lib/member-status", async (importOriginal) => {
-  const mod = await importOriginal<typeof import("@/lib/member-status")>();
-  return {
-    ...mod,
-    recordStatusEventsBulk: vi.fn(async (...args: Parameters<typeof mod.recordStatusEventsBulk>) => {
-      const h = hooks.insideRefresh; hooks.insideRefresh = null;
-      if (h) await h();
-      return mod.recordStatusEventsBulk(...args);
-    }),
-  };
-});
+// Interleaving hook: retireEmailBoundTokens runs INSIDE the PATCH transaction,
+// after its member.updateMany (the PATCH holds the row lock). An armed hook runs
+// once. (A refresh writes no member since 25 Oct 2026, so it has no hook.)
+const hooks = vi.hoisted(() => ({ insidePatch: null as null | (() => Promise<void>) }));
 vi.mock("@/lib/login-email", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/login-email")>();
   return {
@@ -104,7 +93,6 @@ const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = `cei${Date.now().toString(36)}`;
 const E = (who: string) => `${STAMP}-${who}@example.test`;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 /** Deterministic digest of rows: sorted by id, every column (Dates as ISO). */
 const digest = (rows: { id: string }[]) => sha(JSON.stringify([...rows].sort((a, b) => (a.id < b.id ? -1 : 1))));
@@ -221,21 +209,6 @@ async function importAttendance(club: Club, text: string) {
 const memberRow = (id: string) => withRlsBypass((tx) => tx.member.findUniqueOrThrow({ where: { id } }));
 const ledgerOf = (tenantId: string, memberId: string) =>
   withRlsBypass((tx) => tx.importedMembership.findMany({ where: { tenantId, memberId } }));
-/** Backends of this database currently blocked on a row lock in an UPDATE of Member — proof the race really interleaved. */
-async function blockedMemberUpdates(): Promise<number> {
-  const rows = await withRlsBypass((tx) => tx.$queryRaw<{ n: bigint }[]>`
-    SELECT count(*)::bigint AS n FROM pg_stat_activity
-    WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%update%"Member"%'`);
-  return Number(rows[0]?.n ?? 0);
-}
-const STANDING = ["status", "paymentStatus", "cancelledAt", "membershipType", "membershipTierId", "billingStatusAsOf", "billingStatusSource"] as const;
-function expectStandingIs(m: Record<string, unknown>, after: Record<string, unknown>) {
-  for (const k of STANDING) {
-    const have = m[k] instanceof Date ? (m[k] as Date).toISOString() : (m[k] ?? null);
-    expect(have, k).toEqual(after[k] ?? null);
-  }
-}
-
 describe.skipIf(!HAS_DB)("contact-email change → imports keep the person (AH-05)", () => {
   let A: Awaited<ReturnType<typeof mkClub>>;
   let B: Awaited<ReturnType<typeof mkClub>>;
@@ -370,17 +343,22 @@ describe.skipIf(!HAS_DB)("contact-email change → imports keep the person (AH-0
     await expect(dup).rejects.toMatchObject({ code: "P2002" });
   });
 
-  it("a TeamUp refresh with the ORIGINAL rows resolves to the same member ids and does NOT overwrite the corrected address", async () => {
+  it("a TeamUp refresh with the ORIGINAL rows resolves to the same member ids, lists the difference and writes NOTHING (owner decision 25 Oct 2026)", async () => {
+    const alexBefore = digest([await memberRow(id.alex)]);
+    const samBefore = digest([await memberRow(id.sam)]);
     const { jobId, manifest } = await runImport(A, exportOf({ alex: "hold" }), "refresh", "2026-09-20T08:00:00Z");
-    const changes = manifest.refresh?.changes ?? [];
-    const alexChange = changes.find((c) => c.memberId === id.alex);
-    expect(alexChange, "Alex matched by externalRef").toBeDefined();
-    expect(changes.find((c) => c.memberId === id.sam), "Sam matched by externalRef").toBeDefined();
+    expect(manifest.refresh?.changes ?? []).toEqual([]);
+    const conflicts = (manifest as { conflicts?: { memberId: string; fields: { field: string; upload: string | null; matflow: string | null }[] }[] }).conflicts ?? [];
+    const alexConflict = conflicts.find((c) => c.memberId === id.alex);
+    expect(alexConflict, "Alex matched by externalRef and listed").toBeDefined();
+    expect(alexConflict!.fields).toContainEqual({ field: "paymentStatus", upload: "paused", matflow: "paid" });
+    // Every column of Alex and Sam is exactly as before the refresh.
+    expect(digest([await memberRow(id.alex)])).toBe(alexBefore);
+    expect(digest([await memberRow(id.sam)])).toBe(samBefore);
     const alex = await memberRow(id.alex);
     expect(alex.email).toBe(E("alex-new"));
     expect(Buffer.compare(Buffer.from(alex.externalRef ?? "", "utf8"), before.alex.ref)).toBe(0);
-    expect(alex.billingStatusSource).toBe(jobId);
-    expectStandingIs(alex as unknown as Record<string, unknown>, alexChange!.after);
+    expect(alex.billingStatusSource).not.toBe(jobId);
     expect((await memberRow(id.sam)).email).toBe(E("sam-new"));
     // Payer records are never refreshed; the shared-address adult keeps every column but standing.
     expect(digest([await memberRow(id.guardian)])).toBe(guardianDigest);
@@ -433,60 +411,33 @@ describe.skipIf(!HAS_DB)("contact-email change → imports keep the person (AH-0
     expect(Buffer.compare(Buffer.from(alex.externalRef ?? "", "utf8"), before.alex.ref)).toBe(0);
   });
 
-  it("refresh holds the row locks while three PATCHes wait: one consistent outcome, no address reverted, no standing half-written", async () => {
-    const pending: Promise<{ status: number }>[] = [];
-    let settledWhileLocked = 0;
-    let blocked = -1;
-    hooks.insideRefresh = async () => {
-      for (const [k, to] of [["casey", E("casey-new")], ["drew", E("drew-new")], ["eli", E("eli-new")]] as const) {
-        pending.push(patchEmail(A, id[k], to).finally(() => { if (blocked === -1) settledWhileLocked += 1; }));
-      }
-      // The PATCHes reach member.updateMany and block on the refresh's row locks.
-      for (let i = 0; i < 20 && (await blockedMemberUpdates()) < 3; i++) await sleep(250);
-      blocked = await blockedMemberUpdates();
-    };
-    const { jobId, manifest } = await runImport(A, exportOf({ alex: "hold", casey: "hold", drew: "hold", eli: "hold" }), "refresh", "2026-09-25T08:00:00Z");
-    const results = await Promise.all(pending);
-    expect(blocked, "three PATCHes were waiting on the refresh's row locks").toBeGreaterThanOrEqual(3);
-    expect(settledWhileLocked, "no PATCH finished while the refresh held the rows").toBe(0);
-    expect(results.map((r) => r.status)).toEqual([200, 200, 200]);
-    const changes = manifest.refresh?.changes ?? [];
-    for (const k of ["casey", "drew", "eli"] as const) {
-      const m = await memberRow(id[k]);
-      expect(m.email, k).toBe(E(`${k}-new`));
-      expect(Buffer.compare(Buffer.from(m.externalRef ?? "", "utf8"), before[k].ref), k).toBe(0);
-      expect(m.billingStatusSource, k).toBe(jobId);
-      const c = changes.filter((x) => x.memberId === id[k]);
-      expect(c, `${k} recorded once`).toHaveLength(1);
-      expectStandingIs(m as unknown as Record<string, unknown>, c[0].after);
-      expect(digest(await ledgerOf(A.tenantId, id[k]))).toBe(before[k].ledger);
-    }
-  }, 60_000);
-
-  it("a PATCH holds the row lock while the refresh waits: the refresh lands after it and the corrected address stands", async () => {
-    let refresh: Promise<Awaited<ReturnType<typeof runImport>>> | null = null;
-    let refreshSettled = false;
-    let blocked = -1;
+  it("a staff edit holds Fay's row lock while a whole refresh runs: the refresh neither waits nor writes, and the staff edit stands", async () => {
+    let refreshed: Awaited<ReturnType<typeof runImport>> | null = null;
     hooks.insidePatch = async () => {
-      refresh = runImport(A, exportOf({ alex: "hold", casey: "hold", drew: "hold", eli: "hold", fay: "hold" }), "refresh", "2026-09-28T08:00:00Z");
-      void refresh.finally(() => { refreshSettled = true; }).catch(() => {});
-      // The refresh reaches member.updateMany for Fay and blocks on this transaction's row lock.
-      for (let i = 0; i < 40 && (await blockedMemberUpdates()) < 1; i++) await sleep(250);
-      blocked = await blockedMemberUpdates();
-      expect(refreshSettled, "the refresh could not finish while the PATCH held Fay's row").toBe(false);
+      // Inside the PATCH transaction, after its member update (the row is locked).
+      // A refresh that tried to write Fay would wait on this lock and never return.
+      refreshed = await runImport(A, exportOf({ casey: "hold", drew: "hold", fay: "hold" }), "refresh", "2026-09-28T08:00:00Z");
     };
-    const r = await patchEmail(A, id.fay, E("fay-new"));
-    expect(r.status).toBe(200);
-    expect(blocked, "the refresh was waiting on the PATCH's row lock").toBeGreaterThanOrEqual(1);
-    expect(refresh).not.toBeNull();
-    const { jobId, manifest } = await refresh!;
+    mockAuth.mockResolvedValue({ user: { id: A.userId, tenantId: A.tenantId, role: "owner" } } as never);
+    const res = await patchMember(
+      new Request(`https://test.local/api/members/${id.fay}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" },
+        body: JSON.stringify({ email: E("fay-new"), status: "inactive" }),
+      }),
+      { params: Promise.resolve({ id: id.fay }) },
+    );
+    expect(res.status).toBe(200);
+    expect(refreshed, "the refresh completed while the staff edit held the row").not.toBeNull();
+    const { jobId, manifest } = refreshed!;
     const fay = await memberRow(id.fay);
     expect(fay.email).toBe(E("fay-new"));
+    expect(fay.status).toBe("inactive");
+    expect(fay.paymentStatus).toBe("paid"); // the file's hold was listed, never applied
     expect(Buffer.compare(Buffer.from(fay.externalRef ?? "", "utf8"), before.fay.ref)).toBe(0);
-    expect(fay.billingStatusSource).toBe(jobId);
-    const c = (manifest.refresh?.changes ?? []).filter((x) => x.memberId === id.fay);
-    expect(c).toHaveLength(1);
-    expectStandingIs(fay as unknown as Record<string, unknown>, c[0].after);
-    expect(c[0].after.paymentStatus).not.toBe("paid"); // the hold really was applied
-  }, 60_000);
+    // No member of the club carries this refresh as its source: it wrote nobody.
+    expect(await withRlsBypass((tx) => tx.member.count({ where: { tenantId: A.tenantId, billingStatusSource: jobId } }))).toBe(0);
+    const conflicts = (manifest as { conflicts?: { memberId: string }[] }).conflicts ?? [];
+    expect(conflicts.map((c) => c.memberId)).toEqual(expect.arrayContaining([id.casey, id.drew, id.fay]));
+  }, 90_000);
 });

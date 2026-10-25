@@ -48,7 +48,6 @@ const ALLOW: Record<string, [number, string]> = {
   "app/api/admin/create-tenant/route.ts#nested users.create": [1, "creates the club and its first owner in ONE transaction; no other row can exist in a club that does not exist yet"],
   "app/api/admin/applications/[id]/approve/route.ts#nested users.create": [1, "creates the club and its first owner in ONE transaction; no other row can exist in a club that does not exist yet"],
   "app/api/admin/dsar/erase/route.ts#member.update": [1, "renames to the per-member sentinel deleted-<id>@deleted.invalid: unique by member id, never a deliverable or claimable login"],
-  "app/api/admin/import/[id]/commit/route.ts#member.updateMany": [1, "status refresh: data is refreshWrite(...) — status, payment and billing columns only (lib/importers/teamup-refresh.ts); never email"],
   "app/api/admin/import/[id]/rollback/route.ts#member.updateMany": [1, "refresh rollback: data is refreshWrite(...) — status, payment and billing columns only; never email"],
   "app/api/member/children/[id]/route.ts#member.updateMany": [1, "data is updateData typed { name?, dateOfBirth? } — never email"],
   "app/api/member/children/route.ts#member.create": [1, "a child is created on a fresh synthesised no-login address (synthesiseKidEmail): random, never shared"],

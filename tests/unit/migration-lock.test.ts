@@ -60,9 +60,9 @@ const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 const firstInTx = (s: string) => [...s.matchAll(/withTenantContext\(\s*tenantId,\s*async \(tx\) => \{\s*(?:\/\/[^\n]*\n\s*)*await holdOffMigrations\(tx\);/g)].length;
 
 describe("which job transactions hold migrations off", () => {
-  it("TeamUp commit: the claim, both member slices, the ledger chunks and every refresh write; a slice never swallows the refusal", () => {
+  it("TeamUp commit: the claim, both member slices and the ledger chunks (a refresh writes no member since 25 Oct 2026); a slice never swallows the refusal", () => {
     const s = src("app/api/admin/import/[id]/commit/route.ts");
-    expect(firstInTx(s)).toBe(5);
+    expect(firstInTx(s)).toBe(4);
     expect(s.match(/if \(isMigrationInProgress\(e\)\) throw e;/g)?.length).toBe(2);
     expect(s).toMatch(/if \(isMigrationInProgress\(e\)\) return migrationInProgress\(\);/);
   });
