@@ -213,6 +213,20 @@ describe("At-Risk after the first MatFlow check-in", () => {
     expect(memberCalls).toEqual([]);
   });
 
+  it("one stray check-in months ago does not open the gate early (review 25 Oct): it warms up from the restart", async () => {
+    const rows = [...importedHistory(70), visit("m1", 60, "matflow")];
+    for (let d = 0; d <= 8; d += 1) rows.push(visit("m2", d, "matflow"));
+    const gate = await readAtRiskGate(fakeTx(rows).tx, "t1", NOW);
+    const startsAt = daysAgo(8);
+    startsAt.setDate(startsAt.getDate() + 14);
+    expect(gate).toEqual({ open: false, reason: "warming_up", startsAt });
+  });
+
+  it("check-ins once, none for three weeks: paused, not 'none yet'", async () => {
+    const rows = [...importedHistory(70), visit("m1", 40, "matflow"), visit("m2", 30, "matflow")];
+    expect(await readAtRiskGate(fakeTx(rows).tx, "t1", NOW)).toEqual({ open: false, reason: "paused" });
+  });
+
   it("a week with no MatFlow check-ins (a closure) pauses At-Risk", async () => {
     // Registers before the window and in the last 7 days, none in days 7–14.
     const rows = [...importedHistory(40), visit("m1", 30, "matflow"), visit("m1", 20, "matflow"), visit("m2", 3, "matflow")];

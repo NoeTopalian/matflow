@@ -110,24 +110,28 @@ export const MATFLOW_CHECKIN_WHERE = {
  * the moment one check-in lifts a "has any check-in" gate.
  *
  * So the window is judged only when ALL of these hold:
- *   1. the club has a check-in recorded in MatFlow BEFORE the window starts
- *      (MatFlow has been the register for the whole window); and
+ *   1. the club has a check-in recorded in MatFlow in the 7 days BEFORE the
+ *      window starts (MatFlow was already the register when the window
+ *      began; a stray check-in months earlier does not count); and
  *   2. MatFlow recorded check-ins in EACH 7-day half of the window (the
  *      register was in use throughout — a week with none, such as a closure
  *      or registers taken elsewhere again, cannot show who stayed away).
  * Otherwise the tile shows why it has no number:
  *   - "none": no MatFlow check-in at all yet;
- *   - "warming_up": the first MatFlow check-in is under 14 days old; At-Risk
- *     starts 14 days after it (`startsAt`);
- *   - "paused": a 7-day half of the window has no MatFlow check-in.
+ *   - "warming_up": no MatFlow check-in in the week before the window, and
+ *     the first one inside it is under 14 days old; At-Risk starts 14 days
+ *     after it (`startsAt`);
+ *   - "paused": a 7-day half of the window has no MatFlow check-in, or there
+ *     were MatFlow check-ins once but none in the last three weeks.
  * When the gate is open, imported visits still count as visits in
  * atRiskMemberWhere, so a member whose last visit was imported long before
  * the switch is flagged, and a member seen at a MatFlow register is not.
  *
  * What the rule cannot know: a club that registers SOME classes in MatFlow
  * every week and the rest elsewhere will see members of the unregistered
- * classes flagged. Nothing in the data tells those apart from real absences;
- * the tile's detail line says the count rests on check-ins recorded in MatFlow.
+ * classes flagged. Nothing in the data tells those apart from real absences.
+ * The rule asks for one MatFlow check-in per week, not a density; a club with
+ * a single check-in in each of three weeks opens it.
  *
  * Cost: three indexed probes on AttendanceRecord(tenantId, checkInTime).
  * Probe 1 walks back from the window start and stops at the first MatFlow
@@ -165,10 +169,19 @@ export async function readAtRiskGate(tx: AtRiskGateClient, tenantId: string, now
       select: { checkInTime: true },
     });
 
-  const before = await probe({ lt: since }, "desc");
+  // The week BEFORE the window, not any time before it (review 25 Oct): one
+  // stray check-in months ago (a kiosk test, a demo) must not count as
+  // MatFlow having been the register when the window started.
+  const weekBefore = new Date(since);
+  weekBefore.setDate(since.getDate() - Math.floor(AT_RISK_DAYS / 2));
+  const before = await probe({ gte: weekBefore, lt: since }, "desc");
   if (!before) {
     const first = await probe({ gte: since }, "asc");
-    if (!first) return { open: false, reason: "none" };
+    if (!first) {
+      // Check-ins once, none for three weeks: the register stopped, not "none yet".
+      const earlier = await probe({ lt: weekBefore }, "desc");
+      return earlier ? { open: false, reason: "paused" } : { open: false, reason: "none" };
+    }
     const startsAt = new Date(first.checkInTime);
     startsAt.setDate(startsAt.getDate() + AT_RISK_DAYS);
     return { open: false, reason: "warming_up", startsAt };
