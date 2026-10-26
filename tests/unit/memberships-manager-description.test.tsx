@@ -238,14 +238,20 @@ describe("Description in the tier editor", () => {
       expect(writes()[0].body.description).toBe("Shared text");
     });
 
-    it("clearing the description does not disturb the class-limit rule", async () => {
-      renderWith([tier({ maxClassesPerWeek: 3 })]);
+    it("clearing the description does not disturb the class-allowance rule", async () => {
+      // #41: the editor sends the allowance as the classLimit* keys, and only
+      // when it changed from what the form loaded (integration review 26 Oct).
+      renderWith([tier({ classLimit: 3, classLimitBasis: "week" })]);
       openEdit("Plan A");
       setDescription("");
       saveEdit();
       await waitFor(() => expect(writes()).toHaveLength(1));
-      expect(writes()[0].body.description).toBeNull();
-      expect("maxClassesPerWeek" in writes()[0].body).toBe(false);
+      const body = writes()[0].body;
+      expect(body.description).toBeNull();
+      for (const k of ["classLimit", "classLimitBasis", "classLimitWeeks", "classLimitAnchor", "maxClassesPerWeek"]) {
+        expect(k in body, k).toBe(false);
+      }
+      expect(server.t1.classLimit).toBe(3);
     });
   });
 
