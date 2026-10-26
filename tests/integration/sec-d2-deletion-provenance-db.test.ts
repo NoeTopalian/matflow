@@ -196,6 +196,10 @@ const paths: Record<string, (label: string) => Promise<Released>> = {
       select: { id: true },
     }));
     const id = await mkOld(club, name, email, { importJobId: job.id });
+    // A real import completes after it writes its members. Stamped here, after the member, so the rollback's
+    // "edited after the import" rule (updatedAt more than 1 s past completedAt) never reads the round trips
+    // between the two writes as an edit: at ~235 ms per round trip that gap passed 1 s (26 Oct 2026).
+    await withRlsBypass((tx) => tx.importJob.update({ where: { id: job.id }, data: { completedAt: new Date() } }));
     gate.current = { tenantId: club.tenantId, userId: club.userId };
     const res = (await importRollback(new Request(`https://test.local/api/admin/import/${job.id}/rollback`, { method: "POST", headers: ORIGIN, body: "{}" }), { params: Promise.resolve({ id: job.id }) })) as unknown as { status: number };
     return { club, email, name, status: res.status, subjectGone: async () => !(await memberExists(club, id)) };
