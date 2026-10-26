@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { classCategorySchema } from "@/lib/class-category";
 
 /**
  * One recurring slot. Exported so PATCH /api/classes/[id] validates schedule
@@ -21,6 +22,15 @@ export const scheduleSchema = z.object({
   startDate: z.string().optional(),
   endDate:   z.string().optional().nullable(),
 });
+
+/**
+ * T6a: the membership tiers that include a class. Shared by POST and PATCH so
+ * the two cannot drift. Duplicates are removed rather than refused.
+ */
+export const allowedTierIdsSchema = z
+  .array(z.string().min(1).max(64))
+  .max(50)
+  .transform((ids) => [...new Set(ids)]);
 
 /** One ticked member on a comp-class allow-list. Mirrors the PATCH route's shape. */
 export const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
@@ -48,6 +58,9 @@ export const classCreateSchema = z.object({
   // A kids class refuses adults at self and kiosk check-in (lib/checkin.ts)
   // and asks the desk first on the register. Omitted = not a kids class.
   isKids: z.boolean().optional(),
+  // T6c: the class category (lib/class-category.ts). Omitted or null =
+  // uncategorised; a key outside the list is a 400.
+  category: classCategorySchema.optional(),
   // Required, and at least one: a class with no day never appears on the
   // weekly timetable, and Noe's ruling (18 Sep) is that the minimum — name,
   // duration, one day — is enforced, not hinted. The PATCH schema keeps
@@ -58,6 +71,10 @@ export const classCreateSchema = z.object({
   // while PATCH has accepted the same array since Task 5. Optional: omitted
   // means "no allow-list", `[]` means the same.
   roster: z.array(rosterEntrySchema).max(500).optional(),
+  // T6a "Who can attend": the memberships that include this class. Omitted or
+  // [] = everyone (the class is open, exactly as before). Each id must be one
+  // of this club's tiers (classRefError) or the create is refused.
+  allowedTierIds: allowedTierIdsSchema.optional(),
 });
 
 export type ClassCreateInput = z.infer<typeof classCreateSchema>;

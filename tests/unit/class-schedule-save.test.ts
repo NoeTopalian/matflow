@@ -42,6 +42,10 @@ const mockPrisma = {
   classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn() },
   classSubscription: { findMany: vi.fn(), deleteMany: vi.fn() },
   rankSystem: { findFirst: vi.fn() },
+  // T6a: the PATCH write transaction opens with a Class row lock.
+  $queryRaw: vi.fn().mockResolvedValue([{ id: "c1" }]),
+  classMembershipTier: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn(), createMany: vi.fn() },
+  membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({
@@ -263,6 +267,23 @@ describe("Task 3c — the instances a moved slot orphaned", () => {
     expect(args.data.every((d) => d.startTime === "19:00" && d.date.getDay() === 1)).toBe(true);
     expect(args.data).toHaveLength(8); // 56-day horizon
     expect(body.scheduleChange?.instancesCreated).toBe(8);
+  });
+
+  // T6b: a paused class gets no new sessions. A schedule edit sent to one (the
+  // API allows it) still reconciles its slots, but mints nothing; Resume
+  // mints the rolling window when it comes back.
+  it("a PAUSED class's schedule edit reconciles slots but mints no sessions", async () => {
+    mockPrisma.$queryRaw.mockResolvedValueOnce([{ id: "c1", isActive: false, deletedAt: null }]);
+    const { body } = await patch({ schedules: [MON_19] });
+    expect(mockPrisma.classSchedule.createMany).toHaveBeenCalled();
+    expect(mockPrisma.classInstance.createMany).not.toHaveBeenCalled();
+    expect(body.scheduleChange?.instancesCreated).toBe(0);
+  });
+
+  it("an ARCHIVED class's schedule edit mints no sessions either", async () => {
+    mockPrisma.$queryRaw.mockResolvedValueOnce([{ id: "c1", isActive: false, deletedAt: new Date("2026-08-01T00:00:00Z") }]);
+    await patch({ schedules: [MON_19] });
+    expect(mockPrisma.classInstance.createMany).not.toHaveBeenCalled();
   });
 
   // Verifier lane 3 (30 Sep 2026): changing only the END time left every

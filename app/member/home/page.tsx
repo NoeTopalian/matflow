@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { QrCode, Clock, Users, MapPin, Megaphone, X, CheckCircle2, ExternalLink, ChevronDown, ChevronUp, ChevronRight, Loader2 } from "lucide-react";
+import { QrCode, Clock, Users, MapPin, Megaphone, X, CheckCircle2, ExternalLink, ChevronDown, ChevronUp, ChevronRight, Loader2, Lock } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import SignaturePad, { type SignaturePadHandle } from "@/components/ui/SignaturePad";
@@ -20,10 +20,13 @@ import {
   linkedChildNames, alreadyLinkedLine, duplicateOfLinked,
 } from "@/lib/member-onboarding";
 import { formatTimeRange } from "@/lib/class-time";
+import { TIER_LOCKED_LABEL, isTierLockedForSelf } from "@/lib/class-tier-gate";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface TodayClass { id: string; name: string; time: string; endTime: string; coach: string; location: string; spots: number | null; capacity: number | null; classInstanceId?: string | null; }
+// eligibility: the member's own (buildMemberSchedule) — T6a shows a class
+// their plan does not include as locked here as well as on the schedule.
+interface TodayClass { id: string; name: string; time: string; endTime: string; coach: string; location: string; spots: number | null; capacity: number | null; classInstanceId?: string | null; eligibility?: string; }
 interface AnnouncementLink { label: string; url: string; }
 interface Announcement { id: string; title: string; body: string; time: string; pinned: boolean; imageUrl?: string; links?: AnnouncementLink[]; unseen?: boolean; }
 
@@ -1040,6 +1043,13 @@ function SignInSheet({
     const cls = classes.find((c) => c.id === selected);
     if (!cls) return;
 
+    // T6a: the member's plan does not include this class, so the door would
+    // refuse a self check-in. Say so here instead of sending it.
+    if (isTierLockedForSelf(cls, signingInAs)) {
+      setError(`${cls.name}: ${TIER_LOCKED_LABEL}. Ask staff about a membership that includes it.`);
+      return;
+    }
+
     // No session to sign in to today — cancelled, or never scheduled. This used
     // to skip the server and show "Signed in!" with nothing recorded (verifier
     // lane 2, 30 Sep 2026). Say what is true instead.
@@ -1174,7 +1184,8 @@ function SignInSheet({
 
             <p className="text-gray-500 text-xs mb-3">Select your class for today:</p>
             {classes.map((cls) => {
-              const isSel = selected === cls.id;
+              const locked = isTierLockedForSelf(cls, signingInAs);
+              const isSel = selected === cls.id && !locked;
               // Follows places taken, not capacity alone (lib/capacity-label.ts).
               const { almostFull, full } = cls.spots != null
                 ? capacityState(cls.capacity, (cls.capacity ?? 0) - cls.spots)
@@ -1182,17 +1193,25 @@ function SignInSheet({
               return (
                 <button
                   key={cls.id}
-                  onClick={() => setSelected(cls.id)}
-                  className="w-full rounded-2xl border p-4 flex items-center gap-3 transition-all text-left active:scale-[0.99]"
+                  onClick={() => { setSelected(cls.id); setError(null); }}
+                  disabled={locked}
+                  aria-disabled={locked}
+                  data-testid={locked ? "signin-tier-locked" : undefined}
+                  className="w-full rounded-2xl border p-4 flex items-center gap-3 transition-all text-left active:scale-[0.99] disabled:opacity-60 disabled:active:scale-100"
                   style={{
                     background: isSel ? hex(primaryColor, 0.1) : "var(--member-surface)",
                     borderColor: isSel ? primaryColor : "var(--member-border)",
                   }}
                 >
-                  <div className="w-1 self-stretch rounded-full shrink-0" style={{ background: primaryColor }} />
+                  <div className="w-1 self-stretch rounded-full shrink-0" style={{ background: locked ? "var(--member-text-dim)" : primaryColor }} />
                   <div className="flex-1 min-w-0">
                     <p className="text-white font-semibold text-sm">{cls.name}</p>
                     <p className="text-gray-500 text-xs mt-0.5">{cls.time}–{cls.endTime} · {cls.coach}</p>
+                    {locked && (
+                      <p className="text-xs mt-1 flex items-center gap-1" style={{ color: "var(--hue-warning)" }}>
+                        <Lock className="w-3 h-3 shrink-0" aria-hidden="true" /> {TIER_LOCKED_LABEL}
+                      </p>
+                    )}
                   </div>
                   {cls.spots != null && (
                     <span className="text-xs shrink-0" style={{ color: full ? "#ef4444" : almostFull ? "#f59e0b" : "var(--member-text-muted)" }}>
@@ -1209,7 +1228,10 @@ function SignInSheet({
             )}
             <button
               onClick={signIn}
-              disabled={!selected || loading}
+              disabled={
+                !selected || loading ||
+                (() => { const c = classes.find((x) => x.id === selected); return c ? isTierLockedForSelf(c, signingInAs) : false; })()
+              }
               className="w-full py-3.5 rounded-2xl text-[var(--tx-on-accent)] font-semibold text-sm mt-2 transition-all disabled:opacity-30 flex items-center justify-center gap-2"
               style={{ background: primaryColor }}
             >
@@ -1347,7 +1369,7 @@ export default function MemberHomePage() {
           joinedAt?: string;
           stats?: { totalClasses?: number; firstCheckInAt?: string | null };
         } | null;
-        schedule: Array<{ id: string; name: string; startTime: string; endTime: string; coach: string; location: string; capacity: number | null; dayOfWeek: number; classInstanceId?: string | null }> | null;
+        schedule: Array<{ id: string; name: string; startTime: string; endTime: string; coach: string; location: string; capacity: number | null; dayOfWeek: number; classInstanceId?: string | null; eligibility?: string }> | null;
         children: Array<{
           id: string;
           name: string;
@@ -1402,7 +1424,7 @@ export default function MemberHomePage() {
           const dow = todayDow();
           const filtered: TodayClass[] = data.schedule
             .filter((c) => c.dayOfWeek === dow)
-            .map((c) => ({ id: c.id, name: c.name, time: c.startTime, endTime: c.endTime, coach: c.coach, location: c.location, spots: null, capacity: c.capacity, classInstanceId: c.classInstanceId ?? null }))
+            .map((c) => ({ id: c.id, name: c.name, time: c.startTime, endTime: c.endTime, coach: c.coach, location: c.location, spots: null, capacity: c.capacity, classInstanceId: c.classInstanceId ?? null, eligibility: c.eligibility }))
             .sort((a, b) => a.time.localeCompare(b.time));
           // Always set — a legitimately empty day must clear yesterday's list
           // (previously guarded on length > 0, leaving stale classes on screen).
@@ -1807,6 +1829,19 @@ export default function MemberHomePage() {
                     <span className="text-white font-semibold text-sm">{cls.name}</span>
                     {full && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-400">Full</span>}
                     {almostFull && !full && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400">Almost full</span>}
+                    {cls.eligibility === "tier_not_included" && (
+                      // T6a: the same lock and words as the schedule.
+                      <span
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-flex items-center gap-1"
+                        data-testid="home-today-tier-locked"
+                        style={{
+                          background: "color-mix(in srgb, var(--hue-warning) 15%, transparent)",
+                          color: "var(--hue-warning)",
+                        }}
+                      >
+                        <Lock className="w-3 h-3" aria-hidden="true" /> {TIER_LOCKED_LABEL}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 mt-1 flex-wrap">
                     <span className="flex items-center gap-1 text-gray-500 text-xs">

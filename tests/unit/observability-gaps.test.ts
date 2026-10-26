@@ -30,7 +30,7 @@ describe("a failed check-in is logged, whichever door called it", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const out = await performCheckin({
       tenantId: "t-1", memberId: "m-1", classInstanceId: "ci-1",
-      enforceRankGate: false, enforceRosterGate: false, enforceTimeWindow: false,
+      enforceRankGate: false, enforceTimeWindow: false,
       requireCoverage: false, enforceWaiverGate: false, checkedInByUserId: null,
     } as Parameters<typeof performCheckin>[0]);
     expect(out.kind).toBe("error");

@@ -48,6 +48,12 @@ import {
   type DecisionInput,
   type JobMappings,
 } from "@/lib/attendance-import";
+import { holdOffMigrations, isMigrationInProgress, MIGRATION_IN_PROGRESS_MESSAGE } from "@/lib/migration-lock";
+
+/** A schema migration holds Prisma Migrate's lock (lib/migration-lock.ts): nothing was written; retry shortly. */
+function migrationInProgress() {
+  return NextResponse.json({ error: MIGRATION_IN_PROGRESS_MESSAGE, migrationInProgress: true }, { status: 503, headers: { "Retry-After": "120" } });
+}
 
 export const runtime = "nodejs";
 // Steps stop starting batches after 20 s; a rollback of a full year (~15k
@@ -308,28 +314,36 @@ async function commit(req: Request, tenantId: string, userId: string, jobId: str
   ];
   if (undecided.length) return bad(`Decide these first: ${undecided.join(", ")}.`, 409, { undecided });
 
-  const started = await withTenantContext(tenantId, async (tx) => {
-    const token = await claimLease(tx, tenantId, job.id, ["preview"]);
-    if (!token) return null;
-    // Every person's resolution is frozen as committed: later steps re-plan
-    // against the live roster, and a member added or re-addressed mid-commit
-    // must not receive history the owner never previewed (AH-D1 / SEC-053).
-    const frozenPeople = Object.fromEntries(
-      built.plan.people.map((p) => [p.personKey, { memberId: p.memberId, method: p.matchMethod, decidedPending: p.decidedPending }]),
-    );
-    const mappings: JobMappings = { createdClasses: {}, snapshotAt: job.sourceExportedAt?.toISOString() ?? null, decisions: { ...inputs.decisions, frozenPeople } };
-    await createHistoricalClasses(tx, tenantId, job.id, built.plan, inputs, mappings.createdClasses);
-    // Today's live sessions come from the timetable (with their end times)
-    // before any of today's history is attached to them.
-    await ensureTodayInstances(tx, tenantId, inputs.timezone);
-    await releaseLease(tx, tenantId, job.id, token, {
-      status: "running", startedAt: now, processedRows: 0, importedRows: 0, skippedRows: 0, errorRows: 0,
-      totalRows: built.plan.bookings.length,
-      mappings: mappings as unknown as Prisma.InputJsonValue,
-      manifest: { kind: "attendance", inProgress: true, progress: emptyProgress() } as unknown as Prisma.InputJsonValue,
-    });
-    return mappings;
-  }, { timeout: 60_000 });
+  let started: JobMappings | null;
+  try {
+    started = await withTenantContext(tenantId, async (tx) => {
+      // Not while a schema migration runs (lib/migration-lock.ts): refused before the lease, nothing written.
+      await holdOffMigrations(tx);
+      const token = await claimLease(tx, tenantId, job.id, ["preview"]);
+      if (!token) return null;
+      // Every person's resolution is frozen as committed: later steps re-plan
+      // against the live roster, and a member added or re-addressed mid-commit
+      // must not receive history the owner never previewed (AH-D1 / SEC-053).
+      const frozenPeople = Object.fromEntries(
+        built.plan.people.map((p) => [p.personKey, { memberId: p.memberId, method: p.matchMethod, decidedPending: p.decidedPending }]),
+      );
+      const mappings: JobMappings = { createdClasses: {}, snapshotAt: job.sourceExportedAt?.toISOString() ?? null, decisions: { ...inputs.decisions, frozenPeople } };
+      await createHistoricalClasses(tx, tenantId, job.id, built.plan, inputs, mappings.createdClasses);
+      // Today's live sessions come from the timetable (with their end times)
+      // before any of today's history is attached to them.
+      await ensureTodayInstances(tx, tenantId, inputs.timezone);
+      await releaseLease(tx, tenantId, job.id, token, {
+        status: "running", startedAt: now, processedRows: 0, importedRows: 0, skippedRows: 0, errorRows: 0,
+        totalRows: built.plan.bookings.length,
+        mappings: mappings as unknown as Prisma.InputJsonValue,
+        manifest: { kind: "attendance", inProgress: true, progress: emptyProgress() } as unknown as Prisma.InputJsonValue,
+      });
+      return mappings;
+    }, { timeout: 60_000 });
+  } catch (e) {
+    if (isMigrationInProgress(e)) return migrationInProgress();
+    throw e;
+  }
   if (!started) return bad("This import is already starting in another tab.", 409, { busy: true });
 
   await logAudit({
@@ -430,6 +444,7 @@ export async function DELETE(req: Request) {
 
   try {
     const result = await withTenantContext(tenantId, async (tx) => {
+      await holdOffMigrations(tx);
       const token = await claimLease(tx, tenantId, job.id, ["complete", "failed"]);
       if (!token) return null;
       const report = await rollbackJob(tx, tenantId, job.id);
@@ -443,6 +458,7 @@ export async function DELETE(req: Request) {
     await logAudit({ tenantId, userId, action: "import.attendance.rollback", entityType: "ImportJob", entityId: job.id, req, metadata: result });
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
+    if (isMigrationInProgress(e)) return migrationInProgress();
     return apiError("Rollback failed — nothing was removed", 500, e, "[admin/import/attendance]");
   }
 }

@@ -6,6 +6,8 @@
 // reveal whether the token is malformed vs not-found).
 //
 // Returns today's class instances for the tenant. NO member roster. NO PII.
+// A squad class carries `rosterOnly: true` (T6d) — a boolean, no member ids.
+// Each class carries its `category` key (T6c), a timetable label, not PII.
 
 import { NextResponse } from "next/server";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
@@ -13,6 +15,7 @@ import { hashToken } from "@/lib/token-hash";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
 import { todayWindow, usableTimezone } from "@/lib/class-time";
+import { liveSessionWhere } from "@/lib/class-live";
 
 export const runtime = "nodejs";
 
@@ -73,18 +76,26 @@ export async function GET(
     tx.classInstance.findMany({
       where: {
         date: { gte: start, lt: end },
-        isCancelled: false,
-        // Live classes only; imported history is never offered at the door.
-        class: { tenantId: tenant.id, isActive: true, deletedAt: null },
-        sourceImportJobId: null,
+        // T6b: live sessions only. Not cancelled, not imported history, and
+        // the class neither paused nor archived nor itself imported history
+        // (the class-level import filter was missing before liveSessionWhere).
+        ...liveSessionWhere(tenant.id),
       },
       include: {
         class: {
           select: {
             id: true,
             name: true,
+            // T6c: the category key, shown as a label on the class list. A
+            // label the club chose for the timetable, so safe on this
+            // unauthenticated door.
+            category: true,
             requiredRank: { select: { name: true, color: true } },
             maxRank: { select: { name: true, color: true } },
+            // T6d: whether the class has a roster (a squad / comp class). A
+            // COUNT, never the rows: this door is unauthenticated, so it says
+            // only that a list exists, never who is on it.
+            _count: { select: { rosterMembers: true } },
           },
         },
       },
@@ -111,6 +122,12 @@ export async function GET(
       date: i.date.toISOString(),
       requiredRank: i.class.requiredRank?.name ?? null,
       maxRank: i.class.maxRank?.name ?? null,
+      // T6c: the category key (lib/class-category.ts), or null when
+      // uncategorised. The kiosk shows its label.
+      category: i.class.category ?? null,
+      // T6d: a squad class is badged "Squad only"; the name search that follows
+      // a tap lists only the members on its roster.
+      rosterOnly: (i.class._count?.rosterMembers ?? 0) > 0,
     })),
   });
 }

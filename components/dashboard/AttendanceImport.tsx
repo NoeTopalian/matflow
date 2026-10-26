@@ -49,7 +49,7 @@ type Summary = {
   sessions: { provisional: number; byState: Record<string, number>; withAttendance: number; sameStartVisits: number; newHistoricalClasses: number };
   undecided: { offerings: string[]; venues: string[] };
   committable: boolean;
-  targets: { classes: { id: string; name: string; isActive: boolean; historical: boolean }[]; locations: { id: string; name: string }[] };
+  targets: { classes: { id: string; name: string; isActive: boolean; historical: boolean; archived?: boolean }[]; locations: { id: string; name: string }[] };
 };
 type JobView = {
   id: string; status: string; phase: string; fileName: string; total: number; processed: number; attendanceCreated: number;
@@ -494,6 +494,7 @@ export default function AttendanceImport({ primaryColor, onChanged }: { primaryC
                   <option value="">Choose…</option>
                   <option value="new_class">Historical class “{o.label}” (not on the timetable)</option>
                   {summary.targets.classes.filter((cl) => cl.isActive).map((cl) => <option key={cl.id} value={`class|${cl.id}`}>{cl.name} (timetable)</option>)}
+                  {summary.targets.classes.filter((cl) => !cl.isActive && !cl.historical).map((cl) => <option key={cl.id} value={`class|${cl.id}`}>{cl.name} ({cl.archived ? "archived" : "off the timetable"})</option>)}
                   {summary.targets.classes.filter((cl) => cl.historical).map((cl) => <option key={cl.id} value={`class|${cl.id}`}>{cl.name} (historical)</option>)}
                   <option value="pending">Leave pending (not imported as attendance)</option>
                 </Select>

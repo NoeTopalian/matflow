@@ -16,7 +16,8 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 const db = vi.hoisted(() => ({
   class: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn(), count: vi.fn() },
-  classRoster: { deleteMany: vi.fn(), createMany: vi.fn() },
+  // count: a rank gate clears the roster, so the PATCH asks whether one existed (T6d).
+  classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn().mockResolvedValue(0) },
   classSubscription: { findMany: vi.fn(), deleteMany: vi.fn() },
   classInstance: { createMany: vi.fn() },
   rankSystem: { findFirst: vi.fn(), updateMany: vi.fn() },
@@ -25,6 +26,10 @@ const db = vi.hoisted(() => ({
   user: { findFirst: vi.fn() },
   location: { findFirst: vi.fn() },
   tenant: { findUnique: vi.fn(), findFirst: vi.fn() },
+  // T6a: the PATCH write transaction opens with a Class row lock.
+  $queryRaw: vi.fn().mockResolvedValue([{ id: "c1" }]),
+  classMembershipTier: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn(), createMany: vi.fn() },
+  membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
 }));
 const mockAuth = vi.hoisted(() => vi.fn());
 

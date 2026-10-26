@@ -248,7 +248,11 @@ export function makeAttendanceFakeDb() {
   // The planner reads the released-address digests with one raw SELECT (lane D third pass, 9 Oct 2026);
   // the fake answers it from the auditLog table it holds so release rows seeded here count.
   // The fake holds no auditLog table (the route under test mocks the audit log), so no release is ever recorded here.
-  (tx as Record<string, unknown>).$queryRaw = async () => [] as Array<{ entityType: string; entityId: string; metadata: Record<string, unknown> | null }>;
+  // lib/migration-lock.ts holdOffMigrations is answered "no migration running" (the fake never has one).
+  (tx as Record<string, unknown>).$queryRaw = async (strings: TemplateStringsArray | string) =>
+    (Array.isArray(strings) ? strings.join("?") : String(strings)).includes("pg_try_advisory_xact_lock_shared")
+      ? ([{ ok: true }] as never[])
+      : ([] as Array<{ entityType: string; entityId: string; metadata: Record<string, unknown> | null }>);
   (tx as Record<string, unknown>).$executeRaw = async () => 0;
   return {
     tables,

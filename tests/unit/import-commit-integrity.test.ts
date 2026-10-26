@@ -20,6 +20,9 @@ const h = vi.hoisted(() => ({
   failCreate: false,
   ledgerRows: 0,
   tiers: [] as unknown[],
+  // lib/migration-lock.ts: the Nth lock probe and every later one find a schema migration running (null = never).
+  migrationAt: null as number | null,
+  lockProbes: 0,
 }));
 
 vi.mock("next/server", () => ({
@@ -43,7 +46,17 @@ vi.mock("@/lib/import-storage", () => ({
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) => {
     h.txCalls += 1;
-    return fn(addLoginClaimSql(makeTx()));
+    const tx = addLoginClaimSql(makeTx());
+    const query = tx.$queryRaw;
+    tx.$queryRaw = async (...args: unknown[]) => {
+      const [strings] = args as [TemplateStringsArray | string];
+      if (String(Array.isArray(strings) ? strings.join("?") : strings).includes("pg_try_advisory_xact_lock_shared")) {
+        h.lockProbes += 1;
+        if (h.migrationAt !== null && h.lockProbes >= h.migrationAt) return [{ ok: false }] as never;
+      }
+      return query(...args);
+    };
+    return fn(tx);
   },
 }));
 
@@ -153,6 +166,8 @@ beforeEach(() => {
   h.failCreate = false;
   h.ledgerRows = 0;
   h.tiers = [];
+  h.migrationAt = null;
+  h.lockProbes = 0;
   h.gate.mockResolvedValue({ ok: true, tenantId: "t1", userId: "u1" });
   h.email.mockResolvedValue({ ok: true });
   seed();
@@ -165,6 +180,44 @@ describe("member import commit", () => {
     expect(res.status).toBe(200);
     expect(db.members).toHaveLength(3);
     expect(db.jobs[0].status).toBe("complete");
+  });
+
+  it("while a schema migration runs, the commit is refused before its claim: 503, job untouched, nobody written, no email", async () => {
+    const { POST } = await import("@/app/api/admin/import/[id]/commit/route");
+    h.migrationAt = 1;
+    const res = await POST(req(), params);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ migrationInProgress: true, error: expect.stringMatching(/Nothing was changed/) });
+    expect(db.jobs[0]).toMatchObject({ status: "preview", startedAt: null });
+    expect(db.members).toHaveLength(0);
+    expect(h.email).not.toHaveBeenCalled();
+  });
+
+  it("a migration that starts mid-run stops the run at a slice boundary (503, job failed with the reason); the re-run completes without duplicates", async () => {
+    const { POST } = await import("@/app/api/admin/import/[id]/commit/route");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const rows = Array.from({ length: 60 }, (_, i) => `Person ${i + 1},person${i + 1}@example.test`);
+    h.files.set("local-import://f0", ["name,email", ...rows].join("\n"));
+    h.migrationAt = 3; // probe 1 = the claim, 2 = the first slice of 25, 3 = the second slice
+    const first = await POST(req(), params);
+    expect(first.status).toBe(503);
+    expect(db.members).toHaveLength(25);
+    expect(db.jobs[0].status).toBe("failed");
+    expect(JSON.stringify(db.jobs[0].errorLog)).toMatch(/database update is being applied/);
+    expect(h.email).not.toHaveBeenCalled();
+
+    h.migrationAt = null;
+    const second = await POST(req(), params);
+    expect(second.status).toBe(200);
+    expect(db.jobs[0].status).toBe("complete");
+    expect(db.members).toHaveLength(60);
+    expect(new Set(db.members.map((m) => m.email)).size).toBe(60);
+    // The 25 saved before the stop are the run's own work, not "already in the club".
+    const body = (await second.json()) as { skipped: number; manifest: { reconciles: boolean } };
+    expect(body.skipped).toBe(0);
+    expect(body.manifest.reconciles).toBe(true);
+    expect(db.jobs[0].importedRows).toBe(60);
+    expect(db.jobs[0].skippedRows).toBe(0);
   });
 
   it("a commit that loses the claim to another tab writes nothing and answers 409 (gap 13)", async () => {

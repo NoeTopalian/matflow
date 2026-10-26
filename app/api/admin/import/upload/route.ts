@@ -65,12 +65,25 @@ function publicJobView(job: {
     // "owner_stated" | "provisional" | null (no time given).
     sourceExportedAtProvenance: job.sourceExportedAtProvenance ?? null,
     mappingVersion: job.mappingVersion ?? null,
-    manifest: job.manifest ?? null,
+    manifest: withoutConflictDetail(job.manifest ?? null),
     rolledBackAt: job.rolledBackAt ?? null,
     // NOTE: fileBlobUrl deliberately omitted.
   };
 }
-export { publicJobView };
+export { publicJobView, withoutConflictDetail };
+
+/**
+ * The people a job listed for review (owner decision 25 Oct 2026) are served
+ * only by GET admin/import/[id]/conflicts, which re-reads each member and
+ * withholds a deleted member's data. Every other job view keeps the kind of
+ * each entry (for counts) and nothing personal.
+ */
+function withoutConflictDetail(manifest: unknown): unknown {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return manifest;
+  const m = manifest as Record<string, unknown>;
+  if (!Array.isArray(m.conflicts)) return manifest;
+  return { ...m, conflicts: (m.conflicts as { kind?: unknown }[]).map((c) => ({ kind: c?.kind === "ambiguous" ? "ambiguous" : "conflict" })) };
+}
 
 export async function POST(req: Request) {
   const csrf = assertSameOrigin(req);
@@ -184,7 +197,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "The export date must be a real date that is not in the future." }, { status: 400 });
     }
     // How that time is known: stated by the owner (the default when a time is
-    // given) or a provisional estimate to be confirmed by a status refresh.
+    // given) or a provisional estimate (shown as such on each member; a later upload does not change it).
     const provenanceRaw = String(formData.get("sourceExportedAtProvenance") ?? "").trim();
     if (provenanceRaw && !EXPORT_TIME_PROVENANCES.includes(provenanceRaw as ExportTimeProvenance)) {
       return NextResponse.json({ error: "Invalid export-time provenance." }, { status: 400 });

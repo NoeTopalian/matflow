@@ -50,6 +50,8 @@ function makeTx() {
   return {
     tenant: { findUnique: async () => ({ timezone: "Europe/London" }) },
     member: { findMany: async () => [] },
+    // The preview reads staff logins to count rows the commit would refuse (shared matcher, 25 Oct 2026).
+    user: { findMany: async () => [] },
     class: { findMany: async () => [] },
     membershipTier: { findMany: async () => db.tiers },
     importJob: {

@@ -24,6 +24,7 @@ import { CONFIRMED_BY, guardianSuggestionSource } from "@/lib/guardianship";
 import { LoginIdentityTaken, claimLoginIdentity } from "@/lib/login-email";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, isSupportSession, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
+import { TRAINING_MEMBER } from "@/lib/member-population";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -83,11 +84,17 @@ export async function GET(req: Request) {
   const where: {
     tenantId: string;
     parentMemberId?: { not: null };
+    accountType?: { not: "parent" };
     OR?: Array<{ name?: { contains: string; mode: "insensitive" }; email?: { contains: string; mode: "insensitive" } }>;
   } = {
     tenantId: session.user.tenantId,
   };
   if (filter === "kids") where.parentMemberId = { not: null };
+  // T6d: ?population=training — training members only (lib/member-population).
+  // The class roster picker asks for this, so a guardian account, including
+  // the no-login guardian drafts an import makes from emergency contacts, is
+  // never offered as a squad member. Absent, the list is unchanged.
+  if (searchParams.get("population") === "training") Object.assign(where, TRAINING_MEMBER);
   if (search) {
     where.OR = [
       { name: { contains: search, mode: "insensitive" } },

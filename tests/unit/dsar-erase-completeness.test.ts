@@ -140,6 +140,8 @@ vi.mock("@/lib/prisma", () => ({
     rankHistory: { count: rankHistoryCountMock, updateMany: rankHistoryUpdateManyMock },
     importedBooking: { count: importedBookingCountMock, deleteMany: importedBookingDeleteManyMock },
     importSourceMapping: { count: mappingCountMock, deleteMany: mappingDeleteManyMock },
+    // Import review lists are scrubbed of the subject (lib/importers/import-conflicts-scrub, 25 Oct 2026).
+    importJob: { findMany: vi.fn(async () => []), updateMany: vi.fn() },
   },
 }));
 

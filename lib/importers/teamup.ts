@@ -340,7 +340,7 @@ export function parseTeamUp(csvText: string, opts: { today?: string; asOf?: stri
     const scheduled = scheduledRows.length ? [...scheduledRows].sort(byStart)[0] : null;
     if (scheduled) {
       summary.scheduledStarts += 1;
-      notes.push(`Scheduled at TeamUp: ${scheduled.plan} starts ${isoDate(scheduled.start)} — ${current ? `${current.plan} stays current until then` : "no plan is current before that date"}; the next status refresh after the start date moves them.`);
+      notes.push(`Scheduled at TeamUp: ${scheduled.plan} starts ${isoDate(scheduled.start)} — ${current ? `${current.plan} stays current until then` : "no plan is current before that date"}; change their plan in MatFlow once it starts (a later upload does not move them).`);
     }
 
     const dob = sorted.map((r) => isoDate(r.dob)).find(Boolean);

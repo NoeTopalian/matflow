@@ -199,11 +199,11 @@ describe("POST /api/checkin/card — how the attendance is written", () => {
     expect(mockPerformCheckin.mock.calls[0][0].method).toBe("qr");
   });
 
-  it("uses the admin gate profile, so a coach's register never refuses a member at the door", async () => {
+  it("uses the admin gate profile (no rank, window or coverage gate); class eligibility has no flag to switch off", async () => {
     await POST(req({ classInstanceId: INSTANCE, tokens: [card("mem_1")] }));
     const args = mockPerformCheckin.mock.calls[0][0];
     expect(args.enforceRankGate).toBe(false);
-    expect(args.enforceRosterGate).toBe(false);
+    expect(args).not.toHaveProperty("enforceRosterGate");
     expect(args.enforceTimeWindow).toBe(false);
     expect(args.requireCoverage).toBe(false);
   });

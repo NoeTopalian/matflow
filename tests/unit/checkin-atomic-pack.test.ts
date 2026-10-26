@@ -84,6 +84,10 @@ vi.mock("@/lib/prisma-tenant", () => ({
         findUnique: vi.fn().mockResolvedValue(null),
       },
       classPackRedemption: { create: redemptionCreateMock },
+      // Class eligibility (roster + memberships) runs after the lock on every
+      // door; neither list is set on this fixture, so the class is open.
+      classRoster: { count: vi.fn().mockResolvedValue(0), findUnique: vi.fn().mockResolvedValue(null) },
+      classMembershipTier: { findMany: vi.fn().mockResolvedValue([]) },
       // capacityState locks the Class row before any insert. No maxCapacity
       // on this fixture, so the gate is inert and the walk is unchanged.
       $queryRaw: vi.fn().mockResolvedValue([{ maxCapacity: null }]),
@@ -99,7 +103,6 @@ const BASE_ARGS = {
   classInstanceId: "ci-1",
   method: "self" as const,
   enforceRankGate: false,
-  enforceRosterGate: false,
   enforceTimeWindow: false,
   requireCoverage: true,
   // The mocked class carries no maxCapacity, so the round-3 capacity gate is

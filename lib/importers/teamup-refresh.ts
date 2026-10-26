@@ -157,8 +157,16 @@ export function changedFields(before: Standing, after: Standing): RefreshOwnedFi
   return REFRESH_OWNED_FIELDS.filter((f) => before[f] !== after[f]);
 }
 
-export function tierMap(tiers: ResolvedMembershipTier[]): Map<string, ResolvedMembershipTier> {
-  return new Map(tiers.map((t) => [t.name.trim().toLowerCase(), t]));
+/**
+ * Plan name (trimmed, case-insensitive) → the club's plan. Two plans whose names
+ * differ only by case or spacing are both left out: a name that fits two plans
+ * is not a match (25 Oct 2026), so the person keeps the label with no plan and
+ * is listed for the owner instead of being given one of them at random.
+ */
+export function tierMap<T extends { name: string }>(tiers: readonly T[]): Map<string, T> {
+  const seen = new Map<string, number>();
+  for (const t of tiers) seen.set(t.name.trim().toLowerCase(), (seen.get(t.name.trim().toLowerCase()) ?? 0) + 1);
+  return new Map(tiers.filter((t) => seen.get(t.name.trim().toLowerCase()) === 1).map((t) => [t.name.trim().toLowerCase(), t]));
 }
 
 /**

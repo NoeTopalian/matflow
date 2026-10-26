@@ -168,6 +168,8 @@ function pick(row: Record<string, unknown>, select?: Record<string, unknown>) {
 
 function makeTx() {
   return {
+    // lib/migration-lock.ts holdOffMigrations: no schema migration ever runs in the fake database.
+    $queryRaw: async (strings: TemplateStringsArray) => (strings.join("?").includes("pg_try_advisory_xact_lock_shared") ? [{ ok: true }] : []),
     member: {
       findMany: async ({ where, select }: { where: Record<string, unknown>; select?: Record<string, unknown> }) =>
         db.members.filter((m) => matches(m, where)).map((m) => pick(m, select)),
@@ -370,52 +372,76 @@ describe("a refresh never moves standing backwards in time", () => {
 
 // ── Commit ───────────────────────────────────────────────────────────────────
 
-describe("status refresh commit", () => {
-  it("writes only TeamUp-owned fields, keeps a contact field edited in MatFlow, and records before and after", async () => {
+describe("status refresh commit (owner decision 25 Oct 2026: a later upload never overwrites MatFlow)", () => {
+  it("writes no member; every difference is listed with the file's value and MatFlow's", async () => {
+    // Staff moved Ada to another plan in MatFlow; Uma was cancelled in MatFlow. Neither is in the file that way.
+    Object.assign(db.members.find((m) => m.id === "m_ada")!, { membershipType: "Staff-chosen plan" });
+    Object.assign(db.members.find((m) => m.id === "m_uma")!, { status: "cancelled", cancelledAt: new Date("2026-09-10T00:00:00Z") });
+    const before = JSON.stringify(db.members);
     refreshJob({ status: "preview" });
     const res = (await commitPOST(req(), params("job_refresh"))) as unknown as Res;
     expect(res.status).toBe(200);
 
-    const allowed = new Set<string>([...REFRESH_OWNED_FIELDS, "billingStatusAsOf", "billingStatusSource"]);
-    expect(db.memberWrites.length).toBe(3);
-    for (const w of db.memberWrites) {
-      for (const k of Object.keys(w.data)) expect(allowed.has(k), `refresh wrote ${k}`).toBe(true);
-      expect(w.where).toMatchObject({ tenantId: "t1", billedBy: "teamup" });
-    }
-
-    const ada = db.members.find((m) => m.id === "m_ada")!;
-    expect(ada.paymentStatus).toBe("paused");
-    expect(ada.phone).toBe("07999 edited in MatFlow");
-    expect(ada.notes).toBe("Knee — go easy");
-    expect(ada.holdUntil).toBeNull();
-    expect((ada.billingStatusAsOf as Date).toISOString()).toBe(EXPORT_2.toISOString());
-    expect(ada.billingStatusSource).toBe("job_refresh");
-
-    const tom = db.members.find((m) => m.id === "m_tom")!;
-    expect(tom.status).toBe("cancelled");
-    // Dan (billed by MatFlow) and Gina (not in the file) are untouched.
-    expect(db.members.find((m) => m.id === "m_dan")!.billingStatusSource).toBeNull();
-    expect(db.members.find((m) => m.id === "m_gone")!.billingStatusSource).toBe(CREATE_JOB);
+    // Nothing in MatFlow moved: no member write, no status event, no email.
+    expect(db.memberWrites).toEqual([]);
+    expect(JSON.stringify(db.members)).toBe(before);
+    expect(db.events).toEqual([]);
+    expect(emailMock).not.toHaveBeenCalled();
+    // Staff-edited plan and a MatFlow cancellation survive; so does the record with no edit history (Tom).
+    expect(db.members.find((m) => m.id === "m_ada")!.membershipType).toBe("Staff-chosen plan");
+    expect(db.members.find((m) => m.id === "m_uma")!.status).toBe("cancelled");
+    expect(db.members.find((m) => m.id === "m_tom")!.status).toBe("active");
 
     const job = db.jobs[0];
     expect(job.status).toBe("complete");
-    const changes = (job.manifest as { refresh: { changes: { memberId: string; before: Record<string, unknown>; after: Record<string, unknown> }[] } }).refresh.changes;
-    const adaChange = changes.find((c) => c.memberId === "m_ada")!;
-    expect(adaChange.before).toMatchObject({ paymentStatus: "paid", billingStatusSource: CREATE_JOB, billingStatusAsOf: EXPORT_1.toISOString() });
-    expect(adaChange.after).toMatchObject({ paymentStatus: "paused", billingStatusSource: "job_refresh", billingStatusAsOf: EXPORT_2.toISOString() });
-
-    // A status change is recorded as an import event; nothing is emailed.
-    expect(db.events).toContainEqual(expect.objectContaining({ memberId: "m_tom", fromStatus: "active", toStatus: "cancelled", reason: "import" }));
-    expect(emailMock).not.toHaveBeenCalled();
+    const m = job.manifest as { refresh: { changes: unknown[]; changed: number; toReview: number }; conflicts: { kind: string; memberId: string; fields: { field: string; upload: string | null; matflow: string | null }[] }[] };
+    expect(m.refresh.changes).toEqual([]);
+    expect(m.refresh.changed).toBe(0);
+    const byMember = new Map(m.conflicts.map((c) => [c.memberId, c]));
+    expect(byMember.get("m_ada")!.fields).toEqual(
+      expect.arrayContaining([
+        { field: "paymentStatus", upload: "paused", matflow: "paid" },
+        { field: "plan", upload: "Adults Advanced 2026", matflow: "Staff-chosen plan" },
+      ]),
+    );
+    expect(byMember.get("m_tom")!.fields).toEqual(expect.arrayContaining([{ field: "status", upload: "cancelled", matflow: "active" }]));
+    expect(byMember.get("m_uma")!.fields).toEqual(expect.arrayContaining([{ field: "status", upload: "active", matflow: "cancelled" }]));
+    expect(m.refresh.toReview).toBe(3);
+    // Dan (billed by MatFlow) and Gina (not in the file) are not listed as conflicts.
+    expect(byMember.has("m_dan")).toBe(false);
+    expect(byMember.has("m_gone")).toBe(false);
+    expect(REFRESH_OWNED_FIELDS.length).toBeGreaterThan(0);
   });
 });
 
 // ── Rollback ─────────────────────────────────────────────────────────────────
 
 describe("status refresh rollback", () => {
-  it("restores only members still carrying what the refresh wrote, and says why the others were kept", async () => {
+  it("a refresh under the 25 Oct 2026 rule changed nobody, so its rollback restores nobody and writes nothing", async () => {
     refreshJob({ status: "preview" });
     await commitPOST(req(), params("job_refresh"));
+    const res = (await rollbackPOST(req(), params("job_refresh"))) as unknown as Res;
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { restored: number }).restored).toBe(0);
+    expect(db.memberWrites).toEqual([]);
+  });
+
+  it("a refresh recorded before the rule still rolls back: restores only members still carrying what it wrote", async () => {
+    // A legacy refresh job: what the old commit wrote is applied to the members and recorded in its manifest.
+    const job = refreshJob({ status: "preview" });
+    const legacy = (id: string, after: Partial<Member>, fields: string[]) => {
+      const m = db.members.find((x) => x.id === id)!;
+      const std = (x: Member) => ({ status: x.status, paymentStatus: x.paymentStatus, cancelledAt: x.cancelledAt ? (x.cancelledAt as Date).toISOString() : null, membershipType: x.membershipType, membershipTierId: x.membershipTierId, billingStatusAsOf: x.billingStatusAsOf ? (x.billingStatusAsOf as Date).toISOString() : null, billingStatusSource: x.billingStatusSource });
+      const before = std(m);
+      Object.assign(m, after, { billingStatusAsOf: EXPORT_2, billingStatusSource: "job_refresh" });
+      return { memberId: id, name: m.name, sourceKey: m.externalRef, fields, before, after: std(m) };
+    };
+    const changes = [
+      legacy("m_ada", { paymentStatus: "paused" }, ["paymentStatus"]),
+      legacy("m_tom", { status: "cancelled", cancelledAt: new Date("2026-09-20T00:00:00Z") }, ["status", "cancelledAt"]),
+      legacy("m_uma", {}, []),
+    ];
+    Object.assign(job, { status: "complete", completedAt: new Date(), manifest: { mode: "refresh", refresh: { changes } } });
 
     // Staff change Tom's payment standing after the refresh.
     db.members.find((m) => m.id === "m_tom")!.paymentStatus = "overdue";

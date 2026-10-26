@@ -194,11 +194,11 @@ describe("PATCH /api/memberships/[id] — cross-tenant isolation", () => {
 describe("membership limit clearing — server contract", () => {
   const row = (maxClassesPerWeek: number | null) => ({
     id: "tier-1", tenantId: "tenant-A", name: "Plan A", description: null, pricePence: 4500,
-    currency: "GBP", billingCycle: "monthly", maxClassesPerWeek, isKids: false, isActive: true,
+    currency: "GBP", billingCycle: "monthly", maxClassesPerWeek, classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null, isKids: false, isActive: true,
     locationId: null, stripePriceId: null, stripeProductId: null, createdAt: new Date(), updatedAt: new Date(),
   });
 
-  it("PATCH maxClassesPerWeek: null writes null and audits 3 → null", async () => {
+  it("PATCH maxClassesPerWeek: null (a pre-T7c page) clears the whole allowance and audits 3 → null", async () => {
     mockAuth.mockResolvedValue({ user: { role: "owner", tenantId: "tenant-A", id: "user-1" } } as never);
     mockUpdateMany.mockResolvedValue({ count: 1 } as never);
     mockFindFirst.mockResolvedValueOnce(row(3) as never).mockResolvedValueOnce(row(null) as never);
@@ -211,7 +211,7 @@ describe("membership limit clearing — server contract", () => {
     const res = await PATCH(req, { params: Promise.resolve({ id: "tier-1" }) });
     expect(res.status).toBe(200);
     expect(mockUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "tier-1", tenantId: "tenant-A" }, data: { maxClassesPerWeek: null } }),
+      expect.objectContaining({ where: { id: "tier-1", tenantId: "tenant-A" }, data: { maxClassesPerWeek: null, classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null } }),
     );
     const meta = mockLogAudit.mock.calls[0][0].metadata as Record<string, unknown>;
     expect(meta.before).toEqual({ maxClassesPerWeek: 3 });

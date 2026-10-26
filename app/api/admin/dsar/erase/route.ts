@@ -56,6 +56,7 @@ import { emailDigest } from "@/lib/login-email";
 import { isTenantBlobUrl } from "@/lib/blob-url";
 import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
+import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -488,6 +489,8 @@ export async function POST(req: Request) {
     // source name and email behind on an unmatched row.
     await tx.importedBooking.deleteMany({ where: importedBookingWhere });
     await tx.importSourceMapping.deleteMany({ where: personMappingWhere });
+    // The people an import listed for review keep no trace of the subject (25 Oct 2026).
+    await scrubImportConflictsFor(tx, tenantId, memberId);
 
     await tx.member.update({
       where: { id: memberId },

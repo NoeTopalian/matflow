@@ -32,6 +32,7 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { holdOffMigrations, isMigrationInProgress } from "@/lib/migration-lock";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { emailDigest } from "@/lib/login-email";
 import { hashToken } from "@/lib/token-hash";
@@ -268,9 +269,12 @@ export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInpu
   // Every member, whatever their status: a cancelled member's history is still history.
   const memberRows = await tx.member.findMany({ where: { tenantId }, select: { id: true, name: true, email: true, externalRef: true } });
   const members: RosterMember[] = memberRows.map((m) => ({ ...m, createdAt: cuidCreatedAt(m.id) }));
+  // T6b: archived classes are match targets too. Archiving keeps a class's
+  // history, so imported history for it lands on it rather than on a new
+  // historical class (and an owner mapping an offering to it is accepted).
   const classes = await tx.class.findMany({
-    where: { tenantId, deletedAt: null },
-    select: { id: true, name: true, isActive: true, sourceImportJobId: true, locationId: true },
+    where: { tenantId },
+    select: { id: true, name: true, isActive: true, deletedAt: true, sourceImportJobId: true, locationId: true },
   });
   const locations = await tx.location.findMany({ where: { tenantId }, select: { id: true, name: true } });
   const mappings = await tx.importSourceMapping.findMany({ where: { tenantId, source: LEDGER_SOURCE } });
@@ -359,7 +363,7 @@ export async function loadClubInputs(tx: Tx, tenantId: string): Promise<ClubInpu
     members,
     released,
     unprovenDecisions,
-    classes: classes.map((c) => ({ id: c.id, name: c.name, isActive: c.isActive, historical: !!c.sourceImportJobId, locationId: c.locationId })),
+    classes: classes.map((c) => ({ id: c.id, name: c.name, isActive: c.isActive, historical: !!c.sourceImportJobId, archived: !!c.deletedAt, locationId: c.locationId })),
     locations,
     decisions,
   };
@@ -525,7 +529,7 @@ export async function previewSummary(
     undecided: { offerings: undecidedOfferings, venues: undecidedVenues },
     // What an offering or a venue can be mapped to.
     targets: {
-      classes: inputs.classes.map((c) => ({ id: c.id, name: c.name, isActive: c.isActive, historical: c.historical })).sort((a, b) => a.name.localeCompare(b.name)),
+      classes: inputs.classes.map((c) => ({ id: c.id, name: c.name, isActive: c.isActive, historical: c.historical, archived: !!c.archived })).sort((a, b) => a.name.localeCompare(b.name)),
       locations: inputs.locations.map((l) => ({ id: l.id, name: l.name })),
     },
     committable: undecidedOfferings.length === 0 && undecidedVenues.length === 0 && plan.rejected.length === 0,
@@ -559,7 +563,9 @@ export async function saveDecisions(tx: Tx, tenantId: string, userId: string, li
       if (!ok) return "That member is not in this club.";
     }
     if (d.action === "class") {
-      const ok = await tx.class.count({ where: { id: d.targetId!, tenantId, deletedAt: null } });
+      // T6b: an archived class is a valid target (its history is kept), so
+      // this sentence is now only ever true: the class is not this club's.
+      const ok = await tx.class.count({ where: { id: d.targetId!, tenantId } });
       if (!ok) return "That class is not in this club.";
     }
     if (d.action === "location") {
@@ -930,7 +936,19 @@ export type StepResult =
  * checkpoint atomically, release. Safe to call again at any time.
  */
 export async function runStep(tenantId: string, jobId: string, readFile: (url: string) => Promise<string | null>): Promise<StepResult> {
-  const token = await withTenantContext(tenantId, (tx) => claimLease(tx, tenantId, jobId, ["running", "failed"]));
+  // While a schema migration runs (lib/migration-lock.ts) a step is "busy": nothing is claimed or written, and the
+  // client's step loop simply asks again a few seconds later.
+  let claimed: Awaited<ReturnType<typeof claimLease>>;
+  try {
+    claimed = await withTenantContext(tenantId, async (tx) => {
+      await holdOffMigrations(tx);
+      return claimLease(tx, tenantId, jobId, ["running", "failed"]);
+    });
+  } catch (e) {
+    if (isMigrationInProgress(e)) return { kind: "busy" };
+    throw e;
+  }
+  const token = claimed;
   if (!token) {
     const job = await withTenantContext(tenantId, (tx) => tx.importJob.findFirst({ where: { id: jobId, tenantId, source: JOB_SOURCE }, select: { status: true } }));
     return job ? { kind: "busy" } : { kind: "not_found" };
@@ -964,6 +982,7 @@ export async function runStep(tenantId: string, jobId: string, readFile: (url: s
       await withTenantContext(
         tenantId,
         async (tx) => {
+          await holdOffMigrations(tx);
           await processBatch(tx, { tenantId, jobId, snapshotAt, now }, slice, p);
           // The checkpoint moves with the batch, in the same transaction.
           const moved = await tx.importJob.updateMany({
@@ -1003,6 +1022,12 @@ export async function runStep(tenantId: string, jobId: string, readFile: (url: s
     );
     return { kind: "complete", manifest };
   } catch (e) {
+    if (isMigrationInProgress(e)) {
+      // A migration started between two batches: give the lease back WITHOUT failing the job (its checkpoint is the
+      // last batch that committed) and let the client's loop ask again.
+      await withTenantContext(tenantId, (tx) => releaseLease(tx, tenantId, jobId, token)).catch(() => {});
+      return { kind: "busy" };
+    }
     const msg = e instanceof Error ? e.message : "Import step failed";
     console.error(`[attendance-import ${jobId}] step failed`, e);
     await withTenantContext(tenantId, (tx) =>

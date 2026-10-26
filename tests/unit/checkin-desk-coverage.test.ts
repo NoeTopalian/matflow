@@ -21,6 +21,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
       member: { findUnique: memberFindUniqueMock },
       memberRank: { findFirst: vi.fn().mockResolvedValue(null) },
       classRoster: { count: vi.fn().mockResolvedValue(0), findUnique: vi.fn().mockResolvedValue(null) },
+      classMembershipTier: { findMany: vi.fn().mockResolvedValue([]) },
       classInstance: {
         findFirst: vi.fn().mockResolvedValue({
           id: "ci-1", classId: "c-1", isCancelled: false,
@@ -41,7 +42,7 @@ import { performCheckin } from "@/lib/checkin";
 
 const SELF = {
   tenantId: "t-1", memberId: "m-1", classInstanceId: "ci-1", method: "self" as const,
-  enforceRankGate: false, enforceRosterGate: false, enforceTimeWindow: false,
+  enforceRankGate: false, enforceTimeWindow: false,
   requireCoverage: true, enforceCapacity: false, enforceWaiverGate: true, enforceHoldGate: true,
   checkedInByUserId: null,
 };

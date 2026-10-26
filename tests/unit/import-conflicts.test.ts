@@ -1,0 +1,201 @@
+/**
+ * Later uploads never silently overwrite MatFlow (owner decision 25 Oct 2026):
+ * new people are added, exact duplicates skipped, differences and ambiguous
+ * matches listed. The pure rules in lib/importers/import-conflicts.
+ */
+import { describe, it, expect } from "vitest";
+import { classify, differences, stillDiffers, uploadValues, type CandidateMember } from "@/lib/importers/import-conflicts";
+import type { MemberDraft } from "@/lib/importers";
+import { tierMap } from "@/lib/importers/teamup-refresh";
+import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
+
+const JOB = "job_now";
+const draft = (over: Partial<MemberDraft> = {}): MemberDraft => ({
+  name: "Jo Bloggs",
+  email: "jo@example.test",
+  status: "active",
+  paymentStatus: "paid",
+  membershipType: "Beginners",
+  accountType: "adult",
+  sourceKey: "teamup:jo@example.test|jo bloggs",
+  sourceRows: [4],
+  ...over,
+});
+const member = (over: Partial<CandidateMember> = {}): CandidateMember => ({
+  id: "m1",
+  name: "Jo Bloggs",
+  email: "jo@example.test",
+  phone: null,
+  dateOfBirth: null,
+  accountType: "adult",
+  membershipType: "Beginners",
+  membershipTierId: "tier_beg",
+  status: "active",
+  paymentStatus: "paid",
+  cancelledAt: null,
+  joinedAt: null,
+  emergencyContactName: null,
+  emergencyContactPhone: null,
+  emergencyContactRelation: null,
+  externalRef: "teamup:jo@example.test|jo bloggs",
+  importJobId: "job_first",
+  ...over,
+});
+const plan = { tierId: "tier_beg", label: "Beginners" };
+
+describe("classify", () => {
+  it("nobody matches: a new person", () => {
+    expect(classify({ draft: draft(), plan, byIdentity: [], byKey: null, jobId: JOB })).toEqual({ kind: "new" });
+  });
+
+  it("the same person with the same values is an exact duplicate (skipped, nothing listed)", () => {
+    const m = member();
+    expect(classify({ draft: draft(), plan, byIdentity: [m], byKey: m, jobId: JOB })).toEqual({ kind: "duplicate", memberId: "m1" });
+  });
+
+  it("case, spacing and phone formatting are not differences", () => {
+    const m = member({ name: "jo  bloggs", phone: "07700 900 123" });
+    expect(classify({ draft: draft({ phone: "07700900123" }), plan, byIdentity: [m], byKey: m, jobId: JOB }).kind).toBe("duplicate");
+  });
+
+  it("a plan and a status staff changed in MatFlow are listed, not overwritten", () => {
+    const m = member({ membershipType: "Advanced", membershipTierId: "tier_adv", status: "inactive" });
+    const c = classify({ draft: draft(), plan, byIdentity: [m], byKey: m, jobId: JOB });
+    expect(c).toMatchObject({ kind: "conflict", memberId: "m1", rows: [4] });
+    expect(c.kind === "conflict" && c.fields).toEqual([
+      { field: "plan", upload: "Beginners", matflow: "Advanced" },
+      { field: "status", upload: "active", matflow: "inactive" },
+    ]);
+  });
+
+  it("a member cancelled in MatFlow stays cancelled: the file's 'active' is a listed difference", () => {
+    const m = member({ status: "cancelled", cancelledAt: new Date("2026-09-30T00:00:00Z") });
+    const c = classify({ draft: draft(), plan, byIdentity: [m], byKey: m, jobId: JOB });
+    expect(c.kind).toBe("conflict");
+    expect(c.kind === "conflict" && c.fields).toContainEqual({ field: "status", upload: "active", matflow: "cancelled" });
+  });
+
+  it("a record with no edit history (created in MatFlow, no record key) is preserved and the difference flagged", () => {
+    const m = member({ externalRef: null, importJobId: null, paymentStatus: "overdue" });
+    const c = classify({ draft: draft(), plan, byIdentity: [m], byKey: null, jobId: JOB });
+    expect(c.kind).toBe("conflict");
+    expect(c.kind === "conflict" && c.fields).toEqual([{ field: "paymentStatus", upload: "paid", matflow: "overdue" }]);
+  });
+
+  it("a value the file does not state is no information, never a difference", () => {
+    const m = member({ phone: "07700 900123", dateOfBirth: new Date("1990-01-01T00:00:00Z") });
+    expect(classify({ draft: draft({ phone: undefined, dateOfBirth: undefined }), plan, byIdentity: [m], byKey: m, jobId: JOB }).kind).toBe("duplicate");
+  });
+
+  it("email points at one member and the record key at another: ambiguous, nobody chosen", () => {
+    const a = member({ id: "a", externalRef: null });
+    const b = member({ id: "b", email: "jo.old@example.test" });
+    const c = classify({ draft: draft(), plan, byIdentity: [a], byKey: b, jobId: JOB });
+    expect(c).toMatchObject({ kind: "ambiguous", memberIds: ["a", "b"] });
+  });
+
+  it("two members share the name and date of birth: ambiguous", () => {
+    const c = classify({ draft: draft({ email: "x@no-login.matflow.local", nonContactable: true }), plan, byIdentity: [member({ id: "a" }), member({ id: "b" })], byKey: null, jobId: JOB });
+    expect(c).toMatchObject({ kind: "ambiguous", memberIds: ["a", "b"] });
+  });
+
+  it("same email, but the member carries a DIFFERENT record key from an earlier import: ambiguous", () => {
+    const m = member({ externalRef: "teamup:someone-else" });
+    expect(classify({ draft: draft(), plan, byIdentity: [m], byKey: null, jobId: JOB })).toMatchObject({ kind: "ambiguous", memberIds: ["m1"] });
+  });
+
+  it("a member this same job created on an interrupted call is its own work, not a duplicate", () => {
+    const m = member({ importJobId: JOB });
+    expect(classify({ draft: draft(), plan, byIdentity: [m], byKey: m, jobId: JOB })).toEqual({ kind: "own", memberId: "m1" });
+  });
+
+  it("a synthesised no-login address is never compared as an email", () => {
+    const m = member({ email: "abc@no-login.matflow.local" });
+    expect(differences(uploadValues(draft({ email: "xyz@no-login.matflow.local", nonContactable: true }), plan), m).map((f) => f.field)).not.toContain("email");
+  });
+});
+
+describe("review 25 Oct (5): nothing guessed, nothing hidden", () => {
+  it("a no-email person with no date of birth matched by name alone is ambiguous, never a duplicate", () => {
+    const m = member({ email: "a@no-login.matflow.local", externalRef: null });
+    const d = draft({ email: "b@no-login.matflow.local", nonContactable: true, sourceKey: "teamup:|jo bloggs" });
+    expect(classify({ draft: d, plan, byIdentity: [m], byKey: null, jobId: JOB, nameOnly: true })).toMatchObject({ kind: "ambiguous", reason: expect.stringMatching(/name only/) });
+  });
+
+  it("a TeamUp record key with no email in it ('teamup:|name') is a name-only key: still ambiguous (re-review M-3)", () => {
+    const m = member({ email: "a@no-login.matflow.local", externalRef: "teamup:|jo bloggs" });
+    const d = draft({ email: "b@no-login.matflow.local", nonContactable: true, sourceKey: "teamup:|jo bloggs" });
+    expect(classify({ draft: d, plan, byIdentity: [m], byKey: m, jobId: JOB, nameOnly: true })).toMatchObject({ kind: "ambiguous", reason: expect.stringMatching(/name only/) });
+  });
+
+  it("only a name-only TeamUp key matches and the date of birth differs: ambiguous, not a field to fix (review 6, M-1)", () => {
+    const m = member({ email: "a@no-login.matflow.local", externalRef: "teamup:|jo bloggs", dateOfBirth: new Date("1990-01-01T00:00:00Z") });
+    const d = draft({ email: "b@no-login.matflow.local", nonContactable: true, sourceKey: "teamup:|jo bloggs", dateOfBirth: "2001-05-05" });
+    expect(classify({ draft: d, plan, byIdentity: [], byKey: m, jobId: JOB })).toMatchObject({ kind: "ambiguous", reason: expect.stringMatching(/date of birth does not/) });
+  });
+
+  it("a no-email person with a different name is not described as sharing an email (review 6, L-1)", () => {
+    const m = member({ name: "Joanne Bloggs", email: "a@no-login.matflow.local", externalRef: null, dateOfBirth: new Date("1990-01-01T00:00:00Z") });
+    const d = draft({ email: "b@no-login.matflow.local", nonContactable: true, sourceKey: undefined, dateOfBirth: "1990-01-01" });
+    expect(classify({ draft: d, plan, byIdentity: [m], byKey: null, jobId: JOB })).toMatchObject({ kind: "ambiguous", reason: "matched a member with a different name" });
+  });
+
+  it("the same email on a member with a different name and no record key is ambiguous (two people sharing an address)", () => {
+    const m = member({ name: "Sam Bloggs", externalRef: null });
+    expect(classify({ draft: draft(), plan, byIdentity: [m], byKey: null, jobId: JOB }).kind).toBe("ambiguous");
+  });
+
+  it("a changed emergency-contact phone or join date is a listed difference, not a duplicate", () => {
+    const m = member({ emergencyContactPhone: "07700 900111", joinedAt: new Date("2025-01-01T00:00:00Z") });
+    const c = classify({ draft: draft({ emergencyContactPhone: "07700900222", joinedAt: "2025-01-01" }), plan, byIdentity: [m], byKey: m, jobId: JOB });
+    expect(c.kind === "conflict" && c.fields).toEqual([{ field: "emergencyContactPhone", upload: "07700900222", matflow: "07700 900111" }]);
+  });
+
+  it("a resumed run recognises its own row even when another member also matches", () => {
+    const mine = member({ id: "mine", importJobId: JOB });
+    const other = member({ id: "other" });
+    expect(classify({ draft: draft({ email: "x@no-login.matflow.local", nonContactable: true }), plan, byIdentity: [mine, other], byKey: null, jobId: JOB })).toEqual({ kind: "own", memberId: "mine" });
+  });
+});
+
+describe("stillDiffers (what the review list shows against MatFlow now)", () => {
+  it("reads 'matches now' once someone has changed the member by hand", () => {
+    expect(stillDiffers("status", "cancelled", "cancelled")).toBe(false);
+    expect(stillDiffers("status", "cancelled", "active")).toBe(true);
+    expect(stillDiffers("plan", "Beginners", "beginners")).toBe(false);
+  });
+});
+
+describe("tierMap: a plan name two plans share matches neither (25 Oct)", () => {
+  it("keeps unique names, drops names that differ only by case or outer spacing", () => {
+    const m = tierMap([{ id: "a", name: "Beginners" }, { id: "b", name: "Juniors" }, { id: "c", name: " JUNIORS " }]);
+    expect(m.get("beginners")?.id).toBe("a");
+    expect(m.has("juniors")).toBe(false);
+  });
+});
+
+describe("scrubImportConflictsFor: a deleted or erased member leaves no trace in the review lists (task 4)", () => {
+  it("reduces every entry naming the member to its kind, leaves others alone, and is tenant-scoped", async () => {
+    const jobs = [
+      { id: "j1", manifest: { mode: "create", conflicts: [
+        { kind: "conflict", memberId: "gone", name: "Fox Ward", fields: [{ field: "phone", upload: "07700 900999", matflow: "07700 900456" }] },
+        { kind: "conflict", memberId: "stays", name: "Ann Lee", fields: [] },
+        { kind: "ambiguous", memberIds: ["x", "gone"], name: "Fox Ward", reason: "two" },
+      ] } },
+      { id: "j2", manifest: { mode: "create" } },
+    ];
+    const updates: { where: unknown; data: { manifest: { conflicts: unknown[] } } }[] = [];
+    const tx = {
+      importJob: {
+        findMany: async (args: { where: { tenantId: string } }) => (args.where.tenantId === "t1" ? jobs : []),
+        updateMany: async (args: { where: unknown; data: { manifest: { conflicts: unknown[] } } }) => { updates.push(args); return { count: 1 }; },
+      },
+    };
+    expect(await scrubImportConflictsFor(tx as never, "t1", "gone")).toBe(2);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].where).toEqual({ id: "j1", tenantId: "t1" });
+    expect(updates[0].data.manifest.conflicts).toEqual([{ kind: "conflict" }, jobs[0].manifest.conflicts![1], { kind: "ambiguous" }]);
+    expect(JSON.stringify(updates[0].data)).not.toContain("Fox Ward");
+    expect(await scrubImportConflictsFor(tx as never, "other-club", "gone")).toBe(0);
+  });
+});

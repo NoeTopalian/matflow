@@ -9,6 +9,7 @@ import KidPhotosAndWaiver from "@/components/member/KidPhotosAndWaiver";
 import MilestonesCard from "@/components/member/MilestonesCard";
 import { buildDefaultKidsWaiverTitle, buildDefaultKidsWaiverContent } from "@/lib/default-waiver";
 import { KidBillingCard } from "@/components/member/KidBillingCard";
+import { memberAllowanceUsage } from "@/lib/class-allowance-count";
 
 function ageFrom(d: Date | null) {
   if (!d) return null;
@@ -83,6 +84,21 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
   });
 
   if (!child || !stats) notFound();
+
+  // T7 (Sean note 5): the child's plan allowance, so a parent can see the
+  // count before the member app refuses a check-in for it. Read only after
+  // the confirmed-guardian lookup above found this child, by the same rows
+  // the check-in counts. Its own transaction: a failure says so on the card
+  // rather than taking the page down or showing nothing.
+  let childAllowance: Awaited<ReturnType<typeof memberAllowanceUsage>> = null;
+  let childAllowanceUnavailable = false;
+  try {
+    childAllowance = await withTenantContext(session.user.tenantId, (tx) =>
+      memberAllowanceUsage(tx, { tenantId: session.user.tenantId, memberId: child.id }),
+    );
+  } catch {
+    childAllowanceUnavailable = true;
+  }
 
   const age = ageFrom(child.dateOfBirth);
   const currentRank = child.memberRanks[0];
@@ -248,6 +264,20 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
       {/* B5 — kid billing card. Shows plan picker + Subscribe / Manage card /
           Cancel actions, OR a "speak to gym staff" notice when the owner
           hasn't enabled member-side billing yet. */}
+      {/* T7: the child's class allowance ("2 of 4 classes used in the last
+          4 weeks"). Nothing for an Unlimited plan; a failed count says so. */}
+      {(childAllowance || childAllowanceUnavailable) && (
+        <div className="mt-5 rounded-2xl border p-4" style={{ borderColor: "var(--member-border)" }} data-testid="child-plan-allowance">
+          <div className="flex items-center gap-2 mb-1.5">
+            <Calendar className="w-4 h-4" style={{ color: "var(--member-text-muted)" }} aria-hidden />
+            <span className="text-xs uppercase tracking-wider" style={{ color: "var(--member-text-muted)" }}>Class allowance</span>
+          </div>
+          <p className="text-sm" style={{ color: childAllowance ? "var(--member-text)" : "var(--member-text-muted)" }}>
+            {childAllowance ? childAllowance.text : `Couldn't load how many classes ${child.name}'s plan has left.`}
+          </p>
+        </div>
+      )}
+
       <div className="mt-5">
         <KidBillingCard childId={child.id} primaryColor={session.user.primaryColor ?? "#4f46e5"} />
       </div>
