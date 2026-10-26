@@ -151,8 +151,12 @@ beforeEach(() => {
 
 describe("refusing doors (member app, parent, kiosk)", () => {
   it("the member app refuses the fifth class of the period, names the count and the reset date, and writes nothing", async () => {
-    const r = await performCheckin(SELF);
-    expect(r).toEqual({ kind: "allowance_reached", askable: false, ...FACTS, current: expect.any(Boolean) });
+    // "this 4-week period" is the wording while today is inside it; pin today
+    // there (the period ends 26 Oct 2026, so the real clock fails it after).
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-19T12:00:00.000Z"));
+    const r = await performCheckin(SELF).finally(() => vi.useRealTimers());
+    expect(r).toEqual({ kind: "allowance_reached", askable: false, ...FACTS, current: true });
     expect(h.recordCreate).not.toHaveBeenCalled();
     const refusal = checkinRefusal(r)!;
     expect(refusal.status).toBe(403);

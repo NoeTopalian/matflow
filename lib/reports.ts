@@ -1,7 +1,14 @@
 import { unstable_cache } from "next/cache";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { noPaymentYetWhere } from "@/lib/overdue";
-import { TRAINING_MEMBER } from "@/lib/member-population";
+import { noPaymentYetPayerWhere, overduePayerWhere } from "@/lib/overdue";
+import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
+import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER, isActiveMember } from "@/lib/member-population";
+import { percent, ratePct1dp } from "@/lib/percent";
+import { clubMonthKey, clubMonthWindow, defaultClubMonthWindow, monthRange, type ClubMonthWindow } from "@/lib/club-month";
+import { emptyMembershipReport, loadMembershipReport, type MembershipReport } from "@/lib/membership-report";
+import { joinedOf, type MembershipBasis } from "@/lib/membership-movement";
+
+export type { MembershipReport } from "@/lib/membership-report";
 
 export interface ClassOption {
   id: string;
@@ -36,6 +43,39 @@ export interface AttendanceRate {
   value: number | null;
   label: string;
   formula: string;
+  /**
+   * T2b (17 Oct 2026): the two counts behind `value`, so the readout and the
+   * CSV can show "x% (n of m)" — check-ins and active members for the
+   * per-member average, attendees and active members for the percentage,
+   * check-ins and class places for the fill rate.
+   */
+  numerator: number;
+  denominator: number;
+}
+
+/**
+ * T2b (17 Oct 2026; agent default adopted 17 Oct 2026; not an owner
+ * decision; required by Sean's note relayed 14 Oct and the owner instruction
+ * of 24 Oct 2026): every percentage on Reports carries its numerator and
+ * denominator. `ratePct` is null exactly when the base is
+ * 0 — the screen renders "—", never "0%" (MATFLOW-SPECIFICATION-2026-10.md
+ * :144 "divide-by-zero → null", extended to every ratio here).
+ */
+export interface ChurnFigures {
+  /** cancelled ÷ base × 100, one decimal place; null when base is 0. */
+  ratePct: number | null;
+  /** Training members whose cancelledAt falls in this calendar month. */
+  cancelled: number;
+  /** Active training members now + `cancelled` (the existing formula's base). */
+  base: number;
+  /**
+   * D11: Joined this month by the movement definition — new + rejoined
+   * (lib/membership-movement.ts), the same figure as the Net New Members
+   * card. Tasters and imports are not joins.
+   */
+  joined: number;
+  /** The movement net for the month: new + rejoined − left. */
+  net: number;
 }
 
 export interface ReportsData {
@@ -47,6 +87,15 @@ export interface ReportsData {
    * (UI-RULES §7).
    */
   generatedAt: string;
+  /**
+   * The calendar month every "this month" figure counts (review L4, 23 Oct
+   * 2026): resolved ONCE, in the club's time zone (Tenant.timezone), as the
+   * half-open window [monthStart, nextMonthStart). Joined this month,
+   * cancelled this month, churn and the monthly buckets all use it; the
+   * drill-through links carry its `monthKey` so the Members page lists the
+   * same month even if the calendar has turned since this was computed.
+   */
+  period: ClubMonthWindow;
   /**
    * Width of the reporting window, in weeks (4-24, default 12). Every
    * attendance-derived figure below — `summary.totalCheckIns`,
@@ -84,11 +133,25 @@ export interface ReportsData {
     ageGroup: "adult" | "kids" | null;
   };
   summary: {
+    /** Every training member on record, in any status — including those who have left. */
     totalMembers: number;
+    /**
+     * T2b: current training members — active, inactive and tasters (not
+     * cancelled, not guardians; CURRENT_MEMBER). The denominator of the
+     * status shares and of "x% of current members are active".
+     */
+    currentMembers: number;
     activeMembers: number;
     inactiveMembers: number;
     cancelledMembers: number;
     tasterMembers: number;
+    /**
+     * Active training members whose membership is on hold (ACTIVE_MEMBER +
+     * ON_HOLD). They stay inside activeMembers (Q4 A-1: agent default adopted
+     * 17 Oct 2026; not an owner decision) and the tile marks them: "includes N
+     * on hold".
+     */
+    activeOnHoldMembers: number;
     totalCheckIns: number;
     totalActiveClasses: number;
     attendanceThisWeek: number;
@@ -97,8 +160,26 @@ export interface ReportsData {
     newMembersLastMonth: number;
   };
   weeklyAttendance: { week: string; count: number; isCurrentWeek: boolean }[];
-  monthlySignups: { month: string; count: number; isCurrentMonth: boolean }[];
+  /**
+   * Joined (new + rejoined) per club month, last 6 months, by the movement
+   * definition. `basis` says whether the month was recorded at the time or is
+   * (partly) estimated, so the chart and the CSV can say so (24 Oct 2026).
+   */
+  monthlySignups: { month: string; count: number; isCurrentMonth: boolean; basis: MembershipBasis }[];
+  /**
+   * @deprecated All-time partition (percentages over every training member
+   * ever recorded, cancelled included). Kept so the shape stays additive;
+   * the screen and the CSV read `currentMembersByStatus` instead (T2b, Q4
+   * A-2 split status card).
+   */
   membersByStatus: { status: string; label: string; count: number; percentage: number }[];
+  /**
+   * T2b: current members only (no cancelled row), each share over
+   * `summary.currentMembers`, so the rows add to 100% ± rounding. Members
+   * who have left are `summary.cancelledMembers`, shown as a count with no
+   * percentage.
+   */
+  currentMembersByStatus: { status: string; label: string; count: number; percentage: number }[];
   checkInMethods: { method: string; label: string; count: number; percentage: number }[];
   topClasses: {
     name: string;
@@ -106,16 +187,65 @@ export interface ReportsData {
     sessions: number;
     averageAttendance: number;
     fillRate: number | null;
+    /** T2b: the class places behind `fillRate` (0 when no session had capacity set). */
+    capacityTotal: number;
   }[];
+  /** Kept for compatibility (tests/e2e/full-app-qa.spec.ts reads it); 0 when the base is 0. Prefer `churn`. */
   churnRate: number;
+  /** T2b: churn with its counts, and joined beside it for the same month. */
+  churn: ChurnFigures;
   retentionRate: number | null;
+  /** T2b: the counts behind `retentionRate` (members who joined 6+ months ago, and how many are still active). */
+  retention: { ratePct: number | null; survived: number; cohort: number };
+  /**
+   * @deprecated Joins by joinedAt against members currently cancelled, by
+   * cancelledAt (a rejoin vanishes). Kept so the shape stays additive; the Net
+   * New Members card and the CSV read `membership` instead (T8c).
+   */
   netNewByMonth: { month: string; joined: number; cancelled: number; net: number }[];
+  /**
+   * T8c: movement (new, rejoined, lost incl. completed course, net) and
+   * active-member headcount per club month, replayed from status history
+   * (lib/membership-movement.ts). The current month's headcount equals
+   * `summary.activeMembers`. Club-wide: never scoped by the class or age filter.
+   */
+  membership: MembershipReport;
+  /**
+   * Money totals count PAYERS, not members (review L2, 23 Oct 2026): active
+   * and taster accounts of any type, guardians who pay included (lib/overdue
+   * overduePayerWhere / noPaymentYetPayerWhere — the Payments → Outstanding
+   * and Members "Payers overdue" definition). Overdue and "No payment yet"
+   * never overlap; together they are the Outstanding list.
+   */
   paymentHealth: {
+    /** Payers overdue, by Stripe or by a passed due date. */
     overdueCount: number;
-    /** "No payment yet" on a plan, MatFlow-billed (lib/overdue noPaymentYetWhere — the Outstanding list's rule). */
+    /** How many of `overdueCount` are parent or guardian accounts. */
+    overdueGuardianCount: number;
+    /** Payers on a plan with no payment ever recorded, MatFlow-billed. */
     noPaymentYetCount: number;
+    /** How many of `noPaymentYetCount` are parent or guardian accounts. */
+    noPaymentYetGuardianCount: number;
+    /**
+     * D9 (23 Oct 2026): inactive or cancelled accounts with a CONFIRMED debt —
+     * marked overdue (lib/other-accounts-owing.ts). Not chased, not in
+     * `overdueCount`, not in any member total.
+     */
+    otherOwingCount: number;
+    /** How many of `otherOwingCount` are parent or guardian accounts. */
+    otherOwingGuardianCount: number;
+    /**
+     * Owner instruction of 24 Oct 2026: inactive or cancelled accounts whose
+     * latest charge failed and that are NOT marked overdue — a failed charge to
+     * reconcile, never counted as a debt. Not in `otherOwingCount`.
+     */
+    failedToReconcileCount: number;
+    /** How many of `failedToReconcileCount` are parent or guardian accounts. */
+    failedToReconcileGuardianCount: number;
     failedLast30Days: number;
     recoveryRate: number | null;
+    /** T2b: the counts behind `recoveryRate` (members with a failed payment in 90 days, and how many are now paid). */
+    recovery: { ratePct: number | null; recovered: number; failedMembers: number };
   };
   /** The active attendance-rate definition, computed and labelled. */
   attendanceRate: AttendanceRate;
@@ -184,19 +314,27 @@ function computeAttendanceRate(
 ): AttendanceRate {
   const meta = ATTENDANCE_RATE_MODES.find((m) => m.mode === mode) ?? ATTENDANCE_RATE_MODES[0];
   let value: number | null;
+  let numerator: number;
+  let denominator: number;
   switch (mode) {
     case "attendance-percentage":
-      value = data.activeMembers > 0 ? percent(data.distinctAttendingMembers, data.activeMembers) : null;
+      numerator = data.distinctAttendingMembers;
+      denominator = data.activeMembers;
+      value = denominator > 0 ? percent(numerator, denominator) : null;
       break;
     case "fill-rate":
-      value = data.capacitySum > 0 ? percent(data.attendedAgainstCapacity, data.capacitySum) : null;
+      numerator = data.attendedAgainstCapacity;
+      denominator = data.capacitySum;
+      value = denominator > 0 ? percent(numerator, denominator) : null;
       break;
     case "checkins-per-member":
     default:
-      value = data.activeMembers > 0 ? roundedAverage(data.totalCheckIns, data.activeMembers) : null;
+      numerator = data.totalCheckIns;
+      denominator = data.activeMembers;
+      value = denominator > 0 ? roundedAverage(numerator, denominator) : null;
       break;
   }
-  return { mode, value, label: meta.label, formula: meta.formula };
+  return { mode, value, label: meta.label, formula: meta.formula, numerator, denominator };
 }
 
 function titleCase(value: string) {
@@ -217,31 +355,18 @@ function startOfWeek(date: Date) {
   return d;
 }
 
-function startOfMonth(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-
 function addDays(date: Date, days: number) {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
   return d;
 }
 
-function addMonths(date: Date, months: number) {
-  return new Date(date.getFullYear(), date.getMonth() + months, 1);
-}
-
 function formatWeek(date: Date) {
   return `${date.getDate()} ${date.toLocaleString("en-GB", { month: "short" })}`;
 }
 
-function formatMonth(date: Date) {
-  return date.toLocaleString("en-GB", { month: "short", year: "2-digit" });
-}
-
-function percent(count: number, total: number) {
-  if (total <= 0) return 0;
-  return Math.round((count / total) * 100);
+function formatMonth(date: Date, timeZone: string) {
+  return date.toLocaleString("en-GB", { month: "short", year: "2-digit", timeZone });
 }
 
 function roundedAverage(total: number, sessions: number) {
@@ -252,15 +377,18 @@ function roundedAverage(total: number, sessions: number) {
 export function createEmptyReportsData(): ReportsData {
   return {
     generatedAt: new Date().toISOString(),
+    period: defaultClubMonthWindow(),
     weeksBack: DEFAULT_WEEKS,
     classOptions: [],
     filters: { classId: null, className: null, ageGroup: null },
     summary: {
       totalMembers: 0,
+      currentMembers: 0,
       activeMembers: 0,
       inactiveMembers: 0,
       cancelledMembers: 0,
       tasterMembers: 0,
+      activeOnHoldMembers: 0,
       totalCheckIns: 0,
       totalActiveClasses: 0,
       attendanceThisWeek: 0,
@@ -271,16 +399,27 @@ export function createEmptyReportsData(): ReportsData {
     weeklyAttendance: [],
     monthlySignups: [],
     membersByStatus: [],
+    currentMembersByStatus: [],
     checkInMethods: [],
     topClasses: [],
     churnRate: 0,
+    churn: { ratePct: null, cancelled: 0, base: 0, joined: 0, net: 0 },
     retentionRate: null,
+    retention: { ratePct: null, survived: 0, cohort: 0 },
     netNewByMonth: [],
+    membership: emptyMembershipReport(),
     paymentHealth: {
       overdueCount: 0,
+      overdueGuardianCount: 0,
       noPaymentYetCount: 0,
+      noPaymentYetGuardianCount: 0,
+      otherOwingCount: 0,
+      otherOwingGuardianCount: 0,
+      failedToReconcileCount: 0,
+      failedToReconcileGuardianCount: 0,
       failedLast30Days: 0,
       recoveryRate: null,
+      recovery: { ratePct: null, recovered: 0, failedMembers: 0 },
     },
     attendanceRate: computeAttendanceRate(DEFAULT_ATTENDANCE_RATE_MODE, {
       totalCheckIns: 0,
@@ -322,12 +461,17 @@ export async function getReportsData(
   // real-but-empty filter that would make the whole tenant's attendance
   // silently read as zero (UI-RULES §7 — an honest empty state must come
   // from an honest query, not a filter nobody asked for).
-  const classOptionsRaw = await withTenantContext(tenantId, (tx) =>
-    tx.class.findMany({
-      where: { tenantId, isActive: true, deletedAt: null },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-    }),
+  // The club's zone is read in the same transaction: every month window below
+  // is the CLUB's calendar month, not the server's (review L4).
+  const [classOptionsRaw, club] = await withTenantContext(tenantId, (tx) =>
+    Promise.all([
+      tx.class.findMany({
+        where: { tenantId, isActive: true, deletedAt: null },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      }),
+      tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }),
+    ]),
   );
   const resolvedClassId = requestedClassId && classOptionsRaw.some((c) => c.id === requestedClassId)
     ? requestedClassId
@@ -337,9 +481,12 @@ export async function getReportsData(
   const currentWeekStart = startOfWeek(now);
   const previousWeekStart = addDays(currentWeekStart, -7);
   const weeklyWindowStart = addDays(currentWeekStart, -(weeksBack - 1) * 7);
-  const currentMonthStart = startOfMonth(now);
-  const previousMonthStart = addMonths(currentMonthStart, -1);
-  const sixMonthsAgo = addMonths(currentMonthStart, -5);
+  // Club-zone months, half-open [start, next start). The server's own zone
+  // (UTC on Vercel) and the reader's browser zone play no part (review L4).
+  const period = clubMonthWindow(now, club?.timezone);
+  const thisMonth = monthRange(period);
+  const chartMonths = [5, 4, 3, 2, 1, 0].map((back) => clubMonthWindow(now, period.timeZone, -back));
+  const sixMonthsAgo = new Date(chartMonths[0].monthStart);
 
   // Attendance-scope filter fragment (Track A, D5): merged into every
   // attendance-derived query below. `classInstance: { classId }` and
@@ -356,24 +503,25 @@ export async function getReportsData(
     weeklyRecords,
     methodCounts,
     memberStatusCounts,
-    newMembers,
     topResult, // Lane 1 iter-1 P-03: { topRaw, instances } — in-tx continuation
     totalMembers,
     totalCheckIns,
     totalActiveClasses,
     attendanceThisWeek,
     attendanceLastWeek,
-    newMembersThisMonth,
-    newMembersLastMonth,
     cancelledThisMonth,
     activeCount,
     retentionBase,
     retentionActive,
     overdueCount,
+    overdueGuardianCount,
     noPaymentYetCount,
+    noPaymentYetGuardianCount,
     failedLast30,
     membersWithRecentFailed,
     cancelledByMonth,
+    activeOnHoldMembers,
+    otherOwingRows,
   ] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       tx.attendanceRecord.findMany({
@@ -382,7 +530,7 @@ export async function getReportsData(
         // below — same rows already fetched for the weekly chart, no new
         // query, so the distinct-attendee count shares the identical window
         // and filter scope as everything else on this page.
-        select: { checkInTime: true, memberId: true, member: { select: { status: true } } },
+        select: { checkInTime: true, memberId: true, member: { select: { status: true, accountType: true } } },
         take: 10000,
       }).then((rows) => {
         if (rows.length === 10000) console.warn("[reports] truncated at 10000 rows (attendance window)");
@@ -402,14 +550,6 @@ export async function getReportsData(
         by: ["status"],
         where: { tenantId, ...TRAINING_MEMBER },
         _count: true,
-      }),
-      tx.member.findMany({
-        where: { tenantId, joinedAt: { gte: sixMonthsAgo }, ...TRAINING_MEMBER },
-        select: { joinedAt: true },
-        take: 5000,
-      }).then((rows) => {
-        if (rows.length === 5000) console.warn("[reports] truncated at 5000 rows (member-join window)");
-        return rows;
       }),
       // Lane 1 iter-1 P-03 [Critical] fix: fold the previously-separate
       // `withTenantContext` (lines 257-263) into this same parallel block.
@@ -455,28 +595,24 @@ export async function getReportsData(
           ...attendanceScope,
         },
       }),
-      tx.member.count({ where: { tenantId, joinedAt: { gte: currentMonthStart }, ...TRAINING_MEMBER } }),
-      tx.member.count({
-        where: {
-          tenantId,
-          joinedAt: { gte: previousMonthStart, lt: currentMonthStart },
-          ...TRAINING_MEMBER,
-        },
-      }),
       // Health metrics — churn (D1: date by cancelledAt, not updatedAt, so an
       // unrelated edit to a cancelled member doesn't re-bucket them into churn)
-      tx.member.count({ where: { tenantId, status: "cancelled", cancelledAt: { gte: currentMonthStart }, ...TRAINING_MEMBER } }),
-      tx.member.count({ where: { tenantId, status: "active", ...TRAINING_MEMBER } }),
+      tx.member.count({ where: { tenantId, ...LEFT_MEMBER, cancelledAt: thisMonth } }),
+      tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
       // Retention: joined ≥6 months ago
       tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, ...TRAINING_MEMBER } }),
-      tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, status: "active", ...TRAINING_MEMBER } }),
-      // Payment health — D5: match the dashboard "payments due" tile predicate
-      // (only active/taster members count as overdue; a cancelled member isn't
-      // chased). Keeps the dashboard tile and this report in agreement.
-      tx.member.count({ where: { tenantId, paymentStatus: "overdue", status: { in: ["active", "taster"] }, billedBy: { not: "teamup" } } }),
-      // Members who owe without being overdue — never "all in good standing" while
+      tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, ...ACTIVE_MEMBER } }),
+      // Payment health (review L2): PAYERS, the definition Payments →
+      // Outstanding and the Members "Payers overdue" tile share. It used to be
+      // Stripe's stored "overdue" only, so a cash member past their due date
+      // was on Outstanding and missing here. Guardians who pay are counted —
+      // a debt is never dropped — and how many of them is reported beside.
+      tx.member.count({ where: { tenantId, ...overduePayerWhere(now) } }),
+      tx.member.count({ where: { tenantId, ...GUARDIAN_ACCOUNT, ...overduePayerWhere(now) } }),
+      // Payers who owe without being overdue — never "all in good standing" while
       // Payments → Outstanding lists them (end-user check, 30 Sep 2026).
-      tx.member.count({ where: { tenantId, status: { in: ["active", "taster"] }, ...noPaymentYetWhere() } }),
+      tx.member.count({ where: { tenantId, ...noPaymentYetPayerWhere() } }),
+      tx.member.count({ where: { tenantId, ...GUARDIAN_ACCOUNT, ...noPaymentYetPayerWhere() } }),
       tx.payment.count({ where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 30 * 86400000) } } }),
       tx.payment.findMany({
         where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 90 * 86400000) } },
@@ -485,9 +621,14 @@ export async function getReportsData(
       }),
       // Net-new chart: members cancelled in the last 6 months (D1: by cancelledAt)
       tx.member.findMany({
-        where: { tenantId, status: "cancelled", cancelledAt: { gte: sixMonthsAgo }, ...TRAINING_MEMBER },
+        where: { tenantId, ...LEFT_MEMBER, cancelledAt: { gte: sixMonthsAgo } },
         select: { cancelledAt: true },
       }),
+      // Q4 A-1: members on hold stay inside "Active members" and are marked there.
+      tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER, ...ON_HOLD } }),
+      // D9: inactive or cancelled accounts that still owe — counted beside
+      // the payers, never inside them or a member total.
+      loadOtherAccountsOwing(tx, tenantId),
     ]),
     // ~12 parallel aggregate queries in one transaction — needs more than the
     // default budget on large tenants (was expiring with P2028/commit-expired).
@@ -520,25 +661,40 @@ export async function getReportsData(
     // here, which could push the rate past 100% — count a distinct attendee only
     // while they are currently active. The weekly chart bucket above still counts
     // every check-in regardless of status.
-    if (rec.member?.status === "active") distinctAttendingMemberIds.add(rec.memberId);
+    // The denominator is ACTIVE_MEMBER, which leaves guardian accounts out, so
+    // the numerator uses the same predicate: a guardian's check-in is never a
+    // "(n of m)" person who is missing from m.
+    if (rec.member && isActiveMember(rec.member)) distinctAttendingMemberIds.add(rec.memberId);
   }
 
-  const monthlyMap = new Map<string, { month: string; count: number; isCurrentMonth: boolean }>();
-  for (let i = 5; i >= 0; i--) {
-    const d = addMonths(currentMonthStart, -i);
-    const key = `${d.getFullYear()}-${d.getMonth()}`;
-    monthlyMap.set(key, {
-      month: formatMonth(d),
-      count: 0,
-      isCurrentMonth: d.getTime() === currentMonthStart.getTime(),
+  // T8c: movement and headcount, in its own read (one events findMany plus the
+  // ledger when the back-fill has not been applied), after the block above so
+  // the report never holds two pooled connections at once.
+  const membership = await withTenantContext(
+    tenantId,
+    (tx) => loadMembershipReport(tx, tenantId, { now }),
+    { maxWait: 10_000, timeout: 30_000 },
+  );
+  // D11 (23 Oct 2026): every "joined" on the page is the movement definition
+  // (lib/membership-movement.ts) — never Member.joinedAt — so the tiles, the
+  // charts, the CSV and the Members drill-throughs count the same events.
+  const moveIn = (monthKey: string) => membership.movementsByMonth.find((r) => r.month === monthKey && r.basis !== "none") ?? null;
+  const thisMonthMoves = moveIn(period.monthKey);
+  const lastMonthMoves = moveIn(clubMonthWindow(now, period.timeZone, -1).monthKey);
+  const newMembersThisMonth = thisMonthMoves?.new ?? 0;
+  const newMembersLastMonth = lastMonthMoves?.new ?? 0;
+
+  // Buckets keyed by the club-zone month ("2026-10") and labelled in that
+  // zone: joined (new + rejoined) by the movement definition (D11).
+  const monthlyMap = new Map<string, { month: string; count: number; isCurrentMonth: boolean; basis: MembershipBasis }>();
+  for (const w of chartMonths) {
+    const moves = moveIn(w.monthKey);
+    monthlyMap.set(w.monthKey, {
+      month: formatMonth(new Date(w.monthStart), period.timeZone),
+      count: moves ? joinedOf(moves) : 0,
+      isCurrentMonth: w.monthKey === period.monthKey,
+      basis: moves?.basis ?? "none",
     });
-  }
-
-  for (const member of newMembers) {
-    const d = startOfMonth(member.joinedAt);
-    const key = `${d.getFullYear()}-${d.getMonth()}`;
-    const bucket = monthlyMap.get(key);
-    if (bucket) bucket.count += 1;
   }
 
   const statusCount = new Map(memberStatusCounts.map((row) => [row.status, row._count]));
@@ -548,6 +704,20 @@ export async function getReportsData(
       label: STATUS_LABELS[row.status] ?? titleCase(row.status),
       count: row._count,
       percentage: percent(row._count, totalMembers),
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  // Q4 A-2 (split status card, T2b): shares over CURRENT members only, so a
+  // cancelled slice is never a share of the people still on the books. The
+  // count of those who left is `summary.cancelledMembers`, shown on its own.
+  const currentRows = memberStatusCounts.filter((row) => row.status !== "cancelled");
+  const currentMembers = currentRows.reduce((sum, row) => sum + row._count, 0);
+  const currentMembersByStatus = currentRows
+    .map((row) => ({
+      status: row.status,
+      label: STATUS_LABELS[row.status] ?? titleCase(row.status),
+      count: row._count,
+      percentage: percent(row._count, currentMembers),
     }))
     .sort((a, b) => b.count - a.count);
 
@@ -594,6 +764,7 @@ export async function getReportsData(
         sessions,
         averageAttendance: roundedAverage(stats.count, sessions),
         fillRate: stats.capacityTotal > 0 ? percent(stats.count, stats.capacityTotal) : null,
+        capacityTotal: stats.capacityTotal,
       };
     })
     .sort((a, b) => b.count - a.count)
@@ -616,16 +787,27 @@ export async function getReportsData(
 
   // ── Health metrics ───────────────────────────────────────────────────────
 
-  const churnRate = Math.round(
-    ((cancelledThisMonth / Math.max(activeCount + cancelledThisMonth, 1)) * 100) * 10,
-  ) / 10;
+  // Q6 (agent default adopted 17 Oct 2026; not an owner decision; the churn
+  // formula is open as D4): keep the existing formula — cancelled
+  // this month ÷ (active now + cancelled this month) — but return its counts
+  // so every surface prints "x% (n of m)". An empty base is null ("—"), not
+  // the "0%" the old Math.max(…, 1) produced; `churnRate` keeps that number
+  // only for its existing numeric readers.
+  const churnBase = activeCount + cancelledThisMonth;
+  const churnPct = ratePct1dp(cancelledThisMonth, churnBase);
+  const churn: ChurnFigures = {
+    ratePct: churnPct,
+    cancelled: cancelledThisMonth,
+    base: churnBase,
+    joined: thisMonthMoves ? joinedOf(thisMonthMoves) : 0,
+    net: thisMonthMoves?.net ?? 0,
+  };
+  const churnRate = churnPct ?? 0;
 
   // 0/0 is "no data", not "perfect": a club with no members who joined 6+
   // months ago has an UNDEFINED survival rate — surface it as null → "—", not a
   // fake 100% (same honesty rule as the attendance-rate modes).
-  const retentionRate = retentionBase > 0
-    ? Math.round((retentionActive / retentionBase) * 1000) / 10
-    : null;
+  const retentionRate = ratePct1dp(retentionActive, retentionBase);
 
   // Recovery rate: of members with a failed payment in the last 90 days,
   // what fraction now have paymentStatus='paid'?
@@ -641,9 +823,7 @@ export async function getReportsData(
 
   // No members had a failed payment → recovery rate is UNDEFINED (nothing to
   // recover), not 100%. null → "—" so the metric never claims a fake success.
-  const recoveryRate = failedMemberIds.length > 0
-    ? Math.round((recoveredCount / failedMemberIds.length) * 1000) / 10
-    : null;
+  const recoveryRate = ratePct1dp(recoveredCount, failedMemberIds.length);
 
   // The rate readout's denominator must carry the SAME age scope as its
   // numerator: under "Kids" the check-ins are kids' check-ins, so the "active
@@ -668,8 +848,7 @@ export async function getReportsData(
   const cancelledByMonthMap = new Map<string, number>();
   for (const row of cancelledByMonth) {
     if (!row.cancelledAt) continue;
-    const d = startOfMonth(row.cancelledAt);
-    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    const key = clubMonthKey(row.cancelledAt, period.timeZone);
     cancelledByMonthMap.set(key, (cancelledByMonthMap.get(key) ?? 0) + 1);
   }
 
@@ -688,6 +867,7 @@ export async function getReportsData(
     : null;
 
   return {
+    period,
     weeksBack,
     classOptions: classOptionsRaw,
     filters: {
@@ -697,10 +877,12 @@ export async function getReportsData(
     },
     summary: {
       totalMembers,
+      currentMembers,
       activeMembers: statusCount.get("active") ?? 0,
       inactiveMembers: statusCount.get("inactive") ?? 0,
       cancelledMembers: statusCount.get("cancelled") ?? 0,
       tasterMembers: statusCount.get("taster") ?? 0,
+      activeOnHoldMembers,
       totalCheckIns,
       totalActiveClasses,
       attendanceThisWeek,
@@ -711,16 +893,27 @@ export async function getReportsData(
     weeklyAttendance: Array.from(weeklyMap.values()),
     monthlySignups: Array.from(monthlyMap.values()),
     membersByStatus,
+    currentMembersByStatus,
     checkInMethods,
     topClasses,
     churnRate,
+    churn,
     retentionRate,
+    retention: { ratePct: retentionRate, survived: retentionActive, cohort: retentionBase },
     netNewByMonth,
+    membership,
     paymentHealth: {
       overdueCount,
+      overdueGuardianCount,
       noPaymentYetCount,
+      noPaymentYetGuardianCount,
+      otherOwingCount: otherOwingTotals(otherOwingRows).count,
+      otherOwingGuardianCount: otherOwingTotals(otherOwingRows).guardians,
+      failedToReconcileCount: otherOwingTotals(otherOwingRows).toReconcile,
+      failedToReconcileGuardianCount: otherOwingTotals(otherOwingRows).toReconcileGuardians,
       failedLast30Days: failedLast30,
       recoveryRate,
+      recovery: { ratePct: recoveryRate, recovered: recoveredCount, failedMembers: failedMemberIds.length },
     },
     attendanceRate: computeAttendanceRate(attendanceRateMode, {
       totalCheckIns,
@@ -735,6 +928,30 @@ export async function getReportsData(
 }
 
 /**
+ * Cache version token — the second element of every reports cache key. Bump
+ * it with EVERY change to the `ReportsData` shape, so a 60-second entry
+ * written by the previous deployment is never served to code that expects
+ * the new fields (and vice versa); old and new deployments never share an
+ * entry. "v2" = T2b counts (churn, retention, recovery, rate
+ * numerator/denominator, current status shares). T2c added no field.
+ * "v3" = summary.activeOnHoldMembers (T1 review, 17 Oct 2026).
+ * "v4" = period, the club-zone month window (review L4, 23 Oct 2026).
+ * "v5" = paymentHealth payer counts and guardian counts (review L2, 23 Oct 2026).
+ * "v6" = membership: movement and headcount by month (T8c). The headcount
+ * branch shipped this field as its own "v4" before the reporting branch was
+ * merged in; the merged shape (period + payer counts + membership) matches
+ * neither earlier token, so it gets a fresh one. On the reporting branch
+ * alone "v6" meant paymentHealth.otherOwingCount (D9); that shape is also
+ * different from this one.
+ * "v7" = the merged shape: membership (T8c) + paymentHealth.otherOwingCount /
+ * otherOwingGuardianCount (D9, 23 Oct 2026).
+ * "v8" = otherOwingCount narrowed to confirmed debts, plus
+ * paymentHealth.failedToReconcileCount / failedToReconcileGuardianCount and
+ * monthlySignups[].basis (24 Oct 2026).
+ */
+export const REPORTS_CACHE_VERSION = "v8";
+
+/**
  * The cached read the reports page and API use. Under 25 concurrent staff
  * sessions the uncached report was the slowest path in the product (p95 5 s
  * in the 2026-09-24 pilot load run — docs/readiness/CAPACITY-PILOT): every
@@ -743,10 +960,14 @@ export async function getReportsData(
  * different windows never share a result and one club never sees another's.
  * The 60 seconds are disclosed on the page via `generatedAt`. Tag
  * `reports-<tenantId>` lets a write path bust it early; none does today —
- * a minute's staleness on aggregates is the documented trade.
+ * a minute's staleness on aggregates is the documented trade (write-path
+ * invalidation is deferred, A-7). A future call should go through
+ * `revalidateTagLogged` (lib/revalidate-tag-logged.ts) so a failure is logged.
  *
- * The CSV export keeps calling `getReportsData` directly: an explicit export
- * should be computed for the moment it was asked for.
+ * The CSV export does NOT recompute: it is built in the browser
+ * (ReportsView `reportsCsv`) from the same cached `ReportsData` the page
+ * received, so it carries exactly the on-screen figures — and its first data
+ * row states their `generatedAt`, so the file says when they were computed.
  */
 export function getReportsDataCached(
   tenantId: string,
@@ -754,6 +975,7 @@ export function getReportsDataCached(
 ): Promise<ReportsData> {
   const key = [
     "reports",
+    REPORTS_CACHE_VERSION,
     tenantId,
     String(clampWeeks(options.weeksBack)),
     options.classId?.trim() || "-",

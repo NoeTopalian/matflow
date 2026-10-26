@@ -427,6 +427,7 @@ export function parseTeamUp(csvText: string, opts: { today?: string; asOf?: stri
     let status = "active";
     let paymentStatus = "paid";
     let cancelledAt: string | undefined;
+    let courseEndedAt: string | undefined;
     let membershipType: string | undefined = cur?.plan || undefined;
     if (cur) {
       if (cur.status.toLowerCase() === "hold") { paymentStatus = "paused"; notes.push("On hold at TeamUp — resume date not in the export."); }
@@ -446,6 +447,10 @@ export function parseTeamUp(csvText: string, opts: { today?: string; asOf?: stri
       paymentStatus = "cancelled";
       cancelledAt = isoDate(last.cancelled);
       const ended = cancelledAt ?? (lastStatus === "completed" ? isoInstant(last.completedAt)?.slice(0, 10) : undefined);
+      // A completed course ends at Completed At, else its Cancelled Date — the
+      // back-fill's order (lib/status-backfill.ts endOf), so a refresh and the
+      // back-fill put the same completion in the same club month (review F3).
+      if (status === "inactive") courseEndedAt = isoInstant(last.completedAt) ?? cancelledAt;
       if (status === "cancelled" && !cancelledAt) {
         summary.cancelledWithoutDate += 1;
         notes.push(`No live membership at TeamUp — last was ${last.plan} (${last.status}); cancellation date not in the export.`);
@@ -468,6 +473,7 @@ export function parseTeamUp(csvText: string, opts: { today?: string; asOf?: stri
       joinedAt: joined,
       paymentStatus,
       cancelledAt,
+      ...(courseEndedAt ? { courseEndedAt } : {}),
       emergencyContactName: src.ecName || undefined,
       emergencyContactPhone: src.ecPhone || undefined,
       emergencyContactRelation: src.ecRel || undefined,

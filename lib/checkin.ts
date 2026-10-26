@@ -126,7 +126,7 @@ import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { checkinWindowVerdict, usableTimezone, DEFAULT_TIMEZONE } from "@/lib/class-time";
 import { isOnHold } from "@/lib/member-hold";
-import { isOverdue } from "@/lib/overdue";
+import { isOverdue, paymentEvidence, type PaymentEvidence } from "@/lib/overdue";
 import { isAdultAccount } from "@/lib/account-type";
 import { classTierCovers } from "@/lib/class-tier-gate";
 import { doorLifecycle } from "@/lib/class-lifecycle";
@@ -352,7 +352,17 @@ export type PerformCheckinResult =
       beforeMin?: number;
       afterMin?: number;
     }
-  | { kind: "no_coverage"; billedBy?: string | null }
+  | {
+      kind: "no_coverage";
+      billedBy?: string | null;
+      /**
+       * D10: set when the member is on a plan and refused because they are
+       * behind — which evidence applies (lib/overdue paymentEvidence), so the
+       * refusal can say "never paid" apart from "did not pay". Absent for a
+       * member with no plan at all.
+       */
+      payment?: PaymentEvidence | null;
+    }
   | { kind: "duplicate" }
   | { kind: "error"; error: unknown };
 
@@ -770,6 +780,35 @@ function overrideFields(allowance: AllowanceGateState): {
 }
 
 /**
+ * D10: the evidence for a payment refusal, read only on the refusal path. The
+ * ACCESS decision has already been made by `covered` above; this is copy, so
+ * a failed read of the latest payment falls back to the evidence the member
+ * row alone gives (never to an error the member would see instead).
+ */
+async function refusalPaymentEvidence(
+  tenantId: string,
+  memberId: string,
+  member: { paymentStatus: string; nextDueAt: Date | null; stripeSubscriptionId: string | null; billedBy: string | null; membershipTierId: string | null },
+): Promise<PaymentEvidence | null> {
+  if (!member.membershipTierId) return null;
+  const now = new Date();
+  if (!isOverdue(member, now)) return null;
+  let lastSettled: { status: string; createdAt: Date } | null = null;
+  try {
+    lastSettled = await withTenantContext(tenantId, (tx) =>
+      tx.payment.findFirst({
+        where: { tenantId, memberId, status: { in: ["succeeded", "failed"] } },
+        orderBy: { createdAt: "desc" },
+        select: { status: true, createdAt: true },
+      }),
+    );
+  } catch (e) {
+    console.warn("[checkin] latest payment read failed; refusal falls back to the member row", e);
+  }
+  return paymentEvidence(member, now, lastSettled);
+}
+
+/**
  * Never throws: a failure on any read or write becomes { kind: "error" },
  * logged once, so every door (desk, kiosk, card, register) answers with its own
  * sentence instead of a bare 500 (connection register gap 2, 30 Sep 2026).
@@ -1044,7 +1083,14 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       // TeamUp bridge: a member TeamUp bills who has no plan set here (two
       // plans at TeamUp, a plan label with no tier, a scheduled start) must
       // not be told to buy a pack — the desk decides (teamup-2, 2 Oct 2026).
-      if (result.kind === "no_coverage") return { kind: "no_coverage", billedBy: memberRecord?.billedBy ?? null };
+      if (result.kind === "no_coverage") {
+        return {
+          kind: "no_coverage",
+          billedBy: memberRecord?.billedBy ?? null,
+          // The pre-read is skipped when no gate needs it; no member row, no evidence.
+          payment: memberRecord ? await refusalPaymentEvidence(tenantId, memberId, memberRecord) : null,
+        };
+      }
       return {
         kind: "success",
         record: result.record,

@@ -33,6 +33,43 @@ import AttributionFields, { emptyAttribution, type AttributionValue } from "@/co
 import { resolveSignupCredit } from "@/lib/signup-credit";
 import { BilledByTeamUpPill } from "@/components/dashboard/BilledByTeamUpPill";
 import { paymentStatusLabel } from "@/lib/payment-status";
+import type { PaymentEvidence } from "@/lib/overdue";
+import type { MembershipBasis, MovementBucket } from "@/lib/membership-movement";
+import { basisNote } from "@/lib/net-new-series";
+import {
+  FAILED_TO_RECONCILE_COPY,
+  OTHER_OWING_COPY,
+  failedToReconcileLine,
+  PAYER_COPY,
+  POPULATION_COPY,
+  otherAccountsOwingLine,
+  payerGuardianNote,
+  payersOverdueLabel,
+  isActiveMember,
+  isGuardianAccount,
+  isOnHold,
+  type PopulationKey,
+} from "@/lib/member-population";
+import { defaultClubMonthWindow, inMonthWindow, type ClubMonthWindow } from "@/lib/club-month";
+import {
+  QUIET_THRESHOLD_DAYS,
+  addCounts,
+  countMemberRows,
+  isQuiet,
+  isOverduePayerRow,
+  isMissingPhone,
+  isWaiverMissing,
+  needsAttention,
+  type MemberListCounts,
+} from "@/lib/member-list-counts";
+
+/**
+ * The club-zone month the server resolved for the two Reports drill-through
+ * slices (review L4). `isCurrent` is false when a Reports link asked for a
+ * month that has since ended, so the header names the month instead of
+ * calling it "this month".
+ */
+export type MonthWindowProp = ClubMonthWindow & { isCurrent: boolean };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -56,6 +93,31 @@ export interface MemberRow {
   /** "teamup" while TeamUp collects this member's money (readiness spec v3 §7). */
   billedBy?: string | null;
   billingStatusAsOf?: string | null;
+  /**
+   * D9: an inactive or cancelled account with a confirmed debt (marked overdue;
+   * lib/other-accounts-owing.ts), flagged by the server. Listed under "Other
+   * accounts owing", never under Payers overdue.
+   */
+  otherOwing?: boolean;
+  /**
+   * Owner instruction of 24 Oct 2026: an inactive or cancelled account whose
+   * last charge failed with nothing confirming a debt. Listed under "Last
+   * charge failed — to reconcile", never as owing.
+   */
+  failedToReconcile?: boolean;
+  /**
+   * D11: the movement figures this member was counted in for the page's club
+   * month (new, rejoined, lost, tasterAdded), flagged by the server from the
+   * same replay as Reports. Drives the four movement drill-throughs.
+   */
+  moved?: MovementBucket[];
+  /**
+   * D10: why a member on a plan is behind — never paid past the first payment
+   * date, a failed charge, or an outstanding due date — with the badge label
+   * and the sentence the self check-in refusal uses (lib/overdue
+   * paymentEvidence). Null when they are not behind.
+   */
+  paymentEvidence?: { kind: PaymentEvidence["kind"]; label: string; sentence: string } | null;
   lastVisitAt?: string | null;
   // feat/member-profile-pictures Track A: Avatar renders this when set,
   // falls back to deterministic initials when null. Flattened from
@@ -113,6 +175,35 @@ interface Props {
   supportScope?: "view" | "edit" | null;
   /** Set when the page loaded only the first N members (SSR cap). */
   truncatedAt?: number | null;
+  /**
+   * The month "new-this-month" and "churned-this-month" list, resolved on the
+   * server in the club's zone. Absent (tests, older callers): the
+   * schema-default zone's current month — never the browser's zone.
+   */
+  monthWindow?: MonthWindowProp | null;
+  /**
+   * Every total on the page, counted on the server over the club's FULL
+   * population (lib/member-list-counts.ts, review L5) — independent of the
+   * row cap. Absent (tests, older callers): counted from `members`.
+   */
+  serverCounts?: MemberListCounts | null;
+  /**
+   * D9: inactive or cancelled accounts that still owe, counted on the server
+   * over the whole club. Absent (tests, older callers): counted from the
+   * flagged rows.
+   */
+  otherOwing?: { count: number; guardians: number; toReconcile?: number; toReconcileGuardians?: number } | null;
+  /**
+   * D11: how many members each movement figure counted for the page's club
+   * month — the Reports Joined tile's numbers. Absent: counted from the
+   * flagged rows.
+   */
+  movers?: Record<MovementBucket, number> | null;
+  /**
+   * Whether the month's movement is recorded or (partly) estimated, and what
+   * an estimate came from — the same basis the Reports chart gives the month.
+   */
+  moversBasis?: { basis: MembershipBasis; caption: string } | null;
 }
 
 // ─── Belt colour map ──────────────────────────────────────────────────────────
@@ -157,7 +248,20 @@ function daysSince(iso?: string | null) {
   return Math.max(0, Math.floor(ms / 86_400_000));
 }
 
-function paymentMeta(status?: string | null) {
+/**
+ * The Payment badge. D10: a member who is behind shows WHICH evidence — "No
+ * payment recorded", "Payment failed" or "Payment outstanding" — the same
+ * three the self check-in refusal names, with its sentence as the title.
+ * Counts and filters still read the shown status, unchanged.
+ */
+type PaymentMeta = { label: string; title?: string; color: string; bg: string; Icon: typeof CreditCard };
+
+export function paymentMeta(status?: string | null, evidence?: MemberRow["paymentEvidence"]): PaymentMeta {
+  if (evidence) {
+    // The "No payment yet" colours for never paid, the "Overdue" ones for the other two.
+    const base = paymentMeta(evidence.kind === "no_payment_recorded" ? "pending" : "overdue");
+    return { ...base, label: evidence.label, title: evidence.sentence };
+  }
   const s = (status ?? "paid").toLowerCase();
   if (s === "paid") return { label: "Paid", color: "#22c55e", bg: "rgba(34,197,94,0.12)", Icon: CheckCircle2 };
   if (s === "overdue") return { label: "Overdue", color: "#f97316", bg: "rgba(249,115,22,0.14)", Icon: AlertTriangle };
@@ -171,7 +275,7 @@ function paymentMeta(status?: string | null) {
 // ─── Table columns ────────────────────────────────────────────────────────────
 
 /**
- * The eight Members columns, rendered through the DataTable primitive at the
+ * The seven Members columns, rendered through the DataTable primitive at the
  * §1.5.4 dense spec (36px rows, py-2, 13px, sticky thead). Module scope keeps
  * the array identity stable so the table's sort memo survives re-renders.
  *
@@ -184,6 +288,11 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
     key: "member",
     header: "Member",
     sortValue: (m) => m.name,
+    // wrap + a capped inner row: with the default nowrap the column grew to
+    // the longest "name · email" in the club and pushed Waiver, Rank, Last
+    // Visit and Joined off the right edge at lg:, where DataTable releases its
+    // scroller (owner screenshot, 12 Oct 2026). The cap lets truncate engage.
+    wrap: true,
     // ONE line (§4a.4): name over email was a stacked cell, and a stacked cell
     // defeats --row-h-dense outright — it is why this table measured 57px
     // against a 36px spec. The email now trails the name inline and the whole
@@ -191,7 +300,10 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
     cell: (m) => (
       // A synthesised placeholder is not an address — showing it would be
       // fabricated data (UI-RULES §7) and a member of staff would try to mail it.
-      <div className="flex min-w-0 items-center gap-3" title={isSynthesisedEmail(m.email) ? "No email address" : m.email}>
+      // w-0 min-w-full: contributes nothing to the table's min-content width
+      // yet fills the cell, so the column takes whatever space the fixed
+      // columns leave and the name/email truncates inside it.
+      <div className="flex w-0 min-w-full items-center gap-3" title={isSynthesisedEmail(m.email) ? "No email address" : m.email}>
         {/* feat/member-profile-pictures Track A Phase A5: avatar slot. `sm`
             (28px) is the largest avatar a 36px row can hold with 4px cell
             padding; `md` (40px) forced the row to 48px on its own. */}
@@ -213,10 +325,11 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
   {
     key: "membership",
     header: "Membership",
+    wrap: true,
     // One line: tier, then the junior/kids chip and the age inline.
     cell: (m) => (
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="truncate" style={{ color: "var(--tx-2)" }}>{m.membershipType ?? "No membership"}</span>
+      <div className="flex w-0 min-w-full items-center gap-1.5">
+        <span className="min-w-0 truncate" title={m.membershipType ?? undefined} style={{ color: "var(--tx-2)" }}>{m.membershipType ?? "No membership"}</span>
         {m.accountType && m.accountType !== "adult" && (() => {
           const ab = ACCOUNT_BADGE[m.accountType!] ?? ACCOUNT_BADGE.adult;
           return (
@@ -234,16 +347,24 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
   {
     key: "payment",
     header: "Payment",
-    width: "8rem",
+    // 8rem wrapped "Billed by TeamUp" under the status chip on every TeamUp
+    // row, doubling the 36px dense row (owner screenshot, 12 Oct 2026). 15rem
+    // holds the longest pair, "No payment yet" + "Billed by TeamUp", on one line.
+    width: "15rem",
     cell: (m) => {
       // Suppressed for no-membership rows (e.g. a parent tied to a kid who
       // holds the membership) — the default "paid" would mislead the owner.
       if (!m.membershipType) return <span className="text-[11px]" style={{ color: "var(--tx-3)" }}>—</span>;
-      const pay = paymentMeta(m.paymentStatus);
+      const pay = paymentMeta(m.paymentStatus, m.paymentEvidence);
       const PayIcon = pay.Icon;
       return (
-        <span className="inline-flex flex-wrap items-center gap-1">
-          <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: pay.bg, color: pay.color }}>
+        <span className="inline-flex flex-nowrap items-center gap-1 whitespace-nowrap">
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+            style={{ background: pay.bg, color: pay.color }}
+            title={pay.title}
+            data-testid="member-payment-badge"
+          >
             <PayIcon className="size-3" />
             {pay.label}
           </span>
@@ -269,6 +390,12 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
   {
     key: "rank",
     header: "Rank",
+    // Lowest-priority columns appear only where the content box can hold
+    // them (see DataTable visibleFrom): 1280px gains Last Visit, 1536px gains
+    // Rank. The content box is capped at max-w-6xl (1152px), so even the
+    // widest screen holds seven columns, not eight: Joined moved into the
+    // Last Visit cell's title (sorting by it stays in the Filters panel).
+    visibleFrom: "2xl",
     // §5a: a fixed-geometry badge must never be resized by its text. 8rem left
     // "Blue Belt" + 3 stripe dots one or two pixels short, so the pill wrapped
     // to two lines and deepened the whole row. 9.5rem fits the longest belt
@@ -297,13 +424,15 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
   {
     key: "lastVisit",
     header: "Last Visit",
+    visibleFrom: "xl",
     width: "8rem",
     sortValue: (m) => (m.lastVisitAt ? new Date(m.lastVisitAt) : null),
     cell: (m) => {
       const inactiveDays = daysSince(m.lastVisitAt);
       return (
         // One line: date, then the inactivity hint inline behind a separator.
-        <span className="whitespace-nowrap" style={{ color: m.lastVisitAt ? "var(--tx-2)" : "var(--tx-3)" }}>
+        // The join date rides along as the title (no Joined column; see Rank).
+        <span className="whitespace-nowrap" title={`Joined ${formatShortDate(m.joinedAt)}`} style={{ color: m.lastVisitAt ? "var(--tx-2)" : "var(--tx-3)" }}>
           {formatShortDate(m.lastVisitAt)}
           {inactiveDays !== null && inactiveDays >= 14 && (
             // suppressHydrationWarning: daysSince() calls Date.now(), so SSR
@@ -318,15 +447,6 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
     },
   },
   {
-    key: "joined",
-    header: "Joined",
-    width: "8rem",
-    sortValue: (m) => new Date(m.joinedAt),
-    cell: (m) => (
-      <span className="whitespace-nowrap" style={{ color: "var(--tx-3)" }}>{formatShortDate(m.joinedAt)}</span>
-    ),
-  },
-  {
     key: "go",
     header: "",
     headerLabel: "",
@@ -339,23 +459,42 @@ const MEMBER_COLUMNS: DataTableColumn<MemberRow>[] = [
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type SortOption = "name-asc" | "name-desc" | "joined-newest" | "joined-oldest" | "last-visit";
-type StatusFilter = "all" | "attention" | "overdue" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "churned-this-month" | "guardians" | "guardian-review";
+type StatusFilter = "all" | "attention" | "overdue" | "other-owing" | "failed-to-reconcile" | "waiver-missing" | "missing-phone" | "quiet" | "active" | "inactive" | "cancelled" | "on-hold" | "taster" | "kids" | "new-this-month" | "rejoined-this-month" | "lost-this-month" | "tasters-this-month" | "churned-this-month" | "guardians" | "guardian-review";
 
-const QUIET_THRESHOLD_DAYS = 14;
 // "new-this-month" / "churned-this-month": deep-link-only filters (no visible
 // chip, same pattern as "active"/"inactive"/"cancelled" below) — the Reports
 // page's "New this month" / "Churn rate this month" tiles link here so the
 // owner can see the actual members behind those two numbers (Track A drill-
-// through). Month boundary is the browser's local calendar month, same
-// server-local convention lib/reports.ts uses for its own month buckets.
-const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "churned-this-month", "guardians", "guardian-review"];
+// through). Review L4 (23 Oct 2026): the month is the CLUB's, resolved on the
+// server as [monthStart, nextMonthStart) (lib/club-month.ts) and passed in as
+// `monthWindow` — the same window Reports counted, never the browser's month.
+const FILTERS: StatusFilter[] = ["all", "attention", "overdue", "other-owing", "failed-to-reconcile", "waiver-missing", "missing-phone", "quiet", "active", "inactive", "cancelled", "on-hold", "taster", "kids", "new-this-month", "rejoined-this-month", "lost-this-month", "tasters-this-month", "churned-this-month", "guardians", "guardian-review"];
 
-function isThisCalendarMonth(iso?: string | null) {
-  if (!iso) return false;
-  const d = new Date(iso);
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-}
+/**
+ * The landing view (T1, Q4 A-1: agent default adopted 17 Oct 2026; not an
+ * owner decision; keeping inactive members out of the Active total is
+ * confirmed by owner instruction of 23 Oct 2026): the page
+ * opens on Active — active training members, holds included and marked — so
+ * its headline is the same number as the Reports "Active members" tile.
+ * "All current" (active, inactive and tasters) stays one click away.
+ */
+const DEFAULT_FILTER: StatusFilter = "active";
+
+/**
+ * Which named population the header and the first tile describe for each
+ * filter. Filters that slice a population (Needs attention, Overdue, Quiet…)
+ * are drawn from current members, so the headline names that base.
+ */
+const HEADLINE_POPULATION: Partial<Record<StatusFilter, PopulationKey>> = {
+  active: "active",
+  all: "current",
+  inactive: "inactive",
+  taster: "taster",
+  cancelled: "left",
+  "on-hold": "onHold",
+  guardians: "guardian",
+};
+
 
 /**
  * A parent/guardian account — including the no-login guardian records an
@@ -367,34 +506,15 @@ function isThisCalendarMonth(iso?: string | null) {
  * plan) inflated Current Members, Paid, Waivers Missing, Missing Phone and —
  * a fortnight later — Quiet. They stay findable: the "Parents & guardians"
  * chip lists them, and a search on All looks at everyone.
+ *
+ * T1 (17 Oct 2026): this is now the shared GUARDIAN_ACCOUNT twin itself, not
+ * a copy of its rule.
  */
-export function isAccountHolderOnly(m: { accountType?: string | null }) {
-  return m.accountType === "parent";
-}
+export const isAccountHolderOnly = isGuardianAccount;
 
-/**
- * "Waiver missing" = someone who can train (active or taster) with no signed
- * waiver. The dashboard's "Missing waivers" count links to this filter and
- * uses the same definition (app/dashboard/page.tsx); they used to disagree
- * (4 vs 5) because this side also counted inactive members.
- */
-export function isWaiverMissing(m: { status: string; waiverAccepted?: boolean | null }) {
-  return (m.status === "active" || m.status === "taster") && m.waiverAccepted === false;
-}
-
-export function isQuiet(m: { paymentStatus?: string | null; status: string; lastVisitAt?: string | null; joinedAt?: string | null }) {
-  // "Quiet" = paying active member who hasn't checked in for {QUIET_THRESHOLD_DAYS} days.
-  // Tasters and unpaid members are excluded — they belong in the Attention/Overdue bucket.
-  if (m.status !== "active") return false;
-  if ((m.paymentStatus ?? "paid") !== "paid") return false;
-  const days = daysSince(m.lastVisitAt);
-  if (days !== null) return days >= QUIET_THRESHOLD_DAYS;
-  // Never visited. Verifier lane 3 D4: this used to be quiet regardless of
-  // joining date, so a member who joined this morning was flagged as lapsed.
-  // Someone who has not had 14 days to visit yet is new, not quiet.
-  const sinceJoined = daysSince(m.joinedAt);
-  return sinceJoined === null || sinceJoined >= QUIET_THRESHOLD_DAYS;
-}
+// "Waiver missing" and "Quiet" now live beside their server twins in
+// lib/member-list-counts.ts (review L5); re-exported for existing importers.
+export { isWaiverMissing, isQuiet };
 
 /**
  * The member's standing, when it is not plain active (D4) — the list used to
@@ -425,15 +545,156 @@ function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null }
  * component), so a cancelled member no longer inflates "All", "Total members",
  * "Waivers missing" or "Needs attention".
  */
-const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month"];
+const INCLUDES_CANCELLED: StatusFilter[] = ["cancelled", "churned-this-month", "new-this-month", "rejoined-this-month", "lost-this-month", "tasters-this-month"];
 
-export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null }: Props) {
+/**
+ * D11: the four movement drill-throughs and the figure each lists. The server
+ * flags each row with the figures it was counted in for the requested club
+ * month (lib/membership-report loadMonthMovers) — the same events the Reports
+ * Joined tile and the Net New Members chart counted.
+ */
+const MOVEMENT_FILTERS: Partial<Record<StatusFilter, MovementBucket>> = {
+  "new-this-month": "new",
+  "rejoined-this-month": "rejoined",
+  "lost-this-month": "lost",
+  "tasters-this-month": "tasterAdded",
+};
+
+type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing" | "failedToReconcile" | "moved">>;
+
+/**
+ * Whether a member belongs under a chip when nobody is searching. The single
+ * rule behind both the rows the list shows and the check made after an add
+ * (a new member the current view would hide moves the view to one that shows
+ * them).
+ */
+export function inStatusView(
+  m: ViewRow,
+  f: StatusFilter,
+  month: Pick<ClubMonthWindow, "monthStart" | "nextMonthStart"> = defaultClubMonthWindow(),
+): boolean {
+  // Payers overdue (review L2): active and taster accounts that owe, of ANY
+  // account type — a guardian who pays is a debt, never dropped — so this
+  // view is decided before the guardian and cancelled rules below.
+  if (f === "overdue") return isOverduePayerRow(m);
+  // D9: inactive or cancelled accounts that still owe, any account type —
+  // the server flags them (lib/other-accounts-owing.ts).
+  if (f === "other-owing") return !!m.otherOwing;
+  if (f === "failed-to-reconcile") return !!m.failedToReconcile;
+  if (m.status === "cancelled" && !INCLUDES_CANCELLED.includes(f)) return false;
+  // Parent/guardian accounts are listed under their own chip only; every
+  // other view is training members, matching its count.
+  if (f === "guardians") return isAccountHolderOnly(m);
+  if (isAccountHolderOnly(m)) return false;
+  switch (f) {
+    case "all":
+      return true;
+    case "active":
+      // The shared predicate behind the Reports "Active members" tile.
+      return isActiveMember(m);
+    case "guardian-review":
+      // Renders the queue (GuardianReviewQueue), which loads its own rows.
+      return true;
+    case "attention":
+      return needsAttention(m);
+    case "waiver-missing":
+      return isWaiverMissing(m);
+    case "missing-phone":
+      // Active and tasters only, as the dashboard counts (round-3 review L6).
+      return isMissingPhone(m);
+    case "quiet":
+      return isQuiet(m);
+    case "kids":
+      // Source of truth: parentMemberId IS NOT NULL (the link, not accountType,
+      // since accountType could be junior/kids and not always reflect linkage).
+      return !!m.parentMemberId;
+    case "new-this-month":
+    case "rejoined-this-month":
+    case "lost-this-month":
+    case "tasters-this-month":
+      // D11: the movement definition, flagged by the server — never joinedAt.
+      return !!m.moved?.includes(MOVEMENT_FILTERS[f]!);
+    case "churned-this-month":
+      return m.status === "cancelled" && inMonthWindow(m.cancelledAt, month);
+    case "on-hold":
+      return isOnHold(m);
+    default:
+      return m.status === f;
+  }
+}
+
+/**
+ * Where to send the desk after an add the current view would hide (the
+ * landing view is Active, so a new taster or inactive member would otherwise
+ * vanish and look like a failed save).
+ */
+export function viewShowingNewMember(
+  m: ViewRow,
+  f: StatusFilter,
+  month?: Pick<ClubMonthWindow, "monthStart" | "nextMonthStart">,
+): StatusFilter | null {
+  if (inStatusView(m, f, month)) return null;
+  if (isAccountHolderOnly(m)) return "guardians";
+  if (m.status === "taster") return "taster";
+  return "all";
+}
+
+/**
+ * The two Reports drill-through slices have no shared population: their
+ * header names the slice and counts its rows, so "1 cancelled this month"
+ * sits over the one row the churn tile counted.
+ */
+function sliceHeadlineCopy(
+  f: StatusFilter,
+  month: Pick<MonthWindowProp, "label" | "isCurrent" | "timeZone">,
+): { label: string; includes: string; excludes: string } | null {
+  // "this month" while it is; a Reports link for a month that has since
+  // ended names that month instead (review L4).
+  const when = month.isCurrent ? "this month" : `in ${month.label}`;
+  const zone = `Months run midnight to midnight in the club's time zone (${month.timeZone})`;
+  if (f === "churned-this-month") {
+    return {
+      label: `Cancelled ${when}`,
+      includes: `Training members whose cancellation date falls ${when}`,
+      excludes: `Excludes guardians. ${zone}`,
+    };
+  }
+  // D11: the movement definition (lib/membership-movement.ts), one slice per
+  // figure on the Reports Joined tile.
+  const excludes = `Excludes guardians and imports. ${zone}`;
+  if (f === "new-this-month") {
+    return { label: `New ${when}`, includes: `Training members whose first ever start was ${when}, including any since cancelled`, excludes };
+  }
+  if (f === "rejoined-this-month") {
+    return { label: `Rejoined ${when}`, includes: `Training members who started again ${when} after leaving`, excludes };
+  }
+  if (f === "lost-this-month") {
+    return { label: `Left ${when}`, includes: `Training members who cancelled or finished a prepaid course ${when}`, excludes };
+  }
+  if (f === "tasters-this-month") {
+    return { label: `Tasters added ${when}`, includes: `People who started on a taster ${when}. Not counted in Joined or Net`, excludes };
+  }
+  return null;
+}
+
+const FILTER_LABELS: Partial<Record<StatusFilter, string>> = {
+  all: "All current",
+  taster: "Tasters",
+  guardians: "Parents & guardians",
+};
+
+export default function MembersList({ members: initial, primaryColor, role, guardianReviewCount = null, truncatedAt = null, supportScope = null, monthWindow = null, serverCounts = null, otherOwing = null, movers = null, moversBasis = null }: Props) {
   const supportEdit = supportScope === "edit";
+  // One month window for every "this month" slice on the page (review L4).
+  const month = useMemo<MonthWindowProp>(() => monthWindow ?? { ...defaultClubMonthWindow(), isCurrent: true }, [monthWindow]);
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const requestedFilter = searchParams.get("filter");
-  const urlFilter = FILTERS.includes(requestedFilter as StatusFilter) ? requestedFilter as StatusFilter : "all";
+  const urlFilter = FILTERS.includes(requestedFilter as StatusFilter) ? requestedFilter as StatusFilter : DEFAULT_FILTER;
   const [members, setMembers] = useState<MemberRow[]>(initial);
+  // Members added on this page since the server counted (review L5): the
+  // server totals plus these, so an add still moves the counts at once.
+  const [addedSinceLoad, setAddedSinceLoad] = useState<MemberRow[]>([]);
   const [query, setQuery] = useState("");
   const [localStatusFilter, setLocalStatusFilter] = useState<StatusFilter | null>(null);
   const [membershipFilter, setMembershipFilter] = useState<string>("all");
@@ -451,50 +712,40 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   const [reviewCount, setReviewCount] = useState<number | null>(canReviewGuardians ? guardianReviewCount : null);
   const statusFilter = localStatusFilter ?? urlFilter;
 
+  // A chip choice is written to the URL so a reload or a shared link opens
+  // the same view (T1). The native History API syncs useSearchParams without
+  // a server round trip — router.replace would re-run the page's member load.
+  const selectFilter = useCallback((key: StatusFilter) => {
+    setLocalStatusFilter(key);
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    params.set("filter", key);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }, []);
+
   // Unique membership types from the list
   const membershipTypes = useMemo(() => {
     const types = Array.from(new Set(members.map((m) => m.membershipType).filter(Boolean))) as string[];
     return types.sort();
   }, [members]);
 
+  // D4: cancelled members are not current. They appear under the Cancelled
+  // (and the two Reports drill-through) filters, and under "All" only when
+  // the desk is searching — a returning member is still findable by name,
+  // with the Cancelled tag on the row. T1: the landing view is now Active, so
+  // a name typed on the untouched landing page still looks at everyone, as it
+  // did when All was the landing view. Active chosen on purpose (a chip click
+  // or the Reports drill-through's ?filter=active) keeps its narrowing, so
+  // the rows under the chip still match its count. A notice says when a
+  // search is looking at everyone.
+  const onUntouchedLanding = localStatusFilter === null && !FILTERS.includes(requestedFilter as StatusFilter);
+  const searchingAll =
+    query.trim() !== "" && (statusFilter === "all" || (statusFilter === "active" && onUntouchedLanding));
+
   const filtered = useMemo(() => {
-    // D4: cancelled members are not current. They appear under the Cancelled
-    // (and the two Reports drill-through) filters, and under "All" only when
-    // the desk is searching — a returning member is still findable by name,
-    // with the Cancelled tag on the row.
-    const searchingAll = statusFilter === "all" && query.trim() !== "";
-    const includeCancelled = INCLUDES_CANCELLED.includes(statusFilter) || searchingAll;
-    let list = includeCancelled ? members : members.filter((m) => m.status !== "cancelled");
-    // Parent/guardian accounts are listed under their own chip and found by a
-    // search on All; every other view is training members, matching its count.
-    if (statusFilter === "guardians") list = list.filter(isAccountHolderOnly);
-    else if (!searchingAll) list = list.filter((m) => !isAccountHolderOnly(m));
-    if (statusFilter === "guardians" || statusFilter === "guardian-review") {
-      // guardians: already narrowed above. guardian-review renders the queue
-      // (GuardianReviewQueue), which loads its own rows from the server.
-    } else if (statusFilter === "attention") {
-      list = list.filter((m) => m.paymentStatus === "overdue" || isWaiverMissing(m) || m.status === "taster" || isQuiet(m));
-    } else if (statusFilter === "overdue") {
-      list = list.filter((m) => m.paymentStatus === "overdue");
-    } else if (statusFilter === "waiver-missing") {
-      list = list.filter(isWaiverMissing);
-    } else if (statusFilter === "missing-phone") {
-      list = list.filter((m) => !m.phone?.trim());
-    } else if (statusFilter === "quiet") {
-      list = list.filter((m) => isQuiet(m));
-    } else if (statusFilter === "kids") {
-      // Source of truth: parentMemberId IS NOT NULL (the link, not accountType,
-      // since accountType could be junior/kids and not always reflect linkage).
-      list = list.filter((m) => !!m.parentMemberId);
-    } else if (statusFilter === "new-this-month") {
-      list = list.filter((m) => isThisCalendarMonth(m.joinedAt));
-    } else if (statusFilter === "churned-this-month") {
-      list = list.filter((m) => m.status === "cancelled" && isThisCalendarMonth(m.cancelledAt));
-    } else if (statusFilter === "on-hold") {
-      list = list.filter((m) => m.paymentStatus === "paused");
-    } else if (statusFilter !== "all") {
-      list = list.filter((m) => m.status === statusFilter);
-    }
+    // Everyone matching the search, whatever their standing; otherwise the
+    // rows under a chip are exactly the ones its count counts.
+    let list = searchingAll ? members : members.filter((m) => inStatusView(m, statusFilter, month));
     if (membershipFilter !== "all") list = list.filter((m) => m.membershipType === membershipFilter);
     if (query.trim()) {
       const q = query.toLowerCase();
@@ -516,7 +767,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
       }
     });
     return list;
-  }, [members, query, statusFilter, membershipFilter, sortBy]);
+  }, [members, query, statusFilter, membershipFilter, sortBy, searchingAll, month]);
 
   // Auto-select: scroll single match into view
   useEffect(() => {
@@ -534,7 +785,17 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   const [inviteCopied, setInviteCopied] = useState(false);
   function handleAdded(member: MemberRow, inviteUrl?: string | null, emailNote?: string | null) {
     setMembers((prev) => [...prev, member].sort((a, b) => a.name.localeCompare(b.name)));
+    setAddedSinceLoad((prev) => [...prev, member]);
     setShowAdd(false);
+    // A new taster or inactive member is not under the Active landing view;
+    // move to a view that lists them, and say so, so the add cannot look like
+    // a failed save (and be repeated as a duplicate).
+    const showIn = viewShowingNewMember(member, statusFilter, month);
+    if (showIn) {
+      selectFilter(showIn);
+      toast(`${member.name} is listed under ${FILTER_LABELS[showIn] ?? showIn}`, "info");
+    }
+    if (membershipFilter !== "all" && member.membershipType !== membershipFilter) setMembershipFilter("all");
     if (inviteUrl) setInviteShare({ name: member.name, url: inviteUrl, emailNote: emailNote ?? null });
     // F-5 (edit-access remediation): no invite link but a reason why - e.g. a
     // support session never mints one - must still be said, or the member is
@@ -549,29 +810,73 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   // still asked for attention. The rows under each chip match its count.
   // Parent/guardian accounts are not training members either (see
   // isAccountHolderOnly) — counted only under their own chip.
-  const current = members.filter((m) => m.status !== "cancelled" && !isAccountHolderOnly(m));
-  const accountHolders = members.filter((m) => m.status !== "cancelled" && isAccountHolderOnly(m));
+  // T1: every population below is the shared client twin of the server's
+  // where-fragment (lib/member-population.ts), so the Active chip, the header
+  // and the first tile count exactly what Reports counts.
+  //
+  // Review L5 (23 Oct 2026): the page loads at most 1,500 rows, so counting
+  // the loaded array undercounted every total for a larger club. The server
+  // now counts the FULL population with the twins of these predicates
+  // (lib/member-list-counts.ts) and passes `serverCounts`; only members added
+  // here since then are counted from rows. Without server counts (tests,
+  // older callers) every total is counted from the rows, as before.
   const showGuardianQueue = statusFilter === "guardian-review" && canReviewGuardians;
-  const quietMembers = current.filter(isQuiet);
-  const counts: Record<string, number> = {
-    all:       current.length,
-    attention: current.filter((m) => m.paymentStatus === "overdue" || isWaiverMissing(m) || m.status === "taster" || isQuiet(m)).length,
-    overdue: current.filter((m) => m.paymentStatus === "overdue").length,
-    waiverMissing: current.filter(isWaiverMissing).length,
-    missingPhone: current.filter((m) => !m.phone?.trim()).length,
-    quiet: quietMembers.length,
-    paid: current.filter((m) => (m.paymentStatus ?? "paid") === "paid").length,
-    active:    current.filter((m) => m.status === "active").length,
-    inactive:  current.filter((m) => m.status === "inactive").length,
-    onHold:    current.filter((m) => m.paymentStatus === "paused").length,
-    cancelled: members.filter((m) => m.status === "cancelled" && !isAccountHolderOnly(m)).length,
-    guardians: accountHolders.length,
+  const counts: MemberListCounts & { guardianReview: number } = {
+    ...(serverCounts
+      ? addCounts(serverCounts, countMemberRows(addedSinceLoad, new Date(), month))
+      : countMemberRows(members, new Date(), month)),
     guardianReview: reviewCount ?? 0,
-    taster:    current.filter((m) => m.status === "taster").length,
-    kids:      current.filter((m) => !!m.parentMemberId).length,
   };
 
-  const activeFilterCount = (statusFilter !== "all" ? 1 : 0) + (membershipFilter !== "all" ? 1 : 0) + (sortBy !== "name-asc" ? 1 : 0);
+  // The header and the first tile follow the selected population (T1) and
+  // say, in the shared copy, what that number includes and leaves out.
+  const headlineKey: PopulationKey = HEADLINE_POPULATION[statusFilter] ?? "current";
+  const headlineCounts: Partial<Record<PopulationKey, number>> = {
+    active: counts.active,
+    current: counts.all,
+    inactive: counts.inactive,
+    taster: counts.taster,
+    left: counts.cancelled,
+    onHold: counts.onHold,
+    guardian: counts.guardians,
+  };
+  // The Reports drill-through slices name themselves and count their own rows.
+  const sliceCopy = sliceHeadlineCopy(statusFilter, month);
+  // Overdue is a PAYER total (review L2): guardians who pay are in it, so its
+  // header names payers rather than a member population.
+  const payerCopy = statusFilter === "overdue" ? PAYER_COPY : null;
+  // D9: debts on inactive or cancelled accounts — beside the payers, never in them.
+  const otherOwingCount = otherOwing?.count ?? members.filter((m) => m.otherOwing).length;
+  const toReconcileCount = otherOwing?.toReconcile ?? members.filter((m) => m.failedToReconcile).length;
+  const otherOwingCopy =
+    statusFilter === "other-owing" ? OTHER_OWING_COPY : statusFilter === "failed-to-reconcile" ? FAILED_TO_RECONCILE_COPY : null;
+  // A movement drill-through for an estimated or partly estimated month says
+  // so, in the words the Reports chart and CSV use for that month.
+  const moversNote =
+    MOVEMENT_FILTERS[statusFilter] && moversBasis
+      ? moversBasis.basis === "estimated"
+        ? `${basisNote("estimated", moversBasis.caption)}: these moves are reconstructed, not recorded at the time.`
+        : moversBasis.basis === "mixed"
+          ? `${basisNote("mixed")}: some of these moves are reconstructed, not recorded at the time.`
+          : null
+      : null;
+  const headlineCount =
+    statusFilter === "other-owing"
+      ? otherOwingCount
+      : statusFilter === "failed-to-reconcile"
+      ? toReconcileCount
+      : MOVEMENT_FILTERS[statusFilter]
+      ? (movers?.[MOVEMENT_FILTERS[statusFilter]!] ?? members.filter((m) => m.moved?.includes(MOVEMENT_FILTERS[statusFilter]!)).length)
+      : statusFilter === "churned-this-month"
+        ? counts.churnedThisMonth
+        : statusFilter === "overdue"
+          ? counts.overdue
+          : headlineCounts[headlineKey] ?? counts.all;
+  const headlineCopy = sliceCopy ?? payerCopy ?? otherOwingCopy ?? POPULATION_COPY[headlineKey];
+  // Q4 A-1: members on hold stay inside the Active headline, marked as such.
+  const holdNote = headlineKey === "active" && counts.activeOnHold > 0 ? `${counts.activeOnHold} on hold` : null;
+
+  const activeFilterCount = (statusFilter !== DEFAULT_FILTER ? 1 : 0) + (membershipFilter !== "all" ? 1 : 0) + (sortBy !== "name-asc" ? 1 : 0);
 
   return (
     <div className="w-full">
@@ -580,7 +885,57 @@ export default function MembersList({ members: initial, primaryColor, role, guar
           action are both gone — §1.5.3 allows no glow or gradients. */}
       <PageHeader
         title="Members"
-        description={`${counts.all} current members · ${counts.attention} need attention`}
+        description={
+          <>
+            <span data-testid="members-headline">
+              {payerCopy
+                ? payersOverdueLabel(headlineCount)
+                : statusFilter === "other-owing"
+                  ? `${headlineCount} ${headlineCount === 1 ? "other account owing" : "other accounts owing"}`
+                  : statusFilter === "failed-to-reconcile"
+                  ? `${headlineCount} ${headlineCount === 1 ? "account" : "accounts"} whose last charge failed — to reconcile`
+                  : `${headlineCount} ${headlineCopy.label.charAt(0).toLowerCase() + headlineCopy.label.slice(1)}`}
+              {holdNote ? `, ${holdNote}` : ""}
+            </span>
+            {" · "}
+            {counts.attention} need attention
+            <span className="mt-0.5 block text-xs text-tx-3" data-testid="members-headline-scope">
+              {headlineCopy.includes}. {headlineCopy.excludes}.
+            </span>
+            {moversNote && (
+              <span className="mt-0.5 block text-xs text-tx-2" data-testid="members-headline-basis">
+                {moversNote}
+              </span>
+            )}
+            {/* D9: the payers view names the debts it leaves out, with the way to them. */}
+            {payerCopy && otherOwingCount > 0 && (
+              <Link
+                href="/dashboard/members?filter=other-owing"
+                onClick={(e) => {
+                  e.preventDefault();
+                  selectFilter("other-owing");
+                }}
+                data-testid="members-other-owing-line"
+                className="mt-0.5 block text-xs text-tx-2 underline underline-offset-2 hover:text-tx-1"
+              >
+                {otherAccountsOwingLine(otherOwingCount)}
+              </Link>
+            )}
+            {payerCopy && toReconcileCount > 0 && (
+              <Link
+                href="/dashboard/members?filter=failed-to-reconcile"
+                onClick={(e) => {
+                  e.preventDefault();
+                  selectFilter("failed-to-reconcile");
+                }}
+                data-testid="members-to-reconcile-line"
+                className="mt-0.5 block text-xs text-tx-2 underline underline-offset-2 hover:text-tx-1"
+              >
+                {failedToReconcileLine(toReconcileCount)}
+              </Link>
+            )}
+          </>
+        }
         action={
           canAdd || (reviewCount ?? 0) > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -589,7 +944,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               {(reviewCount ?? 0) > 0 && (
                 <Button
                   variant="secondary"
-                  onClick={() => setLocalStatusFilter("guardian-review")}
+                  onClick={() => selectFilter("guardian-review")}
                   aria-label={`${reviewCount} guardian suggestions to review`}
                 >
                   <ShieldCheck className="size-4" />
@@ -609,8 +964,8 @@ export default function MembersList({ members: initial, primaryColor, role, guar
 
       {truncatedAt !== null && (
         <p role="status" className="mb-4 rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-[13px] text-tx-2">
-          This club has more than {truncatedAt.toLocaleString("en-GB")} members. This page shows the first{" "}
-          {truncatedAt.toLocaleString("en-GB")} by name, so the counts and search below cover only those.
+          This club has more than {truncatedAt.toLocaleString("en-GB")} members. Every total on this page counts all of
+          them; the list and search show only the first {truncatedAt.toLocaleString("en-GB")} by name.
         </p>
       )}
 
@@ -621,19 +976,27 @@ export default function MembersList({ members: initial, primaryColor, role, guar
           (5 wide only at 1024px+) and constraining the text column with
           min-w-0 + truncate fixes it across mobile, tablet, and desktop. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
-        {[
-          { label: "Current Members", value: counts.all, sub: "Excludes cancelled & guardians", color: primaryColor, Icon: Users },
-          { label: "Paid", value: counts.paid, sub: "Membership current", color: "#22c55e", Icon: CheckCircle2 },
-          { label: "Overdue", value: counts.overdue, sub: "Needs chasing", color: "#f97316", Icon: AlertTriangle },
-          { label: "Waivers Missing", value: counts.waiverMissing, sub: "Active & tasters", color: "#f59e0b", Icon: FileCheck2 },
-          { label: "Tasters", value: counts.taster, sub: "Convert soon", color: "#38bdf8", Icon: CalendarCheck },
-        ].map(({ label, value, sub, color, Icon }) => (
-          <Card key={label} padding="tight">
+        {([
+          // Follows the selected population (T1); on the landing view this is
+          // Active, the Reports "Active members" number.
+          { id: "headline", label: headlineCopy.label, value: headlineCount, sub: headlineCopy.excludes, note: holdNote ? `Includes ${holdNote}` : null, color: primaryColor, Icon: Users },
+          // Paid counts all current members (active, inactive and tasters),
+          // not the headline population beside them; the sub-line says so,
+          // so Paid above Active is not read as a contradiction. Overdue is
+          // a PAYER total (review L2): active and taster accounts that owe,
+          // guardians who pay included, and its sub-line says that.
+          { id: "paid", label: "Paid", value: counts.paid, sub: "Of current members", color: "#22c55e", Icon: CheckCircle2 },
+          { id: "overdue", label: PAYER_COPY.label, value: counts.overdue, sub: `${payerGuardianNote(counts.overdueGuardians)}. Needs chasing`, color: "#f97316", Icon: AlertTriangle },
+          { id: "waivers", label: "Waivers Missing", value: counts.waiverMissing, sub: "Active & tasters", color: "#f59e0b", Icon: FileCheck2 },
+          { id: "tasters", label: "Tasters", value: counts.taster, sub: "Convert soon", color: "#38bdf8", Icon: CalendarCheck },
+        ] as { id: string; label: string; value: number; sub: string; note?: string | null; color: string; Icon: typeof Users }[]).map(({ id, label, value, sub, note, color, Icon }) => (
+          <Card key={id} padding="tight" data-testid={`members-tile-${id}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-xl font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>{value}</p>
                 <p className="mt-1 truncate text-[13px] font-medium" style={{ color: "var(--tx-2)" }}>{label}</p>
-                <p className="mt-0.5 truncate text-[11px]" style={{ color: "var(--tx-3)" }}>{sub}</p>
+                {note && <p className="mt-0.5 text-[11px] font-medium text-tx-2">{note}</p>}
+                <p className="mt-0.5 line-clamp-2 text-[11px]" style={{ color: "var(--tx-3)" }}>{sub}</p>
               </div>
               <Icon className="size-4 shrink-0" style={{ color: hex(color, 0.75) }} />
             </div>
@@ -645,8 +1008,14 @@ export default function MembersList({ members: initial, primaryColor, role, guar
         className="rounded-2xl border p-3 mb-4"
         style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
       >
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-          <div className="relative flex-1 min-w-0">
+        {/* Search owns a full-width row at every width. The single-row xl:
+            layout gave the search box flex-1 against a wrapping chip strip,
+            and the chips won: on a 1900px screen the input collapsed to its
+            padding and its icon and clear button painted over "All" and
+            "Cancelled" (owner screenshot, 12 Oct 2026). UI-RULES 4a.2: xl:
+            is for widening only, never a structural split. */}
+        <div className="flex flex-col gap-3">
+          <div className="relative w-full min-w-0">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" style={{ color: "var(--tx-3)" }} />
             <input
               type="search"
@@ -669,15 +1038,27 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               </span>
             )}
           </div>
+          {searchingAll && (
+            <p role="status" data-testid="members-search-scope" className="text-xs text-tx-3">
+              Searching all members, including cancelled members and guardians.
+            </p>
+          )}
 
           {/* Pills scroll horizontally on phones but WRAP from `lg:` — a
               hidden-scrollbar strip at desktop widths buries filters the user
               cannot see (§4a.7). */}
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1 lg:flex-wrap lg:overflow-x-visible lg:pb-0">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto scrollbar-hide pb-1 lg:flex-wrap lg:overflow-x-visible lg:pb-0">
             {([
-              { key: "all", label: "All", count: counts.all },
+              // Active leads: it is the landing view and the Reports "Active
+              // members" population (T1). "All current" is the wider view —
+              // active, inactive and tasters — labelled as such.
+              { key: "active", label: "Active", count: counts.active },
+              { key: "all", label: "All current", count: counts.all },
               { key: "attention", label: "Needs Attention", count: counts.attention },
-              { key: "overdue", label: "Overdue", count: counts.overdue },
+              { key: "overdue", label: PAYER_COPY.label, count: counts.overdue },
+              { key: "other-owing", label: OTHER_OWING_COPY.label, count: otherOwingCount },
+              { key: "failed-to-reconcile", label: FAILED_TO_RECONCILE_COPY.label, count: toReconcileCount },
               { key: "waiver-missing", label: "Waiver Missing", count: counts.waiverMissing },
               { key: "missing-phone", label: "Missing Phone", count: counts.missingPhone },
               { key: "quiet", label: `Quiet (${QUIET_THRESHOLD_DAYS}d+)`, count: counts.quiet },
@@ -689,11 +1070,12 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               { key: "guardians", label: "Parents & guardians", count: counts.guardians },
               ...(canReviewGuardians ? [{ key: "guardian-review" as const, label: "Guardian suggestions to review", count: counts.guardianReview }] : []),
             ] as { key: StatusFilter; label: string; count: number }[])
-              .filter((item) => item.key === "all" || item.key === statusFilter || item.count > 0)
+              .filter((item) => item.key === "all" || item.key === "active" || item.key === statusFilter || item.count > 0)
               .map((item) => (
                 <button
                   key={item.key}
-                  onClick={() => setLocalStatusFilter(item.key)}
+                  onClick={() => selectFilter(item.key)}
+                  aria-pressed={statusFilter === item.key}
                   className="px-3 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap shrink-0 border"
                   style={{
                     background: statusFilter === item.key ? hex(primaryColor, 0.16) : "var(--sf-1)",
@@ -724,6 +1106,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               </span>
             )}
           </button>
+          </div>
         </div>
       </div>
 
@@ -785,7 +1168,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
 
           {/* Reset */}
           {activeFilterCount > 0 && (
-            <button onClick={() => { setLocalStatusFilter("all"); setMembershipFilter("all"); setSortBy("name-asc"); }} className="text-xs text-[var(--hue-danger-ink)] hover:underline">
+            <button onClick={() => { selectFilter(DEFAULT_FILTER); setMembershipFilter("all"); setSortBy("name-asc"); }} className="text-xs text-[var(--hue-danger-ink)] hover:underline">
               Clear all filters
             </button>
           )}

@@ -61,6 +61,7 @@ describe("SEC-033 raw SQL is parameterised", () => {
       "lib/migration-lock.ts", // 69d87070: pg_try_advisory_xact_lock_shared on Prisma Migrate's key; the key is a module constant bound as a parameter
       "lib/prisma-tenant.ts",
       "lib/rate-limit.ts", // lane C3: per-bucket advisory lock + conditional insert; bucket, window, id, max and the lock namespace are bind parameters
+      "lib/status-backfill.ts", // T8b: per-club advisory lock (the key is a bind parameter) and the latest-event mismatch count (tenantId is a bind parameter)
       "lib/undo-batch.ts", // T7 review: undo-to pre-pass locking Class then Member rows in id order; tenantId and the id arrays are bind parameters
     ]);
   });

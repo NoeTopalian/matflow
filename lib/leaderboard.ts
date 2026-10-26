@@ -19,7 +19,8 @@
 
 import { unstable_cache } from "next/cache";
 import { withRlsBypass } from "@/lib/prisma-tenant";
-import { zoneOffsetMs, usableTimezone } from "@/lib/class-time";
+import { usableTimezone } from "@/lib/class-time";
+import { zonedMonthStart } from "@/lib/club-month";
 
 /** A member's check-in tally for one month window. */
 export type CheckInRow = { memberId: string; count: number };
@@ -123,26 +124,11 @@ export function buildLeaderboard(params: {
 }
 
 /**
- * Start of a calendar month in `timeZone`, as a UTC instant.
- *
- * `monthOffset` shifts by whole months (−1 = last month's start, +1 = next
- * month's start). The zone offset is read twice, exactly as `lib/class-time`'s
- * `parseTime` does, so a month boundary that lands on a DST changeover morning
- * still resolves to true local midnight.
+ * Start of a calendar month in `timeZone`, as a UTC instant. Lives in
+ * lib/club-month.ts now (review L4: Reports and the Members page share it);
+ * re-exported so existing callers keep their import.
  */
-export function zonedMonthStart(now: Date, timeZone: string, monthOffset = 0): Date {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-  }).formatToParts(now);
-  const year = Number(parts.find((p) => p.type === "year")?.value ?? 0);
-  const month = Number(parts.find((p) => p.type === "month")?.value ?? 1); // 1–12
-  const naive = Date.UTC(year, month - 1 + monthOffset, 1, 0, 0, 0, 0);
-  const firstOffset = zoneOffsetMs(new Date(naive), timeZone);
-  const secondOffset = zoneOffsetMs(new Date(naive - firstOffset), timeZone);
-  return new Date(naive - secondOffset);
-}
+export { zonedMonthStart };
 
 /**
  * The uncached aggregate. Runs under `withRlsBypass` because the public board

@@ -1,5 +1,6 @@
 import { requireRole } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { ACTIVE_MEMBER } from "@/lib/member-population";
 import MembershipsManager from "@/components/dashboard/MembershipsManager";
 
 export type MembershipTierRow = {
@@ -40,11 +41,12 @@ export default async function MembershipsPage() {
     tx.membershipTier.findMany({
       // Club-life C4.05: an inactive tier that still has active members stays
       // listed (flagged inactive) so the people on it are never invisible.
-      where: { tenantId: session.user.tenantId, OR: [{ isActive: true }, { members: { some: { status: "active" } } }] },
+      where: { tenantId: session.user.tenantId, OR: [{ isActive: true }, { members: { some: { ...ACTIVE_MEMBER } } }] },
       orderBy: { createdAt: "asc" },
       // Active-member count per tier, the number the previous platform's
       // catalogue shows beside every plan and the one reconciliation reads.
-      include: { _count: { select: { members: { where: { status: "active" } } } }, locationRef: { select: { name: true } } },
+      // Active training members (T1): the Reports "Active members" population.
+      include: { _count: { select: { members: { where: { ...ACTIVE_MEMBER } } } }, locationRef: { select: { name: true } } },
     }),
   );
 

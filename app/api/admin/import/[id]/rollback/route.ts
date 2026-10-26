@@ -19,6 +19,7 @@ import { emailDigest } from "@/lib/login-email";
 import { apiError } from "@/lib/api-error";
 import { recordStatusEventsBulk } from "@/lib/member-status";
 import {
+  forwardEventDates,
   planRefreshRollback,
   refreshWrite,
   REFRESH_MEMBER_SELECT,
@@ -275,9 +276,27 @@ async function rollbackRefresh(
       for (const c of [...restore].sort((a, b) => (a.memberId < b.memberId ? -1 : a.memberId > b.memberId ? 1 : 0))) {
         await tx.member.updateMany({ where: { id: c.memberId, tenantId }, data: refreshWrite(c.before) });
       }
+      // T8a (A-9): each reverse event carries its forward event's date, so a
+      // replay for any day reads as if the refresh never happened; the later
+      // createdAt sorts it after the forward event. Read before the writes
+      // below add the reverse events themselves.
+      const moved = restore.filter((c) => c.before.status !== c.after.status);
+      const forwardEvents = moved.length
+        ? await tx.memberStatusEvent.findMany({
+            where: { tenantId, memberId: { in: moved.map((c) => c.memberId) }, reason: "import" },
+            orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+            select: { memberId: true, fromStatus: true, toStatus: true, occurredAt: true, sourceJobId: true, sourceAction: true },
+          })
+        : [];
+      // T8d: the forward event this job wrote is found by its provenance first.
+      const forwardAt = forwardEventDates(moved, forwardEvents, job.id);
       await recordStatusEventsBulk(
         tx,
-        restore.map((c) => ({ tenantId, memberId: c.memberId, fromStatus: c.after.status, toStatus: c.before.status, reason: "import" as const, changedById: null })),
+        restore.map((c) => {
+          const occurredAt = forwardAt.get(c.memberId);
+          // T8d: the reversal carries the same job, as a rollback.
+          return { tenantId, memberId: c.memberId, fromStatus: c.after.status, toStatus: c.before.status, reason: "import" as const, changedById: null, sourceJobId: job.id, sourceAction: "import_rollback" as const, ...(occurredAt ? { occurredAt } : {}) };
+        }),
       );
       const restoredIds = [...alreadyRestored, ...restore.map((c) => c.memberId)];
       await tx.importJob.update({

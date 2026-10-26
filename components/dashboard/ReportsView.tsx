@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 // file carried quoted delimiters but did not neutralise a leading =/+/-/@, so a
 // member named "=cmd()" exported as a live formula. See lib/csv.ts.
 import { csvDocument } from "@/lib/csv";
+import { formatDateTime, formatTime } from "@/lib/date";
 import { paymentHealthLine } from "@/lib/billing";
 import {
   BarChart,
@@ -44,12 +45,26 @@ import {
   Users,
 } from "lucide-react";
 import type { ReportsData, AttendanceRateMode } from "@/lib/reports";
+import { FAILED_TO_RECONCILE_COPY, OTHER_OWING_COPY, PAYER_COPY, POPULATION_COPY, payerGuardianNote } from "@/lib/member-population";
 import type { AttributionData } from "@/lib/attribution";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import NetNewMembersCard from "./NetNewMembersCard";
-import { EmptyChart, SectionTitle, formatNumber, type TooltipPayload } from "./reports-primitives";
+import { MEMBERSHIP_COPY, combinedBasis, emptyTally, estimatedCaption, type MembershipBasis } from "@/lib/membership-movement";
+import type { MembershipReport } from "@/lib/membership-report";
+import { basisNote } from "@/lib/net-new-series";
+import {
+  EmptyChart,
+  RatioValue,
+  SectionTitle,
+  formatNumber,
+  formatRatio,
+  formatSigned,
+  ratioCounts,
+  wholePct,
+  type TooltipPayload,
+} from "./reports-primitives";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
@@ -57,6 +72,60 @@ import InitiativesPanel from "@/components/dashboard/InitiativesPanel";
 import MonthlyReportView from "@/components/dashboard/MonthlyReportView";
 
 const WEEK_OPTIONS = [4, 8, 12, 16, 24] as const;
+
+/** D9: "Inactive or left, marked overdue, not chased", with the guardian count when any. Screen and CSV share it. */
+export function otherOwingDetail(guardians: number): string {
+  return withGuardians(OTHER_OWING_COPY.short, guardians);
+}
+
+/** "Inactive or left · check before treating as owed", with the guardian count when any. Screen and CSV share it. */
+export function failedToReconcileDetail(guardians: number): string {
+  return withGuardians(FAILED_TO_RECONCILE_COPY.short, guardians);
+}
+
+function withGuardians(text: string, guardians: number): string {
+  if (guardians <= 0) return text;
+  return `${text} · ${guardians === 1 ? "includes 1 parent or guardian" : `includes ${guardians.toLocaleString("en-GB")} parents or guardians`}`;
+}
+
+/**
+ * The words for a figure that is not wholly recorded: "Partly estimated", or
+ * what a wholly estimated month came from ("Estimated from your TeamUp
+ * history"). Null when it is recorded, or there is no data. Every movement
+ * figure on screen and in the CSV goes through this (24 Oct 2026).
+ */
+export function estimateLabel(basis: MembershipBasis | undefined, caption: string): string | null {
+  if (basis === "estimated") return basisNote("estimated", caption);
+  if (basis === "mixed") return basisNote("mixed");
+  return null;
+}
+
+/** The basis of the current club month and the one before it ("none" when absent). */
+export function thisAndLastMonthBasis(m: Pick<MembershipReport, "movementsByMonth">): { current: MembershipBasis; previous: MembershipBasis } {
+  const i = m.movementsByMonth.findIndex((r) => r.isCurrentMonth);
+  return {
+    current: i >= 0 ? m.movementsByMonth[i].basis : "none",
+    previous: i > 0 ? m.movementsByMonth[i - 1].basis : "none",
+  };
+}
+
+/**
+ * The estimate line for a this-month figure compared with last month (the
+ * "New this month" tile and its CSV row): either month may be estimated, and
+ * the comparison is only as firm as the weaker of the two.
+ */
+export function monthPairEstimateNote(m: Pick<MembershipReport, "movementsByMonth" | "historySource" | "fromJoinDates">): string | null {
+  const caption = estimatedCaption(m);
+  const { current, previous } = thisAndLastMonthBasis(m);
+  const parts: string[] = [];
+  const now = estimateLabel(current, caption);
+  const before = estimateLabel(previous, caption);
+  if (now) parts.push(`this month ${now.charAt(0).toLowerCase()}${now.slice(1)}`);
+  if (before) parts.push(`last month ${before.charAt(0).toLowerCase()}${before.slice(1)}`);
+  if (parts.length === 0) return null;
+  const text = parts.join(" · ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541", "#F59E0B", "#38BDF8"];
 
@@ -99,9 +168,10 @@ function hex(h: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-function formatPercent(value: number | null) {
-  if (value === null) return "No capacity";
-  return `${value}%`;
+/** A class's fill rate with the places behind it (T2b): "45% (90 of 200)", or "no capacity set". */
+function formatFill(cls: { fillRate: number | null; count: number; capacityTotal?: number }) {
+  if (cls.fillRate === null || !cls.capacityTotal) return "no capacity set";
+  return formatRatio(cls.fillRate, cls.count, cls.capacityTotal);
 }
 
 /**
@@ -116,13 +186,112 @@ function formatAttendanceRateValue(mode: AttendanceRateMode, value: number | nul
   return mode === "checkins-per-member" ? value.toLocaleString("en-GB") : `${value}%`;
 }
 
-/** Delta as display text, or null when nothing moved. */
-function trendDelta(current: number, previous: number) {
+/**
+ * The counts behind the rate readout (T2b): "(31 of 312)" for the two
+ * percentage modes, "(420 check-ins ÷ 131 members)" for the per-member
+ * average. Empty when the rate is undefined ("—" says it all).
+ */
+function attendanceRateCounts(rate: ReportsData["attendanceRate"]) {
+  if (rate.value === null || !rate.denominator) return "";
+  if (rate.mode === "checkins-per-member") {
+    return `(${formatNumber(rate.numerator)} check-ins ÷ ${formatNumber(rate.denominator)} members)`;
+  }
+  return ratioCounts(rate.numerator, rate.denominator);
+}
+
+/**
+ * Figures every surface (screen and CSV) derives from the same data, so the
+ * two can never print different numbers for one metric (T2b acceptance 3).
+ */
+function derivedShares(data: ReportsData) {
+  const { summary, checkInMethods } = data;
+  const totalMethodCount = checkInMethods.reduce((sum, row) => sum + row.count, 0);
+  const selfServiceCount = checkInMethods
+    .filter((row) => row.method === "self" || row.method === "qr")
+    .reduce((sum, row) => sum + row.count, 0);
+  return {
+    totalMethodCount,
+    selfServiceCount,
+    selfServicePct: wholePct(selfServiceCount, totalMethodCount),
+    // Q4 A-2: the active share is over CURRENT members (active, inactive,
+    // tasters), never over everyone who ever joined.
+    activeSharePct: wholePct(summary.activeMembers, summary.currentMembers),
+  };
+}
+
+/**
+ * What the "Active members" number counts (Q4 A-1): the shared population
+ * copy plus the on-hold count it includes, so the tile, the CSV row and the
+ * Members page describe one number the same way.
+ */
+export function activeMembersDetail(summary: Pick<ReportsData["summary"], "activeOnHoldMembers" | "currentMembers">): string {
+  return `Includes ${formatNumber(summary.activeOnHoldMembers ?? 0)} on hold · of ${formatNumber(summary.currentMembers)} current members · ${POPULATION_COPY.active.excludes}`;
+}
+
+/** The top classes the class-mix donut shares check-ins across. */
+export function classComposition(topClasses: ReportsData["topClasses"]) {
+  const top = topClasses.slice(0, 6);
+  const total = top.reduce((sum, cls) => sum + cls.count, 0);
+  return { top, total, label: `top ${top.length} ${top.length === 1 ? "class" : "classes"}` };
+}
+
+/**
+ * The Members drill-through for a "this month" tile. It carries the report's
+ * club-zone month (review L4), so the rows listed are the month the tile
+ * counted — never one recomputed in the browser's zone, and never the next
+ * month if the calendar turned while the cached report was on screen.
+ */
+export type MonthDrillFilter = "new-this-month" | "rejoined-this-month" | "lost-this-month" | "tasters-this-month" | "churned-this-month";
+
+export function monthDrillHref(filter: MonthDrillFilter, period: ReportsData["period"] | undefined): string {
+  const params = new URLSearchParams({ filter });
+  if (period?.monthKey) params.set("month", period.monthKey);
+  return `/dashboard/members?${params.toString()}`;
+}
+
+/** The CSV's statement of which month "this month" is, and in which zone. */
+export function periodCsvDetail(period: ReportsData["period"]): string {
+  return `"This month" runs midnight to midnight in the club's time zone (${period.timeZone})`;
+}
+
+/**
+ * What Payment recovery counts (round-3 review L3): every ACCOUNT with a
+ * failed payment in the last 90 days, whatever its status (cancelled
+ * included) and account type, and "recovered" is the stored status paid
+ * (lib/reports.ts). Not a payer total, so it does not say "payers".
+ */
+export const RECOVERY_SCOPE = "Accounts with a failed payment in the last 90 days now marked paid (any status, parents and guardians included)";
+
+/**
+ * D11 (23 Oct 2026): ONE movement definition (lib/membership-movement.ts) for
+ * the tiles, the charts, the tally line, the CSV and the drill-throughs. The
+ * current club month's tally, or an empty one when the month has no data.
+ */
+export function currentMonthMovement(m: Pick<MembershipReport, "movementsByMonth">): MembershipReport["totals"] {
+  const current = m.movementsByMonth.find((r) => r.isCurrentMonth && r.basis !== "none");
+  return current ?? emptyTally();
+}
+
+/** "New 1 · Rejoined 1 · Tasters added 1 · Left 2 · Net 0": the Joined tile's lines and its CSV detail. */
+export function joinedTileDetail(t: MembershipReport["totals"]): string {
+  return `New ${formatNumber(t.new)} · Rejoined ${formatNumber(t.rejoined)} · Tasters added ${formatNumber(t.tasterAdded ?? 0)} · Left ${formatNumber(t.lost)} · Net ${formatSigned(t.net)}`;
+}
+
+/** The "New this month" tile's scope, in the movement words. */
+export const NEW_SCOPE = "First ever start. Rejoins, tasters and imports are counted apart";
+const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";
+
+/**
+ * Delta as display text, or null when nothing moved. A percentage always
+ * carries the two figures it compares (required by Sean's note relayed 14 Oct
+ * and the owner instruction of 24 Oct 2026): "+13% (45 vs 40)".
+ */
+export function trendDelta(current: number, previous: number) {
   const delta = current - previous;
   if (delta === 0) return null;
   if (previous === 0) return `${delta > 0 ? "+" : ""}${formatNumber(delta)}`;
   const pct = Math.round((delta / previous) * 100);
-  return `${pct > 0 ? "+" : ""}${pct}%`;
+  return `${pct > 0 ? "+" : ""}${pct}% (${formatNumber(current)} vs ${formatNumber(previous)})`;
 }
 
 function trendText(current: number, previous: number) {
@@ -158,9 +327,81 @@ function funnelCsvRows(attribution: AttributionData): (string | number | null)[]
   ];
 }
 
+function validGeneratedAt(generatedAt: string): Date | null {
+  const d = new Date(generatedAt);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * "As of 14:05" on screen and the CSV's "Generated at" row read the same
+ * instant through the same en-GB formatter, in the browser's zone, so the
+ * file states the time the owner saw (T2c).
+ */
+export function generatedAtTime(generatedAt: string): string {
+  const d = validGeneratedAt(generatedAt);
+  return d ? formatTime(d) : "—";
+}
+
+/**
+ * The CSV file name, dated from `generatedAt` (the moment the figures were
+ * computed) — not the browser's "now", which could be a different day for a
+ * page left open overnight. Local calendar date, matching the "Generated at"
+ * row inside the file.
+ */
+export function reportsCsvFilename(generatedAt: string): string {
+  const d = validGeneratedAt(generatedAt) ?? new Date();
+  const ymd = [d.getFullYear(), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0")].join("-");
+  return `matflow-reports-${ymd}.csv`;
+}
+
+/**
+ * T8c: the movement tally for the window, one row per month (new, rejoined,
+ * lost with its split, net) and the active-member headcount at each month
+ * end — the same figures the Net New Members card draws, with each month's
+ * basis (what it was estimated from) so an estimate never reads as a record.
+ * Months that ended before the club's earliest event have no data and are
+ * left out, as on the card. Net is a number cell, so a negative month stays a
+ * number.
+ */
+export function membershipCsvRows(m: MembershipReport): (string | number | null)[][] {
+  if (m.movementsByMonth.length === 0) return [];
+  const t = m.totals;
+  const caption = estimatedCaption(m);
+  const split = (r: MembershipReport["totals"]) =>
+    `New ${r.new} · Rejoined ${r.rejoined} · Left ${r.lost} (cancelled ${r.lostCancelled}, completed course ${r.lostCompleted}) · Tasters added ${r.tasterAdded ?? 0}`;
+  return [
+    [
+      "Membership movement",
+      `${m.window.from} – ${m.window.to}`,
+      t.net,
+      [`${split(t)} · ${MEMBERSHIP_COPY.definition} ${MEMBERSHIP_COPY.deletion}`, estimateLabel(combinedBasis(m.movementsByMonth.map((r) => r.basis)), caption)].filter(Boolean).join(" · "),
+    ],
+    ...m.movementsByMonth.filter((r) => r.basis !== "none").map((r) => [
+      "Membership movement by month",
+      r.label,
+      r.net,
+      [
+        split(r),
+        r.imported > 0 ? `Brought over by an import without dated history ${r.imported}` : null,
+        r.otherIn > 0 || r.otherOut > 0 ? `Other changes in ${r.otherIn}, out ${r.otherOut}` : null,
+        basisNote(r.basis, caption),
+      ].filter(Boolean).join(" · "),
+    ]),
+    ...m.headcountByMonth.filter((h) => h.basis !== "none").map((h) => [
+      "Active members at month end",
+      h.label,
+      h.headcount,
+      [h.isCurrentMonth ? "Today, equals Active members" : MEMBERSHIP_COPY.headcount, basisNote(h.basis, caption)].filter(Boolean).join(" · "),
+    ]),
+  ];
+}
+
 /**
  * The Reports CSV as text: BOM, CRLF, every cell through csvCell
  * (lib/csv.ts csvDocument). Pure, so the export is testable without a browser.
+ * The first data row states when the figures were computed (T2c): the CSV is
+ * built from the page's cached data, so without it a file could not say how
+ * old its numbers are.
  */
 export function reportsCsv(data: ReportsData, attribution: AttributionData): string {
   const windowLabel = `Last ${data.weeksBack} weeks`;
@@ -173,31 +414,83 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     data.filters.ageGroup === "adult" ? "Adults" : data.filters.ageGroup === "kids" ? "Kids" : null,
   ].filter(Boolean).join(" · ");
   const scopedWindowLabel = filterSuffix ? `${windowLabel} · ${filterSuffix}` : windowLabel;
+  const { churn, retention } = data;
+  const recovery = data.paymentHealth.recovery;
+  const shares = derivedShares(data);
+  const thisMonthEstimate = estimateLabel(thisAndLastMonthBasis(data.membership).current, estimatedCaption(data.membership));
   const rows: (string | number | null)[][] = [
     ["Section", "Metric", "Value", "Detail"],
-    ["Summary", "Total members", data.summary.totalMembers, ""],
-    ["Summary", "Active members", data.summary.activeMembers, ""],
+    ["Report", "Generated at", validGeneratedAt(data.generatedAt) ? formatDateTime(data.generatedAt) : "—", "Figures cached for up to 60 seconds"],
+    ...(data.period ? [["Report", "This month", data.period.label, periodCsvDetail(data.period)]] : []),
+    ["Summary", "Total members", data.summary.totalMembers, "Every training member on record, including those who have left"],
+    ["Summary", "Current members", data.summary.currentMembers, "Active and inactive members and tasters"],
+    ["Summary", "Active members", data.summary.activeMembers, activeMembersDetail(data.summary)],
     // Attendance this week IS narrowed by the class/age filters (lib/reports.ts
     // attendanceScope), so its export row must say so — it was the one scoped
     // number leaving the page unlabelled (assessment lane 5).
     ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Last week: ${data.summary.attendanceLastWeek}${filterSuffix ? ` · ${filterSuffix}` : ""}`],
-    ["Summary", "New members this month", data.summary.newMembersThisMonth, `Last month: ${data.summary.newMembersLastMonth}`],
+    ["Summary", "New members this month", data.summary.newMembersThisMonth, [`Last month: ${data.summary.newMembersLastMonth}`, NEW_SCOPE, monthPairEstimateNote(data.membership)].filter(Boolean).join(" · ")],
     ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
     // The rate definition the owner chose on screen, with its formula — the
     // headline of the filter bar, previously missing from the file.
-    ["Summary", `Attendance rate — ${data.attendanceRate.label}`, formatAttendanceRateValue(data.attendanceRate.mode, data.attendanceRate.value), `${data.attendanceRate.formula} · ${scopedWindowLabel}`],
+    ["Summary", `Attendance rate — ${data.attendanceRate.label}`, [formatAttendanceRateValue(data.attendanceRate.mode, data.attendanceRate.value), attendanceRateCounts(data.attendanceRate)].filter(Boolean).join(" "), `${data.attendanceRate.formula} · ${scopedWindowLabel}`],
     ["Summary", "Active classes", data.summary.totalActiveClasses, ""],
-    ["Summary", "6-month survival", data.retentionRate === null ? "—" : `${data.retentionRate}%`, "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
+    // Health rows (T2b): the same text the tiles print, so the file and the
+    // screen agree. Club-wide — the class/age filters never scope them.
+    ["Health", "Churn this month", formatRatio(churn.ratePct, churn.cancelled, churn.base), `${CHURN_FORMULA} · club-wide`],
+    // D11: the Joined tile, line for line, and the members behind each figure.
+    ["Health", MEMBERSHIP_COPY.joinedLabel, churn.joined, withEstimate(`${joinedTileDetail(currentMonthMovement(data.membership))} · ${MEMBERSHIP_COPY.definition}`, thisMonthEstimate)],
+    ["Health", "New this month", currentMonthMovement(data.membership).new, withEstimate("First ever start", thisMonthEstimate)],
+    ["Health", "Rejoined this month", currentMonthMovement(data.membership).rejoined, withEstimate("Started again after leaving", thisMonthEstimate)],
+    ["Health", "Tasters added this month", currentMonthMovement(data.membership).tasterAdded ?? 0, withEstimate("Not in Joined or Net", thisMonthEstimate)],
+    ["Health", "Left this month", currentMonthMovement(data.membership).lost, withEstimate("Cancelled, or finished a prepaid course", thisMonthEstimate)],
+    ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), RECOVERY_SCOPE],
+    // Review L2: payer totals, the Payments → Outstanding definition; the
+    // detail says guardians who pay are counted, and how many.
+    ["Payments", PAYER_COPY.label, data.paymentHealth.overdueCount, payerGuardianNote(data.paymentHealth.overdueGuardianCount ?? 0)],
+    ["Payments", "Payers with no payment yet", data.paymentHealth.noPaymentYetCount, payerGuardianNote(data.paymentHealth.noPaymentYetGuardianCount ?? 0)],
+    // D9: debts on inactive or cancelled accounts, beside the payers and
+    // never inside them or a member total.
+    ["Payments", OTHER_OWING_COPY.label, data.paymentHealth.otherOwingCount ?? 0, otherOwingDetail(data.paymentHealth.otherOwingGuardianCount ?? 0)],
+    // Owner instruction of 24 Oct 2026: a failed charge is not a debt until it
+    // is reconciled, so it is its own row and in no debt total.
+    ["Payments", FAILED_TO_RECONCILE_COPY.label, data.paymentHealth.failedToReconcileCount ?? 0, failedToReconcileDetail(data.paymentHealth.failedToReconcileGuardianCount ?? 0)],
+    ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
+    ...membershipCsvRows(data.membership),
     ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
-    ...data.monthlySignups.map((row) => ["Monthly signups", row.month, row.count, row.isCurrentMonth ? "Current month" : ""]),
+    ...data.monthlySignups.map((row) => [
+      "Joined by month (new + rejoined)",
+      row.month,
+      row.count,
+      [row.isCurrentMonth ? "Current month" : null, estimateLabel(row.basis, estimatedCaption(data.membership))].filter(Boolean).join(" · "),
+    ]),
+    ...(() => {
+      const mix = classComposition(data.topClasses);
+      return mix.top.map((row) => [
+        "Class composition",
+        row.name,
+        row.count,
+        `${formatRatio(wholePct(row.count, mix.total), row.count, mix.total)} of check-ins across the ${mix.label} · ${scopedWindowLabel}`,
+      ]);
+    })(),
     ...data.topClasses.map((row) => [
       "Top classes",
       row.name,
       row.count,
-      `${scopedWindowLabel}, ${row.averageAttendance}/session, fill rate ${formatPercent(row.fillRate)}`,
+      `${scopedWindowLabel}, ${row.averageAttendance}/session, fill rate ${formatFill(row)}`,
     ]),
-    ...data.membersByStatus.map((row) => ["Members by status", row.label, row.count, `${row.percentage}%`]),
-    ...data.checkInMethods.map((row) => ["Check-in methods", row.label, row.count, `${row.percentage}% · ${scopedWindowLabel}`]),
+    // Q4 A-2 split: shares over current members; those who have left are a
+    // count with no percentage — exactly as the status card shows them.
+    ...data.currentMembersByStatus.map((row) => [
+      "Current members by status",
+      row.label,
+      row.count,
+      formatRatio(row.percentage, row.count, data.summary.currentMembers),
+    ]),
+    ["Left the club", "Cancelled members", data.summary.cancelledMembers, "Not part of current members, so no percentage"],
+    ...data.checkInMethods.map((row) => ["Check-in methods", row.label, row.count, `${formatRatio(row.percentage, row.count, shares.totalMethodCount)} · ${scopedWindowLabel}`]),
+    ["Owner insights", "Self-service check-in", formatRatio(shares.selfServicePct, shares.selfServiceCount, shares.totalMethodCount), `Self or QR · ${scopedWindowLabel}`],
+    ["Owner insights", "Active share of current members", formatRatio(shares.activeSharePct, data.summary.activeMembers, data.summary.currentMembers), "Active members ÷ current members"],
     // The conversion funnel, club-wide then per coach — the same numbers and
     // the same honesty guards as the screen (null rates export as "N/A").
     ...funnelCsvRows(attribution),
@@ -206,12 +499,17 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
   return csvDocument(rows);
 }
 
+/** A CSV detail with its estimate label appended, when there is one. */
+function withEstimate(detail: string, estimate: string | null): string {
+  return estimate ? `${detail} · ${estimate}` : detail;
+}
+
 function exportCsv(data: ReportsData, attribution: AttributionData) {
   const blob = new Blob([reportsCsv(data, attribution)], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `matflow-reports-${new Date().toISOString().slice(0, 10)}.csv`;
+  anchor.download = reportsCsvFilename(data.generatedAt);
   anchor.click();
   URL.revokeObjectURL(url);
 }
@@ -250,6 +548,70 @@ function TrendBadge({
       <span className="font-semibold tabular-nums">{delta}</span>
       <span style={{ color: "var(--tx-3)" }}>{label}</span>
     </span>
+  );
+}
+
+/**
+ * D11: the Joined tile. One combined figure, explicitly labelled
+ * "Joined this month (new + rejoined)", with New, Rejoined, Tasters added and
+ * Left each on its own line and each a drill-through to exactly the members
+ * that figure counted, for the report's club month. Net and the definition
+ * underneath, in the words the Net New Members card uses.
+ */
+function JoinedThisMonthTile({
+  joined,
+  t,
+  period,
+  estimate = null,
+}: {
+  joined: number;
+  t: MembershipReport["totals"];
+  period: ReportsData["period"] | undefined;
+  /** "Partly estimated" (or what an estimate came from) when this month is not wholly recorded. */
+  estimate?: string | null;
+}) {
+  const lines: { label: string; value: number; filter: MonthDrillFilter }[] = [
+    { label: "New", value: t.new, filter: "new-this-month" },
+    { label: "Rejoined", value: t.rejoined, filter: "rejoined-this-month" },
+    { label: "Tasters added", value: t.tasterAdded ?? 0, filter: "tasters-this-month" },
+    { label: "Left", value: t.lost, filter: "lost-this-month" },
+  ];
+  return (
+    <Card className="!p-4" data-testid="reports-joined-tile">
+      <div
+        className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+        style={{ background: "color-mix(in srgb, var(--color-primary) 13%, transparent)" }}
+      >
+        <UserPlus className="w-5 h-5" style={{ color: "var(--color-primary)" }} />
+      </div>
+      <p className="mt-5 text-2xl font-bold leading-tight text-tx-1" data-testid="reports-joined-value">{formatNumber(joined)}</p>
+      <p className="text-xs font-medium mt-1 text-tx-3">{MEMBERSHIP_COPY.joinedLabel}</p>
+      <ul className="mt-2 space-y-0.5 text-[11px]">
+        {lines.map((line) => (
+          <li key={line.filter}>
+            <Link
+              href={monthDrillHref(line.filter, period)}
+              className="flex items-center justify-between gap-2 rounded px-1 -mx-1 py-0.5 text-tx-2 transition-colors hover:bg-[var(--sf-2)]"
+              data-testid={`reports-joined-${line.filter}`}
+            >
+              <span>{line.label}</span>
+              <span className="flex items-center gap-1 font-semibold tabular-nums text-tx-1">
+                {formatNumber(line.value)}
+                <ChevronRight className="w-3 h-3 shrink-0 text-tx-3" aria-hidden="true" />
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[11px] text-tx-2" data-testid="reports-joined-net">
+        Net {formatSigned(t.net)} this month (new + rejoined − left)
+      </p>
+      {estimate && (
+        <p className="mt-1 text-[11px] text-tx-3" data-testid="reports-joined-estimate">
+          {estimate}: some of this month&apos;s moves are reconstructed, not recorded at the time.
+        </p>
+      )}
+    </Card>
   );
 }
 
@@ -340,19 +702,53 @@ function MetricCard({
   );
 }
 
+/**
+ * A month dot on the Joined chart: filled when the month was recorded at the
+ * time, hollow when it is estimated or partly estimated, so an estimate never
+ * reads as a record (the note under the chart names those months).
+ */
+function BasisDot(props: { cx?: number; cy?: number; color: string; payload?: { basis?: MembershipBasis } }) {
+  const { cx, cy, color, payload } = props;
+  if (cx === undefined || cy === undefined) return null;
+  const estimated = payload?.basis === "estimated" || payload?.basis === "mixed";
+  return estimated ? (
+    <circle cx={cx} cy={cy} r={4} fill="var(--sf-0)" stroke={color} strokeWidth={2} strokeDasharray="2 2" />
+  ) : (
+    <circle cx={cx} cy={cy} r={4} fill={color} strokeWidth={0} />
+  );
+}
+
+/**
+ * The line under the Joined chart naming the months that are not wholly
+ * recorded, or null when every month is: "Estimated from your TeamUp history:
+ * May 26, Jun 26. Partly estimated: Jul 26."
+ */
+export function joinedEstimateNote(rows: readonly { month: string; basis?: MembershipBasis }[], caption: string): string | null {
+  const estimated = rows.filter((r) => r.basis === "estimated").map((r) => r.month);
+  const mixed = rows.filter((r) => r.basis === "mixed").map((r) => r.month);
+  const parts: string[] = [];
+  if (estimated.length > 0) parts.push(`${caption}: ${estimated.join(", ")}.`);
+  if (mixed.length > 0) parts.push(`Partly estimated: ${mixed.join(", ")}.`);
+  return parts.length > 0 ? `${parts.join(" ")} Hollow dots are not wholly recorded at the time.` : null;
+}
+
 function ChartTooltip({
   active,
   payload,
   label,
   suffix,
+  noteFor,
 }: {
   active?: boolean;
   payload?: TooltipPayload[];
   label?: string;
   suffix: string;
+  /** A line under the value for this point (e.g. "Partly estimated"), or null. */
+  noteFor?: (point: unknown) => string | null;
 }) {
   if (!active || !payload?.length) return null;
   const value = Number(payload[0].value ?? 0);
+  const note = noteFor ? noteFor((payload[0] as { payload?: unknown }).payload ?? {}) : null;
   return (
     <div
       className="rounded-xl border px-3 py-2 text-sm shadow-xl"
@@ -362,6 +758,7 @@ function ChartTooltip({
       <p className="font-semibold" style={{ color: "var(--tx-1)" }}>
         {formatNumber(value)} {suffix}
       </p>
+      {note && <p className="text-xs text-tx-3">{note}</p>}
     </div>
   );
 }
@@ -427,13 +824,15 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     summary,
     weeklyAttendance,
     monthlySignups,
-    membersByStatus,
+    currentMembersByStatus,
     checkInMethods,
     topClasses,
-    churnRate,
+    churn,
+    retention,
     retentionRate,
-    netNewByMonth,
+    membership,
     paymentHealth,
+    period,
     weeksBack,
     classOptions,
     filters,
@@ -523,25 +922,24 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
   const bestClass = topClasses[0];
   const maxAttendance = Math.max(...weeklyAttendance.map((row) => row.count), 0);
   const maxTopClass = Math.max(...topClasses.map((row) => row.count), 1);
-  const totalMethodCount = checkInMethods.reduce((sum, row) => sum + row.count, 0);
-  const totalStatusCount = membersByStatus.reduce((sum, row) => sum + row.count, 0);
-  const selfServiceCount = checkInMethods
-    .filter((row) => row.method === "self" || row.method === "qr")
-    .reduce((sum, row) => sum + row.count, 0);
-  const selfServicePct = totalMethodCount > 0 ? Math.round((selfServiceCount / totalMethodCount) * 100) : 0;
-  const attentionMembers = summary.inactiveMembers + summary.cancelledMembers;
+  const { totalMethodCount, selfServiceCount, selfServicePct, activeSharePct } = derivedShares(data);
+  // Q4 A-2 (split): "need review" is inactive members only. Cancelled members
+  // have left the club; they appear as "Left the club: N", not as people to
+  // review alongside the current ones.
+  const attentionMembers = summary.inactiveMembers;
   const topMethod = checkInMethods[0];
-  const activeShare = summary.totalMembers > 0 ? Math.round((summary.activeMembers / summary.totalMembers) * 100) : 0;
+  const recovery = paymentHealth.recovery;
 
   const weeklyTickFormatter = (value: string, index: number) =>
     weeklyAttendance.length > 8 && index % 2 !== 0 ? "" : value;
 
-  const classCompositionSlices: DonutSlice[] = topClasses.slice(0, 6).map((cls, i) => ({
+  const classMix = classComposition(topClasses);
+  const classCompositionSlices: DonutSlice[] = classMix.top.map((cls, i) => ({
     label: cls.name,
     value: cls.count,
     color: HERO_PALETTE[i % HERO_PALETTE.length],
   }));
-  const totalClassCheckins = classCompositionSlices.reduce((s, d) => s + d.value, 0);
+  const totalClassCheckins = classMix.total;
 
   const trendPoints = weeklyAttendance.map((row) => ({ label: row.week, value: row.count }));
 
@@ -688,6 +1086,17 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             >
               {formatAttendanceRateValue(attendanceRate.mode, attendanceRate.value)}
             </span>
+            {/* The counts behind the number (T2b) — kept beside it, never
+                truncated; the label after it gives way first. */}
+            {attendanceRateCounts(attendanceRate) && (
+              <span
+                data-testid="rate-readout-counts"
+                className="shrink-0 text-xs tabular-nums whitespace-nowrap"
+                style={{ color: "var(--tx-2)" }}
+              >
+                {attendanceRateCounts(attendanceRate)}
+              </span>
+            )}
             <span className="text-xs truncate" style={{ color: "var(--tx-3)" }} title={attendanceRate.label}>
               {attendanceRate.label}
             </span>
@@ -704,7 +1113,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               suppressHydrationWarning
               title="Figures are recomputed at most once a minute per club"
             >
-              As of {new Date(data.generatedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+              As of {generatedAtTime(data.generatedAt)}
             </span>
           </div>
 
@@ -719,7 +1128,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
       {/* Hero chart row — donut (attendance composition) + sparkline (12-week trend) */}
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-4">
         <Card>
-          <SectionTitle title="Class composition" subtitle={`Share of check-ins by class — ${scopedWindowLabel}`} icon={Trophy} />
+          {/* Shares are over the check-ins of the classes shown (the top six at
+              most), not over every check-in; the subtitle and centre say so. */}
+          <SectionTitle title="Class composition" subtitle={`Share of check-ins across the ${classMix.label} — ${scopedWindowLabel}`} icon={Trophy} />
           {/* Chart and its empty state share a minimum height so a filter that
               empties one card does not move everything beneath it (lane 1). */}
           {totalClassCheckins === 0 ? (
@@ -730,11 +1141,11 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 data={classCompositionSlices}
                 size={200}
                 thickness={28}
-                centerLabel="Check-ins"
+                centerLabel={`Check-ins, ${classMix.label}`}
                 centerValue={formatNumber(totalClassCheckins)}
               />
               <div className="flex-1 min-w-0 w-full">
-                <DonutLegend data={classCompositionSlices} />
+                <DonutLegend data={classCompositionSlices} showCounts />
               </div>
             </div>
           )}
@@ -753,7 +1164,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 <TrendBadge
                   current={summary.attendanceThisWeek}
                   previous={summary.attendanceLastWeek}
-                  label="vs last week"
+                  label={`vs ${formatNumber(summary.attendanceLastWeek)} last week`}
                 />
               </div>
               <div className="w-full overflow-hidden [&>svg]:w-full [&>svg]:h-auto">
@@ -779,7 +1190,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={Users}
           label="Active members"
           value={formatNumber(summary.activeMembers)}
-          detail={`${formatNumber(summary.totalMembers)} total members`}
+          detail={activeMembersDetail(summary)}
           primaryColor={primaryColor}
           href="/dashboard/members?filter=active"
         />
@@ -789,16 +1200,16 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           value={formatNumber(summary.attendanceThisWeek)}
           detail={filterSuffix ? `Check-ins since Monday · ${filterSuffix}` : "Check-ins since Monday"}
           primaryColor={primaryColor}
-          trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, label: "vs last week" }}
+          trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, label: "on last week" }}
         />
         <MetricCard
           icon={UserPlus}
           label="New this month"
           value={formatNumber(summary.newMembersThisMonth)}
-          detail="Member signups"
+          detail={[NEW_SCOPE, monthPairEstimateNote(membership)].filter(Boolean).join(" · ")}
           primaryColor={primaryColor}
-          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: "vs last month" }}
-          href="/dashboard/members?filter=new-this-month"
+          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: "on last month" }}
+          href={monthDrillHref("new-this-month", period)}
         />
         <MetricCard
           icon={BarChart3}
@@ -885,15 +1296,19 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <InsightRow
               icon={QrCode}
               label="Self-service check-in"
-              value={`${selfServicePct}% self or QR`}
+              value={selfServicePct === null ? "No check-ins yet" : `${formatRatio(selfServicePct, selfServiceCount, totalMethodCount)} self or QR`}
               detail={topMethod ? `${topMethod.label} is the top method` : "No method data yet"}
               color="#6366f1"
             />
             <InsightRow
               icon={attentionMembers > 0 ? AlertTriangle : ShieldCheck}
               label="Member attention"
-              value={attentionMembers > 0 ? `${attentionMembers} need review` : "No inactive members"}
-              detail={`${activeShare}% of members are active`}
+              value={attentionMembers > 0 ? `${formatNumber(attentionMembers)} inactive to review` : "No inactive members"}
+              detail={
+                summary.currentMembers > 0
+                  ? `${formatRatio(activeSharePct, summary.activeMembers, summary.currentMembers)} of current members are active`
+                  : "No current members yet"
+              }
               color={attentionMembers > 0 ? "#f59e0b" : "#22c55e"}
             />
           </div>
@@ -902,9 +1317,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionTitle title="New Members" subtitle="Last 6 months" icon={UserPlus} />
+          <SectionTitle title="Joined" subtitle="Joined (new + rejoined) per month, last 6 months" icon={UserPlus} />
           {monthlySignups.every((row) => row.count === 0) ? (
-            <EmptyChart label="No signup data yet" />
+            <EmptyChart label="No joins yet" />
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={monthlySignups} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
@@ -921,17 +1336,22 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   tickLine={false}
                   allowDecimals={false}
                 />
-                <Tooltip content={<ChartTooltip suffix="new members" />} />
+                <Tooltip content={<ChartTooltip suffix="joined (new + rejoined)" noteFor={(p) => estimateLabel((p as { basis?: MembershipBasis }).basis, estimatedCaption(membership))} />} />
                 <Line
                   type="monotone"
                   dataKey="count"
                   stroke={primaryColor}
                   strokeWidth={2.5}
-                  dot={{ fill: primaryColor, r: 4, strokeWidth: 0 }}
+                  dot={<BasisDot color={primaryColor} />}
                   activeDot={{ r: 6, fill: primaryColor }}
                 />
               </LineChart>
             </ResponsiveContainer>
+          )}
+          {joinedEstimateNote(monthlySignups, estimatedCaption(membership)) && (
+            <p className="mt-2 text-xs text-tx-3" data-testid="reports-joined-chart-estimate">
+              {joinedEstimateNote(monthlySignups, estimatedCaption(membership))}
+            </p>
           )}
         </Card>
 
@@ -946,7 +1366,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   key={cls.name}
                   label={cls.name}
                   value={formatNumber(cls.count)}
-                  detail={`${cls.averageAttendance}/session | ${formatPercent(cls.fillRate)} fill`}
+                  detail={`${cls.averageAttendance}/session · fill ${formatFill(cls)}`}
                   pct={Math.round((cls.count / maxTopClass) * 100)}
                   color={index === 0 ? primaryColor : hex(primaryColor, 0.62 - index * 0.08)}
                 />
@@ -958,16 +1378,24 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionTitle title="Members by Status" subtitle="Counts and share of your member base" icon={Users} />
-          {totalStatusCount === 0 ? (
-            <EmptyChart label="No member data yet" />
+          {/* Q4 A-2, split status card (T2b): shares over CURRENT members
+              only, adding to 100% ± rounding. Members who have left are a
+              count of their own with no percentage — a cancelled slice is
+              never a share of the people still on the books. */}
+          <SectionTitle
+            title="Current members by status"
+            subtitle="Share of current members: active, inactive and tasters. Excludes guardians."
+            icon={Users}
+          />
+          {summary.currentMembers === 0 ? (
+            <EmptyChart label="No current members yet" />
           ) : (
-            <div className={`grid gap-5 ${membersByStatus.length > 1 ? "sm:grid-cols-[130px_1fr]" : ""}`}>
-              {membersByStatus.length > 1 && (
+            <div className={`grid gap-5 ${currentMembersByStatus.length > 1 ? "sm:grid-cols-[130px_1fr]" : ""}`}>
+              {currentMembersByStatus.length > 1 && (
                 <ResponsiveContainer width="100%" height={130}>
                   <PieChart>
                     <Pie
-                      data={membersByStatus}
+                      data={currentMembersByStatus}
                       dataKey="count"
                       nameKey="label"
                       cx="50%"
@@ -976,7 +1404,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                       outerRadius={58}
                       strokeWidth={0}
                     >
-                      {membersByStatus.map((entry, index) => (
+                      {currentMembersByStatus.map((entry, index) => (
                         <Cell key={entry.status} fill={statusColor(entry.status, index)} />
                       ))}
                     </Pie>
@@ -984,17 +1412,17 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 </ResponsiveContainer>
               )}
               <div className="space-y-3">
-                {membersByStatus.length === 1 && (
+                {currentMembersByStatus.length === 1 && (
                   <div className="flex items-center gap-2 rounded-xl px-3 py-2 border" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>
                     <ShieldCheck className="w-4 h-4" style={{ color: "#22c55e" }} />
-                    <span className="text-sm">All tracked members are currently {membersByStatus[0].label.toLowerCase()}.</span>
+                    <span className="text-sm">All current members are {currentMembersByStatus[0].label.toLowerCase()}.</span>
                   </div>
                 )}
-                {membersByStatus.map((entry, index) => (
+                {currentMembersByStatus.map((entry, index) => (
                   <ProgressRow
                     key={entry.status}
                     label={entry.label}
-                    value={`${formatNumber(entry.count)} (${entry.percentage}%)`}
+                    value={formatRatio(entry.percentage, entry.count, summary.currentMembers)}
                     pct={entry.percentage}
                     color={statusColor(entry.status, index)}
                   />
@@ -1002,6 +1430,14 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               </div>
             </div>
           )}
+          <p
+            data-testid="left-the-club"
+            className="mt-4 border-t border-bd-default pt-3 text-sm"
+            style={{ color: "var(--tx-2)" }}
+          >
+            Left the club: <span className="font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>{formatNumber(summary.cancelledMembers)}</span>
+            <span className="text-xs" style={{ color: "var(--tx-3)" }}> · cancelled members, not part of the shares above</span>
+          </p>
         </Card>
 
         <Card>
@@ -1014,7 +1450,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 <ProgressRow
                   key={method.method}
                   label={method.label}
-                  value={`${formatNumber(method.count)} (${method.percentage}%)`}
+                  value={formatRatio(method.percentage, method.count, totalMethodCount)}
                   pct={method.percentage}
                   color={methodColor(method.method)}
                 />
@@ -1033,27 +1469,37 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           </p>
         </div>
 
-        {/* KPI row — churn and payment recovery only. Retention used to sit
-            here as a third tile and read as "1 - churn" at a glance, which it
-            is not: different cohort (6mo+ joiners vs this month's active
-            base) and a different window (a point-in-time survival check vs
-            a monthly rate). It has its own card below instead of a headline
-            neighbour (Track A churn-honesty fix). */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        {/* KPI row — churn, joined beside it, then payment recovery.
+            Retention still does NOT sit here: it read as "1 - churn" at a
+            glance, which it is not (different cohort and window), so it
+            keeps its own card below (Track A churn-honesty fix). Joined is
+            the other side of churn's ledger for the SAME month — Q6 (agent
+            default adopted 17 Oct 2026; not an owner decision) puts it
+            immediately beside churn, overriding the old "no neighbour" note
+            for this tile only.
+            Every rate prints its counts, "x% (n of m)"; an empty base is "—". */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
           <MetricCard
             icon={UserMinus}
             label="Churn rate this month"
-            value={`${churnRate}%`}
-            detail="Cancellations as % of active base"
-            primaryColor={churnRate > 5 ? "#ef4444" : churnRate > 2 ? "#f59e0b" : "#22c55e"}
-            href="/dashboard/members?filter=churned-this-month"
+            value={<RatioValue pct={churn.ratePct} n={churn.cancelled} base={churn.base} />}
+            detail={churn.base > 0 ? CHURN_FORMULA : "No active or cancelled members this month"}
+            primaryColor={primaryColor}
+            href={monthDrillHref("churned-this-month", period)}
+            hrefLabel="Churn rate this month"
+          />
+          <JoinedThisMonthTile
+            joined={churn.joined}
+            t={currentMonthMovement(membership)}
+            period={period}
+            estimate={estimateLabel(thisAndLastMonthBasis(membership).current, estimatedCaption(membership))}
           />
           <MetricCard
             icon={RefreshCcw}
             label="Payment recovery rate"
-            value={paymentHealth.recoveryRate === null ? "—" : `${paymentHealth.recoveryRate}%`}
-            detail="Of members with a failed payment in last 90 days now paid"
-            primaryColor={(paymentHealth.recoveryRate ?? 50) >= 70 ? "#22c55e" : (paymentHealth.recoveryRate ?? 50) >= 40 ? "#f59e0b" : "#ef4444"}
+            value={<RatioValue pct={recovery.ratePct} n={recovery.recovered} base={recovery.failedMembers} />}
+            detail={recovery.failedMembers > 0 ? RECOVERY_SCOPE : "No failed payments in the last 90 days"}
+            primaryColor={primaryColor}
           />
         </div>
 
@@ -1066,7 +1512,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>
-              6-month survival: {retentionRate === null ? "—" : `${retentionRate}%`}
+              6-month survival: {formatRatio(retention.ratePct, retention.survived, retention.cohort)}
             </p>
             <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
               Of members who joined 6+ months ago, still active today. A different cohort and window to the monthly churn rate above — not its inverse, and the two numbers will not sum to 100%.
@@ -1076,22 +1522,28 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
         {/* Net-new chart runs the full width (Noe, 25 Sep: "from the left side of
             the screen to the right"), with its own view switch; Payment Health
-            sits under it with its three figures side by side. */}
-        <NetNewMembersCard rows={netNewByMonth} />
+            sits under it with its four figures side by side. */}
+        <NetNewMembersCard membership={membership} />
         <div className="grid grid-cols-1 gap-4">
           <Card>
             <SectionTitle title="Payment Health" subtitle="Current overdue and recent failures" icon={CreditCard} />
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-6">
               <Link
                 href="/dashboard/members?filter=overdue"
-                aria-label="Overdue now — see the members behind this number"
+                aria-label={`${PAYER_COPY.label} — see the payers behind this number`}
                 className="flex items-center justify-between gap-3 py-3 -mx-1 px-1 rounded-lg transition-colors hover:bg-[var(--sf-2)]"
               >
                 <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: hex("#ef4444", 0.12) }}>
+                  <div className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center" style={{ background: hex("#ef4444", 0.12) }}>
                     <AlertTriangle className="w-4 h-4" style={{ color: "#ef4444" }} />
                   </div>
-                  <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>Overdue now</p>
+                  <div className="min-w-0">
+                    {/* Review L2: a payer total, guardians who pay included. */}
+                    <p className="text-sm font-medium text-tx-1">{PAYER_COPY.label}</p>
+                    <p className="text-[11px] text-tx-3" data-testid="reports-payers-overdue-detail">
+                      {payerGuardianNote(paymentHealth.overdueGuardianCount ?? 0)}
+                    </p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span
@@ -1117,8 +1569,58 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   {formatNumber(paymentHealth.failedLast30Days)}
                 </span>
               </div>
+              {/* D9: debts on inactive or cancelled accounts. Not chased and
+                  not in Payers overdue, but never hidden; the drill-through
+                  names them on the Members page. */}
+              <Link
+                href="/dashboard/members?filter=other-owing"
+                aria-label={`${OTHER_OWING_COPY.label} — see the accounts behind this number`}
+                data-testid="reports-other-owing"
+                className="flex items-center justify-between gap-3 py-3 -mx-1 px-1 rounded-lg transition-colors hover:bg-[var(--sf-2)]"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center" style={{ background: "var(--sf-2)" }}>
+                    <CreditCard className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-tx-1">{OTHER_OWING_COPY.label}</p>
+                    <p className="text-[11px] text-tx-3" data-testid="reports-other-owing-detail">
+                      {otherOwingDetail(paymentHealth.otherOwingGuardianCount ?? 0)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xl font-bold tabular-nums text-tx-1">{formatNumber(paymentHealth.otherOwingCount ?? 0)}</span>
+                  <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />
+                </div>
+              </Link>
+              {/* Owner instruction of 24 Oct 2026: a failed charge on an
+                  inactive or cancelled account is not a debt until someone has
+                  checked it — its own line, in no debt total. */}
+              <Link
+                href="/dashboard/members?filter=failed-to-reconcile"
+                aria-label={`${FAILED_TO_RECONCILE_COPY.label} — see the accounts behind this number`}
+                data-testid="reports-failed-to-reconcile"
+                className="flex items-center justify-between gap-3 py-3 -mx-1 px-1 rounded-lg transition-colors hover:bg-[var(--sf-2)]"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center" style={{ background: "var(--sf-2)" }}>
+                    <CreditCard className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-tx-1">{FAILED_TO_RECONCILE_COPY.label}</p>
+                    <p className="text-[11px] text-tx-3" data-testid="reports-failed-to-reconcile-detail">
+                      {failedToReconcileDetail(paymentHealth.failedToReconcileGuardianCount ?? 0)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xl font-bold tabular-nums text-tx-1">{formatNumber(paymentHealth.failedToReconcileCount ?? 0)}</span>
+                  <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />
+                </div>
+              </Link>
               {healthLine?.tone === "good" && (
-                <div className="flex items-center gap-2 rounded-xl px-3 py-2 border sm:col-span-3" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>
+                <div className="flex items-center gap-2 rounded-xl px-3 py-2 border sm:col-span-2 lg:col-span-4" style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}>
                   <ShieldCheck className="w-4 h-4" style={{ color: "#22c55e" }} />
                   <span className="text-sm">{healthLine.text}</span>
                 </div>
@@ -1126,7 +1628,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               {healthLine?.tone === "owed" && (
                 <Link
                   href="/dashboard/payments"
-                  className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 border sm:col-span-3 transition-colors hover:bg-[var(--sf-2)]"
+                  className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 border sm:col-span-2 lg:col-span-4 transition-colors hover:bg-[var(--sf-2)]"
                   style={{ borderColor: "var(--bd-default)", color: "var(--tx-2)" }}
                 >
                   <span className="flex items-center gap-2">

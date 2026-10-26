@@ -554,7 +554,7 @@ test("an overdue member is on the outstanding list, and drops off once paid", as
   // which would make this a false pass. Either the summary line or the empty
   // state means the fetch came back (components/dashboard/OutstandingPanel.tsx).
   await expect(
-    page.getByText(/outstanding across \d+ member|Nobody owes you right now/),
+    page.getByText(/outstanding across \d+ payer|Nobody owes you right now/),
   ).toBeVisible({ timeout: 60_000 });
   await expect(page.getByRole("link", { name, exact: true })).toHaveCount(0);
 

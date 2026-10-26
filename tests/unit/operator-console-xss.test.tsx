@@ -138,6 +138,7 @@ describe("tenants list", () => {
             ownerName: IMG,
             ownerUserId: "u1",
             memberCount: 3,
+            activeMemberCount: 2,
             status: "active",
             stripeConnected: false,
             stripeChargesEnabled: null,

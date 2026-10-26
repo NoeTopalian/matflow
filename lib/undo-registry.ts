@@ -19,12 +19,13 @@
  * refused rather than forced.
  */
 import type { Prisma } from "@prisma/client";
-import { revalidateTag } from "next/cache";
+import { revalidateTagLogged } from "@/lib/revalidate-tag-logged";
 import { restorePackCreditsForAttendance } from "@/lib/checkin";
 import { CONFIRMED_BY } from "@/lib/guardianship";
 import { mintUpcomingSessions } from "@/lib/class-lifecycle";
 import { IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
 import { BILLING_BASIS_AVAILABLE } from "@/lib/class-allowance";
+import { recordStatusEvent } from "@/lib/member-status";
 
 /** What the owner reads when an undo would switch a plan to the billing-period basis while it ships dark. */
 export const BILLING_BASIS_UNDO_REFUSAL =
@@ -45,11 +46,14 @@ export type AuditRowLike = {
 
 export type UndoDecision = { ok: true } | { ok: false; reason: string };
 
+/** Who is undoing: the staff user a restored status transition is attributed to (T8a). */
+export type UndoActor = { userId: string };
+
 export type UndoHandler = {
   /** Pure: can this row be reversed from what it carries? */
   decide: (row: AuditRowLike) => UndoDecision;
   /** Reverse it. Throw `UndoStale` when the entity has moved on since. */
-  apply: (tx: TxLike, row: AuditRowLike) => Promise<void>;
+  apply: (tx: TxLike, row: AuditRowLike, actor?: UndoActor) => Promise<void>;
 };
 
 export class UndoStale extends Error {
@@ -205,7 +209,7 @@ function snapshotHandler(entityType: string, opts: SnapshotOptions = {}): UndoHa
       if (fields.length === 0) return { ok: false, reason: REASON.noSnapshot };
       return { ok: true };
     },
-    async apply(tx, row) {
+    async apply(tx, row, actor) {
       const m = meta(row);
       const before = asRecord(m.before);
       const after = asRecord(m.after);
@@ -249,6 +253,21 @@ function snapshotHandler(entityType: string, opts: SnapshotOptions = {}): UndoHa
         if (DATE_FIELDS.has(f) && typeof restore[f] === "string") restore[f] = new Date(restore[f] as string);
       }
       await d.update({ where: { id: row.entityId }, data: { ...restore, ...(opts.extra?.(restore) ?? {}) } });
+      // T8a: a restored member status is a status transition, so it goes
+      // through the single writer in this same transaction, attributed to the
+      // staff user doing the undo. (Cancellations are refused in `decide`, so
+      // cancelledAt never needs stamping here.) The writer no-ops when the
+      // status does not actually move.
+      if (entityType === "Member" && typeof restore.status === "string" && typeof current.status === "string" && row.tenantId) {
+        await recordStatusEvent(tx, {
+          tenantId: row.tenantId,
+          memberId: row.entityId,
+          fromStatus: current.status,
+          toStatus: restore.status,
+          reason: "staff_edit",
+          changedById: actor?.userId ?? null,
+        });
+      }
       await opts.afterApply?.(tx, row, restore);
       opts.after?.(row);
     },
@@ -327,12 +346,10 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
   },
   "tenant.settings.update": snapshotHandler("Tenant", {
     after(row) {
-      try {
-        revalidateTag(`gym-branding-${row.tenantId}`, { expire: 0 });
-      } catch {
-        // Outside a Next request store (unit tests) revalidateTag throws; the
-        // 60 s cache then expires on its own clock — same as the settings PATCH.
-      }
+      // Outside a Next request store (unit tests) revalidateTag throws; the
+      // 60 s cache then expires on its own clock — same as the settings PATCH.
+      // The failure is logged, never thrown, so the undo still succeeds.
+      if (row.tenantId) revalidateTagLogged(`gym-branding-${row.tenantId}`, row.tenantId);
     },
   }),
   "staff.update": snapshotHandler("User", {
@@ -681,8 +698,8 @@ export function decideUndo(row: AuditRowLike, alreadyUndone: boolean): UndoDecis
   return { ok: false, reason: REASON.noSnapshot };
 }
 
-export async function applyUndo(tx: TxLike, row: AuditRowLike): Promise<void> {
+export async function applyUndo(tx: TxLike, row: AuditRowLike, actor?: UndoActor): Promise<void> {
   const handler = UNDO_HANDLERS[row.action];
   if (!handler) throw new Error(`No undo handler for ${row.action}`);
-  await handler.apply(tx, row);
+  await handler.apply(tx, row, actor);
 }
