@@ -162,13 +162,6 @@ export type MemberDraft = {
   nextDueAt?: string;          // ISO date — when this member's membership is next due
   paymentStatus?: string;      // paid | overdue | paused | free | pending | cancelled
   cancelledAt?: string;        // ISO date — when a cancelled member left
-  /**
-   * TeamUp: when a member's last prepaid course was completed (status
-   * "inactive") — the Completed At instant, else the Cancelled Date as an ISO
-   * date. The back-fill's rule (lib/status-backfill.ts endOf); a refresh dates
-   * the completion by it (review F3, 23 Oct 2026). Never written to a Member.
-   */
-  courseEndedAt?: string;
   emergencyContactName?: string;
   emergencyContactPhone?: string;
   emergencyContactRelation?: string;
