@@ -350,18 +350,24 @@ export interface MonthWindow {
  * Members drill-through use), so a movement and a "Joined this month" tile
  * can never disagree about which month an instant falls in.
  */
-export function clubMonthWindows(now: Date, timeZone: string, count: number): MonthWindow[] {
+export function clubMonthWindows(now: Date, timeZone: string, count: number, endMonth?: string): MonthWindow[] {
+  // A statistics page's period may end before this month (lib/report-period):
+  // the windows then end with `endMonth` ("YYYY-MM"), each counted to its last
+  // instant. Without it they end with the month that holds `now`, as before.
+  const monthIndex = (key: string) => { const [y, m] = key.split("-").map(Number); return y * 12 + m - 1; };
+  const endOffset = endMonth ? Math.min(0, monthIndex(endMonth) - monthIndex(clubMonthWindow(now, timeZone).monthKey)) : 0;
   const out: MonthWindow[] = [];
   for (let i = count - 1; i >= 0; i -= 1) {
-    const w = clubMonthWindow(now, timeZone, -i);
+    const offset = endOffset - i;
+    const w = clubMonthWindow(now, timeZone, offset);
     const [year, month] = w.monthKey.split("-").map(Number);
     const marker = new Date(Date.UTC(year, month - 1, 1));
     out.push({
       key: w.monthKey,
       label: marker.toLocaleString("en-GB", { month: "short", year: "2-digit", timeZone: "UTC" }),
       start: new Date(w.monthStart),
-      at: i === 0 ? now : new Date(new Date(w.nextMonthStart).getTime() - 1),
-      isCurrent: i === 0,
+      at: offset === 0 ? now : new Date(new Date(w.nextMonthStart).getTime() - 1),
+      isCurrent: offset === 0,
     });
   }
   return out;
@@ -377,6 +383,8 @@ export interface BuildMembershipInput {
   now: Date;
   timeZone: string;
   months?: number;
+  /** "YYYY-MM": the last month of the window when it ends before this month (a statistics page's period). */
+  endMonth?: string;
   boundary: Date | null;
 }
 
@@ -481,7 +489,7 @@ export function buildMembership(input: BuildMembershipInput): MembershipSeries {
   const count = input.months ?? MEMBERSHIP_WINDOW_MONTHS;
   const { byMember, reconciled } = reconciledEvents(input);
 
-  const windows = clubMonthWindows(now, timeZone, count);
+  const windows = clubMonthWindows(now, timeZone, count, input.endMonth);
   const openingAt = new Date(windows[0].start.getTime() - 1);
   const headcounts = windows.map(() => 0);
   // Active members at the instant whose state came from a reconstructed event (corrections aside).

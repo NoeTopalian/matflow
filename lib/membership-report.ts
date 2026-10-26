@@ -1,8 +1,10 @@
 import type { Prisma } from "@prisma/client";
 import { usableTimezone } from "./class-time";
 import { TRAINING_MEMBER } from "./member-population";
+import { clubMonthWindowForKey } from "./club-month";
 import {
   buildMembership,
+  combinedBasis,
   compareEvents,
   estimatedCaption,
   isImportOpening,
@@ -13,6 +15,7 @@ import {
   type MembershipSeries,
   type MovementBucket,
   type MovementEvent,
+  type MovementTally,
 } from "./membership-movement";
 import { planTenantBackfill, STATUS_BACKFILL_SOURCE_ACTION } from "./status-backfill";
 
@@ -143,6 +146,51 @@ export async function loadMembershipReport(
   const loaded = await loadMembershipInput(tx, tenantId, now);
   const series = buildMembership({ ...loaded.input, months });
   return { ...series, historySource: loaded.historySource, undatedHistory: loaded.undatedHistory, fromJoinDates: loaded.fromJoinDates };
+}
+
+/** The movement figures for a statistics page's whole period (lib/report-period). */
+export interface PeriodMembership {
+  /** Moves inside the period: joined (new + rejoined), left, net, tasters. */
+  totals: MovementTally;
+  /**
+   * Active members just before the period opened: the churn base (churn =
+   * left in the period ÷ this; Noe, 26 Oct 2026, the normal definition).
+   * Null when the club has no history from before the period, so the base is
+   * unknown — the page shows "—", never a churn worked out against 0.
+   */
+  openingHeadcount: number | null;
+  /** Whether the period's moves were recorded at the time or are (partly) estimated. */
+  basis: MembershipBasis;
+}
+
+/**
+ * A statistics page's membership figures for its period: the monthly series
+ * over the chart's months (at least as long as the period, ending with it)
+ * and the period's own totals and opening headcount. One read, two replays of
+ * the same events, so the chart, the tiles and the churn base cannot disagree.
+ */
+export async function loadMembershipForPeriod(
+  tx: TxClient,
+  tenantId: string,
+  { now, endMonth, months, chartMonths }: { now: Date; endMonth: string; months: number; chartMonths: number },
+): Promise<{ report: MembershipReport; period: PeriodMembership }> {
+  const loaded = await loadMembershipInput(tx, tenantId, now);
+  const series = buildMembership({ ...loaded.input, months: Math.max(chartMonths, months), endMonth });
+  const own = buildMembership({ ...loaded.input, months, endMonth });
+  // The period opens at club midnight on the 1st of its first month. Its
+  // opening headcount means something only when the club's earliest event
+  // came before that instant; otherwise there is no base to divide by.
+  const firstMonth = own.headcountByMonth[0]?.month;
+  const opensAt = firstMonth ? new Date(clubMonthWindowForKey(firstMonth, own.timeZone)!.monthStart).getTime() : null;
+  const hasHistory = opensAt !== null && own.firstDataAt !== null && new Date(own.firstDataAt).getTime() < opensAt;
+  return {
+    report: { ...series, historySource: loaded.historySource, undatedHistory: loaded.undatedHistory, fromJoinDates: loaded.fromJoinDates },
+    period: {
+      totals: own.totals,
+      openingHeadcount: hasHistory ? own.openingHeadcount : null,
+      basis: combinedBasis(own.movementsByMonth.map((m) => m.basis)),
+    },
+  };
 }
 
 /**

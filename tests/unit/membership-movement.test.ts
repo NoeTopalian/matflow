@@ -197,6 +197,51 @@ describe("clubMonthWindows: calendar months in the club's timezone", () => {
   });
 });
 
+describe("clubMonthWindows / buildMembership with an end month (statistics period, 26 Oct 2026)", () => {
+  const HISTORY = () => [
+    ev("a", "active", "2025-03-01T00:00:00Z"),
+    ev("a", "cancelled", "2026-06-15T10:00:00Z"),
+    ev("a", "active", "2026-09-10T10:00:00Z"),
+    ev("b", "active", "2025-04-01T00:00:00Z"),
+    ev("b", "cancelled", "2026-08-20T10:00:00Z"),
+    ev("c", "active", "2026-07-05T10:00:00Z"),
+  ];
+  const LIVE = [{ id: "a", status: "active" }, { id: "b", status: "cancelled" }, { id: "c", status: "active" }];
+
+  it("windows end with the given month, each counted to its last instant, and none is current", () => {
+    const w = clubMonthWindows(NOW, TZ, 3, "2026-08");
+    expect(w.map((x) => x.key)).toEqual(["2026-06", "2026-07", "2026-08"]);
+    expect(w.every((x) => !x.isCurrent)).toBe(true);
+    expect(w[2].at.toISOString()).toBe("2026-08-31T22:59:59.999Z");
+  });
+
+  it("an end month of this month (or later) is the same as none", () => {
+    expect(clubMonthWindows(NOW, TZ, 4, "2026-10")).toEqual(clubMonthWindows(NOW, TZ, 4));
+    expect(clubMonthWindows(NOW, TZ, 4, "2027-03")).toEqual(clubMonthWindows(NOW, TZ, 4));
+  });
+
+  it("a past period's totals and opening headcount match the same months in the full series", () => {
+    const full = buildMembership({ events: HISTORY(), live: LIVE, now: NOW, timeZone: TZ, boundary: new Date("2025-01-01T00:00:00Z") });
+    const jun_aug = buildMembership({ events: HISTORY(), live: LIVE, now: NOW, timeZone: TZ, boundary: new Date("2025-01-01T00:00:00Z"), months: 3, endMonth: "2026-08" });
+    const months = full.movementsByMonth.filter((r) => r.month >= "2026-06" && r.month <= "2026-08");
+    const sum = (k: "new" | "rejoined" | "lost" | "net") => months.reduce((n, r) => n + r[k], 0);
+    expect(jun_aug.totals).toMatchObject({ new: sum("new"), rejoined: sum("rejoined"), lost: sum("lost"), net: sum("net") });
+    expect(jun_aug.totals).toMatchObject({ new: 1, lost: 2, net: -1 }); // c joined July; a left June, b left August
+    // Opening = active at the end of May = the full series' May headcount (a and b).
+    expect(jun_aug.openingHeadcount).toBe(full.headcountByMonth.find((r) => r.month === "2026-05")!.headcount);
+    expect(jun_aug.openingHeadcount).toBe(2);
+    expect(jun_aug.headcountByMonth.map((r) => r.headcount)).toEqual(
+      full.headcountByMonth.filter((r) => r.month >= "2026-06" && r.month <= "2026-08").map((r) => r.headcount),
+    );
+  });
+
+  it("without an end month nothing changes", () => {
+    const a = buildMembership({ events: HISTORY(), live: LIVE, now: NOW, timeZone: TZ, boundary: null });
+    const b = buildMembership({ events: HISTORY(), live: LIVE, now: NOW, timeZone: TZ, boundary: null, endMonth: undefined });
+    expect(b).toEqual(a);
+  });
+});
+
 describe("buildMembership", () => {
   it("acceptance 2: cancelled in June, active again in September — June lost, September rejoined, neither drops them", () => {
     const m = buildMembership({
