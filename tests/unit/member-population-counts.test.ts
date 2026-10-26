@@ -68,11 +68,13 @@ describe("member population counts", () => {
     expect(unguarded, unguarded.join("\n---\n")).toEqual([]);
   });
 
-  it("Reports' Active members and churn counts use ACTIVE_MEMBER and LEFT_MEMBER (behaviour-identical refactor)", () => {
+  it("Reports' member counts carry a named population; churn comes from the movement replay, not a date column", () => {
     const src = readFileSync("lib/reports.ts", "utf8");
-    expect(src).toContain("tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } })");
-    // Review L4: the month is the club-zone half-open window (lib/club-month.ts).
-    expect(src).toContain("tx.member.count({ where: { tenantId, ...LEFT_MEMBER, cancelledAt: thisMonth } })");
+    expect(src).toContain("tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER, ...ON_HOLD } })");
+    // D4 (Noe, 26 Oct 2026): left in the period ÷ active at its start, both from
+    // the training members' status history (lib/membership-report.ts).
+    expect(src).toContain("loadMembershipForPeriod(tx, tenantId, {");
+    expect(src).not.toMatch(/LEFT_MEMBER, cancelledAt: thisMonth/);
     expect(src).not.toMatch(/status: "active", \.\.\.TRAINING_MEMBER/);
   });
 

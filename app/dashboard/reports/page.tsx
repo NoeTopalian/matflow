@@ -4,22 +4,22 @@ import { getAttributionData } from "@/lib/attribution";
 import { requireRole } from "@/lib/authz";
 
 interface Props {
-  searchParams: Promise<{ weeks?: string; classId?: string; ageGroup?: string; rate?: string }>;
+  searchParams: Promise<{ period?: string; from?: string; to?: string; weeks?: string; classId?: string; ageGroup?: string; rate?: string }>;
 }
 
 export default async function ReportsPage({ searchParams }: Props) {
   // Audit iter-1-dashboard A4C-1: use centralised authz helper, not raw auth().
   const { session } = await requireRole(["owner", "manager"]);
 
-  // Weeks/class/age-group controls (ReportsView) drive these via the URL so
+  // Period/class/age-group controls (ReportsView) drive these via the URL so
   // the server page re-queries on every change — no client refetch, no
-  // stale-while-revalidate flash. `weeks` clamps 4-24 in lib/reports.ts;
-  // an out-of-range or non-numeric value degrades to the 12-week default
-  // rather than throwing. classId/ageGroup are validated against the real
+  // stale-while-revalidate flash. The period (lib/report-period) resolves in
+  // the club's zone; an unknown or out-of-range value degrades to "this
+  // month" rather than throwing, and an old `weeks` link maps to the nearest
+  // preset. classId/ageGroup are validated against the real
   // data in getReportsData (see lib/reports.ts) — a stale value here is
   // dropped there, never applied as a phantom filter.
-  const { weeks, classId, ageGroup: rawAgeGroup, rate } = await searchParams;
-  const weeksBack = weeks !== undefined ? Number(weeks) : undefined;
+  const { period, from, to, weeks, classId, ageGroup: rawAgeGroup, rate } = await searchParams;
   const ageGroup = rawAgeGroup === "adult" || rawAgeGroup === "kids" ? rawAgeGroup : undefined;
   // `rate` (Track G): which attendance-rate DEFINITION is active. An
   // unrecognised/stale value degrades to the default mode inside
@@ -41,7 +41,7 @@ export default async function ReportsPage({ searchParams }: Props) {
   // `generatedAt` so the figures never pass as live.
   const [data, attribution] = await Promise.all([
     getReportsDataCached(session.user.tenantId, {
-      weeksBack,
+      period: { period, from, to, weeks },
       classId,
       ageGroup,
       attendanceRateMode: rate,

@@ -260,7 +260,7 @@ export function periodCsvDetail(period: ReportsData["period"]): string {
  * included) and account type, and "recovered" is the stored status paid
  * (lib/reports.ts). Not a payer total, so it does not say "payers".
  */
-export const RECOVERY_SCOPE = "Accounts with a failed payment in the last 90 days now marked paid (any status, parents and guardians included)";
+export const RECOVERY_SCOPE = "Accounts with a failed payment in the period now marked paid (any status, parents and guardians included)";
 
 /**
  * D11 (23 Oct 2026): ONE movement definition (lib/membership-movement.ts) for

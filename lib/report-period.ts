@@ -58,8 +58,8 @@ export type ReportRange = ReportSpan & {
   months: ClubMonthWindow[];
   /** The months a monthly chart shows: the period's, or the MIN_CHART_MONTHS ending with it when shorter. */
   chartMonths: ClubMonthWindow[];
-  /** The same number of months straight before the period (Analysis' comparisons). */
-  previous: ReportSpan;
+  /** The same number of months straight before the period (comparisons). */
+  previous: ReportSpan & { fromMonth: string; toMonth: string };
 };
 
 export type ReportPeriodParams = {
@@ -173,8 +173,25 @@ export function resolveReportPeriod(params: ReportPeriodParams, now: Date, timeZ
     ...span(fromMonth, toMonth, timeZone, now),
     months: monthsBetween(fromMonth, toMonth, timeZone),
     chartMonths: monthsBetween(chartFrom, toMonth, timeZone),
-    previous: span(keyOf(fi - length), keyOf(fi - 1), timeZone, now),
+    previous: { ...span(keyOf(fi - length), keyOf(fi - 1), timeZone, now), fromMonth: keyOf(fi - length), toMonth: keyOf(fi - 1) },
   };
+}
+
+/**
+ * The period's part of a cache key, normalised without the club's zone: a
+ * preset by name (an old `weeks` value mapped to its preset), a custom run as
+ * "custom:FROM:TO" when both are months, otherwise the default. Two links for
+ * the same preset share one entry; a custom run the resolver later refuses
+ * (it ends after this month) just keys its own entry for the default figures.
+ */
+export function reportPeriodCacheKey(params: ReportPeriodParams): string {
+  if (params.period === "custom") {
+    return params.from && params.to && MONTH_KEY.test(params.from) && MONTH_KEY.test(params.to)
+      ? `custom:${params.from}:${params.to}`
+      : DEFAULT_REPORT_PERIOD;
+  }
+  if (params.period && (REPORT_PERIOD_KEYS as readonly string[]).includes(params.period)) return params.period;
+  return (!params.period && presetForWeeks(params.weeks)) || DEFAULT_REPORT_PERIOD;
 }
 
 /** True when `monthKey` is one of the period's months (charts highlight these). */

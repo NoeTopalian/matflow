@@ -32,15 +32,24 @@ describe("getReportsDataCached", () => {
     await getReportsDataCached("tenant-A", { weeksBack: 8, classId: "cls_1", ageGroup: "kids", attendanceRateMode: "fill-rate" });
     await getReportsDataCached("tenant-B", { weeksBack: 8, classId: "cls_1", ageGroup: "kids", attendanceRateMode: "fill-rate" });
     await getReportsDataCached("tenant-A", { weeksBack: 12 });
-    expect(calls[0].key).toEqual(["reports", REPORTS_CACHE_VERSION, "tenant-A", "8", "cls_1", "kids", "fill-rate"]);
-    expect(calls[1].key).toEqual(["reports", REPORTS_CACHE_VERSION, "tenant-B", "8", "cls_1", "kids", "fill-rate"]);
-    expect(calls[2].key).toEqual(["reports", REPORTS_CACHE_VERSION, "tenant-A", "12", "-", "-", "checkins-per-member"]);
+    // An old weeks value keys as the preset it maps to (lib/report-period): 8 and 12 weeks are both "3m".
+    expect(calls[0].key).toEqual(["reports", REPORTS_CACHE_VERSION, "tenant-A", "3m", "cls_1", "kids", "fill-rate"]);
+    expect(calls[1].key).toEqual(["reports", REPORTS_CACHE_VERSION, "tenant-B", "3m", "cls_1", "kids", "fill-rate"]);
+    expect(calls[2].key).toEqual(["reports", REPORTS_CACHE_VERSION, "tenant-A", "3m", "-", "-", "checkins-per-member"]);
     expect(new Set(calls.map((c) => c.key.join("|"))).size).toBe(3);
   });
 
-  it("normalises the key the same way the data layer normalises its inputs (clamped weeks, unknown mode → default)", async () => {
+  it("normalises the key the same way the data layer normalises its inputs (weeks → preset, unknown mode → default)", async () => {
     await getReportsDataCached("tenant-A", { weeksBack: 99, attendanceRateMode: "nonsense", classId: "  " });
-    expect(calls[0].key).toEqual(["reports", REPORTS_CACHE_VERSION, "tenant-A", "24", "-", "-", "checkins-per-member"]);
+    expect(calls[0].key).toEqual(["reports", REPORTS_CACHE_VERSION, "tenant-A", "6m", "-", "-", "checkins-per-member"]);
+  });
+
+  it("keys the statistics period: presets by name, a custom run by its months, anything else as the default", async () => {
+    await getReportsDataCached("tenant-A", { period: { period: "12m" } });
+    await getReportsDataCached("tenant-A", { period: { period: "custom", from: "2026-01", to: "2026-06" } });
+    await getReportsDataCached("tenant-A", { period: { period: "custom", from: "2026-1", to: "2026-06" } });
+    await getReportsDataCached("tenant-A", { period: { period: "nonsense" } });
+    expect(calls.map((c) => c.key[3])).toEqual(["12m", "custom:2026-01:2026-06", "this-month", "this-month"]);
   });
 
   it("revalidates every 60 seconds under the per-tenant reports tag", async () => {
@@ -58,7 +67,9 @@ describe("getReportsDataCached", () => {
     // v7 (D9 merged in): paymentHealth.otherOwingCount beside `membership`.
     // v8 (24 Oct): otherOwingCount = confirmed debts only, failedToReconcileCount
     // beside it, and monthlySignups[].basis.
-    expect(REPORTS_CACHE_VERSION).toBe("v8");
+    // v9 (26 Oct): the statistics period (range, attendanceBucket,
+    // paymentHealth.failedInPeriod, monthlySignups[].inPeriod) and churn over it.
+    expect(REPORTS_CACHE_VERSION).toBe("v9");
     await getReportsDataCached("tenant-A");
     expect(calls[0].key[1]).toBe(REPORTS_CACHE_VERSION);
   });

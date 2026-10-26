@@ -161,6 +161,8 @@ export interface PeriodMembership {
   openingHeadcount: number | null;
   /** Whether the period's moves were recorded at the time or are (partly) estimated. */
   basis: MembershipBasis;
+  /** The same figures for the equal run of months straight before (comparisons); null when that run has no data. */
+  previous: { totals: MovementTally; basis: MembershipBasis } | null;
 }
 
 /**
@@ -172,11 +174,14 @@ export interface PeriodMembership {
 export async function loadMembershipForPeriod(
   tx: TxClient,
   tenantId: string,
-  { now, endMonth, months, chartMonths }: { now: Date; endMonth: string; months: number; chartMonths: number },
+  { now, endMonth, months, chartMonths, previousEndMonth }: { now: Date; endMonth: string; months: number; chartMonths: number; previousEndMonth: string },
 ): Promise<{ report: MembershipReport; period: PeriodMembership }> {
   const loaded = await loadMembershipInput(tx, tenantId, now);
-  const series = buildMembership({ ...loaded.input, months: Math.max(chartMonths, months), endMonth });
+  // The Net New Members card keeps its 12 months at least (MEMBERSHIP_WINDOW_MONTHS); a longer period lengthens it.
+  const series = buildMembership({ ...loaded.input, months: Math.max(chartMonths, months, MEMBERSHIP_WINDOW_MONTHS), endMonth });
   const own = buildMembership({ ...loaded.input, months, endMonth });
+  const before = buildMembership({ ...loaded.input, months, endMonth: previousEndMonth });
+  const beforeBasis = combinedBasis(before.movementsByMonth.map((m) => m.basis));
   // The period opens at club midnight on the 1st of its first month. Its
   // opening headcount means something only when the club's earliest event
   // came before that instant; otherwise there is no base to divide by.
@@ -189,6 +194,7 @@ export async function loadMembershipForPeriod(
       totals: own.totals,
       openingHeadcount: hasHistory ? own.openingHeadcount : null,
       basis: combinedBasis(own.movementsByMonth.map((m) => m.basis)),
+      previous: beforeBasis === "none" ? null : { totals: before.totals, basis: beforeBasis },
     },
   };
 }

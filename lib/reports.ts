@@ -4,8 +4,9 @@ import { noPaymentYetPayerWhere, overduePayerWhere } from "@/lib/overdue";
 import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
 import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER, isActiveMember } from "@/lib/member-population";
 import { percent, ratePct1dp } from "@/lib/percent";
-import { clubMonthKey, clubMonthWindow, defaultClubMonthWindow, monthRange, type ClubMonthWindow } from "@/lib/club-month";
-import { emptyMembershipReport, loadMembershipReport, type MembershipReport } from "@/lib/membership-report";
+import { clubMonthKey, clubMonthWindow, clubMonthWindowForKey, type ClubMonthWindow } from "@/lib/club-month";
+import { emptyMembershipReport, loadMembershipForPeriod, type MembershipReport } from "@/lib/membership-report";
+import { inReportRange, reportPeriodCacheKey, resolveReportPeriod, type ReportPeriodParams, type ReportRange } from "@/lib/report-period";
 import { joinedOf, type MembershipBasis } from "@/lib/membership-movement";
 import { liveClassWhere } from "@/lib/class-live";
 
@@ -63,19 +64,26 @@ export interface AttendanceRate {
  * :144 "divide-by-zero → null", extended to every ratio here).
  */
 export interface ChurnFigures {
-  /** cancelled ÷ base × 100, one decimal place; null when base is 0. */
+  /** cancelled ÷ base × 100, one decimal place; null when base is 0 (no members before the period). */
   ratePct: number | null;
-  /** Training members whose cancelledAt falls in this calendar month. */
+  /**
+   * Members who left during the period (cancelled, or finished a prepaid
+   * course: the movement definition, lib/membership-movement.ts).
+   */
   cancelled: number;
-  /** Active training members now + `cancelled` (the existing formula's base). */
+  /**
+   * Active members just before the period opened (Noe, 26 Oct 2026: churn the
+   * normal way, left in the period ÷ members at its start). 0 when the club
+   * has no history from before the period.
+   */
   base: number;
   /**
-   * D11: Joined this month by the movement definition — new + rejoined
+   * D11: Joined in the period by the movement definition — new + rejoined
    * (lib/membership-movement.ts), the same figure as the Net New Members
    * card. Tasters and imports are not joins.
    */
   joined: number;
-  /** The movement net for the month: new + rejoined − left. */
+  /** The movement net for the period: new + rejoined − left. */
   net: number;
 }
 
@@ -98,11 +106,19 @@ export interface ReportsData {
    */
   period: ClubMonthWindow;
   /**
-   * Width of the reporting window, in weeks (4-24, default 12). Every
-   * attendance-derived figure below — `summary.totalCheckIns`,
-   * `checkInMethods`, `topClasses`, `weeklyAttendance` — covers exactly this
-   * window, not all time (audit memory-storage 2026-08-16 P1-12). The UI
-   * labels these numbers with it so they never read as lifetime totals.
+   * The statistics period (Noe, 26 Oct 2026; lib/report-period): whole club
+   * months, chosen on the page. Every period figure covers it: attendance,
+   * joins and leavers, churn, failed payments. The "now" figures (members by
+   * status, active members, overdue, active classes) do not, and say "Now".
+   * `period` above is its last month, kept for the drill-throughs and API.
+   */
+  range: ReportRange;
+  /** How the attendance chart groups the period: by week, or by month when it is longer than 3 months. */
+  attendanceBucket: "week" | "month";
+  /**
+   * The weeks the period spans, rounded up (kept for the API's readers; the
+   * period itself is `range`). Every attendance-derived figure covers the
+   * period, not all time (audit memory-storage 2026-08-16 P1-12).
    */
   weeksBack: number;
   /**
@@ -166,7 +182,7 @@ export interface ReportsData {
    * definition. `basis` says whether the month was recorded at the time or is
    * (partly) estimated, so the chart and the CSV can say so (24 Oct 2026).
    */
-  monthlySignups: { month: string; count: number; isCurrentMonth: boolean; basis: MembershipBasis }[];
+  monthlySignups: { month: string; count: number; isCurrentMonth: boolean; basis: MembershipBasis; /** One of the period's months (the chart highlights these); set on every row the report builds. */ inPeriod?: boolean }[];
   /**
    * @deprecated All-time partition (percentages over every training member
    * ever recorded, cancelled included). Kept so the shape stays additive;
@@ -244,8 +260,10 @@ export interface ReportsData {
     /** How many of `failedToReconcileCount` are parent or guardian accounts. */
     failedToReconcileGuardianCount: number;
     failedLast30Days: number;
+    /** Failed payments during the period. */
+    failedInPeriod: number;
     recoveryRate: number | null;
-    /** T2b: the counts behind `recoveryRate` (members with a failed payment in 90 days, and how many are now paid). */
+    /** T2b: the counts behind `recoveryRate` (members with a failed payment in the period, and how many are now paid). */
     recovery: { ratePct: number | null; recovered: number; failedMembers: number };
   };
   /** The active attendance-rate definition, computed and labelled. */
@@ -253,8 +271,6 @@ export interface ReportsData {
   /** Every selectable definition, for the UI's picker — label + formula, no hardcoding on the client. */
   attendanceRateModes: AttendanceRateModeOption[];
 }
-
-const DEFAULT_WEEKS = 12;
 
 const METHOD_LABELS: Record<string, string> = {
   qr: "QR",
@@ -344,11 +360,6 @@ function titleCase(value: string) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function clampWeeks(value: number | undefined) {
-  if (!Number.isFinite(value)) return DEFAULT_WEEKS;
-  return Math.min(Math.max(Math.trunc(value ?? DEFAULT_WEEKS), 4), 24);
-}
-
 function startOfWeek(date: Date) {
   const d = new Date(date);
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
@@ -378,8 +389,10 @@ function roundedAverage(total: number, sessions: number) {
 export function createEmptyReportsData(): ReportsData {
   return {
     generatedAt: new Date().toISOString(),
-    period: defaultClubMonthWindow(),
-    weeksBack: DEFAULT_WEEKS,
+    period: clubMonthWindow(new Date(), undefined),
+    range: resolveReportPeriod({}, new Date(), undefined),
+    attendanceBucket: "week",
+    weeksBack: 5,
     classOptions: [],
     filters: { classId: null, className: null, ageGroup: null },
     summary: {
@@ -419,6 +432,7 @@ export function createEmptyReportsData(): ReportsData {
       failedToReconcileCount: 0,
       failedToReconcileGuardianCount: 0,
       failedLast30Days: 0,
+      failedInPeriod: 0,
       recoveryRate: null,
       recovery: { ratePct: null, recovered: 0, failedMembers: 0 },
     },
@@ -444,13 +458,14 @@ const KIDS_ACCOUNT_TYPES = ["kids", "junior"];
 export async function getReportsData(
   tenantId: string,
   options: {
+    /** The page's period (lib/report-period); when absent, `weeksBack` is mapped to the nearest preset. */
+    period?: ReportPeriodParams;
     weeksBack?: number;
     classId?: string;
     ageGroup?: "adult" | "kids";
     attendanceRateMode?: string;
   } = {},
 ): Promise<ReportsData> {
-  const weeksBack = clampWeeks(options.weeksBack);
   const requestedClassId = options.classId?.trim() || undefined;
   const ageGroup = options.ageGroup === "adult" || options.ageGroup === "kids" ? options.ageGroup : undefined;
   const attendanceRateMode = resolveAttendanceRateMode(options.attendanceRateMode);
@@ -482,13 +497,25 @@ export async function getReportsData(
   const now = new Date();
   const currentWeekStart = startOfWeek(now);
   const previousWeekStart = addDays(currentWeekStart, -7);
-  const weeklyWindowStart = addDays(currentWeekStart, -(weeksBack - 1) * 7);
-  // Club-zone months, half-open [start, next start). The server's own zone
-  // (UTC on Vercel) and the reader's browser zone play no part (review L4).
-  const period = clubMonthWindow(now, club?.timezone);
-  const thisMonth = monthRange(period);
-  const chartMonths = [5, 4, 3, 2, 1, 0].map((back) => clubMonthWindow(now, period.timeZone, -back));
-  const sixMonthsAgo = new Date(chartMonths[0].monthStart);
+  // The page's period, in club-zone months, half-open [start, end). The
+  // server's own zone (UTC on Vercel) and the reader's browser zone play no
+  // part (review L4).
+  const range = resolveReportPeriod(
+    options.period ?? { weeks: options.weeksBack !== undefined ? String(options.weeksBack) : undefined },
+    now,
+    club?.timezone,
+  );
+  const rangeStart = new Date(range.start);
+  const rangeEnd = new Date(range.end);
+  const inRange = { gte: rangeStart, lt: rangeEnd };
+  const period = clubMonthWindowForKey(range.toMonth, range.timeZone)!;
+  const currentMonthKey = clubMonthWindow(now, range.timeZone).monthKey;
+  const chartMonths = range.chartMonths;
+  const chartStart = new Date(chartMonths[0].monthStart);
+  // Retention's cohort stays "joined 6+ months ago" from today, whatever the period.
+  const sixMonthsAgo = new Date(clubMonthWindow(now, range.timeZone, -5).monthStart);
+  const attendanceBucket: ReportsData["attendanceBucket"] = range.months.length > 3 ? "month" : "week";
+  const weeksBack = Math.max(1, Math.ceil((Math.min(rangeEnd.getTime(), now.getTime()) - startOfWeek(rangeStart).getTime()) / (7 * 86_400_000)));
 
   // Attendance-scope filter fragment (Track A, D5): merged into every
   // attendance-derived query below. `classInstance: { classId }` and
@@ -511,8 +538,6 @@ export async function getReportsData(
     totalActiveClasses,
     attendanceThisWeek,
     attendanceLastWeek,
-    cancelledThisMonth,
-    activeCount,
     retentionBase,
     retentionActive,
     overdueCount,
@@ -520,6 +545,7 @@ export async function getReportsData(
     noPaymentYetCount,
     noPaymentYetGuardianCount,
     failedLast30,
+    failedInPeriod,
     membersWithRecentFailed,
     cancelledByMonth,
     activeOnHoldMembers,
@@ -527,7 +553,7 @@ export async function getReportsData(
   ] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       tx.attendanceRecord.findMany({
-        where: { tenantId, checkInTime: { gte: weeklyWindowStart }, ...attendanceScope },
+        where: { tenantId, checkInTime: inRange, ...attendanceScope },
         // memberId added (Track G) for the "members who attended" rate mode
         // below — same rows already fetched for the weekly chart, no new
         // query, so the distinct-attendee count shares the identical window
@@ -541,11 +567,11 @@ export async function getReportsData(
       // Audit memory-storage 2026-08-16 P1-12: this and the two aggregates
       // below used to run all-time, so every reports visit re-scanned the
       // tenant's whole attendance history with zero caching. They now share
-      // the `weeklyWindowStart` window the rest of the page already uses —
-      // the UI labels say "last N weeks" to match.
+      // the page's period, as the rest of the page does — the UI labels
+      // every card with the period so these never read as lifetime totals.
       tx.attendanceRecord.groupBy({
         by: ["checkInMethod"],
-        where: { tenantId, checkInTime: { gte: weeklyWindowStart }, ...attendanceScope },
+        where: { tenantId, checkInTime: inRange, ...attendanceScope },
         _count: true,
       }),
       tx.member.groupBy({
@@ -563,7 +589,7 @@ export async function getReportsData(
       tx.attendanceRecord
         .groupBy({
           by: ["classInstanceId"],
-          where: { tenantId, checkInTime: { gte: weeklyWindowStart }, ...attendanceScope },
+          where: { tenantId, checkInTime: inRange, ...attendanceScope },
           _count: true,
           orderBy: { _count: { classInstanceId: "desc" } },
           take: 200,
@@ -585,7 +611,7 @@ export async function getReportsData(
           return { topRaw, instances };
         }),
       tx.member.count({ where: { tenantId, ...TRAINING_MEMBER } }),
-      tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: weeklyWindowStart }, ...attendanceScope } }),
+      tx.attendanceRecord.count({ where: { tenantId, checkInTime: inRange, ...attendanceScope } }),
       tx.class.count({ where: liveClassWhere(tenantId) }),
       tx.attendanceRecord.count({
         where: { tenantId, checkInTime: { gte: currentWeekStart }, ...attendanceScope },
@@ -597,10 +623,8 @@ export async function getReportsData(
           ...attendanceScope,
         },
       }),
-      // Health metrics — churn (D1: date by cancelledAt, not updatedAt, so an
-      // unrelated edit to a cancelled member doesn't re-bucket them into churn)
-      tx.member.count({ where: { tenantId, ...LEFT_MEMBER, cancelledAt: thisMonth } }),
-      tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
+      // Churn comes from the membership replay below (left in the period ÷
+      // active at its start), not from these counts.
       // Retention: joined ≥6 months ago
       tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, ...TRAINING_MEMBER } }),
       tx.member.count({ where: { tenantId, joinedAt: { lt: sixMonthsAgo }, ...ACTIVE_MEMBER } }),
@@ -616,14 +640,15 @@ export async function getReportsData(
       tx.member.count({ where: { tenantId, ...noPaymentYetPayerWhere() } }),
       tx.member.count({ where: { tenantId, ...GUARDIAN_ACCOUNT, ...noPaymentYetPayerWhere() } }),
       tx.payment.count({ where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 30 * 86400000) } } }),
+      tx.payment.count({ where: { tenantId, status: "failed", createdAt: inRange } }),
       tx.payment.findMany({
-        where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 90 * 86400000) } },
+        where: { tenantId, status: "failed", createdAt: inRange },
         select: { memberId: true },
         distinct: ["memberId"],
       }),
-      // Net-new chart: members cancelled in the last 6 months (D1: by cancelledAt)
+      // Net-new chart: members cancelled in the chart's months (D1: by cancelledAt)
       tx.member.findMany({
-        where: { tenantId, ...LEFT_MEMBER, cancelledAt: { gte: sixMonthsAgo } },
+        where: { tenantId, ...LEFT_MEMBER, cancelledAt: { gte: chartStart } },
         select: { cancelledAt: true },
       }),
       // Q4 A-1: members on hold stay inside "Active members" and are marked there.
@@ -637,15 +662,20 @@ export async function getReportsData(
     { maxWait: 10_000, timeout: 30_000 },
   );
 
-  const weeklyMap = new Map<number, { week: string; count: number; isCurrentWeek: boolean }>();
-  for (let i = 0; i < weeksBack; i++) {
-    const d = addDays(weeklyWindowStart, i * 7);
-    weeklyMap.set(d.getTime(), {
-      week: formatWeek(d),
-      count: 0,
-      isCurrentWeek: d.getTime() === currentWeekStart.getTime(),
-    });
+  // The attendance chart's buckets: the period's weeks (each keyed by its
+  // Monday), or its months when the period is longer than 3 months.
+  const weeklyMap = new Map<number | string, { week: string; count: number; isCurrentWeek: boolean }>();
+  if (attendanceBucket === "month") {
+    for (const m of range.months) {
+      weeklyMap.set(m.monthKey, { week: formatMonth(new Date(m.monthStart), range.timeZone), count: 0, isCurrentWeek: m.monthKey === currentMonthKey });
+    }
+  } else {
+    const lastDay = new Date(Math.min(rangeEnd.getTime() - 1, now.getTime()));
+    for (let d = startOfWeek(rangeStart); d.getTime() <= lastDay.getTime(); d = addDays(d, 7)) {
+      weeklyMap.set(d.getTime(), { week: formatWeek(d), count: 0, isCurrentWeek: d.getTime() === currentWeekStart.getTime() });
+    }
   }
+  const bucketOf = (at: Date) => (attendanceBucket === "month" ? clubMonthKey(at, range.timeZone) : startOfWeek(at).getTime());
 
   // Distinct ACTIVE attendees this window — the "members who attended" rate
   // mode's numerator (only active members count; see the loop below). Built from
@@ -654,8 +684,7 @@ export async function getReportsData(
   const distinctAttendingMemberIds = new Set<string>();
 
   for (const rec of weeklyRecords) {
-    const week = startOfWeek(rec.checkInTime).getTime();
-    const bucket = weeklyMap.get(week);
+    const bucket = weeklyMap.get(bucketOf(rec.checkInTime));
     if (bucket) bucket.count += 1;
     // "Members who attended" is an ACTIVE-member engagement rate, so its
     // numerator must stay within the active-member denominator. An ex-member
@@ -672,30 +701,37 @@ export async function getReportsData(
   // T8c: movement and headcount, in its own read (one events findMany plus the
   // ledger when the back-fill has not been applied), after the block above so
   // the report never holds two pooled connections at once.
-  const membership = await withTenantContext(
+  const { report: membership, period: periodMoves } = await withTenantContext(
     tenantId,
-    (tx) => loadMembershipReport(tx, tenantId, { now }),
+    (tx) =>
+      loadMembershipForPeriod(tx, tenantId, {
+        now,
+        endMonth: range.toMonth,
+        months: range.months.length,
+        chartMonths: chartMonths.length,
+        previousEndMonth: range.previous.toMonth,
+      }),
     { maxWait: 10_000, timeout: 30_000 },
   );
   // D11 (23 Oct 2026): every "joined" on the page is the movement definition
   // (lib/membership-movement.ts) — never Member.joinedAt — so the tiles, the
   // charts, the CSV and the Members drill-throughs count the same events.
   const moveIn = (monthKey: string) => membership.movementsByMonth.find((r) => r.month === monthKey && r.basis !== "none") ?? null;
-  const thisMonthMoves = moveIn(period.monthKey);
-  const lastMonthMoves = moveIn(clubMonthWindow(now, period.timeZone, -1).monthKey);
-  const newMembersThisMonth = thisMonthMoves?.new ?? 0;
-  const newMembersLastMonth = lastMonthMoves?.new ?? 0;
+  // "New" in the period and in the equal run of months before it (the tile's comparison).
+  const newMembersThisMonth = periodMoves.basis === "none" ? 0 : periodMoves.totals.new;
+  const newMembersLastMonth = periodMoves.previous?.totals.new ?? 0;
 
   // Buckets keyed by the club-zone month ("2026-10") and labelled in that
   // zone: joined (new + rejoined) by the movement definition (D11).
-  const monthlyMap = new Map<string, { month: string; count: number; isCurrentMonth: boolean; basis: MembershipBasis }>();
+  const monthlyMap = new Map<string, { month: string; count: number; isCurrentMonth: boolean; basis: MembershipBasis; inPeriod: boolean }>();
   for (const w of chartMonths) {
     const moves = moveIn(w.monthKey);
     monthlyMap.set(w.monthKey, {
       month: formatMonth(new Date(w.monthStart), period.timeZone),
       count: moves ? joinedOf(moves) : 0,
-      isCurrentMonth: w.monthKey === period.monthKey,
+      isCurrentMonth: w.monthKey === currentMonthKey,
       basis: moves?.basis ?? "none",
+      inPeriod: inReportRange(range, w.monthKey),
     });
   }
 
@@ -789,20 +825,20 @@ export async function getReportsData(
 
   // ── Health metrics ───────────────────────────────────────────────────────
 
-  // Q6 (agent default adopted 17 Oct 2026; not an owner decision; the churn
-  // formula is open as D4): keep the existing formula — cancelled
-  // this month ÷ (active now + cancelled this month) — but return its counts
-  // so every surface prints "x% (n of m)". An empty base is null ("—"), not
-  // the "0%" the old Math.max(…, 1) produced; `churnRate` keeps that number
-  // only for its existing numeric readers.
-  const churnBase = activeCount + cancelledThisMonth;
-  const churnPct = ratePct1dp(cancelledThisMonth, churnBase);
+  // D4 settled by Noe, 26 Oct 2026 ("how it normally is"): churn = members
+  // who left during the period ÷ active members just before it opened, with
+  // its counts so every surface prints "x% (n of m)". No history before the
+  // period → base 0 → null ("—"), never a rate against nothing; `churnRate`
+  // keeps the number only for its existing numeric readers.
+  const left = periodMoves.basis === "none" ? 0 : periodMoves.totals.lost;
+  const churnBase = periodMoves.openingHeadcount ?? 0;
+  const churnPct = ratePct1dp(left, churnBase);
   const churn: ChurnFigures = {
     ratePct: churnPct,
-    cancelled: cancelledThisMonth,
+    cancelled: left,
     base: churnBase,
-    joined: thisMonthMoves ? joinedOf(thisMonthMoves) : 0,
-    net: thisMonthMoves?.net ?? 0,
+    joined: periodMoves.basis === "none" ? 0 : joinedOf(periodMoves.totals),
+    net: periodMoves.basis === "none" ? 0 : periodMoves.totals.net,
   };
   const churnRate = churnPct ?? 0;
 
@@ -811,7 +847,7 @@ export async function getReportsData(
   // fake 100% (same honesty rule as the attendance-rate modes).
   const retentionRate = ratePct1dp(retentionActive, retentionBase);
 
-  // Recovery rate: of members with a failed payment in the last 90 days,
+  // Recovery rate: of members with a failed payment in the period,
   // what fraction now have paymentStatus='paid'?
   const failedMemberIds = membersWithRecentFailed
     .map((r) => r.memberId)
@@ -870,6 +906,8 @@ export async function getReportsData(
 
   return {
     period,
+    range,
+    attendanceBucket,
     weeksBack,
     classOptions: classOptionsRaw,
     filters: {
@@ -914,6 +952,7 @@ export async function getReportsData(
       failedToReconcileCount: otherOwingTotals(otherOwingRows).toReconcile,
       failedToReconcileGuardianCount: otherOwingTotals(otherOwingRows).toReconcileGuardians,
       failedLast30Days: failedLast30,
+      failedInPeriod,
       recoveryRate,
       recovery: { ratePct: recoveryRate, recovered: recoveredCount, failedMembers: failedMemberIds.length },
     },
@@ -950,8 +989,11 @@ export async function getReportsData(
  * "v8" = otherOwingCount narrowed to confirmed debts, plus
  * paymentHealth.failedToReconcileCount / failedToReconcileGuardianCount and
  * monthlySignups[].basis (24 Oct 2026).
+ * "v9" = the statistics period: range, attendanceBucket,
+ * paymentHealth.failedInPeriod, monthlySignups[].inPeriod, churn over the
+ * period by the normal definition (26 Oct 2026).
  */
-export const REPORTS_CACHE_VERSION = "v8";
+export const REPORTS_CACHE_VERSION = "v9";
 
 /**
  * The cached read the reports page and API use. Under 25 concurrent staff
@@ -979,7 +1021,8 @@ export function getReportsDataCached(
     "reports",
     REPORTS_CACHE_VERSION,
     tenantId,
-    String(clampWeeks(options.weeksBack)),
+    // The period, normalised as the data layer reads it (an old weeks value is its preset).
+    reportPeriodCacheKey(options.period ?? { weeks: options.weeksBack !== undefined ? String(options.weeksBack) : undefined }),
     options.classId?.trim() || "-",
     options.ageGroup ?? "-",
     resolveAttendanceRateMode(options.attendanceRateMode),
