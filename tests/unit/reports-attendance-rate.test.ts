@@ -17,6 +17,8 @@
  * (null, never NaN) for each mode.
  */
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
@@ -224,5 +226,27 @@ describe("getReportsData — attendanceRateMode", () => {
     const data = await getReportsData("tenant-A", {});
     expect(data.retentionRate).toBeNull();
     expect(data.paymentHealth.recoveryRate).toBeNull();
+  });
+});
+
+// Integration review (26 Oct 2026): "Active classes" and the class filter read
+// the timetable's classes the way #41 defines them (lib/class-live): not
+// paused, archived or attendance-history imports. They used `isActive` alone
+// (the count) or without the import marker (the filter).
+describe("getReportsData — class reads use the live-class predicate", () => {
+  const LIVE = { tenantId: "tenant-A", isActive: true, deletedAt: null, sourceImportJobId: null };
+
+  it("the Active classes count and the class filter both read live classes only", async () => {
+    await getReportsData("tenant-A", {});
+    expect(vi.mocked(prisma.class.count)).toHaveBeenCalledWith({ where: LIVE });
+    expect(vi.mocked(prisma.class.findMany)).toHaveBeenCalledWith(expect.objectContaining({ where: LIVE }));
+  });
+
+  it("the AI report and Analysis page count classes the same way", () => {
+    for (const f of ["lib/ai-causal-report.ts", "app/dashboard/analysis/page.tsx"]) {
+      const src = readFileSync(path.join(process.cwd(), f), "utf8");
+      expect(src, f).toMatch(/tx\.class\.count\(\{ where: liveClassWhere\(tenantId\) \}\)/);
+      expect(src, f).not.toMatch(/class\.count\(\{ where: \{ tenantId, isActive: true \} \}\)/);
+    }
   });
 });

@@ -7,6 +7,7 @@ import { percent, ratePct1dp } from "@/lib/percent";
 import { clubMonthKey, clubMonthWindow, defaultClubMonthWindow, monthRange, type ClubMonthWindow } from "@/lib/club-month";
 import { emptyMembershipReport, loadMembershipReport, type MembershipReport } from "@/lib/membership-report";
 import { joinedOf, type MembershipBasis } from "@/lib/membership-movement";
+import { liveClassWhere } from "@/lib/class-live";
 
 export type { MembershipReport } from "@/lib/membership-report";
 
@@ -466,7 +467,8 @@ export async function getReportsData(
   const [classOptionsRaw, club] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       tx.class.findMany({
-        where: { tenantId, isActive: true, deletedAt: null },
+        // The timetable's classes (lib/class-live): not paused, archived or imported history.
+        where: liveClassWhere(tenantId),
         select: { id: true, name: true },
         orderBy: { name: "asc" },
       }),
@@ -584,7 +586,7 @@ export async function getReportsData(
         }),
       tx.member.count({ where: { tenantId, ...TRAINING_MEMBER } }),
       tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: weeklyWindowStart }, ...attendanceScope } }),
-      tx.class.count({ where: { tenantId, isActive: true } }),
+      tx.class.count({ where: liveClassWhere(tenantId) }),
       tx.attendanceRecord.count({
         where: { tenantId, checkInTime: { gte: currentWeekStart }, ...attendanceScope },
       }),

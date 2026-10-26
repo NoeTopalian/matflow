@@ -5,6 +5,7 @@ import { ACTIVE_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { monthWindows } from "@/lib/month-windows";
 import { clubMonthWindow } from "@/lib/club-month";
 import { loadJoinedInWindows } from "@/lib/membership-report";
+import { liveClassWhere } from "@/lib/class-live";
 
 export const metadata = { title: "Analysis | MatFlow" };
 
@@ -37,7 +38,7 @@ export default async function AnalysisPage() {
       tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
       tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: startOfMonth } } }),
       tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: startOfLastMonth, lt: startOfMonth } } }),
-      tx.class.count({ where: { tenantId, isActive: true } }),
+      tx.class.count({ where: liveClassWhere(tenantId) }),
       tx.member.groupBy({ by: ["status"], where: { tenantId, ...TRAINING_MEMBER }, _count: true }),
       tx.attendanceRecord.findMany({
         // Audit iter-2-database A8I2-P-H-2: cap at 60k rows. At a busy

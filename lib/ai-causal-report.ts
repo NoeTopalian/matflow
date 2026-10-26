@@ -13,6 +13,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { ACTIVE_MEMBER, LEFT_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { loadJoinedInWindows } from "@/lib/membership-report";
+import { liveClassWhere } from "@/lib/class-live";
 
 const MODEL = "claude-haiku-4-5-20251001";
 const MAX_OUTPUT_TOKENS = 1200;
@@ -77,7 +78,7 @@ async function gatherMetrics(input: ReportInput): Promise<Record<string, number>
       tx.attendanceRecord.count({
         where: { tenantId, checkInTime: { gte: prevStart, lt: periodStart } },
       }),
-      tx.class.count({ where: { tenantId, isActive: true } }),
+      tx.class.count({ where: liveClassWhere(tenantId) }),
     ]),
   );
 
