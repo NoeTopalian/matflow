@@ -365,19 +365,25 @@ L.note("seed", "N4 expected payer and month figures", { clubZone, P, Y });
 // ── D9: other accounts owing, computed independently ───────────────────────
 // lib/overdue.ts otherOwingEvidence: status inactive or cancelled (any account type) AND (latest settled payment —
 // succeeded or failed — is a failed charge, OR paymentStatus "overdue"). A passed nextDueAt alone never counts.
+// Owner instruction of 24 Oct 2026: a failed latest charge is NOT a debt. Those accounts are "Last charge failed — to
+// reconcile" (RC below), even when marked overdue; "Other accounts owing" (OW) is marked overdue with a latest charge
+// that did not fail. Both stay out of every payer and member total.
 const owingRows = await q(
   `select m.id, m.name, m.status, m."accountType", m."paymentStatus", lp.status as "lastStatus",
-          (extract(epoch from lp."createdAt") * 1000)::float8 as "lastAt", lp."amountPence"
+          (extract(epoch from lp."createdAt") * 1000)::float8 as "lastAt", lp."amountPence", lp."failureReason"
      from "Member" m
-     left join lateral (select p.status, p."createdAt", p."amountPence" from "Payment" p
+     left join lateral (select p.status, p."createdAt", p."amountPence", p."failureReason" from "Payment" p
                          where p."memberId" = m.id and p."tenantId" = $1 and p.status in ('succeeded', 'failed')
                          order by p."createdAt" desc limit 1) lp on true
     where m."tenantId" = $1 and m.status in ('inactive', 'cancelled') and (lp.status = 'failed' or m."paymentStatus" = 'overdue')
     order by m.name`, [tenantId]);
-const OW = { count: owingRows.length, guardians: owingRows.filter((r) => r.accountType === "parent").length };
+const debtRows = owingRows.filter((r) => r.lastStatus !== "failed");
+const reconcileRows = owingRows.filter((r) => r.lastStatus === "failed");
+const OW = { count: debtRows.length, guardians: debtRows.filter((r) => r.accountType === "parent").length };
+const RC = { count: reconcileRows.length, guardians: reconcileRows.filter((r) => r.accountType === "parent").length };
 const owingIds = owingRows.map((r) => r.id);
 const seededOwing = ["owe-inactive", "owe-cancelled"].map((k) => seededIds[k]);
-L.check("seed", "S4 the two seeded owing rows are exactly the seed's other accounts owing (the cancelled one by its failed charge, the inactive one by \"overdue\")",
+L.check("seed", "S4 the two seeded rows are the seed's D9 accounts (the cancelled one to reconcile by its failed charge, the inactive one owing by \"overdue\")",
   seededOwing.every((id) => owingIds.includes(id))
     && owingRows.find((r) => r.id === seededIds["owe-cancelled"])?.lastStatus === "failed"
     && owingRows.find((r) => r.id === seededIds["owe-inactive"])?.lastStatus == null,
@@ -391,24 +397,39 @@ const Eex = (await q(`select
   from "Member" where "tenantId" = $1 and not (id = any($2))`, [tenantId, owingIds]))[0];
 const owingTrainingCurrent = owingRows.filter((r) => r.accountType !== "parent" && r.status !== "cancelled").length;
 const OTHER_OWING_LABEL = "Other accounts owing";                                                         // lib/member-population.ts:93
-const OTHER_OWING_SHORT = "Inactive or left, not chased";                                                 // lib/member-population.ts:94
-const OTHER_OWING_SCOPE = "Inactive and cancelled accounts whose last charge failed or that are marked overdue, including parents and guardians. Not chased, and not counted in Payers overdue or any member total."; // :95-96 via MembersList headline-scope
+const OTHER_OWING_SHORT = "Inactive or left, marked overdue, not chased";                               // lib/member-population.ts OTHER_OWING_COPY
+const OTHER_OWING_SCOPE = "Inactive and cancelled accounts marked overdue whose latest charge did not fail, including parents and guardians. Not chased, and not counted in Payers overdue or any member total."; // via MembersList headline-scope
+const RECONCILE_LABEL = "Last charge failed — to reconcile";                                              // FAILED_TO_RECONCILE_COPY
+const RECONCILE_SHORT = "Inactive or left · check before treating as owed";
+const RECONCILE_SCOPE = "Inactive and cancelled accounts whose latest charge failed, even if marked overdue, including parents and guardians. Not a confirmed debt: check the payment before treating it as owed. Not chased, and in no debt or member total.";
+const withGuardians = (text, n) => (n <= 0 ? text : `${text} · ${n === 1 ? "includes 1 parent or guardian" : `includes ${fmtNum(n)} parents or guardians`}`); // ReportsView.tsx withGuardians
 const fmtDay = (ms) => new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }); // OutstandingPanel.tsx:270-272 (browser zone = this machine)
 const fmtPence = (p) => (p == null ? "—" : `£${(p / 100).toFixed(2)}`);                                // OutstandingPanel.tsx:31-34
 const Z = {
-  line: `${OTHER_OWING_LABEL}: ${fmtNum(OW.count)} (inactive or left, not chased)`,                      // lib/member-population.ts:100-102 otherAccountsOwingLine
+  line: `${OTHER_OWING_LABEL}: ${fmtNum(OW.count)} (inactive or left, marked overdue, not chased)`,     // lib/member-population.ts otherAccountsOwingLine
   chip: `${OTHER_OWING_LABEL} · ${OW.count}`,                                                               // MembersList.tsx:1008 + :1033
   headline: `${OW.count} ${OW.count === 1 ? "other account owing" : "other accounts owing"}`,              // MembersList.tsx:861-862
-  reportsDetail: OW.guardians <= 0 ? OTHER_OWING_SHORT                                                     // ReportsView.tsx:77-80 otherOwingDetail
-    : `${OTHER_OWING_SHORT} · ${OW.guardians === 1 ? "includes 1 parent or guardian" : `includes ${fmtNum(OW.guardians)} parents or guardians`}`,
-  outstandingLine: `${OTHER_OWING_LABEL}: ${fmtNum(OW.count)} (inactive or left, not chased) — listed below, not in this total.`, // OutstandingPanel.tsx:171-174
+  reportsDetail: withGuardians(OTHER_OWING_SHORT, OW.guardians),                                          // ReportsView.tsx otherOwingDetail
+  outstandingLine: `${OTHER_OWING_LABEL}: ${fmtNum(OW.count)} (inactive or left, marked overdue, not chased) — listed below, not in this total.`, // OutstandingPanel.tsx
   outstandingHeading: `${OTHER_OWING_LABEL} · ${fmtNum(OW.count)}`,                                         // OutstandingPanel.tsx:290-292
-  outstandingRows: Object.fromEntries(owingRows.map((r) => [r.name, {                                       // OutstandingPanel.tsx:295-315
-    line: `${r.status === "cancelled" ? "Cancelled" : "Inactive"}${r.accountType === "parent" ? " · Parent or guardian" : ""} · ${r.lastStatus === "failed" ? `Last charge failed on ${fmtDay(r.lastAt)}` : "Marked overdue"}`,
-    amount: fmtPence(r.lastStatus === "failed" ? r.amountPence : null),
+  outstandingRows: Object.fromEntries(debtRows.map((r) => [r.name, {                                        // OutstandingPanel.tsx OtherAccountsOwing kind="owing"
+    line: `${r.status === "cancelled" ? "Cancelled" : "Inactive"}${r.accountType === "parent" ? " · Parent or guardian" : ""} · Marked overdue`,
+    amount: fmtPence(null),
   }])),
 };
-Z.csv = ["Payments", OTHER_OWING_LABEL, String(OW.count), Z.reportsDetail];                               // ReportsView.tsx:396
+Z.csv = ["Payments", OTHER_OWING_LABEL, String(OW.count), Z.reportsDetail];                               // ReportsView.tsx reportsCsv
+// The to-reconcile group, in the words each screen uses for it.
+const RZ = {
+  detail: withGuardians(RECONCILE_SHORT, RC.guardians),                                                    // ReportsView.tsx failedToReconcileDetail
+  line: `${RECONCILE_LABEL}: ${fmtNum(RC.count)} (inactive or left, check before treating as owed)`,       // failedToReconcileLine
+  headline: `${RC.count} ${RC.count === 1 ? "account" : "accounts"} whose last charge failed — to reconcile`, // MembersList.tsx members-headline
+  outstandingHeading: `${RECONCILE_LABEL} · ${fmtNum(RC.count)}`,
+  outstandingRows: Object.fromEntries(reconcileRows.map((r) => [r.name, {                                   // OutstandingPanel.tsx kind="reconcile"
+    line: `${r.status === "cancelled" ? "Cancelled" : "Inactive"}${r.accountType === "parent" ? " · Parent or guardian" : ""} · Last charge failed on ${fmtDay(r.lastAt)} — check before treating as owed${r.failureReason ? ` · ${r.failureReason}` : ""}`,
+    amount: fmtPence(r.amountPence),
+  }])),
+};
+RZ.csv = ["Payments", RECONCILE_LABEL, String(RC.count), RZ.detail];
 
 // ── D10: the badge evidence, computed independently ────────────────────────
 // lib/overdue.ts paymentEvidence (:297-309), paymentEvidenceSentence (:320-333), PAYMENT_EVIDENCE_LABEL (:336-340).
@@ -419,7 +440,7 @@ const BADGES = {
   "RT Card Failed": { text: "Payment failed", title: `A payment failed on ${dayMonth(seedRow("card-failed").payments[0].at, clubZone)}.` },
   "RT Paid Before Late": { text: "Payment outstanding", title: `The payment due on ${dayMonth(dueAtOf(seedRow("paid-late")), "UTC")} is outstanding.` },
 };
-L.note("seed", "N5 expected D9 and D10 figures", { OW, owing: owingRows.map((r) => r.name), Pex, Eex, Z, BADGES });
+L.note("seed", "N5 expected D9 and D10 figures", { OW, RC, owing: debtRows.map((r) => r.name), toReconcile: reconcileRows.map((r) => r.name), Pex, Eex, Z, RZ, BADGES });
 
 // ── Page helpers ────────────────────────────────────────────────────────────
 const tileLink = (page, name) => page.getByRole("link", { name: `${name} — see the members behind this number`, exact: true });
@@ -589,8 +610,18 @@ try {
     href: await owTile.getAttribute("href"),
   };
   const owWant = { label: OTHER_OWING_LABEL, detail: Z.reportsDetail, value: fmtNum(OW.count), href: "/dashboard/members?filter=other-owing" };
-  L.check("reports", "OW1 Reports \"Other accounts owing\" tile: the count, \"Inactive or left, not chased\", and the drill-through",
+  L.check("reports", "OW1 Reports \"Other accounts owing\" tile: the count of confirmed debts, \"Inactive or left, marked overdue, not chased\", and the drill-through",
     JSON.stringify(owSaw) === JSON.stringify(owWant), { saw: owSaw, expected: owWant });
+  const rcTile = page.getByTestId("reports-failed-to-reconcile").filter({ visible: true }).first();
+  const rcSaw = await rcTile.waitFor({ timeout: 15000 }).then(async () => ({
+    label: norm(await rcTile.locator("p").first().innerText()),
+    detail: norm(await rcTile.getByTestId("reports-failed-to-reconcile-detail").innerText()),
+    value: norm(await rcTile.locator("span.tabular-nums").first().innerText()),
+    href: await rcTile.getAttribute("href"),
+  }), () => null);
+  const rcWant = { label: RECONCILE_LABEL, detail: RZ.detail, value: fmtNum(RC.count), href: "/dashboard/members?filter=failed-to-reconcile" };
+  L.check("reports", "RC1 Reports \"Last charge failed — to reconcile\" tile beside it: the failed-charge accounts, \"check before treating as owed\", and its drill-through (24 Oct rule)",
+    JSON.stringify(rcSaw) === JSON.stringify(rcWant), { saw: rcSaw, expected: rcWant });
   await shot(page, "reporting-truth-reports");
 
   // CSV export: same rows, same numbers.
@@ -619,11 +650,24 @@ try {
     tasters: row("Health", "Tasters added this month")?.slice(2), left: row("Health", "Left this month")?.slice(2),
     recovery: row("Health", "Payment recovery")?.[2], survival: row("Health", "6-month survival")?.[2],
   };
+  // 24 Oct 2026: a month not wholly recorded says so on every movement row (ReportsView.tsx estimateLabel/withEstimate).
+  const apiReport = await page.request.get("/api/reports").then((r) => r.json()).catch(() => null);
+  const curBasis = apiReport?.membership?.movementsByMonth?.find((m) => m.isCurrentMonth)?.basis ?? null;
+  const caption = (() => {
+    const src = apiReport?.membership ?? {};
+    const parts = [];
+    if (src.historySource && src.historySource !== "none") parts.push("your TeamUp history");
+    if ((src.fromJoinDates ?? 0) > 0) parts.push("join and cancellation dates");
+    return parts.length > 0 ? `Estimated from ${parts.join(" and ")}` : "Estimated";
+  })();
+  const estimateWords = curBasis === "mixed" ? "Partly estimated" : curBasis === "estimated" ? caption : null;
+  const est = (d) => (estimateWords ? `${d} · ${estimateWords}` : d);
+  L.note("csv", "N6 this club month's movement basis (from /api/reports) and the estimate words the CSV must carry", { basis: curBasis, words: estimateWords });
   const csvHealthExpected = {
     churn: X.churn,
-    joined: [String(MV.joined), X.joinedCsvDetail], oldJoined: null,
-    new: [String(MV.new), "First ever start"], rejoined: [String(MV.rejoined), "Started again after leaving"],
-    tasters: [String(MV.tasterAdded), "Not in Joined or Net"], left: [String(MV.lost), "Cancelled, or finished a prepaid course"],
+    joined: [String(MV.joined), est(X.joinedCsvDetail)], oldJoined: null,
+    new: [String(MV.new), est("First ever start")], rejoined: [String(MV.rejoined), est("Started again after leaving")],
+    tasters: [String(MV.tasterAdded), est("Not in Joined or Net")], left: [String(MV.lost), est("Cancelled, or finished a prepaid course")],
     recovery: X.recovery, survival: X.survival,
   };
   L.check("csv", "C3 CSV churn, \"Joined this month (new + rejoined)\" with its lines and definition, the New / Rejoined / Tasters added / Left rows, recovery and survival read exactly as the tiles",
@@ -645,6 +689,9 @@ try {
   const csvOwing = row("Payments", OTHER_OWING_LABEL);
   L.check("csv", "OW2 CSV row \"Payments,Other accounts owing,N,<detail>\" as on the tile",
     JSON.stringify(csvOwing) === JSON.stringify(Z.csv), { saw: csvOwing, expected: Z.csv });
+  const csvReconcile = row("Payments", RECONCILE_LABEL);
+  L.check("csv", "RC2 CSV row \"Payments,Last charge failed — to reconcile,N,<detail>\" as on the tile",
+    JSON.stringify(csvReconcile) === JSON.stringify(RZ.csv), { saw: csvReconcile, expected: RZ.csv });
 
   // Drill-through: the Active tile opens a Members page whose headline is the same number (Sean's note 2).
   await activeLink.click();
@@ -691,9 +738,13 @@ try {
   const owLine = page.getByTestId("members-other-owing-line").filter({ visible: true }).first();
   const owLineSaw = await owLine.waitFor({ timeout: 15000 }).then(async () => ({ text: norm(await owLine.innerText()), href: await owLine.getAttribute("href") }), () => null);
   const owNotPayers = { inactive: await listed("RT Owing Inactive"), cancelled: await listed("RT Owing Cancelled") };
-  L.check("payers", "OW3 under Payers overdue: the sub-line \"Other accounts owing: N (inactive or left, not chased)\" links to them, and neither owing account is listed as a payer",
+  L.check("payers", "OW3 under Payers overdue: the sub-line \"Other accounts owing: N (inactive or left, marked overdue, not chased)\" links to them, and neither D9 account is listed as a payer",
     owLineSaw?.text === Z.line && owLineSaw?.href === "/dashboard/members?filter=other-owing" && !owNotPayers.inactive && !owNotPayers.cancelled,
     { saw: owLineSaw, expected: Z.line, listedAsPayers: owNotPayers });
+  const rcLine = page.getByTestId("members-to-reconcile-line").filter({ visible: true }).first();
+  const rcLineSaw = await rcLine.waitFor({ timeout: 15000 }).then(async () => ({ text: norm(await rcLine.innerText()), href: await rcLine.getAttribute("href") }), () => null);
+  L.check("payers", "RC3 under Payers overdue: a separate sub-line \"Last charge failed — to reconcile: N (…)\" links to the failed-charge accounts",
+    rcLineSaw?.text === RZ.line && rcLineSaw?.href === "/dashboard/members?filter=failed-to-reconcile", { saw: rcLineSaw, expected: RZ.line });
   await shot(page, "reporting-truth-payers");
   await owLine.click();
   const owHead = await membersHeadline(page);
@@ -702,13 +753,21 @@ try {
   const owListed = Object.fromEntries(await Promise.all([...owingRows.map((r) => r.name), "RT Inactive", "RT Left Earlier", "RT Card Failed", "RT Paid Before Late"]
     .map(async (n) => [n, await listed(n)])));
   const owRowCount = await page.locator("tbody tr").filter({ visible: true }).count();
-  L.check("payers", "OW4 the sub-line opens \"N other accounts owing\" (chip \"Other accounts owing · N\" selected) listing exactly the owing accounts",
+  L.check("payers", "OW4 the sub-line opens \"N other accounts owing\" (chip \"Other accounts owing · N\" selected) listing exactly the confirmed debts, not the account to reconcile",
     owHead === Z.headline && owScope === OTHER_OWING_SCOPE && owChipPressed === "true" && owRowCount === OW.count
-      && owingRows.every((r) => owListed[r.name]) && !owListed["RT Inactive"] && !owListed["RT Left Earlier"] && !owListed["RT Card Failed"] && !owListed["RT Paid Before Late"],
+      && debtRows.every((r) => owListed[r.name]) && reconcileRows.every((r) => !owListed[r.name])
+      && !owListed["RT Inactive"] && !owListed["RT Left Earlier"] && !owListed["RT Card Failed"] && !owListed["RT Paid Before Late"],
     { head: owHead, scope: owScope, chipPressed: owChipPressed, rows: owRowCount, listed: owListed, expected: { head: Z.headline, chip: Z.chip, rows: OW.count, scope: OTHER_OWING_SCOPE } });
   await page.goto("/dashboard/members?filter=other-owing");
   const owDrill = await membersHeadline(page);
   L.check("payers", "OW5 the Reports drill-through URL (filter=other-owing) opens the same \"N other accounts owing\"", owDrill === Z.headline, { saw: owDrill, expected: Z.headline });
+  await page.goto("/dashboard/members?filter=failed-to-reconcile");
+  const rcDrill = await membersHeadline(page);
+  const rcScope = norm(await page.getByTestId("members-headline-scope").filter({ visible: true }).first().innerText());
+  const rcListed = Object.fromEntries(await Promise.all(owingRows.map(async (r) => [r.name, await listed(r.name)])));
+  L.check("payers", "RC4 filter=failed-to-reconcile opens \"N account(s) whose last charge failed — to reconcile\" with its scope, listing exactly the failed-charge accounts",
+    rcDrill === RZ.headline && rcScope === RECONCILE_SCOPE && reconcileRows.every((r) => rcListed[r.name]) && debtRows.every((r) => !rcListed[r.name]),
+    { saw: { head: rcDrill, scope: rcScope, listed: rcListed }, expected: { head: RZ.headline, scope: RECONCILE_SCOPE } });
   await shot(page, "reporting-truth-other-owing");
   // D9 never moves a payer or member total: the owing rows count only by their status.
   L.check("payers", "OW6 Payers overdue and Active equal the totals with the owing rows left out; Current counts the inactive one once, by its status (as before D9)",
@@ -730,15 +789,25 @@ try {
   // D9 on Outstanding (OutstandingPanel.tsx:171-174, :281-318): a line beside the total, then a separate list with
   // no Chase button; each owing account appears once, in that list only.
   const outOwLine = norm(await page.getByTestId("outstanding-other-owing").filter({ visible: true }).first().innerText().catch(() => ""));
-  const owList = page.getByTestId("outstanding-other-owing-list").filter({ visible: true }).first();
-  const owListSaw = await owList.waitFor({ timeout: 15000 }).then(async () => ({
-    heading: norm(await owList.locator("h3").innerText()),
-    chaseButtons: await owList.getByRole("button", { name: /Chase/ }).count(),
-    rows: Object.fromEntries(await Promise.all(owingRows.map(async (r) => {
-      const rowEl = owList.locator("div.flex.items-center.justify-between").filter({ hasText: r.name }).first();
-      return [r.name, { line: norm(await rowEl.locator("p").first().innerText()), amount: norm(await rowEl.locator("p").nth(1).innerText()) }];
-    }))),
-  }), () => null);
+  const readList = async (testId, rows) => {
+    const list = page.getByTestId(testId).filter({ visible: true }).first();
+    return list.waitFor({ timeout: 15000 }).then(async () => ({
+      heading: norm(await list.locator("h3").innerText()),
+      chaseButtons: await list.getByRole("button", { name: /Chase/ }).count(),
+      rows: Object.fromEntries(await Promise.all(rows.map(async (r) => {
+        const rowEl = list.locator("div.flex.items-center.justify-between").filter({ hasText: r.name }).first();
+        const n = await rowEl.count();
+        return [r.name, n === 0 ? null : { line: norm(await rowEl.locator("p").first().innerText({ timeout: 10000 })), amount: norm(await rowEl.locator("p").nth(1).innerText({ timeout: 10000 })) }];
+      }))),
+    }), () => null);
+  };
+  const owListSaw = await readList("outstanding-other-owing-list", debtRows);
+  const rcListSaw = await readList("outstanding-to-reconcile-list", reconcileRows);
+  const outRcLine = norm(await page.getByTestId("outstanding-to-reconcile").filter({ visible: true }).first().innerText().catch(() => ""));
+  L.check("outstanding", "RC5 Outstanding: \"Last charge failed — to reconcile: N (…) — listed below, not in this total.\", then its own list (failed date, amount, \"check before treating as owed\") with no Chase button",
+    outRcLine === `${RZ.line} — listed below, not in this total.` && rcListSaw?.heading === RZ.outstandingHeading && rcListSaw?.chaseButtons === 0
+      && JSON.stringify(rcListSaw?.rows) === JSON.stringify(RZ.outstandingRows),
+    { line: outRcLine, list: rcListSaw, expected: { line: `${RZ.line} — listed below, not in this total.`, heading: RZ.outstandingHeading, rows: RZ.outstandingRows } });
   const owOnce = Object.fromEntries(await Promise.all(owingRows.map(async (r) => [r.name, await page.getByText(r.name, { exact: true }).filter({ visible: true }).count()])));
   L.check("outstanding", "OW7 Outstanding: \"Other accounts owing: N (…) — listed below, not in this total.\", then a separate list with each account's evidence and no Chase button",
     outOwLine === Z.outstandingLine && owListSaw?.heading === Z.outstandingHeading && owListSaw?.chaseButtons === 0

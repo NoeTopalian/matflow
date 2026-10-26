@@ -556,12 +556,21 @@ try {
     new: healthRow("New this month"), rejoined: healthRow("Rejoined this month"),
     tasters: healthRow("Tasters added this month"), left: healthRow("Left this month"),
   };
+  // 24 Oct 2026: a month not wholly recorded says so on every movement row (ReportsView.tsx estimateLabel/withEstimate).
+  const estimateWords = cur.basis === "mixed" ? "Partly estimated"
+    : cur.basis === "estimated" ? (() => {
+      const parts = [];
+      if (M.historySource && M.historySource !== "none") parts.push("your TeamUp history");
+      if ((M.fromJoinDates ?? 0) > 0) parts.push("join and cancellation dates");
+      return parts.length > 0 ? `Estimated from ${parts.join(" and ")}` : "Estimated";
+    })() : null;
+  const est = (d) => (estimateWords ? `${d} · ${estimateWords}` : d);
   const csvJoinedExpected = {
-    joined: ["Health", JOINED_LABEL, String(post.churn.joined), `${joinedTileDetail(cur)} · ${DEFINITION}`],
-    new: ["Health", "New this month", String(cur.new), "First ever start"],
-    rejoined: ["Health", "Rejoined this month", String(cur.rejoined), "Started again after leaving"],
-    tasters: ["Health", "Tasters added this month", String(cur.tasterAdded ?? 0), "Not in Joined or Net"],
-    left: ["Health", "Left this month", String(cur.lost), "Cancelled, or finished a prepaid course"],
+    joined: ["Health", JOINED_LABEL, String(post.churn.joined), est(`${joinedTileDetail(cur)} · ${DEFINITION}`)],
+    new: ["Health", "New this month", String(cur.new), est("First ever start")],
+    rejoined: ["Health", "Rejoined this month", String(cur.rejoined), est("Started again after leaving")],
+    tasters: ["Health", "Tasters added this month", String(cur.tasterAdded ?? 0), est("Not in Joined or Net")],
+    left: ["Health", "Left this month", String(cur.lost), est("Cancelled, or finished a prepaid course")],
   };
   L.check("csv", "C1 CSV Joined rows = the tile: \"Joined this month (new + rejoined)\" with its New · Rejoined · Tasters added · Left · Net detail, then one row per line",
     JSON.stringify(csvJoined) === JSON.stringify(csvJoinedExpected), { saw: csvJoined, expected: csvJoinedExpected });
