@@ -49,7 +49,9 @@ next-env.d.ts
 !.claude/skills/
 !.claude/hooks/
 !.claude/settings.json
-.claude/skills/matflow-verify-browser/scripts/journeys/
+# Journeys are tracked (chore/verify-harness, 24 Oct 2026); tool state beside them never is. Outputs, fixture state,
+# the lock and the ledger live under %LOCALAPPDATA%/matflow-verify, outside the repository.
+.claude/skills/**/.omc/
 .playwright-mcp/
 .venv/
 playwright-report/
