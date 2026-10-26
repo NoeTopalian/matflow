@@ -257,13 +257,14 @@ const planned = Object.fromEntries(Object.keys(seedDelta).map((k) => [k, baselin
 L.check("seed", "S1 the database population after seeding is the baseline plus the planned seed, definition by definition",
   Object.keys(planned).every((k) => planned[k] === E[k]), { planned, observed: E });
 
-// Payment recovery inputs (lib/reports.ts: distinct members with a failed payment in 90 days; recovered = now paid).
+// Payment recovery inputs (lib/reports.ts: distinct members with a failed payment in the period — by default this
+// club month, 26 Oct 2026; it was the last 90 days before the period selector — recovered = now paid).
 const rec = (await q(
   `select count(distinct p."memberId")::int as failed,
           count(distinct p."memberId") filter (where m."paymentStatus" = 'paid')::int as recovered
      from "Payment" p left join "Member" m on m.id = p."memberId"
-    where p."tenantId" = $1 and p.status = 'failed' and p."createdAt" >= now() - interval '90 days' and p."memberId" is not null`,
-  [tenantId],
+    where p."tenantId" = $1 and p.status = 'failed' and p."createdAt" >= $2 and p."memberId" is not null`,
+  [tenantId, monthStart.toISOString()],
 ))[0];
 
 // ── Expected strings, in the source's exact formats ─────────────────────────
@@ -353,7 +354,7 @@ const Y = {
   healthLine: `${payersOverdue(P.overdue)} · No payment yet ${P.npy}`,                                       // lib/billing.ts paymentHealthLine (shown when npy > 0)
   csvOverdue: ["Payments", PAYER_LABEL, String(P.overdue), guardianNote(P.overdueGuardians)],               // ReportsView.tsx reportsCsv
   csvNpy: ["Payments", "Payers with no payment yet", String(P.npy), guardianNote(P.npyGuardians)],
-  csvPeriod: ["Report", "This month", monthLabelOf(0), `"This month" runs midnight to midnight in the club's time zone (${clubZone})`], // ReportsView.tsx periodCsvDetail
+  csvPeriod: ["Report", "Period", monthLabelOf(0), `Whole months, midnight to midnight in the club's time zone (${clubZone}), to today`], // ReportsView.tsx rangeCsvDetail
   outstandingSummary: `outstanding across ${payersLabel(owing)} (failed charges, and plan prices for missed due dates and first payments)`, // OutstandingPanel.tsx
   outstandingSplit: `${payersOverdue(P.overdue)} · ${P.npy.toLocaleString("en-GB")} with no payment yet. ${guardianNote(P.overdueGuardians + P.npyGuardians)}.`, // lib/billing.ts outstandingPayerSummary + OutstandingPanel.tsx
   lastMonthHeadline: `${MVLast.new} new in ${monthLabelOf(-1)}`,                                           // MembersList.tsx:648 sliceHeadlineCopy (past month), D11 movement New
@@ -683,8 +684,8 @@ try {
   L.check("csv", "C5 CSV payer rows: Payers overdue and Payers with no payment yet, each with its guardian note",
     JSON.stringify(csvPayers.overdue) === JSON.stringify(Y.csvOverdue) && JSON.stringify(csvPayers.npy) === JSON.stringify(Y.csvNpy),
     { saw: csvPayers, expected: { overdue: Y.csvOverdue, npy: Y.csvNpy } });
-  const csvPeriod = row("Report", "This month");
-  L.check("csv", "C6 CSV \"This month\" row names the month and the club's time zone",
+  const csvPeriod = row("Report", "Period");
+  L.check("csv", "C6 CSV \"Period\" row names the month and the club's time zone",
     JSON.stringify(csvPeriod) === JSON.stringify(Y.csvPeriod), { saw: csvPeriod, expected: Y.csvPeriod });
   const csvOwing = row("Payments", OTHER_OWING_LABEL);
   L.check("csv", "OW2 CSV row \"Payments,Other accounts owing,N,<detail>\" as on the tile",
@@ -700,7 +701,8 @@ try {
   L.check("drill", "D1 Reports Active members tile opens Members with the same headline number", drillActive === X.membersHeadline, { saw: drillActive, expected: X.membersHeadline });
   await page.goto("/dashboard/members?filter=churned-this-month");
   const drillChurn = await membersHeadline(page);
-  L.check("drill", "D2 the churn drill-through lists exactly the members churn counted", drillChurn === `${E.cancelledThisMonth} cancelled this month`, { saw: drillChurn, expected: `${E.cancelledThisMonth} cancelled this month` });
+  const churnHeadExpected = `${churnedFrom(monthStart.getTime())} churned this month`;
+  L.check("drill", "D2 the churn drill-through lists exactly the members churn counted", drillChurn === churnHeadExpected, { saw: drillChurn, expected: churnHeadExpected });
   // D11: each Joined-tile line opens Members on exactly the members that figure counted (MembersList.tsx:646-657).
   for (const [i, line] of JOINED_LINES.entries()) {
     await page.goto(joinedHrefs[line.filter] ?? `/dashboard/members?filter=${line.filter}&month=${Y.thisMonthKey}`);

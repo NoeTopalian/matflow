@@ -77,7 +77,7 @@ const norm = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 
 const DEFINITION = "New: first ever start. Rejoined: started again after leaving. Joined = new + rejoined. Left: cancelled, or finished a prepaid course. Net = new + rejoined − left. Tasters added are counted apart, and imports are never joins."; // membership-movement.ts:147-148
 const JOINED_LABEL = "Joined this month (new + rejoined)";                                                 // membership-movement.ts:150, ReportsView.tsx:506
-const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";               // ReportsView.tsx:234
+const CHURN_FORMULA = "Of the members active when the period began, how many left during it";        // ReportsView.tsx CHURN_FORMULA (26 Oct 2026)               // ReportsView.tsx:234
 const JOINED_LINES = [                                                                                      // ReportsView.tsx:491-496, 513
   { key: "new", label: "New", filter: "new-this-month" },
   { key: "rejoined", label: "Rejoined", filter: "rejoined-this-month" },
@@ -458,9 +458,11 @@ try {
   L.check("seed", "S7 D11: the report's Joined is the movement — churn.joined = new + rejoined this month, and the seed adds 2 (Ana new, Cara rejoined; not Ben, not Ivy)",
     post.churn.joined === cur.new + cur.rejoined && seedJoined === SEED_JOINED && JSON.stringify(seedNow) === JSON.stringify(SEED_NOW),
     { joined: post.churn.joined, newPlusRejoined: cur.new + cur.rejoined, seedJoined, seedNow, expected: { seedJoined: SEED_JOINED, seedNow: SEED_NOW } });
-  L.check("seed", "S8 churn and Active members in the report equal SQL (status and cancelledAt in the club month)",
-    post.churn.cancelled === E.cancelled && post.summary.activeMembers === E.active && E.cancelled - tileBefore.cancelled === 1,
-    { report: { cancelled: post.churn.cancelled, active: post.summary.activeMembers }, sql: E, cancelledAddedBySeed: E.cancelled - tileBefore.cancelled });
+  const churnSeed = { leavers: post.churn.cancelled - pre.churn.cancelled, base: post.churn.base - pre.churn.base };
+  const openingHead = M.headcountByMonth.at(-2)?.headcount ?? null;
+  L.check("seed", "S8 churn the normal way: the seed adds 2 leavers (Eve cancelled, Dan's course ended — both active when the month began; not Cara) and 2 to the base; the base is last month's closing headcount; Active members equal SQL",
+    churnSeed.leavers === 2 && churnSeed.base === 2 && post.churn.base === openingHead && post.summary.activeMembers === E.active,
+    { churnSeed, expected: { leavers: 2, base: 2 }, base: post.churn.base, openingHead, active: [post.summary.activeMembers, E.active] });
   L.note("d11", "N3 D11 for the ledger: the retired joinedAt count would read this month vs the Joined tile now (the seed adds 3 by joinedAt — Ana, Ben, Ivy — and 2 by movement — Ana, Cara)", {
     retiredJoinedAt: { wholeClub: E.joinedAtCount, seed: E.joinedAtCount - tileBefore.joinedAtCount },
     joinedTile: { wholeClub: post.churn.joined, seed: seedJoined },
@@ -482,10 +484,10 @@ try {
     joinedTile.net === tileExpected.net, { saw: joinedTile.net, expected: tileExpected.net });
   const churnLink = tileLink(page, "Churn rate this month");
   const churnTile = await pTexts(churnLink);
-  const churnBase = E.active + E.cancelled;
-  const churnExpected = [fmtRatio(pct1(E.cancelled, churnBase), E.cancelled, churnBase), "Churn rate this month", churnBase > 0 ? CHURN_FORMULA : "No active or cancelled members this month"];
+  const churnBase = post.churn.base;
+  const churnExpected = [fmtRatio(pct1(post.churn.cancelled, churnBase), post.churn.cancelled, churnBase), "Churn rate this month", CHURN_FORMULA];
   const nextToChurn = await churnLink.evaluate((el) => el.nextElementSibling?.getAttribute("data-testid") ?? null);
-  L.check("reports", "R4 churn beside it counts cancellations by cancelledAt (Eve in; Dan's completed course not), and the Joined tile is its next tile",
+  L.check("reports", "R4 churn beside it reads x% (n of m) of the report's leavers over its opening members, with the formula, and the Joined tile is its next tile",
     JSON.stringify(churnTile) === JSON.stringify(churnExpected) && nextToChurn === "reports-joined-tile", { saw: churnTile, expected: churnExpected, nextTile: nextToChurn });
 
   const card = page.getByTestId("net-new-card");
@@ -615,8 +617,8 @@ try {
   await page.goto(`/dashboard/members?filter=churned-this-month&month=${K.now}`);
   const drillChurn = await membersHeadline(page);
   const churnRows = { eve: await listed(page, NAMES.eve), cara: await listed(page, NAMES.cara), dan: await listed(page, NAMES.dan) };
-  L.check("drill", "D5 the churn drill-through lists the churn count, with Eve and without Cara (reactivated) or Dan (course ended)",
-    drillChurn === `${E.cancelled} cancelled this month` && churnRows.eve && !churnRows.cara && !churnRows.dan, { saw: drillChurn, expected: `${E.cancelled} cancelled this month`, ...churnRows });
+  L.check("drill", "D5 the churn drill-through lists the churn count, with Eve and Dan (active when the month began, left in it) and without Cara (not active then)",
+    drillChurn === `${post.churn.cancelled} churned this month` && churnRows.eve && churnRows.dan && !churnRows.cara, { saw: drillChurn, expected: `${post.churn.cancelled} churned this month`, ...churnRows });
 
   // ── Phone width (390 px), same session ─────────────────────────────────────────────────────────────────────
   const phone = await context(browser, "10.96.0.2", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState() });
