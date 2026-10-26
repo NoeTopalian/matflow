@@ -22,6 +22,7 @@ import {
   PieChart,
   Pie,
   CartesianGrid,
+  ReferenceArea,
 } from "recharts";
 import {
   Activity,
@@ -53,6 +54,8 @@ import { Select } from "@/components/ui/select";
 import NetNewMembersCard from "./NetNewMembersCard";
 import { MEMBERSHIP_COPY, combinedBasis, emptyTally, estimatedCaption, type MembershipBasis } from "@/lib/membership-movement";
 import type { MembershipReport } from "@/lib/membership-report";
+import { clubMonthWindow } from "@/lib/club-month";
+import { MAX_CUSTOM_MONTHS, REPORT_PERIOD_OPTIONS, type ReportPeriodKey, type ReportRange } from "@/lib/report-period";
 import { basisNote } from "@/lib/net-new-series";
 import {
   EmptyChart,
@@ -71,7 +74,73 @@ import Sparkline from "@/components/dashboard/charts/Sparkline";
 import InitiativesPanel from "@/components/dashboard/InitiativesPanel";
 import MonthlyReportView from "@/components/dashboard/MonthlyReportView";
 
-const WEEK_OPTIONS = [4, 8, 12, 16, 24] as const;
+/**
+ * The period in a tile's words, and the equal run before it: "this month" /
+ * "last month" for the default (so the default page reads exactly as before),
+ * "in the last 3 months", "in Jan – Jun 2026" otherwise.
+ */
+export function periodWords(range: Pick<ReportRange, "key" | "label" | "months">): { during: string; before: string; possessive: string } {
+  switch (range.key) {
+    case "this-month":
+      return { during: "this month", before: "last month", possessive: "this month's" };
+    case "last-month":
+      return { during: "last month", before: "the month before", possessive: "last month's" };
+    case "3m":
+    case "6m":
+    case "12m": {
+      const n = range.months.length;
+      return { during: `in the last ${n} months`, before: `the ${n} months before`, possessive: "the period's" };
+    }
+    default:
+      return { during: `in ${range.label}`, before: range.months.length === 1 ? "the month before" : "the period before", possessive: "the period's" };
+  }
+}
+
+/** "Aug – Oct 2026 (to today)": the window every period card names. */
+export function windowLabelOf(range: Pick<ReportRange, "label" | "isCurrent">): string {
+  return `${range.label}${range.isCurrent ? " (to today)" : ""}`;
+}
+
+/** The estimate line for a period figure compared with the run before it (the New tile and its CSV row). */
+export function periodPairEstimateNote(data: Pick<ReportsData, "membership" | "range" | "periodMovement">): string | null {
+  const caption = estimatedCaption(data.membership);
+  const pm = data.periodMovement;
+  const w = periodWords(data.range);
+  const parts: string[] = [];
+  const now = estimateLabel(pm.basis, caption);
+  const before = estimateLabel(pm.previousBasis, caption);
+  if (now) parts.push(`${w.during} ${now.charAt(0).toLowerCase()}${now.slice(1)}`);
+  if (before) parts.push(`${w.before} ${before.charAt(0).toLowerCase()}${before.slice(1)}`);
+  if (parts.length === 0) return null;
+  const text = parts.join(" · ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The CSV's statement of the period, and in which zone its months run. */
+export function rangeCsvDetail(range: Pick<ReportRange, "timeZone" | "isCurrent">): string {
+  return `Whole months, midnight to midnight in the club's time zone (${range.timeZone})${range.isCurrent ? ", to today" : ""}`;
+}
+
+const monthIndex = (key: string) => { const [y, m] = key.split("-").map(Number); return y * 12 + m - 1; };
+const monthKeyOf = (i: number) => `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`;
+
+/**
+ * A custom run after one end changed: the other end moves to keep from ≤ to
+ * and the run within MAX_CUSTOM_MONTHS, and neither end passes `latest` (this
+ * month), so the server never has to refuse it.
+ */
+export function customRun(from: string, to: string, changed: "from" | "to", latest: string): { from: string; to: string } {
+  let f = Math.min(monthIndex(from), monthIndex(latest));
+  let t = Math.min(monthIndex(to), monthIndex(latest));
+  if (changed === "from") {
+    if (t < f) t = f;
+    if (t - f + 1 > MAX_CUSTOM_MONTHS) t = f + MAX_CUSTOM_MONTHS - 1;
+  } else {
+    if (f > t) f = t;
+    if (t - f + 1 > MAX_CUSTOM_MONTHS) f = t - MAX_CUSTOM_MONTHS + 1;
+  }
+  return { from: monthKeyOf(f), to: monthKeyOf(t) };
+}
 
 /** D9: "Inactive or left, marked overdue, not chased", with the guardian count when any. Screen and CSV share it. */
 export function otherOwingDetail(guardians: number): string {
@@ -243,9 +312,18 @@ export function classComposition(topClasses: ReportsData["topClasses"]) {
  */
 export type MonthDrillFilter = "new-this-month" | "rejoined-this-month" | "lost-this-month" | "tasters-this-month" | "churned-this-month";
 
-export function monthDrillHref(filter: MonthDrillFilter, period: ReportsData["period"] | undefined): string {
+export function monthDrillHref(filter: MonthDrillFilter, period: ReportsData["period"] | undefined, range?: Pick<ReportRange, "fromMonth" | "toMonth">): string {
   const params = new URLSearchParams({ filter });
-  if (period?.monthKey) params.set("month", period.monthKey);
+  // A period of several months lists the members of the whole run (the Members
+  // page reads from/to as one window); one month keeps the `month` link.
+  if (range && range.fromMonth !== range.toMonth) {
+    params.set("from", range.fromMonth);
+    params.set("to", range.toMonth);
+  } else if (range) {
+    params.set("month", range.toMonth);
+  } else if (period?.monthKey) {
+    params.set("month", period.monthKey);
+  }
   return `/dashboard/members?${params.toString()}`;
 }
 
@@ -279,7 +357,8 @@ export function joinedTileDetail(t: MembershipReport["totals"]): string {
 
 /** The "New this month" tile's scope, in the movement words. */
 export const NEW_SCOPE = "First ever start. Rejoins, tasters and imports are counted apart";
-const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";
+/** D4 (Noe, 26 Oct 2026: churn "how it normally is"). */
+const CHURN_FORMULA = "Members who left during the period ÷ active members when it began";
 
 /**
  * Delta as display text, or null when nothing moved. A percentage always
@@ -404,7 +483,11 @@ export function membershipCsvRows(m: MembershipReport): (string | number | null)
  * old its numbers are.
  */
 export function reportsCsv(data: ReportsData, attribution: AttributionData): string {
-  const windowLabel = `Last ${data.weeksBack} weeks`;
+  const range = data.range;
+  const words = periodWords(range);
+  const pm = data.periodMovement;
+  const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+  const windowLabel = windowLabelOf(range);
   // Same scoping as the on-screen labels (ReportsView.scopedWindowLabel): the
   // class/age filters only narrow attendance-derived rows below, never the
   // membership/payment ones, so a downloaded CSV can't be misread as a
@@ -417,11 +500,11 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
   const { churn, retention } = data;
   const recovery = data.paymentHealth.recovery;
   const shares = derivedShares(data);
-  const thisMonthEstimate = estimateLabel(thisAndLastMonthBasis(data.membership).current, estimatedCaption(data.membership));
+  const thisMonthEstimate = estimateLabel(pm.basis, estimatedCaption(data.membership));
   const rows: (string | number | null)[][] = [
     ["Section", "Metric", "Value", "Detail"],
     ["Report", "Generated at", validGeneratedAt(data.generatedAt) ? formatDateTime(data.generatedAt) : "—", "Figures cached for up to 60 seconds"],
-    ...(data.period ? [["Report", "This month", data.period.label, periodCsvDetail(data.period)]] : []),
+    ["Report", "Period", range.label, rangeCsvDetail(range)],
     ["Summary", "Total members", data.summary.totalMembers, "Every training member on record, including those who have left"],
     ["Summary", "Current members", data.summary.currentMembers, "Active and inactive members and tasters"],
     ["Summary", "Active members", data.summary.activeMembers, activeMembersDetail(data.summary)],
@@ -429,7 +512,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // attendanceScope), so its export row must say so — it was the one scoped
     // number leaving the page unlabelled (assessment lane 5).
     ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Last week: ${data.summary.attendanceLastWeek}${filterSuffix ? ` · ${filterSuffix}` : ""}`],
-    ["Summary", "New members this month", data.summary.newMembersThisMonth, [`Last month: ${data.summary.newMembersLastMonth}`, NEW_SCOPE, monthPairEstimateNote(data.membership)].filter(Boolean).join(" · ")],
+    ["Summary", `New members ${words.during}`, data.summary.newMembersThisMonth, [`${cap(words.before)}: ${data.summary.newMembersLastMonth}`, NEW_SCOPE, periodPairEstimateNote(data)].filter(Boolean).join(" · ")],
     ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
     // The rate definition the owner chose on screen, with its formula — the
     // headline of the filter bar, previously missing from the file.
@@ -437,13 +520,13 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     ["Summary", "Active classes", data.summary.totalActiveClasses, ""],
     // Health rows (T2b): the same text the tiles print, so the file and the
     // screen agree. Club-wide — the class/age filters never scope them.
-    ["Health", "Churn this month", formatRatio(churn.ratePct, churn.cancelled, churn.base), `${CHURN_FORMULA} · club-wide`],
+    ["Health", `Churn ${words.during}`, formatRatio(churn.ratePct, churn.cancelled, churn.base), `${CHURN_FORMULA} · club-wide`],
     // D11: the Joined tile, line for line, and the members behind each figure.
-    ["Health", MEMBERSHIP_COPY.joinedLabel, churn.joined, withEstimate(`${joinedTileDetail(currentMonthMovement(data.membership))} · ${MEMBERSHIP_COPY.definition}`, thisMonthEstimate)],
-    ["Health", "New this month", currentMonthMovement(data.membership).new, withEstimate("First ever start", thisMonthEstimate)],
-    ["Health", "Rejoined this month", currentMonthMovement(data.membership).rejoined, withEstimate("Started again after leaving", thisMonthEstimate)],
-    ["Health", "Tasters added this month", currentMonthMovement(data.membership).tasterAdded ?? 0, withEstimate("Not in Joined or Net", thisMonthEstimate)],
-    ["Health", "Left this month", currentMonthMovement(data.membership).lost, withEstimate("Cancelled, or finished a prepaid course", thisMonthEstimate)],
+    ["Health", `Joined ${words.during} (new + rejoined)`, churn.joined, withEstimate(`${joinedTileDetail(pm.totals)} · ${MEMBERSHIP_COPY.definition}`, thisMonthEstimate)],
+    ["Health", `New ${words.during}`, pm.totals.new, withEstimate("First ever start", thisMonthEstimate)],
+    ["Health", `Rejoined ${words.during}`, pm.totals.rejoined, withEstimate("Started again after leaving", thisMonthEstimate)],
+    ["Health", `Tasters added ${words.during}`, pm.totals.tasterAdded ?? 0, withEstimate("Not in Joined or Net", thisMonthEstimate)],
+    ["Health", `Left ${words.during}`, pm.totals.lost, withEstimate("Cancelled, or finished a prepaid course", thisMonthEstimate)],
     ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), RECOVERY_SCOPE],
     // Review L2: payer totals, the Payments → Outstanding definition; the
     // detail says guardians who pay are counted, and how many.
@@ -457,12 +540,14 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     ["Payments", FAILED_TO_RECONCILE_COPY.label, data.paymentHealth.failedToReconcileCount ?? 0, failedToReconcileDetail(data.paymentHealth.failedToReconcileGuardianCount ?? 0)],
     ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
     ...membershipCsvRows(data.membership),
-    ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
+    ...data.weeklyAttendance.map((row) => (data.attendanceBucket === "month"
+      ? ["Monthly attendance", row.week, row.count, row.isCurrentWeek ? "Current month" : ""]
+      : ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""])),
     ...data.monthlySignups.map((row) => [
       "Joined by month (new + rejoined)",
       row.month,
       row.count,
-      [row.isCurrentMonth ? "Current month" : null, estimateLabel(row.basis, estimatedCaption(data.membership))].filter(Boolean).join(" · "),
+      [row.isCurrentMonth ? "Current month" : null, row.inPeriod === false ? "Outside the period (shown for context)" : null, estimateLabel(row.basis, estimatedCaption(data.membership))].filter(Boolean).join(" · "),
     ]),
     ...(() => {
       const mix = classComposition(data.topClasses);
@@ -562,12 +647,16 @@ function JoinedThisMonthTile({
   joined,
   t,
   period,
+  range,
+  words,
   estimate = null,
 }: {
   joined: number;
   t: MembershipReport["totals"];
   period: ReportsData["period"] | undefined;
-  /** "Partly estimated" (or what an estimate came from) when this month is not wholly recorded. */
+  range: ReportRange;
+  words: ReturnType<typeof periodWords>;
+  /** "Partly estimated" (or what an estimate came from) when the period is not wholly recorded. */
   estimate?: string | null;
 }) {
   const lines: { label: string; value: number; filter: MonthDrillFilter }[] = [
@@ -585,12 +674,12 @@ function JoinedThisMonthTile({
         <UserPlus className="w-5 h-5" style={{ color: "var(--color-primary)" }} />
       </div>
       <p className="mt-5 text-2xl font-bold leading-tight text-tx-1" data-testid="reports-joined-value">{formatNumber(joined)}</p>
-      <p className="text-xs font-medium mt-1 text-tx-3">{MEMBERSHIP_COPY.joinedLabel}</p>
+      <p className="text-xs font-medium mt-1 text-tx-3">Joined {words.during} (new + rejoined)</p>
       <ul className="mt-2 space-y-0.5 text-[11px]">
         {lines.map((line) => (
           <li key={line.filter}>
             <Link
-              href={monthDrillHref(line.filter, period)}
+              href={monthDrillHref(line.filter, period, range)}
               className="flex items-center justify-between gap-2 rounded px-1 -mx-1 py-0.5 text-tx-2 transition-colors hover:bg-[var(--sf-2)]"
               data-testid={`reports-joined-${line.filter}`}
             >
@@ -604,11 +693,11 @@ function JoinedThisMonthTile({
         ))}
       </ul>
       <p className="mt-2 text-[11px] text-tx-2" data-testid="reports-joined-net">
-        Net {formatSigned(t.net)} this month (new + rejoined − left)
+        Net {formatSigned(t.net)} {words.during} (new + rejoined − left)
       </p>
       {estimate && (
         <p className="mt-1 text-[11px] text-tx-3" data-testid="reports-joined-estimate">
-          {estimate}: some of this month&apos;s moves are reconstructed, not recorded at the time.
+          {estimate}: some of {words.possessive} moves are reconstructed, not recorded at the time.
         </p>
       )}
     </Card>
@@ -833,13 +922,18 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     membership,
     paymentHealth,
     period,
-    weeksBack,
     classOptions,
     filters,
     attendanceRate,
     attendanceRateModes,
   } = data;
   const healthLine = paymentHealthLine(paymentHealth);
+  const range = data.range;
+  const words = periodWords(range);
+  const pm = data.periodMovement;
+  const byMonth = data.attendanceBucket === "month";
+  // The latest month a custom run may end in: this month, in the club's zone.
+  const latestMonth = clubMonthWindow(new Date(), range.timeZone).monthKey;
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -863,10 +957,12 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
   // click ("All classes" shown after choosing a class). useOptimistic shows
   // the clicked value for exactly the life of the transition and reverts to
   // the server value the moment the new page lands — no effect, no cleanup.
-  type ParamKey = "weeks" | "classId" | "ageGroup" | "rate";
-  type Shown = { weeks: string; classId: string; ageGroup: string | null; rate: string };
+  type ParamKey = "classId" | "ageGroup" | "rate";
+  type Shown = { period: string; from: string; to: string; classId: string; ageGroup: string | null; rate: string };
   const serverShown: Shown = {
-    weeks: String(weeksBack),
+    period: range.key,
+    from: range.fromMonth,
+    to: range.toMonth,
     classId: filters.classId ?? "",
     ageGroup: filters.ageGroup ?? null,
     rate: attendanceRate.mode,
@@ -894,7 +990,6 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     const update: Partial<Shown> =
       key === "ageGroup" ? { ageGroup: value } :
       key === "classId" ? { classId: value ?? "" } :
-      key === "weeks" ? { weeks: value ?? serverShown.weeks } :
       { rate: value ?? serverShown.rate };
     startTransition(() => {
       showOptimistically(update);
@@ -902,9 +997,35 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     });
   }
 
-  // Every attendance-derived figure on this page covers `weeksBack` weeks,
-  // not all time (audit memory-storage 2026-08-16 P1-12) — label them so.
-  const windowLabel = `Last ${weeksBack} weeks`;
+  // The period: a preset, or a custom run of months (lib/report-period). The
+  // old `weeks` parameter is dropped once a period is chosen.
+  function setPeriod(next: { period: ReportPeriodKey; from?: string; to?: string }) {
+    const params = new URLSearchParams(requestedParams.current.toString());
+    params.delete("weeks");
+    params.set("period", next.period);
+    if (next.period === "custom" && next.from && next.to) {
+      params.set("from", next.from);
+      params.set("to", next.to);
+    } else {
+      params.delete("from");
+      params.delete("to");
+    }
+    requestedParams.current = params;
+    startTransition(() => {
+      showOptimistically({ period: next.period, ...(next.from ? { from: next.from } : {}), ...(next.to ? { to: next.to } : {}) });
+      router.replace(`/dashboard/reports?${params.toString()}`);
+    });
+  }
+
+  function setMonth(end: "from" | "to", value: string) {
+    if (!/^\d{4}-\d{2}$/.test(value)) return;
+    const run = customRun(end === "from" ? value : shown.from, end === "to" ? value : shown.to, end, latestMonth);
+    setPeriod({ period: "custom", ...run });
+  }
+
+  // Every period figure on this page covers the chosen months, not all time
+  // (audit memory-storage 2026-08-16 P1-12) — label them so.
+  const windowLabel = windowLabelOf(range);
   // Class/age-group filters only narrow the attendance-derived sections
   // (lib/reports.ts documents the exact list on ReportsData.filters) — this
   // suffix is appended ONLY to those captions, never to growth/churn/
@@ -977,24 +1098,48 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
       <Card data-testid="reports-filters" padding="tight">
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-3">
+            {/* The period (Noe, 26 Oct 2026): a preset, or a custom run of
+                whole months. From/To are always shown, holding the period's
+                months, so choosing never moves the row; editing either picks
+                "Custom months". Every period card below follows it. */}
             <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
-              Window
+              Period
               <Select
-                aria-label="Reporting window"
-                className="w-[120px]"
-                value={shown.weeks}
-                onChange={(e) => setParam("weeks", e.target.value)}
+                aria-label="Reporting period"
+                className="w-[170px]"
+                value={shown.period}
+                onChange={(e) => {
+                  const key = e.target.value as ReportPeriodKey;
+                  if (key === "custom") setPeriod({ period: "custom", from: shown.from, to: shown.to });
+                  else setPeriod({ period: key });
+                }}
               >
-                {WEEK_OPTIONS.map((w) => (
-                  <option key={w} value={w}>{w} weeks</option>
+                {REPORT_PERIOD_OPTIONS.map((o) => (
+                  <option key={o.key} value={o.key}>{o.label}</option>
                 ))}
-                {/* lib/reports.ts accepts any 4-24; a hand-typed `?weeks=7` is
-                    valid and rendered, so the control must say "7 weeks" rather
-                    than fall back to showing the first option (lane 5). */}
-                {!(WEEK_OPTIONS as readonly number[]).includes(weeksBack) && (
-                  <option value={weeksBack}>{weeksBack} weeks</option>
-                )}
               </Select>
+            </label>
+            <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
+              From
+              <input
+                type="month"
+                aria-label="Period from month"
+                className="h-9 w-[150px] rounded-[var(--r-md)] border border-bd-default bg-[var(--sf-1)] px-2 text-sm text-tx-1"
+                value={shown.from}
+                max={latestMonth}
+                onChange={(e) => setMonth("from", e.target.value)}
+              />
+            </label>
+            <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
+              To
+              <input
+                type="month"
+                aria-label="Period to month"
+                className="h-9 w-[150px] rounded-[var(--r-md)] border border-bd-default bg-[var(--sf-1)] px-2 text-sm text-tx-1"
+                value={shown.to}
+                max={latestMonth}
+                onChange={(e) => setMonth("to", e.target.value)}
+              />
             </label>
 
             <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
@@ -1152,7 +1297,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         </Card>
 
         <Card>
-          <SectionTitle title="Check-in trend" subtitle={`Weekly attendance — ${scopedWindowLabel}`} icon={Activity} />
+          <SectionTitle title="Check-in trend" subtitle={`${byMonth ? "Monthly" : "Weekly"} attendance — ${scopedWindowLabel}`} icon={Activity} />
           {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
             <EmptyChart label="No attendance data yet" />
           ) : (
@@ -1204,12 +1349,12 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         />
         <MetricCard
           icon={UserPlus}
-          label="New this month"
+          label={`New ${words.during}`}
           value={formatNumber(summary.newMembersThisMonth)}
-          detail={[NEW_SCOPE, monthPairEstimateNote(membership)].filter(Boolean).join(" · ")}
+          detail={[NEW_SCOPE, periodPairEstimateNote(data)].filter(Boolean).join(" · ")}
           primaryColor={primaryColor}
-          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: "on last month" }}
-          href={monthDrillHref("new-this-month", period)}
+          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: `on ${words.before}` }}
+          href={monthDrillHref("new-this-month", period, range)}
         />
         <MetricCard
           icon={BarChart3}
@@ -1242,7 +1387,11 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.55fr)_360px] gap-4">
         <Card>
-          <SectionTitle title="Weekly Attendance" subtitle={`${scopedWindowLabel}, current week highlighted`} icon={Activity} />
+          <SectionTitle
+            title={byMonth ? "Attendance by month" : "Weekly Attendance"}
+            subtitle={`${scopedWindowLabel}, current ${byMonth ? "month" : "week"} highlighted`}
+            icon={Activity}
+          />
           {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
             <EmptyChart label="No attendance data yet" />
           ) : (
@@ -1317,7 +1466,13 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionTitle title="Joined" subtitle="Joined (new + rejoined) per month, last 6 months" icon={UserPlus} />
+          <SectionTitle
+            title="Joined"
+            subtitle={monthlySignups.some((r) => r.inPeriod === false)
+              ? `Joined (new + rejoined) per month · ${range.label} shaded, earlier months for context`
+              : `Joined (new + rejoined) per month · ${range.label}`}
+            icon={UserPlus}
+          />
           {monthlySignups.every((row) => row.count === 0) ? (
             <EmptyChart label="No joins yet" />
           ) : (
@@ -1337,6 +1492,15 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   allowDecimals={false}
                 />
                 <Tooltip content={<ChartTooltip suffix="joined (new + rejoined)" noteFor={(p) => estimateLabel((p as { basis?: MembershipBasis }).basis, estimatedCaption(membership))} />} />
+                {monthlySignups.some((r) => r.inPeriod === false) && monthlySignups.some((r) => r.inPeriod) && (
+                  <ReferenceArea
+                    x1={monthlySignups.find((r) => r.inPeriod)!.month}
+                    x2={[...monthlySignups].reverse().find((r) => r.inPeriod)!.month}
+                    fill="var(--color-primary)"
+                    fillOpacity={0.08}
+                    ifOverflow="extendDomain"
+                  />
+                )}
                 <Line
                   type="monotone"
                   dataKey="count"
@@ -1481,24 +1645,26 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
           <MetricCard
             icon={UserMinus}
-            label="Churn rate this month"
+            label={`Churn rate ${words.during}`}
             value={<RatioValue pct={churn.ratePct} n={churn.cancelled} base={churn.base} />}
-            detail={churn.base > 0 ? CHURN_FORMULA : "No active or cancelled members this month"}
+            detail={churn.base > 0 ? CHURN_FORMULA : "No active members when the period began"}
             primaryColor={primaryColor}
-            href={monthDrillHref("churned-this-month", period)}
-            hrefLabel="Churn rate this month"
+            href={monthDrillHref("churned-this-month", period, range)}
+            hrefLabel={`Churn rate ${words.during}`}
           />
           <JoinedThisMonthTile
             joined={churn.joined}
-            t={currentMonthMovement(membership)}
+            t={pm.totals}
             period={period}
-            estimate={estimateLabel(thisAndLastMonthBasis(membership).current, estimatedCaption(membership))}
+            range={range}
+            words={words}
+            estimate={estimateLabel(pm.basis, estimatedCaption(membership))}
           />
           <MetricCard
             icon={RefreshCcw}
             label="Payment recovery rate"
             value={<RatioValue pct={recovery.ratePct} n={recovery.recovered} base={recovery.failedMembers} />}
-            detail={recovery.failedMembers > 0 ? RECOVERY_SCOPE : "No failed payments in the last 90 days"}
+            detail={recovery.failedMembers > 0 ? RECOVERY_SCOPE : "No failed payments in the period"}
             primaryColor={primaryColor}
           />
         </div>
@@ -1526,7 +1692,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <NetNewMembersCard membership={membership} />
         <div className="grid grid-cols-1 gap-4">
           <Card>
-            <SectionTitle title="Payment Health" subtitle="Current overdue and recent failures" icon={CreditCard} />
+            <SectionTitle title="Payment Health" subtitle={`Overdue now · failures ${words.during}`} icon={CreditCard} />
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-6">
               <Link
                 href="/dashboard/members?filter=overdue"

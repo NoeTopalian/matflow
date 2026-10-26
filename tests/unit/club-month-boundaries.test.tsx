@@ -209,7 +209,7 @@ describe("Reports tiles, CSV and drill-through agree on the club's month", () =>
     // CSV: the same numbers, and it says which month and zone.
     expect(csvValue("New members this month")).toBe("2");
     expect(csvValue("Joined this month (new + rejoined)")).toBe("2");
-    expect(csv).toContain("This month,November 2026");
+    expect(csv).toContain("Period,November 2026");
     expect(csv).toContain("Pacific/Auckland");
     // Drill-through: the same members, by id.
     expect(newRows.names.sort()).toEqual(["n1", "n2"]);

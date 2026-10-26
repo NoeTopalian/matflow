@@ -116,6 +116,12 @@ export interface ReportsData {
   /** How the attendance chart groups the period: by week, or by month when it is longer than 3 months. */
   attendanceBucket: "week" | "month";
   /**
+   * The period's movement (new, rejoined, tasters added, left, net: the
+   * movement definition) and whether it, and the equal run of months before
+   * it, were recorded or estimated. The Joined tile and the CSV read it.
+   */
+  periodMovement: { totals: MembershipReport["totals"]; basis: MembershipBasis; previousBasis: MembershipBasis };
+  /**
    * The weeks the period spans, rounded up (kept for the API's readers; the
    * period itself is `range`). Every attendance-derived figure covers the
    * period, not all time (audit memory-storage 2026-08-16 P1-12).
@@ -392,6 +398,7 @@ export function createEmptyReportsData(): ReportsData {
     period: clubMonthWindow(new Date(), undefined),
     range: resolveReportPeriod({}, new Date(), undefined),
     attendanceBucket: "week",
+    periodMovement: { totals: emptyMembershipReport().totals, basis: "none", previousBasis: "none" },
     weeksBack: 5,
     classOptions: [],
     filters: { classId: null, className: null, ageGroup: null },
@@ -908,6 +915,11 @@ export async function getReportsData(
     period,
     range,
     attendanceBucket,
+    periodMovement: {
+      totals: periodMoves.basis === "none" ? emptyMembershipReport().totals : periodMoves.totals,
+      basis: periodMoves.basis,
+      previousBasis: periodMoves.previous?.basis ?? "none",
+    },
     weeksBack,
     classOptions: classOptionsRaw,
     filters: {

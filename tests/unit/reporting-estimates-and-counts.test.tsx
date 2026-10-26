@@ -101,6 +101,11 @@ function membership(currentBasis: MembershipBasis = "mixed"): MembershipReport {
   };
 }
 
+/** A month row's tally, without its label fields. */
+function tallyOf(r: MembershipReport["movementsByMonth"][number]): MembershipReport["totals"] {
+  return { new: r.new, rejoined: r.rejoined, lost: r.lost, lostCancelled: r.lostCancelled, lostCompleted: r.lostCompleted, net: r.net, imported: r.imported, otherIn: r.otherIn, otherOut: r.otherOut, tasterAdded: r.tasterAdded };
+}
+
 function reports(m: MembershipReport = membership()): ReportsData {
   const base = createEmptyReportsData();
   return {
@@ -108,6 +113,8 @@ function reports(m: MembershipReport = membership()): ReportsData {
     summary: { ...base.summary, activeMembers: 32, currentMembers: 35, attendanceThisWeek: 45, attendanceLastWeek: 40, newMembersThisMonth: 2, newMembersLastMonth: 2 },
     churn: { ratePct: 3, cancelled: 1, base: 33, joined: 3, net: 2 },
     membership: m,
+    // The period is this month: its movement is October's tally, the run before it September.
+    periodMovement: { totals: tallyOf(m.movementsByMonth[2]), basis: m.movementsByMonth[2].basis, previousBasis: m.movementsByMonth[1].basis },
     monthlySignups: [
       { month: "Aug 2026", count: 4, isCurrentMonth: false, basis: "estimated" },
       { month: "Sep 2026", count: 2, isCurrentMonth: false, basis: "estimated" },

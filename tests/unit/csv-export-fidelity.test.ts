@@ -1,3 +1,4 @@
+import { resolveReportPeriod } from "@/lib/report-period";
 import { describe, it, expect, vi } from "vitest";
 import { csvCell, csvDocument, CSV_UTF8_BOM } from "@/lib/csv";
 
@@ -149,6 +150,13 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
       },
       // T2c: the CSV states when its figures were computed.
       generatedAt: new Date(2026, 9, 17, 14, 5).toISOString(),
+      // The statistics period (this month) and its movement: October's tally.
+      range: resolveReportPeriod({}, new Date(2026, 9, 17, 14, 5), "Europe/London"),
+      periodMovement: {
+        totals: { new: 2, rejoined: 1, lost: 0, lostCancelled: 0, lostCompleted: 0, net: 3, imported: 5, otherIn: 0, otherOut: 0, tasterAdded: 0 },
+        basis: "mixed",
+        previousBasis: "estimated",
+      },
     };
     const attribution = {
       rows: [{ name: "Zoé \"Coach\" 🥋", trialsRun: 2, conversions: 1, conversionRate: null, retained: 1, retentionRate: null, lost: 0, undecided: 1 }],
@@ -231,6 +239,8 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
       weeklyAttendance: [], monthlySignups: [], topClasses: [], currentMembersByStatus: [], checkInMethods: [],
       membership: { movementsByMonth: [], headcountByMonth: [] },
       generatedAt,
+      range: resolveReportPeriod({}, new Date(generatedAt), "Europe/London"),
+      periodMovement: { totals: { new: 0, rejoined: 0, lost: 0, lostCancelled: 0, lostCompleted: 0, net: 0, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0 }, basis: "none", previousBasis: "none" },
     };
     const attribution = { rows: [], overall: { trials: 0, lost: 0, undecided: 0, converted: 0, conversionRate: null, churned: 0, retained: 0, retentionRate: null }, epochStart: null, minTrials: 5 };
     const rows = parseCsv(stripBom(reportsCsv(minimal as never, attribution as never)));

@@ -92,6 +92,12 @@ function reports(overrides: Partial<ReportsData> = {}): ReportsData {
         { month: "2026-10", label: "Oct 26", new: 2, rejoined: 1, lost: 1, lostCancelled: 1, lostCompleted: 0, net: 2, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0, basis: "recorded", isCurrentMonth: true },
       ],
     },
+    // The period's movement (this month): October's tally.
+    periodMovement: {
+      totals: { new: 2, rejoined: 1, lost: 1, lostCancelled: 1, lostCompleted: 0, net: 2, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0 },
+      basis: "recorded",
+      previousBasis: "none",
+    },
     retention: { ratePct: 75, survived: 15, cohort: 20 },
     retentionRate: 75,
     paymentHealth: {
