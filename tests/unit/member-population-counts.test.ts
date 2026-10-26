@@ -1,6 +1,6 @@
 /**
  * Headline member counts exclude parent/guardian accounts (2 Oct 2026,
- * independent acceptance of the TeamUp import, finding P1: 219 no-login
+ * independent acceptance of the TeamUp import, finding P1: an import's no-login
  * guardian drafts read as "active members" and "new this month"). Pinned as a
  * scan: every Member population query in lib/reports.ts and the dashboard
  * home carries a named population from lib/member-population.ts.

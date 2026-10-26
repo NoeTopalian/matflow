@@ -131,8 +131,8 @@ async function getStats(tx: TxClient, tenantId: string, role: string, atRisk: At
     }),
     // A guardian/parent account never signs a training waiver and is not a
     // member to chase for a phone; both counts are training members only
-    // (acceptance S1 follow-up, 2 Oct 2026: 219 guardian drafts read as 531
-    // missing waivers).
+    // (acceptance S1 follow-up, 2 Oct 2026: a real import's guardian drafts
+    // were counted as missing waivers).
     tx.member.count({
       where: { tenantId, ...CAN_TRAIN_MEMBER, waiverAccepted: false },
     }),

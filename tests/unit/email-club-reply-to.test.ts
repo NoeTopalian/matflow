@@ -61,7 +61,7 @@ beforeEach(() => {
   createMock.mockReset().mockResolvedValue({ id: "log-1" });
   updateMock.mockReset().mockResolvedValue({});
   resendSendMock.mockReset().mockResolvedValue({ data: { id: "re_1" }, error: null });
-  tenantFindUnique.mockReset().mockResolvedValue({ contactEmail: "info@totalbjj.co.uk", billingContactEmail: null });
+  tenantFindUnique.mockReset().mockResolvedValue({ contactEmail: "info@club.example.test", billingContactEmail: null });
   provisionalLookup.mockReset().mockResolvedValue(null);
   process.env.RESEND_API_KEY = "re_test_key";
   process.env.RESEND_FROM = "MatFlow Studio <noreply@matflow.studio>";
@@ -70,13 +70,13 @@ beforeEach(() => {
 describe("sendEmail — club Reply-To", () => {
   it("a receipt carries Reply-To = the club's contact email", async () => {
     await sendEmail({ tenantId: "t-1", templateId: "receipt", to: "tom@example.com", vars: VARS });
-    expect(sentArgs().replyTo).toBe("info@totalbjj.co.uk");
+    expect(sentArgs().replyTo).toBe("info@club.example.test");
   });
 
   it("falls back to billingContactEmail when contactEmail is empty", async () => {
-    tenantFindUnique.mockResolvedValue({ contactEmail: null, billingContactEmail: "billing@totalbjj.co.uk" });
+    tenantFindUnique.mockResolvedValue({ contactEmail: null, billingContactEmail: "billing@club.example.test" });
     await sendEmail({ tenantId: "t-1", templateId: "payment_failed", to: "tom@example.com", vars: VARS });
-    expect(sentArgs().replyTo).toBe("billing@totalbjj.co.uk");
+    expect(sentArgs().replyTo).toBe("billing@club.example.test");
   });
 
   it("no club address → no Reply-To at all (never a dead address)", async () => {
@@ -97,9 +97,9 @@ describe("sendEmail — club Reply-To", () => {
       templateId: "receipt",
       to: "tom@example.com",
       vars: VARS,
-      replyTo: "desk@totalbjj.co.uk",
+      replyTo: "desk@club.example.test",
     });
-    expect(sentArgs().replyTo).toBe("desk@totalbjj.co.uk");
+    expect(sentArgs().replyTo).toBe("desk@club.example.test");
     expect(tenantFindUnique).not.toHaveBeenCalled();
   });
 

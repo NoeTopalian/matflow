@@ -68,7 +68,6 @@ Path: https://vercel.com/noetopalians-projects/matflow/settings/environment-vari
 
 | # | Variable | Value source | Effect when set |
 |---|---|---|---|
-| 1 | `CRON_SECRET` | Use this generated value: `18ddde488d98ca8d36730abcfcd74c4a6988094c3eafaa011e6684a56836119e` | Monthly cron fires on the 1st of each month at 02:00 UTC |
 | 2 | `RESEND_API_KEY` | resend.com → API keys → Create | Outbound email starts working: forgot-password OTP, payment-failed alerts, monthly report email |
 | 3 | `RESEND_WEBHOOK_SECRET` | resend.com → Webhooks → add endpoint `https://matflow-nine.vercel.app/api/webhooks/resend` (tick all 6 events) → reveal Signing Secret | EmailLog status updates flow back |
 | 4 | `ANTHROPIC_API_KEY` | console.anthropic.com → API Keys → Create | Claude AI causal monthly report generates real content (cron currently no-ops) |

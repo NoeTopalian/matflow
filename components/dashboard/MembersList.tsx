@@ -502,7 +502,7 @@ const HEADLINE_POPULATION: Partial<Record<StatusFilter, PopulationKey>> = {
  * not a training member (3 Oct 2026). Same rule as TRAINING_MEMBER in
  * lib/member-population.ts, which Reports and the dashboard's waiver count
  * already use, so the Members page cannot disagree with them. Without it a
- * TeamUp import's ~219 guardian records (status "active", payment "paid", no
+ * TeamUp import's guardian records (status "active", payment "paid", no
  * plan) inflated Current Members, Paid, Waivers Missing, Missing Phone and —
  * a fortnight later — Quiet. They stay findable: the "Parents & guardians"
  * chip lists them, and a search on All looks at everyone.
