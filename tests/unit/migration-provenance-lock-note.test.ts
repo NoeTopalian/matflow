@@ -5,6 +5,10 @@
  * is held to COMMIT, so that is wrong (the SQL itself is safe). The migration
  * was applied to the test branch, so its file must not change (a comment edit
  * changes the checksum); the correction lives in the folder's README.
+ *
+ * 26 Oct 2026 (release integration): the one change since is the bounded-wait
+ * header (tests/unit/migrations-bounded-waits.test.ts), with the test branch
+ * re-stamped; the pin below is the file with that header.
  */
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
@@ -14,10 +18,10 @@ import { join } from "node:path";
 const DIR = join(process.cwd(), "prisma", "migrations", "20261017022302_status_event_source_provenance");
 
 describe("provenance migration lock note (review F5)", () => {
-  it("the migration SQL is byte-for-byte what was applied to the test branch", () => {
+  it("the migration SQL is byte-for-byte the reviewed file (statements as applied, plus the bounded-wait header)", () => {
     // Line endings normalised: git stores LF, a Windows checkout may show CRLF.
     const sql = readFileSync(join(DIR, "migration.sql"), "utf8").replace(/\r\n/g, "\n");
-    expect(createHash("sha256").update(sql).digest("hex")).toBe("37dd995957f6d50886f5f474e6173f551f1459518e441686410d9037d9e50777");
+    expect(createHash("sha256").update(sql).digest("hex")).toBe("64fbf7fc557e885ac5f1996a6d4ca387cd5c5121c6eacf0a8890464ff820e11c");
   });
 
   it("a README beside it corrects the lock comment", () => {
