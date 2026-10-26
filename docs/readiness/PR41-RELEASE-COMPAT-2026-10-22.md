@@ -12,7 +12,7 @@ Read-only, one `READ ONLY` transaction, aggregates only, through the shared host
 4. **Billing behaviour:** the webhook stores the paid period on `invoice.payment_succeeded`; no club has Stripe subscribers, so it writes nothing today.
 5. **Bookings:** none exist, so the booking-preservation policy has no live instances yet.
 
-The read holds only as of its date. Repeat it immediately before merge: a limit, squad list, booking or paused class created after it changes what deploy activates.
+The read holds only as of its date. Repeat it immediately before merge: a limit, squad list, booking or paused class created after it changes what deploy activates. Since 26 Oct the read also reports F, active classes an attendance-history import created (expected 0): the release's live-class counts in Reports, Analysis, the AI report and Settings leave them out, so a non-zero count would drop those numbers on deploy. Proven on the test branch only (26 Oct: 0 at every club).
 
 ## Migrations (six, all additive) and the application serving during migration
 - `20261017020102` creates `ClassMembershipTier` (indexes, foreign keys, row-level security): new table, no existing-row effect.

@@ -2,6 +2,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import SettingsPage from "@/components/dashboard/SettingsPage";
 import { requireRole } from "@/lib/authz";
 import { ACTIVE_MEMBER, CURRENT_MEMBER, GUARDIAN_ACCOUNT, ON_HOLD, TRAINING_MEMBER } from "@/lib/member-population";
+import { liveClassWhere } from "@/lib/class-live";
 
 export type TenantSettings = {
   id: string;
@@ -78,7 +79,8 @@ async function getData(tenantId: string, userId: string) {
             select: {
               members: { where: { ...ACTIVE_MEMBER } },
               users: true,
-              classes: { where: { isActive: true } },
+              // The timetable's classes, as Reports counts them (lib/class-live).
+              classes: { where: liveClassWhere(tenantId) },
             },
           },
         },

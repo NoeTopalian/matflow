@@ -15,6 +15,7 @@
 //  D. members with a live Stripe subscription (they gain a stored billing period on their next paid invoice;
 //     until then a "billing" allowance, if ever chosen, reads "period unknown") and members with nextDueAt;
 //  E. the billing-cycle mix of tiers (the webhook change stores the paid period; it changes no charge).
+//  F. active classes an attendance-history import created (the live-class counts leave them out; expected 0).
 import fs from "node:fs";
 import pg from "pg";
 import { parse as parsePg } from "pg-connection-string";
@@ -78,6 +79,11 @@ try {
     // E. tier billing cycles.
     T.tierCycles = (await client.query(
       `select "billingCycle", count(*)::int as n from "MembershipTier" where "tenantId" = $1 group by 1 order by 1`, [t.id])).rows;
+    // F. classes an attendance-history import created that are active (integration review, 26 Oct 2026). Before #41
+    // the class PATCH could reactivate one; the live-class counts (Reports, Analysis, AI report) leave them out, so a
+    // non-zero here means those counts drop on deploy. Expected 0.
+    T.activeImportedClasses = (await client.query(
+      `select count(*)::int as n from "Class" where "tenantId" = $1 and "sourceImportJobId" is not null and "isActive"`, [t.id])).rows[0].n;
     out.tenants[t.id] = T;
   }
   await client.query("COMMIT");

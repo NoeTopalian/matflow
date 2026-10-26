@@ -249,4 +249,12 @@ describe("getReportsData — class reads use the live-class predicate", () => {
       expect(src, f).not.toMatch(/class\.count\(\{ where: \{ tenantId, isActive: true \} \}\)/);
     }
   });
+
+  it("the Settings class counts (page and GET /api/settings) count live classes too", () => {
+    for (const f of ["app/dashboard/settings/page.tsx", "app/api/settings/route.ts"]) {
+      const src = readFileSync(path.join(process.cwd(), f), "utf8");
+      expect(src, f).toMatch(/classes: \{ where: liveClassWhere\(/);
+      expect(src, f).not.toMatch(/classes: \{ where: \{ isActive: true \} \}/);
+    }
+  });
 });
