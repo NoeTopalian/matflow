@@ -1649,7 +1649,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             value={<RatioValue pct={churn.ratePct} n={churn.cancelled} base={churn.base} />}
             detail={churn.base > 0 ? CHURN_FORMULA : "No active members when the period began"}
             primaryColor={primaryColor}
-            href={monthDrillHref("churned-this-month", period, range)}
+            // Churn counts leavers by the movement definition (cancelled, or
+            // finished a prepaid course), so it lists the Left slice.
+            href={monthDrillHref("lost-this-month", period, range)}
             hrefLabel={`Churn rate ${words.during}`}
           />
           <JoinedThisMonthTile

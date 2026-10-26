@@ -194,6 +194,17 @@ export function reportPeriodCacheKey(params: ReportPeriodParams): string {
   return (!params.period && presetForWeeks(params.weeks)) || DEFAULT_REPORT_PERIOD;
 }
 
+/**
+ * The period as one month-shaped window (the Members drill-through's window):
+ * start of its first month to the end of its last, labelled with its months.
+ * A one-month period is that month; `isCurrent` ("this month" in the slice's
+ * words) only for the current month on its own, never for a run.
+ */
+export function rangeAsMonthWindow(range: ReportRange): ClubMonthWindow & { isCurrent: boolean } {
+  if (range.fromMonth === range.toMonth) return { ...range.months[0], isCurrent: range.isCurrent };
+  return { timeZone: range.timeZone, monthStart: range.start, nextMonthStart: range.end, monthKey: range.toMonth, label: range.label, isCurrent: false };
+}
+
 /** True when `monthKey` is one of the period's months (charts highlight these). */
 export function inReportRange(range: Pick<ReportRange, "fromMonth" | "toMonth">, monthKey: string): boolean {
   return monthKey >= range.fromMonth && monthKey <= range.toMonth;

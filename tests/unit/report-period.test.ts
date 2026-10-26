@@ -7,6 +7,7 @@ import {
   reportPeriodParams,
   inReportRange,
   monthsLabel,
+  rangeAsMonthWindow,
   MAX_CUSTOM_MONTHS,
   MIN_CHART_MONTHS,
 } from "@/lib/report-period";
@@ -135,5 +136,16 @@ describe("helpers", () => {
 
   it("monthsLabel names one month in full", () => {
     expect(monthsLabel("2026-02", "2026-02", LONDON)).toBe("February 2026");
+  });
+});
+
+describe("rangeAsMonthWindow (the Members drill-through for a period)", () => {
+  it("a run of months is one window from the first month's start to the end of the last, never 'this month'", () => {
+    const w = rangeAsMonthWindow(resolveReportPeriod({ period: "3m" }, NOW, LONDON));
+    expect(w).toMatchObject({ monthStart: "2026-07-31T23:00:00.000Z", nextMonthStart: "2026-11-01T00:00:00.000Z", label: "Aug – Oct 2026", isCurrent: false });
+  });
+  it("one month is that month; the current month on its own is 'this month'", () => {
+    expect(rangeAsMonthWindow(resolveReportPeriod({}, NOW, LONDON))).toMatchObject({ monthKey: "2026-10", label: "October 2026", isCurrent: true });
+    expect(rangeAsMonthWindow(resolveReportPeriod({ period: "last-month" }, NOW, LONDON))).toMatchObject({ monthKey: "2026-09", isCurrent: false });
   });
 });
