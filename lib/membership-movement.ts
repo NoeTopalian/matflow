@@ -222,9 +222,11 @@ function isCorrection(e: MovementEvent): boolean {
   return e.correction === true || e.sourceAction === "import_rollback";
 }
 
-// A TeamUp refresh moves a member to inactive only for a completed prepaid
-// course (lib/importers/teamup.ts draftFor); the back-fill does the same for a
-// course that ended (lib/status-backfill.ts endOf). A staff "inactive" is not one.
+// A TeamUp refresh recorded before the 25 Oct 2026 later-upload rule moved a
+// member to inactive only for a completed prepaid course (lib/importers/teamup.ts
+// draftFor); a refresh now writes no event, so import_refresh rows are history.
+// The back-fill does the same for a course that ended (lib/status-backfill.ts
+// endOf). A staff "inactive" is not one.
 function endsCourse(e: MovementEvent): boolean {
   return (
     e.toStatus === "inactive" &&

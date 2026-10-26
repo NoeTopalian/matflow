@@ -94,7 +94,7 @@ describe("axes", () => {
     expect(lo).toBe(0);
     expect(hi).toBeGreaterThan(12);
     expect(headcountDomain([])).toEqual([0, 1]);
-    expect(headcountDomain(buildNetNewSeries(membership([month("2026-10", "Oct 26", { headcount: 531 })]))) [1]).toBe(600);
+    expect(headcountDomain(buildNetNewSeries(membership([month("2026-10", "Oct 26", { headcount: 540 })]))) [1]).toBe(600);
   });
 });
 

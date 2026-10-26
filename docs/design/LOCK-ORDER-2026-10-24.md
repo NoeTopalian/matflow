@@ -76,8 +76,8 @@ Locks in the order taken. "Plain reads" take no row lock.
 | Undo to a point (≥ 2 rows) | Class rows `FOR NO KEY UPDATE` in id order → Member rows `FOR NO KEY UPDATE` in id order → handlers (snapshot `UPDATE`s, roster `INSERT`/`DELETE`, attendance `DELETE` with pack restore) → audit `INSERT`s | `lib/undo-batch.ts` `lockBatchRows` |
 | Undo of one row | that handler's statements only | `lib/undo-registry.ts` |
 | TeamUp import, create | per 25 rows: Member `INSERT`, ledger `INSERT`; job `UPDATE` | `app/api/admin/import/[id]/commit/route.ts` |
-| TeamUp status refresh | per 25 members: Member `UPDATE` × 25 (**id order since 24 Oct**, was file order) → status events → job `UPDATE` | same file, `commitRefresh` |
-| Refresh rollback | ONE transaction: Member `UPDATE` for every changed member (**id order since 24 Oct**) → status events → job `UPDATE` → audit | `app/api/admin/import/[id]/rollback/route.ts` |
+| TeamUp status refresh | (since the 25 Oct later-upload rule) no Member `UPDATE` and no status event: the differences are listed for review → job `UPDATE` only. Before: per 25 members, Member `UPDATE` × 25 (id order from 24 Oct, file order before) → status events → job `UPDATE` | same file, `commitRefresh` |
+| Refresh rollback | ONE transaction: Member `UPDATE` for every changed member (**id order since 24 Oct**) → status events → job `UPDATE` → audit. Writes only for a refresh recorded before 25 Oct; a later refresh changed nobody, so its rollback restores nobody | `app/api/admin/import/[id]/rollback/route.ts` |
 | Import rollback (create) | ONE transaction (budget = function limit − 10 s): imported attendance `DELETE` → Member `DELETE` (children, then adults; one statement each, scan order) → ledger `DELETE` → job `UPDATE` → audit | same file |
 | Attendance-history import | job lease `UPDATE` → per 400 rows (60 s budget): Class/session `INSERT` (KEY SHARE Class), attendance `INSERT` (KEY SHARE Member, session), imported-booking `INSERT`/`UPDATE`, mapping upserts. No Member `UPDATE`, no Class `FOR UPDATE` | `lib/attendance-import.ts` |
 | Stripe webhook (dispute) | Member `UPDATE` → pack `UPDATE` | `app/api/stripe/webhook/route.ts` |
@@ -87,7 +87,7 @@ Locks in the order taken. "Plain reads" take no row lock.
 
 | # | Pair | Cycle | Status |
 |---|---|---|---|
-| C-1 | TeamUp refresh batch / refresh rollback **vs** undo batch | Refresh updated two members B then A (file order) while the undo batch locked A then B (id order): each holds one and waits for the other. | **Fixed 24 Oct**: both refresh writers update in id order. Test A proves the opposite order deadlocks; test F proves the same order queues. |
+| C-1 | TeamUp refresh batch / refresh rollback **vs** undo batch | Refresh updated two members B then A (file order) while the undo batch locked A then B (id order): each holds one and waits for the other. | **Fixed 24 Oct**: both refresh writers update in id order. Test A proves the opposite order deadlocks; test F proves the same order queues. Since 25 Oct the refresh commit writes no member at all; only the rollback of an older refresh remains a writer. |
 | C-2 | Class PATCH squad rewrite **vs** member deletion | The PATCH (holding the Class) deleted the class's roster rows, then inserting the new squad waited for KEY SHARE on member M; the deletion (holding M `FOR UPDATE`) cascaded to M's roster rows, one of which the PATCH had deleted, and waited for the PATCH. | **Fixed 24 Oct**: the PATCH takes KEY SHARE on the new squad's members, id order, before touching any roster row. Test G. |
 | C-3 | Import rollback **vs** undo batch | The rollback deletes members in one statement (scan order); the undo batch locks members in id order. A cycle needs two members in both sets. | Not reachable in practice: the rollback keeps every member edited after the import ("edited after the import"), and an undo batch only covers staff edits. Recommendation if it ever matters: lock the removable members `ORDER BY id FOR UPDATE` before the deletes. |
 | — | Check-in **vs** any writer above | None: no writer takes a Member row and then a Class row (test B shows that would deadlock), and the writers that lock both take Class first (tests C, D, E). The attendance import's KEY SHARE on members does not conflict with the check-in's Member lock. | Holds. |
@@ -99,11 +99,11 @@ Locks in the order taken. "Plain reads" take no row lock.
   behind it, every check-in and booking for that class, until `lock_timeout`
   (10 s) fails them. The long holders: the import rollback (one transaction
   for the whole run), the refresh rollback (one transaction for every changed
-  member), a refresh batch (25 members), a member deletion with a long history.
+  member; only for a refresh recorded before 25 Oct), a member deletion with a long history. (A refresh batch no longer writes members.)
   Recommendation (not implemented; changes the check-in's failure mode): take
   the Member lock with a short `SET LOCAL lock_timeout` (about 3 s) and answer
   "busy — try again" rather than hold the class for 10 s; and split the two
-  rollbacks into batches like the refresh.
+  rollbacks into batches.
 - **W-2. The undo batch locks the Class rows first**, so check-ins to a class in
   the batch wait for the whole batch.
 - **W-3. A class PATCH with a timetable change** holds the Class row across the
