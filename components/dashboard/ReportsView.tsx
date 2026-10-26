@@ -55,7 +55,8 @@ import NetNewMembersCard from "./NetNewMembersCard";
 import { MEMBERSHIP_COPY, combinedBasis, emptyTally, estimatedCaption, type MembershipBasis } from "@/lib/membership-movement";
 import type { MembershipReport } from "@/lib/membership-report";
 import { clubMonthWindow } from "@/lib/club-month";
-import { MAX_CUSTOM_MONTHS, REPORT_PERIOD_OPTIONS, type ReportPeriodKey, type ReportRange } from "@/lib/report-period";
+import { periodWords, windowLabelOf, type ReportRange } from "@/lib/report-period";
+import PeriodSelector, { periodSearchParams, type PeriodChoice } from "./PeriodSelector";
 import { basisNote } from "@/lib/net-new-series";
 import {
   EmptyChart,
@@ -73,33 +74,6 @@ import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import InitiativesPanel from "@/components/dashboard/InitiativesPanel";
 import MonthlyReportView from "@/components/dashboard/MonthlyReportView";
-
-/**
- * The period in a tile's words, and the equal run before it: "this month" /
- * "last month" for the default (so the default page reads exactly as before),
- * "in the last 3 months", "in Jan – Jun 2026" otherwise.
- */
-export function periodWords(range: Pick<ReportRange, "key" | "label" | "months">): { during: string; before: string; possessive: string } {
-  switch (range.key) {
-    case "this-month":
-      return { during: "this month", before: "last month", possessive: "this month's" };
-    case "last-month":
-      return { during: "last month", before: "the month before", possessive: "last month's" };
-    case "3m":
-    case "6m":
-    case "12m": {
-      const n = range.months.length;
-      return { during: `in the last ${n} months`, before: `the ${n} months before`, possessive: "the period's" };
-    }
-    default:
-      return { during: `in ${range.label}`, before: range.months.length === 1 ? "the month before" : "the period before", possessive: "the period's" };
-  }
-}
-
-/** "Aug – Oct 2026 (to today)": the window every period card names. */
-export function windowLabelOf(range: Pick<ReportRange, "label" | "isCurrent">): string {
-  return `${range.label}${range.isCurrent ? " (to today)" : ""}`;
-}
 
 /** The estimate line for a period figure compared with the run before it (the New tile and its CSV row). */
 export function periodPairEstimateNote(data: Pick<ReportsData, "membership" | "range" | "periodMovement">): string | null {
@@ -119,27 +93,6 @@ export function periodPairEstimateNote(data: Pick<ReportsData, "membership" | "r
 /** The CSV's statement of the period, and in which zone its months run. */
 export function rangeCsvDetail(range: Pick<ReportRange, "timeZone" | "isCurrent">): string {
   return `Whole months, midnight to midnight in the club's time zone (${range.timeZone})${range.isCurrent ? ", to today" : ""}`;
-}
-
-const monthIndex = (key: string) => { const [y, m] = key.split("-").map(Number); return y * 12 + m - 1; };
-const monthKeyOf = (i: number) => `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`;
-
-/**
- * A custom run after one end changed: the other end moves to keep from ≤ to
- * and the run within MAX_CUSTOM_MONTHS, and neither end passes `latest` (this
- * month), so the server never has to refuse it.
- */
-export function customRun(from: string, to: string, changed: "from" | "to", latest: string): { from: string; to: string } {
-  let f = Math.min(monthIndex(from), monthIndex(latest));
-  let t = Math.min(monthIndex(to), monthIndex(latest));
-  if (changed === "from") {
-    if (t < f) t = f;
-    if (t - f + 1 > MAX_CUSTOM_MONTHS) t = f + MAX_CUSTOM_MONTHS - 1;
-  } else {
-    if (f > t) f = t;
-    if (t - f + 1 > MAX_CUSTOM_MONTHS) f = t - MAX_CUSTOM_MONTHS + 1;
-  }
-  return { from: monthKeyOf(f), to: monthKeyOf(t) };
 }
 
 /** D9: "Inactive or left, marked overdue, not chased", with the guardian count when any. Screen and CSV share it. */
@@ -999,28 +952,13 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
   // The period: a preset, or a custom run of months (lib/report-period). The
   // old `weeks` parameter is dropped once a period is chosen.
-  function setPeriod(next: { period: ReportPeriodKey; from?: string; to?: string }) {
-    const params = new URLSearchParams(requestedParams.current.toString());
-    params.delete("weeks");
-    params.set("period", next.period);
-    if (next.period === "custom" && next.from && next.to) {
-      params.set("from", next.from);
-      params.set("to", next.to);
-    } else {
-      params.delete("from");
-      params.delete("to");
-    }
+  function setPeriod(next: PeriodChoice) {
+    const params = periodSearchParams(requestedParams.current, next);
     requestedParams.current = params;
     startTransition(() => {
       showOptimistically({ period: next.period, ...(next.from ? { from: next.from } : {}), ...(next.to ? { to: next.to } : {}) });
       router.replace(`/dashboard/reports?${params.toString()}`);
     });
-  }
-
-  function setMonth(end: "from" | "to", value: string) {
-    if (!/^\d{4}-\d{2}$/.test(value)) return;
-    const run = customRun(end === "from" ? value : shown.from, end === "to" ? value : shown.to, end, latestMonth);
-    setPeriod({ period: "custom", ...run });
   }
 
   // Every period figure on this page covers the chosen months, not all time
@@ -1102,45 +1040,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 whole months. From/To are always shown, holding the period's
                 months, so choosing never moves the row; editing either picks
                 "Custom months". Every period card below follows it. */}
-            <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
-              Period
-              <Select
-                aria-label="Reporting period"
-                className="w-[170px]"
-                value={shown.period}
-                onChange={(e) => {
-                  const key = e.target.value as ReportPeriodKey;
-                  if (key === "custom") setPeriod({ period: "custom", from: shown.from, to: shown.to });
-                  else setPeriod({ period: key });
-                }}
-              >
-                {REPORT_PERIOD_OPTIONS.map((o) => (
-                  <option key={o.key} value={o.key}>{o.label}</option>
-                ))}
-              </Select>
-            </label>
-            <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
-              From
-              <input
-                type="month"
-                aria-label="Period from month"
-                className="h-9 w-[150px] rounded-[var(--r-md)] border border-bd-default bg-[var(--sf-1)] px-2 text-sm text-tx-1"
-                value={shown.from}
-                max={latestMonth}
-                onChange={(e) => setMonth("from", e.target.value)}
-              />
-            </label>
-            <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
-              To
-              <input
-                type="month"
-                aria-label="Period to month"
-                className="h-9 w-[150px] rounded-[var(--r-md)] border border-bd-default bg-[var(--sf-1)] px-2 text-sm text-tx-1"
-                value={shown.to}
-                max={latestMonth}
-                onChange={(e) => setMonth("to", e.target.value)}
-              />
-            </label>
+            <PeriodSelector shown={shown} latestMonth={latestMonth} onSelect={setPeriod} />
 
             <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
               <span className="inline-flex items-center gap-1">Class<ScopeInfo /></span>

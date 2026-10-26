@@ -27,9 +27,9 @@ vi.mock("@/components/dashboard/ConversionFunnel", () => ({ default: () => null 
 vi.mock("@/components/dashboard/NetNewMembersCard", () => ({ default: () => null }));
 vi.mock("@/components/dashboard/charts/Sparkline", () => ({ default: () => null }));
 
-import ReportsView, { customRun, monthDrillHref, periodWords, reportsCsv } from "@/components/dashboard/ReportsView";
+import ReportsView, { monthDrillHref, reportsCsv } from "@/components/dashboard/ReportsView";
+import { customRun, periodWords, resolveReportPeriod } from "@/lib/report-period";
 import { createEmptyReportsData, type ReportsData } from "@/lib/reports";
-import { resolveReportPeriod } from "@/lib/report-period";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
 const LONDON = "Europe/London";

@@ -215,3 +215,48 @@ export function reportPeriodParams(range: Pick<ReportRange, "key" | "fromMonth" 
   if (range.key === "custom") return { period: "custom", from: range.fromMonth, to: range.toMonth };
   return { period: range.key };
 }
+
+/**
+ * The period in a tile's words, and the equal run before it: "this month" /
+ * "last month" for the default (so the default page reads exactly as before),
+ * "in the last 3 months", "in Jan – Jun 2026" otherwise.
+ */
+export function periodWords(range: Pick<ReportRange, "key" | "label" | "months">): { during: string; before: string; possessive: string } {
+  switch (range.key) {
+    case "this-month":
+      return { during: "this month", before: "last month", possessive: "this month's" };
+    case "last-month":
+      return { during: "last month", before: "the month before", possessive: "last month's" };
+    case "3m":
+    case "6m":
+    case "12m": {
+      const n = range.months.length;
+      return { during: `in the last ${n} months`, before: `the ${n} months before`, possessive: "the period's" };
+    }
+    default:
+      return { during: `in ${range.label}`, before: range.months.length === 1 ? "the month before" : "the period before", possessive: "the period's" };
+  }
+}
+
+/** "Aug – Oct 2026 (to today)": the window every period card names. */
+export function windowLabelOf(range: Pick<ReportRange, "label" | "isCurrent">): string {
+  return `${range.label}${range.isCurrent ? " (to today)" : ""}`;
+}
+
+/**
+ * A custom run after one end changed: the other end moves to keep from ≤ to
+ * and the run within MAX_CUSTOM_MONTHS, and neither end passes `latest` (this
+ * month), so the server never has to refuse it.
+ */
+export function customRun(from: string, to: string, changed: "from" | "to", latest: string): { from: string; to: string } {
+  let f = Math.min(monthIndex(from), monthIndex(latest));
+  let t = Math.min(monthIndex(to), monthIndex(latest));
+  if (changed === "from") {
+    if (t < f) t = f;
+    if (t - f + 1 > MAX_CUSTOM_MONTHS) t = f + MAX_CUSTOM_MONTHS - 1;
+  } else {
+    if (f > t) f = t;
+    if (t - f + 1 > MAX_CUSTOM_MONTHS) f = t - MAX_CUSTOM_MONTHS + 1;
+  }
+  return { from: keyOf(f), to: keyOf(t) };
+}
