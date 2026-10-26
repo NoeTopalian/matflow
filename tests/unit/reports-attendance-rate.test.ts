@@ -304,4 +304,18 @@ describe("getReportsData — attendance is counted in the database, never read a
     expect(data.weeklyAttendance.at(-1)?.inPeriod).toBe(true);
     expect(data.weeklyAttendance.some((w) => w.inPeriod === false)).toBe(true);
   });
+
+  it("a past month's weekly bars add up to its check-ins: an edge week counts only its days inside the period", async () => {
+    // One check-in per hour of each counted window, so a bar that reached past
+    // the period's edge would add hours the headline does not have.
+    vi.mocked(prisma.attendanceRecord.count).mockImplementation((async (args: { where?: { checkInTime?: { gte?: Date; lt?: Date } } }) => {
+      const w = args?.where?.checkInTime;
+      return w?.gte && w?.lt ? Math.round((w.lt.getTime() - w.gte.getTime()) / 3_600_000) : 0;
+    }) as never);
+    const data = await getReportsData("tenant-A", { period: { period: "last-month" } });
+    expect(data.attendanceBucket).toBe("week");
+    const inPeriod = data.weeklyAttendance.filter((w) => w.inPeriod !== false);
+    expect(inPeriod.reduce((n, w) => n + w.count, 0)).toBe(data.summary.totalCheckIns);
+    expect(data.summary.totalCheckIns).toBeGreaterThan(0);
+  });
 });

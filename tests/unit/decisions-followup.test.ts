@@ -122,6 +122,11 @@ describe("2. Reports never says 'all in good standing' while anyone has No payme
     expect(paymentHealthLine({ overdueCount: 1, noPaymentYetCount: 0, failedLast30Days: 0 })).toBeNull();
   });
 
+  it("beside a period's failures, good standing is said to be now (re-review 26 Oct 2026)", () => {
+    expect(paymentHealthLine({ overdueCount: 0, noPaymentYetCount: 0, failedLast30Days: 0, failedInPeriod: 7 })?.text).toBe("All payments are in good standing now.");
+    expect(paymentHealthLine({ overdueCount: 0, noPaymentYetCount: 0, failedLast30Days: 0, failedInPeriod: 0 })?.text).toBe("All payments are in good standing.");
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.class.findMany).mockResolvedValue([] as never);

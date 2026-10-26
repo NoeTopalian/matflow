@@ -215,6 +215,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
   // month (lib/report-period); a past period ends at that month's end.
   const lastMonth = membership.headcountByMonth[membership.headcountByMonth.length - 1];
   const endsToday = lastMonth?.isCurrentMonth ?? true;
+  const lastMonthName = lastMonth ? fullMonthName(lastMonth.month) : today.month;
 
   function choose(next: NetNewView) {
     storeView(next);
@@ -267,7 +268,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
             {today && today.headcount !== null && (
               <>
                 {" "}· <span className="font-semibold tabular-nums">{formatNumber(today.headcount)}</span>{" "}
-                {endsToday ? "active members today" : `active members at the end of ${lastMonth?.label ?? today.month}`}
+                {endsToday ? "active members today" : `active members at the end of ${lastMonthName}`}
               </>
             )}
           </p>
@@ -362,4 +363,10 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
       )}
     </Card>
   );
+}
+
+/** "2026-09" → "September 2026" (a short label such as "Sep 26" reads as a day). */
+function fullMonthName(key: string): string {
+  const [y, m] = key.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 }

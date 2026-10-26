@@ -155,6 +155,20 @@ describe("ReportsView with a period", () => {
   });
 });
 
+describe("the CSV marks the chart's context weeks (re-review 26 Oct 2026)", () => {
+  it("a week before the period says it is shown for context; a week inside it does not", () => {
+    const data = report({});
+    data.attendanceBucket = "week";
+    data.weeklyAttendance = [
+      { week: "21 Sep", count: 4, isCurrentWeek: false, inPeriod: false },
+      { week: "26 Oct", count: 6, isCurrentWeek: true, inPeriod: true },
+    ];
+    const csv = reportsCsv(data, ATTRIBUTION as never);
+    expect(csv).toContain("Weekly attendance,21 Sep,4,Outside the period (shown for context)");
+    expect(csv).toContain("Weekly attendance,26 Oct,6,Current week");
+  });
+});
+
 describe("Analysis with a period", () => {
   const metrics = (period: Parameters<typeof resolveReportPeriod>[0]) => ({
     totalMembers: 20, newThisMonth: 3, newLastMonth: 2, checkinsThisMonth: 50, checkinsLastMonth: 40,

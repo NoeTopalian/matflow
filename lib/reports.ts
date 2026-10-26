@@ -667,7 +667,9 @@ export async function getReportsData(
   // ending with the period's last week, so the default "this month" chart is
   // never one bar on the 1st; weeks before the period are context, marked
   // `inPeriod: false`. Each bar is a COUNT in the database over its own
-  // window, so a long period never reads (or truncates) check-in rows.
+  // window, so a long period never reads (or truncates) check-in rows. A week
+  // that crosses the period's edge counts only its days inside the period, so
+  // the period's bars add up to its check-ins (re-review 26 Oct 2026).
   type Bucket = { week: string; isCurrentWeek: boolean; inPeriod: boolean; start: Date; end: Date };
   const buckets: Bucket[] = [];
   if (attendanceBucket === "month") {
@@ -679,7 +681,14 @@ export async function getReportsData(
     const firstWeek = new Date(Math.min(startOfWeek(rangeStart).getTime(), addDays(lastWeek, -7 * (MIN_CHART_WEEKS - 1)).getTime()));
     for (let d = firstWeek; d.getTime() <= lastWeek.getTime(); d = addDays(d, 7)) {
       const end = addDays(d, 7);
-      buckets.push({ week: formatWeek(d), isCurrentWeek: d.getTime() === currentWeekStart.getTime(), inPeriod: end.getTime() > rangeStart.getTime(), start: d, end });
+      const inPeriod = end.getTime() > rangeStart.getTime();
+      buckets.push({
+        week: formatWeek(d),
+        isCurrentWeek: d.getTime() === currentWeekStart.getTime(),
+        inPeriod,
+        start: inPeriod && d.getTime() < rangeStart.getTime() ? rangeStart : d,
+        end: inPeriod && end.getTime() > rangeEnd.getTime() ? rangeEnd : end,
+      });
     }
   }
   const [bucketCounts, distinctAttending] = await withTenantContext(

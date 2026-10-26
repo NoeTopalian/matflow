@@ -496,7 +496,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     ...membershipCsvRows(data.membership),
     ...data.weeklyAttendance.map((row) => (data.attendanceBucket === "month"
       ? ["Monthly attendance", row.week, row.count, row.isCurrentWeek ? "Current month" : ""]
-      : ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""])),
+      : ["Weekly attendance", row.week, row.count, [row.isCurrentWeek ? "Current week" : null, row.inPeriod === false ? "Outside the period (shown for context)" : null].filter(Boolean).join(" · ")])),
     ...data.monthlySignups.map((row) => [
       "Joined by month (new + rejoined)",
       row.month,

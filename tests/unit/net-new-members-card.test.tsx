@@ -114,7 +114,7 @@ describe("NetNewMembersCard", () => {
     past.reconciled = 2;
     render(<NetNewMembersCard membership={past} />);
     const tally = screen.getByTestId("net-new-tally").textContent ?? "";
-    expect(tally).toContain("41 active members at the end of Oct 26");
+    expect(tally).toContain("41 active members at the end of October 2026");
     expect(tally).not.toContain("today");
     // The reconciliation is today's correction, not part of a past window.
     expect(document.body.textContent).not.toContain("did not match their current status");
