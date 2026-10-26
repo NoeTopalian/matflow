@@ -249,8 +249,10 @@ export async function loadJoinedInWindows(
   const loaded = await loadMembershipInput(tx, tenantId, now);
   const caption = estimatedCaption(loaded);
   return windows.map((w) => {
-    const { movers, basis } = moversAndBasisInWindow(loaded.input, w);
-    return { joined: movers.new.length + movers.rejoined.length, basis, caption };
+    // Joins counted as moves, as the Reports Joined tile counts them (review 26 Oct: distinct people
+    // made Analysis lower than Reports when someone rejoined twice in one period).
+    const { joinedMoves, basis } = moversAndBasisInWindow(loaded.input, w);
+    return { joined: joinedMoves, basis, caption };
   });
 }
 

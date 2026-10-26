@@ -211,6 +211,10 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
   const caption = estimatedCaption(membership);
   const t = membership.totals;
   const today = points[points.length - 1];
+  // The card's last month is today's only when the page's period ends this
+  // month (lib/report-period); a past period ends at that month's end.
+  const lastMonth = membership.headcountByMonth[membership.headcountByMonth.length - 1];
+  const endsToday = lastMonth?.isCurrentMonth ?? true;
 
   function choose(next: NetNewView) {
     storeView(next);
@@ -262,7 +266,8 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
             {" "}· <span className="font-semibold tabular-nums">{formatNumber(t.tasterAdded ?? 0)}</span> tasters added
             {today && today.headcount !== null && (
               <>
-                {" "}· <span className="font-semibold tabular-nums">{formatNumber(today.headcount)}</span> active members today
+                {" "}· <span className="font-semibold tabular-nums">{formatNumber(today.headcount)}</span>{" "}
+                {endsToday ? "active members today" : `active members at the end of ${lastMonth?.label ?? today.month}`}
               </>
             )}
           </p>
@@ -347,7 +352,7 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
               {formatNumber(membership.undatedHistory)} imported {membership.undatedHistory === 1 ? "member has" : "members have"} TeamUp history without dates, so {membership.undatedHistory === 1 ? "is" : "are"} counted from the import day.
             </p>
           )}
-          {membership.reconciled > 0 && (
+          {membership.reconciled > 0 && endsToday && (
             <p>
               {formatNumber(membership.reconciled)} {membership.reconciled === 1 ? "member's" : "members'"} recorded history did not match their current status; counted as other changes this month.
             </p>

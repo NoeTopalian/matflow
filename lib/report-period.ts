@@ -260,3 +260,12 @@ export function customRun(from: string, to: string, changed: "from" | "to", late
   }
   return { from: keyOf(f), to: keyOf(t) };
 }
+
+/** The `count` club months ending with `latest` ("YYYY-MM"), newest first, labelled "Oct 2026": the From/To lists. */
+export function monthOptions(latest: string, count: number): { key: string; label: string }[] {
+  const li = monthIndex(latest);
+  return Array.from({ length: count }, (_, i) => {
+    const key = keyOf(li - i);
+    return { key, label: `${SHORT(key)} ${key.slice(0, 4)}` };
+  });
+}

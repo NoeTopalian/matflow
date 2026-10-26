@@ -464,13 +464,13 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // Attendance this week IS narrowed by the class/age filters (lib/reports.ts
     // attendanceScope), so its export row must say so — it was the one scoped
     // number leaving the page unlabelled (assessment lane 5).
-    ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Last week: ${data.summary.attendanceLastWeek}${filterSuffix ? ` · ${filterSuffix}` : ""}`],
+    ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Now · last week: ${data.summary.attendanceLastWeek}${filterSuffix ? ` · ${filterSuffix}` : ""}`],
     ["Summary", `New members ${words.during}`, data.summary.newMembersThisMonth, [`${cap(words.before)}: ${data.summary.newMembersLastMonth}`, NEW_SCOPE, periodPairEstimateNote(data)].filter(Boolean).join(" · ")],
     ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
     // The rate definition the owner chose on screen, with its formula — the
     // headline of the filter bar, previously missing from the file.
     ["Summary", `Attendance rate — ${data.attendanceRate.label}`, [formatAttendanceRateValue(data.attendanceRate.mode, data.attendanceRate.value), attendanceRateCounts(data.attendanceRate)].filter(Boolean).join(" "), `${data.attendanceRate.formula} · ${scopedWindowLabel}`],
-    ["Summary", "Active classes", data.summary.totalActiveClasses, ""],
+    ["Summary", "Active classes", data.summary.totalActiveClasses, "Now · live timetable classes"],
     // Health rows (T2b): the same text the tiles print, so the file and the
     // screen agree. Club-wide — the class/age filters never scope them.
     ["Health", `Churn ${words.during}`, formatRatio(churn.ratePct, churn.cancelled, churn.base), `${CHURN_FORMULA} · club-wide`],
@@ -481,6 +481,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     ["Health", `Tasters added ${words.during}`, pm.totals.tasterAdded ?? 0, withEstimate("Not in Joined or Net", thisMonthEstimate)],
     ["Health", `Left ${words.during}`, pm.totals.lost, withEstimate("Cancelled, or finished a prepaid course", thisMonthEstimate)],
     ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), RECOVERY_SCOPE],
+    ["Payments", `Failed payments ${words.during}`, data.paymentHealth.failedInPeriod, "Charges that failed, any account"],
     // Review L2: payer totals, the Payments → Outstanding definition; the
     // detail says guardians who pay are counted, and how many.
     ["Payments", PAYER_COPY.label, data.paymentHealth.overdueCount, payerGuardianNote(data.paymentHealth.overdueGuardianCount ?? 0)],
@@ -956,7 +957,8 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     const params = periodSearchParams(requestedParams.current, next);
     requestedParams.current = params;
     startTransition(() => {
-      showOptimistically({ period: next.period, ...(next.from ? { from: next.from } : {}), ...(next.to ? { to: next.to } : {}) });
+      // The choice carries its months, so From/To change with the select at once (review finding 9).
+      showOptimistically({ period: next.period, from: next.from, to: next.to });
       router.replace(`/dashboard/reports?${params.toString()}`);
     });
   }
@@ -1040,7 +1042,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 whole months. From/To are always shown, holding the period's
                 months, so choosing never moves the row; editing either picks
                 "Custom months". Every period card below follows it. */}
-            <PeriodSelector shown={shown} latestMonth={latestMonth} onSelect={setPeriod} />
+            <PeriodSelector shown={shown} latestMonth={latestMonth} timeZone={range.timeZone} onSelect={setPeriod} />
 
             <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
               <span className="inline-flex items-center gap-1">Class<ScopeInfo /></span>
@@ -1202,14 +1204,17 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <EmptyChart label="No attendance data yet" />
           ) : (
             <div className="flex flex-col gap-3 min-h-[180px]">
-              <div className="flex items-baseline gap-3">
-                <span className="text-3xl font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>
-                  {formatNumber(summary.attendanceThisWeek)}
+              {/* The headline is the period's check-ins (the chart's subject);
+                  the badge is this week against last, said as such (now). */}
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="text-3xl font-bold tabular-nums" style={{ color: "var(--tx-1)" }} data-testid="reports-trend-total">
+                  {formatNumber(summary.totalCheckIns)}
                 </span>
+                <span className="text-xs text-tx-3">check-ins {words.during}</span>
                 <TrendBadge
                   current={summary.attendanceThisWeek}
                   previous={summary.attendanceLastWeek}
-                  label={`vs ${formatNumber(summary.attendanceLastWeek)} last week`}
+                  label={`this week (${formatNumber(summary.attendanceThisWeek)}) vs ${formatNumber(summary.attendanceLastWeek)} last week`}
                 />
               </div>
               <div className="w-full overflow-hidden [&>svg]:w-full [&>svg]:h-auto">
@@ -1235,7 +1240,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={Users}
           label="Active members"
           value={formatNumber(summary.activeMembers)}
-          detail={activeMembersDetail(summary)}
+          detail={`Now · ${activeMembersDetail(summary)}`}
           primaryColor={primaryColor}
           href="/dashboard/members?filter=active"
         />
@@ -1243,7 +1248,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={Activity}
           label="Attendance this week"
           value={formatNumber(summary.attendanceThisWeek)}
-          detail={filterSuffix ? `Check-ins since Monday · ${filterSuffix}` : "Check-ins since Monday"}
+          detail={filterSuffix ? `Now · check-ins since Monday · ${filterSuffix}` : "Now · check-ins since Monday"}
           primaryColor={primaryColor}
           trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, label: "on last week" }}
         />
@@ -1267,7 +1272,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={Calendar}
           label="Active classes"
           value={formatNumber(summary.totalActiveClasses)}
-          detail="Live timetable classes"
+          detail="Now · live timetable classes"
           primaryColor={primaryColor}
         />
         <MetricCard
@@ -1289,7 +1294,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <Card>
           <SectionTitle
             title={byMonth ? "Attendance by month" : "Weekly Attendance"}
-            subtitle={`${scopedWindowLabel}, current ${byMonth ? "month" : "week"} highlighted`}
+            subtitle={`${scopedWindowLabel}, current ${byMonth ? "month" : "week"} highlighted${weeklyAttendance.some((r) => r.inPeriod === false) ? ", earlier weeks faint for context" : ""}`}
             icon={Activity}
           />
           {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
@@ -1316,7 +1321,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   {weeklyAttendance.map((row) => (
                     <Cell
                       key={row.week}
-                      fill={row.isCurrentWeek ? primaryColor : hex(primaryColor, 0.42)}
+                      fill={row.isCurrentWeek ? primaryColor : hex(primaryColor, row.inPeriod === false ? 0.16 : 0.42)}
                     />
                   ))}
                 </Bar>
@@ -1628,13 +1633,14 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: hex("#f59e0b", 0.12) }}>
                     <CreditCard className="w-4 h-4" style={{ color: "#f59e0b" }} />
                   </div>
-                  <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>Failed last 30 days</p>
+                  <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>Failed {words.during}</p>
                 </div>
                 <span
                   className="text-xl font-bold tabular-nums"
-                  style={{ color: paymentHealth.failedLast30Days > 0 ? "#f59e0b" : "#22c55e" }}
+                  style={{ color: paymentHealth.failedInPeriod > 0 ? "#f59e0b" : "#22c55e" }}
+                  data-testid="reports-failed-in-period"
                 >
-                  {formatNumber(paymentHealth.failedLast30Days)}
+                  {formatNumber(paymentHealth.failedInPeriod)}
                 </span>
               </div>
               {/* D9: debts on inactive or cancelled accounts. Not chased and

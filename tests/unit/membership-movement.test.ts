@@ -586,3 +586,23 @@ describe("openingChurned: churn's numerator", () => {
     expect(m.totals.lost).toBe(3);
   });
 });
+
+describe("moversAndBasisInWindow: joins as moves (Analysis agrees with the Reports Joined tile)", () => {
+  it("a member who rejoined twice in the window is one person but two joins", async () => {
+    const { moversAndBasisInWindow } = await import("@/lib/membership-movement");
+    const r = moversAndBasisInWindow({
+      events: [
+        ev("x", "active", "2025-03-01T00:00:00Z"),
+        ev("x", "cancelled", "2026-07-02T10:00:00Z", { fromStatus: "active" }),
+        ev("x", "active", "2026-08-02T10:00:00Z", { fromStatus: "cancelled" }),
+        ev("x", "cancelled", "2026-08-20T10:00:00Z", { fromStatus: "active" }),
+        ev("x", "active", "2026-09-02T10:00:00Z", { fromStatus: "cancelled" }),
+      ],
+      live: [{ id: "x", status: "active" }],
+      now: NOW,
+      boundary: new Date("2025-01-01T00:00:00Z"),
+    }, { start: new Date("2026-07-31T23:00:00Z"), at: NOW });
+    expect(r.movers.rejoined).toEqual(["x"]);
+    expect(r.joinedMoves).toBe(2);
+  });
+});

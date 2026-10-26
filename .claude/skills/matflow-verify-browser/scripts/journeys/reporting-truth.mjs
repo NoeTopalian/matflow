@@ -507,8 +507,9 @@ try {
     { asOf: norm(await page.getByTestId("reports-generated-at").first().innerText()), seededAt: seededAt.toISOString() });
   const activeTile = await pTexts(activeLink);
   L.check("reports", "R1 Reports Active members tile equals the Members headline and Settings, and says what it counts",
-    activeTile[0] === fmtNum(E.active) && activeTile[1] === "Active members" && activeTile[2] === X.activeDetail,
-    { saw: activeTile, expected: [fmtNum(E.active), "Active members", X.activeDetail] });
+    // On screen the tile says it is a "now" figure (26 Oct 2026); the CSV row keeps the plain detail.
+    activeTile[0] === fmtNum(E.active) && activeTile[1] === "Active members" && activeTile[2] === `Now · ${X.activeDetail}`,
+    { saw: activeTile, expected: [fmtNum(E.active), "Active members", `Now · ${X.activeDetail}`] });
 
   const churnLink = tileLink(page, "Churn rate this month");
   const churnTile = await pTexts(churnLink);
@@ -808,7 +809,7 @@ try {
   // A custom run: editing From picks Custom months, ending this month.
   await page.goto("/dashboard/reports?period=3m");
   await page.getByLabel("Period from month").waitFor({ timeout: 90000 });
-  await page.getByLabel("Period from month").fill(monthKeyOf(-1));
+  await page.getByLabel("Period from month").selectOption(monthKeyOf(-1));
   await page.waitForURL(/period=custom/, { timeout: 60000 });
   const customUrl = new URL(page.url());
   L.check("period", "P6 editing From asks for a custom run ending this month",
@@ -862,7 +863,7 @@ try {
   await pActive.waitFor({ timeout: 90000 });
   const pActiveTile = await pTexts(pActive);
   L.check("mobile", "M3 at 390 px the Reports Active members tile shows the same number and detail",
-    pActiveTile[0] === fmtNum(E.active) && pActiveTile[2] === X.activeDetail, { saw: pActiveTile });
+    pActiveTile[0] === fmtNum(E.active) && pActiveTile[2] === `Now · ${X.activeDetail}`, { saw: pActiveTile });
   const pChurn = tileLink(p2, "Churn rate this month"); const pJoined = p2.getByTestId("reports-joined-tile").first();
   await pChurn.scrollIntoViewIfNeeded();
   const pChurnTile = await pTexts(pChurn);

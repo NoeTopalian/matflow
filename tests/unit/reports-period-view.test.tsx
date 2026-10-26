@@ -122,12 +122,28 @@ describe("ReportsView with a period", () => {
     expect(url.searchParams.get("classId")).toBe("c1");
   });
 
-  it("editing a month picks a custom run the server will accept", () => {
+  it("picking a month picks a custom run the server will accept", () => {
     render(<ReportsView data={report({ period: "3m" })} attribution={ATTRIBUTION as never} primaryColor="#3b82f6" />);
-    fireEvent.change(screen.getByLabelText("Period from month"), { target: { value: "2026-11" } });
+    // To moved before From (Aug): From follows it back, so the run is never inverted.
+    fireEvent.change(screen.getByLabelText("Period to month"), { target: { value: "2026-07" } });
     const url = new URL(replaceMock.mock.calls[0][0], "https://x.test");
-    // November is after this month: both ends stay at this month.
-    expect([url.searchParams.get("period"), url.searchParams.get("from"), url.searchParams.get("to")]).toEqual(["custom", "2026-10", "2026-10"]);
+    expect([url.searchParams.get("period"), url.searchParams.get("from"), url.searchParams.get("to")]).toEqual(["custom", "2026-07", "2026-07"]);
+  });
+
+  it("the month lists offer only real months, newest first, ending with this month", () => {
+    render(<ReportsView data={report({})} attribution={ATTRIBUTION as never} primaryColor="#3b82f6" />);
+    const options = [...(screen.getByLabelText("Period to month") as HTMLSelectElement).options].map((o) => o.value);
+    expect(options[0]).toBe("2026-10");
+    expect(options).toHaveLength(36);
+    expect(options).not.toContain("2026-11");
+  });
+
+  it("a preset choice carries its months, so the page can show them before the server answers", async () => {
+    const { default: PeriodSelector } = await import("@/components/dashboard/PeriodSelector");
+    const onSelect = vi.fn();
+    render(<PeriodSelector shown={{ period: "this-month", from: "2026-10", to: "2026-10" }} latestMonth="2026-10" timeZone={LONDON} onSelect={onSelect} />);
+    fireEvent.change(screen.getByLabelText("Reporting period"), { target: { value: "3m" } });
+    expect(onSelect).toHaveBeenCalledWith({ period: "3m", from: "2026-08", to: "2026-10" });
   });
 
   it("the CSV states the period and uses its words", () => {
@@ -164,5 +180,16 @@ describe("Analysis with a period", () => {
     const url = new URL(replaceMock.mock.calls[0][0], "https://x.test");
     expect(url.pathname).toBe("/dashboard/analysis");
     expect(url.searchParams.get("period")).toBe("12m");
+  });
+});
+
+describe("Payment Health follows the period (review 26 Oct 2026)", () => {
+  it("shows failed payments in the period, not the fixed 30 days", () => {
+    const data = report({ period: "12m" });
+    data.paymentHealth = { ...data.paymentHealth, failedInPeriod: 7, failedLast30Days: 1 };
+    render(<ReportsView data={data} attribution={ATTRIBUTION as never} primaryColor="#3b82f6" />);
+    expect(screen.getByTestId("reports-failed-in-period").textContent).toBe("7");
+    expect(screen.getByText("Failed in the last 12 months")).toBeTruthy();
+    expect(reportsCsv(data, ATTRIBUTION as never)).toContain("Payments,Failed payments in the last 12 months,7,");
   });
 });

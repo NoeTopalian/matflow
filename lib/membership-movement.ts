@@ -448,8 +448,10 @@ export function moversInWindow(
 export function moversAndBasisInWindow(
   input: Pick<BuildMembershipInput, "events" | "live" | "now" | "boundary">,
   window: { start: Date; at: Date },
-): { movers: Record<MovementBucket, string[]>; basis: MembershipBasis } {
+): { movers: Record<MovementBucket, string[]>; basis: MembershipBasis; joinedMoves: number } {
   const out: Record<MovementBucket, Set<string>> = { new: new Set(), rejoined: new Set(), lost: new Set(), tasterAdded: new Set(), churned: new Set() };
+  // Joins as MOVES (a member who rejoined twice joined twice): the Reports Joined tile's figure.
+  let joinedMoves = 0;
   let first: number | null = null;
   let estimatedMoves = 0;
   const openedAt = new Date(window.start.getTime() - 1);
@@ -464,11 +466,13 @@ export function moversAndBasisInWindow(
       const bucket = movementBucket(m.kind);
       if (bucket) out[bucket].add(m.memberId);
       if (bucket === "lost" && activeAtOpening) out.churned.add(m.memberId);
+      if (m.kind === "new" || m.kind === "rejoined") joinedMoves += 1;
     }
   }
   return {
     movers: { new: [...out.new], rejoined: [...out.rejoined], lost: [...out.lost], tasterAdded: [...out.tasterAdded], churned: [...out.churned] },
     basis: movementWindowBasis(window, first, input.boundary?.getTime() ?? null, estimatedMoves),
+    joinedMoves,
   };
 }
 

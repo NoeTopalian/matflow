@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState, useRef, useEffect, useTransition } from "react";
+import { useState, useRef, useEffect, useOptimistic, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   BrainCircuit,
@@ -116,8 +116,9 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
   lines.push("");
   lines.push("## Overview");
   lines.push(
-    `${cap(w.during)} ${metrics.gymName} maintained ${metrics.totalMembers} active members across ${metrics.activeClasses} classes. ` +
-    `You recorded ${metrics.checkinsThisMonth} check-ins — ${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} ${w.before}` +
+    // Members and classes are today's counts; check-ins are the period's (26 Oct 2026: never present a "now" figure as the period's).
+    `${metrics.gymName} has ${metrics.totalMembers} active members today across ${metrics.activeClasses} classes. ` +
+    `${cap(w.during)} you recorded ${metrics.checkinsThisMonth} check-ins — ${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} ${w.before}` +
     // An empty base has no rate: say so in words rather than printing "—".
     (metrics.totalMembers > 0
       ? ` — giving an engagement rate of ${engagementText} — active members who checked in at least once.`
@@ -271,9 +272,22 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
   // The latest month a custom run may end in: this month, in the club's zone.
   const latestMonth = clubMonthWindow(new Date(), metrics.range.timeZone).monthKey;
 
+  // As on Reports (review finding 8): the selector shows the choice for the
+  // life of the transition (useOptimistic), and each change builds on the last
+  // URL this page REQUESTED, so two quick changes never lose the first.
+  const serverShown = { period: metrics.range.key, from: metrics.range.fromMonth, to: metrics.range.toMonth };
+  const [shown, showOptimistically] = useOptimistic(serverShown, (s: typeof serverShown, u: Partial<typeof serverShown>) => ({ ...s, ...u }));
+  const requestedParams = useRef(new URLSearchParams(searchParams.toString()));
+  useEffect(() => {
+    requestedParams.current = new URLSearchParams(searchParams.toString());
+  }, [searchParams]);
+
   function setPeriod(next: PeriodChoice) {
+    const params = periodSearchParams(requestedParams.current, next);
+    requestedParams.current = params;
     startTransition(() => {
-      router.replace(`/dashboard/analysis?${periodSearchParams(new URLSearchParams(searchParams.toString()), next).toString()}`);
+      showOptimistically({ period: next.period, from: next.from, to: next.to });
+      router.replace(`/dashboard/analysis?${params.toString()}`);
     });
   }
 
@@ -354,11 +368,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
       {/* The period every figure below counts (shared with Reports). */}
       <Card padding="tight" className="mb-4" aria-busy={isPending || undefined}>
         <div className="flex flex-wrap items-center gap-3" data-testid="analysis-period">
-          <PeriodSelector
-            shown={{ period: metrics.range.key, from: metrics.range.fromMonth, to: metrics.range.toMonth }}
-            latestMonth={latestMonth}
-            onSelect={setPeriod}
-          />
+          <PeriodSelector shown={shown} latestMonth={latestMonth} timeZone={metrics.range.timeZone} onSelect={setPeriod} />
         </div>
       </Card>
 
