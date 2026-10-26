@@ -215,7 +215,7 @@ describe("Reports tiles, CSV and drill-through agree on the club's month", () =>
     expect(newRows.names.sort()).toEqual(["n1", "n2"]);
     expect(newRows.headline).toBe("2 new this month");
     expect(churnedRows.names).toEqual(["c1"]);
-    expect(churnedRows.headline).toBe("1 cancelled this month");
+    expect(churnedRows.headline).toBe("1 churned this month");
   });
 
   it("mirror: Los Angeles club, UTC server, Auckland browser, 2026-11-01T05:00Z: all three still count October", async () => {

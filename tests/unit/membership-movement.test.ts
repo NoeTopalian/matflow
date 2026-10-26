@@ -545,3 +545,44 @@ describe("estimatedCaption: what an estimate came from", () => {
     expect(estimatedCaption({ historySource: "none", fromJoinDates: 0 })).toBe("Estimated");
   });
 });
+
+// Churn the normal way (D4, Noe 26 Oct 2026): of the members active just before
+// the window, how many left inside it — each person once, so n ≤ m always.
+describe("openingChurned: churn's numerator", () => {
+  const B = new Date("2025-01-01T00:00:00Z");
+  const build = (events: MovementEvent[], live: { id: string; status: string }[]) =>
+    buildMembership({ events, live, now: NOW, timeZone: TZ, boundary: B, months: 3, endMonth: "2026-10" });
+
+  it("a member there before the window who left in it is churn", () => {
+    const m = build([ev("a", "active", "2025-03-01T00:00:00Z"), ev("a", "cancelled", "2026-09-10T10:00:00Z", { fromStatus: "active" })], [{ id: "a", status: "cancelled" }]);
+    expect([m.openingChurned, m.openingHeadcount]).toEqual([1, 1]);
+  });
+
+  it("someone who joined and left inside the window is not churn (never in the base), though they are Left", () => {
+    const m = build([ev("j", "active", "2026-08-05T10:00:00Z"), ev("j", "cancelled", "2026-09-20T10:00:00Z", { fromStatus: "active" })], [{ id: "j", status: "cancelled" }]);
+    expect([m.openingChurned, m.openingHeadcount, m.totals.lost]).toEqual([0, 0, 1]);
+  });
+
+  it("paused (inactive) before the window and cancelled in it: not active at the start, so not churn", () => {
+    const m = build([
+      ev("p", "active", "2025-03-01T00:00:00Z"),
+      ev("p", "inactive", "2026-06-01T10:00:00Z", { fromStatus: "active" }),
+      ev("p", "cancelled", "2026-09-01T10:00:00Z", { fromStatus: "inactive" }),
+    ], [{ id: "p", status: "cancelled" }]);
+    expect(m.openingChurned).toBe(0);
+  });
+
+  it("left twice in the window counts once; left and came back still left", () => {
+    const m = build([
+      ev("t", "active", "2025-03-01T00:00:00Z"),
+      ev("t", "cancelled", "2026-08-10T10:00:00Z", { fromStatus: "active" }),
+      ev("t", "active", "2026-09-01T10:00:00Z", { fromStatus: "cancelled" }),
+      ev("t", "cancelled", "2026-10-02T10:00:00Z", { fromStatus: "active" }),
+      ev("r", "active", "2025-03-01T00:00:00Z"),
+      ev("r", "cancelled", "2026-08-10T10:00:00Z", { fromStatus: "active" }),
+      ev("r", "active", "2026-09-01T10:00:00Z", { fromStatus: "cancelled" }),
+    ], [{ id: "t", status: "cancelled" }, { id: "r", status: "active" }]);
+    expect([m.openingChurned, m.openingHeadcount]).toEqual([2, 2]);
+    expect(m.totals.lost).toBe(3);
+  });
+});

@@ -216,8 +216,9 @@ describe("MembersList — totals independent of the row cap", () => {
 
   it("the drill-through slices use the server's month totals too", () => {
     currentSearch = "filter=churned-this-month";
-    render(<MembersList members={loaded} primaryColor="#3b82f6" role="owner" truncatedAt={10} serverCounts={full} monthWindow={{ ...MONTH, isCurrent: true }} />);
-    expect(screen.getByTestId("members-headline").textContent).toBe("4 cancelled this month");
+    // The churn slice counts the server's movement replay (churned: active when the month began, then left).
+    render(<MembersList members={loaded} primaryColor="#3b82f6" role="owner" truncatedAt={10} serverCounts={full} movers={{ new: 0, rejoined: 0, lost: 5, tasterAdded: 0, churned: 4 }} monthWindow={{ ...MONTH, isCurrent: true }} />);
+    expect(screen.getByTestId("members-headline").textContent).toBe("4 churned this month");
   });
 
   it("without server totals (older callers) the counts still come from the rows", () => {

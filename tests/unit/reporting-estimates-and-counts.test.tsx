@@ -268,7 +268,7 @@ describe("estimate labels: a past month's Members drill-through", () => {
         primaryColor="#3b82f6"
         role="owner"
         monthWindow={{ ...sep, isCurrent: false }}
-        movers={{ new: 1, rejoined: 0, lost: 0, tasterAdded: 0 }}
+        movers={{ new: 1, rejoined: 0, lost: 0, tasterAdded: 0, churned: 0 }}
         moversBasis={{ basis, caption: "Estimated from your TeamUp history" }}
       />,
     );

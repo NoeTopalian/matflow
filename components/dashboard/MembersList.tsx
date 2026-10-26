@@ -558,6 +558,8 @@ const MOVEMENT_FILTERS: Partial<Record<StatusFilter, MovementBucket>> = {
   "rejoined-this-month": "rejoined",
   "lost-this-month": "lost",
   "tasters-this-month": "tasterAdded",
+  // The churn tile's numerator (26 Oct 2026): active when the window opened, then left.
+  "churned-this-month": "churned",
 };
 
 type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing" | "failedToReconcile" | "moved">>;
@@ -612,10 +614,10 @@ export function inStatusView(
     case "rejoined-this-month":
     case "lost-this-month":
     case "tasters-this-month":
-      // D11: the movement definition, flagged by the server — never joinedAt.
-      return !!m.moved?.includes(MOVEMENT_FILTERS[f]!);
     case "churned-this-month":
-      return m.status === "cancelled" && inMonthWindow(m.cancelledAt, month);
+      // D11: the movement definition, flagged by the server — never joinedAt
+      // or cancelledAt (churn: active when the window opened, then left).
+      return !!m.moved?.includes(MOVEMENT_FILTERS[f]!);
     case "on-hold":
       return isOnHold(m);
     default:
@@ -653,10 +655,12 @@ function sliceHeadlineCopy(
   const when = month.isCurrent ? "this month" : `in ${month.label}`;
   const zone = `Months run midnight to midnight in the club's time zone (${month.timeZone})`;
   if (f === "churned-this-month") {
+    // Churn the normal way (D4, Noe 26 Oct 2026): the members active when the
+    // window began who then left — the churn tile's "n" in "x% (n of m)".
     return {
-      label: `Cancelled ${when}`,
-      includes: `Training members whose cancellation date falls ${when}`,
-      excludes: `Excludes guardians. ${zone}`,
+      label: `Churned ${when}`,
+      includes: `Members who were active when ${month.isCurrent ? "the month" : "the period"} began and left ${when} (cancelled, or finished a prepaid course)`,
+      excludes: `Excludes guardians, and people who joined and left ${when}. ${zone}`,
     };
   }
   // D11: the movement definition (lib/membership-movement.ts), one slice per

@@ -153,7 +153,8 @@ describe("D11: one movement definition", () => {
     members = CLUB;
     events = EVENTS;
     const movers = await loadMonthMovers(tx() as never, "club", NOW, { start: at(START), at: NOW });
-    expect(movers).toEqual({ new: ["ana"], rejoined: ["cara"], lost: ["dan", "eve"], tasterAdded: ["ben"] });
+    // Dan and Eve were members before the month and left in it: lost, and churned (active when the month began).
+    expect(movers).toEqual({ new: ["ana"], rejoined: ["cara"], lost: ["dan", "eve"], tasterAdded: ["ben"], churned: ["dan", "eve"] });
     expect(monthDrillHref("rejoined-this-month", { monthKey: MONTH.monthKey } as never)).toBe(`/dashboard/members?filter=rejoined-this-month&month=${MONTH.monthKey}`);
 
     const moved = new Map<string, MemberRow["moved"]>();
@@ -168,10 +169,11 @@ describe("D11: one movement definition", () => {
     expect(listed("rejoined-this-month")).toEqual(["cara"]);
     expect(listed("lost-this-month")).toEqual(["dan", "eve"]);
     expect(listed("tasters-this-month")).toEqual(["ben"]);
+    expect(listed("churned-this-month")).toEqual(["dan", "eve"]);
     // Ivy joined "this month" by joinedAt but was imported: in no slice.
     for (const f of ["new-this-month", "rejoined-this-month", "lost-this-month", "tasters-this-month"]) expect(listed(f)).not.toContain("ivy");
 
-    const counts = { new: 1, rejoined: 1, lost: 2, tasterAdded: 1 };
+    const counts = { new: 1, rejoined: 1, lost: 2, tasterAdded: 1, churned: 2 };
     currentSearch = "filter=lost-this-month";
     render(<MembersList members={rows} primaryColor="#3b82f6" role="owner" movers={counts} monthWindow={{ ...MONTH, isCurrent: true }} />);
     expect(screen.getByTestId("members-headline").textContent).toBe("2 left this month");

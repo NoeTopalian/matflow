@@ -66,6 +66,7 @@ export function emptyMembershipReport(): MembershipReport {
     boundary: null,
     window: { from: "", to: "", months: MEMBERSHIP_WINDOW_MONTHS },
     openingHeadcount: 0,
+    openingChurned: 0,
     headcountByMonth: [],
     movementsByMonth: [],
     totals: { new: 0, rejoined: 0, lost: 0, lostCancelled: 0, lostCompleted: 0, net: 0, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0 },
@@ -159,6 +160,8 @@ export interface PeriodMembership {
    * unknown — the page shows "—", never a churn worked out against 0.
    */
   openingHeadcount: number | null;
+  /** Churn's numerator: of those `openingHeadcount` members, how many left in the period (each once). */
+  churned: number;
   /** Whether the period's moves were recorded at the time or are (partly) estimated. */
   basis: MembershipBasis;
   /** The same figures for the equal run of months straight before (comparisons); null when that run has no data. */
@@ -193,6 +196,7 @@ export async function loadMembershipForPeriod(
     period: {
       totals: own.totals,
       openingHeadcount: hasHistory ? own.openingHeadcount : null,
+      churned: hasHistory ? own.openingChurned : 0,
       basis: combinedBasis(own.movementsByMonth.map((m) => m.basis)),
       previous: beforeBasis === "none" ? null : { totals: before.totals, basis: beforeBasis },
     },

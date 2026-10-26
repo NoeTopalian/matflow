@@ -41,7 +41,8 @@ const MEMBERS: MemberRow[] = [
   // "new" by the movement definition — not a joinedAt comparison.
   member({ id: "m-new", name: "Nina New", joinedAt: thisMonth, moved: ["new"] }),
   member({ id: "m-old", name: "Oscar Old", joinedAt: lastMonth }),
-  member({ id: "m-churned", name: "Cara Churned", status: "cancelled", joinedAt: lastMonth, cancelledAt: thisMonth }),
+  // A member before this month who left in it: flagged by the server as lost and churned (lib/membership-movement).
+  member({ id: "m-churned", name: "Cara Churned", status: "cancelled", joinedAt: lastMonth, cancelledAt: thisMonth, moved: ["lost", "churned"] }),
   member({ id: "m-churned-stale", name: "Sam Stale", status: "cancelled", joinedAt: lastMonth, cancelledAt: lastMonth }),
 ];
 
@@ -59,7 +60,7 @@ describe("MembersList — Reports drill-through filters", () => {
     expect(screen.queryAllByText("Sam Stale")).toHaveLength(0);
   });
 
-  it("?filter=churned-this-month shows only cancelled members whose cancelledAt is this calendar month", () => {
+  it("?filter=churned-this-month shows only the members the server flagged as churned (active when the month began, then left)", () => {
     currentSearch = "filter=churned-this-month";
     render(<MembersList members={MEMBERS} primaryColor="#3b82f6" role="owner" />);
 

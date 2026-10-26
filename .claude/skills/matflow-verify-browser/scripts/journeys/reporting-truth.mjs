@@ -228,17 +228,29 @@ const MV = tallyMoves(allMoves, moveWindows.thisMonth);
 const activeNoEvent = (status, joined, cancelled, t) =>
   status === "active" ? (joined <= t ? 1 : 0)
     : status === "cancelled" && cancelled != null ? (joined <= t && t < Math.max(cancelled, joined + 1) ? 1 : 0) : 0;
-const activeAt = (t) => {
-  let n = 0;
-  for (const r of baselineRows) n += activeNoEvent(r.status, r.joined, r.cancelled, t);
-  for (const r of SEED.filter(training)) {
-    if (!r.event) { n += activeNoEvent(r.status, r.joined.getTime(), r.cancelled ? r.cancelled.getTime() : null, t); continue; }
-    const at = r.event.at.getTime();
-    const before = r.event.from !== null && Math.min(r.joined.getTime(), at - 1) <= t ? r.event.from : null;
-    n += (at <= t ? r.event.to : before) === "active" ? 1 : 0;
-  }
-  return n;
-};
+// One entry per training member: active at t, and whether they left at or after t0 (the movement definition).
+const people = [
+  ...baselineRows.map((r) => ({
+    active: (t) => activeNoEvent(r.status, r.joined, r.cancelled, t) === 1,
+    leftFrom: (t0) => noEventMoves(r.status, r.joined, r.cancelled).some((m) => m.kind === "lost" && m.at >= t0),
+  })),
+  ...SEED.filter(training).map((r) => (r.event
+    ? {
+      active: (t) => {
+        const at = r.event.at.getTime();
+        const before = r.event.from !== null && Math.min(r.joined.getTime(), at - 1) <= t ? r.event.from : null;
+        return (at <= t ? r.event.to : before) === "active";
+      },
+      leftFrom: (t0) => r.move === "lost" && r.event.at.getTime() >= t0,
+    }
+    : {
+      active: (t) => activeNoEvent(r.status, r.joined.getTime(), r.cancelled ? r.cancelled.getTime() : null, t) === 1,
+      leftFrom: (t0) => noEventMoves(r.status, r.joined.getTime(), r.cancelled ? r.cancelled.getTime() : null).some((m) => m.kind === "lost" && m.at >= t0),
+    })),
+];
+const activeAt = (t) => people.filter((p) => p.active(t)).length;
+// Churn's numerator: of those active just before t0, how many left from t0 on (each person once).
+const churnedFrom = (t0) => people.filter((p) => p.active(t0 - 1) && p.leftFrom(t0)).length;
 const MVLast = tallyMoves(allMoves, moveWindows.lastMonth);
 const E = await population();
 const planned = Object.fromEntries(Object.keys(seedDelta).map((k) => [k, baseline[k] + seedDelta[k]]));
@@ -275,14 +287,14 @@ const JOINED_LINES = [
   { filter: "tasters-this-month", label: "Tasters added", value: MV.tasterAdded, headline: "tasters added this month" },
   { filter: "lost-this-month", label: "Left", value: MV.lost, headline: "left this month" },
 ];
-const CHURN_FORMULA = "Members who left during the period ÷ active members when it began";
+const CHURN_FORMULA = "Of the members active when the period began, how many left during it";
 const churnBase = activeAt(monthStart.getTime() - 1);
 const X = {
   membersHeadline: `${E.active} active members${E.activeOnHold > 0 ? `, ${E.activeOnHold} on hold` : ""}`,
   membersScope: `Active training members, including any on hold. ${ACTIVE_EXCLUDES}.`,
   membersTile: [String(E.active), "Active members", ...(E.activeOnHold > 0 ? [`Includes ${E.activeOnHold} on hold`] : []), ACTIVE_EXCLUDES],
   activeDetail: `Includes ${fmtNum(E.activeOnHold)} on hold · of ${fmtNum(E.current)} current members · ${ACTIVE_EXCLUDES}`,
-  churn: fmtRatio(pct1(MV.lost, churnBase), MV.lost, churnBase),
+  churn: fmtRatio(pct1(churnedFrom(monthStart.getTime()), churnBase), churnedFrom(monthStart.getTime()), churnBase),
   churnDetail: churnBase > 0 ? CHURN_FORMULA : "No active members when the period began",
   joinedValue: fmtNum(MV.joined),                                                                  // ReportsView.tsx:505
   joinedNet: `Net ${signed(MV.net)} this month (new + rejoined − left)`,                            // ReportsView.tsx:524-526
@@ -564,9 +576,8 @@ try {
     P.npy > 0 && healthLine >= 1, { expected: Y.healthLine, found: healthLine });
   const joinedHref = joinedHrefs["new-this-month"];
   const churnHref = await churnLink.getAttribute("href");
-  // Churn counts leavers by the movement definition, so it drills to the Left slice (26 Oct 2026).
   L.check("reports", "R13 the joined and churn drill-throughs carry the club month the tiles counted (month=YYYY-MM)",
-    joinedHref === `/dashboard/members?filter=new-this-month&month=${Y.thisMonthKey}` && churnHref === `/dashboard/members?filter=lost-this-month&month=${Y.thisMonthKey}`,
+    joinedHref === `/dashboard/members?filter=new-this-month&month=${Y.thisMonthKey}` && churnHref === `/dashboard/members?filter=churned-this-month&month=${Y.thisMonthKey}`,
     { joined: joinedHref, churn: churnHref, expectedMonth: Y.thisMonthKey });
   // D9: the Reports "Other accounts owing" tile (ReportsView.tsx:1442-1462), beside the payers, never inside them.
   const owTile = page.getByTestId("reports-other-owing").first();
@@ -744,10 +755,11 @@ try {
   const MV3 = tallyMoves(allMoves, [start3.getTime(), Infinity]);
   const open3 = activeAt(start3.getTime() - 1);
   const X3 = {
-    churn: fmtRatio(pct1(MV3.lost, open3), MV3.lost, open3),
+    churn: fmtRatio(pct1(churnedFrom(start3.getTime()), open3), churnedFrom(start3.getTime()), open3),
     churnDetail: open3 > 0 ? CHURN_FORMULA : "No active members when the period began",
     newHref: `/dashboard/members?filter=new-this-month&from=${monthKeyOf(-2)}&to=${monthKeyOf(0)}`,
     lostHref: `/dashboard/members?filter=lost-this-month&from=${monthKeyOf(-2)}&to=${monthKeyOf(0)}`,
+    churnHref: `/dashboard/members?filter=churned-this-month&from=${monthKeyOf(-2)}&to=${monthKeyOf(0)}`,
   };
   L.note("period", "N4 expected figures for the last 3 months", { label3, movement: MV3, openingHeadcount: open3, X3 });
 
@@ -783,8 +795,8 @@ try {
     JSON.stringify(joined3Saw) === JSON.stringify(joined3Want), { saw: joined3Saw, expected: joined3Want });
   const range3 = { from: await page.getByLabel("Period from month").inputValue(), to: await page.getByLabel("Period to month").inputValue() };
   L.check("period", "P3 From and To show the run's first and last months", range3.from === monthKeyOf(-2) && range3.to === monthKeyOf(0), range3);
-  L.check("period", "P4 the churn tile drills to the Left slice for the whole run", (await churn3Link.getAttribute("href")) === X3.lostHref,
-    { saw: await churn3Link.getAttribute("href"), expected: X3.lostHref });
+  L.check("period", "P4 the churn tile drills to the churned slice for the whole run", (await churn3Link.getAttribute("href")) === X3.churnHref,
+    { saw: await churn3Link.getAttribute("href"), expected: X3.churnHref });
   await shot(page, "reporting-truth-period-3m");
 
   // The Left slice for the run lists exactly the leavers the tile counted, named by the run's months.

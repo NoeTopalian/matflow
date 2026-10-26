@@ -215,12 +215,13 @@ describe("getReportsData — churn the normal way, with its counts", () => {
     expect(data.churnRate).toBe(0);
   });
 
-  it("no history from before the period: someone left, but there is no base to divide by → null", async () => {
+  it("no history from before the period: someone joined and left, but nobody was there to churn → null, 0 of 0", async () => {
     setup({ ...BASE, history: { events: [ev("x", null, "active", thisMonthAt()), ev("x", "active", "cancelled", new Date(thisMonthAt().getTime() + 1))], live: [{ id: "x", status: "cancelled", joinedAt: thisMonthAt(), cancelledAt: thisMonthAt() }] } });
     const data = await getReportsData("tenant-A");
     expect(data.churn.ratePct).toBeNull();
     expect(data.churn.base).toBe(0);
-    expect(data.churn.cancelled).toBe(1);
+    // They joined inside the period, so they were never in the base: not churn (they are on the Joined tile's Left line).
+    expect(data.churn.cancelled).toBe(0);
   });
 
   it("last month: only last month's leavers, over who was active when last month opened", async () => {

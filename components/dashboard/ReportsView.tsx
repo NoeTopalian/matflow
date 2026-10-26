@@ -311,7 +311,7 @@ export function joinedTileDetail(t: MembershipReport["totals"]): string {
 /** The "New this month" tile's scope, in the movement words. */
 export const NEW_SCOPE = "First ever start. Rejoins, tasters and imports are counted apart";
 /** D4 (Noe, 26 Oct 2026: churn "how it normally is"). */
-const CHURN_FORMULA = "Members who left during the period ÷ active members when it began";
+const CHURN_FORMULA = "Of the members active when the period began, how many left during it";
 
 /**
  * Delta as display text, or null when nothing moved. A percentage always
@@ -1549,9 +1549,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             value={<RatioValue pct={churn.ratePct} n={churn.cancelled} base={churn.base} />}
             detail={churn.base > 0 ? CHURN_FORMULA : "No active members when the period began"}
             primaryColor={primaryColor}
-            // Churn counts leavers by the movement definition (cancelled, or
-            // finished a prepaid course), so it lists the Left slice.
-            href={monthDrillHref("lost-this-month", period, range)}
+            // The churn slice lists exactly the tile's n: active when the
+            // period began, then left (the movement definition).
+            href={monthDrillHref("churned-this-month", period, range)}
             hrefLabel={`Churn rate ${words.during}`}
           />
           <JoinedThisMonthTile

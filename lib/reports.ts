@@ -67,8 +67,10 @@ export interface ChurnFigures {
   /** cancelled ÷ base × 100, one decimal place; null when base is 0 (no members before the period). */
   ratePct: number | null;
   /**
-   * Members who left during the period (cancelled, or finished a prepaid
-   * course: the movement definition, lib/membership-movement.ts).
+   * Of the `base` members, how many left during the period (cancelled, or
+   * finished a prepaid course: the movement definition), each person once.
+   * Members who joined and left inside the period are not churn (they were
+   * never in the base); they are in the Joined tile's Left line.
    */
   cancelled: number;
   /**
@@ -833,12 +835,13 @@ export async function getReportsData(
 
   // ── Health metrics ───────────────────────────────────────────────────────
 
-  // D4 settled by Noe, 26 Oct 2026 ("how it normally is"): churn = members
-  // who left during the period ÷ active members just before it opened, with
-  // its counts so every surface prints "x% (n of m)". No history before the
-  // period → base 0 → null ("—"), never a rate against nothing; `churnRate`
-  // keeps the number only for its existing numeric readers.
-  const left = periodMoves.basis === "none" ? 0 : periodMoves.totals.lost;
+  // D4 settled by Noe, 26 Oct 2026 ("how it normally is"): churn = of the
+  // members active just before the period opened, how many left during it
+  // (each once) ÷ those members — so never above 100%. With its counts every
+  // surface prints "x% (n of m)". No history before the period → base 0 →
+  // null ("—"), never a rate against nothing; `churnRate` keeps the number
+  // only for its existing numeric readers.
+  const left = periodMoves.basis === "none" ? 0 : periodMoves.churned;
   const churnBase = periodMoves.openingHeadcount ?? 0;
   const churnPct = ratePct1dp(left, churnBase);
   const churn: ChurnFigures = {

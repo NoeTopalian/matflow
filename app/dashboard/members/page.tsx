@@ -202,7 +202,9 @@ export default async function MembersPage({ searchParams }: Props) {
   // its last millisecond), so each drill-through lists exactly who was counted.
   const moveWindow = {
     start: new Date(monthWindow.monthStart),
-    at: monthWindow.isCurrent ? now : new Date(new Date(monthWindow.nextMonthStart).getTime() - 1),
+    // Counted to now, or to the window's last instant when it ended before now (a past month, or a
+    // Reports run of months that ends this month: up to now, as Reports counts it).
+    at: new Date(Math.min(now.getTime(), new Date(monthWindow.nextMonthStart).getTime() - 1)),
   };
   const { movers, basis: moversBasis, caption: moversCaption } = await withTenantContext(
     session!.user.tenantId,
@@ -259,7 +261,7 @@ export default async function MembersPage({ searchParams }: Props) {
         monthWindow={monthWindow}
         serverCounts={counts}
         otherOwing={otherOwingTotals(otherOwingRows)}
-        movers={{ new: movers.new.length, rejoined: movers.rejoined.length, lost: movers.lost.length, tasterAdded: movers.tasterAdded.length }}
+        movers={{ new: movers.new.length, rejoined: movers.rejoined.length, lost: movers.lost.length, tasterAdded: movers.tasterAdded.length, churned: movers.churned.length }}
         moversBasis={{ basis: moversBasis, caption: moversCaption }}
         supportScope={(session!.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
       />

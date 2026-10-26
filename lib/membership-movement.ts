@@ -135,6 +135,13 @@ export interface MembershipSeries {
   window: { from: string; to: string; months: number };
   /** Active members just before the window opens, so the first month's change can be checked too. */
   openingHeadcount: number;
+  /**
+   * Churn's numerator (D4, Noe 26 Oct 2026: "how it normally is"): of the
+   * `openingHeadcount` members, how many left (cancelled, or finished a prepaid
+   * course) inside the window — each person once, however many times they
+   * left. Never more than `openingHeadcount`.
+   */
+  openingChurned: number;
   headcountByMonth: MonthHeadcount[];
   movementsByMonth: MonthMovement[];
   totals: MovementTally;
@@ -406,8 +413,12 @@ function reconciledEvents(input: Pick<BuildMembershipInput, "events" | "live" | 
   return { byMember, reconciled };
 }
 
-/** The four Members drill-throughs (D11): one per figure on the Joined tile. */
-export type MovementBucket = "new" | "rejoined" | "lost" | "tasterAdded";
+/**
+ * The Members drill-throughs: one per figure on the Joined tile (D11), and
+ * "churned" — members active just before the window who left inside it, the
+ * churn tile's numerator (26 Oct 2026).
+ */
+export type MovementBucket = "new" | "rejoined" | "lost" | "tasterAdded" | "churned";
 
 export function movementBucket(kind: MovementKind): MovementBucket | null {
   if (kind === "new" || kind === "rejoined" || kind === "tasterAdded") return kind;
@@ -438,22 +449,25 @@ export function moversAndBasisInWindow(
   input: Pick<BuildMembershipInput, "events" | "live" | "now" | "boundary">,
   window: { start: Date; at: Date },
 ): { movers: Record<MovementBucket, string[]>; basis: MembershipBasis } {
-  const out: Record<MovementBucket, Set<string>> = { new: new Set(), rejoined: new Set(), lost: new Set(), tasterAdded: new Set() };
+  const out: Record<MovementBucket, Set<string>> = { new: new Set(), rejoined: new Set(), lost: new Set(), tasterAdded: new Set(), churned: new Set() };
   let first: number | null = null;
   let estimatedMoves = 0;
+  const openedAt = new Date(window.start.getTime() - 1);
   for (const list of reconciledEvents(input).byMember.values()) {
     const t0 = list[0]?.occurredAt.getTime();
     if (t0 !== undefined && (first === null || t0 < first)) first = t0;
+    const activeAtOpening = stateAt(list, openedAt) === "active";
     for (const m of memberMovements(list)) {
       const t = m.at.getTime();
       if (t < window.start.getTime() || t > window.at.getTime()) continue;
       if (m.estimated) estimatedMoves += 1;
       const bucket = movementBucket(m.kind);
       if (bucket) out[bucket].add(m.memberId);
+      if (bucket === "lost" && activeAtOpening) out.churned.add(m.memberId);
     }
   }
   return {
-    movers: { new: [...out.new], rejoined: [...out.rejoined], lost: [...out.lost], tasterAdded: [...out.tasterAdded] },
+    movers: { new: [...out.new], rejoined: [...out.rejoined], lost: [...out.lost], tasterAdded: [...out.tasterAdded], churned: [...out.churned] },
     basis: movementWindowBasis(window, first, input.boundary?.getTime() ?? null, estimatedMoves),
   };
 }
@@ -495,11 +509,18 @@ export function buildMembership(input: BuildMembershipInput): MembershipSeries {
   // Active members at the instant whose state came from a reconstructed event (corrections aside).
   const estimatedActive = windows.map(() => 0);
   let openingHeadcount = 0;
+  let openingChurned = 0;
   const allMoves: Movement[] = [];
+  const windowEnd = windows[windows.length - 1].at.getTime();
 
   for (const list of byMember.values()) {
-    allMoves.push(...memberMovements(list));
-    if (stateAt(list, openingAt) === "active") openingHeadcount += 1;
+    const moves = memberMovements(list);
+    allMoves.push(...moves);
+    if (stateAt(list, openingAt) === "active") {
+      openingHeadcount += 1;
+      const t0 = windows[0].start.getTime();
+      if (moves.some((m) => movementBucket(m.kind) === "lost" && m.at.getTime() >= t0 && m.at.getTime() <= windowEnd)) openingChurned += 1;
+    }
     windows.forEach((w, i) => {
       let latest: MovementEvent | null = null;
       for (const e of list) {
@@ -553,6 +574,7 @@ export function buildMembership(input: BuildMembershipInput): MembershipSeries {
     firstDataAt: first === null ? null : new Date(first).toISOString(),
     window: { from: firstWithData.label, to: windows[windows.length - 1].label, months: windows.length - windows.indexOf(firstWithData) },
     openingHeadcount,
+    openingChurned,
     headcountByMonth: windows.map((w, i) => ({
       month: w.key,
       label: w.label,

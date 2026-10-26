@@ -124,10 +124,14 @@ describe("search scope on Active", () => {
 });
 
 describe("Reports drill-through slices name themselves", () => {
-  it("churned-this-month: the header counts the cancelled rows shown, not current members", () => {
+  it("churned-this-month: the header counts members active when the month began who left (churn the normal way, 26 Oct 2026)", () => {
     currentSearch = "filter=churned-this-month";
-    render(<MembersList members={CLUB} primaryColor="#3b82f6" role="owner" />);
-    expect(headline()).toBe("1 cancelled this month");
+    // Ed was a member before this month and left in it: churn. Cy joined AND left this month: never in the base, not churn.
+    const ed = member({ id: "c3", name: "Ed Earlier", status: "cancelled", joinedAt: lastMonth, cancelledAt: thisMonth, moved: ["lost", "churned"] });
+    render(<MembersList members={[...CLUB, ed]} primaryColor="#3b82f6" role="owner" />);
+    expect(headline()).toBe("1 churned this month");
+    expect(shown("Ed Earlier")).toBe(true);
+    expect(shown("Cy Cancelled")).toBe(false);
     expect(scope()).not.toContain("Excludes cancelled members");
     expect(screen.getByTestId("members-tile-headline").querySelector("p")!.textContent).toBe("1");
   });
