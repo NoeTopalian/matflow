@@ -15,6 +15,7 @@
 // when DATABASE_URL is unset. Prefix t8a-; count-checked teardown of this
 // file's clubs only.
 import { vi, describe, it, expect, afterAll } from "vitest";
+import type { Prisma } from "@prisma/client";
 
 vi.mock("next/server", () => ({
   NextResponse: {
@@ -214,7 +215,7 @@ function row(o: { name: string; email: string; status: string; start: string; ca
   return [o.name, o.email, "", "Adults Advanced 2026", "recurring", o.status, "Stripe", o.start, o.start, o.cancelled ?? "", o.cancelled ?? "", "Yes", "", "", "", "", "", "", "GB", "", "", "", "1990-01-01", "", "", ""].join(",");
 }
 
-describe.skipIf(!HAS_DB)("T8a: refresh events are source-dated and clamped; rollback mirrors them", () => {
+describe.skipIf(!HAS_DB)("T8a: a refresh writes no events (25 Oct rule); a pre-rule refresh's rollback mirrors its dates", () => {
   const EXPORT_1 = new Date("2026-10-03T11:39:57.000Z");
   const EXPORT_2 = new Date("2026-10-20T08:00:00.000Z");
   const CANCELLED = "2026-10-05";
@@ -255,34 +256,58 @@ describe.skipIf(!HAS_DB)("T8a: refresh events are source-dated and clamped; roll
 
   const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
-  it("dates Cara's cancellation 5 Oct (createdAt = now), clamps Stan's to his 10 Oct staff edit, and keeps the latest-event invariant", async () => {
-    const { club, cara, stan, una, jobId, STAFF } = await setup("refresh");
-    const before = Date.now();
+  // Owner decision 25 Oct 2026: a refresh never overwrites MatFlow, so it writes
+  // no member and no status event; its forward-event dating has nothing to date.
+  it("a refresh committed under the 25 Oct rule writes no status event and changes no member", async () => {
+    const { club, cara, stan, una, jobId } = await setup("refresh");
+    const snapshot = async () => {
+      const out: unknown[] = [];
+      for (const id of [cara, stan, una]) {
+        out.push(await eventsOf(club, id));
+        out.push(await withRlsBypass((tx) => tx.member.findFirst({ where: { tenantId: club.tenantId, id }, select: { status: true, cancelledAt: true, paymentStatus: true, membershipType: true, billingStatusAsOf: true, billingStatusSource: true } })));
+      }
+      return JSON.stringify(out);
+    };
+    const before = await snapshot();
     const res = (await commitPOST(new Request("https://test.local/x", { method: "POST", headers: ORIGIN }), params(jobId))) as unknown as { status: number };
     expect(res.status).toBe(200);
-
-    const caraEvents = await eventsOf(club, cara);
-    const caraCancel = caraEvents.find((e) => e.toStatus === "cancelled")!;
-    // Midnight 5 Oct in the club's timezone (Europe/London, BST): 23:00Z on the 4th (review F2).
-    expect(caraCancel.occurredAt.toISOString()).toBe("2026-10-04T23:00:00.000Z");
-    expect(caraCancel.createdAt.getTime()).toBeGreaterThanOrEqual(before - 5_000);
-
-    const stanCancel = (await eventsOf(club, stan)).find((e) => e.toStatus === "cancelled")!;
-    expect(stanCancel.occurredAt.toISOString()).toBe(STAFF.toISOString());
-
-    for (const id of [cara, stan, una]) {
-      const evs = await eventsOf(club, id);
-      expect(evs[evs.length - 1].toStatus).toBe((await memberRow(club, id))!.status);
-    }
+    expect(await snapshot()).toBe(before);
   }, 120_000);
 
-  it("a rollback's reverse events carry the forward dates; replay for any date equals the pre-refresh status", async () => {
-    const { club, cara, stan, jobId } = await setup("rollback");
+  /**
+   * A refresh committed BEFORE the 25 Oct rule: its member writes and the
+   * forward events it wrote (dated by the file, clamped to the latest event),
+   * and the manifest the old commit recorded. Its rollback is still live.
+   */
+  async function legacyRefresh(club: Club, jobId: string, moves: { id: string; cancelledAt: Date; occurredAt: Date }[]) {
+    const std = (m: { status: string; paymentStatus: string; cancelledAt: Date | null; membershipType: string | null; membershipTierId: string | null; billingStatusAsOf: Date | null; billingStatusSource: string | null }) => ({
+      status: m.status, paymentStatus: m.paymentStatus, cancelledAt: m.cancelledAt?.toISOString() ?? null, membershipType: m.membershipType,
+      membershipTierId: m.membershipTierId, billingStatusAsOf: m.billingStatusAsOf?.toISOString() ?? null, billingStatusSource: m.billingStatusSource,
+    });
+    const sel = { name: true, externalRef: true, status: true, paymentStatus: true, cancelledAt: true, membershipType: true, membershipTierId: true, billingStatusAsOf: true, billingStatusSource: true } as const;
+    const changes: Prisma.InputJsonObject[] = [];
+    for (const mv of moves) {
+      const was = await withRlsBypass((tx) => tx.member.findFirstOrThrow({ where: { tenantId: club.tenantId, id: mv.id }, select: sel }));
+      const now = await withRlsBypass(async (tx) => {
+        await tx.memberStatusEvent.create({ data: { tenantId: club.tenantId, memberId: mv.id, fromStatus: was.status, toStatus: "cancelled", reason: "import", occurredAt: mv.occurredAt, sourceJobId: jobId, sourceAction: "import_refresh" } });
+        return tx.member.update({ where: { id: mv.id }, data: { status: "cancelled", cancelledAt: mv.cancelledAt, billingStatusAsOf: EXPORT_2, billingStatusSource: jobId }, select: sel });
+      });
+      changes.push({ memberId: mv.id, name: was.name, sourceKey: was.externalRef, fields: ["status", "cancelledAt"], before: std(was), after: std(now) });
+    }
+    await withRlsBypass((tx) => tx.importJob.update({ where: { id: jobId }, data: { status: "complete", completedAt: new Date(), manifest: { mode: "refresh", refresh: { changes } } } }));
+  }
+
+  it("rolling back a pre-rule refresh: reverse events carry the forward dates; replay for any date equals the pre-refresh status", async () => {
+    const { club, cara, stan, jobId, STAFF } = await setup("rollback");
     const preRefresh = new Map<string, Awaited<ReturnType<typeof eventsOf>>>();
     for (const id of [cara, stan]) preRefresh.set(id, await eventsOf(club, id));
+    // The old commit dated Cara at club midnight 5 Oct (BST: 23:00Z on the 4th) and clamped Stan to his staff edit.
+    await legacyRefresh(club, jobId, [
+      { id: cara, cancelledAt: new Date(`${CANCELLED}T00:00:00.000Z`), occurredAt: new Date("2026-10-04T23:00:00.000Z") },
+      { id: stan, cancelledAt: new Date(`${CANCELLED}T00:00:00.000Z`), occurredAt: STAFF },
+    ]);
 
     const req = () => new Request("https://test.local/x", { method: "POST", headers: ORIGIN });
-    expect(((await commitPOST(req(), params(jobId))) as unknown as { status: number }).status).toBe(200);
     expect(((await rollbackPOST(req(), params(jobId))) as unknown as { status: number }).status).toBe(200);
 
     const probes = [EXPORT_1, new Date("2026-10-05T00:00:00Z"), new Date("2026-10-09T12:00:00Z"), new Date("2026-10-10T09:00:00Z"), new Date()];

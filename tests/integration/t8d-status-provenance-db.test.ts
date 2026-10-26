@@ -178,16 +178,32 @@ describe.skipIf(!HAS_DB)("T8d: refresh and rollback events carry the job", () =>
     return { club, cara, jobId: job.id };
   }
 
-  it("acceptance 1 and 2: the cancellation names the refresh job; the rollback's reverse names it too, at the forward date", async () => {
+  // Owner decision 25 Oct 2026: a refresh writes no event, so forward
+  // import_refresh rows come only from refreshes recorded before the rule.
+  // Their rollback still names the job (acceptance 2).
+  it("acceptance 2: a pre-rule refresh's rollback reverse names the job as import_rollback, at the forward date", async () => {
     const { club, cara, jobId } = await setup("refresh");
-    expect(((await commitPOST(req(), params(jobId))) as unknown as { status: number }).status).toBe(200);
-    const fwd = (await eventsOf(club, cara)).find((e) => e.toStatus === "cancelled")!;
-    expect(fwd).toMatchObject({ fromStatus: "active", reason: "import", sourceJobId: jobId, sourceAction: "import_refresh" });
+    const FWD = new Date("2026-10-08T23:00:00.000Z"); // club midnight 9 Oct (BST)
+    const sel = { name: true, externalRef: true, status: true, paymentStatus: true, cancelledAt: true, membershipType: true, membershipTierId: true, billingStatusAsOf: true, billingStatusSource: true } as const;
+    const std = (m: { status: string; paymentStatus: string; cancelledAt: Date | null; membershipType: string | null; membershipTierId: string | null; billingStatusAsOf: Date | null; billingStatusSource: string | null }) => ({
+      status: m.status, paymentStatus: m.paymentStatus, cancelledAt: m.cancelledAt?.toISOString() ?? null, membershipType: m.membershipType,
+      membershipTierId: m.membershipTierId, billingStatusAsOf: m.billingStatusAsOf?.toISOString() ?? null, billingStatusSource: m.billingStatusSource,
+    });
+    // What the old commit wrote: the member move, its forward event, and the manifest.
+    const was = await withRlsBypass((tx) => tx.member.findFirstOrThrow({ where: { tenantId: club.tenantId, id: cara }, select: sel }));
+    const now = await withRlsBypass(async (tx) => {
+      await tx.memberStatusEvent.create({ data: { tenantId: club.tenantId, memberId: cara, fromStatus: "active", toStatus: "cancelled", reason: "import", occurredAt: FWD, sourceJobId: jobId, sourceAction: "import_refresh" } });
+      return tx.member.update({ where: { id: cara }, data: { status: "cancelled", cancelledAt: new Date(`${CANCELLED}T00:00:00.000Z`), billingStatusAsOf: EXPORT_2, billingStatusSource: jobId }, select: sel });
+    });
+    const changes = [{ memberId: cara, name: was.name, sourceKey: was.externalRef, fields: ["status", "cancelledAt"], before: std(was), after: std(now) }];
+    await withRlsBypass((tx) => tx.importJob.update({ where: { id: jobId }, data: { status: "complete", completedAt: new Date(), manifest: { mode: "refresh", refresh: { changes } } } }));
 
     expect(((await rollbackPOST(req(), params(jobId))) as unknown as { status: number }).status).toBe(200);
+    const fwd = (await eventsOf(club, cara)).find((e) => e.toStatus === "cancelled")!;
     const back = (await eventsOf(club, cara)).find((e) => e.fromStatus === "cancelled")!;
     expect(back).toMatchObject({ toStatus: "active", reason: "import", sourceJobId: jobId, sourceAction: "import_rollback" });
     expect(back.occurredAt.toISOString()).toBe(fwd.occurredAt.toISOString());
+    expect(back.occurredAt.toISOString()).toBe(FWD.toISOString());
   });
 
   it("a slice that fails after its events were written leaves neither the member write nor the event", async () => {
