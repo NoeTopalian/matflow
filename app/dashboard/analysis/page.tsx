@@ -2,7 +2,6 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import AnalysisView from "@/components/dashboard/AnalysisView";
 import { requireRole } from "@/lib/authz";
 import { ACTIVE_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
-import { clubMonthKey } from "@/lib/club-month";
 import { loadJoinedInWindows } from "@/lib/membership-report";
 import { liveClassWhere } from "@/lib/class-live";
 import { resolveReportPeriod } from "@/lib/report-period";
@@ -29,7 +28,6 @@ export default async function AnalysisPage({ searchParams }: Props) {
   const range = resolveReportPeriod({ period, from, to }, now, tenant?.timezone);
   const inPeriod = { gte: new Date(range.start), lt: new Date(range.end) };
   const inPrevious = { gte: new Date(range.previous.start), lt: new Date(range.previous.end) };
-  const trendStart = new Date(range.chartMonths[0].monthStart);
 
   const [
     totalMembers,
@@ -37,7 +35,7 @@ export default async function AnalysisPage({ searchParams }: Props) {
     checkinsLastMonth,
     activeClasses,
     statusGroups,
-    trendCheckIns,
+    trendCounts,
     // Distinct member IDs that checked in at least once in the period — used
     // to compute a true engagement % bounded by total membership (was
     // previously computed as `checkins / members` and could blow past 100%).
@@ -51,19 +49,10 @@ export default async function AnalysisPage({ searchParams }: Props) {
       tx.attendanceRecord.count({ where: { tenantId, checkInTime: inPrevious } }),
       tx.class.count({ where: liveClassWhere(tenantId) }),
       tx.member.groupBy({ by: ["status"], where: { tenantId, ...TRAINING_MEMBER }, _count: true }),
-      tx.attendanceRecord.findMany({
-        // Audit iter-2-database A8I2-P-H-2: cap at 60k rows. At a busy
-        // 500-member tenant ~200 classes/month × 20 members = 24k rows over
-        // 6 months; 60k gives 2.5× headroom before the JS bucketing pipe
-        // truncates. Matches the lib/reports.ts pattern with a warn log
-        // so we know when it bites.
-        where: { tenantId, checkInTime: { gte: trendStart, lt: inPeriod.lt } },
-        select: { checkInTime: true },
-        take: 60000,
-      }).then((rows) => {
-        if (rows.length === 60000) console.warn("[analysis] truncated at 60000 rows (trend window)");
-        return rows;
-      }),
+      // Check-ins per club month over the chart's months (the period, or the six
+      // months ending with it): one COUNT per month in the database, so a long
+      // period never reads or truncates rows (it used to cap at 60,000 rows).
+      Promise.all(range.chartMonths.map((m) => tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: new Date(m.monthStart), lt: new Date(m.nextMonthStart) } } }))),
       // Lane 1 iter-1 P-04 [Critical] fix: count distinct members at the DB.
       // The previous `findMany({ distinct: ["memberId"] })` materialised every
       // row to JS and discarded everything but the member ids — ~10k rows
@@ -102,16 +91,11 @@ export default async function AnalysisPage({ searchParams }: Props) {
   const newLastMonth = joinedLast.joined;
   const joinedEstimated = joinedThis.basis === "estimated" || joinedThis.basis === "mixed" || joinedLast.basis === "estimated" || joinedLast.basis === "mixed";
 
-  // Check-ins per club month over the chart's months (the period, or the six
-  // months ending with it): bucketed in the club's zone, not the server's.
-  const trendByMonth = new Map(range.chartMonths.map((m) => [m.monthKey, 0]));
-  for (const rec of trendCheckIns) {
-    const key = clubMonthKey(rec.checkInTime, range.timeZone);
-    if (trendByMonth.has(key)) trendByMonth.set(key, (trendByMonth.get(key) ?? 0) + 1);
-  }
-  const monthlyTrend = range.chartMonths.map((m) => ({
-    label: new Date(new Date(m.monthStart).getTime() + 15 * 86_400_000).toLocaleString("en-GB", { month: "short", timeZone: range.timeZone }),
-    value: trendByMonth.get(m.monthKey) ?? 0,
+  // Labels in the club's zone; past 12 months a month name repeats, so the year goes with it ("Oct 25").
+  const withYear = range.chartMonths.length > 12;
+  const monthlyTrend = range.chartMonths.map((m, i) => ({
+    label: new Date(new Date(m.monthStart).getTime() + 15 * 86_400_000).toLocaleString("en-GB", { month: "short", ...(withYear ? { year: "2-digit" } : {}), timeZone: range.timeZone }),
+    value: trendCounts[i],
   }));
 
   const STATUS_LABELS: Record<string, string> = { active: "Active", inactive: "Inactive", cancelled: "Cancelled", taster: "Taster" };

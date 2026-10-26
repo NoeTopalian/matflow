@@ -76,6 +76,20 @@ const BASE: Fixture = {
   ],
 };
 
+
+/**
+ * The database's answer to the distinct-attendee groupBy (lib/reports.ts):
+ * the rows its `where.member` filter keeps (status, and accountType "not" /
+ * "in"), one per member. The filter, not the test, decides who counts.
+ */
+type AttendRow = { memberId: string; member?: { status?: string; accountType?: string } };
+function attendeeGroups(rows: AttendRow[], where: { member?: { status?: string; accountType?: { not?: string; in?: string[] } } }) {
+  const m = where.member ?? {};
+  const typeOk = (t: string) => (!m.accountType ? true : m.accountType.not !== undefined ? t !== m.accountType.not : (m.accountType.in ?? []).includes(t));
+  const kept = rows.filter((r) => (!m.status || r.member?.status === m.status) && typeOk(r.member?.accountType ?? "adult"));
+  return [...new Set(kept.map((r) => r.memberId))].map((memberId) => ({ memberId }));
+}
+
 function setup(f: Fixture) {
   vi.mocked(prisma.class.findMany).mockResolvedValue([] as never);
   vi.mocked(prisma.class.count).mockResolvedValue(0 as never);
@@ -90,6 +104,13 @@ function setup(f: Fixture) {
   ] as never);
   vi.mocked(prisma.attendanceRecord.groupBy).mockImplementation(((args: unknown) => {
     const by = (args as { by: string[] }).by;
+    if (by[0] === "memberId") {
+      // The three in-period check-ins: m1 twice and m2, both active.
+      return Promise.resolve(attendeeGroups(
+        [{ memberId: "m1", member: { status: "active" } }, { memberId: "m1", member: { status: "active" } }, { memberId: "m2", member: { status: "active" } }],
+        (args as { where: Parameters<typeof attendeeGroups>[1] }).where,
+      ) as never);
+    }
     if (by[0] === "classInstanceId") {
       return Promise.resolve([
         { classInstanceId: "i1", _count: 2 },

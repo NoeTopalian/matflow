@@ -136,14 +136,15 @@ describe("member population counts", () => {
     expect(src).not.toMatch(/status: "(active|cancelled)"/);
   });
 
-  it("Analysis closes last month half-open (lt startOfMonth), never lte a midnight", () => {
+  it("Analysis compares half-open windows (the period and the equal run before it), never lte a midnight", () => {
     const src = readFileSync("app/dashboard/analysis/page.tsx", "utf8");
     expect(src).not.toContain("endOfLastMonth");
     expect(src).not.toMatch(/lte:/);
-    // Check-ins last month; Joined last month ends 1 ms before the club's next month.
-    expect((src.match(/gte: startOfLastMonth, lt: startOfMonth/g) ?? []).length).toBe(1);
-    expect(src).toContain("new Date(new Date(prev.nextMonthStart).getTime() - 1)");
-    expect(src).toContain("monthWindows(now)");
+    // Check-ins in the run before the period: [previous.start, previous.end) (lib/report-period, 26 Oct 2026).
+    expect(src).toContain("const inPrevious = { gte: new Date(range.previous.start), lt: new Date(range.previous.end) };");
+    expect(src).toContain("checkInTime: inPrevious");
+    // Joined in that run ends at its last instant (previous.at = end − 1 ms).
+    expect(src).toContain("{ start: new Date(range.previous.start), at: new Date(range.previous.at) }");
   });
 
   it("Memberships counts each tier's active training members", () => {

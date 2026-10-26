@@ -70,7 +70,24 @@ const CLASS_INSTANCES = [
   { id: "i2", class: { name: "Open Mat", maxCapacity: null } },
 ];
 
+
+/**
+ * The database's answer to the distinct-attendee groupBy (lib/reports.ts):
+ * the rows its `where.member` filter keeps (status, and accountType "not" /
+ * "in"), one per member. The filter, not the test, decides who counts.
+ */
+type AttendRow = { memberId: string; member?: { status?: string; accountType?: string } };
+function attendeeGroups(rows: AttendRow[], where: { member?: { status?: string; accountType?: { not?: string; in?: string[] } } }) {
+  const m = where.member ?? {};
+  const typeOk = (t: string) => (!m.accountType ? true : m.accountType.not !== undefined ? t !== m.accountType.not : (m.accountType.in ?? []).includes(t));
+  const kept = rows.filter((r) => (!m.status || r.member?.status === m.status) && typeOk(r.member?.accountType ?? "adult"));
+  return [...new Set(kept.map((r) => r.memberId))].map((memberId) => ({ memberId }));
+}
+
+let ROWS: AttendRow[] = WEEKLY_RECORDS;
+
 function setupDefaultMocks() {
+  ROWS = WEEKLY_RECORDS;
   vi.mocked(prisma.class.findMany).mockResolvedValue(CLASS_OPTIONS as never);
   vi.mocked(prisma.class.count).mockResolvedValue(0 as never);
   vi.mocked(prisma.classInstance.findMany).mockResolvedValue(CLASS_INSTANCES as never);
@@ -78,6 +95,7 @@ function setupDefaultMocks() {
   vi.mocked(prisma.attendanceRecord.groupBy).mockImplementation(((args: unknown) => {
     const by = (args as { by: string[] }).by;
     if (by[0] === "classInstanceId") return Promise.resolve(TOP_RAW as never);
+    if (by[0] === "memberId") return Promise.resolve(attendeeGroups(ROWS, (args as { where: Parameters<typeof attendeeGroups>[1] }).where) as never);
     return Promise.resolve([] as never); // checkInMethod groupBy — unused here
   }) as never);
   vi.mocked(prisma.attendanceRecord.count).mockResolvedValue(5 as never); // totalCheckIns
@@ -118,12 +136,12 @@ describe("getReportsData — attendanceRateMode", () => {
     // attended", or the rate reads 4 ÷ 3 = 133% — a "% of members" above 100%,
     // the honesty bug the hostile-owner E2E found. Red-on-revert: without the
     // active-only numerator this asserts 100 but computes 133.
-    vi.mocked(prisma.attendanceRecord.findMany).mockResolvedValue([
-      { checkInTime: new Date(), memberId: "m1", member: { status: "active" } },
-      { checkInTime: new Date(), memberId: "m2", member: { status: "active" } },
-      { checkInTime: new Date(), memberId: "m3", member: { status: "active" } },
-      { checkInTime: new Date(), memberId: "m4", member: { status: "cancelled" } },
-    ] as never);
+    ROWS = [
+      { memberId: "m1", member: { status: "active" } },
+      { memberId: "m2", member: { status: "active" } },
+      { memberId: "m3", member: { status: "active" } },
+      { memberId: "m4", member: { status: "cancelled" } },
+    ];
     vi.mocked(prisma.member.groupBy).mockResolvedValue([{ status: "active", _count: 3 }] as never);
 
     const data = await getReportsData("tenant-A", { attendanceRateMode: "attendance-percentage" });
@@ -135,16 +153,19 @@ describe("getReportsData — attendanceRateMode", () => {
     // Denominator = ACTIVE_MEMBER (3), which leaves guardians out. A guardian
     // whose status is "active" used to be added to the numerator, so the
     // printed "(n of m)" held a person who is not in m: (4 of 3).
-    vi.mocked(prisma.attendanceRecord.findMany).mockResolvedValue([
-      { checkInTime: new Date(), memberId: "m1", member: { status: "active", accountType: "adult" } },
-      { checkInTime: new Date(), memberId: "m2", member: { status: "active", accountType: "kids" } },
-      { checkInTime: new Date(), memberId: "g1", member: { status: "active", accountType: "parent" } },
-    ] as never);
+    ROWS = [
+      { memberId: "m1", member: { status: "active", accountType: "adult" } },
+      { memberId: "m2", member: { status: "active", accountType: "kids" } },
+      { memberId: "g1", member: { status: "active", accountType: "parent" } },
+    ];
     vi.mocked(prisma.member.groupBy).mockResolvedValue([{ status: "active", _count: 3 }] as never);
 
     const data = await getReportsData("tenant-A", { attendanceRateMode: "attendance-percentage" });
     expect(data.attendanceRate.numerator).toBe(2);
     expect(data.attendanceRate.denominator).toBe(3);
+    // The exclusion is the query's: distinct attendees are counted in the database over ACTIVE_MEMBER.
+    const call = vi.mocked(prisma.attendanceRecord.groupBy).mock.calls.find((c) => (c[0] as { by: string[] }).by[0] === "memberId");
+    expect((call?.[0] as { where: { member: unknown } }).where.member).toEqual({ accountType: { not: "parent" }, status: "active" });
   });
 
   it("fill-rate: only capacity-bearing classes count on both sides (3 ÷ 10 = 30%, i2 excluded — no capacity)", async () => {
@@ -256,5 +277,31 @@ describe("getReportsData — class reads use the live-class predicate", () => {
       expect(src, f).toMatch(/classes: \{ where: liveClassWhere\(/);
       expect(src, f).not.toMatch(/classes: \{ where: \{ isActive: true \} \}/);
     }
+  });
+});
+
+// Review finding 1 (26 Oct 2026): the chart used to read check-in ROWS, capped
+// at 10,000 with no order, so a 12-month period at a busy club dropped rows at
+// random. Every bar is now a count in the database over its own window.
+describe("getReportsData — attendance is counted in the database, never read as rows", () => {
+  it("a 12-month period: no attendance rows read, one count per month, 12 monthly bars", async () => {
+    const data = await getReportsData("tenant-A", { period: { period: "12m" } });
+    expect(vi.mocked(prisma.attendanceRecord.findMany)).not.toHaveBeenCalled();
+    expect(data.attendanceBucket).toBe("month");
+    expect(data.weeklyAttendance).toHaveLength(12);
+    const windows = vi.mocked(prisma.attendanceRecord.count).mock.calls
+      .map((c) => (c[0] as { where: { checkInTime?: { gte?: Date; lt?: Date } } }).where.checkInTime)
+      .filter((w) => w?.gte && w?.lt);
+    for (const m of data.range.months) {
+      expect(windows.some((w) => w!.gte!.toISOString() === m.monthStart && w!.lt!.toISOString() === m.nextMonthStart)).toBe(true);
+    }
+  });
+
+  it("the default (this month) still charts at least 8 weeks, the weeks before the period marked as context", async () => {
+    const data = await getReportsData("tenant-A");
+    expect(data.attendanceBucket).toBe("week");
+    expect(data.weeklyAttendance.length).toBeGreaterThanOrEqual(8);
+    expect(data.weeklyAttendance.at(-1)?.inPeriod).toBe(true);
+    expect(data.weeklyAttendance.some((w) => w.inPeriod === false)).toBe(true);
   });
 });

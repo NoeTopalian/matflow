@@ -2,7 +2,7 @@ import { unstable_cache } from "next/cache";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { noPaymentYetPayerWhere, overduePayerWhere } from "@/lib/overdue";
 import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
-import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER, isActiveMember } from "@/lib/member-population";
+import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER } from "@/lib/member-population";
 import { percent, ratePct1dp } from "@/lib/percent";
 import { clubMonthKey, clubMonthWindow, clubMonthWindowForKey, type ClubMonthWindow } from "@/lib/club-month";
 import { emptyMembershipReport, loadMembershipForPeriod, type MembershipReport } from "@/lib/membership-report";
@@ -182,7 +182,8 @@ export interface ReportsData {
     newMembersThisMonth: number;
     newMembersLastMonth: number;
   };
-  weeklyAttendance: { week: string; count: number; isCurrentWeek: boolean }[];
+  /** The attendance chart: one bar per week (or month); `inPeriod` false for weeks shown for context before the period. */
+  weeklyAttendance: { week: string; count: number; isCurrentWeek: boolean; inPeriod?: boolean }[];
   /**
    * Joined (new + rejoined) per club month, last 6 months, by the movement
    * definition. `basis` says whether the month was recorded at the time or is
@@ -286,6 +287,9 @@ const METHOD_LABELS: Record<string, string> = {
   kiosk: "Kiosk",
   import: "Imported",
 };
+
+/** Weekly attendance charts show at least this many weeks, ending with the period's last week. */
+const MIN_CHART_WEEKS = 8;
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Active",
@@ -536,7 +540,6 @@ export async function getReportsData(
   };
 
   const [
-    weeklyRecords,
     methodCounts,
     memberStatusCounts,
     topResult, // Lane 1 iter-1 P-03: { topRaw, instances } — in-tx continuation
@@ -559,18 +562,6 @@ export async function getReportsData(
     otherOwingRows,
   ] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
-      tx.attendanceRecord.findMany({
-        where: { tenantId, checkInTime: inRange, ...attendanceScope },
-        // memberId added (Track G) for the "members who attended" rate mode
-        // below — same rows already fetched for the weekly chart, no new
-        // query, so the distinct-attendee count shares the identical window
-        // and filter scope as everything else on this page.
-        select: { checkInTime: true, memberId: true, member: { select: { status: true, accountType: true } } },
-        take: 10000,
-      }).then((rows) => {
-        if (rows.length === 10000) console.warn("[reports] truncated at 10000 rows (attendance window)");
-        return rows;
-      }),
       // Audit memory-storage 2026-08-16 P1-12: this and the two aggregates
       // below used to run all-time, so every reports visit re-scanned the
       // tenant's whole attendance history with zero caching. They now share
@@ -669,41 +660,51 @@ export async function getReportsData(
     { maxWait: 10_000, timeout: 30_000 },
   );
 
-  // The attendance chart's buckets: the period's weeks (each keyed by its
-  // Monday), or its months when the period is longer than 3 months.
-  const weeklyMap = new Map<number | string, { week: string; count: number; isCurrentWeek: boolean }>();
+  // The attendance chart's buckets (26 Oct 2026): by month when the period is
+  // longer than 3 months, otherwise by week — and then at least the 8 weeks
+  // ending with the period's last week, so the default "this month" chart is
+  // never one bar on the 1st; weeks before the period are context, marked
+  // `inPeriod: false`. Each bar is a COUNT in the database over its own
+  // window, so a long period never reads (or truncates) check-in rows.
+  type Bucket = { week: string; isCurrentWeek: boolean; inPeriod: boolean; start: Date; end: Date };
+  const buckets: Bucket[] = [];
   if (attendanceBucket === "month") {
     for (const m of range.months) {
-      weeklyMap.set(m.monthKey, { week: formatMonth(new Date(m.monthStart), range.timeZone), count: 0, isCurrentWeek: m.monthKey === currentMonthKey });
+      buckets.push({ week: formatMonth(new Date(m.monthStart), range.timeZone), isCurrentWeek: m.monthKey === currentMonthKey, inPeriod: true, start: new Date(m.monthStart), end: new Date(m.nextMonthStart) });
     }
   } else {
-    const lastDay = new Date(Math.min(rangeEnd.getTime() - 1, now.getTime()));
-    for (let d = startOfWeek(rangeStart); d.getTime() <= lastDay.getTime(); d = addDays(d, 7)) {
-      weeklyMap.set(d.getTime(), { week: formatWeek(d), count: 0, isCurrentWeek: d.getTime() === currentWeekStart.getTime() });
+    const lastWeek = startOfWeek(new Date(Math.min(rangeEnd.getTime() - 1, now.getTime())));
+    const firstWeek = new Date(Math.min(startOfWeek(rangeStart).getTime(), addDays(lastWeek, -7 * (MIN_CHART_WEEKS - 1)).getTime()));
+    for (let d = firstWeek; d.getTime() <= lastWeek.getTime(); d = addDays(d, 7)) {
+      const end = addDays(d, 7);
+      buckets.push({ week: formatWeek(d), isCurrentWeek: d.getTime() === currentWeekStart.getTime(), inPeriod: end.getTime() > rangeStart.getTime(), start: d, end });
     }
   }
-  const bucketOf = (at: Date) => (attendanceBucket === "month" ? clubMonthKey(at, range.timeZone) : startOfWeek(at).getTime());
-
-  // Distinct ACTIVE attendees this window — the "members who attended" rate
-  // mode's numerator (only active members count; see the loop below). Built from
-  // the same `weeklyRecords` fetch as the chart above, so it shares the identical
-  // window and class/age scope (Track G).
-  const distinctAttendingMemberIds = new Set<string>();
-
-  for (const rec of weeklyRecords) {
-    const bucket = weeklyMap.get(bucketOf(rec.checkInTime));
-    if (bucket) bucket.count += 1;
-    // "Members who attended" is an ACTIVE-member engagement rate, so its
-    // numerator must stay within the active-member denominator. An ex-member
-    // (cancelled/inactive) whose check-in falls in the window used to be counted
-    // here, which could push the rate past 100% — count a distinct attendee only
-    // while they are currently active. The weekly chart bucket above still counts
-    // every check-in regardless of status.
-    // The denominator is ACTIVE_MEMBER, which leaves guardian accounts out, so
-    // the numerator uses the same predicate: a guardian's check-in is never a
-    // "(n of m)" person who is missing from m.
-    if (rec.member && isActiveMember(rec.member)) distinctAttendingMemberIds.add(rec.memberId);
-  }
+  const [bucketCounts, distinctAttending] = await withTenantContext(
+    tenantId,
+    (tx) =>
+      Promise.all([
+        Promise.all(buckets.map((b) => tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: b.start, lt: b.end }, ...attendanceScope } }))),
+        // Distinct ACTIVE attendees in the period — the "members who attended"
+        // rate mode's numerator, counted in the database (one row per member).
+        // Its numerator stays within the active-member denominator: an
+        // ex-member's or a guardian's check-in is never a "(n of m)" person
+        // missing from m. The class and age filters apply as everywhere.
+        tx.attendanceRecord
+          .groupBy({
+            by: ["memberId"],
+            where: {
+              tenantId,
+              checkInTime: inRange,
+              ...(resolvedClassId ? { classInstance: { classId: resolvedClassId } } : {}),
+              member: { ...ACTIVE_MEMBER, ...(ageGroup ? { accountType: { in: ageGroup === "adult" ? ADULT_ACCOUNT_TYPES : KIDS_ACCOUNT_TYPES } } : {}) },
+            },
+          })
+          .then((groups) => groups.length),
+      ]),
+    { maxWait: 10_000, timeout: 30_000 },
+  );
+  const weeklyAttendance = buckets.map((b, i) => ({ week: b.week, count: bucketCounts[i], isCurrentWeek: b.isCurrentWeek, inPeriod: b.inPeriod }));
 
   // T8c: movement and headcount, in its own read (one events findMany plus the
   // ledger when the back-fill has not been applied), after the block above so
@@ -942,7 +943,7 @@ export async function getReportsData(
       newMembersThisMonth,
       newMembersLastMonth,
     },
-    weeklyAttendance: Array.from(weeklyMap.values()),
+    weeklyAttendance,
     monthlySignups: Array.from(monthlyMap.values()),
     membersByStatus,
     currentMembersByStatus,
@@ -971,7 +972,7 @@ export async function getReportsData(
     attendanceRate: computeAttendanceRate(attendanceRateMode, {
       totalCheckIns,
       activeMembers: scopedActiveMembers,
-      distinctAttendingMembers: distinctAttendingMemberIds.size,
+      distinctAttendingMembers: distinctAttending,
       capacitySum,
       attendedAgainstCapacity,
     }),
