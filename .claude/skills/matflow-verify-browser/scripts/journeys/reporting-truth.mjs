@@ -221,6 +221,24 @@ const allMoves = [
     : noEventMoves(r.status, r.joined.getTime(), r.cancelled ? r.cancelled.getTime() : null))),
 ];
 const MV = tallyMoves(allMoves, moveWindows.thisMonth);
+// Who was active at instant t, by the app's rule (lib/membership-report.ts joinDateHistory, then the replay): no
+// events → active from joinedAt (until the cancellation, for a member who left); a first event with a fromStatus →
+// that status from joinedAt (or 1 ms before the event) until the event; a creation event → nothing before it.
+// The churn base is this count just before the period opens (D4, Noe 26 Oct 2026: churn the normal way).
+const activeNoEvent = (status, joined, cancelled, t) =>
+  status === "active" ? (joined <= t ? 1 : 0)
+    : status === "cancelled" && cancelled != null ? (joined <= t && t < Math.max(cancelled, joined + 1) ? 1 : 0) : 0;
+const activeAt = (t) => {
+  let n = 0;
+  for (const r of baselineRows) n += activeNoEvent(r.status, r.joined, r.cancelled, t);
+  for (const r of SEED.filter(training)) {
+    if (!r.event) { n += activeNoEvent(r.status, r.joined.getTime(), r.cancelled ? r.cancelled.getTime() : null, t); continue; }
+    const at = r.event.at.getTime();
+    const before = r.event.from !== null && Math.min(r.joined.getTime(), at - 1) <= t ? r.event.from : null;
+    n += (at <= t ? r.event.to : before) === "active" ? 1 : 0;
+  }
+  return n;
+};
 const MVLast = tallyMoves(allMoves, moveWindows.lastMonth);
 const E = await population();
 const planned = Object.fromEntries(Object.keys(seedDelta).map((k) => [k, baseline[k] + seedDelta[k]]));
@@ -257,15 +275,15 @@ const JOINED_LINES = [
   { filter: "tasters-this-month", label: "Tasters added", value: MV.tasterAdded, headline: "tasters added this month" },
   { filter: "lost-this-month", label: "Left", value: MV.lost, headline: "left this month" },
 ];
-const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";
-const churnBase = E.active + E.cancelledThisMonth;
+const CHURN_FORMULA = "Members who left during the period ÷ active members when it began";
+const churnBase = activeAt(monthStart.getTime() - 1);
 const X = {
   membersHeadline: `${E.active} active members${E.activeOnHold > 0 ? `, ${E.activeOnHold} on hold` : ""}`,
   membersScope: `Active training members, including any on hold. ${ACTIVE_EXCLUDES}.`,
   membersTile: [String(E.active), "Active members", ...(E.activeOnHold > 0 ? [`Includes ${E.activeOnHold} on hold`] : []), ACTIVE_EXCLUDES],
   activeDetail: `Includes ${fmtNum(E.activeOnHold)} on hold · of ${fmtNum(E.current)} current members · ${ACTIVE_EXCLUDES}`,
-  churn: fmtRatio(pct1(E.cancelledThisMonth, churnBase), E.cancelledThisMonth, churnBase),
-  churnDetail: churnBase > 0 ? CHURN_FORMULA : "No active or cancelled members this month",
+  churn: fmtRatio(pct1(MV.lost, churnBase), MV.lost, churnBase),
+  churnDetail: churnBase > 0 ? CHURN_FORMULA : "No active members when the period began",
   joinedValue: fmtNum(MV.joined),                                                                  // ReportsView.tsx:505
   joinedNet: `Net ${signed(MV.net)} this month (new + rejoined − left)`,                            // ReportsView.tsx:524-526
   // ReportsView.tsx:228-230 joinedTileDetail + :384 CSV row.
@@ -546,8 +564,9 @@ try {
     P.npy > 0 && healthLine >= 1, { expected: Y.healthLine, found: healthLine });
   const joinedHref = joinedHrefs["new-this-month"];
   const churnHref = await churnLink.getAttribute("href");
+  // Churn counts leavers by the movement definition, so it drills to the Left slice (26 Oct 2026).
   L.check("reports", "R13 the joined and churn drill-throughs carry the club month the tiles counted (month=YYYY-MM)",
-    joinedHref === `/dashboard/members?filter=new-this-month&month=${Y.thisMonthKey}` && churnHref === `/dashboard/members?filter=churned-this-month&month=${Y.thisMonthKey}`,
+    joinedHref === `/dashboard/members?filter=new-this-month&month=${Y.thisMonthKey}` && churnHref === `/dashboard/members?filter=lost-this-month&month=${Y.thisMonthKey}`,
     { joined: joinedHref, churn: churnHref, expectedMonth: Y.thisMonthKey });
   // D9: the Reports "Other accounts owing" tile (ReportsView.tsx:1442-1462), beside the payers, never inside them.
   const owTile = page.getByTestId("reports-other-owing").first();
@@ -715,6 +734,103 @@ try {
     { line: outOwLine, list: owListSaw, appearances: owOnce, expected: { line: Z.outstandingLine, heading: Z.outstandingHeading, rows: Z.outstandingRows } });
   await shot(page, "reporting-truth-outstanding");
 
+  // ── The statistics period (Noe, 26 Oct 2026; lib/report-period) ────────────
+  // The last 3 club months, from this journey's own replay: the movement over the run and who was active just
+  // before it opened. Labels as lib/report-period monthsLabel writes them.
+  const shortOf = (offset) => { const [y, m] = monthKeyOf(offset).split("-").map(Number); return new Date(Date.UTC(y, m - 1, 15, 12)).toLocaleString("en-GB", { month: "short", timeZone: "UTC" }); };
+  const yearOf = (offset) => monthKeyOf(offset).slice(0, 4);
+  const label3 = yearOf(-2) === yearOf(0) ? `${shortOf(-2)} – ${shortOf(0)} ${yearOf(0)}` : `${shortOf(-2)} ${yearOf(-2)} – ${shortOf(0)} ${yearOf(0)}`;
+  const start3 = clubMonthStart(-2);
+  const MV3 = tallyMoves(allMoves, [start3.getTime(), Infinity]);
+  const open3 = activeAt(start3.getTime() - 1);
+  const X3 = {
+    churn: fmtRatio(pct1(MV3.lost, open3), MV3.lost, open3),
+    churnDetail: open3 > 0 ? CHURN_FORMULA : "No active members when the period began",
+    newHref: `/dashboard/members?filter=new-this-month&from=${monthKeyOf(-2)}&to=${monthKeyOf(0)}`,
+    lostHref: `/dashboard/members?filter=lost-this-month&from=${monthKeyOf(-2)}&to=${monthKeyOf(0)}`,
+  };
+  L.note("period", "N4 expected figures for the last 3 months", { label3, movement: MV3, openingHeadcount: open3, X3 });
+
+  await page.goto("/dashboard/reports");
+  const periodSelect = page.getByLabel("Reporting period");
+  await periodSelect.waitFor({ timeout: 90000 });
+  L.check("period", "P0 the period selector opens on This month, with From and To both this month",
+    (await periodSelect.inputValue()) === "this-month" && (await page.getByLabel("Period from month").inputValue()) === monthKeyOf(0)
+      && (await page.getByLabel("Period to month").inputValue()) === monthKeyOf(0),
+    { period: await periodSelect.inputValue(), from: await page.getByLabel("Period from month").inputValue(), to: await page.getByLabel("Period to month").inputValue() });
+  await periodSelect.selectOption("3m");
+  await page.waitForURL(/period=3m/, { timeout: 60000 });
+  const churn3Link = tileLink(page, "Churn rate in the last 3 months");
+  await churn3Link.waitFor({ timeout: 90000 });
+  const churn3 = await pTexts(churn3Link);
+  L.check("period", "P1 Last 3 months: churn is the run's leavers over who was active when it began, with its counts",
+    churn3[0] === X3.churn && churn3[1] === "Churn rate in the last 3 months" && churn3[2] === X3.churnDetail,
+    { saw: churn3, expected: [X3.churn, "Churn rate in the last 3 months", X3.churnDetail] });
+  const joined3 = page.getByTestId("reports-joined-tile").first();
+  const joined3Saw = {
+    value: norm(await joined3.getByTestId("reports-joined-value").innerText()),
+    label: norm(await joined3.locator("p").nth(1).innerText()),
+    net: norm(await joined3.getByTestId("reports-joined-net").innerText()),
+    newHref: await joined3.getByTestId("reports-joined-new-this-month").getAttribute("href"),
+  };
+  const joined3Want = {
+    value: fmtNum(MV3.joined),
+    label: "Joined in the last 3 months (new + rejoined)",
+    net: `Net ${signed(MV3.net)} in the last 3 months (new + rejoined − left)`,
+    newHref: X3.newHref,
+  };
+  L.check("period", "P2 the Joined tile counts the run, says so, and drills through with from/to",
+    JSON.stringify(joined3Saw) === JSON.stringify(joined3Want), { saw: joined3Saw, expected: joined3Want });
+  const range3 = { from: await page.getByLabel("Period from month").inputValue(), to: await page.getByLabel("Period to month").inputValue() };
+  L.check("period", "P3 From and To show the run's first and last months", range3.from === monthKeyOf(-2) && range3.to === monthKeyOf(0), range3);
+  L.check("period", "P4 the churn tile drills to the Left slice for the whole run", (await churn3Link.getAttribute("href")) === X3.lostHref,
+    { saw: await churn3Link.getAttribute("href"), expected: X3.lostHref });
+  await shot(page, "reporting-truth-period-3m");
+
+  // The Left slice for the run lists exactly the leavers the tile counted, named by the run's months.
+  await page.goto(X3.lostHref);
+  const leftHeadline = `${MV3.lost} left in ${label3}`;
+  const leftSeen = await page.getByText(leftHeadline, { exact: true }).first().waitFor({ timeout: 60000 }).then(() => true, () => false);
+  L.check("period", "P5 the Members Left slice for the run reads 'N left in <months>'", leftSeen, { expected: leftHeadline });
+
+  // A custom run: editing From picks Custom months, ending this month.
+  await page.goto("/dashboard/reports?period=3m");
+  await page.getByLabel("Period from month").waitFor({ timeout: 90000 });
+  await page.getByLabel("Period from month").fill(monthKeyOf(-1));
+  await page.waitForURL(/period=custom/, { timeout: 60000 });
+  const customUrl = new URL(page.url());
+  L.check("period", "P6 editing From asks for a custom run ending this month",
+    customUrl.searchParams.get("from") === monthKeyOf(-1) && customUrl.searchParams.get("to") === monthKeyOf(0) && !customUrl.searchParams.has("weeks"),
+    { url: customUrl.search });
+  const churnCustom = await tileLink(page, `Churn rate in ${shortOf(-1)} – ${shortOf(0)} ${yearOf(0)}`).count()
+    || await tileLink(page, `Churn rate in ${shortOf(-1)} ${yearOf(-1)} – ${shortOf(0)} ${yearOf(0)}`).count();
+  L.check("period", "P7 the custom run's tiles name its months", churnCustom >= 1, { found: churnCustom });
+
+  // Keyboard: the selector is reached by Tab and changed with the arrow keys.
+  await page.goto("/dashboard/reports");
+  await periodSelect.waitFor({ timeout: 90000 });
+  let reached = false;
+  for (let i = 0; i < 40 && !reached; i++) {
+    await page.keyboard.press("Tab");
+    reached = await periodSelect.evaluate((el) => el === document.activeElement);
+  }
+  L.check("period", "P8 the period selector is reached with Tab", reached, { tabs: "≤ 40" });
+  if (reached) {
+    await page.keyboard.press("ArrowDown");
+    const moved = await page.waitForURL(/period=last-month/, { timeout: 30000 }).then(() => true, () => false);
+    L.check("period", "P9 the arrow key changes the period (This month → Last month)", moved, { url: page.url() });
+  }
+
+  // Analysis follows the same period.
+  await page.goto("/dashboard/analysis?period=3m");
+  const aSelect = page.getByLabel("Reporting period");
+  await aSelect.waitFor({ timeout: 90000 });
+  const aDesc = norm(await page.getByText(/ · AI report$/).first().innerText());
+  L.check("period", "P10 Analysis opens on the same period and names its months",
+    (await aSelect.inputValue()) === "3m" && aDesc === `${label3} (to today) · AI report`,
+    { period: await aSelect.inputValue(), description: aDesc, expected: `${label3} (to today) · AI report` });
+  await shot(page, "reporting-truth-analysis-3m");
+
   // ── Phone width (390 px), same session ─────────────────────────────────────
   const phone = await context(browser, "10.95.0.2", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState() });
   const p2 = await phone.newPage();
@@ -747,6 +863,10 @@ try {
     { churn: pChurnTile[0], joined: pJoinedValue, nextTile: pNext, churnBox: pcb, joinedBox: pjb });
   const m2 = await noHScroll(p2);
   L.check("mobile", "M5 /dashboard/reports at 390 px has no horizontal page scroll", m2.scroll <= m2.width + 1, m2);
+  const pSel = await p2.getByLabel("Reporting period").boundingBox();
+  const pTo = await p2.getByLabel("Period to month").boundingBox();
+  L.check("mobile", "M5b at 390 px the period selector and its month pickers sit inside the screen",
+    !!pSel && !!pTo && pSel.x >= 0 && pSel.x + pSel.width <= 391 && pTo.x >= 0 && pTo.x + pTo.width <= 391, { select: pSel, to: pTo });
   await shot(p2, "reporting-truth-mobile-reports");
 
   await p2.goto("/dashboard/settings");
