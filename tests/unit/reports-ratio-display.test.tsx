@@ -34,6 +34,9 @@ import { formatRatio, formatPct, formatSigned, wholePct } from "@/components/das
 import ReportsView, { reportsCsv } from "@/components/dashboard/ReportsView";
 import AnalysisView from "@/components/dashboard/AnalysisView";
 import { createEmptyReportsData, type ReportsData } from "@/lib/reports";
+import { resolveReportPeriod } from "@/lib/report-period";
+/** The Analysis fixtures describe October 2026 (the default period, "this month"). */
+const OCTOBER = resolveReportPeriod({}, new Date("2026-10-15T12:00:00.000Z"), "Europe/London");
 
 describe("formatRatio", () => {
   it.each([
@@ -215,7 +218,7 @@ describe("ReportsView — every percentage shows its counts, matching the CSV", 
 describe("AnalysisView — engagement shows its counts", () => {
   const metrics = {
     totalMembers: 312, newThisMonth: 7, newLastMonth: 4, checkinsThisMonth: 50, checkinsLastMonth: 40,
-    activeClasses: 6, activeMembersThisMonth: 31, monthLabel: "October 2026", gymName: "Test club",
+    activeClasses: 6, activeMembersThisMonth: 31, monthLabel: "October 2026", gymName: "Test club", range: OCTOBER,
   };
 
   it("prints the rate with (n of m), and the change pills' two counts", () => {

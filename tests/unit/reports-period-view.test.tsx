@@ -138,3 +138,31 @@ describe("ReportsView with a period", () => {
     expect(csv).toContain('Summary,New members in the last 3 months,7,"The 3 months before: 4');
   });
 });
+
+describe("Analysis with a period", () => {
+  const metrics = (period: Parameters<typeof resolveReportPeriod>[0]) => ({
+    totalMembers: 20, newThisMonth: 3, newLastMonth: 2, checkinsThisMonth: 50, checkinsLastMonth: 40,
+    activeClasses: 4, activeMembersThisMonth: 10, gymName: "Test club",
+    range: resolveReportPeriod(period, NOW, LONDON),
+    monthLabel: resolveReportPeriod(period, NOW, LONDON).label,
+  });
+
+  it("the report and the interview use the period's words", async () => {
+    const { buildReport, questionsFor } = await import("@/components/dashboard/AnalysisView");
+    const text = buildReport(metrics({ period: "3m" }), []);
+    expect(text).toContain("# Analysis — Aug – Oct 2026");
+    expect(text).toContain("**3 joined** (new + rejoined) in the last 3 months, compared to 2 the 3 months before");
+    expect(questionsFor(resolveReportPeriod({ period: "3m" }, NOW, LONDON))[0]).toBe("How many new members joined through word-of-mouth or referrals in the last 3 months?");
+    // The default reads as it always has.
+    expect(buildReport(metrics({}), [])).toContain("# Monthly Analysis — October 2026");
+  });
+
+  it("choosing a period on Analysis asks for it on the Analysis page", async () => {
+    const { default: AnalysisView } = await import("@/components/dashboard/AnalysisView");
+    render(<AnalysisView metrics={metrics({})} primaryColor="#3b82f6" />);
+    fireEvent.change(screen.getByLabelText("Reporting period"), { target: { value: "12m" } });
+    const url = new URL(replaceMock.mock.calls[0][0], "https://x.test");
+    expect(url.pathname).toBe("/dashboard/analysis");
+    expect(url.searchParams.get("period")).toBe("12m");
+  });
+});

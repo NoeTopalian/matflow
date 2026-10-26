@@ -40,6 +40,9 @@ import AnalysisView, { buildReport } from "@/components/dashboard/AnalysisView";
 import AttendanceView from "@/components/dashboard/AttendanceView";
 import { pctOf, dropText } from "@/components/dashboard/ConversionFunnel";
 import { createEmptyReportsData, type ReportsData } from "@/lib/reports";
+import { resolveReportPeriod } from "@/lib/report-period";
+/** The Analysis fixtures describe October 2026 (the default period, "this month"). */
+const OCTOBER = resolveReportPeriod({}, new Date("2026-10-15T12:00:00.000Z"), "Europe/London");
 
 const ATTRIBUTION = {
   rows: [],
@@ -76,7 +79,7 @@ function tileFor(label: string): HTMLElement {
 
 const METRICS = {
   totalMembers: 9, newThisMonth: 2, newLastMonth: 1, checkinsThisMonth: 50, checkinsLastMonth: 40,
-  activeClasses: 6, activeMembersThisMonth: 6, monthLabel: "October 2026", gymName: "Test club",
+  activeClasses: 6, activeMembersThisMonth: 6, monthLabel: "October 2026", gymName: "Test club", range: OCTOBER,
   membersByStatus: [
     { status: "active", label: "Active", count: 9 },
     { status: "inactive", label: "Inactive", count: 2 },

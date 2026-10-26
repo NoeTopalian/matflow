@@ -60,6 +60,9 @@ import {
 } from "@/lib/membership-movement";
 import { buildNetNewSeries, partlyEstimatedMonths } from "@/lib/net-new-series";
 import { clubMonthWindow, clubMonthWindowForKey } from "@/lib/club-month";
+import { resolveReportPeriod } from "@/lib/report-period";
+/** The Analysis fixtures describe October 2026 (the default period, "this month"). */
+const OCTOBER = resolveReportPeriod({}, new Date("2026-10-15T12:00:00.000Z"), "Europe/London");
 
 afterEach(() => {
   cleanup();
@@ -304,16 +307,17 @@ describe("Analysis and the AI report show the Reports Joined figure (review 25 O
   it("the Analysis page counts Joined by movement in the club's months, and its report says so", async () => {
     const page = readFileSync(path.join(process.cwd(), "app/dashboard/analysis/page.tsx"), "utf8");
     expect(page).toMatch(/loadJoinedInWindows\(/);
-    expect(page).toMatch(/clubMonthWindow\(now, tenant\?\.timezone/);
+    // The club's months: the period resolves in Tenant.timezone (lib/report-period, 26 Oct 2026).
+    expect(page).toMatch(/resolveReportPeriod\(\{ period, from, to \}, now, tenant\?\.timezone\)/);
     expect(page).not.toMatch(/joinedAt:/);
     const { buildReport } = await import("@/components/dashboard/AnalysisView");
     const text = buildReport(
-      { totalMembers: 20, newThisMonth: 3, newLastMonth: 2, checkinsThisMonth: 50, checkinsLastMonth: 40, activeClasses: 4, activeMembersThisMonth: 10, monthLabel: "October 2026", gymName: "Test club" },
+      { totalMembers: 20, newThisMonth: 3, newLastMonth: 2, checkinsThisMonth: 50, checkinsLastMonth: 40, activeClasses: 4, activeMembersThisMonth: 10, monthLabel: "October 2026", gymName: "Test club", range: OCTOBER },
       [],
     );
     expect(text).toContain("**3 joined** (new + rejoined) this month, compared to 2 last month");
     const estimated = buildReport(
-      { totalMembers: 20, newThisMonth: 3, newLastMonth: 2, joinedEstimated: true, checkinsThisMonth: 50, checkinsLastMonth: 40, activeClasses: 4, activeMembersThisMonth: 10, monthLabel: "October 2026", gymName: "Test club" },
+      { totalMembers: 20, newThisMonth: 3, newLastMonth: 2, joinedEstimated: true, checkinsThisMonth: 50, checkinsLastMonth: 40, activeClasses: 4, activeMembersThisMonth: 10, monthLabel: "October 2026", gymName: "Test club", range: OCTOBER },
       [],
     );
     expect(estimated).toContain("**3 joined** (new + rejoined) this month (partly estimated)");

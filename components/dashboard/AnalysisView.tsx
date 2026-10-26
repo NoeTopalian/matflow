@@ -1,6 +1,7 @@
 ﻿"use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useTransition } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   BrainCircuit,
   TrendingUp,
@@ -24,6 +25,9 @@ import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import { formatPct, formatRatio, ratioCounts } from "@/components/dashboard/reports-primitives";
 import { percent } from "@/lib/percent";
+import { clubMonthWindow } from "@/lib/club-month";
+import { periodWords, type ReportRange } from "@/lib/report-period";
+import PeriodSelector, { periodSearchParams, type PeriodChoice } from "@/components/dashboard/PeriodSelector";
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541"];
 const STATUS_COLORS: Record<string, string> = { active: "#67BA90", taster: "#C9F990", inactive: "#EB3163", cancelled: "#8E1F57" };
@@ -50,6 +54,12 @@ interface Metrics {
   /** Training members who have left: a count, never a share of the mix. */
   leftMembers?: number;
   monthlyTrend?: { label: string; value: number }[];
+  /**
+   * The page's period (Noe, 26 Oct 2026; lib/report-period). "ThisMonth"
+   * figures above count it, "LastMonth" ones the equal run before it; for the
+   * default period those are exactly this month and last.
+   */
+  range: ReportRange;
 }
 
 interface Props {
@@ -61,17 +71,23 @@ type Stage = "idle" | "interview" | "generating" | "report";
 
 // ─── Interview questions ───────────────────────────────────────────────────────
 
-const QUESTIONS = [
-  "How many new members joined through word-of-mouth or referrals this month?",
-  "Did you run any special events, promotions, or challenges? If so, what happened?",
-  "What's the biggest challenge you're facing right now — retention, marketing, space, staff?",
-  "How would you rate the energy and morale in the gym this month (1–10)? What's driving that?",
-  "What's your main goal for next month?",
-];
+/** The interview, in the period's words ("this month" for the default). */
+export function questionsFor(range: ReportRange): string[] {
+  const w = periodWords(range);
+  return [
+    `How many new members joined through word-of-mouth or referrals ${w.during}?`,
+    "Did you run any special events, promotions, or challenges? If so, what happened?",
+    "What's the biggest challenge you're facing right now — retention, marketing, space, staff?",
+    `How would you rate the energy and morale in the gym ${w.during} (1–10)? What's driving that?`,
+    "What's your main goal for next month?",
+  ];
+}
 
 // ─── Report generator ─────────────────────────────────────────────────────────
 
 export function buildReport(metrics: Metrics, answers: string[]): string {
+  const w = periodWords(metrics.range);
+  const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
   const growthDir = metrics.newThisMonth >= metrics.newLastMonth ? "up" : "down";
   const growthDiff = Math.abs(metrics.newThisMonth - metrics.newLastMonth);
   const checkinDir = metrics.checkinsThisMonth >= metrics.checkinsLastMonth ? "up" : "down";
@@ -95,13 +111,13 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
 
   const lines: string[] = [];
 
-  lines.push(`# Monthly Analysis — ${metrics.monthLabel}`);
+  lines.push(`# ${metrics.range.months.length === 1 ? "Monthly Analysis" : "Analysis"} — ${metrics.monthLabel}`);
   lines.push(`**${metrics.gymName}**`);
   lines.push("");
   lines.push("## Overview");
   lines.push(
-    `This month ${metrics.gymName} maintained ${metrics.totalMembers} active members across ${metrics.activeClasses} classes. ` +
-    `You recorded ${metrics.checkinsThisMonth} check-ins — ${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} last month` +
+    `${cap(w.during)} ${metrics.gymName} maintained ${metrics.totalMembers} active members across ${metrics.activeClasses} classes. ` +
+    `You recorded ${metrics.checkinsThisMonth} check-ins — ${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} ${w.before}` +
     // An empty base has no rate: say so in words rather than printing "—".
     (metrics.totalMembers > 0
       ? ` — giving an engagement rate of ${engagementText} — active members who checked in at least once.`
@@ -112,17 +128,17 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
   lines.push(
     // The Reports "Joined" figure (new + rejoined, lib/membership-movement):
     // an import is never a join (review 25 Oct; it used to count by joinedAt).
-    `**${metrics.newThisMonth} joined** (new + rejoined) this month${metrics.joinedEstimated ? " (partly estimated)" : ""}, compared to ${metrics.newLastMonth} last month ` +
+    `**${metrics.newThisMonth} joined** (new + rejoined) ${w.during}${metrics.joinedEstimated ? " (partly estimated)" : ""}, compared to ${metrics.newLastMonth} ${w.before} ` +
     `(${growthDir === "up" ? `+${growthDiff} ↑` : `-${growthDiff} ↓`}). ` +
     (metrics.newThisMonth > 0
       ? `You reported that approximately ${referrals} of these came via referrals or word-of-mouth, which is a strong signal of community health.`
-      : `No new members were added this month. This is worth investigating — consider a referral campaign or introductory offer.`)
+      : `No new members were added ${w.during}. This is worth investigating — consider a referral campaign or introductory offer.`)
   );
   lines.push("");
   lines.push("## Attendance & Engagement");
   lines.push(
     `With ${metrics.checkinsThisMonth} total check-ins and ${metrics.totalMembers} active members, ` +
-    `the average member attended roughly ${metrics.totalMembers > 0 ? (metrics.checkinsThisMonth / metrics.totalMembers).toFixed(1) : "0"} classes this month. ` +
+    `the average member attended roughly ${metrics.totalMembers > 0 ? (metrics.checkinsThisMonth / metrics.totalMembers).toFixed(1) : "0"} classes ${w.during}. ` +
     // No active members → no rate, so no verdict on it either.
     (metrics.totalMembers === 0
       ? ""
@@ -135,8 +151,8 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
   lines.push("");
   lines.push("## Events & Promotions");
   lines.push(events !== "none reported"
-    ? `This month you ran: **${events}**. These kinds of activities build community and retention — keep tracking their impact on attendance in the weeks following.`
-    : "No specific events were reported this month. Consider whether a small competition prep, seminar, or challenge could boost engagement and give members something to train towards."
+    ? `${cap(w.during)} you ran: **${events}**. These kinds of activities build community and retention — keep tracking their impact on attendance in the weeks following.`
+    : `No specific events were reported ${w.during}. Consider whether a small competition prep, seminar, or challenge could boost engagement and give members something to train towards.`
   );
   lines.push("");
   lines.push("## Challenges");
@@ -158,7 +174,7 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
   );
   lines.push("");
   lines.push("## Next Month Focus");
-  lines.push(`Your stated goal: **${goal}**. Based on this month's data, the highest-leverage actions to support that goal are:`);
+  lines.push(`Your stated goal: **${goal}**. Based on ${w.possessive} data, the highest-leverage actions to support that goal are:`);
   lines.push("");
   lines.push(`- Follow up personally with any members who haven't checked in for 2+ weeks`);
   if (metrics.newThisMonth < metrics.newLastMonth) {
@@ -247,6 +263,19 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
   const [currentAnswer, setCurrentAnswer] = useState("");
   const [report, setReport] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [isPending, startTransition] = useTransition();
+  const words = periodWords(metrics.range);
+  const QUESTIONS = questionsFor(metrics.range);
+  // The latest month a custom run may end in: this month, in the club's zone.
+  const latestMonth = clubMonthWindow(new Date(), metrics.range.timeZone).monthKey;
+
+  function setPeriod(next: PeriodChoice) {
+    startTransition(() => {
+      router.replace(`/dashboard/analysis?${periodSearchParams(new URLSearchParams(searchParams.toString()), next).toString()}`);
+    });
+  }
 
   const memberDelta = delta(metrics.newThisMonth, metrics.newLastMonth);
   const checkinDelta = delta(metrics.checkinsThisMonth, metrics.checkinsLastMonth);
@@ -307,7 +336,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
       {/* §4: the one PageHeader treatment — no per-page heading inventions. */}
       <PageHeader
         title="Analysis"
-        description={`${metrics.monthLabel} · AI monthly report`}
+        description={`${metrics.monthLabel}${metrics.range.isCurrent ? " (to today)" : ""} · AI report`}
         action={
           <div
             className="flex size-10 items-center justify-center rounded-[var(--r-md)]"
@@ -321,6 +350,17 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
           </div>
         }
       />
+
+      {/* The period every figure below counts (shared with Reports). */}
+      <Card padding="tight" className="mb-4" aria-busy={isPending || undefined}>
+        <div className="flex flex-wrap items-center gap-3" data-testid="analysis-period">
+          <PeriodSelector
+            shown={{ period: metrics.range.key, from: metrics.range.fromMonth, to: metrics.range.toMonth }}
+            latestMonth={latestMonth}
+            onSelect={setPeriod}
+          />
+        </div>
+      </Card>
 
       {/* Hero charts — donut (member status mix) + sparkline (6-month check-in
           trend). Full width: both read better wide, and the split below owns
@@ -378,7 +418,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="text-[11px] uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Engagement trend</p>
-                <p className="text-sm font-semibold mt-0.5" style={{ color: "var(--tx-1)" }}>6-month check-ins</p>
+                <p className="text-sm font-semibold mt-0.5" style={{ color: "var(--tx-1)" }}>Check-ins by month</p>
               </div>
               <CalendarCheck className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
             </div>
@@ -410,20 +450,20 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             value: metrics.totalMembers,
             // The change pill is the change in members JOINED (the Reports
             // movement definition: new + rejoined, imports never), with its two counts.
-            sub: `${metrics.newThisMonth} joined this month · ${metrics.newLastMonth} last month${metrics.joinedEstimated ? " · partly estimated" : ""}`,
+            sub: `${metrics.newThisMonth} joined ${words.during} · ${metrics.newLastMonth} ${words.before}${metrics.joinedEstimated ? " · partly estimated" : ""}`,
             icon: Users,
             pct: memberDelta,
             counts: [metrics.newThisMonth, metrics.newLastMonth] as const,
-            pillLabel: "members joined, this month vs last",
+            pillLabel: `members joined, ${words.during} vs ${words.before}`,
           },
           {
             label: "Check-ins",
             value: metrics.checkinsThisMonth,
-            sub: `this month · ${metrics.checkinsLastMonth} last month`,
+            sub: `${words.during} · ${metrics.checkinsLastMonth} ${words.before}`,
             icon: CalendarCheck,
             pct: checkinDelta,
             counts: [metrics.checkinsThisMonth, metrics.checkinsLastMonth] as const,
-            pillLabel: "check-ins, this month vs last",
+            pillLabel: `check-ins, ${words.during} vs ${words.before}`,
           },
           {
             label: "Engagement",
@@ -431,7 +471,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             // active members (an undefined rate is never "0%").
             value: formatPct(metrics.totalMembers > 0 ? engagementRate : null, metrics.totalMembers),
             sub: metrics.totalMembers > 0
-              ? `${ratioCounts(metrics.activeMembersThisMonth, metrics.totalMembers)} active members checked in this month`
+              ? `${ratioCounts(metrics.activeMembersThisMonth, metrics.totalMembers)} active members checked in ${words.during}`
               : "No active members yet",
             icon: TrendingUp,
             pct: null,
