@@ -30,7 +30,7 @@ const flag = (name) => { const i = args.indexOf(name); if (i < 0) return false; 
 const noServer = flag("--no-server");
 const allowForeign = flag("--allow-foreign");
 const fault = opt("--fault");
-const DEFAULT = ["next-16-4-smoke", "allowance-eligibility", "member-booking-notice", "scanner-override", "reporting-truth", "headcount-movement", "permissions-matrix", "accounts-and-members"];
+const DEFAULT = ["next-16-4-smoke", "import-review", "allowance-eligibility", "member-booking-notice", "scanner-override", "reporting-truth", "headcount-movement", "permissions-matrix", "accounts-and-members"];
 const journeys = args.length ? args : DEFAULT;
 const L = path.resolve(HERE, "../../matflow-verify-local/scripts").replace(/\\/g, "/");
 const journeyFile = (j) => (j === "smoke" ? `${HERE}/smoke.mjs` : `${HERE}/journeys/${j}.mjs`);
