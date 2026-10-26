@@ -80,6 +80,8 @@ export const AUDIT_LABELS: Record<string, string> = {
   "class.instance_restored": "Restored a cancelled session",
   "class.roster.add": "Added a member to a class roster",
   "class.roster.remove": "Removed a member from a class roster",
+  // D2 (24 Oct 2026): a rule change kept bookings whose members it now turns away.
+  "class.bookings.kept_ineligible": "Kept bookings of members the class now turns away",
   "location.create": "Added a venue",
   "location.update": "Updated a venue",
   "location.delete": "Removed a venue",

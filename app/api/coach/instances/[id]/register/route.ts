@@ -3,6 +3,7 @@ import { medicalNotesText } from "@/lib/medical-notes";
 import { NextResponse } from "next/server";
 import { requireApiStaff } from "@/lib/api-authz";
 import { classTierCovers } from "@/lib/class-tier-gate";
+import { MEMBER_DOORS_ONLY, accessRefusalSentence, accessRefusals, highestRankOrder } from "@/lib/booking-eligibility";
 
 function latest(a: Date | null, b: Date | null): Date | null {
   if (!a) return b;
@@ -34,6 +35,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             // T6a: the memberships that include the class, for the desk ask.
             allowedTiers: { select: { tier: { select: { id: true, name: true } } } },
             _count: { select: { rosterMembers: true } },
+            // D2: the rank gate, so a booked member the door now turns away is flagged.
+            requiredRank: { select: { order: true } },
+            maxRank: { select: { order: true } },
           },
         },
       },
@@ -57,10 +61,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
               holdUntil: true,
               billedBy: true,
               billingStatusAsOf: true,
+              // All of them, latest first: the chip shows the latest; D2's
+              // booked-but-ineligible flag reads the highest order (the door's rule).
               memberRanks: {
                 orderBy: { achievedAt: "desc" },
-                take: 1,
-                include: { rankSystem: { select: { name: true, color: true, discipline: true } } },
+                include: { rankSystem: { select: { name: true, color: true, discipline: true, order: true } } },
               },
             },
           },
@@ -104,8 +109,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             billingStatusAsOf: true,
             memberRanks: {
               orderBy: { achievedAt: "desc" },
-              take: 1,
-              include: { rankSystem: { select: { name: true, color: true, discipline: true } } },
+              include: { rankSystem: { select: { name: true, color: true, discipline: true, order: true } } },
             },
           },
         })
@@ -150,6 +154,41 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const allowedTiers = instance.class.allowedTiers.map((t) => t.tier);
   const allowedTierIds = allowedTiers.map((t) => t.id);
   const hasRoster = instance.class._count.rosterMembers > 0;
+  const cls = instance.class as typeof instance.class & {
+    requiredRank?: { order: number } | null;
+    maxRank?: { order: number } | null;
+  };
+  const bookedIneligibleOf = (member: {
+    id: string;
+    membershipTierId: string | null;
+    membershipTier?: { name: string } | null;
+    classRosters?: { id: string }[];
+    memberRanks?: Array<{ rankSystem: { order?: number } }>;
+  }) => {
+    const reasons = accessRefusals(
+      {
+        // Only this member's place on the list matters: a list without them is one other entry.
+        rosterMemberIds: !hasRoster ? [] : member.classRosters?.length ? [member.id] : ["(someone else)"],
+        allowedTierIds,
+        requiredRankOrder: cls.requiredRank?.order ?? null,
+        maxRankOrder: cls.maxRank?.order ?? null,
+      },
+      {
+        memberId: member.id,
+        membershipTierId: member.membershipTierId,
+        tierName: member.membershipTier?.name ?? null,
+        rankOrder: highestRankOrder(
+          (member.memberRanks ?? []).flatMap((r) => (typeof r.rankSystem.order === "number" ? [{ order: r.rankSystem.order }] : [])),
+        ),
+      },
+    );
+    if (reasons.length === 0) return null;
+    return {
+      reasons,
+      sentence: accessRefusalSentence(reasons[0], cls.name, member.membershipTier?.name ?? null),
+      staffDoorsAdmit: reasons.every((r) => MEMBER_DOORS_ONLY[r]),
+    };
+  };
 
   return NextResponse.json({
     instance: {
@@ -214,6 +253,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         // TeamUp standing is. Informational only — it never refuses a check-in.
         billedBy: b.member.billedBy,
         billingStatusAsOf: b.member.billingStatusAsOf?.toISOString() ?? null,
+        // D2: BOOKED, but the class's rules now turn them away (the booking
+        // was kept). The door's reasons and the member's own sentence; rank is
+        // refused at the member app and kiosk only (staff can mark).
+        bookedIneligible: b.walkIn ? null : bookedIneligibleOf(b.member),
       };
     }),
     waitlist: waitlist.map((w) => ({

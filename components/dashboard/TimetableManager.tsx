@@ -19,6 +19,8 @@ import { sessionStateLabel, sessionStates, spanMinutes, type SessionState } from
 import type { ClassRow, CoachUserOption, TierOption } from "@/app/dashboard/timetable/page";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, classCategoryLabel, classCategoryTag } from "@/lib/class-category";
+import type { RestrictionPreview } from "@/lib/booking-eligibility";
+import { RestrictionPreviewBody, previewHasRefusals } from "@/components/dashboard/RestrictionPreview";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -88,6 +90,25 @@ function describeSave(change: ScheduleChange | null | undefined): string {
       ` — members have already checked in or joined the waitlist. Cancel them from the register if they are not running.`;
   }
   return message;
+}
+
+/**
+ * D2: whether a save changes who the class admits — its memberships, its
+ * squad list or its rank gate — so the owner is shown who it turns away
+ * first. A new class is previewed when it is created restricted.
+ */
+function accessChanged(target: ClassRow | null, data: Record<string, unknown>): boolean {
+  const ids = (v: unknown, key: "id" | "memberId") =>
+    Array.isArray(v) ? (v as Array<string | Record<string, string>>).map((x) => (typeof x === "string" ? x : x[key])).sort().join(",") : null;
+  const tiersAfter = Array.isArray(data.allowedTierIds) ? [...(data.allowedTierIds as string[])].sort().join(",") : null;
+  const rosterAfter = ids(data.roster, "memberId");
+  if (!target) return !!tiersAfter || !!rosterAfter || !!data.requiredRankId || !!data.maxRankId;
+  const tiersBefore = ids(target.allowedTiers ?? [], "id") ?? "";
+  const rosterBefore = ids(target.roster ?? [], "memberId") ?? "";
+  const rankChanged =
+    ("requiredRankId" in data && (data.requiredRankId ?? null) !== (target.requiredRankId ?? null)) ||
+    ("maxRankId" in data && (data.maxRankId ?? null) !== (target.maxRankId ?? null));
+  return (tiersAfter !== null && tiersAfter !== tiersBefore) || (rosterAfter !== null && rosterAfter !== rosterBefore) || rankChanged;
 }
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -1626,32 +1647,32 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   async function handleSave(data: Record<string, unknown>) {
     setSaving(true);
     try {
-      if (editTarget) {
-        // T6a: narrowing the memberships removes the bookings of members it
-        // no longer includes. Preview first and ask, rather than surprise.
-        const before = (editTarget.allowedTiers ?? []).map((t) => t.id).sort().join(",");
-        const after = Array.isArray(data.allowedTierIds) ? [...(data.allowedTierIds as string[])].sort().join(",") : before;
-        if (after !== before && after !== "") {
-          const preview = await fetch(`/api/classes/${editTarget.id}?dryRun=1`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(data),
-          });
-          if (!preview.ok) {
-            const body = await preview.json().catch(() => null);
-            throw new Error(describeApiError(body));
-          }
-          const { tierAffectedMemberIds } = (await preview.json()) as { tierAffectedMemberIds?: string[] };
-          const n = tierAffectedMemberIds?.length ?? 0;
-          if (n > 0) {
-            const ok = await ask({
-              title: "Remove bookings outside these memberships?",
-              body: `${n} ${n === 1 ? "member is" : "members are"} booked on this class but not on the memberships you ticked. Saving removes ${n === 1 ? "that booking" : "those bookings"}; past check-ins are kept.`,
-              confirmLabel: "Save and remove bookings",
-            });
-            if (!ok) return;
-          }
+      // D2 (booking preservation, approved 21 Oct 2026): a change to who can
+      // attend — squad list, rank gate or memberships — is previewed first:
+      // who is booked and would no longer be admitted (their bookings are
+      // KEPT), and who is not booked but would be refused. Nothing is
+      // deleted; the owner confirms having seen it.
+      if (accessChanged(editTarget, data)) {
+        const preview = await fetch(editTarget ? `/api/classes/${editTarget.id}?dryRun=1` : "/api/classes?dryRun=1", {
+          method: editTarget ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        if (!preview.ok) {
+          const body = await preview.json().catch(() => null);
+          throw new Error(describeApiError(body));
         }
+        const { restriction } = (await preview.json()) as { restriction?: RestrictionPreview };
+        if (previewHasRefusals(restriction)) {
+          const ok = await ask({
+            title: editTarget ? "Check who this change turns away" : "Check who this class turns away",
+            body: <RestrictionPreviewBody preview={restriction} editing={!!editTarget} />,
+            confirmLabel: editTarget ? "Save — bookings are kept" : "Create class",
+          });
+          if (!ok) return;
+        }
+      }
+      if (editTarget) {
         const res = await fetch(`/api/classes/${editTarget.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -1663,8 +1684,9 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         }
         // `scheduleChange` is a report about the save, not a field of the
         // class — destructured out so it never lands on the row.
-        const { scheduleChange, ...updated } = (await res.json()) as {
+        const { scheduleChange, bookingsKeptIneligible, ...updated } = (await res.json()) as {
           scheduleChange: ScheduleChange | null;
+          bookingsKeptIneligible?: Partial<Record<"squad" | "rank" | "membership", string[]>>;
         } & Partial<ClassRow>;
         setClasses((prev) =>
           prev.map((c) =>
@@ -1678,7 +1700,13 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         // says what the save actually did, including the upcoming sessions
         // the change removed.
         const kept = scheduleChange?.instancesKept.length ?? 0;
-        showToast(describeSave(scheduleChange), kept > 0 ? "warning" : "success");
+        const turnedAway = new Set(Object.values(bookingsKeptIneligible ?? {}).flat()).size;
+        showToast(
+          turnedAway > 0
+            ? `${describeSave(scheduleChange).replace(/\.?$/, ".")} ${turnedAway} booked ${turnedAway === 1 ? "member is" : "members are"} now turned away at the door; ${turnedAway === 1 ? "the booking is" : "their bookings are"} kept.`
+            : describeSave(scheduleChange),
+          kept > 0 || turnedAway > 0 ? "warning" : "success",
+        );
       } else {
         const res = await fetch("/api/classes", {
           method: "POST",

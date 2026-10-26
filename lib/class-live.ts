@@ -2,7 +2,7 @@
  * T6b (Sean note 7): a class's lifecycle, and the one predicate every reader
  * uses for "on the timetable".
  *
- * Owner decision, 17 Oct 2026 (Q7):
+ * Agent default adopted 17 Oct 2026 (Q7); not an owner decision:
  *  - PAUSED   = `isActive = false`, `deletedAt = null`. Hidden from the
  *    timetable, booking, the member app and the kiosk; no new sessions are
  *    generated; history and bookings are kept; one click resumes it.

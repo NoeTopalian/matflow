@@ -4,12 +4,12 @@
  *  - allowedTierIds is destructured, never spread into class.create, and the
  *    rows are written in the class's own transaction with its tenantId;
  *  - another club's tier id is a 400 and nothing is written (acceptance 7);
- *  - PATCH replaces the rows AFTER the Class row lock, and the narrowing
- *    cascade (bookings of members the new list excludes) is computed inside
- *    the write transaction and audited by member id (acceptance 8);
- *  - a rostered class is narrowed exactly the same way (roster AND tier
- *    both hold, 20 Oct 2026); a roster edit alone cascades nothing on tier
- *    grounds;
+ *  - PATCH replaces the rows AFTER the Class row lock; the members a
+ *    narrowing newly turns away are computed inside the write transaction
+ *    and recorded durably by member id — their bookings are KEPT (D2,
+ *    approved 21 Oct 2026; acceptance 8 used to delete them);
+ *  - a rostered class is judged the same way (roster AND tier both hold,
+ *    20 Oct 2026); a roster edit alone turns no one away on tier grounds;
  *  - before/after tier ids ride on class.created / class.updated.
  */
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -17,12 +17,13 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 const db = vi.hoisted(() => ({
   order: [] as string[],
   class: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
-  classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn() },
+  classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn(), findMany: vi.fn() },
   classSubscription: { findMany: vi.fn(), deleteMany: vi.fn() },
   classInstance: { createMany: vi.fn() },
   classMembershipTier: { findMany: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
   membershipTier: { findMany: vi.fn() },
-  rankSystem: { findFirst: vi.fn() },
+  rankSystem: { findFirst: vi.fn(), findMany: vi.fn() },
+  attendanceRecord: { groupBy: vi.fn() },
   member: { findMany: vi.fn() },
   user: { findFirst: vi.fn() },
   location: { findFirst: vi.fn() },
@@ -57,6 +58,11 @@ const patch = (body: unknown, qs = "") =>
   PATCH(new Request(`http://test/api/classes/c1${qs}`, { method: "PATCH", body: JSON.stringify(body) }), params);
 const post = (body: unknown) => POST(new Request("http://test/api/classes", { method: "POST", body: JSON.stringify(body) }));
 const base = { name: "Advanced", duration: 60, schedules: [{ dayOfWeek: 1, startTime: "19:00", endTime: "20:00" }] };
+/** The durable D2 rows (class.bookings.kept_ineligible) the route wrote. */
+const keptRows = () =>
+  (logAudit.mock.calls as unknown as Array<[{ action: string; metadata: Record<string, unknown> }]>)
+    .map((c) => c[0])
+    .filter((a) => a.action === "class.bookings.kept_ineligible");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -66,6 +72,10 @@ beforeEach(() => {
   db.class.updateMany.mockResolvedValue({ count: 1 });
   db.class.create.mockResolvedValue({ id: "c-new", name: "Advanced", schedules: [] });
   db.classRoster.count.mockResolvedValue(0);
+  db.classRoster.findMany.mockResolvedValue([]);
+  db.rankSystem.findMany.mockResolvedValue([]);
+  db.member.findMany.mockResolvedValue([]);
+  db.attendanceRecord.groupBy.mockResolvedValue([]);
   db.classSubscription.findMany.mockResolvedValue([]);
   db.classSubscription.deleteMany.mockResolvedValue({ count: 0 });
   db.classInstance.createMany.mockResolvedValue({ count: 0 });
@@ -108,6 +118,24 @@ describe("POST /api/classes", () => {
     const body = (await res.json()) as { allowedTiers: unknown; allowedTierIds: unknown };
     expect(body.allowedTiers).toEqual([{ id: "tier_adv", name: "Advanced", isActive: true }]);
     expect(body.allowedTierIds).toEqual(["tier_adv"]);
+  });
+
+  it("D2: ?dryRun=1 previews who a restricted new class would turn away and creates nothing", async () => {
+    db.member.findMany.mockResolvedValue([
+      { id: "m1", name: "Beg", accountType: "adult", status: "active", membershipTierId: "tier_beg", memberRanks: [] },
+      { id: "m2", name: "Adv", accountType: "adult", status: "active", membershipTierId: "tier_adv", memberRanks: [] },
+      { id: "m3", name: "Kid's Parent", accountType: "parent", status: "active", membershipTierId: null, memberRanks: [] },
+    ]);
+    db.attendanceRecord.groupBy.mockResolvedValue([{ memberId: "m1" }]);
+    const res = await POST(new Request("http://test/api/classes?dryRun=1", { method: "POST", body: JSON.stringify({ ...base, allowedTierIds: ["tier_adv"] }) }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ dryRun: true, restriction: { bookingsKept: true, booked: [], notBookedTotal: 1 } });
+    expect(body.restriction.notBooked).toEqual([
+      expect.objectContaining({ key: "plan_not_included", count: 1, recentlyActiveCount: 1, members: [{ memberId: "m1", name: "Beg", attendedThisClass: false, recentlyActive: true }] }),
+    ]);
+    expect(db.class.create).not.toHaveBeenCalled();
+    expect(db.classMembershipTier.createMany).not.toHaveBeenCalled();
   });
 
   it("no tiers = everyone: no rows written", async () => {
@@ -153,13 +181,14 @@ describe("PATCH /api/classes/[id]", () => {
     expect(db.classMembershipTier.createMany).not.toHaveBeenCalled();
   });
 
-  it("an unchanged list is not rewritten and cascades nothing", async () => {
+  it("an unchanged list is not rewritten and turns no one away", async () => {
     db.classMembershipTier.findMany.mockResolvedValue([{ tierId: "tier_adv" }]);
     db.classSubscription.findMany.mockResolvedValue([{ memberId: "m_beg", member: { membershipTierId: "tier_beg" } }]);
     const res = await patch({ name: "Advanced BJJ", allowedTierIds: ["tier_adv"] });
     expect(res.status).toBe(200);
     expect(db.classMembershipTier.deleteMany).not.toHaveBeenCalled();
     expect(db.classSubscription.deleteMany).not.toHaveBeenCalled();
+    expect(keptRows()).toEqual([]);
   });
 
   it("an edit that does not name tiers leaves them alone", async () => {
@@ -167,33 +196,78 @@ describe("PATCH /api/classes/[id]", () => {
     expect(db.classMembershipTier.deleteMany).not.toHaveBeenCalled();
   });
 
-  it("acceptance 8: narrowing removes the bookings it excludes and the audit lists them", async () => {
+  it("acceptance 8 (D2): narrowing KEEPS the bookings it excludes and records them durably, in the transaction", async () => {
     db.classSubscription.findMany.mockResolvedValue([
-      { memberId: "m_beg", member: { membershipTierId: "tier_beg" } },
-      { memberId: "m_adv", member: { membershipTierId: "tier_adv" } },
-      { memberId: "m_none", member: { membershipTierId: null } },
+      { memberId: "m_beg", member: { name: "Beg", membershipTierId: "tier_beg" } },
+      { memberId: "m_adv", member: { name: "Adv", membershipTierId: "tier_adv" } },
+      { memberId: "m_none", member: { name: "None", membershipTierId: null } },
     ]);
     const res = await patch({ allowedTierIds: ["tier_adv"] });
     expect(res.status).toBe(200);
-    expect(db.classSubscription.deleteMany).toHaveBeenCalledWith({
-      where: { classId: "c1", memberId: { in: ["m_beg", "m_none"] }, member: { tenantId: T } },
-    });
+    // No booking is deleted on loss of access (D2, approved 21 Oct 2026).
+    expect(db.classSubscription.deleteMany).not.toHaveBeenCalled();
+    // One durable row per trigger, written with the transaction's client.
+    expect(keptRows()).toEqual([
+      expect.objectContaining({
+        tx: db,
+        action: "class.bookings.kept_ineligible",
+        entityType: "Class",
+        entityId: "c1",
+        metadata: expect.objectContaining({ trigger: "membership", memberIds: ["m_beg", "m_none"], bookingsKept: true, cause: "class.updated" }),
+      }),
+    ]);
     const audit = logAudit.mock.calls.find((c) => (c as unknown as [{ action: string }])[0].action === "class.updated") as unknown as [{ metadata: Record<string, unknown> }];
-    expect(audit[0].metadata.tierCascadeMemberIds).toEqual(["m_beg", "m_none"]);
+    expect(audit[0].metadata.bookingsKeptIneligible).toEqual({ membership: ["m_beg", "m_none"] });
     expect(audit[0].metadata.allowedTierIds).toEqual({ before: [], after: ["tier_adv"] });
-    expect(audit[0].metadata.cascadeCancelledMemberIds).toEqual(["m_beg", "m_none"]);
+    expect(audit[0].metadata).not.toHaveProperty("cascadeCancelledMemberIds");
+    expect((await res.json()).bookingsKeptIneligible).toEqual({ membership: ["m_beg", "m_none"] });
   });
 
-  it("the dry run previews the members a narrowing would remove and writes nothing", async () => {
-    db.classSubscription.findMany.mockResolvedValue([{ memberId: "m_beg", member: { membershipTierId: "tier_beg" } }]);
+  it("the dry run previews who a narrowing turns away (bookings kept) and writes nothing", async () => {
+    db.classSubscription.findMany.mockResolvedValue([
+      { memberId: "m_beg", member: { name: "Beg", membershipTierId: "tier_beg", membershipTier: { name: "Beginners" } } },
+    ]);
     const res = await patch({ allowedTierIds: ["tier_adv"] }, "?dryRun=1");
-    expect(await res.json()).toMatchObject({ dryRun: true, tierAffectedMemberIds: ["m_beg"] });
+    const body = await res.json();
+    expect(body).toMatchObject({ dryRun: true, tierAffectedMemberIds: ["m_beg"], affectedMemberIds: ["m_beg"] });
+    expect(body.restriction).toMatchObject({
+      bookingsKept: true,
+      booked: [{ memberId: "m_beg", name: "Beg", reasons: ["tier_not_included"], newlyRefused: true, staffDoorsAdmit: false }],
+    });
     expect(db.classMembershipTier.deleteMany).not.toHaveBeenCalled();
     expect(db.classSubscription.deleteMany).not.toHaveBeenCalled();
+    expect(keptRows()).toEqual([]);
   });
 
-  it("narrowing a ROSTERED class removes the bookings it excludes too (both must hold), audited by member id", async () => {
+  it("the dry run also lists members who are NOT booked but would be refused, grouped, without guardian accounts", async () => {
+    db.member.findMany.mockResolvedValue([
+      { id: "m1", name: "Recent Beg", accountType: "adult", status: "active", membershipTierId: "tier_beg", membershipTier: { name: "Beginners" }, memberRanks: [] },
+      { id: "m2", name: "No Plan", accountType: "adult", status: "active", membershipTierId: null, memberRanks: [] },
+      { id: "m3", name: "Covered", accountType: "adult", status: "active", membershipTierId: "tier_adv", memberRanks: [] },
+      { id: "m4", name: "Guardian", accountType: "parent", status: "active", membershipTierId: null, memberRanks: [] },
+      { id: "m5", name: "Cancelled", accountType: "adult", status: "cancelled", membershipTierId: null, memberRanks: [] },
+      { id: "m6", name: "Payer", accountType: "adult", status: "active", externalRef: "teamup-payer:9", membershipTierId: null, memberRanks: [] },
+    ]);
+    db.attendanceRecord.groupBy.mockImplementation(async ({ where }: { where: { classInstance?: unknown } }) =>
+      where.classInstance ? [{ memberId: "m1" }] : [{ memberId: "m1" }, { memberId: "m2" }],
+    );
+    const body = await (await patch({ allowedTierIds: ["tier_adv"] }, "?dryRun=1")).json();
+    expect(body.restriction.notBookedTotal).toBe(2);
+    expect(body.restriction.notBooked).toEqual([
+      expect.objectContaining({
+        key: "plan_not_included", count: 1, attendedThisClassCount: 1,
+        members: [{ memberId: "m1", name: "Recent Beg", attendedThisClass: true, recentlyActive: true }],
+      }),
+      expect.objectContaining({
+        key: "no_plan", count: 1, attendedThisClassCount: 0, recentlyActiveCount: 1,
+        members: [{ memberId: "m2", name: "No Plan", attendedThisClass: false, recentlyActive: true }],
+      }),
+    ]);
+  });
+
+  it("a ROSTERED class narrowed: the same members, bookings kept, recorded by member id", async () => {
     db.classRoster.count.mockResolvedValue(2);
+    db.classRoster.findMany.mockResolvedValue([{ memberId: "m_beg" }, { memberId: "m_adv" }]);
     db.classSubscription.findMany.mockResolvedValue([
       { memberId: "m_beg", member: { membershipTierId: "tier_beg" } },
       { memberId: "m_adv", member: { membershipTierId: "tier_adv" } },
@@ -203,26 +277,26 @@ describe("PATCH /api/classes/[id]", () => {
 
     const res = await patch({ allowedTierIds: ["tier_adv"] });
     expect(res.status).toBe(200);
-    expect(db.classSubscription.deleteMany).toHaveBeenCalledWith({
-      where: { classId: "c1", memberId: { in: ["m_beg"] }, member: { tenantId: T } },
-    });
-    const audit = logAudit.mock.calls.find((c) => (c as unknown as [{ action: string }])[0].action === "class.updated") as unknown as [{ metadata: Record<string, unknown> }];
-    expect(audit[0].metadata.tierCascadeMemberIds).toEqual(["m_beg"]);
+    expect(db.classSubscription.deleteMany).not.toHaveBeenCalled();
+    expect(keptRows().map((r) => r.metadata)).toEqual([expect.objectContaining({ trigger: "membership", memberIds: ["m_beg"] })]);
   });
 
-  it("removing the roster with the list unchanged cascades nothing on tier grounds (the list already applied)", async () => {
+  it("removing the roster with the list unchanged turns no one away on tier grounds (the list already applied)", async () => {
     db.classRoster.count.mockResolvedValue(2); // the class had a roster
+    db.classRoster.findMany.mockResolvedValue([{ memberId: "m_adv" }, { memberId: "m_other" }]);
     db.classMembershipTier.findMany.mockResolvedValue([{ tierId: "tier_adv" }]); // list unchanged by this edit
-    db.rankSystem.findFirst.mockResolvedValue({ id: "r_white", order: 0, discipline: "BJJ" });
+    db.rankSystem.findFirst.mockResolvedValue({ id: "r_white", order: 0, discipline: "BJJ" }); // classRefError: it is ours
+    db.rankSystem.findMany.mockResolvedValue([{ id: "r_white", order: 0 }]);
     const ranked = [{ rankSystem: { discipline: "BJJ", order: 1 } }];
     db.classSubscription.findMany.mockResolvedValue([
       { memberId: "m_adv", member: { membershipTierId: "tier_adv", memberRanks: ranked } },
     ]);
     const preview = await patch({ requiredRankId: "r_white" }, "?dryRun=1");
-    expect(await preview.json()).toMatchObject({ tierAffectedMemberIds: [] });
+    expect(await preview.json()).toMatchObject({ tierAffectedMemberIds: [], affectedMemberIds: [] });
     const res = await patch({ requiredRankId: "r_white" });
     expect(res.status).toBe(200);
     expect(db.classSubscription.deleteMany).not.toHaveBeenCalled();
+    expect(keptRows()).toEqual([]);
   });
 
   it("an edit that leaves the roster in place cascades nothing on tier grounds", async () => {

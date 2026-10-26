@@ -55,7 +55,11 @@ const {
 vi.mock("@/lib/api-authz", () => ({ requireApiStaff: mockRequireApiStaff }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: mockCheckRateLimit }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: mockLogAudit }));
-vi.mock("@/lib/checkin", () => ({ performCheckin: mockPerformCheckin }));
+vi.mock("@/lib/checkin", () => ({
+  performCheckin: mockPerformCheckin,
+  // D6: the route reads the session with the engine's own loader.
+  loadCheckinInstance: (tx: { classInstance: { findFirst: (a: unknown) => unknown } }, tenantId: string, id: string) => tx.classInstance.findFirst({ where: { id, class: { tenantId } } }),
+}));
 
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
@@ -206,6 +210,23 @@ describe("POST /api/checkin/card — how the attendance is written", () => {
     expect(args).not.toHaveProperty("enforceRosterGate");
     expect(args.enforceTimeWindow).toBe(false);
     expect(args.requireCoverage).toBe(false);
+  });
+
+  it("D6: hands the session it read to the engine, and the card's version for the check under the Member lock", async () => {
+    await POST(req({ classInstanceId: INSTANCE, tokens: [card("mem_1", 1)] }));
+    const args = mockPerformCheckin.mock.calls[0][0];
+    // The same object the route read, not a second read per card.
+    expect(args.preloadedInstance).toEqual(await mockInstanceFindFirst.mock.results[0].value);
+    expect(mockInstanceFindFirst).toHaveBeenCalledTimes(1);
+    expect(args.expectedCardVersion).toBe(1);
+  });
+
+  it("D6: a card revoked while its check-in waited on the Member lock reads as revoked, and records nothing", async () => {
+    mockPerformCheckin.mockResolvedValue({ kind: "card_revoked" });
+    const res = await POST(req({ classInstanceId: INSTANCE, tokens: [card("mem_1")] }));
+    const body = await res.json();
+    expect(body.results[0].status).toBe("revoked");
+    expect(body.recorded).toBe(0);
   });
 
   it("records which member of staff scanned", async () => {

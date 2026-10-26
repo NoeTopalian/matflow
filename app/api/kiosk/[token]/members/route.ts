@@ -77,7 +77,8 @@ export async function GET(
     return NextResponse.json({ members: [] });
   }
 
-  // T6d (Sean note 1, owner decision 17 Oct 2026): a squad / comp class — one
+  // T6d (Sean note 1; agent default adopted 17 Oct 2026; not an owner decision;
+  // confirmed by owner instruction of 20 Oct 2026): a squad / comp class — one
   // with a roster — is open only to the members on it. The kiosk picks the
   // class first and the name second, so the class is known here: when the
   // tablet passes `classInstanceId` and that class has a roster, the search

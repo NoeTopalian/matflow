@@ -6,6 +6,8 @@
 //  - another club's tier id is refused (400) and nothing is written
 //    (acceptance 7);
 //  - a PATCH that throws after replacing the rows leaves the old rows;
+//  - D2: a narrowing keeps the bookings it excludes (acceptance 8 used to
+//    delete them) and records them inside the write;
 //  - acceptance 9: a tier-list change that commits while a check-in waits on
 //    the Class lock is the list the check-in is judged against.
 //
@@ -26,24 +28,25 @@ vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => {}) }));
 
-// A switch to make the write-phase cascade throw AFTER the tier rows were
-// replaced, to prove the transaction rolls them back.
-// The pre-flight preview evaluates the gate once per booking (call 1); the
-// write-phase cascade evaluates it again after the rows are replaced (call 2).
-const fault = vi.hoisted(() => ({ throwOnCall: 0, calls: 0 }));
-vi.mock("@/lib/class-tier-gate", async (orig) => {
-  const real = await orig<typeof import("@/lib/class-tier-gate")>();
+// A switch to make the write transaction throw AFTER the tier rows were
+// replaced, to prove it rolls them back. D2 (24 Oct 2026): the durable record
+// of kept bookings (recordKeptBookings) is written after the tier and roster
+// rewrites, inside the same transaction, so that is where the fault goes.
+const fault = vi.hoisted(() => ({ on: false, calls: 0 }));
+vi.mock("@/lib/booking-eligibility-db", async (orig) => {
+  const real = await orig<typeof import("@/lib/booking-eligibility-db")>();
   return {
     ...real,
-    classTierCovers: (input: Parameters<typeof real.classTierCovers>[0]) => {
+    recordKeptBookings: async (...args: Parameters<typeof real.recordKeptBookings>) => {
       fault.calls += 1;
-      if (fault.throwOnCall > 0 && fault.calls === fault.throwOnCall) throw new Error("injected fault after deleteMany");
-      return real.classTierCovers(input);
+      if (fault.on) throw new Error("injected fault after the tier rows were replaced");
+      return real.recordKeptBookings(...args);
     },
   };
 });
 
 import { auth } from "@/auth";
+import { logAudit } from "@/lib/audit-log";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { POST } from "@/app/api/classes/route";
 import { PATCH } from "@/app/api/classes/[id]/route";
@@ -149,40 +152,51 @@ describe.skipIf(!HAS_DB)("ClassMembershipTier — real database", () => {
   });
 
   it("a PATCH that throws after replacing the rows leaves the old rows", async () => {
-    // A booking makes the in-transaction cascade evaluate the gate, where the
-    // fault is injected — after deleteMany + createMany have run.
+    // The fault fires in the durable record written after deleteMany +
+    // createMany have run, inside the same transaction.
     await withRlsBypass((tx) => tx.classSubscription.create({ data: { memberId: memberBeg, classId } }));
     fault.calls = 0;
-    fault.throwOnCall = 2;
+    fault.on = true;
     try {
       const res = await patch({ allowedTierIds: [tierBeg, tierAdv] });
       expect(res.status).toBe(500);
-      expect(fault.calls).toBe(2);
+      expect(fault.calls).toBe(1);
     } finally {
-      fault.throwOnCall = 0;
+      fault.on = false;
     }
     expect(await rowsFor(classId)).toEqual([{ tierId: tierAdv, tenantId: tenantA }]);
     // The booking survived too.
     expect(await withRlsBypass((tx) => tx.classSubscription.count({ where: { classId, memberId: memberBeg } }))).toBe(1);
   });
 
-  it("acceptance 8: narrowing removes the excluded booking inside the write", async () => {
+  it("acceptance 8 (D2): narrowing KEEPS the excluded booking and records it inside the write", async () => {
     // Open the class, then restrict it to Advanced again.
     expect((await patch({ allowedTierIds: [] })).status).toBe(200);
     expect(await rowsFor(classId)).toEqual([]);
+    vi.mocked(logAudit).mockClear();
     expect((await patch({ allowedTierIds: [tierAdv] })).status).toBe(200);
-    expect(await withRlsBypass((tx) => tx.classSubscription.count({ where: { classId, memberId: memberBeg } }))).toBe(0);
+    expect(await withRlsBypass((tx) => tx.classSubscription.count({ where: { classId, memberId: memberBeg } }))).toBe(1);
+    const kept = (vi.mocked(logAudit).mock.calls as unknown as Array<[{ action: string; tx?: unknown; metadata: Record<string, unknown> }]>)
+      .map((c) => c[0])
+      .filter((e) => e.action === "class.bookings.kept_ineligible");
+    expect(kept).toHaveLength(1);
+    expect(kept[0].tx).toBeTruthy();
+    expect(kept[0].metadata).toMatchObject({ trigger: "membership", memberIds: [memberBeg], bookingsKept: true });
   });
 
-  it("acceptance 8 on a ROSTERED class: narrowing removes the booking of a rostered member the new list excludes (both must hold)", async () => {
+  it("acceptance 8 (D2) on a ROSTERED class: the rostered member the new list excludes keeps the booking (both must hold at the door)", async () => {
     expect((await patch({ allowedTierIds: [] })).status).toBe(200);
     await withRlsBypass(async (tx) => {
       await tx.classRoster.create({ data: { tenantId: tenantA, classId, memberId: memberBeg } });
-      await tx.classSubscription.create({ data: { memberId: memberBeg, classId } });
+      await tx.classSubscription.upsert({
+        where: { memberId_classId: { memberId: memberBeg, classId } },
+        create: { memberId: memberBeg, classId },
+        update: {},
+      });
     });
     try {
       expect((await patch({ allowedTierIds: [tierAdv] })).status).toBe(200);
-      expect(await withRlsBypass((tx) => tx.classSubscription.count({ where: { classId, memberId: memberBeg } }))).toBe(0);
+      expect(await withRlsBypass((tx) => tx.classSubscription.count({ where: { classId, memberId: memberBeg } }))).toBe(1);
     } finally {
       await withRlsBypass((tx) => tx.classRoster.deleteMany({ where: { tenantId: tenantA, classId } }));
     }
