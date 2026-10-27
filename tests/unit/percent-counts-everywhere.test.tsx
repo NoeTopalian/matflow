@@ -141,7 +141,7 @@ describe("conversion funnel (Reports and /dashboard/attribution)", () => {
 });
 
 describe("attribution table, Conversion column", () => {
-  it("prints '12.5% (5 of 40)', 'N/A · too few' under the minimum, and '—' for a coach with no trial", () => {
+  it("prints '12.5% (5 of 40)', 'N/A · too few (1 of 2)' under the minimum (as the funnel does), and '—' for a coach with no trial", () => {
     render(<AttributionView data={ATTRIBUTION} />);
     const table = screen.getByRole("table");
     const cellFor = (name: string) => {
@@ -151,7 +151,7 @@ describe("attribution table, Conversion column", () => {
     };
     expect(cellFor("Marco Silva")).toBe("12.5% (5 of 40)");
     expect(cellFor("Sam Kerr")).toBe("0% (0 of 4)");
-    expect(cellFor("Priya Nair")).toBe("N/A · too few");
+    expect(cellFor("Priya Nair")).toBe("N/A · too few (1 of 2)");
     expect(cellFor("Lee Park")).toBe("—");
   });
 });

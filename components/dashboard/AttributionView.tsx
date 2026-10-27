@@ -62,18 +62,14 @@ export default function AttributionView({ data }: { data: AttributionData }) {
       header: "Conversion %",
       headerLabel: "Conversion %",
       align: "right",
-      // The rate with its counts, "12.5% (5 of 40)" (the funnel's own text,
-      // formatGuardedRatio); a coach with sign-ups but no trial has no rate: "—".
-      cell: (row) =>
-        row.trialsRun === 0 ? (
-          <span className="text-tx-3">—</span>
-        ) : row.conversionRate === null ? (
-          <span className="text-tx-3">
-            N/A <span className="text-tx-4">· too few</span>
-          </span>
-        ) : (
-          <span className="tabular-nums text-tx-1">{formatGuardedRatio(row.conversionRate, row.conversions, row.trialsRun)}</span>
-        ),
+      // The funnel's own text (formatGuardedRatio), so a coach reads one way
+      // on this page: "12.5% (5 of 40)"; under the minimum "N/A · too few
+      // (1 of 2)"; a coach with sign-ups but no trial "—". Muted without a rate.
+      cell: (row) => (
+        <span className={row.conversionRate === null ? "tabular-nums text-tx-3" : "tabular-nums text-tx-1"}>
+          {formatGuardedRatio(row.conversionRate, row.conversions, row.trialsRun)}
+        </span>
+      ),
       // Nulls (too few trials) sort to the bottom via the primitive's blank rule.
       sortValue: (row) => row.conversionRate,
     },
