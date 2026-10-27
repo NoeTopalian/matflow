@@ -17,13 +17,18 @@
 // write that did not land cannot be shown as one that did, and a walk-in who
 // is un-ticked disappears because the server no longer lists them.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   AlertCircle, AlertTriangle, CalendarCheck, Check, Heart, Loader2, Search, ShieldAlert, ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Dialog } from "@/components/ui/dialog";
+import { formatTimeRange } from "@/lib/class-time";
+import {
+  ONE_OFF_REASON_ERROR, ONE_OFF_REASON_MAX, oneOffCanAdmit, oneOffReason, oneOffRowLabel,
+} from "@/lib/one-off";
 import { useToast } from "@/components/ui/Toast";
 import { describeApiError } from "@/lib/api-field-errors";
 import { classifyCheckinResponse } from "@/lib/checkin-outcome";
@@ -67,6 +72,8 @@ type RegisterMember = {
    * kiosk; a staff mark still admits).
    */
   bookedIneligible?: { reasons: string[]; sentence: string; staffDoorsAdmit: boolean } | null;
+  /** G4: this session's visit was a coach's one-off (not counted against their classes). */
+  oneOff?: { reason: string; grantedByName: string | null } | null;
 };
 
 type RegisterResponse = {
@@ -107,6 +114,15 @@ type Candidate = {
  */
 type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class";
 
+/**
+ * G4: a mark the server refused on the squad list, the plan restriction or
+ * the class allowance, which staff may turn into a one-off for this session.
+ * `acknowledged` is what the desk already confirmed for that mark (hold,
+ * waiver, kids class): the one-off is asked the same questions and sends the
+ * same answers.
+ */
+type OneOffOffer = { memberId: string; name: string; acknowledged: Acknowledged[]; fromSearch: boolean };
+
 /** Token-safe tint (UI-RULES §2). */
 function tint(color: string, percent: number) {
   return `color-mix(in srgb, ${color} ${percent}%, transparent)`;
@@ -142,6 +158,17 @@ export default function RegisterPanel({
   const [candidatesError, setCandidatesError] = useState(false);
   const [query, setQuery] = useState("");
   const [retrying, setRetrying] = useState(false);
+  // G4: the refused mark that can become a one-off, and the dialog for it.
+  const [offer, setOffer] = useState<OneOffOffer | null>(null);
+  const [oneOffFor, setOneOffFor] = useState<OneOffOffer | null>(null);
+  const [oneOffText, setOneOffText] = useState("");
+  const [oneOffError, setOneOffError] = useState<string | null>(null);
+  const [oneOffSaving, setOneOffSaving] = useState(false);
+  const oneOffSavingRef = useRef(false);
+  const oneOffFieldId = useId();
+  const oneOffReasonRef = useRef<HTMLTextAreaElement>(null);
+  /** Whose reason the text box holds: reopening for the same member keeps it. */
+  const offerTextFor = useRef<string | null>(null);
   const { toast: showToast } = useToast();
   const { ask, dialogProps } = useConfirmDialog();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -258,9 +285,11 @@ export default function RegisterPanel({
     who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & {
       waiverAccepted?: boolean; cancelled?: boolean; accountType?: string | null;
     },
+    fromSearch = false,
   ): Promise<boolean> {
     const acknowledged: Acknowledged[] = [];
     if (who?.cancelled) return false;
+    setOffer(null);
     // F-8: an on-hold member can be admitted by staff, but not by accident.
     if (who?.onHold) {
       const until = who.holdUntil ? new Date(who.holdUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
@@ -321,6 +350,11 @@ export default function RegisterPanel({
       if (outcome.kind === "refused" || outcome.kind === "signed_out") {
         const hasFields = !!body && typeof body === "object" && "details" in body;
         setError(hasFields ? describeApiError(body) : outcome.message);
+        // G4: the squad list, the plan restriction and the class allowance
+        // can be admitted past for this session only, as a one-off.
+        if (outcome.kind === "refused" && oneOffCanAdmit(outcome.reason)) {
+          setOffer({ memberId, name: who?.name ?? "This member", acknowledged, fromSearch });
+        }
         return false;
       }
       const over = (body as { overCapacity?: { taken: number; maxCapacity: number } } | null)?.overCapacity;
@@ -336,7 +370,69 @@ export default function RegisterPanel({
     }
   }
 
-  async function unmark(memberId: string, name: string, usedPackCredit: boolean) {
+  /** G4: open the one-off dialog for the refused mark. The reason typed for this member is kept. */
+  function openOneOff(o: OneOffOffer) {
+    if (offerTextFor.current !== o.memberId) setOneOffText("");
+    offerTextFor.current = o.memberId;
+    setOneOffError(null);
+    setOneOffFor(o);
+  }
+
+  /**
+   * G4: send the one-off. One request per Confirm (a second press while one
+   * is in flight is ignored); a failure keeps the dialog open with the typed
+   * reason and says what went wrong beside the action. A retry after a lost
+   * response that answers "already checked in" is the one-off having landed.
+   */
+  async function submitOneOff() {
+    const o = oneOffFor;
+    if (!o || oneOffSavingRef.current) return;
+    const reason = oneOffReason(oneOffText);
+    if (!reason) {
+      setOneOffError(ONE_OFF_REASON_ERROR);
+      oneOffReasonRef.current?.focus();
+      return;
+    }
+    oneOffSavingRef.current = true;
+    setOneOffSaving(true);
+    setOneOffError(null);
+    try {
+      const res = await fetch("/api/checkin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          classInstanceId: instance.id,
+          memberId: o.memberId,
+          checkInMethod: "admin",
+          oneOff: { reason },
+          ...(o.acknowledged.length > 0 ? { acknowledged: o.acknowledged } : {}),
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      const outcome = classifyCheckinResponse(res.status, body);
+      if (outcome.kind === "recorded" || outcome.kind === "already_checked_in") {
+        setOneOffFor(null);
+        setOffer(null);
+        setError(null);
+        setOneOffText("");
+        offerTextFor.current = null;
+        if (o.fromSearch) setQuery("");
+        showToast(outcome.kind === "recorded" ? `Added as a one-off: ${o.name}` : `${o.name} is already marked in`, "success");
+        const over = (body as { overCapacity?: { taken: number; maxCapacity: number } } | null)?.overCapacity;
+        if (over) showToast(`Admitted over capacity — this class holds ${over.maxCapacity} and now has ${over.taken + 1} checked in`, "error");
+        await loadRegister();
+        return;
+      }
+      setOneOffError(outcome.message);
+    } catch {
+      setOneOffError("Couldn't reach MatFlow — check your signal and try again.");
+    } finally {
+      oneOffSavingRef.current = false;
+      setOneOffSaving(false);
+    }
+  }
+
+  async function unmark(memberId: string, name: string, usedPackCredit: boolean, wasOneOff = false) {
     // The name goes in the BODY, which wraps. In the title it did not: a long
     // name made the sheet wider than a 390 px phone and the confirm button sat
     // off-screen — found by attendance-hub.spec.ts case 3 on 18 Sep 2026.
@@ -345,7 +441,7 @@ export default function RegisterPanel({
       // The credit sentence only when this check-in actually spent one: a
       // monthly member was promised a class-pack credit they never had
       // (end-user round 2, 4.8).
-      body: `${name} will no longer be marked as attending this session.${usedPackCredit ? " The class-pack credit it used is given back." : ""}`,
+      body: `${name} will no longer be marked as attending this session.${usedPackCredit ? " The class-pack credit it used is given back." : ""}${wasOneOff ? " The one-off is removed with it." : ""}`,
       confirmLabel: "Remove check-in",
       destructive: true,
     });
@@ -386,7 +482,7 @@ export default function RegisterPanel({
 
   async function markFromSearch(c: Candidate) {
     // F-6: the toast says what happened, so only a recorded check-in gets one.
-    const recorded = await mark(c.id, c);
+    const recorded = await mark(c.id, c, true);
     if (recorded) {
       setQuery("");
       showToast(`Marked in: ${c.name}`, "success");
@@ -414,6 +510,19 @@ export default function RegisterPanel({
         >
           <AlertCircle className="mt-0.5 size-4 shrink-0" />
           <p className="flex-1 text-xs">{error}</p>
+          {offer && (
+            // G4: the refusal line offers the one-off for this session only.
+            <Button
+              variant="secondary"
+              size="compact"
+              className="shrink-0"
+              onClick={() => openOneOff(offer)}
+              aria-label={`Add ${offer.name} as a one-off`}
+              data-testid="register-one-off-offer"
+            >
+              Add as a one-off
+            </Button>
+          )}
           {/* Verifier lane 7 D7: a roster that failed to load had no way
               forward. Offer the reload whenever there is no register to show. */}
           {!register && (
@@ -477,7 +586,7 @@ export default function RegisterPanel({
                 }}
               >
                 <button
-                  onClick={() => (m.attended ? void unmark(m.memberId, m.name, m.usedPackCredit === true) : void mark(m.memberId, m))}
+                  onClick={() => (m.attended ? void unmark(m.memberId, m.name, m.usedPackCredit === true, !!m.oneOff) : void mark(m.memberId, m))}
                   disabled={busy}
                   className="ui-fixed-size flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--r-md)] border transition-colors disabled:opacity-50"
                   style={{
@@ -606,6 +715,13 @@ export default function RegisterPanel({
                         : m.notOnRoster
                           ? "edit the squad list first."
                           : "change their membership first."}
+                      {" "}Or tick them and add them as a one-off for this session.
+                    </p>
+                  )}
+                  {m.attended && m.oneOff && (
+                    // G4: a coach's one-off — the reason in full, wrapping on a phone.
+                    <p className="mt-1 break-words text-[11px] font-medium" style={{ color: "var(--hue-info-ink)" }} data-testid="register-one-off">
+                      {oneOffRowLabel(m.oneOff.reason)}
                     </p>
                   )}
                   {!m.attended && !m.walkIn && m.bookedIneligible?.staffDoorsAdmit && (
@@ -720,6 +836,71 @@ export default function RegisterPanel({
           </ul>
         </Card>
       )}
+
+      {/* G4: "Add as a one-off" — a short form, so the Dialog primitive
+          (Escape, focus trap, bottom sheet on a phone). The reason stays
+          typed after a failed save; the error sits beside the action. */}
+      <Dialog
+        open={oneOffFor !== null}
+        onClose={() => { if (!oneOffSavingRef.current) setOneOffFor(null); }}
+        title="Add as a one-off"
+        description="Admits them to this session only. It isn't counted against their classes and uses no class-pack credit."
+        initialFocusRef={oneOffReasonRef}
+        footer={
+          <div className="flex w-full flex-wrap items-center justify-end gap-2">
+            {oneOffError && (
+              <p role="alert" className="mr-auto min-w-0 flex-1 basis-48 text-xs" style={{ color: "var(--hue-danger-ink)" }} data-testid="register-one-off-error">
+                {oneOffError}
+              </p>
+            )}
+            <Button variant="secondary" onClick={() => setOneOffFor(null)} disabled={oneOffSaving}>
+              Cancel
+            </Button>
+            <Button type="submit" form={`${oneOffFieldId}-form`} loading={oneOffSaving} data-testid="register-one-off-confirm">
+              Add as a one-off
+            </Button>
+          </div>
+        }
+      >
+        {oneOffFor && (
+          <form
+            id={`${oneOffFieldId}-form`}
+            className="space-y-3"
+            onSubmit={(e) => { e.preventDefault(); void submitOneOff(); }}
+          >
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
+              <dt className="text-tx-3">Member</dt>
+              <dd className="break-words font-medium text-tx-1" data-testid="register-one-off-member">{oneOffFor.name}</dd>
+              <dt className="text-tx-3">Session</dt>
+              <dd className="break-words text-tx-1">
+                {className()} · {formatTimeRange(instance.startTime, instance.endTime)}
+              </dd>
+            </dl>
+            <div>
+              <label htmlFor={`${oneOffFieldId}-reason`} className="mb-1 block text-sm font-medium text-tx-2">
+                Reason
+              </label>
+              <textarea
+                id={`${oneOffFieldId}-reason`}
+                ref={oneOffReasonRef}
+                value={oneOffText}
+                onChange={(e) => setOneOffText(e.target.value)}
+                required
+                rows={2}
+                maxLength={ONE_OFF_REASON_MAX}
+                aria-describedby={`${oneOffFieldId}-hint`}
+                aria-invalid={oneOffError === ONE_OFF_REASON_ERROR || undefined}
+                className="w-full resize-none rounded-[var(--r-md)] border px-3 py-2 text-sm focus:outline-none"
+                style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+                data-testid="register-one-off-reason"
+              />
+              <p id={`${oneOffFieldId}-hint`} className="mt-1 text-[11px] text-tx-3">
+                Shown on the register, in their history and in Activity. {oneOffText.trim().length}/{ONE_OFF_REASON_MAX}
+              </p>
+            </div>
+          </form>
+        )}
+      </Dialog>
 
       <ConfirmDialog {...dialogProps} />
     </div>

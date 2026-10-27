@@ -49,6 +49,7 @@ import { resolveSignupCredit } from "@/lib/signup-credit";
 import { billingSourceLabel, HOLD_ACCESS_ONLY_NOTE, isBilledElsewhere, staleBillingWarning } from "@/lib/billing-source";
 import { paymentStatusLabel } from "@/lib/payment-status";
 import { paymentStatusFromHoldResponse } from "@/lib/member-hold";
+import { oneOffHistoryLine } from "@/lib/one-off";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -135,6 +136,8 @@ export interface MemberDetail {
     method: string;
     coachName: string | null;
     location: string | null;
+    /** G4: the visit was a coach's one-off (not counted against the allowance). */
+    oneOff?: { reason: string; grantedByName: string | null } | null;
   }[];
 }
 
@@ -382,7 +385,19 @@ const attendanceColumns: DataTableColumn<AttendanceEntry>[] = [
     key: "className",
     header: "Class",
     sortValue: (a) => a.className,
-    cell: (a) => <span className="block truncate font-medium">{a.className}</span>,
+    // G4: a one-off's reason is free text (up to 200 characters) and wraps.
+    wrap: true,
+    cell: (a) => (
+      <>
+        <span className="block truncate font-medium">{a.className}</span>
+        {a.oneOff && (
+          // G4: who let them in and why, in full (it wraps; never truncated).
+          <span className="mt-0.5 block whitespace-normal text-xs" style={{ color: "var(--tx-3)" }} data-testid="attendance-one-off">
+            {oneOffHistoryLine(a.oneOff.grantedByName, a.oneOff.reason)}
+          </span>
+        )}
+      </>
+    ),
   },
   {
     key: "session",
@@ -1883,6 +1898,11 @@ export default function MemberProfile({
                       <p className="mt-0.5 text-xs" style={{ color: "var(--tx-3)" }}>
                         {a.coachName ?? "No coach set"} · {a.location ?? "No location set"}
                       </p>
+                      {a.oneOff && (
+                        <p className="mt-0.5 text-xs" style={{ color: "var(--tx-3)" }} data-testid="attendance-one-off">
+                          {oneOffHistoryLine(a.oneOff.grantedByName, a.oneOff.reason)}
+                        </p>
+                      )}
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
                       <p className="text-sm font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>

@@ -88,6 +88,8 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
             id: true,
             checkInTime: true,
             checkInMethod: true,
+            // G4: a coach's one-off — who added them and why.
+            oneOff: { select: { reason: true, grantedBy: { select: { name: true } } } },
             classInstance: {
               select: {
                 date: true,
@@ -216,6 +218,7 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
       method: a.checkInMethod,
       coachName: a.classInstance.class.coachName ?? null,
       location: a.classInstance.class.location ?? null,
+      oneOff: a.oneOff ? { reason: a.oneOff.reason, grantedByName: a.oneOff.grantedBy?.name ?? null } : null,
     })),
   };
 }

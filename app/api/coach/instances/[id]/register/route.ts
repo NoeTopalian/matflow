@@ -73,7 +73,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       }),
       tx.attendanceRecord.findMany({
         where: { classInstanceId },
-        select: { id: true, memberId: true, checkInTime: true, checkInMethod: true },
+        select: {
+          id: true, memberId: true, checkInTime: true, checkInMethod: true,
+          // G4: a coach's one-off, shown on the row as "One-off · <reason>".
+          oneOff: { select: { reason: true, grantedBy: { select: { name: true } } } },
+        },
       }),
       tx.classWaitlist.findMany({
         where: { classInstanceId, status: "waiting" },
@@ -241,6 +245,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         attended: !!attended,
         attendedAt: attended?.checkInTime.toISOString() ?? null,
         attendedMethod: attended?.checkInMethod ?? null,
+        // G4: this session's visit was a coach's one-off (not counted).
+        oneOff: attended?.oneOff ? { reason: attended.oneOff.reason, grantedByName: attended.oneOff.grantedBy?.name ?? null } : null,
         // The later of any other visit and this session's own check-in: a
         // member ticked in today read "Last seen Never" (end-user round 2,
         // 4.x) because the visit query leaves this session out.
