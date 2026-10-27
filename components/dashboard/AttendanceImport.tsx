@@ -28,13 +28,22 @@ import { formatDate, formatDateTime } from "@/lib/date";
 import { formatRatio } from "@/lib/percent";
 
 /**
+ * How far along, as a whole percentage, rounded down so it never reads 100%
+ * before the last item is in; 0 with nothing to do. Multiply first (as
+ * lib/percent does): 29 of 100 is 29, where dividing first floors it to 28.
+ * The progress bar's width, its aria-valuenow and the text all use this.
+ */
+export function progressPct(done: number, total: number): number {
+  return total > 0 ? Math.floor((done * 100) / total) : 0;
+}
+
+/**
  * The import's progress line: "24% (12 of 50) of bookings", the percentage
- * with its count and base like every other share in the app. Rounded down,
- * so it never reads 100% before the last booking is in. No bookings: "—".
+ * with its count and base like every other share in the app. No bookings: "—".
  */
 export function bookingsProgressText(processed: number, total: number): string {
   if (total <= 0) return "—";
-  return `${formatRatio(Math.floor((processed * 100) / total), processed, total)} of bookings`;
+  return `${formatRatio(progressPct(processed, total), processed, total)} of bookings`;
 }
 
 type Decision = { action: string; targetId?: string | null } | null;
@@ -381,7 +390,9 @@ export default function AttendanceImport({ primaryColor, onChanged }: { primaryC
 
   // ── Running, stopped part-way, or finished ─────────────────────────────────
   if (job && job.status !== "preview") {
-    const pct = job.total ? Math.floor((job.processed / job.total) * 100) : 0;
+    // The same number the text prints (bookingsProgressText), so the bar and
+    // its aria-valuenow never disagree with it by one.
+    const pct = progressPct(job.processed, job.total);
     const done = job.phase === "completed";
     const m = (job.manifest ?? {}) as { outcomes?: Record<string, number>; dispositions?: Record<string, number>; attendance?: { createdByThisImport?: number; linkedToExisting?: number }; sessions?: { created?: number }; classes?: { created?: number }; reconciles?: boolean; input?: { rows?: number; duplicates?: number; rejected?: number } };
     return (
@@ -567,7 +578,7 @@ export default function AttendanceImport({ primaryColor, onChanged }: { primaryC
   }
 
   // ── Choose a file ──────────────────────────────────────────────────────────
-  const pct = upload?.totalBytes ? Math.floor((upload.sentBytes / upload.totalBytes) * 100) : 0;
+  const pct = upload ? progressPct(upload.sentBytes, upload.totalBytes) : 0;
   return (
     <form onSubmit={uploadAndPreview} className="space-y-3" data-testid="attendance-import-form">
       <p className="text-[11px] text-tx-4">

@@ -39,7 +39,9 @@ import * as primitives from "@/components/dashboard/reports-primitives";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import AttributionView from "@/components/dashboard/AttributionView";
 import { reportsCsv } from "@/components/dashboard/ReportsView";
-import { bookingsProgressText } from "@/components/dashboard/AttendanceImport";
+import { bookingsProgressText, progressPct } from "@/components/dashboard/AttendanceImport";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { checkInsMetricLine } from "@/lib/ai-causal-report";
 import { buildFunnel, MIN_TRIALS_FOR_RATE, type AttributionData, type StaffConversionRow } from "@/lib/attribution";
 import { createEmptyReportsData } from "@/lib/reports";
@@ -186,5 +188,21 @@ describe("attendance import progress line", () => {
     expect(bookingsProgressText(12, 50)).toBe("24% (12 of 50) of bookings");
     expect(bookingsProgressText(1999, 2000)).toBe("99% (1,999 of 2,000) of bookings");
     expect(bookingsProgressText(0, 0)).toBe("—");
+  });
+
+  // Review finding 3: the bar used (29 / 100) * 100, which floors to 28,
+  // while the text said 29%. Both now come from progressPct.
+  it("the bar, its aria value and the text use one number: 29 of 100 is 29 and 57 of 100 is 57", () => {
+    expect(progressPct(29, 100)).toBe(29);
+    expect(progressPct(57, 100)).toBe(57);
+    expect(Math.floor((29 / 100) * 100)).toBe(28); // the old divide-first value
+    expect(bookingsProgressText(29, 100)).toBe("29% (29 of 100) of bookings");
+    expect(progressPct(0, 0)).toBe(0);
+    expect(progressPct(50, 50)).toBe(100);
+    const src = readFileSync(join(process.cwd(), "components/dashboard/AttendanceImport.tsx"), "utf8");
+    // Every percentage in the file goes through progressPct: no divide-first left.
+    expect(src.match(/\/ [\w.?]+\) \* 100/g) ?? []).toEqual([]);
+    expect(src).toContain("const pct = progressPct(job.processed, job.total);");
+    expect(src).toMatch(/aria-valuenow=\{pct\} aria-label="Import progress"/);
   });
 });
