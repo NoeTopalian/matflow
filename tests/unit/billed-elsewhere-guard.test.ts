@@ -115,9 +115,9 @@ describe("billing source labels", () => {
   it("labels only TeamUp-billed members, with the import date or 'date unknown'", () => {
     expect(billingSourceLabel({ billedBy: "matflow", billingStatusAsOf: new Date("2026-10-03T08:00:00Z") })).toBeNull();
     expect(billingSourceLabel({ billedBy: "teamup", billingStatusAsOf: new Date("2026-10-03T08:00:00Z") })).toBe(
-      "Billed by TeamUp · Imported from TeamUp on 3 Oct 2026",
+      "Billed by TeamUp · imported 3 Oct 2026",
     );
-    expect(billingSourceLabel({ billedBy: "teamup", billingStatusAsOf: null })).toBe("Billed by TeamUp · Imported from TeamUp, date unknown");
+    expect(billingSourceLabel({ billedBy: "teamup", billingStatusAsOf: null })).toBe("Billed by TeamUp · import date unknown");
   });
 
   it("gives the import line on its own", () => {
@@ -131,7 +131,7 @@ describe("billing source labels", () => {
     expect(keys).not.toContain("isBillingStatusStale");
     expect(keys).not.toContain("staleBillingWarning");
     expect(billingSourceLabel({ billedBy: "teamup", billingStatusAsOf: new Date("2026-01-03T08:00:00Z") })).toBe(
-      "Billed by TeamUp · Imported from TeamUp on 3 Jan 2026",
+      "Billed by TeamUp · imported 3 Jan 2026",
     );
   });
 });

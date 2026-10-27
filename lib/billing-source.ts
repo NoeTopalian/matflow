@@ -51,12 +51,15 @@ export function importedFromTeamUpLabel(
 }
 
 /**
- * Who bills the member and when they came over: "Billed by TeamUp · Imported
- * from TeamUp on 3 Oct 2026". Null for a member MatFlow bills.
+ * Who bills the member and when they came over, without saying TeamUp twice:
+ * "Billed by TeamUp · imported 3 Oct 2026". Null for a member MatFlow bills.
  */
 export function billingSourceLabel(
   m: { billedBy?: string | null; billingStatusAsOf?: Date | string | null } | null | undefined,
 ): string | null {
-  const imported = importedFromTeamUpLabel(m);
-  return imported ? `Billed by TeamUp · ${imported}` : null;
+  if (!isBilledElsewhere(m)) return null;
+  const d = toDate(m?.billingStatusAsOf ?? null);
+  return d
+    ? `Billed by TeamUp · imported ${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })}`
+    : "Billed by TeamUp · import date unknown";
 }

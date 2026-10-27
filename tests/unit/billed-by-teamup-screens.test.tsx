@@ -2,7 +2,7 @@
 //
 // Honest screens for a member TeamUp bills (readiness spec v3 §7; contract
 // docs/readiness/TEAMUP-OPERATIONS-CONTRACT.md §2, §4, §5):
-//   - the staff profile says "Billed by TeamUp · Imported from TeamUp on
+//   - the staff profile says "Billed by TeamUp · imported
 //     <date>" by the payment status. The 8-day staleness warning is retired
 //     (owner decision, 27 Oct 2026: imports no longer update a member, so the
 //     date never moves and the warning would stay on for good);
@@ -100,11 +100,11 @@ async function renderProfile(member: MemberDetail = MEMBER) {
 }
 
 describe("staff profile", () => {
-  it("shows 'Billed by TeamUp · Imported from TeamUp on <date>' for a TeamUp-billed member", async () => {
+  it("shows 'Billed by TeamUp · imported <date>' for a TeamUp-billed member", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(at(24));
     await renderProfile();
-    expect(screen.getByTestId("billing-source-label").textContent).toBe("Billed by TeamUp · Imported from TeamUp on 20 Sept 2026");
+    expect(screen.getByTestId("billing-source-label").textContent).toBe("Billed by TeamUp · imported 20 Sept 2026");
   });
 
   it("shows no label for a member MatFlow bills", async () => {
@@ -117,7 +117,7 @@ describe("staff profile", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(at(90 * 24));
     await renderProfile();
-    expect(screen.getByTestId("billing-source-label").textContent).toBe("Billed by TeamUp · Imported from TeamUp on 20 Sept 2026");
+    expect(screen.getByTestId("billing-source-label").textContent).toBe("Billed by TeamUp · imported 20 Sept 2026");
     expect(screen.queryByTestId("stale-billing-warning")).toBeNull();
     expect(document.body.textContent).not.toMatch(/Billing status last updated|status as of/);
   });
@@ -150,8 +150,8 @@ describe("members list marker", () => {
     const pill = screen.getByTestId("billed-by-teamup");
     // Functional review F5 (30 Sep 2026): "TeamUp" alone said nothing.
     expect(pill.textContent).toBe("Billed by TeamUp");
-    expect(pill.getAttribute("title")).toBe("Billed by TeamUp · Imported from TeamUp on 20 Sept 2026");
-    expect(pill.getAttribute("aria-label")).toBe("Billed by TeamUp · Imported from TeamUp on 20 Sept 2026");
+    expect(pill.getAttribute("title")).toBe("Billed by TeamUp · imported 20 Sept 2026");
+    expect(pill.getAttribute("aria-label")).toBe("Billed by TeamUp · imported 20 Sept 2026");
     rerender(<BilledByTeamUpPill member={{ billedBy: "matflow", billingStatusAsOf: null }} />);
     expect(screen.queryByTestId("billed-by-teamup")).toBeNull();
   });
@@ -182,7 +182,7 @@ describe("register", () => {
     });
     render(<RegisterPanel instance={INSTANCE} primaryColor="#3b82f6" onCountChange={() => {}} />);
     const label = await screen.findByTestId("register-billing-source");
-    expect(label.textContent).toBe("Billed by TeamUp · Imported from TeamUp on 20 Sept 2026");
+    expect(label.textContent).toBe("Billed by TeamUp · imported 20 Sept 2026");
     expect(screen.queryByTestId("register-stale-billing")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Mark Tess Stale attended" }));
     await waitFor(() => expect(calls.some((c) => c.url === "/api/checkin" && c.init?.method === "POST")).toBe(true));
@@ -205,7 +205,7 @@ describe("register", () => {
     });
     render(<RegisterPanel instance={INSTANCE} primaryColor="#3b82f6" onCountChange={() => {}} />);
     const label = await screen.findByTestId("register-billing-source");
-    expect(label.textContent).toBe("Billed by TeamUp · Imported from TeamUp on 20 Sept 2026");
+    expect(label.textContent).toBe("Billed by TeamUp · imported 20 Sept 2026");
     expect(screen.queryByTestId("register-stale-billing")).toBeNull();
   });
 
