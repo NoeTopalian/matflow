@@ -2,8 +2,10 @@
 // (review gap 4, 21 Oct 2026). The scanner aborts a request after 10 s and
 // lets the coach hold the card again; the server may still commit the first
 // request. Proved here: the retry is answered "duplicate", the member has ONE
-// attendance row, and an allowance override is recorded once — never a second
-// attendance, never a second consumption. Also measured: the route's own
+// attendance row, and the class-pack credit that paid past the used-up
+// allowance is spent once — never a second attendance, never a second
+// consumption. There is no allowance override (owner decision, 27 Oct 2026):
+// an old scanner's acknowledgement admits no one. Also measured: the route's own
 // time from this machine (printed as a NOTE line; the scanner's client
 // timeout is 10 s).
 import { describe, it, beforeAll, afterAll, expect, vi } from "vitest";
@@ -41,6 +43,7 @@ describe.skipIf(!HAS_DB)("card scan: abort-and-retry cannot duplicate attendance
   let used = "";
   let next = "";
   let token = "";
+  let memberPackId = "";
 
   beforeAll(async () => {
     await withRlsBypass(async (tx) => {
@@ -63,6 +66,9 @@ describe.skipIf(!HAS_DB)("card scan: abort-and-retry cannot duplicate attendance
     if (!state.tenantId) return;
     const tenantId = state.tenantId;
     await withRlsBypass(async (tx) => {
+      await tx.classPackRedemption.deleteMany({ where: { memberPack: { tenantId } } });
+      await tx.memberClassPack.deleteMany({ where: { tenantId } });
+      await tx.classPack.deleteMany({ where: { tenantId } });
       await tx.attendanceRecord.deleteMany({ where: { tenantId } });
       await tx.classInstance.deleteMany({ where: { class: { tenantId } } });
       await tx.class.deleteMany({ where: { tenantId } });
@@ -74,30 +80,47 @@ describe.skipIf(!HAS_DB)("card scan: abort-and-retry cannot duplicate attendance
   }, 60_000);
 
   const rows = () => withRlsBypass((tx) => tx.attendanceRecord.count({ where: { memberId, classInstanceId: next } }));
+  const credits = async () =>
+    (await withRlsBypass((tx) => tx.memberClassPack.findUnique({ where: { id: memberPackId }, select: { creditsRemaining: true } })))?.creditsRemaining;
 
-  it("asked, then admitted once; the same confirmed card again is 'duplicate': one row, one override", async () => {
+  it("at the limit with no pack the card is refused, and an old scanner's acknowledgement admits no one", async () => {
     const asked = await scan(next, token);
-    expect(asked.body.results[0]).toMatchObject({ status: "needs_confirmation", reason: "allowance_reached" });
+    expect(asked.body.results[0]).toMatchObject({ status: "refused", reason: "allowance_reached" });
+    expect(String(asked.body.results[0].message)).toMatch(/^Retry Member has used their 1 class .* and has no class-pack credit, so they can't be checked in\.$/);
+    const old = await scan(next, token, ["allowance_reached"]);
+    expect(old.status).toBe(200);
+    expect(old.body.results[0]).toMatchObject({ status: "refused", reason: "allowance_reached" });
     expect(await rows()).toBe(0);
+    expect(audit.calls.filter((e) => e.action === "attendance.card_scan")).toHaveLength(0);
+  });
 
-    const admitted = await scan(next, token, ["allowance_reached"]);
+  it("with a pack the card is admitted once on a pack credit; the same card again is 'duplicate': one row, one credit", async () => {
+    await withRlsBypass(async (tx) => {
+      const template = await tx.classPack.create({ data: { tenantId: state.tenantId, name: "Five", totalCredits: 5, validityDays: 90, pricePence: 5000 } });
+      memberPackId = (await tx.memberClassPack.create({
+        data: { tenantId: state.tenantId, memberId, packId: template.id, creditsRemaining: 3, status: "active", expiresAt: new Date(Date.now() + 60 * 86_400_000) },
+      })).id;
+    });
+    const admitted = await scan(next, token);
     expect(admitted.body.results[0].status).toBe("success");
     expect(await rows()).toBe(1);
-    const overrides = audit.calls.filter((e) => e.action === "attendance.card_scan");
-    expect(overrides).toHaveLength(1);
-    expect((overrides[0].metadata as { overrides?: unknown[] }).overrides).toHaveLength(1);
+    expect(await credits()).toBe(2);
+    const scans = audit.calls.filter((e) => e.action === "attendance.card_scan");
+    expect(scans).toHaveLength(1);
+    expect(scans[0].metadata as Record<string, unknown>).not.toHaveProperty("overrides");
 
     // The browser aborted after 10 s but the server had committed; the coach holds the card again.
-    const retry = await scan(next, token, ["allowance_reached"]);
+    const retry = await scan(next, token);
     expect(retry.body.results[0].status).toBe("duplicate");
     expect(retry.body.recorded).toBe(0);
     expect(await rows()).toBe(1);
+    expect(await credits()).toBe(2);
     expect(audit.calls.filter((e) => e.action === "attendance.card_scan")).toHaveLength(1);
-    // And an unconfirmed retry (a scanner that lost its answer) is a duplicate too, not a second question.
-    const plain = await scan(next, token);
+    // An old scanner resending with an acknowledgement is a duplicate too, never a second credit.
+    const plain = await scan(next, token, ["allowance_reached"]);
     expect(plain.body.results[0].status).toBe("duplicate");
     expect(await rows()).toBe(1);
-
-    console.log(`NOTE card route timings from this machine: asked ${asked.ms} ms, admitted ${admitted.ms} ms, retry ${retry.ms} ms (scanner client timeout 10000 ms)`);
+    expect(await credits()).toBe(2);
+    console.log(`NOTE card route timings from this machine: admitted ${admitted.ms} ms, retry ${retry.ms} ms (scanner client timeout 10000 ms)`);
   }, 120_000);
 });

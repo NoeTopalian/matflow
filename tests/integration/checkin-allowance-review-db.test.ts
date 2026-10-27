@@ -5,8 +5,10 @@
 //
 //  1. Coach tick door (R-ALLOW rule 6 / C10): a coach tick on session Y and a
 //     self check-in on session X for a 1-class plan, both parked on the Member
-//     lock: exactly one admission without acknowledgement; with it, any
-//     admission past the allowance carries the override on the tick's audit row.
+//     lock: exactly one admission, with or without an old client's
+//     acknowledgement (no staff override, owner decision 27 Oct 2026); with a
+//     class pack, the tick past the allowance spends one credit, tied to the
+//     row it created, and an unmark gives it back.
 //  2. Stripe dispute webhook x pack check-in (§8b.3 C1 / §8b.4 R2): the
 //     webhook now writes the Member row before voiding the pack, so with a
 //     pack check-in holding Class + Member and waiting on the pack, the webhook
@@ -217,14 +219,16 @@ describe.skipIf(!HAS_DB)("T7 review fixes - real database", () => {
     expect(admissions).toBe(1);
     if (o.kind === "success") {
       expect(c.status).toBe(403);
-      expect(c.body).toMatchObject({ reason: "allowance_reached", askable: true, allowance: { used: 1, limit: 1, weeks: 2 } });
+      expect(c.body).toMatchObject({ reason: "allowance_reached", allowance: { used: 1, limit: 1, weeks: 2 } });
+      expect(c.body).not.toHaveProperty("askable");
+      expect(String(c.body.error)).toMatch(/and has no class-pack credit, so they can't be checked in\.$/);
     } else {
       expect(o).toMatchObject({ kind: "allowance_reached", used: 1, limit: 1 });
     }
     expect(await recordsIn([x, y], memberId)).toBe(1);
   });
 
-  it("coach tick vs self check-in with acknowledgement: an admission past the allowance carries the override on the tick", async () => {
+  it("coach tick vs self check-in with an old client's acknowledgement: still exactly one admission, no override recorded", async () => {
     const memberId = await newMember();
     const { x, y } = await freshPair();
     audit.calls.length = 0;
@@ -237,20 +241,42 @@ describe.skipIf(!HAS_DB)("T7 review fixes - real database", () => {
     await gate.done;
     const [o, c] = await Promise.all([own, coach]);
     noDeadlock([o]);
-    expect(c.status).toBe(200);
+    // Never a 400 for the old field; never two admissions.
+    expect(c.status).not.toBe(400);
+    const admissions = (o.kind === "success" ? 1 : 0) + (c.status === 200 ? 1 : 0);
+    expect(admissions).toBe(1);
     const mark = audit.calls.find((e) => e.action === "attendance.mark") as { metadata: Record<string, unknown> } | undefined;
-    expect(mark).toBeDefined();
-    if (o.kind === "success") {
-      // The member's own check-in took the place; the tick admitted past it and says so.
-      expect(mark!.metadata.overrides).toEqual(["allowance_reached"]);
-      expect(mark!.metadata.overAllowance).toMatchObject({ used: 1, limit: 1, weeks: 2 });
-      expect(await recordsIn([x, y], memberId)).toBe(2);
-    } else {
-      // The tick won within the allowance (no override); the member was then refused.
-      expect(mark!.metadata.overrides).toBeUndefined();
-      expect(o).toMatchObject({ kind: "allowance_reached", used: 1 });
-      expect(await recordsIn([x, y], memberId)).toBe(1);
+    if (mark) {
+      expect(mark.metadata).not.toHaveProperty("overrides");
+      expect(mark.metadata).not.toHaveProperty("overAllowance");
     }
+    expect(await recordsIn([x, y], memberId)).toBe(1);
+  });
+
+  it("coach tick past the allowance with a class pack: one credit spent for the tick's row, and an unmark gives it back", async () => {
+    const memberId = await newMember();
+    const packId = await givePack(memberId, 2);
+    const { x, y } = await freshPair();
+    // The member's own check-in uses the one class of the period.
+    expect((await performCheckin(selfArgs(tenantId, memberId, x))).kind).toBe("success");
+    const c = await tick(y, memberId);
+    expect(c.status).toBe(200);
+    const after = await withRlsBypass(async (tx) => ({
+      credits: (await tx.memberClassPack.findUnique({ where: { id: packId }, select: { creditsRemaining: true } }))?.creditsRemaining,
+      row: await tx.attendanceRecord.findFirst({ where: { memberId, classInstanceId: y }, select: { id: true } }),
+    }));
+    expect(after.credits).toBe(1);
+    const redemption = await withRlsBypass((tx) => tx.classPackRedemption.findFirst({ where: { memberPackId: packId } }));
+    expect(redemption?.attendanceRecordId).toBe(after.row?.id);
+    // Unmark: the credit comes back with the row.
+    const res = (await coachTick(
+      new Request(`http://test/api/coach/instances/${y}/attendance`, { method: "POST", body: JSON.stringify({ memberId, attended: false }) }),
+      { params: Promise.resolve({ id: y }) },
+    )) as unknown as { status: number };
+    expect(res.status).toBe(200);
+    const restored = await withRlsBypass((tx) => tx.memberClassPack.findUnique({ where: { id: packId }, select: { creditsRemaining: true } }));
+    expect(restored?.creditsRemaining).toBe(2);
+    expect(await recordsIn([y], memberId)).toBe(0);
   });
 
   it("a plan change in flight cannot admit on stale eligibility: the tick locks the Member row before it reads the tier (review gap 4)", async () => {

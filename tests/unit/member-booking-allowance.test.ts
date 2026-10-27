@@ -46,7 +46,7 @@ const FOUR_VISITS = [
   { d: DAY("2026-10-14"), s: "18:00" },
 ];
 const NOTICE =
-  "4 of 4 classes used this 4-week period. Booking doesn't use a class, but checking in before Monday 26 October will need a class-pack credit or staff to admit you.";
+  "4 of 4 classes used this 4-week period. Booking doesn't use a class, but checking in before Monday 26 October will need a class-pack credit. For further information, please speak to a coach.";
 const book = async () => (await POST(new Request("http://localhost"), { params: Promise.resolve({ classId: "c-1" }) }))!;
 
 beforeEach(() => {

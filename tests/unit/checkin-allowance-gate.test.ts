@@ -6,9 +6,10 @@
  *  - the allowance resets on an explicit basis (each week, each calendar
  *    month, every N weeks from a start date), never a rolling window: a
  *    session is judged against the period IT falls in;
- *  - member app and kiosk refuse with the count and the date it resets; the
- *    desk register and the card scanner ask, and an admission is reported as
- *    the "allowance_reached" override with the count;
+ *  - every door refuses with the count and the date it resets — the member
+ *    app, the kiosk, the desk register and the card scanner alike; there is
+ *    no staff override (owner decision, 27 Oct 2026), and a usable class pack
+ *    pays instead of a refusal at every door;
  *  - counted rows: not imports, not cancelled sessions, not class-pack
  *    redemptions; a check-in a pack pays for is not gated;
  *  - CONCURRENCY: inside the write transaction, Class FOR UPDATE, then the
@@ -63,7 +64,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
   ),
 }));
 
-import { performCheckin, type PerformCheckinArgs } from "@/lib/checkin";
+import { performCheckin, staffAllowanceGate, returnClaimedPack, type PerformCheckinArgs } from "@/lib/checkin";
 import { checkinRefusal } from "@/lib/checkin-refusal";
 
 const DAY = (iso: string) => new Date(`${iso}T00:00:00.000Z`).getTime();
@@ -114,7 +115,7 @@ const KIOSK: PerformCheckinArgs = { ...SELF, method: "kiosk", requireCoverage: f
 const DESK: PerformCheckinArgs = {
   ...SELF, method: "admin", enforceRankGate: false, requireCoverage: false,
   enforceCapacity: false, enforceWaiverGate: false, enforceHoldGate: false, enforceKidsGate: false,
-  enforceVenueGate: false, allowanceGate: "ask", checkedInByUserId: "u-1",
+  enforceVenueGate: false, allowanceGate: "refuse", checkedInByUserId: "u-1",
 };
 const CARD: PerformCheckinArgs = { ...DESK, method: "qr" };
 
@@ -156,15 +157,15 @@ describe("refusing doors (member app, parent, kiosk)", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-19T12:00:00.000Z"));
     const r = await performCheckin(SELF).finally(() => vi.useRealTimers());
-    expect(r).toEqual({ kind: "allowance_reached", askable: false, ...FACTS, current: true });
+    expect(r).toEqual({ kind: "allowance_reached", ...FACTS, current: true });
     expect(h.recordCreate).not.toHaveBeenCalled();
     const refusal = checkinRefusal(r)!;
     expect(refusal.status).toBe(403);
     expect(refusal.body).toMatchObject({
       reason: "allowance_reached",
-      error: "4 of 4 classes used this 4-week period; it resets on Monday 26 October. Ask staff if you need to train before then.",
+      error: "You've used all 4 of your classes for this 4-week period; it resets on Monday 26 October. For further information, please speak to a coach.",
     });
-    expect(refusal.body.askable).toBeUndefined();
+    expect(refusal.body).not.toHaveProperty("askable");
   });
 
   it("the kiosk gives the same refusal", async () => {
@@ -177,7 +178,7 @@ describe("refusing doors (member app, parent, kiosk)", () => {
     h.cRow = cRow({ ...FOUR_IN_FOUR, visits: FOUR_VISITS.slice(1) });
     const r = await performCheckin(SELF);
     expect(r.kind).toBe("success");
-    if (r.kind === "success") expect(r.overrides).toBeUndefined();
+    expect(r).not.toHaveProperty("overrides");
   });
 
   it("judges the period the session falls in, not a window ending at the session (never a rolling window)", async () => {
@@ -205,8 +206,9 @@ describe("refusing doors (member app, parent, kiosk)", () => {
       kind: "allowance_reached", used: 8, limit: 8, basis: "month",
       period: { start: "2026-10-01", end: "2026-11-01" }, resetsOn: "2026-11-01",
     });
-    expect(checkinRefusal(r)!.body.error).toBe(
-      "8 of 8 classes used this month; it resets on Sunday 1 November. Ask staff if you need to train before then.",
+    // The month is named when it is not the current one ("for October 2026").
+    expect(checkinRefusal(r)!.body.error).toMatch(
+      /^You've used all 8 of your classes for (this month|October 2026); it resets on Sunday 1 November\. For further information, please speak to a coach\.$/,
     );
   });
 
@@ -241,32 +243,43 @@ describe("refusing doors (member app, parent, kiosk)", () => {
   });
 });
 
-describe("asking doors (desk register, card scanner)", () => {
-  it("the desk is asked: refused with askable: true until staff confirm", async () => {
+describe("staff doors (desk register, card scanner) refuse too (owner decision, 27 Oct 2026)", () => {
+  it("the desk is refused at the limit, with the count, and writes nothing", async () => {
     const r = await performCheckin(DESK);
-    expect(r).toMatchObject({ kind: "allowance_reached", askable: true, used: 4, limit: 4 });
+    expect(r).toMatchObject({ kind: "allowance_reached", used: 4, limit: 4 });
+    expect(r).not.toHaveProperty("askable");
     expect(h.recordCreate).not.toHaveBeenCalled();
-    expect(checkinRefusal(r)!.body).toMatchObject({ askable: true, allowance: FACTS });
+    expect(h.redemptionCreate).not.toHaveBeenCalled();
+    expect(checkinRefusal(r)!.body).toMatchObject({ reason: "allowance_reached", allowance: FACTS });
+    expect(checkinRefusal(r)!.body).not.toHaveProperty("askable");
   });
 
-  it("confirmed, the desk admits and reports the override with the count for the audit row", async () => {
-    const r = await performCheckin({ ...DESK, allowanceOverrideConfirmed: true });
-    expect(r.kind).toBe("success");
-    if (r.kind !== "success") return;
-    expect(r.overrides).toEqual(["allowance_reached"]);
-    expect(r.overAllowance).toEqual({ ...FACTS, current: expect.any(Boolean) });
+  it("on a staff door the refusal is the staff sentence, naming the member", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-19T12:00:00.000Z"));
+    const r = await performCheckin(DESK).finally(() => vi.useRealTimers());
+    expect(checkinRefusal(r, { staffMemberName: "Sam Taylor" })!.body.error).toBe(
+      "Sam Taylor has used all 4 classes this 4-week period (resets on Monday 26 October) and has no class-pack credit, so they can't be checked in.",
+    );
   });
 
-  it("the card scanner asks the same way", async () => {
+  it("the card scanner is refused the same way and writes nothing", async () => {
     expect((await performCheckin(CARD)).kind).toBe("allowance_reached");
-    const ok = await performCheckin({ ...CARD, allowanceOverrideConfirmed: true });
-    expect(ok.kind === "success" && ok.overrides).toEqual(["allowance_reached"]);
+    expect(h.recordCreate).not.toHaveBeenCalled();
   });
 
-  it("a confirmation is inert when nothing was asked: no override is recorded", async () => {
+  it("the engine has no override argument: success never carries overrides or overAllowance", async () => {
     h.cRow = cRow({ ...FOUR_IN_FOUR, visits: [] });
-    const r = await performCheckin({ ...DESK, allowanceOverrideConfirmed: true });
-    expect(r.kind === "success" && r.overrides).toBeUndefined();
+    const r = await performCheckin(DESK);
+    expect(r.kind).toBe("success");
+    expect(r).not.toHaveProperty("overrides");
+    expect(r).not.toHaveProperty("overAllowance");
+  });
+
+  it("an Unlimited plan is never refused at a staff door, however many visits", async () => {
+    h.cRow = cRow({ visits: [...FOUR_VISITS, ...FOUR_VISITS, ...FOUR_VISITS] });
+    for (const door of [DESK, CARD]) expect((await performCheckin(door)).kind).toBe("success");
+    expect(h.packUpdateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -342,7 +355,7 @@ describe("class packs and the allowance decide together (review, 17 Oct 2026)", 
     expect(r.kind).toBe("success");
     if (r.kind !== "success") return;
     expect(r.coverage).toEqual({ kind: "pack", creditsRemaining: 4 });
-    expect(r.overrides).toBeUndefined();
+    expect(r).not.toHaveProperty("overrides");
     // Counted, found used up, then the pack pays in the SAME transaction.
     expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "statement-c2", "pack-decrement", "insert"]);
     expect(h.redemptionCreate).toHaveBeenCalledWith({ data: { memberPackId: "pack-1", attendanceRecordId: "ar-1" } });
@@ -354,11 +367,23 @@ describe("class packs and the allowance decide together (review, 17 Oct 2026)", 
     expect(r.kind === "success" && r.coverage.kind).toBe("pack");
   });
 
-  it("a staff door never spends a pack: it asks", async () => {
+  it("the desk and the card scanner spend a usable pack once the allowance is used up, instead of refusing", async () => {
     h.packFindFirst.mockResolvedValue({ id: "pack-1" });
-    const r = await performCheckin(DESK);
-    expect(r).toMatchObject({ kind: "allowance_reached", askable: true });
-    expect(h.packUpdateMany).not.toHaveBeenCalled();
+    for (const door of [DESK, CARD]) {
+      h.order.length = 0;
+      h.redemptionCreate.mockClear();
+      const r = await performCheckin(door);
+      expect(r.kind === "success" && r.coverage).toEqual({ kind: "pack", creditsRemaining: 4 });
+      expect(r).not.toHaveProperty("overrides");
+      expect(h.order).toEqual(["class-lock", "member-lock", "statement-c", "statement-c2", "pack-decrement", "insert"]);
+      expect(h.redemptionCreate).toHaveBeenCalledWith({ data: { memberPackId: "pack-1", attendanceRecordId: "ar-1" } });
+    }
+  });
+
+  it("an old client's confirmation cannot be passed: the desk with no pack is refused", async () => {
+    // PerformCheckinArgs has no confirmation field; an extra property is ignored.
+    const r = await performCheckin({ ...DESK, allowanceOverrideConfirmed: true } as PerformCheckinArgs);
+    expect(r.kind).toBe("allowance_reached");
     expect(h.recordCreate).not.toHaveBeenCalled();
   });
 
@@ -476,11 +501,11 @@ describe("per member's billing period (owner scope, 21 Oct 2026)", () => {
     h.cRow = cRow({ ...BILLING, billingCycle: "four_weekly", nextDueAt: new Date("2026-11-02T00:00:00.000Z"), visits: FOUR_VISITS });
     const r = await performCheckin(SELF);
     expect(r).toMatchObject({
-      kind: "allowance_reached", askable: false, used: 4, limit: 4, basis: "billing",
+      kind: "allowance_reached", used: 4, limit: 4, basis: "billing",
       period: { start: "2026-10-05", end: "2026-11-02" }, resetsOn: "2026-11-02",
     });
     expect(h.recordCreate).not.toHaveBeenCalled();
-    expect(checkinRefusal(r)!.body.error).toMatch(/^4 of 4 classes used (this|the) billing period/);
+    expect(checkinRefusal(r)!.body.error).toMatch(/^You've used all 4 of your classes for (this|the) billing period/);
   });
 
   it("a Stripe-billed member: the paid period Stripe stated, stepped forward by the cycle for a later session", async () => {
@@ -511,25 +536,26 @@ describe("per member's billing period (owner scope, 21 Oct 2026)", () => {
   it("no period recorded: the member app refuses with 'no renewal date', never a silent calendar fallback", async () => {
     h.cRow = cRow({ ...BILLING, billingCycle: "four_weekly", visits: [] });
     const r = await performCheckin(SELF);
-    expect(r).toMatchObject({ kind: "allowance_reached", askable: false, used: 0, limit: 4, basis: "billing", periodUnknown: true });
+    expect(r).toMatchObject({ kind: "allowance_reached", used: 0, limit: 4, basis: "billing", periodUnknown: true });
     expect(r).not.toHaveProperty("resetsOn");
     expect(h.recordCreate).not.toHaveBeenCalled();
     expect(checkinRefusal(r)!.body).toMatchObject({
       reason: "allowance_reached",
-      error: "Your plan counts classes per billing period, but no renewal date is recorded for you. Ask staff.",
+      error: "Your plan counts classes per billing period, but no renewal date is recorded for you. For further information, please speak to a coach.",
       allowance: { periodUnknown: true, limit: 4 },
     });
   });
 
-  it("no period recorded: the desk is asked, and an admission records the override with periodUnknown", async () => {
+  it("no period recorded: the desk is refused too, and a usable pack is NOT spent (M-4)", async () => {
     h.cRow = cRow({ ...BILLING, billingCycle: "four_weekly", visits: [] });
-    const asked = await performCheckin(DESK);
-    expect(asked).toMatchObject({ kind: "allowance_reached", askable: true, periodUnknown: true });
-    const admitted = await performCheckin({ ...DESK, allowanceOverrideConfirmed: true });
-    expect(admitted.kind).toBe("success");
-    if (admitted.kind !== "success") return;
-    expect(admitted.overrides).toEqual(["allowance_reached"]);
-    expect(admitted.overAllowance).toMatchObject({ periodUnknown: true, limit: 4, basis: "billing" });
+    h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+    const r = await performCheckin(DESK);
+    expect(r).toMatchObject({ kind: "allowance_reached", periodUnknown: true });
+    expect(h.packUpdateMany).not.toHaveBeenCalled();
+    expect(h.recordCreate).not.toHaveBeenCalled();
+    expect(checkinRefusal(r, { staffMemberName: "Sam" })!.body.error).toBe(
+      "No renewal date is recorded for Sam, so their 4 classes per billing period can't be counted and they can't be checked in.",
+    );
   });
 
   it("an annual billing period counts visits from the whole year: the visits read is bounded by the period, not a fixed window (H-1)", async () => {
@@ -557,5 +583,70 @@ describe("per member's billing period (owner scope, 21 Oct 2026)", () => {
   it("a non-recurring tier (cycle none) with a due date has no period either", async () => {
     h.cRow = cRow({ ...BILLING, billingCycle: "none", nextDueAt: new Date("2026-11-02T00:00:00.000Z"), visits: [] });
     expect(await performCheckin(SELF)).toMatchObject({ kind: "allowance_reached", periodUnknown: true });
+  });
+});
+
+describe("staffAllowanceGate: the coach tick refuses, with the pack fall-through (owner decision, 27 Oct 2026)", () => {
+  const SESSION = { id: "ci-1", date: INSTANCE.date, startTime: INSTANCE.startTime };
+  const packUpdate = vi.fn();
+  function tx() {
+    return {
+      $queryRaw: h.queryRaw,
+      memberClassPack: {
+        findFirst: h.packFindFirst, updateMany: h.packUpdateMany, update: packUpdate,
+        findUnique: vi.fn().mockResolvedValue({ creditsRemaining: 2 }),
+      },
+    } as unknown as Parameters<typeof staffAllowanceGate>[0];
+  }
+  const ARGS = { tenantId: "t-1", memberId: "m-1", timeZone: "Europe/London" };
+
+  it("at the limit with no pack: refused with the facts, Member lock then statement C, nothing spent", async () => {
+    const r = await staffAllowanceGate(tx(), ARGS, SESSION);
+    expect(r).toMatchObject({ kind: "allowance_reached", ...FACTS });
+    expect(h.order).toEqual(["member-lock", "statement-c", "statement-c2"]);
+    expect(h.packUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("at the limit with a usable pack: one credit is spent after the count (Member, then pack) and handed to the caller", async () => {
+    h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+    const r = await staffAllowanceGate(tx(), ARGS, SESSION);
+    expect(r).toEqual({ kind: "open", pack: { id: "pack-1", creditsRemaining: 2 } });
+    expect(h.order).toEqual(["member-lock", "statement-c", "statement-c2", "pack-decrement"]);
+  });
+
+  it("within the allowance: open, no pack touched", async () => {
+    h.cRow = cRow({ ...FOUR_IN_FOUR, visits: FOUR_VISITS.slice(1) });
+    h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+    expect(await staffAllowanceGate(tx(), ARGS, SESSION)).toEqual({ kind: "open", pack: null });
+    expect(h.packUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("an Unlimited plan is never counted or refused", async () => {
+    h.cRow = cRow({ visits: [...FOUR_VISITS, ...FOUR_VISITS] });
+    expect(await staffAllowanceGate(tx(), ARGS, SESSION)).toEqual({ kind: "open", pack: null });
+  });
+
+  it("an unknown billing period is refused without spending a pack (M-4)", async () => {
+    h.cRow = cRow({ classLimit: 4, classLimitBasis: "billing", billingCycle: "four_weekly", visits: [] });
+    h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+    expect(await staffAllowanceGate(tx(), ARGS, SESSION)).toMatchObject({ kind: "allowance_reached", periodUnknown: true });
+    expect(h.packUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("a member already in this session is a duplicate, nothing spent", async () => {
+    h.cRow = cRow({ ...FOUR_IN_FOUR, visits: FOUR_VISITS, alreadyIn: true });
+    h.packFindFirst.mockResolvedValue({ id: "pack-1" });
+    expect(await staffAllowanceGate(tx(), ARGS, SESSION)).toEqual({ kind: "duplicate" });
+    expect(h.packUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("a member deleted before the lock is member_not_found", async () => {
+    h.memberRows = [];
+    expect(await staffAllowanceGate(tx(), ARGS, SESSION)).toEqual({ kind: "member_not_found" });
+  });
+
+  it("returnClaimedPack gives the one credit back", async () => {
+    await returnClaimedPack(tx(), { id: "pack-1", creditsRemaining: 2 });
+    expect(packUpdate).toHaveBeenCalledWith({ where: { id: "pack-1" }, data: { creditsRemaining: { increment: 1 } } });
   });
 });
