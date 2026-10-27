@@ -208,7 +208,10 @@ export async function POST(req: Request) {
 
   switch (result.kind) {
     case "success":
-      if (effectiveMethod === "admin") {
+      // A staff or system mark that spent a class-pack credit (the plan's
+      // classes were used up) is audited with that fact, so a credit never
+      // leaves without a row saying why.
+      if (effectiveMethod === "admin" || (effectiveMethod === "auto" && result.coverage?.kind === "pack")) {
         // A staff mark is audited. The coach register's raw upsert used to be
         // the only staff mark that wrote a row; since 18 Sep 2026 every screen
         // marks through this route, so the row lives here — the same shape as
@@ -227,6 +230,7 @@ export async function POST(req: Request) {
             // is a refusal), so the undo may remove exactly this record.
             recordId: result.record.id,
             created: true,
+            ...(result.coverage?.kind === "pack" ? { paidByClassPack: true, packCreditsRemaining: result.coverage.creditsRemaining ?? null } : {}),
             ...(acknowledged && acknowledged.length > 0 ? { acknowledged: [...new Set(acknowledged)] } : {}),
           },
           req,

@@ -382,7 +382,7 @@ describe("per member's billing period (owner scope, 21 Oct 2026; review round 3)
     expect(allowanceRefusalSentence(v, "Sam")).toBe("Sam's plan counts classes per billing period, but no renewal date is recorded for Sam. For further information, please speak to a coach.");
     expect(allowanceStaffSentence("Ava Green", v)).toBe("No renewal date is recorded for Ava Green, so their 4 classes per billing period can't be counted and they can't be checked in.");
     expect(allowanceBookingNotice(v)).toBe(
-      "Your plan counts classes per billing period, but no renewal date is recorded for you. Booking doesn't use a class, but checking in can't be counted until one is. For further information, please speak to a coach.",
+      "Your plan counts classes per billing period, but no renewal date is recorded for you. Booking doesn't use a class, but you can't check in until a renewal date is recorded. For further information, please speak to a coach.",
     );
     expect(allowanceUsageText(v)).toBe("Your plan allows 4 classes per billing period, but no renewal date is recorded for you — for further information, please speak to a coach");
     for (const text of [allowanceRefusalSentence(v), allowanceRefusalSentence(v, "Sam"), allowanceStaffSentence("Ava", v), allowanceBookingNotice(v), allowanceUsageText(v)]) {

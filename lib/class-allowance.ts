@@ -607,7 +607,7 @@ export function allowanceRefusalSentence(v: VerdictCopy, who?: string | null): s
  */
 export function allowanceBookingNotice(v: VerdictCopy): string {
   if (v.periodUnknown || !v.resetsOn) {
-    return `Your plan counts classes per billing period, but no renewal date is recorded for you. Booking doesn't use a class, but checking in can't be counted until one is. ${SPEAK_TO_A_COACH}`;
+    return `Your plan counts classes per billing period, but no renewal date is recorded for you. Booking doesn't use a class, but you can't check in until a renewal date is recorded. ${SPEAK_TO_A_COACH}`;
   }
   return `${allowanceCountPhrase(v)}. Booking doesn't use a class, but checking in before ${dateText(v.resetsOn)} will need a class-pack credit. ${SPEAK_TO_A_COACH}`;
 }

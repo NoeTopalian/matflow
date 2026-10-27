@@ -134,7 +134,7 @@ describe("coach tick - the allowance refuses (no staff override)", () => {
     expect(h.redemptionCreate).toHaveBeenCalledWith({ data: { memberPackId: "pack_1", attendanceRecordId: "rec_1" } });
     expect(h.returnClaimedPack).not.toHaveBeenCalled();
     const meta = h.logAudit.mock.calls[0][0].metadata as Record<string, unknown>;
-    expect(meta).toMatchObject({ created: true });
+    expect(meta).toMatchObject({ created: true, paidByClassPack: true });
     expect(meta).not.toHaveProperty("overrides");
   });
 
@@ -144,7 +144,7 @@ describe("coach tick - the allowance refuses (no staff override)", () => {
     const res = await POST(req({ memberId: "mem_1", attended: true }), { params });
     expect(res.status).toBe(200);
     expect(h.redemptionCreate).not.toHaveBeenCalled();
-    expect(h.returnClaimedPack).toHaveBeenCalledWith(expect.anything(), { id: "pack_1", creditsRemaining: 2 });
+    expect(h.returnClaimedPack).toHaveBeenCalledWith(expect.anything(), "tenant_a", { id: "pack_1", creditsRemaining: 2 });
     expect(h.logAudit.mock.calls[0][0].metadata).toMatchObject({ created: false });
   });
 

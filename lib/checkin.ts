@@ -727,9 +727,9 @@ export async function staffAllowanceGate(
 }
 
 /** Give back a credit staffAllowanceGate spent when the caller ended up writing no attendance row. */
-export async function returnClaimedPack(tx: Prisma.TransactionClient, pack: ClaimedPack): Promise<void> {
-  await tx.memberClassPack.update({
-    where: { id: pack.id },
+export async function returnClaimedPack(tx: Prisma.TransactionClient, tenantId: string, pack: ClaimedPack): Promise<void> {
+  await tx.memberClassPack.updateMany({
+    where: { id: pack.id, tenantId },
     data: { creditsRemaining: { increment: 1 } },
   });
 }

@@ -216,6 +216,8 @@ export async function POST(req: Request) {
   const memberById = new Map(members.map((m) => [m.id, m]));
 
   let recorded = 0;
+  // Members whose scan was paid by a class-pack credit (their plan's classes were used up).
+  const packPaid: string[] = [];
   for (const v of verified) {
     const member = memberById.get(v.memberId);
     if (!member) {
@@ -268,6 +270,7 @@ export async function POST(req: Request) {
       case "success":
         recorded += 1;
         results[v.index] = { ...base, status: "success" };
+        if (outcome.coverage?.kind === "pack") packPaid.push(member.id);
         break;
       case "tier_not_included":
       case "roster_not_listed":
@@ -329,6 +332,7 @@ export async function POST(req: Request) {
         scanned: tokens.length,
         recorded,
         memberIds: results.filter((r) => r.status === "success").map((r) => r.memberId),
+        ...(packPaid.length > 0 ? { paidByClassPack: packPaid } : {}),
       },
       req,
     });

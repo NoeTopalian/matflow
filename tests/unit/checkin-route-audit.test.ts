@@ -66,6 +66,17 @@ describe("POST /api/checkin audit row", () => {
     });
   });
 
+  // 27 Oct 2026: a staff mark past the plan's classes is paid by a class pack;
+  // the audit row says so, so a credit never leaves without a record.
+  it("a staff mark paid by a class pack records that on the audit row", async () => {
+    performCheckinMock.mockResolvedValue({ kind: "success", record: { id: "rec-1" }, coverage: { kind: "pack", creditsRemaining: 3 } });
+    authMock.mockResolvedValue({ user: { id: "coach-1", role: "coach", tenantId: "t1" } });
+    const { POST } = await import("@/app/api/checkin/route");
+    const res = await POST(req({ classInstanceId: "inst-1", memberId: "mem-1", checkInMethod: "admin" }));
+    expect(res.status).toBe(201);
+    expect(logAuditMock.mock.calls[0][0].metadata).toMatchObject({ paidByClassPack: true, packCreditsRemaining: 3 });
+  });
+
   // Functional review round 3 (F11): a member's own check-in wrote no row.
   it("writes attendance.self_checkin for a member's own check-in, the member as actor", async () => {
     authMock.mockResolvedValue({ user: { id: "u-mem", role: "member", tenantId: "t1", memberId: "mem-1", email: "m@x" } });

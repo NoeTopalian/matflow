@@ -123,10 +123,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           if (created) {
             await tx.classPackRedemption.create({ data: { memberPackId: pack.id, attendanceRecordId: record.id } });
           } else {
-            await returnClaimedPack(tx, pack);
+            await returnClaimedPack(tx, tenantId, pack);
           }
         }
-        return { kind: "marked" as const, memberId: member.id, recordId: record.id, created };
+        return { kind: "marked" as const, memberId: member.id, recordId: record.id, created, paidByClassPack: created && !!pack };
       } else {
         // Unmark is the inverse of a check-in: if the attendance was covered
         // by a class pack, the credit goes back in the same transaction
@@ -142,7 +142,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           await tx.attendanceRecord.deleteMany({ where: { id: { in: ids } } });
         }
       }
-      return { kind: "marked" as const, memberId: member.id, recordId: null, created: false };
+      return { kind: "marked" as const, memberId: member.id, recordId: null, created: false, paidByClassPack: false };
     });
 
     if (outcome === "no-instance") return NextResponse.json({ error: "Class not found" }, { status: 404 });
@@ -163,6 +163,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       metadata: parsed.data.attended
         ? {
             classInstanceId, memberId: outcome.memberId, recordId: outcome.recordId, created: outcome.created,
+            ...(outcome.paidByClassPack ? { paidByClassPack: true } : {}),
           }
         : { classInstanceId, memberId: outcome.memberId },
       req,

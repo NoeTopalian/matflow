@@ -645,8 +645,9 @@ describe("staffAllowanceGate: the coach tick refuses, with the pack fall-through
     expect(await staffAllowanceGate(tx(), ARGS, SESSION)).toEqual({ kind: "member_not_found" });
   });
 
-  it("returnClaimedPack gives the one credit back", async () => {
-    await returnClaimedPack(tx(), { id: "pack-1", creditsRemaining: 2 });
-    expect(packUpdate).toHaveBeenCalledWith({ where: { id: "pack-1" }, data: { creditsRemaining: { increment: 1 } } });
+  it("returnClaimedPack gives the one credit back, inside the club", async () => {
+    h.packUpdateMany.mockClear();
+    await returnClaimedPack(tx(), "t-1", { id: "pack-1", creditsRemaining: 2 });
+    expect(h.packUpdateMany).toHaveBeenCalledWith({ where: { id: "pack-1", tenantId: "t-1" }, data: { creditsRemaining: { increment: 1 } } });
   });
 });

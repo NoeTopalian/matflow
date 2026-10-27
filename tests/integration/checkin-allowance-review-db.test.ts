@@ -242,7 +242,7 @@ describe.skipIf(!HAS_DB)("T7 review fixes - real database", () => {
     const [o, c] = await Promise.all([own, coach]);
     noDeadlock([o]);
     // Never a 400 for the old field; never two admissions.
-    expect(c.status).not.toBe(400);
+    expect([200, 403]).toContain(c.status);
     const admissions = (o.kind === "success" ? 1 : 0) + (c.status === 200 ? 1 : 0);
     expect(admissions).toBe(1);
     const mark = audit.calls.find((e) => e.action === "attendance.mark") as { metadata: Record<string, unknown> } | undefined;
