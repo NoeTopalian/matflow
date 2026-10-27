@@ -14,6 +14,15 @@ const tenantId = club.tenantId;
 const errors = [];
 const LABEL = "Members can check themselves in from the app";
 const REFUSAL = "Check-ins from the app are turned off at this club. Please check in at the desk or the kiosk.";
+// The switch lives in Settings → Waiver → Check-in Window, beside the check-in window it governs, and asks for
+// confirmation (ConfirmDialog with the registry's impact preview) before it saves.
+const SETTINGS_URL = "/dashboard/settings?tab=waiver";
+async function confirmDialog(page, label) {
+  const b = page.getByRole("button", { name: label, exact: true }).filter({ visible: true }).last();
+  await b.waitFor({ timeout: 15000 });
+  await b.focus();
+  await page.keyboard.press("Enter");
+}
 const setting = async () => (await q(`select "memberAppCheckin" as v from "Tenant" where id = $1`, [tenantId]))[0]?.v;
 
 // ── Seed: a member with a password, a class with a session today, and a pack with no expiry ──
@@ -37,7 +46,7 @@ try {
   const owner = await octx.newPage();
   owner.on("pageerror", (e) => errors.push(String(e).slice(0, 200)));
   await ownerSignIn(owner, club);
-  await owner.goto("/dashboard/settings");
+  await owner.goto(SETTINGS_URL);
   const sw = owner.getByRole("switch", { name: LABEL }).filter({ visible: true }).first();
   await sw.waitFor({ timeout: 60000 });
   L.check("settings", "S1 the switch is shown and ON for a club that never set it", (await sw.getAttribute("aria-checked")) === "true" && (await setting()) === true, { aria: await sw.getAttribute("aria-checked"), db: await setting() });
@@ -46,6 +55,7 @@ try {
   await owner.route("**/api/settings", (r) => (r.request().method() === "PATCH" ? r.fulfill({ status: 500, body: "{}" }) : r.continue()));
   await sw.focus();
   await owner.keyboard.press("Space");
+  await confirmDialog(owner, "Turn off");
   await owner.getByRole("alert").filter({ visible: true }).first().waitFor({ timeout: 15000 }).catch(() => {});
   const alertText = await owner.getByRole("alert").filter({ visible: true }).first().innerText().catch(() => "");
   L.check("settings", "S2 a failed save shows an error beside the switch, keeps it ON, and saves nothing",
@@ -60,9 +70,12 @@ try {
   const focusVisible = await sw.evaluate((el) => { const s = getComputedStyle(el); return s.outlineStyle !== "none" || s.boxShadow !== "none"; });
   L.check("keyboard", "K1 the switch takes keyboard focus with a visible indicator", focusVisible, { focusVisible });
   await owner.keyboard.press("Space");
+  const nothingBeforeConfirm = patches === 0;
+  await confirmDialog(owner, "Turn off");
   await owner.waitForResponse((r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === "/api/settings", { timeout: 30000 });
   await owner.waitForTimeout(500);
-  L.check("settings", "S3 Space turns it off: one save, the database reads OFF", patches === 1 && (await setting()) === false, { patches, db: await setting() });
+  L.check("settings", "S3a Space opens the confirmation; nothing is saved before it is confirmed", nothingBeforeConfirm, { nothingBeforeConfirm });
+  L.check("settings", "S3 Space then Enter on \"Turn off\" turns it off: one save, the database reads OFF", patches === 1 && (await setting()) === false, { patches, db: await setting() });
   await owner.reload();
   const sw2 = owner.getByRole("switch", { name: LABEL }).filter({ visible: true }).first();
   await sw2.waitFor({ timeout: 60000 });
@@ -94,9 +107,13 @@ try {
   }, inst);
   L.check("member", "M2 the server refuses the member's own check-in: 403 app_checkin_off with the sentence, nothing recorded",
     selfRes.status === 403 && selfRes.body?.reason === "app_checkin_off" && selfRes.body?.error === REFUSAL && (await attended()) === 0, selfRes);
+  await shot(mp, "app-checkin-member-home-off");
+  // The member's packs are listed on the profile (ClassPacksWidget), not the home page.
+  await mp.goto("/member/profile");
+  await mp.waitForLoadState("load");
   const packText = await mp.getByTestId("pack-classes-left").filter({ visible: true }).first().innerText({ timeout: 15000 }).catch(() => null);
   L.check("packs", "P1 the member's pack reads \"6 classes left\" with no expiry date", packText !== null && /6 classes left/.test(packText) && !/expir|until|valid/i.test(packText), { packText });
-  await shot(mp, "app-checkin-member-home-off");
+  await shot(mp, "app-checkin-member-profile-packs");
 
   // The desk is unaffected.
   const desk = await owner.evaluate(async ({ classInstanceId, memberId }) => {
@@ -108,6 +125,7 @@ try {
   // ── Back ON ──
   await sw2.focus();
   await owner.keyboard.press("Space");
+  await confirmDialog(owner, "Turn on");
   await owner.waitForResponse((r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === "/api/settings", { timeout: 30000 });
   await owner.waitForTimeout(500);
   L.check("settings", "S6 turned back on, the database reads ON", (await setting()) === true, await setting());
@@ -126,7 +144,7 @@ try {
   const phone = await context(browser, "10.98.0.3", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await octx.storageState() });
   const p2 = await phone.newPage();
   p2.on("pageerror", (e) => errors.push(String(e).slice(0, 200)));
-  await p2.goto("/dashboard/settings");
+  await p2.goto(SETTINGS_URL);
   const sw3 = p2.getByRole("switch", { name: LABEL }).filter({ visible: true }).first();
   await sw3.waitFor({ timeout: 60000 });
   await sw3.scrollIntoViewIfNeeded();
