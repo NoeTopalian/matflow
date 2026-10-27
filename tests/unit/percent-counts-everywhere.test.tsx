@@ -33,16 +33,19 @@ import {
   formatGuardedRatioNote,
   formatPct,
   formatRatio,
+  pctChange,
   ratioCounts,
 } from "@/lib/percent";
 import * as primitives from "@/components/dashboard/reports-primitives";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import AttributionView from "@/components/dashboard/AttributionView";
-import { reportsCsv } from "@/components/dashboard/ReportsView";
+import { reportsCsv, trendDelta } from "@/components/dashboard/ReportsView";
+import { changePillText } from "@/components/dashboard/AnalysisView";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { bookingsProgressText, progressPct } from "@/components/dashboard/AttendanceImport";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkInsMetricLine } from "@/lib/ai-causal-report";
+import { checkInsMetricLine, generateMonthlyReport } from "@/lib/ai-causal-report";
 import { buildFunnel, MIN_TRIALS_FOR_RATE, type AttributionData, type StaffConversionRow } from "@/lib/attribution";
 import { createEmptyReportsData } from "@/lib/reports";
 
@@ -167,6 +170,45 @@ describe("Reports CSV, conversion-funnel rows", () => {
     expect(csv).toContain("Conversion by coach,Sam Kerr,4,converted 0% (0 of 4) · still active — · lost 4 · no decision 0");
     expect(csv).toContain("Conversion by coach,Priya Nair,2,converted N/A · too few (1 of 2) · still active N/A · too few (1 of 1) · lost 0 · no decision 1");
     expect(csv).not.toMatch(/\(N\/A\)|\d\.0%/);
+  });
+});
+
+describe("one rounding rule for every change (review finding 2)", () => {
+  // 229 vs 200 is exactly +14.5%. Dividing first gave 14.499999999999998 and
+  // "+14%" on Reports and Analysis while the AI prompt said "+15%".
+  it("229 vs 200 reads +15% on Reports, Analysis, the AI prompt and the stored snapshot", async () => {
+    expect(pctChange(229, 200)).toBe(15);
+    expect(formatChange(229, 200)).toBe("+15% (229 vs 200)");
+    expect(trendDelta(229, 200)).toBe("+15% (229 vs 200)");
+    expect(changePillText(229, 200)).toBe("+15% (229 vs 200)");
+    expect(checkInsMetricLine(229, 200)).toBe("Check-ins this period: 229 (last period: 200, change +15% (229 vs 200))");
+
+    // The stored metricSnapshot.checkInsPctChange, through the real gatherMetrics
+    // (under 10 members the report takes its placeholder path: no model call).
+    vi.mocked(withTenantContext).mockImplementation((async (_t: string, fn: (tx: unknown) => unknown) =>
+      fn({
+        member: { count: async () => 3, findMany: async () => [] },
+        tenant: { findUnique: async () => ({ timezone: "Europe/London" }) },
+        memberStatusEvent: { findMany: async () => [] },
+        importedMembership: { findMany: async () => [] },
+        attendanceRecord: {
+          count: async ({ where }: { where: { checkInTime: { lte?: Date } } }) => (where.checkInTime.lte ? 229 : 200),
+        },
+        class: { count: async () => 2 },
+      })) as never);
+    const report = await generateMonthlyReport({
+      tenantId: "t1", tenantName: "Club",
+      periodStart: new Date("2026-09-01T00:00:00Z"), periodEnd: new Date("2026-09-30T23:59:59Z"),
+    });
+    expect(report.metricSnapshot.checkInsThisPeriod).toBe(229);
+    expect(report.metricSnapshot.checkInsPrevPeriod).toBe(200);
+    expect(report.metricSnapshot.checkInsPctChange).toBe(15);
+  });
+
+  it("no change reads 0%, never +0%; a fall keeps its minus", () => {
+    expect(changePillText(50, 50)).toBe("0% (50 vs 50)");
+    expect(changePillText(170, 200)).toBe("-15% (170 vs 200)");
+    expect(trendDelta(170, 200)).toBe("-15% (170 vs 200)");
   });
 });
 

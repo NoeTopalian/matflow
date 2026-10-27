@@ -14,7 +14,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { ACTIVE_MEMBER, LEFT_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { loadJoinedInWindows } from "@/lib/membership-report";
 import { liveClassWhere } from "@/lib/class-live";
-import { formatChange } from "@/lib/percent";
+import { formatChange, pctChange } from "@/lib/percent";
 
 const MODEL = "claude-haiku-4-5-20251001";
 const MAX_OUTPUT_TOKENS = 1200;
@@ -100,9 +100,11 @@ async function gatherMetrics(input: ReportInput): Promise<Record<string, number>
   const newEstimated = estimated(joinedThis.basis) || estimated(joinedPrev.basis) ? 1 : 0;
 
   const checkInsDelta = checkInsThisPeriod - checkInsPrevPeriod;
-  const checkInsPctChange = checkInsPrevPeriod > 0
-    ? Math.round((checkInsDelta / checkInsPrevPeriod) * 100)
-    : 0;
+  // The prompt's figure (lib/percent, multiply first), so the stored snapshot
+  // and the prompt it came from agree: 229 vs 200 is 15 in both. Stored as
+  // 0 with no check-ins last period (the snapshot holds numbers only); the
+  // prompt says there is no percentage then.
+  const checkInsPctChange = pctChange(checkInsThisPeriod, checkInsPrevPeriod) ?? 0;
   const newDelta = newThisPeriod - newPrevPeriod;
 
   return {

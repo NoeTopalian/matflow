@@ -76,12 +76,24 @@ export function formatGuardedRatioNote(rate: number | null, n: number, base: num
 }
 
 /**
+ * The change from `previous` to `current` as a whole percentage, half-up, or
+ * null when there is nothing to compare against (previous is 0). Multiply
+ * first, like `percent`: 229 vs 200 is +15 (an exact 14.5), where dividing
+ * first read 14.499999999999998 and gave +14. Every change badge, pill and
+ * stored change goes through this, so one pair of numbers reads one way.
+ */
+export function pctChange(current: number, previous: number): number | null {
+  if (previous <= 0) return null;
+  return Math.round(((current - previous) * 100) / previous);
+}
+
+/**
  * A percentage change with the two figures it compares: "+12% (56 vs 50)",
  * "-4% (48 vs 50)", "0% (50 vs 50)". With nothing to compare against
  * (previous is 0) there is no percentage: "—".
  */
 export function formatChange(current: number, previous: number): string {
-  if (previous <= 0) return "—";
-  const pct = Math.round(((current - previous) * 100) / previous);
+  const pct = pctChange(current, previous);
+  if (pct === null) return "—";
   return `${pct > 0 ? "+" : ""}${pct}% (${count(current)} vs ${count(previous)})`;
 }

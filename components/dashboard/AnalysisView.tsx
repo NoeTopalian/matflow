@@ -23,7 +23,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import { formatPct, formatRatio, ratioCounts } from "@/components/dashboard/reports-primitives";
-import { percent } from "@/lib/percent";
+import { formatChange, pctChange, percent } from "@/lib/percent";
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541"];
 const STATUS_COLORS: Record<string, string> = { active: "#67BA90", taster: "#C9F990", inactive: "#EB3163", cancelled: "#8E1F57" };
@@ -177,19 +177,14 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function delta(current: number, previous: number) {
-  if (previous === 0) return null;
-  const pct = Math.round(((current - previous) / previous) * 100);
-  return pct;
-}
-
 /**
  * A change pill always shows the two figures it compares (required by
  * Sean's note relayed 14 Oct and the owner instruction of 24 Oct 2026):
- * "+50% (6 vs 4)".
+ * "+50% (6 vs 4)". lib/percent's `formatChange` (multiply first), so 229 vs
+ * 200 reads "+15%" here as on Reports; no change reads "0%", never "+0%".
  */
-export function changePillText(pct: number, current: number, previous: number): string {
-  return `${pct >= 0 ? "+" : ""}${pct}% (${current.toLocaleString("en-GB")} vs ${previous.toLocaleString("en-GB")})`;
+export function changePillText(current: number, previous: number): string {
+  return formatChange(current, previous);
 }
 
 function renderStrongText(text: string) {
@@ -248,8 +243,8 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
   const [report, setReport] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const memberDelta = delta(metrics.newThisMonth, metrics.newLastMonth);
-  const checkinDelta = delta(metrics.checkinsThisMonth, metrics.checkinsLastMonth);
+  const memberDelta = pctChange(metrics.newThisMonth, metrics.newLastMonth);
+  const checkinDelta = pctChange(metrics.checkinsThisMonth, metrics.checkinsLastMonth);
   // Engagement = % of members with ≥1 check-in this month (bounded 0..100).
   const engagementRate = metrics.totalMembers > 0
     ? Math.min(100, percent(metrics.activeMembersThisMonth, metrics.totalMembers))
@@ -458,7 +453,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               {pct !== null && counts && (
                 <div
                   data-testid="analysis-change-pill"
-                  aria-label={`${changePillText(pct, counts[0], counts[1])}: ${pillLabel}`}
+                  aria-label={`${changePillText(counts[0], counts[1])}: ${pillLabel}`}
                   className="flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap"
                   style={{
                     background: pct >= 0 ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
@@ -466,7 +461,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                   }}
                 >
                   {pct >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                  {changePillText(pct, counts[0], counts[1])}
+                  {changePillText(counts[0], counts[1])}
                 </div>
               )}
             </div>

@@ -66,7 +66,7 @@ import {
   type TooltipPayload,
 } from "./reports-primitives";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
-import { formatGuardedRatio as funnelRate, formatGuardedRatioNote as funnelRateNote } from "@/lib/percent";
+import { formatChange, formatGuardedRatio as funnelRate, formatGuardedRatioNote as funnelRateNote } from "@/lib/percent";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import InitiativesPanel from "@/components/dashboard/InitiativesPanel";
@@ -285,14 +285,15 @@ const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled t
 /**
  * Delta as display text, or null when nothing moved. A percentage always
  * carries the two figures it compares (required by Sean's note relayed 14 Oct
- * and the owner instruction of 24 Oct 2026): "+13% (45 vs 40)".
+ * and the owner instruction of 24 Oct 2026): "+13% (45 vs 40)". The
+ * percentage is lib/percent's `formatChange` (multiply first), so 229 vs 200
+ * reads "+15%" here, in Analysis and in the AI report alike.
  */
 export function trendDelta(current: number, previous: number) {
   const delta = current - previous;
   if (delta === 0) return null;
   if (previous === 0) return `${delta > 0 ? "+" : ""}${formatNumber(delta)}`;
-  const pct = Math.round((delta / previous) * 100);
-  return `${pct > 0 ? "+" : ""}${pct}% (${formatNumber(current)} vs ${formatNumber(previous)})`;
+  return formatChange(current, previous);
 }
 
 function trendText(current: number, previous: number) {
