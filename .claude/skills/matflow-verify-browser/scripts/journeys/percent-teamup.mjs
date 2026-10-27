@@ -48,6 +48,7 @@ try {
   // Reports: the funnel's conversion rate carries its counts.
   await page.goto("/dashboard/reports");
   await page.waitForLoadState("load");
+  await page.getByText(/of trials|Trials run/).first().waitFor({ timeout: 60000 }).catch(() => {});
   const reportsText = norm(await page.locator("main").innerText({ timeout: 60000 }));
   L.check("reports", "G1a the Reports conversion funnel shows the rate with its counts, \"25% (2 of 8)\"", reportsText.includes(CONVERSION),
     { found: reportsText.includes(CONVERSION), around: reportsText.slice(Math.max(0, reportsText.indexOf("25%") - 80), reportsText.indexOf("25%") + 80) });
