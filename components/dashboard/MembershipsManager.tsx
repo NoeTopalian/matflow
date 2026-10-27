@@ -143,6 +143,13 @@ export function formAllowance(form: { classLimit: string; classLimitBasis: strin
   return { kind: "ok", allowance: { limit: limit.value, basis: "weeks", weeks, anchor } };
 }
 
+/** What enforcement means, under the allowance fields (owner wording, 27 Oct 2026). */
+export const ALLOWANCE_ENFORCEMENT_NOTE =
+  "Attending a class uses one; signing up to a class does not. It is enforced as soon as you save: every check-in (member app, kiosk, desk, card scanner and the coach's register) refuses once it is used up. " +
+  "Signing up to a class still goes through, with a note. " +
+  "A member with a class pack can still check in once the allowance is used up: a pack credit is used automatically. " +
+  "A lower allowance applies from the next check-in; nothing already recorded changes.";
+
 /**
  * The editor's note under the allowance fields: the plain summary with the
  * actual dates (allowanceSummary), then what enforcement means.
@@ -154,10 +161,8 @@ export function allowanceNote(fa: FormAllowance, now = new Date(), timeZone?: st
   return {
     summary: s.sentence,
     period: s.period,
-    enforcement:
-      "Attending a class uses one; booking does not. It is enforced as soon as you save: the member app and the kiosk refuse once it is used up, a booking still goes through with a warning (a booking never guarantees a place), and the desk and the card scanner ask before admitting. " +
-      "A lower allowance applies from the next check-in; nothing already recorded changes. " +
-      "Class-pack check-ins do not count: once the allowance is used up, a member with a class pack can still check in with a pack credit.",
+    // Owner wording, 27 Oct 2026: no door admits past a used-up allowance.
+    enforcement: ALLOWANCE_ENFORCEMENT_NOTE,
   };
 }
 
