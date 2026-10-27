@@ -354,7 +354,6 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                 />
                 <div className="flex-1 min-w-0">
                   <DonutLegend
-                    showCounts
                     data={metrics.membersByStatus.map((m, i): DonutSlice => ({
                       label: m.label,
                       value: m.count,

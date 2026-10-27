@@ -25,6 +25,17 @@ import { plural } from "@/components/dashboard/ImportHistory";
 import { sniffCsvKind, WRONG_PATH_MESSAGE } from "@/lib/importers/sniff";
 import { uploadFileInChunks, type UploadProgress } from "@/lib/import-upload-client";
 import { formatDate, formatDateTime } from "@/lib/date";
+import { formatRatio } from "@/lib/percent";
+
+/**
+ * The import's progress line: "24% (12 of 50) of bookings", the percentage
+ * with its count and base like every other share in the app. Rounded down,
+ * so it never reads 100% before the last booking is in. No bookings: "—".
+ */
+export function bookingsProgressText(processed: number, total: number): string {
+  if (total <= 0) return "—";
+  return `${formatRatio(Math.floor((processed * 100) / total), processed, total)} of bookings`;
+}
 
 type Decision = { action: string; targetId?: string | null } | null;
 type Candidate = { memberId: string; reason: "same_name" | "same_email"; name: string };
@@ -386,7 +397,7 @@ export default function AttendanceImport({ primaryColor, onChanged }: { primaryC
               <div className="h-2 rounded-full bg-sf-2 overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Import progress">
                 <div className="h-full" style={{ width: `${pct}%`, background: primaryColor }} />
               </div>
-              <p className="text-xs text-tx-2 tabular-nums" data-testid="attendance-import-progress">{n(job.processed)} of {n(job.total)} bookings ({pct}%)</p>
+              <p className="text-xs text-tx-2 tabular-nums" data-testid="attendance-import-progress">{bookingsProgressText(job.processed, job.total)}</p>
               {!running && (
                 <Button size="compact" onClick={() => void runSteps(job.id)} style={{ background: primaryColor }} data-testid="attendance-import-resume">
                   <RotateCw className="w-4 h-4" />{job.processed > 0 ? "Resume from where it stopped" : "Start"}
