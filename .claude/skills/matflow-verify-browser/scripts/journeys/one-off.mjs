@@ -189,7 +189,14 @@ try {
     await offer2.tap();
     const d2 = p2.getByRole("dialog");
     await d2.waitFor();
-    const confirmBox = await p2.getByTestId("register-one-off-confirm").boundingBox();
+    // The bottom sheet slides in: measure once it has settled (two equal readings), not mid-animation.
+    let confirmBox = null;
+    for (let i = 0, prev = null; i < 40; i++) {
+      confirmBox = await p2.getByTestId("register-one-off-confirm").boundingBox();
+      if (prev && confirmBox && prev.y === confirmBox.y) break;
+      prev = confirmBox;
+      await p2.waitForTimeout(100);
+    }
     const m = await p2.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth, height: window.innerHeight }));
     L.check("mobile", "M2 the dialog fits at 390 px and its action is on screen",
       !!confirmBox && confirmBox.y + confirmBox.height <= m.height && confirmBox.x >= 0 && confirmBox.x + confirmBox.width <= m.width && m.scroll <= m.width + 1, { confirmBox, ...m });
