@@ -56,8 +56,10 @@ try {
   await sw.focus();
   await owner.keyboard.press("Space");
   await confirmDialog(owner, "Turn off");
-  await owner.getByRole("alert").filter({ visible: true }).first().waitFor({ timeout: 15000 }).catch(() => {});
-  const alertText = await owner.getByRole("alert").filter({ visible: true }).first().innerText().catch(() => "");
+  // Next's route announcer is also role=alert (empty); match the setting's own error by its words.
+  const settingAlert = owner.getByRole("alert").filter({ hasText: /couldn|try again|error/i }).filter({ visible: true }).first();
+  await settingAlert.waitFor({ timeout: 15000 }).catch(() => {});
+  const alertText = await settingAlert.innerText().catch(() => "");
   L.check("settings", "S2 a failed save shows an error beside the switch, keeps it ON, and saves nothing",
     /couldn|try again|error/i.test(alertText) && (await sw.getAttribute("aria-checked")) === "true" && (await setting()) === true,
     { alertText, aria: await sw.getAttribute("aria-checked"), db: await setting() });
@@ -96,9 +98,13 @@ try {
   await mp.getByLabel("Password").fill(memberPassword);
   await mp.getByRole("button", { name: "Sign in", exact: true }).click();
   await mp.waitForURL(/\/member/, { timeout: 60000 });
+  // The control shows while /api/member/home is in flight (by design: the route refuses either way, and a sheet
+  // opened then shows the refusal), so judge the page once the home payload has answered.
+  const homeRes = mp.waitForResponse((r) => new URL(r.url()).pathname === "/api/member/home", { timeout: 90000 });
   await mp.goto("/member/home");
-  await mp.waitForLoadState("load");
-  await mp.waitForTimeout(4000);
+  const homeBody = await (await homeRes).json().catch(() => null);
+  L.check("member", "M0 the home payload carries the club's setting: memberAppCheckin false", homeBody?.me?.memberAppCheckin === false, { memberAppCheckin: homeBody?.me?.memberAppCheckin });
+  await mp.waitForTimeout(1500);
   const btnOff = await mp.getByText("Sign In to Class", { exact: true }).filter({ visible: true }).count();
   L.check("member", "M1 with the setting OFF the member home has no \"Sign In to Class\"", btnOff === 0, { visible: btnOff });
   const selfRes = await mp.evaluate(async (classInstanceId) => {
