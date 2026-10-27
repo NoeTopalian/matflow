@@ -856,18 +856,14 @@ export default function RegisterPanel({
             <Button variant="secondary" onClick={() => setOneOffFor(null)} disabled={oneOffSaving}>
               Cancel
             </Button>
-            <Button type="submit" form={`${oneOffFieldId}-form`} loading={oneOffSaving} data-testid="register-one-off-confirm">
+            <Button type="button" onClick={() => void submitOneOff()} loading={oneOffSaving} data-testid="register-one-off-confirm">
               Add as a one-off
             </Button>
           </div>
         }
       >
         {oneOffFor && (
-          <form
-            id={`${oneOffFieldId}-form`}
-            className="space-y-3"
-            onSubmit={(e) => { e.preventDefault(); void submitOneOff(); }}
-          >
+          <div className="space-y-3">
             <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
               <dt className="text-tx-3">Member</dt>
               <dd className="break-words font-medium text-tx-1" data-testid="register-one-off-member">{oneOffFor.name}</dd>
@@ -885,6 +881,10 @@ export default function RegisterPanel({
                 ref={oneOffReasonRef}
                 value={oneOffText}
                 onChange={(e) => setOneOffText(e.target.value)}
+                // Keyboard-fast at the desk: Enter confirms (Shift+Enter is a new line).
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitOneOff(); }
+                }}
                 required
                 rows={2}
                 maxLength={ONE_OFF_REASON_MAX}
@@ -895,10 +895,10 @@ export default function RegisterPanel({
                 data-testid="register-one-off-reason"
               />
               <p id={`${oneOffFieldId}-hint`} className="mt-1 text-[11px] text-tx-3">
-                Shown on the register, in their history and in Activity. {oneOffText.trim().length}/{ONE_OFF_REASON_MAX}
+                Shown on the register, in their history and in Activity. Enter adds them. {oneOffText.trim().length}/{ONE_OFF_REASON_MAX}
               </p>
             </div>
-          </form>
+          </div>
         )}
       </Dialog>
 
