@@ -14,9 +14,6 @@
 export const BILLED_BY = ["matflow", "teamup"] as const;
 export type BilledBy = (typeof BILLED_BY)[number];
 
-/** Standing older than this is shown to staff as stale; it never refuses a check-in. */
-export const BILLING_STATUS_STALE_AFTER_DAYS = 8;
-
 export const BILLED_ELSEWHERE_REFUSAL =
   "Billed by TeamUp — change the billing in TeamUp. MatFlow is not updated automatically: a later TeamUp upload lists any difference for you to review.";
 
@@ -36,29 +33,30 @@ function toDate(d: Date | string | null | undefined): Date | null {
   return Number.isNaN(x.getTime()) ? null : x;
 }
 
-/** True when the standing is more than the threshold old. Unknown dates are not stale — they are shown as unknown. */
-export function isBillingStatusStale(asOf: Date | string | null | undefined, now: Date = new Date()): boolean {
-  const d = toDate(asOf);
-  if (!d) return false;
-  return now.getTime() - d.getTime() > BILLING_STATUS_STALE_AFTER_DAYS * 24 * 60 * 60 * 1000;
-}
-
-/** "Billed by TeamUp · status as of 3 Oct 2026", or null for a member MatFlow bills. */
-export function billingSourceLabel(
+/**
+ * "Imported from TeamUp on 3 Oct 2026" (owner decision, 27 Oct 2026). Imports
+ * no longer update an existing member, so the date is the one import that
+ * brought the member over and never moves. It used to read "status as of",
+ * with an 8-day staleness warning that, once the date stopped moving, would
+ * have stayed on for good; both are retired. Null for a member MatFlow bills.
+ */
+export function importedFromTeamUpLabel(
   m: { billedBy?: string | null; billingStatusAsOf?: Date | string | null } | null | undefined,
 ): string | null {
   if (!isBilledElsewhere(m)) return null;
   const d = toDate(m?.billingStatusAsOf ?? null);
-  const when = d ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "unknown";
-  return `Billed by TeamUp · status as of ${when}`;
+  return d
+    ? `Imported from TeamUp on ${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })}`
+    : "Imported from TeamUp, date unknown";
 }
 
-/** Staff-facing warning when the standing is stale, else null. */
-export function staleBillingWarning(
+/**
+ * Who bills the member and when they came over: "Billed by TeamUp · Imported
+ * from TeamUp on 3 Oct 2026". Null for a member MatFlow bills.
+ */
+export function billingSourceLabel(
   m: { billedBy?: string | null; billingStatusAsOf?: Date | string | null } | null | undefined,
-  now: Date = new Date(),
 ): string | null {
-  if (!isBilledElsewhere(m) || !isBillingStatusStale(m?.billingStatusAsOf ?? null, now)) return null;
-  const d = toDate(m?.billingStatusAsOf ?? null)!;
-  return `Billing status last updated ${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })} — check TeamUp before relying on it.`;
+  const imported = importedFromTeamUpLabel(m);
+  return imported ? `Billed by TeamUp · ${imported}` : null;
 }

@@ -40,9 +40,9 @@ During the bridge, Total BJJ runs its day in MatFlow — roster, classes, check-
 
 - **Holds:** a check never lifts or sets a hold. A member on hold in MatFlow whom TeamUp reports as active is listed ("TeamUp says paid") for staff to resume in MatFlow if that is right.
 
-## 4. Door policy on stale standing — OPEN DECISION (Noe)
+## 4. Door policy on stale standing — DECIDED (owner, 27 Oct 2026)
 - Staleness alone **never refuses** a check-in.
-- "Billed by TeamUp · status as of <date>" and the 8-day "Billing status last updated" warning used to move with each refresh. A check no longer writes, so both stay at the first import's date and the warning stays on once 8 days pass. Retire them, or reword them as "imported from TeamUp on <date>"? Not changed until decided.
+- Decided 27 Oct 2026: imports no longer update an existing member, so the date never moves. "Billed by TeamUp · status as of <date>" now reads "Billed by TeamUp · Imported from TeamUp on <date>", and the 8-day "Billing status last updated" warning (`BILLING_STATUS_STALE_AFTER_DAYS`) is removed; left in, it would have stayed on for good. Who bills the member, and that MatFlow does not charge them, are unchanged.
 - A standing that TeamUp reported as overdue or on hold behaves exactly as MatFlow's own overdue and hold rules do today (self and kiosk refuse a hold; staff may override with a reason).
 
 ## 5. Acceptance contract for the implementation (P1)
@@ -52,12 +52,12 @@ During the bridge, Total BJJ runs its day in MatFlow — roster, classes, check-
 | Card subscription for a TeamUp-billed member | Refused with 409 `billed_elsewhere` and the sentence in §2 | No Stripe call, no row | unit per route (member self, parent for child, staff), before any provider call |
 | Membership migration (G4 cutover) | A migrated member becomes `billedBy = matflow` with the TeamUp standing cleared | Refused while the club is in review; needs Stripe connected | unit on the apply writes |
 | Later upload (import or check) | Writes no existing member; new people added; exact duplicates skipped; differences and uncertain matches listed with current values; preview counts equal the commit's | No member update, no invitations, emails, charges or subscriptions | unit (`import-conflicts`, `import-teamup-refresh`, `sec-d-import-security-state`); DB `import-conflicts-db` and `contact-email-change-imports-db` (both roles); browser journey `import-review` |
-| Staleness warning | Shown to staff when `billingStatusAsOf` is more than 8 days before now (club time) | Never blocks | unit with a frozen clock at 7 d 23 h and 8 d 1 h |
-| Honest screens | Profile, members list and register say "Billed by TeamUp · status as of <date>"; hold dialog and chase carry the TeamUp sentences | — | component tests; e2e cell |
+| Staleness warning | Removed 27 Oct 2026 (§4): no surface shows a stale state | — | unit (`billed-elsewhere-guard`, `billed-by-teamup-screens` at 10 and 90 days) |
+| Honest screens | Profile, members list and register say "Billed by TeamUp · Imported from TeamUp on <date>"; hold dialog and chase carry the TeamUp sentences | — | component tests; e2e cell |
 | Recovery | A check has nothing to roll back; a refresh recorded before 25 Oct 2026 still rolls back, restoring the previous standing | — | unit (legacy rollback) |
 
 ## 6. Open decisions (Noe / Sean)
 1. Confirm the field table in §2.
-2. "Status as of" and the 8-day staleness warning after 25 Oct 2026 (§4): retire or reword.
+2. ~~"Status as of" and the 8-day staleness warning after 25 Oct 2026 (§4): retire or reword.~~ Decided 27 Oct 2026: reworded to "Imported from TeamUp on <date>"; the warning is removed.
 3. Confirm "cash at the desk only" for new money in MatFlow during the bridge.
 4. Confirm the switch date from which attendance is recorded in MatFlow.

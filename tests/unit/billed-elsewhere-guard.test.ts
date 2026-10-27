@@ -7,9 +7,9 @@ import { vi, describe, it, expect, beforeEach, beforeAll } from "vitest";
 import {
   BILLED_ELSEWHERE_REFUSAL,
   billingSourceLabel,
-  isBillingStatusStale,
-  staleBillingWarning,
+  importedFromTeamUpLabel,
 } from "@/lib/billing-source";
+import * as billingSource from "@/lib/billing-source";
 
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("next/server", () => ({
@@ -108,27 +108,30 @@ describe("a card subscription for a member TeamUp bills is refused before any pr
   });
 });
 
-describe("billing standing labels and staleness", () => {
-  const now = new Date("2026-10-10T12:00:00Z");
-  const days = (d: number, h = 0) => new Date(now.getTime() - (d * 24 + h) * 3600_000);
-
-  it("is stale only after 8 days, and unknown is not stale", () => {
-    expect(isBillingStatusStale(days(7, 23), now)).toBe(false);
-    expect(isBillingStatusStale(days(8, 1), now)).toBe(true);
-    expect(isBillingStatusStale(null, now)).toBe(false);
-  });
-
-  it("labels only TeamUp-billed members, with the export date or 'unknown'", () => {
-    expect(billingSourceLabel({ billedBy: "matflow", billingStatusAsOf: days(1) })).toBeNull();
+// Owner decision, 27 Oct 2026: imports no longer update an existing member,
+// so the date never moves. "status as of <date>" became "Imported from TeamUp
+// on <date>", and the 8-day staleness warning is gone.
+describe("billing source labels", () => {
+  it("labels only TeamUp-billed members, with the import date or 'date unknown'", () => {
+    expect(billingSourceLabel({ billedBy: "matflow", billingStatusAsOf: new Date("2026-10-03T08:00:00Z") })).toBeNull();
     expect(billingSourceLabel({ billedBy: "teamup", billingStatusAsOf: new Date("2026-10-03T08:00:00Z") })).toBe(
-      "Billed by TeamUp · status as of 3 Oct 2026",
+      "Billed by TeamUp · Imported from TeamUp on 3 Oct 2026",
     );
-    expect(billingSourceLabel({ billedBy: "teamup", billingStatusAsOf: null })).toBe("Billed by TeamUp · status as of unknown");
+    expect(billingSourceLabel({ billedBy: "teamup", billingStatusAsOf: null })).toBe("Billed by TeamUp · Imported from TeamUp, date unknown");
   });
 
-  it("warns staff about a stale standing, never about a fresh one or a MatFlow-billed member", () => {
-    expect(staleBillingWarning({ billedBy: "teamup", billingStatusAsOf: days(7, 23) }, now)).toBeNull();
-    expect(staleBillingWarning({ billedBy: "teamup", billingStatusAsOf: days(8, 1) }, now)).toMatch(/^Billing status last updated/);
-    expect(staleBillingWarning({ billedBy: "matflow", billingStatusAsOf: days(30) }, now)).toBeNull();
+  it("gives the import line on its own", () => {
+    expect(importedFromTeamUpLabel({ billedBy: "teamup", billingStatusAsOf: "2026-09-20T09:00:00.000Z" })).toBe("Imported from TeamUp on 20 Sept 2026");
+    expect(importedFromTeamUpLabel({ billedBy: "matflow", billingStatusAsOf: "2026-09-20T09:00:00.000Z" })).toBeNull();
+  });
+
+  it("has no staleness rule left: a months-old import reads the same as yesterday's", () => {
+    const keys = Object.keys(billingSource);
+    expect(keys).not.toContain("BILLING_STATUS_STALE_AFTER_DAYS");
+    expect(keys).not.toContain("isBillingStatusStale");
+    expect(keys).not.toContain("staleBillingWarning");
+    expect(billingSourceLabel({ billedBy: "teamup", billingStatusAsOf: new Date("2026-01-03T08:00:00Z") })).toBe(
+      "Billed by TeamUp · Imported from TeamUp on 3 Jan 2026",
+    );
   });
 });
