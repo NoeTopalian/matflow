@@ -4,9 +4,11 @@
 
 ## Purpose
 
-Some gyms sell prepaid class bundles instead of (or alongside) monthly subscriptions: "10 classes valid for 90 days, £100". Class packs are the catalogue side — the owner-defined SKU. Member purchase + redemption is in [class-pack-purchase-and-redemption.md](class-pack-purchase-and-redemption.md).
+Some gyms sell prepaid class bundles instead of (or alongside) monthly subscriptions: "10 classes for £100". Class packs are the catalogue side — the owner-defined SKU. Member purchase + redemption is in [class-pack-purchase-and-redemption.md](class-pack-purchase-and-redemption.md).
 
-The model: each pack has a credit count, a validity window (days), and a price. When a member buys it, we create a [`MemberClassPack`](../prisma/schema.prisma) with `creditsRemaining = totalCredits` and `expiresAt = purchasedAt + validityDays`. Each class attendance burns one credit until the pack is empty or expires.
+The model: each pack has a credit count and a price. When a member buys it, we create a [`MemberClassPack`](../prisma/schema.prisma) with `creditsRemaining = totalCredits` and `expiresAt = NULL`. Each class attendance burns one credit until the pack is empty or refunded.
+
+**G6 (owner decision, 27 Oct 2026): packs never expire.** A pack is usable until its credits are used or it is refunded. `MemberClassPack.expiresAt` and `ClassPack.validityDays` are nullable, new rows store NULL, and no code reads either to decide anything; the legacy status `expired` is usable like `active`.
 
 ## Data model
 
@@ -17,7 +19,7 @@ model ClassPack {
   name            String                    // e.g. "10-Class Pack" or "Beginner Bundle"
   description     String?
   totalCredits    Int                       // 1..1000
-  validityDays    Int                       // 1..3650 (10 years cap)
+  validityDays    Int?                      // no longer asked for or read (G6); NULL on new packs
   pricePence      Int                       // 0..1,000,000 (£10,000 cap)
   currency        String   @default("GBP")
   isActive        Boolean  @default(true)   // gym can deactivate without deleting
@@ -37,8 +39,8 @@ The Stripe IDs are populated on creation — we proactively create the Stripe Pr
 ## Surfaces
 
 - Settings → Revenue → "Class Packs" section (see [settings-revenue.md](settings-revenue.md))
-- Add Pack modal: name, totalCredits, validityDays, pricePence, optional description
-- List view: name, credits, validity, price, active toggle, edit/archive
+- Add Pack modal: name, totalCredits, pricePence, optional description (no validity field since G6)
+- List view: name, credits, "no expiry", price, active toggle, edit/archive
 - Member side: `/member/class-packs` (or in-profile section) lists active packs available to buy
 
 ## API routes
@@ -68,7 +70,7 @@ if (!tenant?.stripeConnected || !tenant.stripeAccountId) return 400;
 
 // 2. Create Stripe Product on the connected account
 const stripeProduct = await stripe.products.create(
-  { name, description: description ?? `${totalCredits} classes valid for ${validityDays} days` },
+  { name, description: description ?? `${totalCredits} classes, no expiry` },
   { stripeAccount: tenant.stripeAccountId },
 );
 
@@ -80,7 +82,7 @@ const stripePrice = await stripe.prices.create(
 
 // 4. Persist locally with both Stripe IDs
 const created = await prisma.classPack.create({
-  data: { tenantId, name, description, totalCredits, validityDays,
+  data: { tenantId, name, description, totalCredits,
           pricePence, currency: "GBP", isActive: true,
           stripeProductId: stripeProduct.id, stripePriceId: stripePrice.id },
 });
@@ -95,7 +97,7 @@ await logAudit({ tenantId, userId, action: "class_pack.create", entityType: "Cla
 
 Owner/manager only.
 
-- PATCH: update name/description/isActive. Price/credits/validity are NOT mutable — changing them would break member purchase semantics. Owner has to deactivate + create a new pack instead.
+- PATCH: update name/description/isActive. Price/credits are NOT mutable — changing them would break member purchase semantics. Owner has to deactivate + create a new pack instead.
 - DELETE: only if no member has bought it (FK guard via `memberPacks` relation). Otherwise PATCH `isActive=false` to "archive".
 
 ## Why price is immutable
@@ -109,7 +111,7 @@ const createSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
   totalCredits: z.number().int().min(1).max(1000),
-  validityDays: z.number().int().min(1).max(3650),
+  // validityDays removed (G6); an older client's value is stripped, never stored
   pricePence: z.number().int().min(0).max(10_000_00),  // £10,000 cap
   currency: z.string().min(3).max(3).optional(),
   isActive: z.boolean().optional(),
@@ -146,7 +148,7 @@ This is intentional — there's no "pay-at-desk class pack" flow today. If a gym
 - **No quantity discounts** — buying 2 packs is just 2x the price.
 - **Currency is per-pack but the system assumes GBP everywhere** (totals, reports). Multi-currency would need a wider refactor.
 - **No pack analytics** — no built-in "how many of pack X have been sold this month?" report. Owner has to query the DB.
-- **PATCH cannot edit credits/validity** by design — but the UI doesn't surface that clearly. Owner finds out via 400.
+- **PATCH cannot edit credits** by design — but the UI doesn't surface that clearly. Owner finds out via 400.
 
 ## Test coverage
 

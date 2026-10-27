@@ -16,7 +16,7 @@ Members buy prepaid class packs (e.g. "10 classes for £100, valid 60 days"). Cr
 
 ## API consumed
 
-- [`GET /api/class-packs/[id]`](../app/api/class-packs/[id]/route.ts) — pack details (name, description, totalCredits, validityDays, pricePence, currency)
+- [`GET /api/class-packs/[id]`](../app/api/class-packs/[id]/route.ts) — pack details (name, description, totalCredits, pricePence, currency; no validity since G6)
 - [`GET /api/member/class-packs`](../app/api/member/class-packs/route.ts) — `{ owned: MemberClassPack[], available: ClassPack[] }`
 - [`POST /api/member/class-packs/buy`](../app/api/member/class-packs/buy/route.ts) — body `{ packId, paymentMethod: "card"|"bank"|"cash" }`. Returns:
   - `card`: `{ stripeUrl }` for redirect to Stripe Checkout
@@ -54,9 +54,9 @@ Members buy prepaid class packs (e.g. "10 classes for £100, valid 60 days"). Cr
 ## Known limitations
 
 - **No pack stacking validation** — a member can buy a 10-pack while already holding a 20-pack with 18 credits left. Schema allows it; UX could warn.
-- **No partial refund** — if a pack expires with credits remaining, those credits are forfeit. No automatic refund flow.
+- **Packs never expire** (G6, 27 Oct 2026) — credits stay usable until used or the pack is refunded.
 - **Card path requires Stripe Connect** — if tenant hasn't connected Stripe, the "Card" radio is disabled (greyed out).
-- **No "purchase history"** for the member — they see currently-active packs, but expired/refunded ones disappear.
+- **No "purchase history"** for the member — they see packs with credits (active, or legacy expired with credits left), but refunded ones disappear.
 - **Receipt email** — depends on Stripe's default; no MatFlow-branded receipt sent.
 
 ## Test coverage
