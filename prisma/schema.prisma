@@ -118,6 +118,7 @@ model Tenant {
   membershipTiers   MembershipTier[]
   classRosters      ClassRoster[]
   classMembershipTiers ClassMembershipTier[]
+  classOneOffs      ClassOneOff[]
   tasks             Task[]
   memberPhotos      MemberPhoto[]
   pushSubscriptions PushSubscription[]
@@ -170,6 +171,7 @@ model User {
   attendanceCheckIns AttendanceRecord[] @relation("AttendanceCheckedInBy")
   classRosterAdds    ClassRoster[]      @relation("ClassRosterAddedBy")
   classTierAdds      ClassMembershipTier[] @relation("ClassMembershipTierAddedBy")
+  classOneOffsGranted ClassOneOff[]      @relation("ClassOneOffGrantedBy")
   pushSubscriptions  PushSubscription[]
   tasksCreated       Task[]             @relation("TaskCreatedBy")
   tasksAssigned      Task[]             @relation("TaskAssignedTo")
@@ -339,6 +341,7 @@ model Member {
 
   memberRanks       MemberRank[]
   attendances       AttendanceRecord[]
+  classOneOffs      ClassOneOff[]
   subscriptions     ClassSubscription[]
   waitlists         ClassWaitlist[]
   notifications     Notification[]
@@ -643,6 +646,7 @@ model ClassInstance {
 
   attendances AttendanceRecord[]
   waitlists   ClassWaitlist[]
+  oneOffs     ClassOneOff[]
 
   // Task 3b (migration 20260819090000_class_instance_unique_slot). Both
   // generation routes pass createMany({ skipDuplicates: true }), which only
@@ -679,6 +683,9 @@ model AttendanceRecord {
   // every check-in made in MatFlow.
   importJobId     String?
   sourceRowId     String?
+
+  // G4: set when a coach admitted this visit as a one-off (not counted).
+  oneOff          ClassOneOff?
 
   @@unique([memberId, classInstanceId])
   @@index([memberId, checkInTime])
@@ -748,6 +755,34 @@ model ClassMembershipTier {
   @@unique([classId, tierId])
   @@index([tenantId, classId])
   @@index([tenantId, tierId])
+}
+
+// G4 (owner, 27 Oct 2026): a coach's one-off. A staff user admits a named
+// member to ONE session from its register, with a reason; it admits them past
+// the squad list, the plan restriction and the class allowance for that
+// session only, is not counted against the allowance and spends no pack. It
+// goes with the attendance row it admitted (ON DELETE CASCADE): an unmark or
+// an undo removes both. Migration 20261027130000_class_one_off (CHECK on the
+// reason's length, RLS tenant_isolation).
+model ClassOneOff {
+  id                 String           @id @default(cuid())
+  tenantId           String
+  tenant             Tenant           @relation(fields: [tenantId], references: [id])
+  classInstanceId    String
+  classInstance      ClassInstance    @relation(fields: [classInstanceId], references: [id], onDelete: Cascade)
+  memberId           String
+  member             Member           @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  attendanceRecordId String           @unique
+  attendanceRecord   AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+  grantedById        String?
+  grantedBy          User?            @relation("ClassOneOffGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+  /// 3 to 200 characters (database CHECK ClassOneOff_reason_length).
+  reason             String
+  createdAt          DateTime         @default(now())
+
+  @@index([tenantId, memberId])
+  @@index([classInstanceId])
+  @@index([grantedById])
 }
 
 model ClassWaitlist {
