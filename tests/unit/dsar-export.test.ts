@@ -605,3 +605,26 @@ describe("GET /api/admin/dsar/export — imported history (attendance + membersh
     expect(body.counts.importedMemberships).toBe(1);
   });
 });
+
+// G4 (27 Oct 2026): a coach's one-off reason is written about the member, so
+// it is their personal data. Each attendance carries its one-off: the visit's
+// date and class, the reason, who granted it and when.
+describe("GET /api/admin/dsar/export — coach one-offs (G4)", () => {
+  it("asks for each visit's one-off and returns it inside the attendance item", async () => {
+    attendanceFindManyMock.mockResolvedValue([{
+      id: "a1", classInstanceId: "ci1", checkInTime: new Date("2026-10-27T18:05:00Z"), checkInMethod: "admin",
+      classInstance: { id: "ci1", date: new Date("2026-10-27T00:00:00Z"), startTime: "18:00", endTime: "19:00", class: { name: "Comp squad" } },
+      oneOff: { reason: "Trial for the comp squad", createdAt: new Date("2026-10-27T18:05:00Z"), grantedById: "u-coach", grantedBy: { name: "Coach Jo" } },
+    }]);
+    attendanceCountMock.mockResolvedValue(1);
+    const { body } = await exportJson();
+    const select = (attendanceFindManyMock.mock.calls.at(-1)![0] as { select: Record<string, unknown> }).select;
+    expect(select.oneOff).toEqual({
+      select: { reason: true, createdAt: true, grantedById: true, grantedBy: { select: { name: true } } },
+    });
+    expect(body.attendances.items[0]).toMatchObject({
+      classInstance: { date: "2026-10-27T00:00:00.000Z", class: { name: "Comp squad" } },
+      oneOff: { reason: "Trial for the comp squad", grantedBy: { name: "Coach Jo" }, grantedById: "u-coach" },
+    });
+  });
+});

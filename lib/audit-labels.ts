@@ -310,3 +310,14 @@ export function auditEntryLabel(action: string, metadata: unknown): string {
   }
   return auditLabelWithUndo(action);
 }
+
+/**
+ * The toast after an Activity undo: "Undone: <label, lower case>." A quoted
+ * part (a one-off's reason, G4) keeps its own case: it is what someone typed.
+ */
+export function undoneMessage(action: string, metadata: unknown): string {
+  const label = auditEntryLabel(action, metadata);
+  const quote = label.indexOf(": “");
+  const lowered = quote >= 0 ? label.slice(0, quote).toLowerCase() + label.slice(quote) : label.toLowerCase();
+  return `Undone: ${lowered}.`;
+}

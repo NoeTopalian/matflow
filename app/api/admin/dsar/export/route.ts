@@ -10,6 +10,7 @@
  *     credential material that is deliberately excluded)
  *   - Family: parent + children summaries
  *   - AttendanceRecord history                    [capped, see CAP_HISTORY]
+ *     (each with its coach's one-off, if any: reason, who granted it, when)
  *   - Payment history                             [capped, see CAP_HISTORY]
  *   - Order history                               [capped, see CAP_HISTORY]
  *   - SignedWaiver records                        [capped, see CAP_HISTORY]
@@ -197,6 +198,12 @@ export async function GET(req: Request) {
             checkedInById: true,
             classInstance: {
               select: { id: true, date: true, startTime: true, endTime: true, class: { select: { name: true } } },
+            },
+            // G4: a coach's one-off for this visit. The reason is written
+            // about the member, so it is their personal data: the visit's
+            // date and class are above; who granted it and when, here.
+            oneOff: {
+              select: { reason: true, createdAt: true, grantedById: true, grantedBy: { select: { name: true } } },
             },
           },
           orderBy: { checkInTime: "desc" },

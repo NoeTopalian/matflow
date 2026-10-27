@@ -6,7 +6,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { decideUndo, UndoStale, type AuditRowLike } from "@/lib/undo-registry";
 import { executeUndo, UndoBatchFailed } from "@/lib/undo-batch";
-import { auditEntryLabel, UNDO_PREFIX } from "@/lib/audit-labels";
+import { undoneMessage, UNDO_PREFIX } from "@/lib/audit-labels";
 
 export const runtime = "nodejs";
 
@@ -53,7 +53,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     if (result.kind === "not-found") return apiError("That activity row was not found.", 404);
     if (result.kind === "refused") return NextResponse.json({ ok: false, error: result.reason }, { status: 409 });
-    return NextResponse.json({ ok: true, message: `Undone: ${auditEntryLabel(result.action, result.metadata).toLowerCase()}.` });
+    return NextResponse.json({ ok: true, message: undoneMessage(result.action, result.metadata) });
   } catch (e) {
     if (e instanceof UndoBatchFailed || e instanceof UndoStale) {
       const reason = e instanceof UndoBatchFailed ? e.reason : e.message;

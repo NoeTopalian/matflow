@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@/lib/checkin", () => ({ restorePackCreditsForAttendance: vi.fn(async () => 0) }));
 import { restorePackCreditsForAttendance } from "@/lib/checkin";
 import { decideUndo, applyUndo, type AuditRowLike, type TxLike } from "@/lib/undo-registry";
-import { auditEntryLabel, auditLabel } from "@/lib/audit-labels";
+import { auditEntryLabel, auditLabel, undoneMessage } from "@/lib/audit-labels";
 import { oneOffCanAdmit, oneOffHistoryLine, oneOffReason, oneOffRowLabel } from "@/lib/one-off";
 
 const META = {
@@ -54,6 +54,14 @@ describe("Activity: attendance.one_off", () => {
 
   it("an already-undone one-off is refused like any other row", () => {
     expect(decideUndo(row("attendance.one_off"), true).ok).toBe(false);
+  });
+
+  it("the undo toast lower-cases the label but keeps the reason as typed", () => {
+    expect(undoneMessage("attendance.one_off", { reason: "Guest of Sean, BJJ Globetrotters" }))
+      .toBe("Undone: added a member to one session as a one-off: “Guest of Sean, BJJ Globetrotters”.");
+    // Every other action reads exactly as before.
+    expect(undoneMessage("member.update", {})).toBe("Undone: updated a member's details.");
+    expect(undoneMessage("attendance.mark", {})).toBe("Undone: checked a member in.");
   });
 });
 
