@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { parseTeamUp } from "@/lib/importers/teamup";
-import { planRefresh, REFRESH_OWNED_FIELDS } from "@/lib/importers/teamup-refresh";
+import { planRefresh, forwardEventDates } from "@/lib/importers/teamup-refresh";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -95,7 +95,8 @@ function keyOf(name: string): string {
 type Member = Record<string, unknown> & { id: string };
 type Job = Record<string, unknown> & { id: string };
 
-let db: { members: Member[]; jobs: Job[]; events: unknown[]; memberWrites: { where: unknown; data: Record<string, unknown> }[] };
+type Event = Record<string, unknown> & { memberId: string; occurredAt: Date; createdAt: Date; seq: number };
+let db: { members: Member[]; jobs: Job[]; events: Event[]; memberWrites: { where: unknown; data: Record<string, unknown> }[] };
 
 const CREATE_JOB = "job_create";
 const EXPORT_1 = new Date("2026-09-01T08:00:00Z");
@@ -134,7 +135,11 @@ function seed() {
       member({ id: "m_local", name: "Lou Local", billedBy: "matflow", externalRef: null, billingStatusAsOf: null, billingStatusSource: null }),
     ],
     jobs: [],
-    events: [],
+    // The first import's create events, dated at its export (T8a fixtures).
+    events: ["m_ada", "m_tom", "m_uma", "m_gone"].map((memberId, seq) => ({
+      tenantId: "t1", memberId, fromStatus: null, toStatus: "active", reason: "import", changedById: null,
+      occurredAt: EXPORT_1, createdAt: EXPORT_1, seq,
+    })),
     memberWrites: [],
   };
 }
@@ -161,6 +166,17 @@ function matches(row: Record<string, unknown>, where: Record<string, unknown>): 
   });
 }
 
+/** Replay order (occurredAt, createdAt, id), newest first. */
+function newestFirst(a: Event, b: Event): number {
+  return b.occurredAt.getTime() - a.occurredAt.getTime() || b.createdAt.getTime() - a.createdAt.getTime() || b.seq - a.seq;
+}
+
+/** A member's status on a date, replayed from the events (null before the first). */
+function statusOn(memberId: string, at: Date): string | null {
+  const mine = db.events.filter((e) => e.memberId === memberId && e.occurredAt <= at).sort(newestFirst);
+  return mine.length ? (mine[0].toStatus as string) : null;
+}
+
 function pick(row: Record<string, unknown>, select?: Record<string, unknown>) {
   if (!select) return { ...row };
   return Object.fromEntries(Object.keys(select).map((k) => [k, row[k] ?? null]));
@@ -168,6 +184,8 @@ function pick(row: Record<string, unknown>, select?: Record<string, unknown>) {
 
 function makeTx() {
   return {
+    // lib/migration-lock.ts holdOffMigrations: no schema migration ever runs in the fake database.
+    $queryRaw: async (strings: TemplateStringsArray) => (strings.join("?").includes("pg_try_advisory_xact_lock_shared") ? [{ ok: true }] : []),
     member: {
       findMany: async ({ where, select }: { where: Record<string, unknown>; select?: Record<string, unknown> }) =>
         db.members.filter((m) => matches(m, where)).map((m) => pick(m, select)),
@@ -181,7 +199,31 @@ function makeTx() {
       createMany: async () => { throw new Error("a refresh must not create members"); },
     },
     membershipTier: { findMany: async () => [] },
-    memberStatusEvent: { createMany: async ({ data }: { data: unknown[] }) => { db.events.push(...data); return { count: data.length }; } },
+    // HARNESS (T8a, 17 Oct 2026): events keep occurredAt (column default: the
+    // write time) and createdAt (always the write time, strictly increasing
+    // here), and the writer's clamp lookup (groupBy) and the rollback's
+    // forward-event read (findMany) are modelled over them.
+    memberStatusEvent: {
+      createMany: async ({ data }: { data: Record<string, unknown>[] }) => {
+        for (const d of data) {
+          const seq = db.events.length;
+          const written = new Date(Date.now() + seq);
+          db.events.push({ occurredAt: written, ...d, createdAt: written, seq } as Event);
+        }
+        return { count: data.length };
+      },
+      groupBy: async ({ where }: { where: Record<string, unknown> }) => {
+        const max = new Map<string, Date>();
+        for (const e of db.events) {
+          if (!matches(e, where)) continue;
+          const cur = max.get(e.memberId);
+          if (!cur || e.occurredAt > cur) max.set(e.memberId, e.occurredAt);
+        }
+        return [...max].map(([memberId, occurredAt]) => ({ memberId, _max: { occurredAt } }));
+      },
+      findMany: async ({ where, select }: { where: Record<string, unknown>; select?: Record<string, unknown> }) =>
+        db.events.filter((e) => matches(e, where)).sort(newestFirst).map((e) => pick(e, select)),
+    },
     importJob: {
       findFirst: async ({ where, select }: { where: Record<string, unknown>; select?: Record<string, unknown> }) => {
         const j = db.jobs.find((x) => matches(x, where));
@@ -235,6 +277,30 @@ function refreshJob(over: Partial<Job> = {}): Job {
   };
   db.jobs.push(j);
   return j;
+}
+
+/**
+ * A refresh committed before the 25 Oct 2026 rule: what the old commit wrote
+ * is applied to the members, recorded in the job's manifest, and (T8a/T8d)
+ * each status move has the forward event that commit wrote. A refresh
+ * committed now writes none of this; its rollback restores nobody.
+ */
+function legacyRefresh(moves: { id: string; after: Partial<Member>; fields: string[]; occurredAt?: Date }[]): Job {
+  const job = refreshJob({ status: "preview" });
+  const std = (x: Member) => ({ status: x.status, paymentStatus: x.paymentStatus, cancelledAt: x.cancelledAt ? (x.cancelledAt as Date).toISOString() : null, membershipType: x.membershipType, membershipTierId: x.membershipTierId, billingStatusAsOf: x.billingStatusAsOf ? (x.billingStatusAsOf as Date).toISOString() : null, billingStatusSource: x.billingStatusSource });
+  const changes = moves.map(({ id, after, fields, occurredAt }) => {
+    const m = db.members.find((x) => x.id === id)!;
+    const before = std(m);
+    Object.assign(m, after, { billingStatusAsOf: EXPORT_2, billingStatusSource: job.id });
+    if (before.status !== m.status) {
+      const at = occurredAt ?? EXPORT_2;
+      db.events.push({ tenantId: "t1", memberId: id, fromStatus: before.status, toStatus: m.status, reason: "import", changedById: null, sourceJobId: job.id, sourceAction: "import_refresh", occurredAt: at, createdAt: new Date(EXPORT_2.getTime() + db.events.length), seq: db.events.length });
+    }
+    return { memberId: id, name: m.name, sourceKey: m.externalRef, fields, before, after: std(m) };
+  });
+  Object.assign(job, { status: "complete", completedAt: new Date(), manifest: { mode: "refresh", refresh: { changes } } });
+  db.memberWrites = [];
+  return job;
 }
 
 const req = () => new Request("http://localhost/x", { method: "POST" });
@@ -370,56 +436,71 @@ describe("a refresh never moves standing backwards in time", () => {
 
 // ── Commit ───────────────────────────────────────────────────────────────────
 
-describe("status refresh commit", () => {
-  it("writes only TeamUp-owned fields, keeps a contact field edited in MatFlow, and records before and after", async () => {
+describe("status refresh commit (owner decision 25 Oct 2026: a later upload never overwrites MatFlow)", () => {
+  it("writes no member; every difference is listed with the file's value and MatFlow's", async () => {
+    // Staff moved Ada to another plan in MatFlow; Uma was cancelled in MatFlow. Neither is in the file that way.
+    Object.assign(db.members.find((m) => m.id === "m_ada")!, { membershipType: "Staff-chosen plan" });
+    Object.assign(db.members.find((m) => m.id === "m_uma")!, { status: "cancelled", cancelledAt: new Date("2026-09-10T00:00:00Z") });
+    const before = JSON.stringify(db.members);
+    const eventsBefore = JSON.stringify(db.events);
     refreshJob({ status: "preview" });
     const res = (await commitPOST(req(), params("job_refresh"))) as unknown as Res;
     expect(res.status).toBe(200);
 
-    const allowed = new Set<string>([...REFRESH_OWNED_FIELDS, "billingStatusAsOf", "billingStatusSource"]);
-    expect(db.memberWrites.length).toBe(3);
-    for (const w of db.memberWrites) {
-      for (const k of Object.keys(w.data)) expect(allowed.has(k), `refresh wrote ${k}`).toBe(true);
-      expect(w.where).toMatchObject({ tenantId: "t1", billedBy: "teamup" });
-    }
-
-    const ada = db.members.find((m) => m.id === "m_ada")!;
-    expect(ada.paymentStatus).toBe("paused");
-    expect(ada.phone).toBe("07999 edited in MatFlow");
-    expect(ada.notes).toBe("Knee — go easy");
-    expect(ada.holdUntil).toBeNull();
-    expect((ada.billingStatusAsOf as Date).toISOString()).toBe(EXPORT_2.toISOString());
-    expect(ada.billingStatusSource).toBe("job_refresh");
-
-    const tom = db.members.find((m) => m.id === "m_tom")!;
-    expect(tom.status).toBe("cancelled");
-    // Dan (billed by MatFlow) and Gina (not in the file) are untouched.
-    expect(db.members.find((m) => m.id === "m_dan")!.billingStatusSource).toBeNull();
-    expect(db.members.find((m) => m.id === "m_gone")!.billingStatusSource).toBe(CREATE_JOB);
+    // Nothing in MatFlow moved: no member write, no status event (only the
+    // first import's seeded create events remain), no email. So T8a's dating
+    // and T8d's provenance of refresh events have nothing to apply to.
+    expect(db.memberWrites).toEqual([]);
+    expect(JSON.stringify(db.members)).toBe(before);
+    expect(JSON.stringify(db.events)).toBe(eventsBefore);
+    expect(emailMock).not.toHaveBeenCalled();
+    // Staff-edited plan and a MatFlow cancellation survive; so does the record with no edit history (Tom).
+    expect(db.members.find((m) => m.id === "m_ada")!.membershipType).toBe("Staff-chosen plan");
+    expect(db.members.find((m) => m.id === "m_uma")!.status).toBe("cancelled");
+    expect(db.members.find((m) => m.id === "m_tom")!.status).toBe("active");
 
     const job = db.jobs[0];
     expect(job.status).toBe("complete");
-    const changes = (job.manifest as { refresh: { changes: { memberId: string; before: Record<string, unknown>; after: Record<string, unknown> }[] } }).refresh.changes;
-    const adaChange = changes.find((c) => c.memberId === "m_ada")!;
-    expect(adaChange.before).toMatchObject({ paymentStatus: "paid", billingStatusSource: CREATE_JOB, billingStatusAsOf: EXPORT_1.toISOString() });
-    expect(adaChange.after).toMatchObject({ paymentStatus: "paused", billingStatusSource: "job_refresh", billingStatusAsOf: EXPORT_2.toISOString() });
-
-    // A status change is recorded as an import event; nothing is emailed.
-    expect(db.events).toContainEqual(expect.objectContaining({ memberId: "m_tom", fromStatus: "active", toStatus: "cancelled", reason: "import" }));
-    expect(emailMock).not.toHaveBeenCalled();
+    const m = job.manifest as { refresh: { changes: unknown[]; changed: number; toReview: number }; conflicts: { kind: string; memberId: string; fields: { field: string; upload: string | null; matflow: string | null }[] }[] };
+    expect(m.refresh.changes).toEqual([]);
+    expect(m.refresh.changed).toBe(0);
+    const byMember = new Map(m.conflicts.map((c) => [c.memberId, c]));
+    expect(byMember.get("m_ada")!.fields).toEqual(
+      expect.arrayContaining([
+        { field: "paymentStatus", upload: "paused", matflow: "paid" },
+        { field: "plan", upload: "Adults Advanced 2026", matflow: "Staff-chosen plan" },
+      ]),
+    );
+    expect(byMember.get("m_tom")!.fields).toEqual(expect.arrayContaining([{ field: "status", upload: "cancelled", matflow: "active" }]));
+    expect(byMember.get("m_uma")!.fields).toEqual(expect.arrayContaining([{ field: "status", upload: "active", matflow: "cancelled" }]));
+    expect(m.refresh.toReview).toBe(3);
+    // Dan (billed by MatFlow) and Gina (not in the file) are not listed as conflicts.
+    expect(byMember.has("m_dan")).toBe(false);
+    expect(byMember.has("m_gone")).toBe(false);
   });
 });
 
 // ── Rollback ─────────────────────────────────────────────────────────────────
 
 describe("status refresh rollback", () => {
-  it("restores only members still carrying what the refresh wrote, and says why the others were kept", async () => {
+  it("a refresh under the 25 Oct 2026 rule changed nobody, so its rollback restores nobody and writes nothing", async () => {
     refreshJob({ status: "preview" });
     await commitPOST(req(), params("job_refresh"));
+    const res = (await rollbackPOST(req(), params("job_refresh"))) as unknown as Res;
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { restored: number }).restored).toBe(0);
+    expect(db.memberWrites).toEqual([]);
+  });
+
+  it("a refresh recorded before the rule still rolls back: restores only members still carrying what it wrote", async () => {
+    legacyRefresh([
+      { id: "m_ada", after: { paymentStatus: "paused" }, fields: ["paymentStatus"] },
+      { id: "m_tom", after: { status: "cancelled", cancelledAt: new Date("2026-09-20T00:00:00Z") }, fields: ["status", "cancelledAt"] },
+      { id: "m_uma", after: {}, fields: [] },
+    ]);
 
     // Staff change Tom's payment standing after the refresh.
     db.members.find((m) => m.id === "m_tom")!.paymentStatus = "overdue";
-    db.memberWrites = [];
 
     const res = (await rollbackPOST(req(), params("job_refresh"))) as unknown as Res;
     expect(res.status).toBe(200);
@@ -489,5 +570,105 @@ describe("upload: the same-file refusal compares jobs of the same mode only", ()
     const res2 = (await uploadPOST(new Request("http://localhost/x", { method: "POST", body: fd2 }))) as unknown as Res;
     expect(res2.status).toBe(400);
     expect(db.jobs).toHaveLength(0);
+  });
+});
+
+// ── Dating (T8a, Q6 D-7 and A-9) ─────────────────────────────────────────────
+
+describe("refresh and rollback dating (T8a)", () => {
+  // The club is in Europe/London: midnight 20 Sep (BST) is 23:00Z on the 19th.
+  const TOM_CANCELLED = new Date("2026-09-19T23:00:00.000Z");
+
+  // A refresh committed now writes no event (see "status refresh commit"
+  // above), so the forward-event dating and its clamp apply only to refreshes
+  // recorded before the 25 Oct 2026 rule. Their rollback is still live:
+  it("a rolled-back pre-rule refresh: the reverse event carries the forward date, and every date replays to the pre-refresh status", async () => {
+    legacyRefresh([{ id: "m_tom", after: { status: "cancelled", cancelledAt: TOM_CANCELLED }, fields: ["status", "cancelledAt"], occurredAt: TOM_CANCELLED }]);
+    const res = (await rollbackPOST(req(), params("job_refresh"))) as unknown as Res;
+    expect(res.status).toBe(200);
+
+    const forward = db.events.find((e) => e.memberId === "m_tom" && e.toStatus === "cancelled")!;
+    const reverse = db.events.find((e) => e.memberId === "m_tom" && e.fromStatus === "cancelled" && e.toStatus === "active")!;
+    expect(reverse.occurredAt.toISOString()).toBe(forward.occurredAt.toISOString());
+    expect(reverse.createdAt.getTime()).toBeGreaterThan(forward.createdAt.getTime());
+
+    for (const at of [EXPORT_1, TOM_CANCELLED, new Date("2026-09-25T00:00:00Z"), new Date()]) {
+      expect(statusOn("m_tom", at)).toBe("active");
+    }
+    expect(db.members.find((m) => m.id === "m_tom")!.status).toBe("active");
+  });
+});
+
+describe("forwardEventDates (pure, T8a)", () => {
+  const st = (status: string, cancelledAt: string | null = null) => ({
+    status, paymentStatus: "paid", cancelledAt, membershipType: null, membershipTierId: null, billingStatusAsOf: null, billingStatusSource: null,
+  });
+
+  it("finds the newest import event that made the forward move, and skips members with none", () => {
+    const at = new Date("2026-09-20T00:00:00Z");
+    const map = forwardEventDates(
+      [
+        { memberId: "a", before: st("active"), after: st("cancelled") },
+        { memberId: "b", before: st("active"), after: st("inactive") },
+        { memberId: "c", before: st("active"), after: st("active") },
+      ],
+      [
+        { memberId: "a", fromStatus: "active", toStatus: "cancelled", occurredAt: at },
+        { memberId: "a", fromStatus: "active", toStatus: "cancelled", occurredAt: new Date("2026-01-01T00:00:00Z") },
+        { memberId: "b", fromStatus: null, toStatus: "active", occurredAt: at },
+      ],
+    );
+    expect(map.get("a")).toEqual(at);
+    expect(map.has("b")).toBe(false);
+    expect(map.has("c")).toBe(false);
+  });
+});
+
+// ── Provenance (T8d) ─────────────────────────────────────────────────────────
+
+describe("refresh and rollback provenance (T8d)", () => {
+  // Forward refresh events (import_refresh) exist only for refreshes recorded
+  // before the 25 Oct 2026 rule; a refresh committed now writes none.
+  it("a pre-rule refresh's rollback: reverse events carry the same job as import_rollback, dated at the forward event (A-9)", async () => {
+    legacyRefresh([{ id: "m_tom", after: { status: "cancelled", cancelledAt: new Date("2026-09-19T23:00:00.000Z") }, fields: ["status", "cancelledAt"], occurredAt: new Date("2026-09-19T23:00:00.000Z") }]);
+    const forwardCount = db.events.length;
+    const res = (await rollbackPOST(req(), params("job_refresh"))) as unknown as Res;
+    expect(res.status).toBe(200);
+    const reverse = db.events.slice(forwardCount);
+    expect(reverse.length).toBeGreaterThan(0);
+    for (const e of reverse) {
+      expect(e).toMatchObject({ reason: "import", changedById: null, sourceJobId: "job_refresh", sourceAction: "import_rollback" });
+    }
+    const forward = db.events.find((e) => e.memberId === "m_tom" && e.sourceAction === "import_refresh")!;
+    const back = reverse.find((e) => e.memberId === "m_tom")!;
+    expect(back).toMatchObject({ fromStatus: "cancelled", toStatus: "active" });
+    expect(back.occurredAt.toISOString()).toBe(forward.occurredAt.toISOString());
+  });
+
+  it("forwardEventDates with a job id: this job's event first, an event with no provenance next, never another job's", () => {
+    const st = (status: string) => ({ status, paymentStatus: "paid", cancelledAt: null, membershipType: null, membershipTierId: null, billingStatusAsOf: null, billingStatusSource: null });
+    const OWN = new Date("2026-09-20T00:00:00Z");
+    const OTHER = new Date("2026-09-25T00:00:00Z");
+    const LEGACY = new Date("2026-09-10T00:00:00Z");
+    const move = (memberId: string) => ({ memberId, before: st("active"), after: st("cancelled") });
+    const ev = (memberId: string, occurredAt: Date, sourceJobId: string | null, sourceAction: string | null) =>
+      ({ memberId, fromStatus: "active", toStatus: "cancelled", occurredAt, sourceJobId, sourceAction });
+    // Newest first, as the route reads them.
+    const map = forwardEventDates(
+      [move("a"), move("b"), move("c")],
+      [
+        ev("a", OTHER, "job_other", "import_refresh"),
+        ev("a", OWN, "job_mine", "import_refresh"),
+        ev("b", OTHER, "job_other", "import_refresh"),
+        ev("b", LEGACY, null, null),
+        ev("c", OTHER, "job_other", "import_refresh"),
+      ],
+      "job_mine",
+    );
+    expect(map.get("a")).toEqual(OWN);
+    expect(map.get("b")).toEqual(LEGACY);
+    expect(map.has("c")).toBe(false);
+    // Without a job id the old rule stands: the newest matching move.
+    expect(forwardEventDates([move("a")], [ev("a", OTHER, "job_other", "import_refresh"), ev("a", OWN, "job_mine", "import_refresh")]).get("a")).toEqual(OTHER);
   });
 });

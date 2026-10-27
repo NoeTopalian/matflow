@@ -44,7 +44,7 @@ export const EXCEPTION_WORDS: Record<ExceptionKind, { title: string; action: str
   shared_email_adult: { title: "Second adult on a shared email", action: "Give them their own address on their profile before inviting them." },
   missing_email_active: { title: "Active member with no email", action: "Add an address on their profile; until then they cannot be invited." },
   cancelled_without_date: { title: "Cancelled at TeamUp, no cancellation date", action: "Nothing is invented; add the date on the profile if you know it." },
-  plan_without_tier: { title: "Plan label with no MatFlow tier", action: "Create the tier with this exact name, then run a status refresh to link it." },
+  plan_without_tier: { title: "Plan label with no MatFlow tier", action: "Create the tier with this exact name, then set it on each member's page." },
   refused_row: { title: "Row not imported", action: "Fix the row at TeamUp or in MatFlow and re-import." },
 };
 

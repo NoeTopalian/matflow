@@ -25,7 +25,7 @@ vi.mock("@/auth", () => ({
 
 const mockPrisma = {
   class: { findMany: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
-  classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn() },
+  classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
   classSubscription: { findMany: vi.fn(), deleteMany: vi.fn() },
   classSchedule: { findMany: vi.fn(), updateMany: vi.fn(), createMany: vi.fn() },
   classInstance: { findMany: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
@@ -34,6 +34,13 @@ const mockPrisma = {
   rankSystem: { findFirst: vi.fn(), findMany: vi.fn() },
   user: { findMany: vi.fn() },
   member: { findMany: vi.fn() },
+  // T6a: the PATCH write transaction opens with a Class row lock; the page reads tiers.
+  // The squad rewrite's Member KEY SHARE read returns the members still there (all of them here).
+  $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    strings.join("?").includes("FOR KEY SHARE") ? (values[0] as string[]).map((id) => ({ id })) : [{ id: "c1" }],
+  ),
+  classMembershipTier: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn(), createMany: vi.fn() },
+  membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({
@@ -89,7 +96,9 @@ describe("Task 3d — read end: the timetable page loads each class's roster", (
   });
 
   it("maps rosterMembers onto ClassRow.roster, which is what drives useRoster", async () => {
-    mockPrisma.class.findMany.mockResolvedValue([
+    // Once: the live timetable read. The page's second read (T6b, the paused
+    // and archived section) falls back to the empty default.
+    mockPrisma.class.findMany.mockResolvedValueOnce([
       {
         id: "c1",
         name: "Comp Team",

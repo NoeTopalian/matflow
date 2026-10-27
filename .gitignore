@@ -44,10 +44,14 @@ next-env.d.ts
 /app/generated/prisma
 .worktrees/
 
-# tool-internal / local-only — never commit (except the shared project skills)
+# tool-internal / local-only — never commit (except the shared project skills, hooks and project settings)
 .claude/*
 !.claude/skills/
-.claude/skills/matflow-verify-browser/scripts/journeys/
+!.claude/hooks/
+!.claude/settings.json
+# Journeys are tracked (chore/verify-harness, 24 Oct 2026); tool state beside them never is. Outputs, fixture state,
+# the lock and the ledger live under %LOCALAPPDATA%/matflow-verify, outside the repository.
+.claude/skills/**/.omc/
 .playwright-mcp/
 .venv/
 playwright-report/

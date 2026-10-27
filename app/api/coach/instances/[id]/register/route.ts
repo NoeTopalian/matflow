@@ -2,6 +2,8 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { medicalNotesText } from "@/lib/medical-notes";
 import { NextResponse } from "next/server";
 import { requireApiStaff } from "@/lib/api-authz";
+import { classTierCovers } from "@/lib/class-tier-gate";
+import { MEMBER_DOORS_ONLY, accessRefusalSentence, accessRefusals, highestRankOrder } from "@/lib/booking-eligibility";
 
 function latest(a: Date | null, b: Date | null): Date | null {
   if (!a) return b;
@@ -28,7 +30,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       },
       include: {
         class: {
-          select: { id: true, name: true, location: true, coachName: true, maxCapacity: true, color: true, isKids: true },
+          select: {
+            id: true, name: true, location: true, coachName: true, maxCapacity: true, color: true, isKids: true,
+            // T6a: the memberships that include the class, for the desk ask.
+            allowedTiers: { select: { tier: { select: { id: true, name: true } } } },
+            _count: { select: { rosterMembers: true } },
+            // D2: the rank gate, so a booked member the door now turns away is flagged.
+            requiredRank: { select: { order: true } },
+            maxRank: { select: { order: true } },
+          },
         },
       },
     });
@@ -41,16 +51,21 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             select: {
               id: true, name: true, email: true, status: true, accountType: true,
               membershipType: true,
+              membershipTierId: true,
+              membershipTier: { select: { name: true } },
+              // T6d: whether this member is on the class's roster (squad class).
+              classRosters: { where: { tenantId, classId: instance.class.id }, select: { id: true }, take: 1 },
               waiverAccepted: true, waiverAcceptedAt: true,
               ...(showMedical ? { medicalConditions: true } : {}),
               paymentStatus: true,
               holdUntil: true,
               billedBy: true,
               billingStatusAsOf: true,
+              // All of them, latest first: the chip shows the latest; D2's
+              // booked-but-ineligible flag reads the highest order (the door's rule).
               memberRanks: {
                 orderBy: { achievedAt: "desc" },
-                take: 1,
-                include: { rankSystem: { select: { name: true, color: true, discipline: true } } },
+                include: { rankSystem: { select: { name: true, color: true, discipline: true, order: true } } },
               },
             },
           },
@@ -83,6 +98,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           select: {
             id: true, name: true, email: true, status: true, accountType: true,
             membershipType: true,
+            membershipTierId: true,
+            membershipTier: { select: { name: true } },
+            classRosters: { where: { tenantId, classId: instance.class.id }, select: { id: true }, take: 1 },
             waiverAccepted: true, waiverAcceptedAt: true,
             ...(showMedical ? { medicalConditions: true } : {}),
             paymentStatus: true,
@@ -91,8 +109,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             billingStatusAsOf: true,
             memberRanks: {
               orderBy: { achievedAt: "desc" },
-              take: 1,
-              include: { rankSystem: { select: { name: true, color: true, discipline: true } } },
+              include: { rankSystem: { select: { name: true, color: true, discipline: true, order: true } } },
             },
           },
         })
@@ -134,6 +151,44 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const redeemedAttendanceIds = new Set(redemptions.map((r) => r.attendanceRecordId));
   const attendedById = new Map(attendances.map((a) => [a.memberId, a]));
   const lastVisitById = new Map(lastVisits.map((lv) => [lv.memberId, lv._max.checkInTime]));
+  const allowedTiers = instance.class.allowedTiers.map((t) => t.tier);
+  const allowedTierIds = allowedTiers.map((t) => t.id);
+  const hasRoster = instance.class._count.rosterMembers > 0;
+  const cls = instance.class as typeof instance.class & {
+    requiredRank?: { order: number } | null;
+    maxRank?: { order: number } | null;
+  };
+  const bookedIneligibleOf = (member: {
+    id: string;
+    membershipTierId: string | null;
+    membershipTier?: { name: string } | null;
+    classRosters?: { id: string }[];
+    memberRanks?: Array<{ rankSystem: { order?: number } }>;
+  }) => {
+    const reasons = accessRefusals(
+      {
+        // Only this member's place on the list matters: a list without them is one other entry.
+        rosterMemberIds: !hasRoster ? [] : member.classRosters?.length ? [member.id] : ["(someone else)"],
+        allowedTierIds,
+        requiredRankOrder: cls.requiredRank?.order ?? null,
+        maxRankOrder: cls.maxRank?.order ?? null,
+      },
+      {
+        memberId: member.id,
+        membershipTierId: member.membershipTierId,
+        tierName: member.membershipTier?.name ?? null,
+        rankOrder: highestRankOrder(
+          (member.memberRanks ?? []).flatMap((r) => (typeof r.rankSystem.order === "number" ? [{ order: r.rankSystem.order }] : [])),
+        ),
+      },
+    );
+    if (reasons.length === 0) return null;
+    return {
+      reasons,
+      sentence: accessRefusalSentence(reasons[0], cls.name, member.membershipTier?.name ?? null),
+      staffDoorsAdmit: reasons.every((r) => MEMBER_DOORS_ONLY[r]),
+    };
+  };
 
   return NextResponse.json({
     instance: {
@@ -146,6 +201,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       maxCapacity: instance.class.maxCapacity,
       // The register asks before marking an adult into a kids class.
       isKids: instance.class.isKids,
+      // T6a: [] = everyone. Shown so the desk knows who the class is for.
+      allowedTiers,
+      // T6d: a squad / comp class (it has a roster). The register shows
+      // "Squad only"; a member must be on the roster AND, when memberships
+      // are ticked, on one of them (20 Oct 2026).
+      rosterOnly: hasRoster,
       date: instance.date.toISOString(),
       startTime: instance.startTime,
       endTime: instance.endTime,
@@ -161,6 +222,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         status: b.member.status,
         accountType: b.member.accountType,
         membershipType: b.member.membershipType,
+        // T6a: the plan, and whether the class's memberships include it.
+        // true = a mark for this member WILL BE REFUSED, rostered class or not.
+        membershipTierId: b.member.membershipTierId,
+        membershipTierName: b.member.membershipTier?.name ?? null,
+        tierNotIncluded: !classTierCovers({ allowedTierIds, memberTierId: b.member.membershipTierId }),
+        // T6d: at a squad class, a member who is not on the roster. true = a
+        // mark WILL BE REFUSED; the remedy is editing the squad list.
+        notOnRoster: hasRoster && !b.member.classRosters?.length,
         waiverAccepted: b.member.waiverAccepted,
         walkIn: b.walkIn,
         rank: rank ? {
@@ -184,6 +253,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         // TeamUp standing is. Informational only — it never refuses a check-in.
         billedBy: b.member.billedBy,
         billingStatusAsOf: b.member.billingStatusAsOf?.toISOString() ?? null,
+        // D2: BOOKED, but the class's rules now turn them away (the booking
+        // was kept). The door's reasons and the member's own sentence; rank is
+        // refused at the member app and kiosk only (staff can mark).
+        bookedIneligible: b.walkIn ? null : bookedIneligibleOf(b.member),
       };
     }),
     waitlist: waitlist.map((w) => ({

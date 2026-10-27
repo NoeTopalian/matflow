@@ -16,6 +16,7 @@
  */
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { recordStatusEvent } from "@/lib/member-status";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -131,6 +132,19 @@ export async function POST(req: Request) {
           dateOfBirth: true,
           accountType: true,
         },
+      });
+      // T8a: the child's first status event (none -> active), through the
+      // single writer and in this transaction, so the child and its history
+      // commit together. Reason self_signup (Q6 A-12): a guardian adding their
+      // own child is a sign-up from the portal, not a staff edit — and with no
+      // trialRunById the child never enters a coach's conversion row.
+      await recordStatusEvent(tx, {
+        tenantId,
+        memberId: kid.id,
+        fromStatus: null,
+        toStatus: "active",
+        reason: "self_signup",
+        changedById: null,
       });
       return { kind: "ok", kid } as const;
     });

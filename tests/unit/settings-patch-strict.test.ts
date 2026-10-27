@@ -29,7 +29,7 @@ vi.mock("next/server", () => ({
   },
 }));
 
-const { update } = vi.hoisted(() => ({ update: vi.fn() }));
+const { update, revalidateTagMock } = vi.hoisted(() => ({ update: vi.fn(), revalidateTagMock: vi.fn() }));
 
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
@@ -58,7 +58,7 @@ vi.mock("@/lib/api-authz", () => ({
 
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: async () => {} }));
-vi.mock("next/cache", () => ({ revalidateTag: () => {} }));
+vi.mock("next/cache", () => ({ revalidateTag: revalidateTagMock }));
 
 import { PATCH } from "@/app/api/settings/route";
 
@@ -131,5 +131,25 @@ describe("PATCH /api/settings refuses what it cannot save", () => {
     const res = await patchWith(everyKey);
     expect(res.status).toBe(200);
     expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  // T2c: the branding-cache bust used to sit in an empty catch. A throw must
+  // not fail the save, and must leave one warning with the tenant and no
+  // personal data.
+  it("a branding save still succeeds when revalidateTag throws, and one structured warning is logged", async () => {
+    revalidateTagMock.mockImplementationOnce(() => {
+      throw new Error("no request store");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const res = await patchWith({ name: "Total BJJ" });
+      expect(res.status).toBe(200);
+      expect(update).toHaveBeenCalledTimes(1);
+      const cacheWarnings = warn.mock.calls.filter((c) => c[0] === "[cache] revalidateTag failed");
+      expect(cacheWarnings).toHaveLength(1);
+      expect(cacheWarnings[0][1]).toEqual({ event: "revalidate_tag_failed", tagKind: "gym-branding", tenantId: "t-A", errorName: "Error" });
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

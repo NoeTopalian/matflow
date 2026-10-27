@@ -19,9 +19,17 @@
  * refused rather than forced.
  */
 import type { Prisma } from "@prisma/client";
-import { revalidateTag } from "next/cache";
+import { revalidateTagLogged } from "@/lib/revalidate-tag-logged";
 import { restorePackCreditsForAttendance } from "@/lib/checkin";
 import { CONFIRMED_BY } from "@/lib/guardianship";
+import { mintUpcomingSessions } from "@/lib/class-lifecycle";
+import { IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
+import { BILLING_BASIS_AVAILABLE } from "@/lib/class-allowance";
+import { recordStatusEvent } from "@/lib/member-status";
+
+/** What the owner reads when an undo would switch a plan to the billing-period basis while it ships dark. */
+export const BILLING_BASIS_UNDO_REFUSAL =
+  "This would put back counting classes per member's billing period, which is not available yet. Set the plan's allowance from the Memberships page.";
 
 export type TxLike = Prisma.TransactionClient;
 
@@ -38,11 +46,14 @@ export type AuditRowLike = {
 
 export type UndoDecision = { ok: true } | { ok: false; reason: string };
 
+/** Who is undoing: the staff user a restored status transition is attributed to (T8a). */
+export type UndoActor = { userId: string };
+
 export type UndoHandler = {
   /** Pure: can this row be reversed from what it carries? */
   decide: (row: AuditRowLike) => UndoDecision;
   /** Reverse it. Throw `UndoStale` when the entity has moved on since. */
-  apply: (tx: TxLike, row: AuditRowLike) => Promise<void>;
+  apply: (tx: TxLike, row: AuditRowLike, actor?: UndoActor) => Promise<void>;
 };
 
 export class UndoStale extends Error {
@@ -81,6 +92,14 @@ export const REASON = {
   importedRow: "This check-in is imported history. Undo the import with its own Rollback, or remove it on the register.",
   loginAddress: "A login address change can't be undone from here — change it again from the member's profile.",
   selfEdit: "The member made this change themselves — ask them to change it back from their profile.",
+  // T6b: true for every class.deleted row written before 17 Oct 2026 — the old
+  // route recorded counts but not the state the class was in — and Restore
+  // now exists, so the sentence can point at it. Conditional on purpose: the
+  // class may have been restored since, and `decide` sees only the row.
+  archivedNoSnapshot: "This class was archived before its previous state was recorded, so this can't be undone from here. If it is still archived, restore it from Paused and archived on the Timetable page.",
+  // T6b: an old pause row would otherwise put an archived class back as
+  // "active but archived" and mint sessions for it.
+  archivedSince: "This class has been archived since. Restore it from Paused and archived on the Timetable page.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -114,14 +133,23 @@ const RESTORABLE: Record<string, readonly string[]> = {
   Class: [
     "name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration",
     "maxCapacity", "isKids", "requiredRankId", "maxRankId", "color", "isActive",
+    // T6c: the class category (a key from lib/class-category.ts, or null).
+    "category",
+    // T6b: Resume / Restore clears it; undoing that puts the archive back.
+    "deletedAt",
   ],
-  MembershipTier: ["name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "isKids", "isActive", "locationId"],
+  MembershipTier: [
+    "name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "isKids", "isActive", "locationId",
+    // T7c: the class allowance set (lib/class-allowance.ts). A row recorded
+    // before T7c carries only maxClassesPerWeek and still restores that.
+    "classLimit", "classLimitBasis", "classLimitWeeks", "classLimitAnchor",
+  ],
   RankSystem: ["discipline", "name", "order", "color", "stripes"],
   Location: ["name", "address", "isDefault"],
 };
 
 /** DateTime columns: restored strings become Dates whatever the current value is. */
-const DATE_FIELDS = new Set(["dateOfBirth", "nextDueAt", "holdUntil", "joinedAt", "cancelledAt"]);
+const DATE_FIELDS = new Set(["dateOfBirth", "nextDueAt", "holdUntil", "joinedAt", "cancelledAt", "deletedAt"]);
 
 const MODEL_KEY: Record<string, keyof TxLike> = {
   Member: "member",
@@ -154,6 +182,8 @@ type SnapshotOptions = {
   guard?: (current: Record<string, unknown>, restore: Record<string, unknown>) => void;
   /** Extra data to write alongside the restore (e.g. a session bump). */
   extra?: (restore: Record<string, unknown>) => Record<string, unknown>;
+  /** Follow-up writes in the same transaction, after the restore (e.g. minting sessions). */
+  afterApply?: (tx: TxLike, row: AuditRowLike, restore: Record<string, unknown>) => Promise<void>;
 };
 
 /** What a snapshot row would restore, as field names, from metadata alone. */
@@ -179,7 +209,7 @@ function snapshotHandler(entityType: string, opts: SnapshotOptions = {}): UndoHa
       if (fields.length === 0) return { ok: false, reason: REASON.noSnapshot };
       return { ok: true };
     },
-    async apply(tx, row) {
+    async apply(tx, row, actor) {
       const m = meta(row);
       const before = asRecord(m.before);
       const after = asRecord(m.after);
@@ -223,6 +253,22 @@ function snapshotHandler(entityType: string, opts: SnapshotOptions = {}): UndoHa
         if (DATE_FIELDS.has(f) && typeof restore[f] === "string") restore[f] = new Date(restore[f] as string);
       }
       await d.update({ where: { id: row.entityId }, data: { ...restore, ...(opts.extra?.(restore) ?? {}) } });
+      // T8a: a restored member status is a status transition, so it goes
+      // through the single writer in this same transaction, attributed to the
+      // staff user doing the undo. (Cancellations are refused in `decide`, so
+      // cancelledAt never needs stamping here.) The writer no-ops when the
+      // status does not actually move.
+      if (entityType === "Member" && typeof restore.status === "string" && typeof current.status === "string" && row.tenantId) {
+        await recordStatusEvent(tx, {
+          tenantId: row.tenantId,
+          memberId: row.entityId,
+          fromStatus: current.status,
+          toStatus: restore.status,
+          reason: "staff_edit",
+          changedById: actor?.userId ?? null,
+        });
+      }
+      await opts.afterApply?.(tx, row, restore);
       opts.after?.(row);
     },
   };
@@ -300,12 +346,10 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
   },
   "tenant.settings.update": snapshotHandler("Tenant", {
     after(row) {
-      try {
-        revalidateTag(`gym-branding-${row.tenantId}`, { expire: 0 });
-      } catch {
-        // Outside a Next request store (unit tests) revalidateTag throws; the
-        // 60 s cache then expires on its own clock — same as the settings PATCH.
-      }
+      // Outside a Next request store (unit tests) revalidateTag throws; the
+      // 60 s cache then expires on its own clock — same as the settings PATCH.
+      // The failure is logged, never thrown, so the undo still succeeds.
+      if (row.tenantId) revalidateTagLogged(`gym-branding-${row.tenantId}`, row.tenantId);
     },
   }),
   "staff.update": snapshotHandler("User", {
@@ -314,11 +358,99 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
     // addresses are not restorable here — see RESTORABLE.User.)
     extra: (restore) => ("role" in restore ? { sessionVersion: { increment: 1 } } : {}),
   }),
-  "class.updated": snapshotHandler("Class"),
+  "class.updated": snapshotHandler("Class", {
+    guard(current, restore) {
+      // T6b: an imported history class never goes on the timetable, not even
+      // by undoing an old row that recorded it as active.
+      if (restore.isActive === true && current.sourceImportJobId) throw new UndoStale(IMPORTED_CLASS_REACTIVATE_REFUSAL);
+      // T6b: undoing an old pause after the class was archived would set
+      // isActive back to true while deletedAt stays set — a class that is
+      // "active" but archived. Refuse; Restore is the way back.
+      if (restore.isActive === true && current.deletedAt != null && !("deletedAt" in restore)) {
+        throw new UndoStale(REASON.archivedSince);
+      }
+    },
+    async afterApply(tx, row, restore) {
+      // Undoing a pause or an archive brings the class back on the timetable:
+      // mint the sessions no generator made while it was off. Only when the
+      // class ends up live (the guard has refused active-but-archived).
+      const endsArchived = "deletedAt" in restore && restore.deletedAt != null;
+      if (restore.isActive === true && !endsArchived && row.tenantId) {
+        await mintUpcomingSessions(tx, row.tenantId, row.entityId);
+      }
+    },
+  }),
+  // T6b: archive = isActive false + deletedAt now. The row records the state
+  // before (`before.isActive`, `before.deletedAt`) and after (`after.deletedAt`).
+  // Undo puts back exactly the prior state — a class paused before it was
+  // archived returns to paused — and refuses if the class has been restored
+  // or re-archived since.
+  "class.deleted": {
+    decide(row) {
+      const before = asRecord(meta(row).before);
+      const after = asRecord(meta(row).after);
+      if (!before || typeof before.isActive !== "boolean" || !after || typeof after.deletedAt !== "string") {
+        return { ok: false, reason: REASON.archivedNoSnapshot };
+      }
+      return { ok: true };
+    },
+    async apply(tx, row) {
+      const m = meta(row);
+      const before = asRecord(m.before) ?? {};
+      const after = asRecord(m.after) ?? {};
+      const tenantId = row.tenantId ?? "";
+      const current = await tx.class.findFirst({
+        where: { id: row.entityId, tenantId },
+        select: { isActive: true, deletedAt: true, sourceImportJobId: true },
+      });
+      if (!current) throw new UndoStale("This class no longer exists.");
+      if (current.isActive || !sameValue(current.deletedAt, after.deletedAt)) {
+        throw new UndoStale("This class has been restored or archived again since, so this archive can't be undone from here.");
+      }
+      const toActive = before.isActive === true && !current.sourceImportJobId;
+      const priorDeletedAt = typeof before.deletedAt === "string" ? new Date(before.deletedAt) : null;
+      const r = await tx.class.updateMany({
+        where: { id: row.entityId, tenantId, isActive: false, deletedAt: current.deletedAt },
+        data: { isActive: toActive, deletedAt: priorDeletedAt },
+      });
+      if (r.count === 0) throw new UndoStale();
+      if (toActive && !priorDeletedAt) await mintUpcomingSessions(tx, tenantId, row.entityId);
+    },
+  },
   "membership.tier.update": snapshotHandler("MembershipTier", {
     guard(current, restore) {
       if (current.stripePriceId && ("pricePence" in restore || "currency" in restore || "billingCycle" in restore)) {
         throw new UndoStale("This plan has a Stripe price; change the price from the Memberships page so Stripe is updated too.");
+      }
+      // T7c: the allowance is a set (limit + basis, plus weeks + start date for
+      // "weeks"; database CHECKs *_tier_class_allowance_basis). A restore that
+      // would leave the set inconsistent is refused in words rather than by the
+      // database.
+      const pick = (k: string) => (k in restore ? restore[k] : current[k]);
+      const limit = pick("classLimit");
+      const basis = pick("classLimitBasis");
+      const weeks = pick("classLimitWeeks");
+      const anchor = pick("classLimitAnchor");
+      const weeksSet = basis === "weeks";
+      const consistent =
+        (limit == null) === (basis == null) &&
+        (weeksSet ? weeks != null && anchor != null : weeks == null && anchor == null);
+      if (!consistent) {
+        throw new UndoStale("This plan's class allowance has changed since; set it again from the Memberships page.");
+      }
+      // Release gate (22 Oct 2026): the billing-period basis ships dark and
+      // both membership routes refuse to save it, so an undo must not put it
+      // back either. Refused only when this restore WRITES "billing" onto a
+      // plan that does not already count that way; every other restore (a
+      // name, a price, or any field of a plan whose stored basis is already
+      // "billing") goes through unchanged.
+      if (
+        !BILLING_BASIS_AVAILABLE &&
+        "classLimitBasis" in restore &&
+        restore.classLimitBasis === "billing" &&
+        current.classLimitBasis !== "billing"
+      ) {
+        throw new UndoStale(BILLING_BASIS_UNDO_REFUSAL);
       }
     },
   }),
@@ -554,6 +686,8 @@ const IRREVERSIBLE: [RegExp, string][] = [
   [/^member\.delete$/, REASON.deleteNoRestore],
   [/^waiver\./, REASON.record],
   [/^(report\.|drive\.|onboarding\.|class\.instances_generated|member\.invite_link|member\.waiver_link|member\.waiver\.)/, REASON.record],
+  // D2: the record of bookings an access change kept; undo the change itself instead.
+  [/^class\.bookings\.kept_ineligible$/, REASON.record],
 ];
 
 export function decideUndo(row: AuditRowLike, alreadyUndone: boolean): UndoDecision {
@@ -564,8 +698,8 @@ export function decideUndo(row: AuditRowLike, alreadyUndone: boolean): UndoDecis
   return { ok: false, reason: REASON.noSnapshot };
 }
 
-export async function applyUndo(tx: TxLike, row: AuditRowLike): Promise<void> {
+export async function applyUndo(tx: TxLike, row: AuditRowLike, actor?: UndoActor): Promise<void> {
   const handler = UNDO_HANDLERS[row.action];
   if (!handler) throw new Error(`No undo handler for ${row.action}`);
-  await handler.apply(tx, row);
+  await handler.apply(tx, row, actor);
 }

@@ -1,5 +1,6 @@
 import { requireRole } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { ACTIVE_MEMBER } from "@/lib/member-population";
 import MembershipsManager from "@/components/dashboard/MembershipsManager";
 
 export type MembershipTierRow = {
@@ -10,6 +11,13 @@ export type MembershipTierRow = {
   currency: string;
   billingCycle: string;
   maxClassesPerWeek: number | null;
+  /** T7c: "N classes" per explicit period; read through tierAllowance() in
+   *  lib/class-allowance.ts, never directly (the reader rule lives there).
+   *  The anchor travels as "YYYY-MM-DD". */
+  classLimit: number | null;
+  classLimitBasis: string | null;
+  classLimitWeeks: number | null;
+  classLimitAnchor: string | null;
   isKids: boolean;
   isActive: boolean;
   createdAt: string;
@@ -33,11 +41,12 @@ export default async function MembershipsPage() {
     tx.membershipTier.findMany({
       // Club-life C4.05: an inactive tier that still has active members stays
       // listed (flagged inactive) so the people on it are never invisible.
-      where: { tenantId: session.user.tenantId, OR: [{ isActive: true }, { members: { some: { status: "active" } } }] },
+      where: { tenantId: session.user.tenantId, OR: [{ isActive: true }, { members: { some: { ...ACTIVE_MEMBER } } }] },
       orderBy: { createdAt: "asc" },
       // Active-member count per tier, the number the previous platform's
       // catalogue shows beside every plan and the one reconciliation reads.
-      include: { _count: { select: { members: { where: { status: "active" } } } }, locationRef: { select: { name: true } } },
+      // Active training members (T1): the Reports "Active members" population.
+      include: { _count: { select: { members: { where: { ...ACTIVE_MEMBER } } } }, locationRef: { select: { name: true } } },
     }),
   );
 
@@ -49,6 +58,10 @@ export default async function MembershipsPage() {
     currency: t.currency,
     billingCycle: t.billingCycle,
     maxClassesPerWeek: t.maxClassesPerWeek,
+    classLimit: t.classLimit,
+    classLimitBasis: t.classLimitBasis,
+    classLimitWeeks: t.classLimitWeeks,
+    classLimitAnchor: t.classLimitAnchor ? t.classLimitAnchor.toISOString().slice(0, 10) : null,
     isKids: t.isKids,
     isActive: t.isActive,
     createdAt: t.createdAt.toISOString(),
@@ -59,10 +72,17 @@ export default async function MembershipsPage() {
     locationName: t.locationRef?.name ?? null,
   }));
 
+  // The club's zone: the editor's "current period" and "next reset" dates are
+  // the club's calendar, not the browser's (review gap 5, 21 Oct 2026).
+  const tenant = await withTenantContext(session.user.tenantId, (tx) =>
+    tx.tenant.findUnique({ where: { id: session.user.tenantId }, select: { timezone: true } }),
+  );
+
   return (
     <MembershipsManager
       initialTiers={tiers}
       primaryColor={session.user.primaryColor}
+      timeZone={tenant?.timezone ?? null}
     />
   );
 }

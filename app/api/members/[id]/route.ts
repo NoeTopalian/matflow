@@ -80,6 +80,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           lastAnnouncementSeenAt: true,
           parentMemberId: true,
           hasKidsHint: true,
+          // Tells "No payment yet" from overdue (lib/overdue shownPaymentStatus, review L2).
+          membershipTierId: true,
           // totpEnabled (boolean) is fine; totpSecret + totpRecoveryCodes
           // (the actual 2FA seed material) are NOT.
           totpEnabled: true,

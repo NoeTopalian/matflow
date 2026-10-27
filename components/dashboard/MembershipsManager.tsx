@@ -17,10 +17,31 @@ import { Switch } from "@/components/ui/switch";
 import type { MembershipTierRow } from "@/app/dashboard/memberships/page";
 import { describeApiError } from "@/lib/api-field-errors";
 import { BILLING_CYCLES, cycleLabel, isBillingCycle, type BillingCycle } from "@/lib/billing-cycle";
+import {
+  BILLING_BASIS_AVAILABLE,
+  BILLING_BASIS_UNAVAILABLE_MESSAGE,
+  BILLING_ON_NONE_MESSAGE,
+  OFFERED_ALLOWANCE_BASES,
+  CLASS_LIMIT_MAX,
+  CLASS_LIMIT_MIN,
+  CLASS_LIMIT_WEEK_OPTIONS,
+  allowanceSummary,
+  classLimitSortValue,
+  classLimitText,
+  dateMinute,
+  minuteToLocal,
+  nowMinute,
+  periodContaining,
+  tierAllowance,
+  type AllowanceBasis,
+  type ClassAllowance,
+} from "@/lib/class-allowance";
 
 interface Props {
   initialTiers: MembershipTierRow[];
   primaryColor: string;
+  /** The club's IANA zone (Tenant.timezone): the editor's dates are the club's calendar. Null falls back to the browser's zone. */
+  timeZone?: string | null;
 }
 
 function formatPrice(pricePence: number, currency: string) {
@@ -47,19 +68,111 @@ export function tierCycleText(t: { pricePence: number; billingCycle: string; des
 }
 
 /**
- * "Max classes/week" as typed (B1-a, 15 Oct 2026). Blank — including
- * whitespace only — means Unlimited; otherwise a whole number 1–30, the range
- * both membership routes accept. Anything else is refused here, before a
- * request, so a bad value can never be sent or quietly read as blank.
+ * "Classes allowed" as typed (B1-a, 15 Oct 2026; widened by T7c to the
+ * allowance's 1–60). Blank — including whitespace only — means Unlimited;
+ * otherwise a whole number in the range both membership routes accept.
+ * Anything else is refused here, before a request, so a bad value can never be
+ * sent or quietly read as blank.
  */
 export type ClassLimitInput = { kind: "blank" } | { kind: "value"; value: number } | { kind: "invalid" };
-export const CLASS_LIMIT_ERROR = "Max classes per week must be a whole number from 1 to 30, or left blank for Unlimited.";
+export const CLASS_LIMIT_ERROR = `Classes allowed must be a whole number from ${CLASS_LIMIT_MIN} to ${CLASS_LIMIT_MAX}, or left blank for Unlimited.`;
 export function parseClassLimit(raw: string): ClassLimitInput {
   const s = raw.trim();
   if (s === "") return { kind: "blank" };
   if (!/^[0-9]{1,2}$/.test(s)) return { kind: "invalid" };
   const n = Number(s);
-  return n >= 1 && n <= 30 ? { kind: "value", value: n } : { kind: "invalid" };
+  return n >= CLASS_LIMIT_MIN && n <= CLASS_LIMIT_MAX ? { kind: "value", value: n } : { kind: "invalid" };
+}
+
+const sameAllowance = (a: ClassAllowance | null, b: ClassAllowance | null) =>
+  a === b ||
+  (a !== null &&
+    b !== null &&
+    a.limit === b.limit &&
+    a.basis === b.basis &&
+    (a.basis !== "weeks" || b.basis !== "weeks" || (a.weeks === b.weeks && a.anchor === b.anchor)));
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** The zone the editor's dates are read in: the club's when the page passes it, else the browser's. */
+export function editorZone(timeZone?: string | null): string {
+  return timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+/** Today, and the Monday of this week, on the club's calendar (review gap 5, 21 Oct 2026). */
+export function todayIso(now = new Date(), timeZone?: string | null): string {
+  return minuteToLocal(nowMinute(now, editorZone(timeZone))).date;
+}
+export function mondayOf(iso: string): string {
+  return minuteToLocal(periodContaining({ limit: 1, basis: "week" }, dateMinute(iso)).start).date;
+}
+
+export const BASIS_LABELS: Record<AllowanceBasis, string> = {
+  week: "Each week (Monday to Sunday)",
+  month: "Each calendar month",
+  weeks: "Every N weeks from a start date",
+  billing: "Each member's own billing period (from their renewal date)",
+};
+
+export const PERIOD_START_ERROR = "Every N weeks needs the date the periods count from (a real calendar date).";
+
+/**
+ * The allowance the form describes: null for Unlimited, or the reason it
+ * cannot be saved. Every value is checked here, before a request, so a bad
+ * value is never sent and never quietly read as blank.
+ */
+export type FormAllowance = { kind: "ok"; allowance: ClassAllowance | null } | { kind: "error"; message: string };
+export function formAllowance(form: { classLimit: string; classLimitBasis: string; classLimitWeeks: string; classLimitAnchor: string; billingCycle?: string }): FormAllowance {
+  const limit = parseClassLimit(form.classLimit);
+  if (limit.kind === "invalid") return { kind: "error", message: CLASS_LIMIT_ERROR };
+  if (limit.kind === "blank") return { kind: "ok", allowance: null };
+  const basis = form.classLimitBasis as AllowanceBasis;
+  // The billing-period basis ships dark until live Stripe delivery is verified (release gate, 22 Oct 2026).
+  if (basis === "billing" && !BILLING_BASIS_AVAILABLE) return { kind: "error", message: BILLING_BASIS_UNAVAILABLE_MESSAGE };
+  // A plan billed once has no billing period to count in (review round 3, L-5).
+  if (basis === "billing" && form.billingCycle === "none") return { kind: "error", message: BILLING_ON_NONE_MESSAGE };
+  if (basis === "week" || basis === "month" || basis === "billing") return { kind: "ok", allowance: { limit: limit.value, basis } };
+  const weeks = Number(form.classLimitWeeks);
+  const anchor = form.classLimitAnchor.trim();
+  if (!(CLASS_LIMIT_WEEK_OPTIONS as readonly number[]).includes(weeks)) return { kind: "error", message: "Every N weeks must be a whole number from 2 to 8." };
+  // A regex-valid but impossible date ("2026-13-01") makes an Invalid Date,
+  // whose toISOString throws — and this runs during render.
+  const anchorDate = new Date(`${anchor}T00:00:00Z`);
+  if (!ISO_DATE.test(anchor) || Number.isNaN(anchorDate.getTime()) || anchorDate.toISOString().slice(0, 10) !== anchor) {
+    return { kind: "error", message: PERIOD_START_ERROR };
+  }
+  return { kind: "ok", allowance: { limit: limit.value, basis: "weeks", weeks, anchor } };
+}
+
+/** What enforcement means, under the allowance fields (owner wording, 27 Oct 2026). */
+export const ALLOWANCE_ENFORCEMENT_NOTE =
+  "Attending a class uses one; signing up to a class does not. It is enforced as soon as you save: every check-in (member app, kiosk, desk, card scanner and the coach's register) refuses once it is used up. " +
+  "Signing up to a class still goes through, with a note. " +
+  "A member with a class pack can still check in once the allowance is used up: a pack credit is used automatically. " +
+  "A lower allowance applies from the next check-in; nothing already recorded changes.";
+
+/**
+ * The editor's note under the allowance fields: the plain summary with the
+ * actual dates (allowanceSummary), then what enforcement means.
+ */
+export function allowanceNote(fa: FormAllowance, now = new Date(), timeZone?: string | null): { summary: string; period: string | null; enforcement: string } {
+  if (fa.kind === "error") return { summary: fa.message, period: null, enforcement: "" };
+  const s = allowanceSummary(fa.allowance, nowMinute(now, editorZone(timeZone)));
+  if (!fa.allowance) return { summary: s.sentence, period: null, enforcement: "" };
+  return {
+    summary: s.sentence,
+    period: s.period,
+    // Owner wording, 27 Oct 2026: no door admits past a used-up allowance.
+    enforcement: ALLOWANCE_ENFORCEMENT_NOTE,
+  };
+}
+
+/**
+ * A plan's description as typed (T7a-2, 17 Oct 2026): trimmed, and blank —
+ * including whitespace only — means "no description" (null).
+ */
+export function normaliseDescription(raw: string): string | null {
+  const s = raw.trim();
+  return s === "" ? null : s;
 }
 
 /** Chip surfaces derived from tokens, so they stay legible on the light shell. */
@@ -80,7 +193,11 @@ const emptyForm = {
   pricePence: "",
   currency: "GBP",
   billingCycle: "monthly" as BillingCycle,
-  maxClassesPerWeek: "",
+  // T7c: "Classes allowed" (blank = Unlimited) on an explicit reset basis.
+  classLimit: "",
+  classLimitBasis: "week" as AllowanceBasis,
+  classLimitWeeks: "4",
+  classLimitAnchor: "",
   isKids: false,
   // Stripe linkage. Owners paste the price_… and prod_… ids from their
   // Stripe dashboard so F2/F3 (member self-subscribe + parent-pays-for-
@@ -95,16 +212,19 @@ const emptyForm = {
 
 type FormState = typeof emptyForm;
 
-export default function MembershipsManager({ initialTiers, primaryColor }: Props) {
+export default function MembershipsManager({ initialTiers, primaryColor, timeZone = null }: Props) {
   const { toast } = useToast();
   const [tiers, setTiers] = useState<MembershipTierRow[]>(initialTiers);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
-  // The class limit this edit form was opened with (null = Unlimited). A save
-  // sends the limit only when the owner changed it from this value, so an
-  // unrelated edit cannot overwrite a limit another session has since set.
-  const [loadedLimit, setLoadedLimit] = useState<number | null>(null);
+  // The class allowance this edit form was opened with (null = Unlimited). A
+  // save sends the allowance only when the owner changed it from this value,
+  // so an unrelated edit cannot overwrite one another session has since set.
+  const [loadedAllowance, setLoadedAllowance] = useState<ClassAllowance | null>(null);
+  // T7a-2: the description this edit form was opened with, normalised the same
+  // way a save normalises it (trimmed; blank = null). Same rule as the limit.
+  const [loadedDescription, setLoadedDescription] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // ADR-001 D2 slice 2: the venue picker appears only once the club has more
   // than one venue; a failed read is said, not shown as "one venue".
@@ -134,20 +254,25 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
 
   function openAdd() {
     setEditingId(null);
-    setForm(emptyForm);
+    setForm({ ...emptyForm, classLimitAnchor: mondayOf(todayIso(new Date(), timeZone)) });
     setShowModal(true);
   }
 
   function openEdit(tier: MembershipTierRow) {
     setEditingId(tier.id);
-    setLoadedLimit(tier.maxClassesPerWeek ?? null);
+    const allowance = tierAllowance(tier);
+    setLoadedAllowance(allowance);
+    setLoadedDescription(normaliseDescription(tier.description ?? ""));
     setForm({
       name: tier.name,
       description: tier.description ?? "",
       pricePence: String(tier.pricePence / 100),
       currency: tier.currency,
       billingCycle: isBillingCycle(tier.billingCycle) ? tier.billingCycle : "monthly",
-      maxClassesPerWeek: tier.maxClassesPerWeek != null ? String(tier.maxClassesPerWeek) : "",
+      classLimit: allowance ? String(allowance.limit) : "",
+      classLimitBasis: allowance?.basis ?? "week",
+      classLimitWeeks: String(allowance?.basis === "weeks" ? allowance.weeks : 4),
+      classLimitAnchor: allowance?.basis === "weeks" ? allowance.anchor : mondayOf(todayIso(new Date(), timeZone)),
       isKids: tier.isKids,
       stripePriceId: tier.stripePriceId ?? "",
       stripeProductId: tier.stripeProductId ?? "",
@@ -166,33 +291,47 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
       toast("Invalid price", "error");
       return;
     }
-    const limit = parseClassLimit(form.maxClassesPerWeek);
-    if (limit.kind === "invalid") {
-      toast(CLASS_LIMIT_ERROR, "error");
+    const fa = formAllowance(form);
+    if (fa.kind === "error") {
+      toast(fa.message, "error");
       return;
     }
-    const nextLimit = limit.kind === "value" ? limit.value : null;
-    // Edit: send the limit only when its normalised value differs from the
-    // one this form loaded — a number, or an explicit null to clear it (an
-    // `undefined` key is dropped by JSON, which is how a clear used to be
-    // lost). Unchanged, or changed and put back, the key is left out so the
-    // server keeps whatever it holds now. This is not general conflict
-    // protection: two people deliberately editing the limit still overwrite
-    // each other. Create: blank omits the key; the create route stores null
-    // when it is absent and does not accept null itself.
-    const maxClassesPerWeek = editingId
-      ? (nextLimit === loadedLimit ? undefined : nextLimit)
-      : (nextLimit ?? undefined);
+    const next = fa.allowance;
+    // Edit: send the allowance only when it differs from the one this form
+    // loaded — the whole set, or explicit nulls to clear it (an `undefined`
+    // key is dropped by JSON, which is how a clear used to be lost).
+    // Unchanged, or changed and put back, the keys are left out so the server
+    // keeps whatever it holds now. This is not general conflict protection:
+    // two people deliberately editing the allowance still overwrite each
+    // other. Create: blank omits the keys (Unlimited).
+    const send = editingId ? !sameAllowance(next, loadedAllowance) : next !== null;
+    const allowanceBody = send
+      ? {
+          classLimit: next?.limit ?? null,
+          classLimitBasis: next?.basis ?? null,
+          classLimitWeeks: next?.basis === "weeks" ? next.weeks : null,
+          classLimitAnchor: next?.basis === "weeks" ? next.anchor : null,
+        }
+      : {};
+    // T7a-2: the description follows the same rule. Edit: a cleared field is
+    // sent as an explicit null (it used to be `undefined`, which JSON drops,
+    // so the old text survived a "successful" save); unchanged, the key is
+    // left out. Create: blank omits the key, since the create route takes no
+    // null and stores null when the key is absent.
+    const nextDescription = normaliseDescription(form.description);
+    const description = editingId
+      ? (nextDescription === loadedDescription ? undefined : nextDescription)
+      : (nextDescription ?? undefined);
 
     setSaving(true);
     try {
       const body = {
         name: form.name.trim(),
-        description: form.description.trim() || undefined,
+        description,
         pricePence,
         currency: form.currency,
         billingCycle: form.billingCycle,
-        maxClassesPerWeek,
+        ...allowanceBody,
         isKids: form.isKids,
         stripePriceId: form.stripePriceId.trim() || null,
         stripeProductId: form.stripeProductId.trim() || null,
@@ -337,16 +476,16 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
     },
     {
       key: "classLimit",
-      header: "Class limit",
-      width: "7rem",
+      header: "Classes allowed",
+      width: "9rem",
       align: "right",
-      // Null means "Unlimited", which is the LARGEST class limit, not a blank.
-      // Left raw it sorts as an empty value and sinks to the bottom in both
-      // directions, which reads as the smallest.
-      sortValue: (t) => t.maxClassesPerWeek ?? Number.MAX_SAFE_INTEGER,
+      // Unlimited is the LARGEST allowance, not a blank: left raw it sorts as
+      // an empty value and sinks to the bottom in both directions. Allowances
+      // over different spans sort by their average per week.
+      sortValue: (t) => classLimitSortValue(tierAllowance(t)),
       cell: (t) => (
-        <span className="whitespace-nowrap text-tx-2">
-          {t.maxClassesPerWeek != null ? `${t.maxClassesPerWeek}/wk` : "Unlimited"}
+        <span className="whitespace-nowrap text-tx-2" data-testid="tier-class-limit">
+          {classLimitText(tierAllowance(t))}
         </span>
       ),
     },
@@ -452,8 +591,12 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
                 )}
                 <p className="truncate text-xs text-tx-4">
                   {tierPriceText(t)} · {tierCycleText(t)}
-                  {t.maxClassesPerWeek != null && ` · max ${t.maxClassesPerWeek}/wk`}
                   {` · ${t.activeMembers} active ${t.activeMembers === 1 ? "member" : "members"}`}
+                </p>
+                {/* T7c: the allowance on its own line, so a phone card never
+                    truncates it away; Unlimited is shown too, as in the table. */}
+                <p className="text-xs text-tx-3" data-testid="tier-card-allowance">
+                  Classes: {classLimitText(tierAllowance(t))}
                 </p>
                 {t.isKids && (
                   <span className="mt-1 inline-flex">
@@ -578,21 +721,87 @@ export default function MembershipsManager({ initialTiers, primaryColor }: Props
             </select>
           </div>
 
-          <div>
-            <label htmlFor="tier-max-classes" className="mb-1 block text-xs text-tx-2">Max classes/week</label>
-            {/* Text, not type="number": a number field reports an unparseable
-                entry as "", which would save as Unlimited. parseClassLimit
-                decides instead, and refuses what it cannot read. */}
-            <input
-              id="tier-max-classes"
-              type="text"
-              inputMode="numeric"
-              autoComplete="off"
-              value={form.maxClassesPerWeek}
-              onChange={(e) => setForm((f) => ({ ...f, maxClassesPerWeek: e.target.value }))}
-              className="w-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors placeholder:text-tx-3 focus:border-bd-active"
-              placeholder="Unlimited"
-            />
+          {/* T7c (Sean note 5): "N classes" on an explicit reset basis — never
+              a rolling window. The summary below states the period dates
+              before anything is saved. Billing frequency is a separate field. */}
+          <div className="sm:col-span-2" role="group" aria-labelledby="tier-allowance-label">
+            <p id="tier-allowance-label" className="mb-1 text-xs text-tx-2">Class allowance</p>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="w-32">
+                <label htmlFor="tier-class-limit" className="mb-1 block text-[11px] text-tx-3">Classes allowed</label>
+                {/* Text, not type="number": a number field reports an
+                    unparseable entry as "", which would save as Unlimited.
+                    parseClassLimit decides instead, and refuses what it
+                    cannot read. */}
+                <input
+                  id="tier-class-limit"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={form.classLimit}
+                  onChange={(e) => setForm((f) => ({ ...f, classLimit: e.target.value }))}
+                  className="w-full rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors placeholder:text-tx-3 focus:border-bd-active"
+                  placeholder="Unlimited"
+                />
+              </div>
+              <div>
+                <label htmlFor="tier-class-limit-basis" className="mb-1 block text-[11px] text-tx-3">resets</label>
+                {/* Disabled while "Classes allowed" is blank: a basis on its
+                    own saves as Unlimited, so it must not look chosen. */}
+                <Select
+                  id="tier-class-limit-basis"
+                  aria-label="resets"
+                  value={form.classLimitBasis}
+                  onChange={(e) => setForm((f) => ({ ...f, classLimitBasis: e.target.value as AllowanceBasis }))}
+                  disabled={form.classLimit.trim() === ""}
+                  title={form.classLimit.trim() === "" ? "Enter how many classes first; blank is Unlimited." : undefined}
+                  className="w-64"
+                >
+                  {OFFERED_ALLOWANCE_BASES.map((b) => (
+                    // A once-off plan has no billing period to count in. (The billing basis itself is offered only once BILLING_BASIS_AVAILABLE.)
+                    <option key={b} value={b} disabled={b === "billing" && form.billingCycle === "none"}>{BASIS_LABELS[b]}</option>
+                  ))}
+                </Select>
+              </div>
+              {form.classLimitBasis === "weeks" && form.classLimit.trim() !== "" && (
+                <>
+                  <div>
+                    <label htmlFor="tier-class-limit-weeks" className="mb-1 block text-[11px] text-tx-3">every</label>
+                    <Select
+                      id="tier-class-limit-weeks"
+                      aria-label="every (weeks)"
+                      value={form.classLimitWeeks}
+                      onChange={(e) => setForm((f) => ({ ...f, classLimitWeeks: e.target.value }))}
+                      className="w-28"
+                    >
+                      {CLASS_LIMIT_WEEK_OPTIONS.map((w) => (
+                        <option key={w} value={String(w)}>{w} weeks</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <label htmlFor="tier-class-limit-anchor" className="mb-1 block text-[11px] text-tx-3">periods count from</label>
+                    <input
+                      id="tier-class-limit-anchor"
+                      type="date"
+                      value={form.classLimitAnchor}
+                      onChange={(e) => setForm((f) => ({ ...f, classLimitAnchor: e.target.value }))}
+                      className="rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 py-2 text-sm text-tx-1 outline-none transition-colors focus:border-bd-active"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+            {(() => {
+              const note = allowanceNote(formAllowance(form), new Date(), timeZone);
+              return (
+                <div className="mt-1.5 space-y-1 text-[11px]" data-testid="tier-allowance-note">
+                  <p className="text-tx-2" data-testid="tier-allowance-summary">{note.summary}</p>
+                  {note.period && <p className="text-tx-3" data-testid="tier-allowance-period">{note.period}</p>}
+                  {note.enforcement && <p className="text-tx-4">{note.enforcement}</p>}
+                </div>
+              );
+            })()}
           </div>
 
           <div className="flex items-center gap-3 sm:col-span-2">

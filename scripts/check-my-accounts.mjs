@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcryptjs";
 import "dotenv/config";
+if (!process.env.OPERATOR_EMAIL) { console.error("Set OPERATOR_EMAIL to the operator's own login address."); process.exit(2); }
 
 // Audit iter-2 C2-1: this script previously referenced TEST_PASSWORD at line
 // 42 without ever declaring or sourcing it — every invocation crashed with
@@ -59,6 +60,6 @@ console.log("=== TotalBJJ ===");
 console.log(JSON.stringify(await check("totalbjj", "owner@totalbjj.com"), null, 2));
 
 console.log("\n=== Noe Test Gym ===");
-console.log(JSON.stringify(await check("noetest", "noetopalian@gmail.com"), null, 2));
+console.log(JSON.stringify(await check("noetest", process.env.OPERATOR_EMAIL), null, 2));
 
 await prisma.$disconnect();

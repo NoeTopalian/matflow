@@ -20,13 +20,20 @@ import { claimLoginIdentities, type LoginIdentityClaim } from "@/lib/login-email
 import { normaliseEmail } from "@/lib/email-normalise";
 import { parseTeamUp } from "@/lib/importers/teamup";
 import {
-  changedFields,
   planRefresh,
-  refreshWrite,
   REFRESH_MEMBER_SELECT,
-  standingOf,
+  tierMap,
   type RefreshChange,
 } from "@/lib/importers/teamup-refresh";
+import { holdOffMigrations, isMigrationInProgress, MIGRATION_IN_PROGRESS_MESSAGE } from "@/lib/migration-lock";
+import { type ImportConflict } from "@/lib/importers/import-conflicts";
+import { withoutConflictDetail } from "@/app/api/admin/import/upload/route";
+import { classifyAdults, classifyChildren, needsParent } from "@/lib/importers/import-match";
+
+/** A schema migration holds Prisma Migrate's lock (lib/migration-lock.ts): nothing was written; retry shortly. */
+function migrationInProgress() {
+  return NextResponse.json({ error: MIGRATION_IN_PROGRESS_MESSAGE, migrationInProgress: true }, { status: 503, headers: { "Retry-After": "120" } });
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -87,7 +94,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "This exact file was already imported by another run. Roll that import back first.", priorJobId: prior.id }, { status: 409 });
     }
   }
-  const resumed = job.status === "running";
+  // A run that stopped part-way ("running" if it died, "failed" if it was stopped,
+  // e.g. by a schema migration) is resumed: what it saved is its own work.
+  const resumed = job.status === "running" || job.status === "failed";
   const jobId = job.id;
   const jobSource = job.source;
   const jobExportedAt = job.sourceExportedAt ?? null;
@@ -99,18 +108,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // 2026): the status check above and a plain update were two statements, so
   // two commits of one job could both start. Only a job that is not complete
   // and not running (or running but stale) can be claimed.
-  const claimed = await withTenantContext(tenantId, (tx) =>
-    tx.importJob.updateMany({
-      where: {
-        id: job.id, tenantId,
-        OR: [
-          { status: { notIn: ["running", "complete"] } },
-          { status: "running", OR: [{ startedAt: null }, { startedAt: { lt: new Date(Date.now() - STALE_RUN_MS) } }] },
-        ],
-      },
-      data: { status: "running", startedAt: new Date(), processedRows: 0, importedRows: 0, skippedRows: 0 },
-    }),
-  );
+  // Not while a schema migration runs (lib/migration-lock.ts): refused before the claim, so the job is untouched.
+  let claimed: { count: number };
+  try {
+    claimed = await withTenantContext(tenantId, async (tx) => {
+      await holdOffMigrations(tx);
+      return tx.importJob.updateMany({
+        where: {
+          id: job.id, tenantId,
+          OR: [
+            { status: { notIn: ["running", "complete"] } },
+            { status: "running", OR: [{ startedAt: null }, { startedAt: { lt: new Date(Date.now() - STALE_RUN_MS) } }] },
+          ],
+        },
+        data: { status: "running", startedAt: new Date(), processedRows: 0, importedRows: 0, skippedRows: 0 },
+      });
+    });
+  } catch (e) {
+    if (isMigrationInProgress(e)) return migrationInProgress();
+    throw e;
+  }
   if (claimed.count !== 1) {
     return NextResponse.json({ error: "Job already running" }, { status: 409 });
   }
@@ -138,7 +155,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   // A resumed run finds the people it created before it stopped; those are its
   // own work, not "already in the club" (functional review F2, 30 Sep 2026).
-  const ownRowsBeforeRun = statusBeforeClaim === "running"
+  const ownRowsBeforeRun = resumed
     ? await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, importJobId: job.id } }))
     : 0;
 
@@ -170,15 +187,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         action: "import.refresh",
         entityType: "ImportJob",
         entityId: job.id,
-        metadata: { source: job.source, fileName: job.fileName, mappingVersion: job.mappingVersion ?? null, sourceExportedAt: job.sourceExportedAt ? job.sourceExportedAt.toISOString() : null, sourceExportedAtProvenance: job.sourceExportedAtProvenance ?? null, changed: out.changed, unchanged: out.unchanged, exceptions: out.exceptionCount, reconciles: out.manifest.reconciles, resumed },
+        metadata: { source: job.source, fileName: job.fileName, mappingVersion: job.mappingVersion ?? null, sourceExportedAt: job.sourceExportedAt ? job.sourceExportedAt.toISOString() : null, sourceExportedAtProvenance: job.sourceExportedAtProvenance ?? null, changed: out.changed, unchanged: out.unchanged, toReview: out.toReview, exceptions: out.exceptionCount, reconciles: out.manifest.reconciles, resumed },
         req,
       });
       if (job.fileBlobUrl) {
         try { await deleteImportFile(job.fileBlobUrl, tenantId); }
         catch (e) { console.warn("[import-commit] blob del failed", e); }
       }
-      // No completion email, no invitations, no Stripe: a refresh only moves standing.
-      return NextResponse.json({ ok: true, mode: "refresh", changed: out.changed, unchanged: out.unchanged, exceptions: out.exceptionCount, manifest: out.manifest });
+      // No completion email, no invitations, no Stripe, and (25 Oct 2026) no member writes: a refresh lists differences.
+      return NextResponse.json({ ok: true, mode: "refresh", changed: out.changed, unchanged: out.unchanged, toReview: out.toReview, exceptions: out.exceptionCount, manifest: withoutConflictDetail(out.manifest) });
     }
 
     // TeamUp entitlement is read at the export snapshot date in the club zone
@@ -199,12 +216,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         select: { id: true, name: true, billingCycle: true },
       }),
     );
-    const tierByName = new Map<string, ResolvedMembershipTier>(
-      tiers.map((t) => [t.name.trim().toLowerCase(), t]),
-    );
+    // A name two plans share (case or spacing apart) matches neither (tierMap).
+    const tierByName: Map<string, ResolvedMembershipTier> = tierMap(tiers);
 
     let imported = 0;
     let skippedExisting = 0;
+    // Existing people this file names (owner decision 25 Oct 2026): exact
+    // duplicates are counted; differences and ambiguous matches are listed for
+    // the owner. Neither writes anything to the member.
+    let duplicates = 0;
+    const conflicts: ImportConflict[] = [];
+    const planOf = (d: MemberDraft) => {
+      const t = d.membershipType ? tierByName.get(d.membershipType.trim().toLowerCase()) : undefined;
+      return { tierId: t?.id ?? null, label: t?.name ?? d.membershipType ?? null };
+    };
     const commitErrors: { row: number; email?: string; error: string }[] = [];
     // Rows lost to a system error (a whole slice's write failed), as opposed to
     // rows refused for a reason. Any of these and the run did not finish.
@@ -282,7 +307,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // parent-pays path and the parent-signed waiver all lost for a third of a
     // club's under-18s. A junior may stand alone (no CHECK forces a parent), but
     // one that carries a parentEmail is linked exactly like a kid.
-    const needsParent = (d: MemberDraft) => d.accountType === "kids" || (d.accountType === "junior" && !!d.parentEmail);
     const firstPass = drafts.filter((d) => !needsParent(d));
     const kidPass = drafts.filter(needsParent);
 
@@ -302,6 +326,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const sliceEmails = slice.map((d) => d.email).filter(Boolean);
       try {
         const { inserted, refused } = await withTenantContext(tenantId, async (tx) => {
+          await holdOffMigrations(tx);
           // Login identity is one per club across staff AND members (AH-01,
           // 9 Oct 2026): lock every real address in this slice (sorted, so
           // two slices cannot deadlock) before reading or writing, and refuse
@@ -311,45 +336,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           const claims = await claimLoginIdentities(tx, tenantId, sliceEmails);
           const refused = slice.filter((d) => holdsStaffLogin(claims.get(normaliseEmail(d.email ?? ""))));
           const staffHeld = new Set(refused.map((d) => d.email));
-          const existing = sliceEmails.length
-            ? await tx.member.findMany({
-                where: { tenantId, email: { in: sliceEmails } },
-                select: { email: true },
-              })
-            : [];
-          const existingEmails = new Set(existing.map((m) => m.email));
-          // A no-email adult has a fresh synthesised address every run; dedupe
-          // them by name + date of birth among the tenant's other
-          // non-contactable adults so a re-import cannot double them.
-          // Guardian drafts are excluded here: they carry no date of birth and a
-          // bare first name is not identity (real-data rehearsal F-R5-2, 2 Oct
-          // 2026 — two emergency contacts with the same first name collapsed
-          // into one and the second child was never imported). They are
-          // identified by unverifiedEmail below.
-          const nonContactable = slice.filter((d) => d.nonContactable && !d.unverified && !existingEmails.has(d.email));
-          const existingByNameDob = new Set<string>();
-          if (nonContactable.length > 0) {
-            const rows = await tx.member.findMany({
-              where: { tenantId, email: { endsWith: "@no-login.matflow.local" }, name: { in: nonContactable.map((d) => d.name), mode: "insensitive" }, parentMemberId: null },
-              select: { name: true, dateOfBirth: true },
-            });
-            for (const r of rows) existingByNameDob.add(`${r.name.toLowerCase()}|${r.dateOfBirth?.toISOString().slice(0, 10) ?? ""}`);
+          // 25 Oct 2026 (owner decision): an existing person is never skipped
+          // blind. Every match is compared (lib/importers/import-match, shared
+          // with the preview): an exact duplicate is skipped, a difference or an
+          // uncertain match is listed for the owner and nothing is written to
+          // that member.
+          const outcomes = await classifyAdults(tx, tenantId, slice, { jobId, planOf, skipEmails: staffHeld });
+          const fresh: MemberDraft[] = [];
+          for (const [d, c] of outcomes) {
+            if (c.kind === "new") fresh.push(d);
+            else if (c.kind === "duplicate") duplicates += 1;
+            else if (c.kind === "conflict" || c.kind === "ambiguous") conflicts.push(c);
           }
-          // A guardian draft is identified by the payer address it keeps as
-          // unverifiedEmail; a re-run must not make a second one.
-          const unverified = slice.map((d) => d.unverifiedEmail).filter((e): e is string => !!e);
-          const existingUnverified = new Set(
-            unverified.length
-              ? (await tx.member.findMany({ where: { tenantId, unverifiedEmail: { in: unverified } }, select: { unverifiedEmail: true } })).map((m) => m.unverifiedEmail)
-              : [],
-          );
-          const fresh = slice.filter(
-            (d) =>
-              !staffHeld.has(d.email) &&
-              !existingEmails.has(d.email) &&
-              !(d.nonContactable && !d.unverified && existingByNameDob.has(`${d.name.toLowerCase()}|${d.dateOfBirth ?? ""}`)) &&
-              !(d.unverified && d.unverifiedEmail && existingUnverified.has(d.unverifiedEmail)),
-          );
           if (fresh.length === 0) return { inserted: 0, refused };
           const result = await tx.member.createMany({
             data: fresh.map((d) => columnsFor(d, null)),
@@ -376,6 +374,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 toStatus: m.status,
                 reason: "import" as const,
                 changedById: null,
+                // T8d: the job that created this member, so its first event can
+                // be traced to the upload that wrote it. Every create import
+                // (TeamUp or generic) stamps it: the job id is true either way,
+                // and the T8d provenance back-fill does the same from
+                // Member.importJobId.
+                sourceJobId: jobId,
+                sourceAction: "import_create" as const,
               })),
             );
           }
@@ -388,6 +393,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           commitErrors.push({ row: i + slice.indexOf(d), email: d.email, error: `${d.name}: ${STAFF_LOGIN_REFUSAL}` });
         }
       } catch (e: unknown) {
+        // A migration started: stop the whole run here (the outer catch says so); rows saved so far are recognised
+        // when the import is run again.
+        if (isMigrationInProgress(e)) throw e;
         // Bulk failure — fall back to per-row error reporting so the
         // operator can see which rows broke. We don't retry; this branch
         // is a defensive fallback for unexpected DB errors (e.g. a
@@ -413,40 +421,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const slice = kidPass.slice(i, i + BATCH);
       try {
         const { inserted, refused } = await withTenantContext(tenantId, async (tx) => {
+          await holdOffMigrations(tx);
           // Children normally carry synthesised logins (never locked); a child
           // row that carries a real address is claimed like an adult's.
           const claims = await claimLoginIdentities(tx, tenantId, slice.map((d) => d.email).filter(Boolean));
           const refused = slice.filter((d) => holdsStaffLogin(claims.get(normaliseEmail(d.email ?? ""))));
-          const parentEmails = [...new Set(slice.map((d) => d.parentEmail).filter((e): e is string => !!e))];
-          const parents = parentEmails.length
-            ? await tx.member.findMany({
-                // An adult member by their login address, or a guardian draft by
-                // the payer address it keeps as unverifiedEmail (its login is
-                // synthesised and never matches a source email).
-                where: { tenantId, OR: [{ email: { in: parentEmails } }, { unverifiedEmail: { in: parentEmails } }] },
-                select: { id: true, email: true, unverifiedEmail: true, children: { select: { name: true, dateOfBirth: true } } },
-              })
-            : [];
-          const parentByEmail = new Map<string, (typeof parents)[number]>();
-          for (const p of parents) {
-            if (p.unverifiedEmail && !parentByEmail.has(p.unverifiedEmail)) parentByEmail.set(p.unverifiedEmail, p);
-          }
-          // A real adult on the address wins over a draft (the parser only makes a
-          // draft when no adult row shares the address, but a later import may add one).
-          for (const p of parents) parentByEmail.set(p.email, p);
+          const outcomes = await classifyChildren(tx, tenantId, slice, { jobId, planOf, skipEmails: new Set(refused.map((d) => d.email)) });
           const fresh: Array<{ d: MemberDraft; parentId: string }> = [];
           for (const [idx, d] of slice.entries()) {
-            if (refused.includes(d)) continue;
-            const parent = d.parentEmail ? parentByEmail.get(d.parentEmail) : undefined;
-            if (!parent) {
+            const o = outcomes.get(d);
+            if (!o) continue; // refused (staff login)
+            if (!o.classification || !o.parentId) {
               commitErrors.push({ row: i + idx, email: d.parentEmail, error: `${d.name}: parent ${d.parentEmail ?? "(none)"} was not imported, so this child was not either.` });
               continue;
             }
-            const dup = parent.children.some(
-              (c) => c.name.toLowerCase() === d.name.toLowerCase() && (c.dateOfBirth?.toISOString().slice(0, 10) ?? "") === (d.dateOfBirth ?? ""),
-            );
-            if (dup) { skippedExisting += 1; continue; }
-            fresh.push({ d, parentId: parent.id });
+            const c = o.classification;
+            if (c.kind === "new") { fresh.push({ d, parentId: o.parentId }); continue; }
+            skippedExisting += 1;
+            if (c.kind === "duplicate") duplicates += 1;
+            else if (c.kind === "conflict" || c.kind === "ambiguous") conflicts.push(c);
           }
           if (fresh.length === 0) return { inserted: 0, refused };
           const result = await tx.member.createMany({
@@ -460,7 +453,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             });
             await recordStatusEventsBulk(
               tx,
-              createdRows.map((m) => ({ tenantId, memberId: m.id, fromStatus: null, toStatus: m.status, reason: "import" as const, changedById: null })),
+              createdRows.map((m) => ({ tenantId, memberId: m.id, fromStatus: null, toStatus: m.status, reason: "import" as const, changedById: null, sourceJobId: jobId, sourceAction: "import_create" as const })),
             );
           }
           return { inserted: result.count, refused };
@@ -470,6 +463,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           commitErrors.push({ row: i + slice.indexOf(d), email: d.email, error: `${d.name}: ${STAFF_LOGIN_REFUSAL}` });
         }
       } catch (e: unknown) {
+        if (isMigrationInProgress(e)) throw e; // as above: the run stops, resumable
         const msg = e instanceof Error ? e.message : "Unknown error";
         console.error("[import-commit] slice failed", e);
         systemFailedRows += slice.length;
@@ -490,16 +484,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // above: it states what this job's rows actually are.
     skippedExisting = Math.max(0, skippedExisting - ownRowsBeforeRun);
     // teamup-2: every CSV record becomes one ImportedMembership row — attached
-    // to the member it belongs to (created now, created by a resumed run, or
-    // already in the club) or to no member (duplicate, deleted customer,
+    // to the member THIS job created (now, or on an interrupted earlier call)
+    // or to no member (already in the club, duplicate, deleted customer,
     // quarantined, refused). The unique (importJobId, sourceRow) key makes a
-    // resumed run idempotent here too.
+    // resumed run idempotent here too. A person already in the club is never
+    // given this file's history (owner decision 25 Oct 2026: a later upload
+    // writes nothing to an existing member; their history page would otherwise
+    // show the file's current plan as a second active TeamUp plan).
     if (ledgerRows && ledgerRows.length > 0) {
       const keys = [...new Set(ledgerRows.map((r) => r.sourceKey).filter((k): k is string => !!k))];
       const byKey = new Map<string, string>();
       for (let i = 0; i < keys.length; i += 500) {
         const found = await withTenantContext(tenantId, (tx) =>
-          tx.member.findMany({ where: { tenantId, externalRef: { in: keys.slice(i, i + 500) } }, select: { id: true, externalRef: true } }),
+          tx.member.findMany({ where: { tenantId, importJobId: job.id, externalRef: { in: keys.slice(i, i + 500) } }, select: { id: true, externalRef: true } }),
         );
         for (const m of found) if (m.externalRef) byKey.set(m.externalRef, m.id);
       }
@@ -525,7 +522,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         disposition: r.disposition,
       }));
       for (let i = 0; i < data.length; i += 500) {
-        await withTenantContext(tenantId, (tx) => tx.importedMembership.createMany({ data: data.slice(i, i + 500), skipDuplicates: true }));
+        await withTenantContext(tenantId, async (tx) => {
+          await holdOffMigrations(tx);
+          return tx.importedMembership.createMany({ data: data.slice(i, i + 500), skipDuplicates: true });
+        });
       }
     }
 
@@ -601,6 +601,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           unmatchedPlan: created.filter((m) => m.membershipType && !m.membershipTierId).length,
         },
         skippedExisting,
+        // Of those already in the club: exact duplicates, and the people listed
+        // for the owner to resolve (nothing written to them; owner decision 25 Oct 2026).
+        existing: {
+          duplicates,
+          conflicts: conflicts.filter((c) => c.kind === "conflict").length,
+          ambiguous: conflicts.filter((c) => c.kind === "ambiguous").length,
+        },
+        conflicts,
         commitErrors: commitErrors.length,
         // Every person in the file is exactly one of: created by this job,
         // already in the club, or refused with a reason — and (teamup-2) every
@@ -625,8 +633,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           totalRows,
           processedRows: drafts.length,
           // The whole run's creations, including those an interrupted earlier
-          // call made (acceptance S9, 2 Oct 2026: a resumed run said "447
-          // imported" for 922 people). The response's `imported` stays this
+          // call made (acceptance S9, 2 Oct 2026: a resumed run reported only
+          // its own call's share of the people). The response's `imported` stays this
           // call's own count; the manifest carries both.
           importedRows: imported + ownRowsBeforeRun,
           skippedRows: skippedExisting,
@@ -699,12 +707,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ok: false,
           incomplete: true,
           error: `${systemFailedRows} ${systemFailedRows === 1 ? "person" : "people"} couldn't be saved because of a system error; ${imported} were imported. Run the import again — people already imported are recognised and not created twice.`,
-          imported, skipped: skippedExisting + errors.length, errors: allErrors.length, manifest,
+          imported, skipped: skippedExisting + errors.length, errors: allErrors.length, manifest: withoutConflictDetail(manifest),
         },
         { status: 500 },
       );
     }
-    return NextResponse.json({ ok: true, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, manifest });
+    return NextResponse.json({ ok: true, imported, skipped: skippedExisting + errors.length, errors: allErrors.length, toReview: conflicts.length, manifest: withoutConflictDetail(manifest) });
   } catch (e) {
     // WP-J: keep the detailed error in our own DB row + server logs but
     // return a generic message to the client (could leak Prisma constraint
@@ -718,18 +726,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         data: { status: "failed", completedAt: new Date(), errorLog: [{ row: 0, reason: msg }] as unknown as object },
       }),
     );
+    // Stopped by a schema migration (lib/migration-lock.ts): the run is re-runnable at once ("failed" is claimable)
+    // and recognises what it already saved.
+    if (isMigrationInProgress(e)) return migrationInProgress();
     return NextResponse.json({ error: "Import failed — see import history for details" }, { status: 500 });
   }
 }
 
 /**
- * Status refresh commit (TeamUp only, readiness spec v3 §7). Updates ONLY the
- * TeamUp-owned standing (lib/importers/teamup-refresh REFRESH_OWNED_FIELDS)
- * plus "status as of" and its source job, on members matched by the key the
- * first import stored. Creates nobody. Every write's before and after values
- * are appended to the job manifest in the same transaction as the write, so a
- * run that dies part-way can be resumed (members already carrying this job as
- * their source are skipped) and every change can be rolled back.
+ * Status refresh commit (TeamUp only). Since 25 Oct 2026 (owner decision: a
+ * later upload never silently overwrites MatFlow) it WRITES NO MEMBER: it
+ * matches the file to members by the key the first import stored, and lists
+ * every difference in the TeamUp-owned standing (status, payment standing,
+ * cancellation date, plan) as a conflict for the owner. Creates nobody. A
+ * refresh recorded before the rule keeps its `refresh.changes` and still rolls
+ * back through the rollback route.
  */
 async function commitRefresh({
   tenantId,
@@ -771,53 +782,18 @@ async function commitRefresh({
     } as const;
   }
 
-  // A resumed run: whatever an earlier run already wrote is in the manifest
-  // with its true before-values and is not written again.
-  const done = new Set(recorded.map((c) => c.memberId));
-  const todo = plan.matched.filter((c) => !done.has(c.memberId) && c.before.billingStatusSource !== job.id);
-
-  const BATCH = 25;
-  let written = [...recorded];
-  for (let i = 0; i < todo.length; i += BATCH) {
-    const slice = todo.slice(i, i + BATCH);
-    written = await withTenantContext(tenantId, async (tx) => {
-      // Re-read inside the write's own transaction: the before-values recorded
-      // are the ones this write replaces, not the ones the plan saw.
-      const fresh = await tx.member.findMany({
-        where: { tenantId, id: { in: slice.map((c) => c.memberId) }, billedBy: "teamup" },
-        select: REFRESH_MEMBER_SELECT,
-      });
-      const byId = new Map(fresh.map((f) => [f.id, f]));
-      const applied: RefreshChange[] = [];
-      for (const c of slice) {
-        const f = byId.get(c.memberId);
-        if (!f) continue;
-        const before = standingOf(f);
-        const change: RefreshChange = { ...c, before, fields: changedFields(before, c.after) };
-        await tx.member.updateMany({ where: { id: c.memberId, tenantId, billedBy: "teamup" }, data: refreshWrite(c.after) });
-        applied.push(change);
-      }
-      await recordStatusEventsBulk(
-        tx,
-        applied.map((c) => ({ tenantId, memberId: c.memberId, fromStatus: c.before.status, toStatus: c.after.status, reason: "import" as const, changedById: null })),
-      );
-      const cur = await tx.importJob.findUnique({ where: { id: job.id }, select: { manifest: true } });
-      const man = (cur?.manifest ?? {}) as Record<string, unknown>;
-      const prevRefresh = (man.refresh ?? {}) as { changes?: RefreshChange[] };
-      const all = [...(prevRefresh.changes ?? []), ...applied];
-      await tx.importJob.update({
-        where: { id: job.id },
-        data: {
-          processedRows: Math.min(i + slice.length, todo.length),
-          manifest: { ...man, mode: "refresh", refresh: { ...prevRefresh, changes: all } } as unknown as Prisma.InputJsonValue,
-        },
-      });
-      return all;
-    });
-  }
-
-  const changed = written.filter((c) => c.fields.length > 0).length;
-  const unchanged = written.length - changed;
+  // Owner decision 25 Oct 2026: a refresh never writes to an existing member.
+  // Every difference between the file and MatFlow is listed for the owner,
+  // who changes the member (or not) through the normal edit, with its own
+  // permission check; MatFlow's value stands until then. This replaces the
+  // write loop that overwrote status, payment status, cancellation and plan.
+  // `recorded` is a job from before this rule (its changes stay rollbackable).
+  const written = recorded;
+  const conflicts: ImportConflict[] = plan.matched
+    .map((c) => ({ kind: "conflict" as const, memberId: c.memberId, name: c.name, sourceKey: c.sourceKey, rows: [], fields: refreshConflictFields(c) }))
+    .filter((c) => c.fields.length > 0);
+  const changed = 0;
+  const unchanged = plan.matched.length - conflicts.length;
   const ex = plan.exceptions;
   const exceptionCount = ex.notInMatFlow.length + ex.notInFile.length + ex.billedByMatFlow.length + ex.refused.length + (ex.holdKept?.length ?? 0) + (ex.decisions?.length ?? 0);
   const manifest = {
@@ -832,10 +808,12 @@ async function commitRefresh({
       matched: plan.matched.length,
       changed,
       unchanged,
+      toReview: conflicts.length,
       payerRecords: plan.payerRecords,
       changes: written,
       exceptions: ex,
     },
+    conflicts,
     reconciles: plan.reconciles,
   };
   await withTenantContext(tenantId, (tx) =>
@@ -854,5 +832,21 @@ async function commitRefresh({
       },
     }),
   );
-  return { changed, unchanged, exceptionCount, manifest };
+  return { changed, unchanged, exceptionCount, toReview: conflicts.length, manifest };
+}
+
+/** A refresh difference in the conflict shape: plan once (label), the other owned fields as stated. */
+function refreshConflictFields(c: RefreshChange) {
+  const out: { field: "status" | "paymentStatus" | "cancelledAt" | "plan"; upload: string | null; matflow: string | null }[] = [];
+  const dayOf = (v: string | null) => (v ? v.slice(0, 10) : null);
+  if (c.fields.includes("status")) out.push({ field: "status", upload: c.after.status, matflow: c.before.status });
+  if (c.fields.includes("paymentStatus")) out.push({ field: "paymentStatus", upload: c.after.paymentStatus, matflow: c.before.paymentStatus });
+  if (c.fields.includes("cancelledAt")) out.push({ field: "cancelledAt", upload: dayOf(c.after.cancelledAt), matflow: dayOf(c.before.cancelledAt) });
+  // A tier-only difference with the same plan name (imported before the tier
+  // existed) is not a difference a person can see; it is not listed.
+  const sameLabel = (c.after.membershipType ?? "").trim().toLowerCase() === (c.before.membershipType ?? "").trim().toLowerCase();
+  if ((c.fields.includes("membershipType") || c.fields.includes("membershipTierId")) && !sameLabel) {
+    out.push({ field: "plan", upload: c.after.membershipType, matflow: c.before.membershipType });
+  }
+  return out;
 }

@@ -38,7 +38,7 @@ Read-only inspection at documentation head `1a36655` (executable candidate `1ca9
 | Webhooks (19 types) | IMPLEMENTED (`app/api/stripe/webhook/route.ts`) | FIXTURE (~60 cases); INTEGRATION (locally signed, 15 Sep) | TEST-MODE replay 24–25 Sep; **no delivery by Stripe to a deployed endpoint recorded** |
 | Reconciliation | IMPLEMENTED, detection only (`lib/stripe/reconcile.ts`) | logic untested (mocked) | **never runs in production** (§14) |
 
-Production evidence of any kind: **none**. Total BJJ production on 7 Oct: 0 payments, 0 Stripe ids, all 922 members billed by TeamUp. All behavioural evidence is test mode on Custom accounts created by API, events replayed by script into a local server. None used the Standard OAuth flow the product ships.
+Production evidence of any kind: **none**. Total BJJ production on 7 Oct: 0 payments, 0 Stripe ids, every member billed by TeamUp (count held privately). All behavioural evidence is test mode on Custom accounts created by API, events replayed by script into a local server. None used the Standard OAuth flow the product ships.
 
 ## 2. How a club connects its account
 

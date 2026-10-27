@@ -77,8 +77,20 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const existing = await tx.location.findFirst({ where: { id, tenantId }, select: { id: true, name: true, isDefault: true } });
     if (!existing) return { ok: false as const, status: 404, error: "Location not found" };
     if (existing.isDefault) return { ok: false as const, status: 409, error: "The default location cannot be removed — make another location the default first" };
-    const classes = await tx.class.count({ where: { tenantId, locationId: id, deletedAt: null } });
-    if (classes > 0) return { ok: false as const, status: 409, error: `${classes} ${classes === 1 ? "class is" : "classes are"} at this location — move them first` };
+    // T6b: paused and ARCHIVED classes count too. The venue link is SetNull,
+    // so removing the location would silently turn an archived class into an
+    // "every location" class the day it is restored. Imported history classes
+    // are not counted: they are never restored onto the timetable.
+    const classes = await tx.class.count({ where: { tenantId, locationId: id, sourceImportJobId: null } });
+    if (classes > 0) {
+      const live = await tx.class.count({ where: { tenantId, locationId: id, sourceImportJobId: null, isActive: true, deletedAt: null } });
+      const off = classes - live;
+      const what = `${classes} ${classes === 1 ? "class is" : "classes are"} at this location`;
+      const error = off === 0
+        ? `${what} — move them first`
+        : `${what}, including ${off} paused or archived — move them first. Resume or restore a paused or archived class on the Timetable to change its location.`;
+      return { ok: false as const, status: 409, error };
+    }
     await tx.location.delete({ where: { id } });
     return { ok: true as const, name: existing.name };
   });

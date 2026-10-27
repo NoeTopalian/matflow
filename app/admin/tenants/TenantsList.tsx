@@ -110,16 +110,21 @@ export default function TenantsList({
 
   function exportCsv() {
     const rows = [
-      // Headers unchanged for the open view (no documented consumer; compatibility
+      // Population per column: "Members" is every member row the club has, as
+      // main exported it (all statuses, guardian accounts included); "Active
+      // members" is the ACTIVE_MEMBER count, the club's own headline number
+      // (active training members, guardians excluded). Existing headers are
+      // unchanged and the new column sits straight after "Members". (No documented consumer; compatibility
       // unknown), so "Status" here is the subscription status; the closed view
       // only appends a Closed column.
-      ["Gym", "Slug", "Owner Name", "Owner Email", "Members", "Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created", ...(closedView ? ["Closed"] : [])],
+      ["Gym", "Slug", "Owner Name", "Owner Email", "Members", "Active members", "Status", "Stripe Connected", "Stripe Charges Enabled", "Onboarding Completed", "Created", ...(closedView ? ["Closed"] : [])],
       ...filtered.map((t) => [
         t.name,
         t.slug,
         t.ownerName ?? "",
         t.ownerEmail ?? "",
         String(t.memberCount),
+        String(t.activeMemberCount),
         t.status,
         String(t.stripeConnected),
         t.stripeChargesEnabled === null ? "" : String(t.stripeChargesEnabled),
@@ -230,6 +235,7 @@ export default function TenantsList({
                   <th style={th}>Gym</th>
                   <th style={th}>Owner</th>
                   <th style={th}>Members</th>
+                  <th style={th}>Active members</th>
                   <th style={th}>Subscription</th>
                   <th style={th}>Stripe</th>
                   <th style={th}>Created</th>
@@ -255,6 +261,7 @@ export default function TenantsList({
                       )}
                     </td>
                     <td style={td}>{t.memberCount}</td>
+                    <td style={td}>{t.activeMemberCount}</td>
                     <td style={td}>{statusBadge(t.status)}</td>
                     <td style={td}>{stripeBadge(t)}</td>
                     <td style={td}>{formatDate(t.createdAt)}</td>

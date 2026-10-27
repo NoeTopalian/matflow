@@ -19,12 +19,15 @@ export type ClassRefs = {
   maxRankId?: string | null;
   coachUserId?: string | null;
   locationId?: string | null;
+  /** T6a: the memberships that include the class. Every id must be this club's. */
+  allowedTierIds?: readonly string[] | null;
 };
 
 export const CLASS_REF_ERRORS = {
   location: "That location is not one of this club's locations",
   rank: "That belt is not one of this club's belts",
   coach: "That coach is not one of this club's staff",
+  tier: "That membership is not one of this club's memberships",
 } as const;
 
 /**
@@ -49,6 +52,14 @@ export async function classRefError(
   if (refs.coachUserId) {
     const coach = await tx.user.findFirst({ where: { id: refs.coachUserId, tenantId }, select: { id: true } });
     if (!coach) return CLASS_REF_ERRORS.coach;
+  }
+  if (refs.allowedTierIds && refs.allowedTierIds.length > 0) {
+    const unique = [...new Set(refs.allowedTierIds)];
+    const tiers = await tx.membershipTier.findMany({
+      where: { id: { in: unique }, tenantId },
+      select: { id: true },
+    });
+    if (tiers.length !== unique.length) return CLASS_REF_ERRORS.tier;
   }
   return null;
 }

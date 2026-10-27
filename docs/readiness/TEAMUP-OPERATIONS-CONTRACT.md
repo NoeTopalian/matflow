@@ -2,18 +2,26 @@
 
 Status: **PROPOSED — awaiting Noe's and Sean's confirmation** (readiness spec v3 §7). Prepared 30 Sep 2026. Until both confirm the field table and the refresh procedure, daily operations on real data are **NO-GO** (spec §7: "a billing split without an agreed maintenance procedure is a daily-operations NO-GO").
 
+> **Later uploads (decided 25 Oct 2026).** Noe, in his words: "A later upload must not silently overwrite
+> existing MatFlow values. Add genuinely new records, skip exact duplicates, and show conflicting or ambiguous
+> records for an authorised person to resolve. Where previous ownership or edit history is unknown, preserve the
+> current value and flag the conflict." And: "Keep the existing role permissions… Imported records should be
+> editable through the same authorised workflows as equivalent MatFlow-created records." (24 Oct: once imported,
+> "all that information should be taken as Matflow information".) §2, §3 and §5 below state the behaviour that
+> follows; it is built on branch `sean/c1-import` (not yet merged).
+
 ## 1. What this contract covers
 During the bridge, Total BJJ runs its day in MatFlow — roster, classes, check-in, attendance, waivers, holds, cash taken at the desk — while **TeamUp and Sean's Stripe keep collecting every existing recurring membership**. MatFlow must never start, change or stop that collection, and must never suggest it has.
 
-**There is no automatic TeamUp → MatFlow sync.** TeamUp offers no integration MatFlow uses. Billing standing reaches MatFlow only through a **controlled status refresh**: a fresh TeamUp memberships export, uploaded by a named operator, previewed, then committed.
+**There is no automatic TeamUp → MatFlow sync.** TeamUp offers no integration MatFlow uses. A fresh TeamUp memberships export can be **checked** against MatFlow (a *status refresh*): the owner uploads it, previews it and runs it, and it lists who differs. It changes nobody; staff change a member by hand if the export is right.
 
 ## 2. Who owns each field (proposed)
 
 | Data / action | Owner during the bridge | How it reaches the other system | Safeguard in MatFlow |
 |---|---|---|---|
 | Existing recurring collection (card, Direct Debit) | **TeamUp** | — | Card subscriptions started by the member, a parent or staff are refused for any member marked *billed by TeamUp* (`409 billed_elsewhere`). The membership migration is the one sanctioned way to move a member to MatFlow billing (gate G4, per cohort, per the cutover manifest); on success it marks the member *billed by MatFlow*. It stays unavailable during the bridge because review mode refuses it and the club is not connected to Stripe in MatFlow. |
-| Payment standing (paid / overdue / on hold / cancelled) and plan | **TeamUp** | status refresh import | Each member carries the date of the export it came from ("status as of"). Staff see a warning when it is older than 8 days. A refresh never overwrites a MatFlow-owned field. |
-| New memberships, plan changes, cancellations of billing | **TeamUp** | next status refresh | MatFlow screens for a TeamUp-billed member say the change must be made in TeamUp. |
+| Payment standing (paid / overdue / on hold / cancelled) and plan | **MatFlow** once imported (TeamUp keeps the billing) | The first import sets them; a later export is only compared | A later upload lists every difference in the import history for the owner, with the file's value beside MatFlow's current one; nothing is written. Staff change the member through the normal edit, with its normal permissions. |
+| New memberships, plan changes, cancellations of billing | **TeamUp** for the billing; **MatFlow** for the member record | Staff make the change in both | The member page says TeamUp still bills the member and a MatFlow edit stays in MatFlow. |
 | Cash taken at the desk | **MatFlow** (Record payment) | — (Sean reconciles against TeamUp manually) | One payment per request id; the payment is recorded in MatFlow only and does not tell TeamUp. |
 | Holds and resumes (access) | **MatFlow for access; TeamUp for billing** | Sean pauses in TeamUp as well | The hold dialog for a TeamUp-billed member says: "This pauses access in MatFlow only. Pause the membership in TeamUp too, or TeamUp keeps collecting." |
 | Contact details, emergency contact, medical notes, date of birth, photo, waiver | **MatFlow** (edited by staff or the member) | — | A status refresh does not touch these. |
@@ -21,20 +29,20 @@ During the bridge, Total BJJ runs its day in MatFlow — roster, classes, check-
 | Member messages about money | **TeamUp** | — | MatFlow's manual "chase" for a TeamUp-billed member warns that TeamUp sends its own reminders. MatFlow sends no automatic money reminders. |
 | Invitations and MatFlow logins | **MatFlow** | — | Only after Sean signs off the imported data (gate G3). |
 
-## 3. Status refresh procedure (proposed)
-- **Who:** Noe (named operator) until handed to Sean in writing.
-- **How often:** weekly, Monday before the first class; and on the day of any bulk change in TeamUp.
-- **Steps:** export TeamUp memberships (all statuses) → note the export time → Settings → Import → TeamUp → *Status refresh* → read the preview: counts changed, exceptions → commit → read the exception list and resolve each (usually a name or email changed in TeamUp).
-- **What it changes:** status, payment standing, cancellation date, plan, "status as of". Not the hold date: the TeamUp export carries no resume date, so a hold end is set in MatFlow. A refresh upload needs the export time; without it the standing would read "as of unknown". **What it never changes:** anything in the MatFlow-owned rows above.
-- **Matching:** by the same person key the first import used (email + name, stored as the member's external reference). A person whose name or email changed in TeamUp is listed as an exception — never matched by a guess, never created twice.
-- **Workload:** about 10 minutes a week plus exceptions.
-- **Last successful refresh:** shown on the import history; staff see the staleness warning once it is more than 8 days old.
+## 3. Later uploads: what each does (25 Oct 2026)
+- **Members import (Add people) of a later file:** a genuinely new person is added; an exact duplicate (every compared value equal) is skipped and counted; a person who differs, or who could be more than one member, is **listed**, and nothing is written to anyone already in MatFlow. Compared values: name, email, phone, date of birth, account type, plan, status, payment status, cancellation date, join date, emergency contact. Not compared (decided exclusions): notes, next due date, guardian links.
+- **Uncertain matches are never guessed:** two members match; the email points at one member and the TeamUp record at another; a member already carries a different TeamUp record; a no-email person matched by name alone; a TeamUp record whose key carries no email and whose date of birth does not match; one email held by a member with a different name.
+- **Status refresh (a check):** the same file, matched by the TeamUp record the first import stored. It writes nothing; it lists who differs (status, payment standing, cancellation date, plan) and the usual exceptions (not in MatFlow, not in the file, billed by MatFlow, holds kept). Nothing to roll back.
+- **Where the list is:** Settings → Import → Import history → "Review N people" on the job. Each person shows what the file said and what MatFlow holds **now**, and links to their member page; there is no "apply" button. Owner only, this club only. A member deleted or erased since is shown with no name or values, and their entries are scrubbed from the stored import record.
+- **Plans:** an exact plan-name match (trimmed, any case) sets the plan. The TeamUp export carries a plan **name only** — no price, billing period or currency — so the decided four-way match (name, period, price, currency) cannot be met from a TeamUp file, and nothing is invented to fill the gap. A name two MatFlow plans share matches neither. A clear new person whose plan matches no single MatFlow plan is **imported without a plan and listed** ("Imported without a plan") until staff set one; plan-restricted classes may refuse them until then (decided 25 Oct: import and flag).
+- **Preview equals commit:** the preview classifies with the same code as the commit, so its counts (will import, same as MatFlow, to review — differs / uncertain, staff login refused, child without parent) are what the run then does.
+- **Matching key:** the person key the first import stored (email + name). A person whose name or email changed in TeamUp is listed, never matched by a guess, never created twice.
 
-- **Holds (confirmed by the functional reviewer, 30 Sep 2026):** a refresh never lifts a hold. A TeamUp cancellation still ends the membership. A member on hold in MatFlow whom TeamUp now reports as active is listed as an exception ("TeamUp says paid") for staff to resume in MatFlow. **Limitation:** this includes members who were on hold *at TeamUp* when first imported — MatFlow does not yet record who placed a hold, so staff resume those by hand when TeamUp's hold ends. Proposed follow-up: record the hold's origin so a TeamUp-origin hold ends with TeamUp's. The preview lists the holds it will keep before anything is written (F9, fixed 30 Sep 2026).
+- **Holds:** a check never lifts or sets a hold. A member on hold in MatFlow whom TeamUp reports as active is listed ("TeamUp says paid") for staff to resume in MatFlow if that is right.
 
-## 4. Door policy on stale standing (proposed)
+## 4. Door policy on stale standing — OPEN DECISION (Noe)
 - Staleness alone **never refuses** a check-in.
-- Staff see "Billing status last updated <date>" on the register and the member profile when the standing is more than 8 days old.
+- "Billed by TeamUp · status as of <date>" and the 8-day "Billing status last updated" warning used to move with each refresh. A check no longer writes, so both stay at the first import's date and the warning stays on once 8 days pass. Retire them, or reword them as "imported from TeamUp on <date>"? Not changed until decided.
 - A standing that TeamUp reported as overdue or on hold behaves exactly as MatFlow's own overdue and hold rules do today (self and kiosk refuse a hold; staff may override with a reason).
 
 ## 5. Acceptance contract for the implementation (P1)
@@ -43,13 +51,13 @@ During the bridge, Total BJJ runs its day in MatFlow — roster, classes, check-
 | Mark a member as billed by TeamUp | Set by the TeamUp import (`billedBy = teamup`, `billingStatusAsOf` = export time, `billingStatusSource` = import job) | Nothing else changes | unit (commit writes the three fields); rehearsal on a synthetic club |
 | Card subscription for a TeamUp-billed member | Refused with 409 `billed_elsewhere` and the sentence in §2 | No Stripe call, no row | unit per route (member self, parent for child, staff), before any provider call |
 | Membership migration (G4 cutover) | A migrated member becomes `billedBy = matflow` with the TeamUp standing cleared | Refused while the club is in review; needs Stripe connected | unit on the apply writes |
-| Status refresh | Updates only TeamUp-owned fields (status, payment standing, cancellation date, plan/tier, status-as-of); lists unmatched and conflicting rows; preview before commit; same file twice refused | MatFlow-owned fields untouched; no invitations, emails, charges | unit (field ownership); rehearsal: import → edit contact in MatFlow → refresh → contact kept, status changed, exception listed |
+| Later upload (import or check) | Writes no existing member; new people added; exact duplicates skipped; differences and uncertain matches listed with current values; preview counts equal the commit's | No member update, no invitations, emails, charges or subscriptions | unit (`import-conflicts`, `import-teamup-refresh`, `sec-d-import-security-state`); DB `import-conflicts-db` and `contact-email-change-imports-db` (both roles); browser journey `import-review` |
 | Staleness warning | Shown to staff when `billingStatusAsOf` is more than 8 days before now (club time) | Never blocks | unit with a frozen clock at 7 d 23 h and 8 d 1 h |
 | Honest screens | Profile, members list and register say "Billed by TeamUp · status as of <date>"; hold dialog and chase carry the TeamUp sentences | — | component tests; e2e cell |
-| Recovery | A bad refresh is rolled back by the import rollback, restoring the previous standing | — | rehearsal |
+| Recovery | A check has nothing to roll back; a refresh recorded before 25 Oct 2026 still rolls back, restoring the previous standing | — | unit (legacy rollback) |
 
 ## 6. Open decisions (Noe / Sean)
 1. Confirm the field table in §2.
-2. Confirm the weekly refresh, its operator and the 8-day threshold.
+2. "Status as of" and the 8-day staleness warning after 25 Oct 2026 (§4): retire or reword.
 3. Confirm "cash at the desk only" for new money in MatFlow during the bridge.
 4. Confirm the switch date from which attendance is recorded in MatFlow.

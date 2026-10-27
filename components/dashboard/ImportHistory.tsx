@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { describeApiError } from "@/lib/api-field-errors";
 import { formatDate, formatDateTime } from "@/lib/date";
 import type { ImportHistoryItem } from "@/app/api/admin/import/route";
+import type { ConflictView, WithoutPlanView } from "@/app/api/admin/import/[id]/conflicts/route";
 
 /** "1 member" / "2 members". */
 export function plural(n: number, one: string, many: string): string {
@@ -46,10 +47,24 @@ function statusInWords(job: ImportHistoryItem): string {
   }
 }
 
+/** People a job did not write: they differ from MatFlow or could not be matched with certainty (25 Oct 2026). */
+function toReviewCount(job: ImportHistoryItem): number {
+  return (job.toReview ? job.toReview.conflicts + job.toReview.ambiguous : 0) + (job.withoutPlan ?? 0);
+}
+
 function countsInWords(job: ImportHistoryItem): string | null {
   if (job.status !== "complete" && job.status !== "failed") return null;
   if (job.mode === "refresh") {
     if (!job.refresh) return null;
+    // A refresh from 25 Oct 2026 on writes nothing to existing members: it lists differences.
+    if (job.toReview) {
+      return [
+        `${plural(toReviewCount(job), "person", "people")} to review`,
+        `${job.refresh.unchanged.toLocaleString("en-GB")} the same as MatFlow`,
+        ...(job.refresh.exceptions > 0 ? [plural(job.refresh.exceptions, "exception", "exceptions")] : []),
+        "nothing changed",
+      ].join(" · ");
+    }
     return [
       `${plural(job.refresh.changed, "member", "members")} changed`,
       `${job.refresh.unchanged.toLocaleString("en-GB")} unchanged`,
@@ -63,7 +78,10 @@ function countsInWords(job: ImportHistoryItem): string | null {
     return "Stopped part-way — people it created stay until you roll it back or run it again";
   }
   const parts = [`${plural(job.importedRows, noun[0], noun[1])} imported`];
-  if (job.skippedRows > 0) parts.push(`${job.skippedRows.toLocaleString("en-GB")} skipped`);
+  const review = toReviewCount(job);
+  const sameAsMatFlow = job.skippedRows - review;
+  if (review > 0) parts.push(`${plural(review, "person", "people")} to review`);
+  if (sameAsMatFlow > 0) parts.push(`${sameAsMatFlow.toLocaleString("en-GB")} already in MatFlow`);
   if (job.errorRows > 0) {
     parts.push(job.kind === "attendance" ? `${job.errorRows.toLocaleString("en-GB")} held back` : plural(job.errorRows, "error", "errors"));
   }
@@ -136,6 +154,113 @@ type LastRefresh = {
   sourceExportedAt: string | null;
   sourceExportedAtProvenance?: "owner_stated" | "provisional" | null;
 } | null;
+
+type ReviewState =
+  | { phase: "closed" }
+  | { phase: "loading" }
+  | { phase: "error" }
+  | { phase: "ready"; items: ConflictView[]; withoutPlan: WithoutPlanView[] };
+
+export const REVIEW_ERROR = "Couldn't load the people to review — try again";
+
+/**
+ * The people an import or refresh did not write (owner decision 25 Oct 2026).
+ * Read on demand from GET admin/import/[id]/conflicts, which re-reads each
+ * member, so "MatFlow now" is current. Nothing here writes: each person links
+ * to their own page, where the normal edit (and its permission check) applies.
+ */
+export function ReviewList({ jobId, count }: { jobId: string; count: number }) {
+  const [state, setState] = useState<ReviewState>({ phase: "closed" });
+  const open = useCallback(async () => {
+    setState({ phase: "loading" });
+    try {
+      const res = await fetch(`/api/admin/import/${encodeURIComponent(jobId)}/conflicts`, { cache: "no-store" });
+      if (!res.ok) { setState({ phase: "error" }); return; }
+      const data = (await res.json()) as { conflicts?: ConflictView[]; withoutPlan?: WithoutPlanView[] };
+      if (!Array.isArray(data.conflicts)) { setState({ phase: "error" }); return; }
+      setState({ phase: "ready", items: data.conflicts, withoutPlan: Array.isArray(data.withoutPlan) ? data.withoutPlan : [] });
+    } catch {
+      setState({ phase: "error" });
+    }
+  }, [jobId]);
+
+  const DATE_FIELDS = new Set(["dateOfBirth", "cancelledAt", "joinedAt"]);
+  const WORDS: Record<string, string> = {
+    active: "active", inactive: "inactive", cancelled: "cancelled", taster: "taster",
+    paid: "paid", overdue: "overdue", paused: "on hold", pending: "no payment yet", free: "free",
+    adult: "adult", junior: "junior", kids: "child", parent: "parent or guardian",
+  };
+  const show = (field: string, v: string | null) => {
+    if (v === null || v === "") return "(none)";
+    if (DATE_FIELDS.has(field)) return formatDate(v);
+    if (field === "status" || field === "paymentStatus" || field === "accountType") return WORDS[v] ?? v;
+    return v;
+  };
+  return (
+    <div className="mt-2" data-testid="import-review">
+      {state.phase === "closed" && (
+        <Button type="button" variant="secondary" size="compact" onClick={() => void open()}>
+          Review {plural(count, "person", "people")}
+        </Button>
+      )}
+      {state.phase === "loading" && <Skeleton className="h-10 w-full" />}
+      {state.phase === "error" && <ErrorState message={REVIEW_ERROR} onRetry={() => void open()} />}
+      {state.phase === "ready" && (
+        <div className="text-xs text-tx-2">
+          <p className="mb-1">
+            Nothing was changed for these people. MatFlow&rsquo;s values stand; open a person to change their record by hand if the file is right.
+          </p>
+          {state.items.length === 0 && state.withoutPlan.length === 0 && <p data-testid="import-review-empty">Nobody is left to review for this import.</p>}
+          {state.withoutPlan.length > 0 && (
+            <div className="mb-2" data-testid="import-review-without-plan">
+              <p className="font-semibold text-tx-1">Imported without a plan ({state.withoutPlan.length.toLocaleString("en-GB")})</p>
+              <p>Their plan name matched no single MatFlow plan, so none was set. Plan-restricted classes may refuse them until you set one on their page.</p>
+              <ul className="mt-0.5 space-y-0.5">
+                {state.withoutPlan.map((m) => (
+                  <li key={m.id}>
+                    <a className="underline" href={m.href}>{m.name}</a> — file says <strong>{m.planLabel}</strong>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <ul className="space-y-2" data-testid="import-review-list">
+            {state.items.map((c, i) =>
+              c.kind === "ambiguous" ? (
+                <li key={`a-${i}`} data-testid="import-review-ambiguous">
+                  <strong className="text-tx-1">{c.name}</strong> — not matched: {c.reason}. Could be:{" "}
+                  {c.members.map((m, j) => (
+                    <span key={m.id}>
+                      {j > 0 ? ", " : ""}
+                      {m.href ? <a className="underline" href={m.href}>{m.name}</a> : "a member since deleted"}
+                    </span>
+                  ))}
+                  . Nobody was created or changed.
+                </li>
+              ) : (
+                <li key={`c-${i}`} data-testid="import-review-conflict">
+                  {c.member.href ? (
+                    <a className="font-semibold text-tx-1 underline" href={c.member.href}>{c.member.name}</a>
+                  ) : (
+                    <strong className="text-tx-1">{c.name}</strong>
+                  )}
+                  <ul className="mt-0.5 space-y-0.5">
+                    {c.fields.map((f) => (
+                      <li key={f.field}>
+                        {f.label}: file says <strong>{show(f.field, f.upload)}</strong>; MatFlow now <strong>{show(f.field, f.now)}</strong>
+                        {f.stillDiffers ? "" : " — matches now"}
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ),
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
 
 type LoadState =
   | { phase: "loading" }
@@ -249,7 +374,9 @@ export default function ImportHistory({
             const keptSome = (job.rollback?.kind === "members" || job.rollback?.kind === "refresh") && job.rollback.kept.length > 0;
             // A member import that failed part-way can be rolled back too (F8).
             const finished = job.status === "complete" || (job.status === "failed" && job.kind !== "attendance" && !job.refresh);
-            const canRollBack = finished && (!job.rolledBackAt || keptSome);
+            // A refresh under the 25 Oct 2026 rule changed nobody, so there is nothing to roll back.
+            const listedOnly = job.mode === "refresh" && job.toReview !== null && (job.refresh?.changed ?? 0) === 0;
+            const canRollBack = finished && !listedOnly && (!job.rolledBackAt || keptSome);
             return (
               <li
                 key={job.id}
@@ -305,6 +432,8 @@ export default function ImportHistory({
                 )}
 
                 <RollbackOutcome job={job} />
+
+                {toReviewCount(job) > 0 && <ReviewList jobId={job.id} count={toReviewCount(job)} />}
 
                 {rowNote?.id === job.id && <p className="mt-1 text-xs text-tx-2">{rowNote.message}</p>}
                 {rowError?.id === job.id && (

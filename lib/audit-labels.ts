@@ -73,12 +73,15 @@ export const AUDIT_LABELS: Record<string, string> = {
   // ── Classes & timetable ───────────────────────────────────────────────────
   "class.created": "Created a class",
   "class.updated": "Updated a class",
-  "class.deleted": "Deleted a class",
+  // T6b: DELETE /api/classes/[id] archives (history kept, restorable).
+  "class.deleted": "Archived a class",
   "class.instances_generated": "Generated timetable sessions",
   "class.instance_cancelled": "Cancelled a session",
   "class.instance_restored": "Restored a cancelled session",
   "class.roster.add": "Added a member to a class roster",
   "class.roster.remove": "Removed a member from a class roster",
+  // D2 (24 Oct 2026): a rule change kept bookings whose members it now turns away.
+  "class.bookings.kept_ineligible": "Kept bookings of members the class now turns away",
   "location.create": "Added a venue",
   "location.update": "Updated a venue",
   "location.delete": "Removed a venue",
@@ -267,4 +270,37 @@ export function isUndoAction(action: string): boolean {
 export function auditLabelWithUndo(action: string): string {
   if (isUndoAction(action)) return `Undid: ${auditLabel(action.slice(UNDO_PREFIX.length))}`;
   return auditLabel(action);
+}
+
+/**
+ * T6b: Pause, Resume and Restore are all written as `class.updated`; the
+ * PATCH records which one in `metadata.lifecycle` (and an undo of one in
+ * `metadata.undoneLifecycle`), so Activity names it.
+ */
+const CLASS_LIFECYCLE_LABELS: Record<string, string> = {
+  paused: "Paused a class",
+  resumed: "Resumed a class",
+  restored: "Restored a class",
+};
+
+export type ClassLifecycleChange = "paused" | "resumed" | "restored";
+
+/** The lifecycle marker a class.updated row carries, if any. */
+export function classLifecycleOf(metadata: unknown): ClassLifecycleChange | null {
+  const m = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? (metadata as Record<string, unknown>) : null;
+  const v = m?.lifecycle;
+  return typeof v === "string" && v in CLASS_LIFECYCLE_LABELS ? (v as ClassLifecycleChange) : null;
+}
+
+/** The label for one Activity row: the action's, made specific by its metadata where it says more. */
+export function auditEntryLabel(action: string, metadata: unknown): string {
+  const m = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? (metadata as Record<string, unknown>) : {};
+  if (action === "class.updated") {
+    const lc = classLifecycleOf(m);
+    if (lc) return CLASS_LIFECYCLE_LABELS[lc];
+  }
+  if (action === `${UNDO_PREFIX}class.updated` && typeof m.undoneLifecycle === "string" && m.undoneLifecycle in CLASS_LIFECYCLE_LABELS) {
+    return `Undid: ${CLASS_LIFECYCLE_LABELS[m.undoneLifecycle]}`;
+  }
+  return auditLabelWithUndo(action);
 }

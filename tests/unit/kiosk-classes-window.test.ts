@@ -123,7 +123,9 @@ describe("GET /api/kiosk/[token]/classes — the club's day", () => {
     expect(where.isCancelled).toBe(false);
     // Live classes only (3 Oct 2026): a historical class an attendance import
     // created, or a session it created, is never offered at the door.
-    expect(where.class).toEqual({ tenantId: TENANT, isActive: true, deletedAt: null });
+    // T6b liveSessionWhere: the class-level import filter is now included too
+    // (it was missing at the kiosk).
+    expect(where.class).toEqual({ tenantId: TENANT, isActive: true, deletedAt: null, sourceImportJobId: null });
     expect(where.sourceImportJobId).toBeNull();
   });
 });

@@ -16,15 +16,25 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 const db = vi.hoisted(() => ({
   class: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn(), count: vi.fn() },
-  classRoster: { deleteMany: vi.fn(), createMany: vi.fn() },
+  // count: a rank gate clears the roster, so the PATCH asks whether one existed (T6d).
+  classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
   classSubscription: { findMany: vi.fn(), deleteMany: vi.fn() },
   classInstance: { createMany: vi.fn() },
-  rankSystem: { findFirst: vi.fn(), updateMany: vi.fn() },
+  // findMany: D2 resolves rank orders (lib/booking-eligibility-db readRankOrders), tenant-scoped.
+  rankSystem: { findFirst: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
+  attendanceRecord: { groupBy: vi.fn().mockResolvedValue([]) },
   memberRank: { count: vi.fn() },
   member: { findMany: vi.fn() },
   user: { findFirst: vi.fn() },
   location: { findFirst: vi.fn() },
   tenant: { findUnique: vi.fn(), findFirst: vi.fn() },
+  // T6a: the PATCH write transaction opens with a Class row lock.
+  // The squad rewrite's Member KEY SHARE read returns the members still there (all of them here).
+  $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    strings.join("?").includes("FOR KEY SHARE") ? (values[0] as string[]).map((id) => ({ id })) : [{ id: "c1" }],
+  ),
+  classMembershipTier: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn(), createMany: vi.fn() },
+  membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
 }));
 const mockAuth = vi.hoisted(() => vi.fn());
 
@@ -71,6 +81,10 @@ beforeEach(() => {
   db.classSubscription.findMany.mockResolvedValue([]);
   db.classSubscription.deleteMany.mockResolvedValue({ count: 0 });
   db.rankSystem.findFirst.mockImplementation(tenantLookup(["rank_a"]));
+  db.rankSystem.findMany.mockImplementation(async ({ where }: { where: { id: { in: string[] }; tenantId: string } }) =>
+    where.tenantId === T ? where.id.in.filter((id) => id === "rank_a").map((id) => ({ id, order: 1 })) : [],
+  );
+  db.member.findMany.mockResolvedValue([]);
   db.user.findFirst.mockImplementation(tenantLookup(["coach_a"]));
   db.location.findFirst.mockImplementation(tenantLookup(["loc_a"]));
   db.member.findMany.mockResolvedValue([]);
@@ -132,6 +146,9 @@ describe("PATCH /api/classes/[id] — E-1 ownership first", () => {
     for (const [args] of db.classSubscription.findMany.mock.calls) {
       expect(args.where).toMatchObject({ classId: "c1", member: { tenantId: T } });
     }
+    // D2: the preview's population read and rank lookups are the caller's club only.
+    for (const [args] of db.member.findMany.mock.calls) expect(args.where).toMatchObject({ tenantId: T });
+    for (const [args] of db.rankSystem.findMany.mock.calls) expect(args.where).toMatchObject({ tenantId: T });
   });
 });
 

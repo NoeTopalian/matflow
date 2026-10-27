@@ -89,6 +89,23 @@ acts on is worse than an error they can see.
 - **Soft-delete columns must be filtered by every reader**, or they are worse than no
   soft-delete at all.
 
+### 5a. Imports and later uploads (Noe, 25 Oct 2026)
+
+- "A later upload must not silently overwrite existing MatFlow values. Add genuinely new
+  records, skip exact duplicates, and show conflicting or ambiguous records for an authorised
+  person to resolve. Where previous ownership or edit history is unknown, preserve the current
+  value and flag the conflict."
+- "Keep the existing role permissions… Imported records should be editable through the same
+  authorised workflows as equivalent MatFlow-created records. No new access to prices,
+  financial records or status changes is approved."
+- "Keep production-derived evidence private. The sanitisation instruction includes customer
+  totals."
+- Once imported, data is MatFlow's; the source is only where it came from (24 Oct). An import
+  never starts a charge, a subscription or a message, and never invents a billing value the
+  file does not carry. A clear new person whose plan matches no single MatFlow plan is
+  imported without one and listed for the owner.
+- How it works: `docs/readiness/TEAMUP-OPERATIONS-CONTRACT.md` §3.
+
 ## 6. Verification
 
 - **Claims are measured, not asserted.** Contrast ratios come from computed styles in a

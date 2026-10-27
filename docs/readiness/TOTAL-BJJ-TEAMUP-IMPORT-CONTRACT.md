@@ -6,9 +6,9 @@ Phase A deliverable of the brief "MatFlow — real TeamUp import, family account
 
 | | Newer export (the candidate) | Older export (the refresh/delta pair) |
 |---|---|---|
-| File | `report-download-hdJocCUxn3aEXNGBdg22Dc.csv` | `report-download-HwnBEVtzVYW6gZEQgRS7W3.csv` |
-| SHA-256 | `90693f95228db57f39b9fd596e694fa62b57107fd63b6aa546a9275bf0aaed22` | `389ac61f…` (recorded in the restricted ledger) |
-| Records (header excluded) | 1,082 | 1,065 |
+| File | `<TeamUp export file>.csv` | `<TeamUp export file>.csv` |
+| SHA-256 | `<sha-256 held privately>` | `<hash held privately>` (recorded in the restricted ledger) |
+| Records (header excluded) | held privately | held privately |
 | Encoding / shape | UTF-8 with BOM, 26 columns, one row per membership ever held | same |
 | Export time | **absent from the file.** Provisional as-of = file mtime, 2 Oct 2026 12:27 UK — flagged provisional on every date-sensitive decision until Sean confirms the export time | 24 Sep 2026 (provisional) |
 
@@ -77,26 +77,27 @@ Money: a current TeamUp membership is written `paymentStatus: paid` meaning only
 Every CSV record ends as exactly one `ImportedMembership` disposition: `member_history` · `duplicate_of:<row>` · `quarantined:<reason>` · `excluded:deleted_customer`. Dispositions sum to the record count by construction; the commit's `reconciles` flag additionally requires persisted ledger rows = parsed ledger rows. The ledger is RLS-protected, cascades from its job and its member, and is purged with the tenant.
 
 Independent controls on the 2 Oct file (aggregates only; the product's preview must reproduce them exactly in the rehearsal):
+> Values held privately since 25 Oct 2026 (Noe: "Keep production-derived evidence private. The sanitisation instruction includes customer totals."). The controls themselves are unchanged.
 
 | Control | Value |
 |---|---|
-| Records | 1,082 |
-| Distinct (email, name) candidates / distinct emails | 708 / 609 |
-| Status: active / cancelled / hold / upgraded / downgraded / completed | 302 / 505 / 22 / 163 / 60 / 30 |
-| Type: recurring / prepaid | 927 / 155 |
-| Plan labels | 20 |
-| Exact duplicate rows | 3 |
-| Deleted-customer rows (excluded) | 8 |
-| Missing-email rows (non-deleted + deleted) | 7 + 8 = 15 |
-| People after folding: adults / juniors / kids | 707: 396 / 88 / 223 |
-| Two started actives (decision required) | 2 |
-| Active with a held row alongside / held only | 3 / 16 |
-| Active starting after the as-of date (scheduled) | 2 |
-| Cancelled persons with no cancellation date | 5 |
-| Emergency-contact conflicts within one person | 1 |
-| Kids: one adult on the email / several / no adult (guardian draft) / no email | 39 / 3 / 265 / 4 |
-| Second adults on an already-claimed email | 6 |
-| Active people with no email | 2 |
+| Records | held privately |
+| Distinct (email, name) candidates / distinct emails | held privately |
+| Status: active / cancelled / hold / upgraded / downgraded / completed | held privately |
+| Type: recurring / prepaid | held privately |
+| Plan labels | held privately |
+| Exact duplicate rows | held privately |
+| Deleted-customer rows (excluded) | held privately |
+| Missing-email rows (non-deleted + deleted) | held privately |
+| People after folding: adults / juniors / kids | held privately |
+| Two started actives (decision required) | held privately |
+| Active with a held row alongside / held only | held privately |
+| Active starting after the as-of date (scheduled) | held privately |
+| Cancelled persons with no cancellation date | held privately |
+| Emergency-contact conflicts within one person | held privately |
+| Kids: one adult on the email / several / no adult (guardian draft) / no email | held privately |
+| Second adults on an already-claimed email | held privately |
+| Active people with no email | held privately |
 
 ## 6. Representational gaps (stated, not papered over)
 
@@ -120,8 +121,8 @@ An import, refresh or rollback sends no welcome, invite, reset, marketing or rem
 
 **Export time: club time, with provenance.** The panel sends the typed wall-clock time and the server reads it in the club's timezone (an owner abroad no longer shifts the as-of date; from UTC+8 a London 00:15 on 5 Oct used to become 4 Oct). `ImportJob.sourceExportedAtProvenance` is `owner_stated` (default when a time is given), `provisional` (the owner ticked "This is an estimate"), or NULL (no time). Preview `asOfIsProvisional` is true for a provisional time; manifests and the success panel say "export time provisional". A provisional time never blocks the refresh that carries the real one (it would otherwise be refused as "older than recorded" whenever the guess was late). To correct an estimate: upload the same file as a Status refresh with the real time. A refresh re-reads entitlement at the real as-of and rewrites the refresh-owned fields; it does not rewrite the ledger's per-row `entitlement`, and the 5 and 19 Oct scheduled starts only move on a refresh from an export taken on or after those dates.
 
-**Plan labels → tiers** (`scripts/readiness/teamup-tier-plan.mjs <file> --as-of <date>`; independent cross-check: `teamup-controls.mjs` `planLabels`). 20 labels: 16 LIVE_TIER (an active or hold row), 4 HISTORY_ONLY. Create one tier per LIVE_TIER label with the label byte-for-byte as its name (matched trimmed and case-insensitive). "8 Week Beginners Course" is LIVE_TIER by status but its 3 holds all expired before 2 Oct, so nobody is on it at that as-of date; creating it is harmless. HISTORY_ONLY labels need no tier: every row is kept whole as `ImportedMembership.planLabel`, and a member's tier follows only their current / scheduled / held membership. The preview now lists, before commit, the labels a current, scheduled or held membership carries with no tier ("Create the missing tiers first"); Import stays enabled — the owner may proceed knowingly, and a later refresh links the tier.
+**Plan labels → tiers** (`scripts/readiness/teamup-tier-plan.mjs <file> --as-of <date>`; independent cross-check: `teamup-controls.mjs` `planLabels`). Each label is LIVE_TIER (an active or hold row) or HISTORY_ONLY (counts held privately). Create one tier per LIVE_TIER label with the label byte-for-byte as its name (matched trimmed and case-insensitive). A label can be LIVE_TIER by status with every hold already expired at the as-of date, so nobody is on it; creating its tier is harmless. HISTORY_ONLY labels need no tier: every row is kept whole as `ImportedMembership.planLabel`, and a member's tier follows only their current / scheduled / held membership. The preview now lists, before commit, the labels a current, scheduled or held membership carries with no tier ("Create the missing tiers first"); Import stays enabled — the owner may proceed knowingly, and sets the tier on each member once it exists (since 25 Oct 2026 a later upload changes nobody in MatFlow; it lists the difference).
 
 **Unknown money.** Tier fields for every TeamUp label: price 0, billing cycle `none`, not a kids plan, no Stripe price, description "Price not yet confirmed — billed by TeamUp (every 4 weeks | monthly | one-off course)". For a `billedBy: "teamup"` member this produces no due date (cycle none seeds nothing; the import never seeds one), no overdue and no "No payment yet" (both rules exclude TeamUp-billed members), no revenue (revenue is summed from payments), no member-facing price (kids self-billing lists only kids tiers; self-start needs a Stripe price; a Stripe price of 0 is refused), and never "Free" (the import and refresh never write it). The owner's Memberships page shows such a tier as "Price not set · Billed by TeamUp". Still reading £0 (owned elsewhere): staff tier pickers (`formatTierPrice`) and the Settings → Revenue "Membership Tiers" card. A member added at the desk on a price-0 tier starts "Free" and MatFlow-billed — leave the tier empty for a TeamUp-billed child added by hand.
 
-**Counts, kept separate** (real file, as of 2 Oct 2026): 1,082 source rows = 1,064 membership-history + 3 duplicate + 7 quarantined + 8 excluded (deleted customer). 707 people in the file = 396 adults + 307 children/juniors imported + 4 children held back. Drafts ("Will import" on an empty club) 922 = 703 people + 219 guardian records synthesised from emergency contacts — not a people count. Guardian suggestions 307 (42 shared email, 265 emergency contact), all unconfirmed. Missing email: 15 rows / 5 name|email groups raw; 7 rows / 4 groups excluding deleted-customer rows — exactly the 4 held-back children, none with an emergency contact. They are refused because `Member_kids_must_have_parent` (migration `20260515000001`) requires a parent; each is in the exceptions download by its first source row and in the ledger with no member. To add them: the parent at the desk if needed, then "Add child" on the parent's Family card (confirmed by staff, billed by MatFlow, no TeamUp key — each later refresh lists them as "not in MatFlow").
+**Counts, kept separate** (real file, as of 2 Oct 2026): held privately since 25 Oct 2026. The categories are: source rows (membership history, duplicates, quarantined, excluded deleted customers); people in the file (adults, children and juniors imported, children held back); drafts, which also count guardian records synthesised from emergency contacts and so are not a people count; guardian suggestions (shared email, emergency contact), all unconfirmed. Children with no email and no emergency contact are held back. They are refused because `Member_kids_must_have_parent` (migration `20260515000001`) requires a parent; each is in the exceptions download by its first source row and in the ledger with no member. To add them: the parent at the desk if needed, then "Add child" on the parent's Family card (confirmed by staff, billed by MatFlow, no TeamUp key — each later refresh lists them as "not in MatFlow").

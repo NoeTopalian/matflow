@@ -21,7 +21,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/page-header";
 import { useToast } from "@/components/ui/Toast";
 import { formatDateTime } from "@/lib/date";
-import { auditLabelWithUndo, isUndoAction } from "@/lib/audit-labels";
+import { auditEntryLabel, auditLabelWithUndo, classLifecycleOf, isUndoAction } from "@/lib/audit-labels";
 
 export type ActivityEntry = {
   id: string;
@@ -105,7 +105,10 @@ function describeChanges(meta: Record<string, unknown> | null): string | null {
       .map(([k, v]) => `${k}: ${String(v.from ?? "—")} → ${String(v.to ?? "—")}`);
     return parts.join(" · ") + (Object.keys(changes).length > 3 ? " · …" : "");
   }
-  const fields = meta.fields as string[] | undefined;
+  let fields = meta.fields as string[] | undefined;
+  // T6b: a Pause / Resume / Restore is named by the label; the raw column
+  // name `isActive` would only repeat it in database terms.
+  if (Array.isArray(fields) && classLifecycleOf(meta)) fields = fields.filter((f) => f !== "isActive");
   if (Array.isArray(fields) && fields.length) return `Fields: ${fields.slice(0, 5).join(", ")}${fields.length > 5 ? "…" : ""}`;
   // Import / refresh / rollback events carry their provenance (acceptance
   // S10/S12, 2 Oct 2026): which file, exported when, what happened to how many.
@@ -284,9 +287,9 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
             <div className="min-w-0">
               <p className="truncate font-medium" style={{ color: "var(--tx-1)" }}>
                 {href ? (
-                  <a href={href} className="underline-offset-2 hover:underline">{auditLabelWithUndo(e.action)}</a>
+                  <a href={href} className="underline-offset-2 hover:underline">{auditEntryLabel(e.action, e.metadata)}</a>
                 ) : (
-                  auditLabelWithUndo(e.action)
+                  auditEntryLabel(e.action, e.metadata)
                 )}
               </p>
               {detail && <p className="truncate text-xs" style={{ color: "var(--tx-3)" }}>{detail}</p>}
@@ -305,7 +308,7 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
             <span className="text-xs" style={{ color: "var(--tx-3)" }}>Undo</span>
           ) : e.undo.ok ? (
             <div className="flex items-center justify-end gap-1.5">
-              <Button variant="secondary" size="compact" onClick={() => setUndoing(e)} aria-label={`Undo: ${auditLabelWithUndo(e.action)}`}>
+              <Button variant="secondary" size="compact" onClick={() => setUndoing(e)} aria-label={`Undo: ${auditEntryLabel(e.action, e.metadata)}`}>
                 <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /> Undo
               </Button>
               {e.user && (
@@ -366,7 +369,7 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
                   <span className="min-w-0 break-words">{formatDateTime(e.createdAt)} · {activityActor(e).name}</span>
                   {activityActor(e).byOperator && <SupportPill />}
                 </p>
-                <p className="mt-1 text-sm font-medium" style={{ color: "var(--tx-1)" }}>{auditLabelWithUndo(e.action)}</p>
+                <p className="mt-1 text-sm font-medium" style={{ color: "var(--tx-1)" }}>{auditEntryLabel(e.action, e.metadata)}</p>
                 {describeChanges(e.metadata) && <p className="text-xs" style={{ color: "var(--tx-3)" }}>{describeChanges(e.metadata)}</p>}
                 <div className="mt-2 flex items-center gap-2">
                   {!isUndoAction(e.action) && e.undo.ok ? (
@@ -392,7 +395,7 @@ export default function ActivityLog({ initialStaff }: { initialStaff: StaffOptio
       <ConfirmDialog
         open={!!undoing}
         onClose={() => { if (!busy) setUndoing(null); }}
-        title={undoing ? `Undo: ${auditLabelWithUndo(undoing.action)}?` : "Undo?"}
+        title={undoing ? `Undo: ${auditEntryLabel(undoing.action, undoing.metadata)}?` : "Undo?"}
         description="This puts the recorded details back as they were before that action. Anything that action created or removed alongside — a booking, rank history, a Stripe change — stays as it is. The undo itself is recorded and can't be undone."
         confirmLabel="Undo this"
         loading={busy}

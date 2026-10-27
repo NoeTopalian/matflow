@@ -23,8 +23,11 @@ const fake = {
   loginEvent: { deleteMany: vi.fn() },
   importedBooking: { deleteMany: vi.fn() },
   importSourceMapping: { deleteMany: vi.fn() },
+  importJob: { findMany: vi.fn(async () => []), updateMany: vi.fn() },
 };
-const tx = fake as unknown as Prisma.TransactionClient;
+// T7: the cascade locks the Member row first (a row back = still there).
+const queryRaw = vi.fn(async () => [{ id: "m1" }]);
+const tx = { ...fake, $queryRaw: queryRaw } as unknown as Prisma.TransactionClient;
 
 beforeEach(() => {
   for (const d of Object.values(fake)) for (const f of Object.values(d)) f.mockReset();

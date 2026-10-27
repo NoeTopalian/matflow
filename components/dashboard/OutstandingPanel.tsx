@@ -5,13 +5,16 @@
  * overdue member with their latest failed amount + how long they've been
  * overdue, and lets staff Chase (send a reminder email) or Open the member's
  * payments tab to charge/refund — without digging into each profile.
+ *
+ * Rows are PAYERS (review L2): a parent or guardian account that owes is
+ * listed and counted, and the summary says how many there are.
  */
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { AlertCircle, ArrowRight, Banknote, CheckCircle2, Loader2, Send } from "lucide-react";
 
-import { NO_PAYMENT_YET_REASON, type OutstandingRow } from "@/lib/billing";
+import { NO_PAYMENT_YET_REASON, outstandingPayerSummary, type OutstandingRow } from "@/lib/billing";
 import RecordPaymentModal from "@/components/dashboard/RecordPaymentModal";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -19,8 +22,11 @@ import { CHASE_ELSEWHERE_NOTE, isBilledElsewhere } from "@/lib/billing-source";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { useToast } from "@/components/ui/Toast";
+import { FAILED_TO_RECONCILE_COPY, OTHER_OWING_COPY, failedToReconcileLine, otherAccountsOwingLine } from "@/lib/member-population";
+import { isConfirmedDebt, type OtherOwingRow } from "@/lib/other-accounts-owing";
 
-type ApiResponse = { rows: OutstandingRow[]; total: number; totalPence: number };
+/** `otherOwing` (D9): inactive or cancelled accounts that still owe — listed, never chased, not in the totals. */
+type ApiResponse = { rows: OutstandingRow[]; total: number; totalPence: number; otherOwing?: OtherOwingRow[] };
 
 function formatAmount(pence: number | null): string {
   if (pence == null) return "—";
@@ -58,7 +64,7 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
     setData((prev) => {
       if (!prev) return prev;
       const rows = prev.rows.filter((r) => r.memberId !== memberId);
-      return { rows, total: rows.length, totalPence: rows.reduce((s, r) => s + (r.amountPence ?? 0), 0) };
+      return { ...prev, rows, total: rows.length, totalPence: rows.reduce((s, r) => s + (r.amountPence ?? 0), 0) };
     });
     onRecorded?.();
   }
@@ -119,14 +125,30 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
   }
 
   const rows = data?.rows ?? [];
+  const summary = outstandingPayerSummary(rows);
+  // D9 confirmed debts, and (owner instruction of 24 Oct 2026) failed charges
+  // to reconcile, listed apart: a failed charge is not treated as owed.
+  const otherOwing = (data?.otherOwing ?? []).filter(isConfirmedDebt);
+  const toReconcile = (data?.otherOwing ?? []).filter((r) => !isConfirmedDebt(r));
+  const otherOwingSection =
+    otherOwing.length > 0 || toReconcile.length > 0 ? (
+      <>
+        {otherOwing.length > 0 && <OtherAccountsOwing rows={otherOwing} kind="owing" />}
+        {toReconcile.length > 0 && <OtherAccountsOwing rows={toReconcile} kind="reconcile" />}
+      </>
+    ) : null;
 
   if (rows.length === 0) {
     return (
-      <EmptyState
-        icon={<CheckCircle2 className="size-8" style={{ color: "var(--hue-success)" }} />}
-        title="Nobody owes you right now"
-        hint="Every active member is up to date. Failed and overdue payments, and members on a plan with no payment yet, appear here."
-      />
+      <div className="space-y-4">
+        {/* "Nobody to chase", not "nobody owes": the accounts below still owe (D9). */}
+        <EmptyState
+          icon={<CheckCircle2 className="size-8" style={{ color: "var(--hue-success)" }} />}
+          title={otherOwing.length > 0 || toReconcile.length > 0 ? "Nobody to chase right now" : "Nobody owes you right now"}
+          hint="Every active member is up to date. Failed and overdue payments, and members on a plan with no payment yet, appear here."
+        />
+        {otherOwingSection}
+      </div>
     );
   }
 
@@ -146,11 +168,25 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
         >
           <AlertCircle className="size-5" aria-hidden="true" />
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-2xl font-bold leading-none" style={{ color: "var(--tx-1)" }}>{formatAmount(data?.totalPence ?? 0)}</p>
-          <p className="mt-1 text-xs" style={{ color: "var(--tx-3)" }}>
-            outstanding across {rows.length} member{rows.length === 1 ? "" : "s"} (failed charges, and plan prices for missed due dates and first payments)
+          {/* Review L2: payers, in the words Reports and the Members tile use. */}
+          <p className="mt-1 text-xs text-tx-3" data-testid="outstanding-summary">
+            outstanding across {summary.headline} (failed charges, and plan prices for missed due dates and first payments)
           </p>
+          <p className="mt-0.5 text-xs text-tx-3" data-testid="outstanding-split">
+            {summary.split}. {summary.guardianNote}.
+          </p>
+          {otherOwing.length > 0 && (
+            <p className="mt-0.5 text-xs text-tx-3" data-testid="outstanding-other-owing">
+              {otherAccountsOwingLine(otherOwing.length)} — listed below, not in this total.
+            </p>
+          )}
+          {toReconcile.length > 0 && (
+            <p className="mt-0.5 text-xs text-tx-3" data-testid="outstanding-to-reconcile">
+              {failedToReconcileLine(toReconcile.length)} — listed below, not in this total.
+            </p>
+          )}
         </div>
       </div>
 
@@ -168,7 +204,7 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
                   {r.memberName}
                 </Link>
                 <p className="mt-0.5 truncate text-xs" style={{ color: "var(--tx-3)" }}>
-                  {r.membershipType ?? "Ad-hoc"}{r.reason && r.kind !== "no_payment_yet" ? ` · ${r.reason}` : ""}
+                  {r.membershipType ?? "Ad-hoc"}{r.reason && r.reason !== NO_PAYMENT_YET_REASON ? ` · ${r.reason}` : ""}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-4">
@@ -178,10 +214,13 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
                       where --hue-danger measures 3.76:1 and fails the §7 floor. */}
                   <p className="text-[11px]" style={{ color: r.kind === "no_payment_yet" ? "var(--tx-3)" : "var(--hue-danger-ink)" }}>{overdueLabel(r)}</p>
                 </div>
-                {/* The chase email is the failed-payment reminder; a member who has
+                {/* The chase email is the failed-payment reminder. A member who has
                     simply not paid yet has had nothing fail, so the desk records
-                    or opens instead. */}
-                {r.kind !== "no_payment_yet" && (
+                    or opens instead. But a declined FIRST charge is a "No payment
+                    yet" row since round-3 M1 and carries its failed charge; this
+                    panel is the only place it can be chased, so Chase shows
+                    whenever a charge failed (round-4 review L1). */}
+                {(r.kind !== "no_payment_yet" || r.amountSource === "failed_charge") && (
                 <Button
                   variant="secondary"
                   size="compact"
@@ -216,6 +255,8 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
         })}
       </div>
 
+      {otherOwingSection}
+
       <ConfirmDialog
         open={confirmChase !== null}
         onClose={() => setConfirmChase(null)}
@@ -237,5 +278,67 @@ export default function OutstandingPanel({ onRecorded }: { onRecorded?: () => vo
         onRecorded={(id) => handleRecorded(id)}
       />
     </div>
+  );
+}
+
+function formatDay(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/**
+ * D9 (owner direction, 23 Oct 2026): inactive or cancelled accounts that
+ * still owe ("owing": marked overdue) or whose last charge failed with nothing
+ * confirming a debt ("reconcile": owner instruction of 24 Oct 2026, never
+ * treated as owed until checked), one list each. Named so the debt is never
+ * lost; no Chase button — the club does
+ * not chase people who are inactive or have left — and not in the total
+ * above. Open leads to the member's payments, where staff can record or
+ * refund as for anyone.
+ */
+function OtherAccountsOwing({ rows, kind }: { rows: OtherOwingRow[]; kind: "owing" | "reconcile" }) {
+  const copy = kind === "owing" ? OTHER_OWING_COPY : FAILED_TO_RECONCILE_COPY;
+  const headingId = kind === "owing" ? "other-owing-heading" : "to-reconcile-heading";
+  return (
+    <section
+      aria-labelledby={headingId}
+      data-testid={kind === "owing" ? "outstanding-other-owing-list" : "outstanding-to-reconcile-list"}
+      className="overflow-hidden rounded-[var(--r-md)] border"
+      style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}
+    >
+      <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--bd-default)" }}>
+        <h3 id={headingId} className="text-sm font-semibold text-tx-1">
+          {copy.label} · {rows.length.toLocaleString("en-GB")}
+        </h3>
+        <p className="mt-0.5 text-xs text-tx-3">{copy.includes}. {copy.excludes}.</p>
+      </div>
+      {rows.map((r) => (
+        <div key={r.memberId} className="flex items-center justify-between gap-3 px-4 py-3" style={{ borderBottom: "1px solid var(--bd-default)" }}>
+          <div className="min-w-0">
+            <Link href={`/dashboard/members/${r.memberId}?tab=payments`} className="block truncate text-sm font-semibold hover:underline" style={{ color: "var(--tx-1)" }}>
+              {r.memberName}
+            </Link>
+            <p className="mt-0.5 truncate text-xs text-tx-3">
+              {r.status === "cancelled" ? "Cancelled" : "Inactive"}
+              {r.accountType === "parent" ? " · Parent or guardian" : ""}
+              {" · "}
+              {r.evidence === "failed_charge"
+                ? `Last charge failed${r.failedAt ? ` on ${formatDay(r.failedAt)}` : ""} — check before treating as owed`
+                : `Marked overdue${r.failedAt ? ` · last charge failed on ${formatDay(r.failedAt)}` : ""}`}
+              {r.reason ? ` · ${r.reason}` : ""}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-4">
+            <p className="text-sm font-semibold tabular-nums" style={{ color: "var(--tx-1)" }}>{formatAmount(r.amountPence)}</p>
+            <Link
+              href={`/dashboard/members/${r.memberId}?tab=payments`}
+              className="inline-flex items-center gap-1 rounded-[var(--r-md)] border px-2.5 py-1.5 text-xs font-semibold text-tx-1 transition-colors hover:bg-[var(--sf-2)]"
+              style={{ borderColor: "var(--bd-default)" }}
+            >
+              Open <ArrowRight className="size-3.5" aria-hidden="true" />
+            </Link>
+          </div>
+        </div>
+      ))}
+    </section>
   );
 }

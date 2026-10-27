@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh pr list:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npx vitest run:*)",
+      "Bash(npx tsc --noEmit:*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/keep-going.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

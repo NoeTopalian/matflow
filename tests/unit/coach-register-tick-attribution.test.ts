@@ -44,7 +44,14 @@ const {
 
 vi.mock("@/lib/api-authz", () => ({ requireApiStaff: requireApiStaffMock }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
-vi.mock("@/lib/checkin", () => ({ restorePackCreditsForAttendance: vi.fn(async () => 0) }));
+vi.mock("@/lib/checkin", () => ({
+  restorePackCreditsForAttendance: vi.fn(async () => 0),
+  // The class has no squad list or membership list here, so it is open.
+  lockedClassEligibility: vi.fn(async () => null),
+  // T7: the plan has no allowance here, so the allowance gate is open and spends no pack.
+  staffAllowanceGate: vi.fn(async () => ({ kind: "open", pack: null })),
+  returnClaimedPack: vi.fn(async () => undefined),
+}));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
     fn({
@@ -68,7 +75,7 @@ beforeEach(async () => {
     userId: "user_coach",
     role: "coach",
   });
-  instanceFindFirstMock.mockResolvedValue({ id: "inst_1" });
+  instanceFindFirstMock.mockResolvedValue({ id: "inst_1", classId: "cls_1", class: { name: "Fundamentals", tenant: { timezone: "Europe/London" } } });
   memberFindFirstMock.mockResolvedValue({ id: "mem_1" });
   upsertMock.mockResolvedValue({});
   findManyMock.mockResolvedValue([]);

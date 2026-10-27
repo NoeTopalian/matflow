@@ -8,10 +8,15 @@
  * Pure: no I/O, no Next imports, unit-tested in tests/unit/checkin-refusal.test.ts.
  */
 import type { PerformCheckinResult as CheckinResult } from "@/lib/checkin";
+import { tierRefusalSentence, ROSTER_REFUSAL_SENTENCE } from "@/lib/class-tier-gate";
+import { classNotLiveSentence } from "@/lib/class-live";
+import { allowanceRefusalSentence, allowanceStaffSentence } from "@/lib/class-allowance";
+import { paymentEvidenceSentence, type PaymentEvidence } from "@/lib/overdue";
 
 export type CheckinRefusalReason =
   | "class_not_found"
   | "class_cancelled"
+  | "class_paused"
   | "rank_below"
   | "rank_above"
   | "outside_window"
@@ -23,11 +28,28 @@ export type CheckinRefusalReason =
   | "on_hold"
   | "kids_class"
   | "venue_not_covered"
+  | "tier_not_included"
+  | "allowance_reached"
   | "member_not_found";
 
 export type CheckinRefusal = {
   status: 402 | 403 | 404 | 409;
-  body: { error: string; reason: CheckinRefusalReason };
+  body: {
+    error: string;
+    reason: CheckinRefusalReason;
+    /** allowance_reached only: the count and the period the sentence was built from. */
+    allowance?: {
+      used: number;
+      limit: number;
+      basis: "week" | "month" | "weeks" | "billing";
+      weeks?: number;
+      period?: { start: string; end: string };
+      resetsOn?: string;
+      current?: boolean;
+      /** A per-billing-period plan with no period recorded for this member. */
+      periodUnknown?: true;
+    };
+  };
 };
 
 function ukDate(d: Date): string {
@@ -54,15 +76,42 @@ export const TEAMUP_NO_PLAN_REFUSAL = "Your membership is with TeamUp and no pla
  * copy; do not shorten them — the numbers and dates are what a member argues
  * with at the desk.
  */
+/**
+ * D10 (owner direction, 23 Oct 2026): a member on a plan refused because they
+ * are behind is told WHICH evidence applies — never paid, a failed charge, or
+ * an outstanding due date — and the next step. The access rule is unchanged.
+ */
+export function paymentRefusalSentence(e: PaymentEvidence, clubTimeZone?: string | null): string {
+  const evidence = paymentEvidenceSentence(e, clubTimeZone || undefined);
+  return e.kind === "no_payment_recorded"
+    ? `${evidence} Ask the desk to record your payment.`
+    : `${evidence} Speak to the desk to settle it.`;
+}
+
 export function checkinRefusal(
   result: CheckinResult,
-  club: { paymentRail?: string | null } = {},
+  club: {
+    paymentRail?: string | null;
+    /** The club's zone, for the payment evidence dates (D10). */
+    timeZone?: string | null;
+    /** A parent checking in a child: the child's name, for the allowance refusal. */
+    memberName?: string | null;
+    /**
+     * A staff door (the register, the coach tick): the member's name. The
+     * allowance refusal then reads as the staff sentence
+     * (allowanceStaffSentence) rather than the member's own.
+     */
+    staffMemberName?: string | null;
+  } = {},
 ): CheckinRefusal | null {
   switch (result.kind) {
     case "class_not_found":
       return { status: 404, body: { error: "Class not found", reason: "class_not_found" } };
     case "class_cancelled":
       return { status: 409, body: { error: "Class has been cancelled", reason: "class_cancelled" } };
+    case "class_paused":
+      // T6b: names the class and says whether it is paused or gone.
+      return { status: 409, body: { error: classNotLiveSentence(result.className, result.state), reason: "class_paused" } };
     case "rank_below":
       return { status: 403, body: { error: "Your current rank is below this class's required rank.", reason: "rank_below" } };
     case "rank_above":
@@ -88,7 +137,9 @@ export function checkinRefusal(
           error:
             result.billedBy === "teamup"
               ? TEAMUP_NO_PLAN_REFUSAL
-              : club.paymentRail === "pay_at_desk"
+              : result.payment
+                ? paymentRefusalSentence(result.payment, club.timeZone)
+                : club.paymentRail === "pay_at_desk"
                 ? "No plan yet — ask the desk to add one."
                 : "No active membership or class pack credits. Buy a pack or contact your gym.",
           reason: "no_coverage",
@@ -105,7 +156,7 @@ export function checkinRefusal(
     case "duplicate":
       return { status: 409, body: { error: "Already checked in", reason: "already_checked_in" } };
     case "roster_not_listed":
-      return { status: 403, body: { error: "You're not on the roster for this class.", reason: "roster_not_listed" } };
+      return { status: 403, body: { error: ROSTER_REFUSAL_SENTENCE, reason: "roster_not_listed" } };
     case "waiver_unsigned":
       return {
         status: 403,
@@ -132,6 +183,35 @@ export function checkinRefusal(
         body: {
           error: `Your membership covers ${result.tierVenue}; this class is at ${result.classVenue}. Ask your gym about training there.`,
           reason: "venue_not_covered",
+        },
+      };
+    case "tier_not_included":
+      // T6a: names the class and the plan. Every door refuses with this
+      // sentence, staff doors included (no override, 20 Oct 2026).
+      return {
+        status: 403,
+        body: { error: tierRefusalSentence(result.className, result.tierName), reason: "tier_not_included" },
+      };
+    case "allowance_reached":
+      // T7: the count and the date the period resets. Every door refuses and
+      // nothing a client sends admits past it (owner decision, 27 Oct 2026):
+      // the member's words at the member app, a parent's and the kiosk; the
+      // staff sentence, naming the member, on a staff door.
+      return {
+        status: 403,
+        body: {
+          error: club.staffMemberName
+            ? allowanceStaffSentence(club.staffMemberName, result)
+            : allowanceRefusalSentence(result, club.memberName ?? null),
+          reason: "allowance_reached",
+          allowance: {
+            used: result.used, limit: result.limit, basis: result.basis,
+            ...(result.weeks !== undefined ? { weeks: result.weeks } : {}),
+            ...(result.period ? { period: result.period } : {}),
+            ...(result.resetsOn ? { resetsOn: result.resetsOn } : {}),
+            ...(result.current !== undefined ? { current: result.current } : {}),
+            ...(result.periodUnknown ? { periodUnknown: true as const } : {}),
+          },
         },
       };
     case "member_not_found":

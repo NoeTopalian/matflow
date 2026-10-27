@@ -4,6 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcryptjs";
 import "dotenv/config";
+if (!process.env.OPERATOR_EMAIL) { console.error("Set OPERATOR_EMAIL to the operator's own login address."); process.exit(2); }
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -17,7 +18,7 @@ console.log("tenant:", tenant);
 const user = await prisma.$transaction(async (tx) => {
   await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true)`;
   return tx.user.findFirst({
-    where: { tenantId: tenant.id, email: "noetopalian@gmail.com" },
+    where: { tenantId: tenant.id, email: process.env.OPERATOR_EMAIL },
     select: { id: true, email: true, role: true, passwordHash: true, failedLoginCount: true, lockedUntil: true },
   });
 });

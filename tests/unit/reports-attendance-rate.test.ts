@@ -17,6 +17,8 @@
  * (null, never NaN) for each mode.
  */
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
@@ -28,10 +30,16 @@ vi.mock("@/lib/prisma-tenant", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     class: { findMany: vi.fn(), count: vi.fn() },
+    // Review L4: getReportsData reads the club zone for its month windows.
+    tenant: { findUnique: vi.fn(async () => ({ timezone: "Europe/London" })) },
     classInstance: { findMany: vi.fn() },
     attendanceRecord: { findMany: vi.fn(), groupBy: vi.fn(), count: vi.fn() },
     member: { groupBy: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     payment: { count: vi.fn(), findMany: vi.fn() },
+    // T8c: the membership series reads (lib/membership-report.ts); it reads
+    // the club zone through the same `tenant` mock above.
+    memberStatusEvent: { findMany: vi.fn(async () => []) },
+    importedMembership: { findMany: vi.fn(async () => []) },
   },
 }));
 
@@ -123,6 +131,22 @@ describe("getReportsData — attendanceRateMode", () => {
     expect(data.attendanceRate.value).toBeLessThanOrEqual(100);
   });
 
+  it("attendance-percentage: a guardian account's check-in is not in the numerator, as it is not in the denominator", async () => {
+    // Denominator = ACTIVE_MEMBER (3), which leaves guardians out. A guardian
+    // whose status is "active" used to be added to the numerator, so the
+    // printed "(n of m)" held a person who is not in m: (4 of 3).
+    vi.mocked(prisma.attendanceRecord.findMany).mockResolvedValue([
+      { checkInTime: new Date(), memberId: "m1", member: { status: "active", accountType: "adult" } },
+      { checkInTime: new Date(), memberId: "m2", member: { status: "active", accountType: "kids" } },
+      { checkInTime: new Date(), memberId: "g1", member: { status: "active", accountType: "parent" } },
+    ] as never);
+    vi.mocked(prisma.member.groupBy).mockResolvedValue([{ status: "active", _count: 3 }] as never);
+
+    const data = await getReportsData("tenant-A", { attendanceRateMode: "attendance-percentage" });
+    expect(data.attendanceRate.numerator).toBe(2);
+    expect(data.attendanceRate.denominator).toBe(3);
+  });
+
   it("fill-rate: only capacity-bearing classes count on both sides (3 ÷ 10 = 30%, i2 excluded — no capacity)", async () => {
     const data = await getReportsData("tenant-A", { attendanceRateMode: "fill-rate" });
     expect(data.attendanceRate.mode).toBe("fill-rate");
@@ -202,5 +226,35 @@ describe("getReportsData — attendanceRateMode", () => {
     const data = await getReportsData("tenant-A", {});
     expect(data.retentionRate).toBeNull();
     expect(data.paymentHealth.recoveryRate).toBeNull();
+  });
+});
+
+// Integration review (26 Oct 2026): "Active classes" and the class filter read
+// the timetable's classes the way #41 defines them (lib/class-live): not
+// paused, archived or attendance-history imports. They used `isActive` alone
+// (the count) or without the import marker (the filter).
+describe("getReportsData — class reads use the live-class predicate", () => {
+  const LIVE = { tenantId: "tenant-A", isActive: true, deletedAt: null, sourceImportJobId: null };
+
+  it("the Active classes count and the class filter both read live classes only", async () => {
+    await getReportsData("tenant-A", {});
+    expect(vi.mocked(prisma.class.count)).toHaveBeenCalledWith({ where: LIVE });
+    expect(vi.mocked(prisma.class.findMany)).toHaveBeenCalledWith(expect.objectContaining({ where: LIVE }));
+  });
+
+  it("the AI report and Analysis page count classes the same way", () => {
+    for (const f of ["lib/ai-causal-report.ts", "app/dashboard/analysis/page.tsx"]) {
+      const src = readFileSync(path.join(process.cwd(), f), "utf8");
+      expect(src, f).toMatch(/tx\.class\.count\(\{ where: liveClassWhere\(tenantId\) \}\)/);
+      expect(src, f).not.toMatch(/class\.count\(\{ where: \{ tenantId, isActive: true \} \}\)/);
+    }
+  });
+
+  it("the Settings class counts (page and GET /api/settings) count live classes too", () => {
+    for (const f of ["app/dashboard/settings/page.tsx", "app/api/settings/route.ts"]) {
+      const src = readFileSync(path.join(process.cwd(), f), "utf8");
+      expect(src, f).toMatch(/classes: \{ where: liveClassWhere\(/);
+      expect(src, f).not.toMatch(/classes: \{ where: \{ isActive: true \} \}/);
+    }
   });
 });

@@ -8,6 +8,8 @@
  *   - "rank_below": class.requiredRank set and member's rank order < threshold
  *   - "rank_above": class.maxRank set and member's rank order > threshold
  *   - "roster_ok": member is on the class's roster (overrides rank for display)
+ *   - "tier_not_included": the class's memberships (ClassMembershipTier) do
+ *     not include the member's plan (T6a) — shown locked, not bookable
  *
  * `kidsClassForAdult` is true on a kids class when the viewer is an adult or
  * parent: check-in refuses them, so the timetable never badges it "Next" for
@@ -21,6 +23,10 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { resolveCoachName } from "@/lib/class-coach";
 import { isAdultAccount } from "@/lib/account-type";
+import { classTierCovers } from "@/lib/class-tier-gate";
+import type { ScheduleEligibility } from "@/lib/member-home";
+import { liveClassWhere } from "@/lib/class-live";
+import { accessRefusals, accessRefusalSentence, highestRankOrder } from "@/lib/booking-eligibility";
 
 const DEMO_CLASSES = [
   { id: "m1",  name: "Fundamentals BJJ", startTime: "09:30", endTime: "10:30", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 1, color: "#3b82f6" },
@@ -54,7 +60,7 @@ export async function GET(req: Request) {
   const memberId = session.user.memberId;
 
   try {
-    const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts, viewerIsAdult } = await withTenantContext(
+    const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts, viewerIsAdult, viewerTierId, viewerTierName, bookedClassIds } = await withTenantContext(
       session.user.tenantId,
       async (tx) => {
         const cls = await tx.class.findMany({
@@ -62,7 +68,9 @@ export async function GET(req: Request) {
           // to filter it. `isActive: false` is "paused"; `deletedAt` is
           // "removed" — a removed class reappearing on the member timetable is
           // the failure mode a soft-delete exists to prevent.
-          where: { tenantId: session.user.tenantId, isActive: true, deletedAt: null },
+          // T6b: live classes only (liveClassWhere) — a paused or archived
+          // class, or imported history, is not on the member timetable.
+          where: liveClassWhere(session.user.tenantId),
           select: {
             id: true,
             name: true,
@@ -72,12 +80,16 @@ export async function GET(req: Request) {
             location: true,
             maxCapacity: true,
             isKids: true,
+            // T6c: the category key, shown as a label on the member timetable.
+            category: true,
             requiredRank: { select: { id: true, name: true, discipline: true, order: true } },
             maxRank: { select: { id: true, name: true, discipline: true, order: true } },
             schedules: {
               where: { isActive: true },
               select: { id: true, dayOfWeek: true, startTime: true, endTime: true },
             },
+            // T6a: memberships that include the class ([] = everyone).
+            allowedTiers: { select: { tierId: true } },
           },
         });
 
@@ -119,8 +131,20 @@ export async function GET(req: Request) {
           : [];
         const rosterIds = new Set(rosterMembershipsRaw.map((r) => r.classId));
         const me = memberId
-          ? await tx.member.findFirst({ where: { id: memberId, tenantId: session.user.tenantId }, select: { accountType: true } })
+          ? await tx.member.findFirst({
+              where: { id: memberId, tenantId: session.user.tenantId },
+              select: { accountType: true, membershipTierId: true, membershipTier: { select: { name: true } } },
+            })
           : null;
+        // D2: the member's own bookings, so a booked class whose rules now
+        // turn them away is shown — marked "not eligible" with the door's
+        // sentence — rather than hidden or silently kept.
+        const booked = memberId
+          ? await tx.classSubscription.findMany({
+              where: { memberId, class: { tenantId: session.user.tenantId } },
+              select: { classId: true },
+            })
+          : [];
 
         // For each class, count whether it has ANY roster (i.e., is roster-only mode).
         const counts = await tx.classRoster.groupBy({
@@ -138,6 +162,9 @@ export async function GET(req: Request) {
           rosterClassIds: rosterIds,
           rosterCounts: countMap,
           viewerIsAdult: isAdultAccount(me?.accountType),
+          viewerTierId: me?.membershipTierId ?? null,
+          viewerTierName: me?.membershipTier?.name ?? null,
+          bookedClassIds: new Set(booked.map((b) => b.classId)),
         };
       },
     );
@@ -149,12 +176,41 @@ export async function GET(req: Request) {
       .flatMap((cls: Cls) => {
         const isRosterMode = (rosterCounts.get(cls.id) ?? 0) > 0;
         const memberOnRoster = rosterClassIds.has(cls.id);
+        const isBooked = bookedClassIds.has(cls.id);
 
-        // Roster-only class member is NOT on → server-side hide entirely.
-        if (isRosterMode && !memberOnRoster) return [];
+        // Roster-only class member is NOT on → server-side hide entirely —
+        // unless they are booked on it (D2: a booking is kept when the squad
+        // list drops them, and the member sees it marked "not eligible").
+        if (isRosterMode && !memberOnRoster && !isBooked) return [];
+
+        // D2: a booked class the door would now refuse this member, with the
+        // door's own sentence (lib/booking-eligibility.ts: the door's rules —
+        // rank on the highest rank of any discipline, the squad list, the
+        // membership list). Null when admitted or not booked.
+        const refusals = isBooked
+          ? accessRefusals(
+              {
+                // Only this member's place on the list matters here: a list
+                // that exists without them is spelled as one other entry.
+                rosterMemberIds: !isRosterMode ? [] : memberOnRoster ? [memberId ?? ""] : ["(someone else)"],
+                allowedTierIds: cls.allowedTiers.map((t) => t.tierId),
+                requiredRankOrder: cls.requiredRank?.order ?? null,
+                maxRankOrder: cls.maxRank?.order ?? null,
+              },
+              {
+                memberId: memberId ?? "",
+                membershipTierId: viewerTierId,
+                tierName: viewerTierName,
+                rankOrder: highestRankOrder(memberRanks.map((mr) => mr.rankSystem)),
+              },
+            )
+          : [];
+        const bookedIneligible = refusals.length > 0
+          ? { reason: refusals[0], sentence: accessRefusalSentence(refusals[0], cls.name, viewerTierName) }
+          : null;
 
         // Compute eligibility per class (constant across schedule entries).
-        let eligibility: "ok" | "rank_below" | "rank_above" | "roster_ok" = "ok";
+        let eligibility: ScheduleEligibility = "ok";
         if (memberOnRoster) {
           eligibility = "roster_ok";
         } else if (cls.requiredRank) {
@@ -164,6 +220,18 @@ export async function GET(req: Request) {
         if (eligibility === "ok" && cls.maxRank) {
           const r = memberRanks.find((mr) => mr.rankSystem.discipline === cls.maxRank!.discipline);
           if (r && r.rankSystem.order > cls.maxRank.order) eligibility = "rank_above";
+        }
+        // T6a: the same rule the check-in engine and booking apply. Locked,
+        // not hidden: the member sees the class and what to ask about. Being
+        // on the roster does not lift it (both must hold, 20 Oct 2026).
+        if (
+          (eligibility === "ok" || eligibility === "roster_ok") &&
+          !classTierCovers({
+            allowedTierIds: cls.allowedTiers.map((t) => t.tierId),
+            memberTierId: viewerTierId,
+          })
+        ) {
+          eligibility = "tier_not_included";
         }
 
         return cls.schedules.map((sched: Sched) => ({
@@ -180,12 +248,16 @@ export async function GET(req: Request) {
           // Shown as a small "Kids" tag on the member's timetable.
           isKids: cls.isKids,
           kidsClassForAdult: viewerIsAdult && cls.isKids === true,
+          // T6c: a key from lib/class-category.ts, or null (uncategorised).
+          category: cls.category ?? null,
           dayOfWeek: sched.dayOfWeek,
           classInstanceId: instanceMap.get(`${cls.id}-${sched.startTime}`) ?? null,
           cancelled: cancelledSlots.has(`${cls.id}-${sched.startTime}`),
           eligibility,
           requiredRankName: cls.requiredRank?.name ?? null,
           maxRankName: cls.maxRank?.name ?? null,
+          // D2: set only on a booked class the door now refuses; the booking is kept.
+          bookedIneligible,
         }));
       });
 

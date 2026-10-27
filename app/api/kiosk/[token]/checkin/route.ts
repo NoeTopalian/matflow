@@ -17,6 +17,9 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { verifyKioskMemberToken } from "@/lib/kiosk-token";
 import { performCheckin } from "@/lib/checkin";
 import { KIDS_CLASS_REFUSAL } from "@/lib/checkin-refusal";
+import { tierRefusalSentence, ROSTER_REFUSAL_SENTENCE } from "@/lib/class-tier-gate";
+import { classNotLiveSentence } from "@/lib/class-live";
+import { allowanceRefusalSentence } from "@/lib/class-allowance";
 import { logAudit } from "@/lib/audit-log";
 import { normaliseIp, summariseUa } from "@/lib/login-fingerprint";
 import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
@@ -88,8 +91,7 @@ export async function POST(
     classInstanceId,
     method: "kiosk",
     enforceRankGate: true,        // default #1: rank gates enforced
-    enforceRosterGate: true,      // default #1b: roster (allow-list) enforced
-    enforceTimeWindow: true,      // kiosk respects the configured check-in window
+    enforceTimeWindow: true,     // kiosk respects the configured check-in window
     requireCoverage: false,       // default #2: forgiving on subs
     // The iPad at the door is the MEMBER deciding, with no one to look at the
     // room, so the ceiling holds here exactly as it does for self check-in.
@@ -107,6 +109,14 @@ export async function POST(
     // The tablet is a member-decided path: a venue-bound tier does not open
     // a class at another venue (ADR-001 D2 slice 2).
     enforceVenueGate: true,
+    // The squad list and the membership list need no flag: the engine
+    // refuses on both at every door, the tablet included.
+    // T6b: a paused or archived class is not offered at the tablet, and a
+    // session minted before the pause is refused by instance id too.
+    enforceClassStateGate: true,
+    // T7: the plan allowance is refused at the tablet with the count and the
+    // date the next class frees up; staff can still admit at the desk.
+    allowanceGate: "refuse",
   });
 
   switch (result.kind) {
@@ -138,6 +148,12 @@ export async function POST(
       return NextResponse.json({ error: "Class not found" }, { status: 404 });
     case "class_cancelled":
       return NextResponse.json({ error: "This class has been cancelled", reason: "class_cancelled" }, { status: 409 });
+    case "class_paused":
+      // T6b: the same sentence as the member app, naming the class.
+      return NextResponse.json(
+        { error: classNotLiveSentence(result.className, result.state), reason: "class_paused" },
+        { status: 409 },
+      );
     case "rank_below":
       return NextResponse.json(
         { error: "This class is for a higher belt — please ask staff." },
@@ -174,13 +190,15 @@ export async function POST(
         { status: 409 },
       );
     case "roster_not_listed":
-      // The kiosk asks for this gate (`enforceRosterGate: true`) and then had
-      // no case for its answer, so a comp class working exactly as configured
-      // fell through `default:` to a 500 and the tablet blamed itself. Same
-      // sentence as the staff route, so the two surfaces agree about the same
-      // state.
+      // The kiosk once had no case for this answer, so a comp class working
+      // exactly as configured fell through `default:` to a 500 and the tablet
+      // blamed itself. Same sentence as the staff route, so the two surfaces
+      // agree about the same state.
+      // T6d: the machine-readable reason, as the staff route sends. The kiosk
+      // search no longer offers a squad class to a member who is not on it,
+      // so this answer is now reached only by a direct POST.
       return NextResponse.json(
-        { error: "You're not on the roster for this class." },
+        { error: ROSTER_REFUSAL_SENTENCE, reason: "roster_not_listed" },
         { status: 403 },
       );
     case "waiver_unsigned":
@@ -211,6 +229,16 @@ export async function POST(
     case "venue_not_covered":
       return NextResponse.json(
         { error: `Your membership covers ${result.tierVenue} — this class is at ${result.classVenue}. Ask staff.`, reason: "venue_not_covered" },
+        { status: 403 },
+      );
+    case "tier_not_included":
+      return NextResponse.json(
+        { error: tierRefusalSentence(result.className, result.tierName), reason: "tier_not_included" },
+        { status: 403 },
+      );
+    case "allowance_reached":
+      return NextResponse.json(
+        { error: allowanceRefusalSentence(result), reason: "allowance_reached" },
         { status: 403 },
       );
     case "no_coverage":

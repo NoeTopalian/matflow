@@ -12,6 +12,7 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { isAdminPageAuthed } from "@/lib/admin-auth";
 import { redirect } from "next/navigation";
 import TenantsList from "./TenantsList";
+import { ACTIVE_MEMBER } from "@/lib/member-population";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,7 +26,10 @@ export type TenantRow = {
   ownerEmail: string | null;
   ownerName: string | null;
   ownerUserId: string | null;
+  /** Every member row the club has, as main exported it: all statuses and account types. */
   memberCount: number;
+  /** The club's own "Active members" number (ACTIVE_MEMBER): active training members, guardians excluded. */
+  activeMemberCount: number;
   status: string;
   stripeConnected: boolean;
   stripeChargesEnabled: boolean | null;
@@ -63,6 +67,16 @@ async function getTenants(view: TenantView) {
       tx.tenant.count({ where: { deletedAt: null } }),
       tx.tenant.count({ where: { deletedAt: { not: null } } }),
     ]);
+    // The club's own "Active members" number (T1, Q4 A-1), beside the all-rows count.
+    const activeByTenant = new Map(
+      (
+        await tx.member.groupBy({
+          by: ["tenantId"],
+          where: { tenantId: { in: tenants.map((t) => t.id) }, ...ACTIVE_MEMBER },
+          _count: { _all: true },
+        })
+      ).map((g) => [g.tenantId, g._count._all]),
+    );
     const rows: TenantRow[] = tenants.map((t) => {
       const status = t.stripeAccountStatus as { chargesEnabled?: boolean } | null;
       return {
@@ -73,6 +87,7 @@ async function getTenants(view: TenantView) {
         ownerName: t.users[0]?.name ?? null,
         ownerUserId: t.users[0]?.id ?? null,
         memberCount: t._count.members,
+        activeMemberCount: activeByTenant.get(t.id) ?? 0,
         status: t.subscriptionStatus,
         stripeConnected: t.stripeConnected,
         stripeChargesEnabled: status?.chargesEnabled ?? null,

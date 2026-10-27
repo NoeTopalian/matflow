@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { billingCycleSchema } from "@/lib/billing-cycle";
+import { BILLING_BASIS_AVAILABLE, BILLING_BASIS_UNAVAILABLE_MESSAGE, BILLING_ON_NONE_MESSAGE, allowanceColumns, classLimitAnchorSchema, classLimitBasisSchema, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
@@ -14,7 +15,16 @@ const createSchema = z.object({
   pricePence: z.number().int().min(0).max(10_000_000, "Price must be £100,000 or less"),
   currency: z.string().length(3).regex(/^[A-Z]{3}$/),
   billingCycle: billingCycleSchema,
+  // Legacy single weekly limit, still accepted from a page loaded before T7c.
+  // Never together with the allowance fields (refineAllowance).
   maxClassesPerWeek: z.number().int().min(1).max(30).optional(),
+  // T7c: "N classes" on an explicit reset basis (lib/class-allowance.ts):
+  // limit + basis together; "weeks" also needs the weeks and the start date.
+  // All null or absent = Unlimited.
+  classLimit: classLimitSchema.nullable().optional(),
+  classLimitBasis: classLimitBasisSchema.nullable().optional(),
+  classLimitWeeks: classLimitWeeksSchema.nullable().optional(),
+  classLimitAnchor: classLimitAnchorSchema.nullable().optional(),
   isKids: z.boolean(),
   // ADR-001 D2 slice 2: the venue this tier covers; null/absent = every venue.
   locationId: z.string().min(1).max(64).optional().nullable(),
@@ -24,7 +34,7 @@ const createSchema = z.object({
   // prefixes mirror Stripe's documented id shapes.
   stripePriceId: z.string().regex(/^price_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
   stripeProductId: z.string().regex(/^prod_[A-Za-z0-9_]+$/).max(100).nullable().optional(),
-});
+}).superRefine(refineAllowance);
 
 export async function GET() {
   try {
@@ -64,7 +74,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    const { name, description, pricePence, currency, billingCycle, maxClassesPerWeek, isKids, stripePriceId, stripeProductId, locationId } = parsed.data;
+    const { name, description, pricePence, currency, billingCycle, isKids, stripePriceId, stripeProductId, locationId } = parsed.data;
+    const allowance = allowanceColumns(parsed.data) ?? { classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null, maxClassesPerWeek: null };
+
+    // The billing-period basis ships dark until live Stripe delivery is verified (release gate, 22 Oct 2026).
+    if (allowance.classLimitBasis === "billing" && !BILLING_BASIS_AVAILABLE) {
+      return NextResponse.json({ error: BILLING_BASIS_UNAVAILABLE_MESSAGE, details: { fieldErrors: { classLimitBasis: [BILLING_BASIS_UNAVAILABLE_MESSAGE] } } }, { status: 400 });
+    }
+    // A plan billed once has no billing period to count classes in (review round 3, L-5).
+    if (allowance.classLimitBasis === "billing" && billingCycle === "none") {
+      return NextResponse.json({ error: BILLING_ON_NONE_MESSAGE, details: { fieldErrors: { classLimitBasis: [BILLING_ON_NONE_MESSAGE] } } }, { status: 400 });
+    }
 
     // A venue from another club must not attach — refused, never dropped.
     if (locationId) {
@@ -81,7 +101,7 @@ export async function POST(req: Request) {
           pricePence,
           currency,
           billingCycle,
-          maxClassesPerWeek: maxClassesPerWeek ?? null,
+          ...allowance,
           isKids,
           stripePriceId: stripePriceId ?? null,
           stripeProductId: stripeProductId ?? null,
@@ -96,7 +116,12 @@ export async function POST(req: Request) {
       action: "membership.tier.create",
       entityType: "MembershipTier",
       entityId: tier.id,
-      metadata: { name, pricePence, billingCycle, isKids, hasStripePriceId: !!stripePriceId },
+      metadata: {
+        name, pricePence, billingCycle, isKids,
+        classLimit: allowance.classLimit, classLimitBasis: allowance.classLimitBasis, classLimitWeeks: allowance.classLimitWeeks,
+        classLimitAnchor: allowance.classLimitAnchor ? allowance.classLimitAnchor.toISOString().slice(0, 10) : null,
+        hasStripePriceId: !!stripePriceId,
+      },
       req,
     });
 

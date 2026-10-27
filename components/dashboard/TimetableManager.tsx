@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Select } from "@/components/ui/select";
 import {
   Plus, Calendar, Clock, Users, MapPin, ChevronRight, ChevronLeft,
-  X, Trash2, Edit2, RefreshCw, Tag,
+  X, Edit2, RefreshCw, Tag, Pause, Archive, ArchiveRestore, Play,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,11 @@ import { Switch } from "@/components/ui/switch";
 import { hex } from "@/lib/color";
 import { describeApiError } from "@/lib/api-field-errors";
 import { sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
-import type { ClassRow, CoachUserOption } from "@/app/dashboard/timetable/page";
+import type { ClassRow, CoachUserOption, TierOption } from "@/app/dashboard/timetable/page";
+import { Checkbox } from "@/components/ui/checkbox";
+import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, classCategoryLabel, classCategoryTag } from "@/lib/class-category";
+import type { RestrictionPreview } from "@/lib/booking-eligibility";
+import { RestrictionPreviewBody, previewHasRefusals } from "@/components/dashboard/RestrictionPreview";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -29,8 +33,12 @@ interface RankOption {
 
 interface Props {
   initialClasses: ClassRow[];
+  /** T6b: paused and archived classes, for the "Paused and archived" section. */
+  initialInactiveClasses?: ClassRow[];
   rankSystems: RankOption[];
   coachUsers: CoachUserOption[];
+  /** T6a: every membership tier of the club, for "Who can attend". */
+  membershipTiers?: TierOption[];
   primaryColor: string;
   role: string;
   // Session F: drives the "My classes" filter. When null (e.g. no
@@ -84,6 +92,25 @@ function describeSave(change: ScheduleChange | null | undefined): string {
   return message;
 }
 
+/**
+ * D2: whether a save changes who the class admits — its memberships, its
+ * squad list or its rank gate — so the owner is shown who it turns away
+ * first. A new class is previewed when it is created restricted.
+ */
+function accessChanged(target: ClassRow | null, data: Record<string, unknown>): boolean {
+  const ids = (v: unknown, key: "id" | "memberId") =>
+    Array.isArray(v) ? (v as Array<string | Record<string, string>>).map((x) => (typeof x === "string" ? x : x[key])).sort().join(",") : null;
+  const tiersAfter = Array.isArray(data.allowedTierIds) ? [...(data.allowedTierIds as string[])].sort().join(",") : null;
+  const rosterAfter = ids(data.roster, "memberId");
+  if (!target) return !!tiersAfter || !!rosterAfter || !!data.requiredRankId || !!data.maxRankId;
+  const tiersBefore = ids(target.allowedTiers ?? [], "id") ?? "";
+  const rosterBefore = ids(target.roster ?? [], "memberId") ?? "";
+  const rankChanged =
+    ("requiredRankId" in data && (data.requiredRankId ?? null) !== (target.requiredRankId ?? null)) ||
+    ("maxRankId" in data && (data.maxRankId ?? null) !== (target.maxRankId ?? null));
+  return (tiersAfter !== null && tiersAfter !== tiersBefore) || (rosterAfter !== null && rosterAfter !== rosterBefore) || rankChanged;
+}
+
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAYS_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -95,6 +122,9 @@ const CLASS_COLORS = [
 
 // UI-RULES §2: the inline hex()/alpha-maths copy that lived here is gone —
 // lib/color.ts is the single source (imported above).
+
+/** Value of the timetable category filter that selects uncategorised classes. */
+const UNCATEGORISED = "__uncategorised";
 
 /**
  * One class as it appears inside a day — used by BOTH the desktop week grid and
@@ -184,6 +214,15 @@ function ClassChip({
               style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
             >
               Kids
+            </span>
+          )}
+          {classCategoryTag(cls) && (
+            <span
+              data-testid="class-chip-category"
+              className="inline-flex items-center rounded-full px-1.5 font-semibold tracking-wide leading-4 text-[9px]"
+              style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
+            >
+              {classCategoryTag(cls)}
             </span>
           )}
           {showState && (
@@ -296,7 +335,8 @@ function ClassCard({
   cls,
   primaryColor,
   onEdit,
-  onDelete,
+  onPause,
+  onArchive,
   onGenerate,
   generating,
   canManage,
@@ -304,7 +344,10 @@ function ClassCard({
   cls: ClassRow;
   primaryColor: string;
   onEdit: (c: ClassRow) => void;
-  onDelete: (id: string) => void;
+  /** T6b: take it off the timetable for now (reversible). */
+  onPause: (c: ClassRow) => void;
+  /** T6b: remove it from the timetable and lists (history kept, restorable). */
+  onArchive: (c: ClassRow) => void;
   onGenerate: (id: string) => void;
   /** True while THIS class's instance generation is in flight. */
   generating: boolean;
@@ -348,14 +391,27 @@ function ClassCard({
             >
               <Edit2 className="w-3.5 h-3.5" />
             </button>
-            <button
-              onClick={() => onDelete(cls.id)}
-              aria-label={`Delete ${cls.name}`}
-              className="w-7 h-7 rounded-[var(--r-sm)] flex items-center justify-center transition-colors hover:bg-sf-2 hover:text-[var(--hue-danger)]"
-              style={{ color: "var(--tx-3)" }}
+            {/* T6b: two lifecycle actions, both reversible, both asked first. */}
+            <Button
+              variant="ghost"
+              size="compact"
+              onClick={() => onPause(cls)}
+              aria-label={`Pause ${cls.name}`}
+              title="Pause: take it off the timetable for now"
+              className="w-7 px-0"
             >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+              <Pause className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="compact"
+              onClick={() => onArchive(cls)}
+              aria-label={`Archive ${cls.name}`}
+              title="Archive: remove it from the timetable, keep its history"
+              className="w-7 px-0"
+            >
+              <Archive className="size-3.5" />
+            </Button>
           </div>
         )}
       </div>
@@ -387,6 +443,27 @@ function ClassCard({
             style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
           >
             Kids
+          </span>
+        )}
+        {classCategoryTag(cls) && (
+          // T6c: what kind of class this is. Absent = uncategorised.
+          <span
+            className="flex items-center text-xs px-2 py-0.5 rounded-full font-medium"
+            style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
+            data-testid="class-card-category"
+          >
+            {classCategoryTag(cls)}
+          </span>
+        )}
+        {cls.allowedTiers && cls.allowedTiers.length > 0 && (
+          // T6a: who the class is for. Absent = everyone.
+          <span
+            className="flex items-center text-xs px-2 py-0.5 rounded-full"
+            style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
+            data-testid="class-card-tiers"
+            title="Memberships that include this class"
+          >
+            For: {cls.allowedTiers.map((t) => t.name).join(", ")}
           </span>
         )}
         {cls.requiredRank && (
@@ -421,6 +498,154 @@ function ClassCard({
       )}
     </div>
   );
+}
+
+// ─── Paused and archived (T6b) ────────────────────────────────────────────────
+
+/**
+ * The classes that are off the timetable, with the one action that brings
+ * each back. Paused: Resume (and Archive, to remove it for good). Archived:
+ * Restore. Owner and manager only — the caller renders it under `canManage`.
+ * The rows come from the server render, so an empty list is the true state,
+ * never a failed read (a failed read throws to the segment error boundary).
+ */
+function InactiveClassList({
+  classes,
+  busyId,
+  onRestore,
+  onArchive,
+}: {
+  classes: ClassRow[];
+  busyId: string | null;
+  onRestore: (c: ClassRow) => void;
+  onArchive: (c: ClassRow) => void;
+}) {
+  if (classes.length === 0) return null;
+  const paused = classes.filter((c) => c.lifecycle !== "archived");
+  const archived = classes.filter((c) => c.lifecycle === "archived");
+  const group = (title: string, rows: ClassRow[], hint: string) =>
+    rows.length === 0 ? null : (
+      <div>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-tx-3 mb-1">
+          {title} ({rows.length})
+        </h3>
+        <p className="text-xs text-tx-4 mb-2">{hint}</p>
+        <ul className="space-y-2">
+          {rows.map((cls) => {
+            const isArchived = cls.lifecycle === "archived";
+            return (
+              <li
+                key={cls.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-bd-default bg-sf-1 px-3 py-2"
+                data-testid={`inactive-class-${cls.id}`}
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-tx-1 break-words">
+                    {cls.name}{" "}
+                    <span className="ml-1 inline-flex items-center rounded-full border border-bd-default bg-sf-2 px-1.5 text-[10px] font-bold uppercase tracking-wide text-tx-2">
+                      {isArchived ? "Archived" : "Paused"}
+                    </span>
+                  </p>
+                  <p className="text-xs text-tx-3">
+                    {cls.schedules.length > 0
+                      ? cls.schedules.map((s) => `${DAYS[s.dayOfWeek]} ${s.startTime}`).join(" · ")
+                      : "No schedule set"}
+                    {isArchived && cls.archivedAt
+                      ? ` · archived ${new Date(cls.archivedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
+                      : ""}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {!isArchived && (
+                    <Button
+                      variant="ghost"
+                      size="compact"
+                      onClick={() => onArchive(cls)}
+                      disabled={busyId === cls.id}
+                      aria-label={`Archive ${cls.name}`}
+                    >
+                      <Archive className="size-3.5" />
+                      Archive
+                    </Button>
+                  )}
+                  <Button
+                    variant="secondary"
+                    size="compact"
+                    onClick={() => onRestore(cls)}
+                    loading={busyId === cls.id}
+                    aria-label={`${isArchived ? "Restore" : "Resume"} ${cls.name}`}
+                  >
+                    {isArchived ? <ArchiveRestore className="size-3.5" /> : <Play className="size-3.5" />}
+                    {isArchived ? "Restore" : "Resume"}
+                  </Button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    );
+  return (
+    <section aria-labelledby="inactive-classes-heading" className="mt-8 space-y-4" data-testid="inactive-classes">
+      <h2 id="inactive-classes-heading" className="font-semibold text-sm text-tx-1">
+        Paused and archived
+      </h2>
+      {group(
+        "Paused",
+        paused,
+        "Off the timetable, the member app, booking and the kiosk. No new sessions are made. Bookings and history are kept.",
+      )}
+      {group(
+        "Archived",
+        archived,
+        "Removed from the timetable and lists. Check-ins stay in reports. Restoring puts it back on the timetable.",
+      )}
+    </section>
+  );
+}
+
+/** The counted confirmation for an archive (T6b): what is kept, in numbers. */
+export function archiveConfirmBody(
+  counts: { attendanceCount: number; rosterCount: number; bookingCount: number },
+  lifecycle?: ClassRow["lifecycle"],
+): string {
+  const kept: string[] = [];
+  const nonZero = [counts.attendanceCount, counts.rosterCount, counts.bookingCount].filter((n) => n > 0);
+  if (counts.attendanceCount > 0) kept.push(plural(counts.attendanceCount, "check-in", "check-ins"));
+  if (counts.rosterCount > 0) kept.push(`${plural(counts.rosterCount, "member", "members")} on its roster`);
+  if (counts.bookingCount > 0) kept.push(plural(counts.bookingCount, "booking", "bookings"));
+  // "Its 1 check-in is kept", "Its 2 bookings are kept", "Its 1 check-in, 1 booking are kept".
+  const verb = nonZero.length === 1 && nonZero[0] === 1 ? "is" : "are";
+  const keeps = kept.length > 0 ? ` Its ${kept.join(", ")} ${verb} kept.` : " It has no check-ins, roster or bookings yet.";
+  // A paused class is already off the timetable and gets no new sessions.
+  const lead = lifecycle === "paused"
+    ? "It moves from Paused to Archived."
+    : "It comes off the timetable, the member app, booking and the kiosk, and no new sessions are made.";
+  return (
+    lead +
+    keeps +
+    " Check-ins stay in reports. You can restore it from Paused and archived, or undo this from Activity."
+  );
+}
+
+/**
+ * The timetable row for a class POST /api/classes just created. The response
+ * carries `allowedTiers` ({id, name, isActive}); a response without it (an
+ * older server) is mapped from `allowedTierIds` against the club's tiers, so
+ * the row's "For: …" chip and the form reopened on it never read as
+ * "Everyone" for a class that is restricted.
+ */
+export function createdClassRow(
+  created: ClassRow & { allowedTierIds?: string[] },
+  membershipTiers: readonly TierOption[],
+): ClassRow {
+  const { allowedTierIds, ...row } = created;
+  if (Array.isArray(row.allowedTiers)) return row;
+  const ids = allowedTierIds ?? [];
+  return {
+    ...row,
+    allowedTiers: ids.map((id) => membershipTiers.find((t) => t.id === id)).filter((t): t is TierOption => !!t),
+  };
 }
 
 // ─── Schedule row input ───────────────────────────────────────────────────────
@@ -577,10 +802,16 @@ function ScheduleRow({
 
 // ─── Class form (add / edit) ──────────────────────────────────────────────────
 
+/** Same set of tier ids, order ignored. */
+function sameTierSet(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((x) => b.includes(x));
+}
+
 function ClassForm({
   initial,
   rankSystems,
   coachUsers,
+  membershipTiers = [],
   primaryColor,
   onSave,
   onCancel,
@@ -589,6 +820,7 @@ function ClassForm({
   initial: Partial<ClassRow> | null;
   rankSystems: RankOption[];
   coachUsers: CoachUserOption[];
+  membershipTiers?: TierOption[];
   primaryColor: string;
   onSave: (data: Record<string, unknown>) => void;
   onCancel: () => void;
@@ -621,6 +853,9 @@ function ClassForm({
   const [duration, setDuration] = useState(String(initial?.duration ?? 60));
   const [maxCapacity, setMaxCapacity] = useState(String(initial?.maxCapacity ?? ""));
   const [isKids, setIsKids] = useState<boolean>(initial?.isKids ?? false);
+  // T6c: "" = uncategorised (sent as null).
+  const initialCategory = initial?.category ?? "";
+  const [category, setCategory] = useState<string>(initialCategory);
   const [description, setDescription] = useState(initial?.description ?? "");
   const [requiredRankId, setRequiredRankId] = useState(initial?.requiredRankId ?? "");
   const [maxRankId, setMaxRankId] = useState(initial?.maxRankId ?? "");
@@ -640,6 +875,22 @@ function ClassForm({
   // reads as a gym with no members and invites the operator to re-add them.
   const [membersError, setMembersError] = useState(false);
   const [memberSearch, setMemberSearch] = useState("");
+  // T6a "Who can attend": none ticked = everyone (the class stays open).
+  const [allowedTierIds, setAllowedTierIds] = useState<string[]>(
+    initial?.allowedTiers?.map((t) => t.id) ?? [],
+  );
+  const initialTierIds = (initial?.allowedTiers ?? []).map((t) => t.id);
+  // A deactivated tier still attached is shown read-only (it still admits its
+  // members); one that is not attached is not offered.
+  const tierChoices = [
+    ...membershipTiers.filter((t) => t.isActive),
+    ...membershipTiers.filter((t) => !t.isActive && initialTierIds.includes(t.id)),
+    // An attached tier the club list did not return (should not happen) is kept visible.
+    ...(initial?.allowedTiers ?? []).filter((t) => !membershipTiers.some((m) => m.id === t.id)),
+  ];
+  function toggleTier(id: string) {
+    setAllowedTierIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
   const [color, setColor] = useState(initial?.color ?? CLASS_COLORS[0]);
   const [schedules, setSchedules] = useState<ScheduleInput[]>(
     initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? []
@@ -699,12 +950,19 @@ function ClassForm({
       duration: durationNum,
       maxCapacity: maxCapacity ? parseInt(maxCapacity) : null,
       isKids,
+      // T6c: sent on create, and on edit only when changed, so an unrelated
+      // edit never rewrites it. "" (Uncategorised) clears it to null.
+      ...(!initial?.id || category !== initialCategory ? { category: category || null } : {}),
       description: description.trim() || null,
       requiredRankId: useRoster ? null : (requiredRankId || null),
       maxRankId: useRoster ? null : (maxRankId || null),
       // Task 12: roster array is sent when in comp-class mode. Server clears
       // requiredRankId/maxRankId on the row to enforce mutual exclusion.
       roster: useRoster ? rosterMemberIds.map((id) => ({ memberId: id })) : undefined,
+      // T6a: [] = everyone. Sent on create, and on edit only when changed, so
+      // an unrelated edit never rewrites the list; clearing every tick sends
+      // [] and reopens the class.
+      ...(!initial?.id || !sameTierSet(allowedTierIds, initialTierIds) ? { allowedTierIds } : {}),
       color,
       schedules,
     });
@@ -725,7 +983,9 @@ function ClassForm({
       let cursor: string | null = null;
       for (let page = 0; page < MAX_PAGES; page++) {
         const res: Response = await fetch(
-          `/api/members?take=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+          // T6d: training members only — a guardian account (or an import's
+          // guardian draft) is never offered as a squad member.
+          `/api/members?take=100&population=training${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data: { members?: Array<{ id: string; name: string; email: string }>; nextCursor?: string | null } =
@@ -805,6 +1065,28 @@ function ClassForm({
           onChange={(e) => setName(e.target.value)}
           {...focusHandlers}
         />
+      </div>
+
+      {/* T6c: Category */}
+      <div>
+        <label htmlFor="class-category" className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Category</label>
+        <Select
+          id="class-category"
+          aria-label="Category"
+          aria-describedby="class-category-hint"
+          className="w-full"
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          data-testid="class-category-select"
+        >
+          <option value="">Uncategorised</option>
+          {CLASS_CATEGORIES.map((key) => (
+            <option key={key} value={key}>{CLASS_CATEGORY_LABELS[key]}</option>
+          ))}
+        </Select>
+        <p id="class-category-hint" className="text-[11px] mt-1" style={{ color: "var(--tx-3)" }}>
+          Shown on the timetable, the members&rsquo; schedule and the kiosk. It does not change who can attend.
+        </p>
       </div>
 
       {/* Coach + Location */}
@@ -920,6 +1202,46 @@ function ClassForm({
           aria-describedby="class-is-kids-hint"
         />
       </div>
+
+      {/* T6a: Who can attend — the memberships that include this class. */}
+      <fieldset className="space-y-2" aria-describedby="class-tiers-hint">
+        <legend className="text-xs font-medium" style={{ color: "var(--tx-2)" }}>Who can attend</legend>
+        <p id="class-tiers-hint" className="text-[11px]" style={{ color: "var(--tx-3)" }}>
+          {useRoster
+            ? "This class has a squad list. Only members on it can book or check in; if memberships are also ticked, a member must be on one of them too."
+            : allowedTierIds.length === 0
+              ? "Everyone — any member can book and check in. Tick memberships to limit this class to them."
+              : "Only members on the ticked memberships can book or check in — at the desk and the card scanner too. To admit someone else, change their membership."}
+        </p>
+        {tierChoices.length === 0 ? (
+          <p className="text-xs" style={{ color: "var(--tx-3)" }}>
+            No memberships set up yet — the class is open to everyone. Add memberships under Memberships to limit who can attend.
+          </p>
+        ) : (
+          <div className="space-y-1" role="group" aria-label="Memberships that include this class">
+            {tierChoices.map((t) => {
+              const checked = allowedTierIds.includes(t.id);
+              const readOnly = !t.isActive;
+              const id = `class-tier-${t.id}`;
+              return (
+                <div key={t.id} className="flex items-center gap-2 rounded px-2 py-1.5">
+                  <Checkbox
+                    id={id}
+                    checked={checked}
+                    disabled={readOnly}
+                    onCheckedChange={() => toggleTier(t.id)}
+                    aria-label={t.name}
+                  />
+                  <label htmlFor={id} className="text-xs" style={{ color: readOnly ? "var(--tx-3)" : "var(--tx-2)" }}>
+                    {t.name}
+                    {readOnly && " (deactivated — still admits its members)"}
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </fieldset>
 
       {/* Description */}
       <div>
@@ -1049,6 +1371,38 @@ function ClassForm({
                 );
               })}
           </div>
+          {!membersLoading && !membersError && availableMembers.length > 0 && (() => {
+            // T6d: the picker lists training members only. Someone already on
+            // the roster who is a guardian account (an import's guardian draft,
+            // say) is no longer in that list, so they are shown here, by name,
+            // where they can be unticked rather than kept invisibly.
+            const listed = new Set(availableMembers.map((m) => m.id));
+            const unlisted = rosterMemberIds.filter((id) => !listed.has(id));
+            if (unlisted.length === 0) return null;
+            const names = new Map((initial?.roster ?? []).map((r) => [r.memberId, r.name]));
+            return (
+              <div className="space-y-1" data-testid="roster-unlisted">
+                <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>
+                  Already on the roster but not in the list above (usually a parent or guardian account, which is not a training member):
+                </p>
+                {unlisted.map((id) => {
+                  const inputId = `roster-unlisted-${id}`;
+                  const label = names.get(id) ?? "Member not listed";
+                  return (
+                    <div key={id} className="flex items-center gap-2 text-xs rounded px-2 py-1 hover:bg-sf-2" style={{ color: "var(--tx-2)" }}>
+                      <Checkbox
+                        id={inputId}
+                        checked
+                        onCheckedChange={() => toggleRosterMember(id)}
+                        aria-label={label}
+                      />
+                      <label htmlFor={inputId} className="cursor-pointer">{label}</label>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
           <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>{rosterMemberIds.length} selected</p>
         </div>
       )}
@@ -1144,10 +1498,14 @@ function ClassForm({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function TimetableManager({ initialClasses, rankSystems, coachUsers, primaryColor, role, currentUserId }: Props) {
+export default function TimetableManager({ initialClasses, initialInactiveClasses = [], rankSystems, coachUsers, membershipTiers = [], primaryColor, role, currentUserId }: Props) {
   const searchParams = useSearchParams();
   const openedFromQuery = useRef(false);
   const [classes, setClasses] = useState<ClassRow[]>(initialClasses);
+  // T6b: paused and archived classes, kept whole (roster included) so Resume /
+  // Restore puts the exact row back on the timetable.
+  const [inactiveClasses, setInactiveClasses] = useState<ClassRow[]>(initialInactiveClasses);
+  const [lifecycleBusy, setLifecycleBusy] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1201,6 +1559,10 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
   // ADR-001 D2: venue filter. Shown only when the club has more than one
   // venue; a class with no venue belongs to every venue and stays visible.
   const [venueFilter, setVenueFilter] = useState("");
+  // T6c: category filter. "" = every category; UNCATEGORISED = no category.
+  // Offered only once at least one class has a category.
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const showCategoryFilter = classes.some((c) => classCategoryLabel(c.category) !== null);
   const [venueList, setVenueList] = useState<{ id: string; name: string; isDefault: boolean }[]>([]);
   useEffect(() => {
     let alive = true;
@@ -1242,7 +1604,15 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
     myClassesOnly && showMyToggle
       ? classes.filter((c) => c.coachUserId === currentUserId)
       : classes
-  ).filter((c) => !venueFilter || c.locationId === null || c.locationId === venueFilter);
+  )
+    .filter((c) => !venueFilter || c.locationId === null || c.locationId === venueFilter)
+    .filter((c) =>
+      !categoryFilter || !showCategoryFilter
+        ? true
+        : categoryFilter === UNCATEGORISED
+          ? classCategoryLabel(c.category) === null
+          : c.category === categoryFilter,
+    );
 
   // Group by day — driven by `visibleClasses` so the weekly grid filters too
   const byDay = Array.from({ length: 7 }, (_, i) =>
@@ -1277,6 +1647,31 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
   async function handleSave(data: Record<string, unknown>) {
     setSaving(true);
     try {
+      // D2 (booking preservation, approved 21 Oct 2026): a change to who can
+      // attend — squad list, rank gate or memberships — is previewed first:
+      // who is booked and would no longer be admitted (their bookings are
+      // KEPT), and who is not booked but would be refused. Nothing is
+      // deleted; the owner confirms having seen it.
+      if (accessChanged(editTarget, data)) {
+        const preview = await fetch(editTarget ? `/api/classes/${editTarget.id}?dryRun=1` : "/api/classes?dryRun=1", {
+          method: editTarget ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        if (!preview.ok) {
+          const body = await preview.json().catch(() => null);
+          throw new Error(describeApiError(body));
+        }
+        const { restriction } = (await preview.json()) as { restriction?: RestrictionPreview };
+        if (previewHasRefusals(restriction)) {
+          const ok = await ask({
+            title: editTarget ? "Check who this change turns away" : "Check who this class turns away",
+            body: <RestrictionPreviewBody preview={restriction} editing={!!editTarget} />,
+            confirmLabel: editTarget ? "Save — bookings are kept" : "Create class",
+          });
+          if (!ok) return;
+        }
+      }
       if (editTarget) {
         const res = await fetch(`/api/classes/${editTarget.id}`, {
           method: "PATCH",
@@ -1289,8 +1684,9 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
         }
         // `scheduleChange` is a report about the save, not a field of the
         // class — destructured out so it never lands on the row.
-        const { scheduleChange, ...updated } = (await res.json()) as {
+        const { scheduleChange, bookingsKeptIneligible, ...updated } = (await res.json()) as {
           scheduleChange: ScheduleChange | null;
+          bookingsKeptIneligible?: Partial<Record<"squad" | "rank" | "membership", string[]>>;
         } & Partial<ClassRow>;
         setClasses((prev) =>
           prev.map((c) =>
@@ -1304,7 +1700,13 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
         // says what the save actually did, including the upcoming sessions
         // the change removed.
         const kept = scheduleChange?.instancesKept.length ?? 0;
-        showToast(describeSave(scheduleChange), kept > 0 ? "warning" : "success");
+        const turnedAway = new Set(Object.values(bookingsKeptIneligible ?? {}).flat()).size;
+        showToast(
+          turnedAway > 0
+            ? `${describeSave(scheduleChange).replace(/\.?$/, ".")} ${turnedAway} booked ${turnedAway === 1 ? "member is" : "members are"} now turned away at the door; ${turnedAway === 1 ? "the booking is" : "their bookings are"} kept.`
+            : describeSave(scheduleChange),
+          kept > 0 || turnedAway > 0 ? "warning" : "success",
+        );
       } else {
         const res = await fetch("/api/classes", {
           method: "POST",
@@ -1318,8 +1720,8 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
         // `instancesCreated` is a report about the save (the sessions minted
         // for the next eight weeks), not a field of the class — kept off the row
         // and put in the toast, so "created" also says it is on the timetable.
-        const { instancesCreated, ...created } = (await res.json()) as { instancesCreated: number } & ClassRow;
-        setClasses((prev) => [...prev, created]);
+        const { instancesCreated, ...created } = (await res.json()) as { instancesCreated: number; allowedTierIds?: string[] } & ClassRow;
+        setClasses((prev) => [...prev, createdClassRow(created, membershipTiers)]);
         showToast(`Class created · ${instancesCreated} sessions added to the timetable`, "success");
       }
       setDrawerOpen(false);
@@ -1330,26 +1732,119 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
     }
   }
 
-  const handleDelete = useCallback(
-    async (id: string) => {
-      // §5.4: archiving still asks first — the native box became a
-      // ConfirmDialog. Archiving is reversible, so it is not `destructive`.
+  // T6b: Pause — off the timetable for now, one click to resume.
+  const handlePause = useCallback(
+    async (cls: ClassRow) => {
       const confirmed = await ask({
-        title: "Archive this class?",
-        body: "It will stop appearing in the timetable. Existing check-ins are kept.",
-        confirmLabel: "Archive class",
+        title: `Pause ${cls.name}?`,
+        body:
+          "It comes off the timetable, the member app, booking and the kiosk, and no new sessions are made. " +
+          "Bookings and check-in history are kept. Resume it any time from Paused and archived, or undo this from Activity.",
+        confirmLabel: "Pause class",
       });
       if (!confirmed) return;
+      setLifecycleBusy(cls.id);
       try {
-        const res = await fetch(`/api/classes/${id}`, { method: "DELETE" });
-        if (!res.ok) throw new Error("Failed");
-        setClasses((prev) => prev.filter((c) => c.id !== id));
-        showToast("Class archived", "success");
-      } catch {
-        showToast("Could not delete class", "error");
+        const res = await fetch(`/api/classes/${cls.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isActive: false }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(describeApiError(body));
+        }
+        setClasses((prev) => prev.filter((c) => c.id !== cls.id));
+        setInactiveClasses((prev) => [...prev.filter((c) => c.id !== cls.id), { ...cls, lifecycle: "paused", archivedAt: null }]);
+        showToast("Class paused. Resume it from Paused and archived.", "success");
+      } catch (err) {
+        showToast(err instanceof Error && err.message ? err.message : "Could not pause the class. Try again.", "error");
+      } finally {
+        setLifecycleBusy(null);
       }
     },
     [ask, showToast]
+  );
+
+  // T6b: Archive — a counted confirmation instead of the old 409. The counts
+  // are read first; if they cannot be read the archive does not go ahead.
+  const handleArchive = useCallback(
+    async (cls: ClassRow) => {
+      let counts: { attendanceCount: number; rosterCount: number; bookingCount: number };
+      try {
+        const preview = await fetch(`/api/classes/${cls.id}?dryRun=1`, { method: "DELETE" });
+        const body = (await preview.json().catch(() => null)) as Partial<typeof counts> | null;
+        if (!preview.ok) throw new Error(describeApiError(body));
+        // The confirmation states these numbers; without all three it would
+        // have to guess, so it does not ask at all (UI-RULES §7).
+        if (
+          !body ||
+          typeof body.attendanceCount !== "number" ||
+          typeof body.rosterCount !== "number" ||
+          typeof body.bookingCount !== "number"
+        ) {
+          throw new Error("");
+        }
+        counts = { attendanceCount: body.attendanceCount, rosterCount: body.rosterCount, bookingCount: body.bookingCount };
+      } catch (err) {
+        showToast(err instanceof Error && err.message ? err.message : "Could not check this class's history. Try again.", "error");
+        return;
+      }
+      const confirmed = await ask({
+        title: `Archive ${cls.name}?`,
+        body: archiveConfirmBody(counts, cls.lifecycle),
+        confirmLabel: "Archive class",
+      });
+      if (!confirmed) return;
+      setLifecycleBusy(cls.id);
+      try {
+        const res = await fetch(`/api/classes/${cls.id}`, { method: "DELETE" });
+        const body = (await res.json().catch(() => null)) as { archivedAt?: string } | null;
+        if (!res.ok) throw new Error(describeApiError(body));
+        setClasses((prev) => prev.filter((c) => c.id !== cls.id));
+        setInactiveClasses((prev) => [
+          ...prev.filter((c) => c.id !== cls.id),
+          { ...cls, lifecycle: "archived", archivedAt: body?.archivedAt ?? new Date().toISOString() },
+        ]);
+        showToast("Class archived. Its history is kept — restore it from Paused and archived.", "success");
+      } catch (err) {
+        showToast(err instanceof Error && err.message ? err.message : "Could not archive the class. Try again.", "error");
+      } finally {
+        setLifecycleBusy(null);
+      }
+    },
+    [ask, showToast]
+  );
+
+  // T6b: Resume (paused) / Restore (archived) — both clear the state and put
+  // the class back on the timetable; the server mints its upcoming sessions.
+  const handleRestore = useCallback(
+    async (cls: ClassRow) => {
+      const wasArchived = cls.lifecycle === "archived";
+      setLifecycleBusy(cls.id);
+      try {
+        const res = await fetch(`/api/classes/${cls.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isActive: true }),
+        });
+        const body = (await res.json().catch(() => null)) as { sessionsCreatedOnResume?: number } | null;
+        if (!res.ok) throw new Error(describeApiError(body));
+        setInactiveClasses((prev) => prev.filter((c) => c.id !== cls.id));
+        setClasses((prev) => [...prev.filter((c) => c.id !== cls.id), { ...cls, lifecycle: "active", archivedAt: null }]);
+        const n = body?.sessionsCreatedOnResume ?? 0;
+        const verb = wasArchived ? "Class restored" : "Class resumed";
+        showToast(n > 0 ? `${verb} · ${plural(n, "session", "sessions")} added to the timetable` : `${verb} — it's back on the timetable`, "success");
+      } catch (err) {
+        showToast(
+          err instanceof Error && err.message ? err.message : `Could not ${wasArchived ? "restore" : "resume"} the class. Try again.`,
+          "error",
+        );
+      } finally {
+        setLifecycleBusy(null);
+      }
+    },
+    [showToast]
   );
 
   const handleGenerate = useCallback(
@@ -1361,13 +1856,14 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ weeks: 4 }),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = (await res.json()) as { created?: number };
+        const data = (await res.json().catch(() => null)) as { created?: number; error?: string } | null;
+        // T6b: a paused or archived class answers 409 with a sentence; say it.
+        if (!res.ok) throw new Error(data?.error ?? "");
         // Without the res.ok check above, a 200-with-error-body rendered
         // "Generated undefined class instances".
-        showToast(`Generated ${data.created ?? 0} class instances`, "success");
-      } catch {
-        showToast("Failed to generate instances", "error");
+        showToast(`Generated ${data?.created ?? 0} class instances`, "success");
+      } catch (err) {
+        showToast(err instanceof Error && err.message ? err.message : "Failed to generate instances", "error");
       } finally {
         setGenerating(null);
       }
@@ -1470,6 +1966,26 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           {venueFilter && (
             <span className="text-xs" style={{ color: "var(--tx-4)" }}>
               {visibleClasses.length} of {classes.length} classes · classes with no venue show everywhere
+            </span>
+          )}
+        </div>
+      )}
+
+      {showCategoryFilter && (
+        <div className="mb-4 flex items-center gap-2 flex-wrap">
+          <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
+            Category
+            <Select aria-label="Filter by category" className="w-[200px]" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} data-testid="timetable-category-filter">
+              <option value="">Every category</option>
+              {CLASS_CATEGORIES.map((key) => (
+                <option key={key} value={key}>{CLASS_CATEGORY_LABELS[key]}</option>
+              ))}
+              <option value={UNCATEGORISED}>Uncategorised</option>
+            </Select>
+          </label>
+          {categoryFilter && (
+            <span className="text-xs" style={{ color: "var(--tx-4)" }} data-testid="timetable-category-count">
+              Showing {visibleClasses.length} of {classes.length} classes
             </span>
           )}
         </div>
@@ -1678,7 +2194,8 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
                   cls={cls}
                   primaryColor={primaryColor}
                   onEdit={openEdit}
-                  onDelete={handleDelete}
+                  onPause={handlePause}
+                  onArchive={handleArchive}
                   onGenerate={handleGenerate}
                   generating={generating === cls.id}
                   canManage={canManage}
@@ -1687,6 +2204,18 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
             </div>
           </div>
         </div>
+      )}
+
+      {/* T6b: the classes that are off the timetable, with Resume / Restore.
+          Outside the empty-state ternary: a club whose every class is paused
+          still needs the way back. */}
+      {canManage && (
+        <InactiveClassList
+          classes={inactiveClasses}
+          busyId={lifecycleBusy}
+          onRestore={handleRestore}
+          onArchive={handleArchive}
+        />
       )}
 
       {/* §4a.3: one overlay standard. The hand-rolled slide-over that lived
@@ -1702,11 +2231,47 @@ export default function TimetableManager({ initialClasses, rankSystems, coachUse
           initial={editTarget}
           rankSystems={rankSystems}
           coachUsers={coachUsers}
+          membershipTiers={membershipTiers}
           primaryColor={primaryColor}
           onSave={handleSave}
           onCancel={() => setDrawerOpen(false)}
           saving={saving}
         />
+        {/* T6b: the lifecycle actions, on the class itself as well as its card. */}
+        {editTarget && canManage && (
+          <div className="mt-6 border-t border-bd-default pt-4" data-testid="class-lifecycle-actions">
+            <p className="text-xs font-semibold text-tx-2 mb-1">Class status</p>
+            <p className="text-xs text-tx-3 mb-3">
+              Pause takes it off the timetable for now; archive removes it. Both keep its history and bookings, and both can be undone.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                size="compact"
+                onClick={() => {
+                  const target = editTarget;
+                  setDrawerOpen(false);
+                  void handlePause(target);
+                }}
+              >
+                <Pause className="size-3.5" />
+                Pause class
+              </Button>
+              <Button
+                variant="ghost"
+                size="compact"
+                onClick={() => {
+                  const target = editTarget;
+                  setDrawerOpen(false);
+                  void handleArchive(target);
+                }}
+              >
+                <Archive className="size-3.5" />
+                Archive class
+              </Button>
+            </div>
+          </div>
+        )}
       </Sheet>
 
       <ConfirmDialog {...dialogProps} />

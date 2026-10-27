@@ -25,6 +25,14 @@
  * currently carries `Tenant.timezone` to either screen; when it does, the
  * caller converts and this file does not change.
  *
+ * The overnight rule is the check-in window's (lib/class-time.ts
+ * `endsNextDay` / `sessionBounds`): end at or before start = the next day.
+ * This file works in WALL-CLOCK minutes, so on a DST changeover night it
+ * differs from the door in one stated way: in the repeated hour a session
+ * inside that hour reads live during both occurrences (the device clock shows
+ * the same minutes twice), while the door times it by its later occurrence.
+ * The door (lib/checkin.ts) is the authority on admission; this is display.
+ *
  * ## Lane packing
  *
  * `packLanes` groups sessions into clusters of transitively overlapping
@@ -35,6 +43,8 @@
  * intersect?) is asserted separately in the browser lanes; this file only
  * decides the interval maths.
  */
+
+import { endsNextDay } from "@/lib/class-time";
 
 export type SessionState = "cancelled" | "live" | "ended" | "next" | "upcoming";
 
@@ -69,7 +79,9 @@ export function timeToMin(hhmm: string): number {
 export function spanMinutes(startTime: string, endTime: string): { startMin: number; endMin: number } {
   const startMin = timeToMin(startTime);
   let endMin = timeToMin(endTime);
-  if (endMin <= startMin) endMin += DAY;
+  // The one overnight rule (lib/class-time.ts endsNextDay), shared with the
+  // check-in window, so a screen never calls "Ended" what the door admits.
+  if (endsNextDay(startTime, endTime)) endMin += DAY;
   return { startMin, endMin };
 }
 

@@ -54,12 +54,14 @@ function tile(sub: string) {
 }
 
 describe("Members page — guardian accounts are not training members", () => {
-  it("Current Members, Paid, Waiver Missing and Missing Phone leave the guardian record out", () => {
+  it("Active members, Paid, Waiver Missing and Missing Phone leave the guardian record out", () => {
     render(<MembersList members={MEMBERS} primaryColor="#3b82f6" role="owner" />);
-    expect(tile("Excludes cancelled & guardians")).toBe("2"); // Current Members
-    expect(tile("Membership current")).toBe("2"); // Paid
+    // T1: the first tile is the landing population, Active members (Q4 A-1).
+    expect(tile("Excludes inactive members, tasters, cancelled members and guardians")).toBe("2"); // Active members
+    expect(tile("Of current members")).toBe("2"); // Paid
     expect(tile("Active & tasters")).toBe("0"); // Waivers Missing
-    expect(screen.getByRole("button", { name: "All · 2" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Active · 2" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "All current · 2" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Waiver Missing ·/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Missing Phone ·/ })).toBeNull();
     expect(screen.queryAllByText("Gina Guardian")).toHaveLength(0);
@@ -80,9 +82,9 @@ describe("Members page — guardian accounts are not training members", () => {
 describe("Members page — guardian suggestions to review", () => {
   it("an owner sees 'N to review' and it opens the review queue", async () => {
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ suggestions: [], total: 0, nextCursor: null }) });
-    render(<MembersList members={MEMBERS} primaryColor="#3b82f6" role="owner" guardianReviewCount={219} />);
-    const badge = screen.getByRole("button", { name: "219 guardian suggestions to review" });
-    expect(badge.textContent).toContain("219 to review");
+    render(<MembersList members={MEMBERS} primaryColor="#3b82f6" role="owner" guardianReviewCount={37} />);
+    const badge = screen.getByRole("button", { name: "37 guardian suggestions to review" });
+    expect(badge.textContent).toContain("37 to review");
     fireEvent.click(badge);
     expect(await screen.findByText("No guardian suggestions to review")).toBeTruthy();
     expect(String(fetchMock.mock.calls[0][0])).toContain("guardianReview=1");
@@ -100,7 +102,7 @@ describe("Members page — guardian suggestions to review", () => {
 
   it("a coach never sees the badge or the queue, even if handed a count", () => {
     currentSearch = "filter=guardian-review";
-    render(<MembersList members={MEMBERS} primaryColor="#3b82f6" role="coach" guardianReviewCount={219} />);
+    render(<MembersList members={MEMBERS} primaryColor="#3b82f6" role="coach" guardianReviewCount={37} />);
     expect(screen.queryByRole("button", { name: /guardian suggestions to review/ })).toBeNull();
     expect(screen.queryByText(/Guardian suggestions to review/)).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();

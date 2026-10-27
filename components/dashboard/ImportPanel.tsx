@@ -52,6 +52,8 @@ type Job = {
     created?: { total: number; unmatchedPlan: number };
     rollback?: { removed: number; kept: { memberId: string; name: string; reasons: string[] }[] };
     teamup2?: TeamUp2Facts;
+    /** Owner decision 25 Oct 2026: people not written because they differ or could not be matched with certainty. */
+    conflicts?: unknown[];
   } | null;
 };
 
@@ -81,6 +83,12 @@ type PreviewSummary = {
   existingMatches: number;
   willImport: number;
   willSkip: number;
+  /** Shared with the commit (lib/importers/import-match, 25 Oct 2026); absent on a preview from before it. */
+  sameAsMatFlow?: number;
+  toReviewDiffers?: number;
+  toReviewUncertain?: number;
+  staffLoginRefused?: number;
+  childrenWithoutParent?: number;
   sampleDrafts: {
     name: string;
     email: string;
@@ -207,7 +215,8 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
   const [error, setError] = useState<string | null>(null);
   const [exportedAt, setExportedAt] = useState("");
   // The owner does not know the exact export time yet: the time is sent as
-  // provisional and a status refresh with the real time corrects it.
+  // provisional and each member's standing says so (a later upload changes
+  // nobody since 25 Oct 2026, so it cannot correct it).
   const [exportedAtEstimate, setExportedAtEstimate] = useState(false);
   const [rollbackBusy, setRollbackBusy] = useState(false);
 
@@ -294,13 +303,13 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
     const missingTiers = preview?.teamup2?.exceptions.unmatchedPlanLabels.length ?? 0;
     const ok = refreshPreview
       ? await ask({
-          title: `Update ${plural(refreshPreview.willChange, "member", "members")} from TeamUp?`,
-          body: "Only status, payment standing and plan change, and every matched member's standing is dated to this export. Contact details, internal notes, medical notes, waivers, holds and guardian links (suggested or confirmed) are never touched. Nobody is created, emailed or charged. You can roll this refresh back from the import history.",
-          confirmLabel: "Refresh",
+          title: `Check ${plural(refreshPreview.matched, "member", "members")} against this TeamUp export?`,
+          body: "Nothing in MatFlow is changed. Where the export differs from MatFlow, the person is listed in the import history for you to review; MatFlow's values stand until someone changes them by hand. Nobody is created, emailed or charged.",
+          confirmLabel: "Check",
         })
       : await ask({
           title: `Import ${plural(count, "member", "members")}?`,
-          body: `Members already on file are matched by email and skipped, never overwritten. Nobody is emailed. Imported members are added straight away; you can roll the import back afterwards for anyone nobody has touched yet.${missingTiers > 0 ? ` ${missingTiers === 1 ? "1 live plan has" : `${missingTiers} live plans have`} no tier yet: those members are imported with the plan name only, and a Status refresh links them once the tiers exist.` : ""}`,
+          body: `${preview?.sameAsMatFlow !== undefined ? `${plural(count, "new person", "new people")} will be added; ${(preview.sameAsMatFlow ?? 0).toLocaleString("en-GB")} already match MatFlow exactly and are skipped; ${plural((preview.toReviewDiffers ?? 0) + (preview.toReviewUncertain ?? 0), "person", "people")} will be listed for you to review (${(preview.toReviewDiffers ?? 0).toLocaleString("en-GB")} differ, ${(preview.toReviewUncertain ?? 0).toLocaleString("en-GB")} uncertain). ` : ""}New people are added straight away; you can roll the import back afterwards for anyone nobody has touched yet. People already in MatFlow are never changed: an exact match is skipped, and anyone who differs, or could be more than one member, is listed in the import history for you to review. Nobody is emailed.${missingTiers > 0 ? ` ${missingTiers === 1 ? "1 live plan has" : `${missingTiers} live plans have`} no tier yet: those members are imported with the plan name only; set their tier on their page once it exists.` : ""}`,
           confirmLabel: "Import",
         });
     if (!ok) return;
@@ -419,7 +428,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
               This is an estimate — I will confirm the real export time later
             </label>
             <p id="import-exported-at-estimate-hint" className="text-[11px] text-tx-4">
-              The import is marked &ldquo;export time provisional&rdquo;. Once you know the real time, run a Status refresh from the same file with it.
+              The import is marked &ldquo;export time provisional&rdquo;, and each member&rsquo;s standing says so. Enter the real time if you know it.
             </p>
           </div>
         </div>
@@ -607,7 +616,24 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
             />
           )}
 
-          {job.mode === "refresh" && job.status === "complete" && !job.rolledBackAt && (
+          {/* A check under the 25 Oct 2026 rule changed nobody: nothing is re-dated, nothing to roll back. */}
+          {job.mode === "refresh" && job.status === "complete" && !job.rolledBackAt && Array.isArray(job.manifest?.conflicts) && (
+            <div className="rounded-xl border border-bd-default bg-sf-1 p-4" data-testid="refresh-checked">
+              <p className="font-semibold text-sm flex items-center gap-2 text-tx-1">
+                <CheckCircle2 className="w-4 h-4" />
+                Check complete — nothing in MatFlow was changed
+              </p>
+              <p className="text-xs mt-1 text-tx-2">
+                {job.manifest!.conflicts!.length > 0
+                  ? `${plural(job.manifest!.conflicts!.length, "person differs", "people differ")} from this export: review them in the import history below. MatFlow's values stand until someone changes them by hand.`
+                  : "Everyone matched is the same as in MatFlow."}
+                {" "}Nobody was created, emailed or charged.
+              </p>
+              {job.manifest?.refresh?.exceptions && <RefreshExceptionList exceptions={job.manifest.refresh.exceptions} />}
+            </div>
+          )}
+
+          {job.mode === "refresh" && job.status === "complete" && !job.rolledBackAt && !Array.isArray(job.manifest?.conflicts) && (
             <div className="rounded-xl border border-[color-mix(in_srgb,var(--hue-success)_25%,transparent)] bg-[color-mix(in_srgb,var(--hue-success)_6%,transparent)] p-4" data-testid="refresh-complete">
               <p className="font-semibold text-sm flex items-center gap-2 text-[var(--hue-success-ink)]">
                 <CheckCircle2 className="w-4 h-4" />
@@ -633,9 +659,21 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
                 <Stat label="Total rows" value={preview.totalRows} />
                 <Stat label="Will import" value={preview.willImport} tone="success" />
-                <Stat label="Existing (skip)" value={preview.existingMatches} />
+                {preview.sameAsMatFlow === undefined ? (
+                  <Stat label="Existing (skip)" value={preview.existingMatches} />
+                ) : (
+                  <Stat label="Same as MatFlow" value={preview.sameAsMatFlow} tone="muted" />
+                )}
                 <Stat label="Errors" value={preview.errorRows} tone={preview.errorRows > 0 ? "danger" : "muted"} />
               </div>
+              {preview.sameAsMatFlow !== undefined && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm" data-testid="preview-review-counts">
+                  <Stat label="To review — differs" value={preview.toReviewDiffers ?? 0} />
+                  <Stat label="To review — uncertain" value={preview.toReviewUncertain ?? 0} />
+                  <Stat label="Staff login (refused)" value={preview.staffLoginRefused ?? 0} tone="muted" />
+                  <Stat label="Child without parent" value={preview.childrenWithoutParent ?? 0} tone="muted" />
+                </div>
+              )}
 
               {preview.source && (
                 <div className="space-y-2" data-testid="import-reconciliation">
@@ -706,7 +744,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                     {preview.teamup2!.exceptions.unmatchedPlanLabels.map((l) => <li key={l}>{l}</li>)}
                   </ul>
                   <p className="text-tx-2">
-                    Add each under Memberships with exactly this name, then start over and upload the file again. You can still import now: those members keep the plan name as text with no tier, and a Status refresh links them once the tiers exist.
+                    Add each under Memberships with exactly this name, then start over and upload the file again. You can still import now: those members keep the plan name as text with no tier; once the tier exists, set it on each member&rsquo;s page (a later upload changes nobody in MatFlow).
                   </p>
                 </div>
               )}
@@ -755,7 +793,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                   {job.manifest.reconciles
                     ? "Every person in the file is accounted for: created, already here, or listed as an error."
                     : "Warning: the counts below do not add up to the people in the file — check the errors before relying on this import."}
-                  {job.sourceExportedAt ? ` Source exported ${formatDateTime(job.sourceExportedAt)}${job.sourceExportedAtProvenance === "provisional" ? " — export time provisional (an estimate): run a Status refresh with the real export time to confirm it" : ""}.` : ""}
+                  {job.sourceExportedAt ? ` Source exported ${formatDateTime(job.sourceExportedAt)}${job.sourceExportedAtProvenance === "provisional" ? " — export time provisional (an estimate); each member's standing is marked provisional" : ""}.` : ""}
                   {job.manifest.created.unmatchedPlan > 0
                     ? ` ${job.manifest.created.unmatchedPlan === 1 ? "1 member has" : `${job.manifest.created.unmatchedPlan} members have`} a plan name with no matching membership tier yet.`
                     : ""}
@@ -818,7 +856,7 @@ function TeamUpFacts({ jobId, facts, committed = false }: { jobId: string; facts
       <p>
         Standing is read <strong>as of {formatDate(facts.asOf)}</strong>
         {facts.asOfProvenance === "provisional"
-          ? " — export time provisional: the time you entered is an estimate. Once you know the real export time, run a Status refresh from the same file with it; standing is re-read as of that date."
+          ? " — export time provisional: the time you entered is an estimate, and each member's standing is marked provisional. A later upload does not change it."
           : facts.asOfIsProvisional
             ? " — the file carries no export time, so this is the upload date; enter the export time if a membership starts or ends around it."
             : " (the export time you entered)."}
@@ -951,15 +989,15 @@ export function RefreshPreviewPanel({
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
         <Stat label="Rows in file" value={preview.totalRows} />
         <Stat label="Matched" value={preview.matched} />
-        <Stat label="Will change" value={preview.willChange} tone="success" />
-        <Stat label="Unchanged" value={preview.unchanged} tone="muted" />
+        <Stat label="Differ — to review" value={preview.willChange} />
+        <Stat label="Same as MatFlow" value={preview.unchanged} tone="muted" />
       </div>
       {!preview.reconciles && (
         <p className="text-xs text-[var(--hue-danger-ink)]">Warning: these counts do not add up to the people in the file.</p>
       )}
       {preview.changes.length > 0 && (
         <details open={preview.changes.length <= 20}>
-          <summary className="text-xs cursor-pointer text-tx-3">What changes, person by person</summary>
+          <summary className="text-xs cursor-pointer text-tx-3">What differs, person by person (MatFlow → export)</summary>
           <ul className="mt-2 text-xs space-y-1" data-testid="refresh-changes">
             {preview.changes.map((c) => (
               <li key={c.memberId} className="text-tx-2">
@@ -976,7 +1014,7 @@ export function RefreshPreviewPanel({
       )}
       <RefreshExceptionList exceptions={preview.exceptions} />
       <p className="text-xs font-medium text-tx-1">
-        A refresh changes only status, payment standing and plan. It never creates anyone, sends anything or charges anyone.
+        A refresh changes nothing in MatFlow. It lists the people whose status, payment standing or plan differ, for you to review; it never creates anyone, sends anything or charges anyone.
       </p>
       <Button
         type="button"
@@ -986,7 +1024,7 @@ export function RefreshPreviewPanel({
         style={{ background: primaryColor }}
       >
         {!busy && <CheckCircle2 className="w-4 h-4" />}
-        {busy ? "Refreshing…" : `Refresh ${plural(preview.matched, "member", "members")}`}
+        {busy ? "Checking…" : `Check ${plural(preview.matched, "member", "members")}`}
       </Button>
     </div>
   );

@@ -186,7 +186,7 @@ export function compareReconciliation(input: ReconciliationInput): Reconciliatio
   checks.push(invariant("Import", "Not rolled back", "no", job.rolledBackAt ? "yes" : "no"));
 
   if (job.mode === "refresh") {
-    checks.push(info("Import", "Status refresh", "not reconciled here", "A status refresh changes standing on people an earlier import created. Reconcile that import instead."));
+    checks.push(info("Import", "Status refresh", "not reconciled here", "A status refresh lists differences on people an earlier import created and changes nobody. Reconcile that import instead."));
     return finish(jobOut, checks, []);
   }
 

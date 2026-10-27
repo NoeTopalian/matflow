@@ -10,6 +10,19 @@ import { updateMetadata } from "@/lib/audit-snapshot";
  */
 vi.mock("@/lib/checkin", () => ({ restorePackCreditsForAttendance: vi.fn(async () => 0) }));
 import { restorePackCreditsForAttendance } from "@/lib/checkin";
+// The billing-period release gate is a constant (false while it ships dark);
+// a getter lets one case prove the guard follows the gate rather than the word "billing".
+const billingGate = vi.hoisted(() => ({ available: false }));
+vi.mock("@/lib/class-allowance", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/class-allowance")>();
+  return {
+    ...real,
+    get BILLING_BASIS_AVAILABLE() {
+      return billingGate.available;
+    },
+  };
+});
+import { BILLING_BASIS_UNDO_REFUSAL } from "@/lib/undo-registry";
 
 const row = (action: string, metadata: unknown, extra: Partial<AuditRowLike> = {}): AuditRowLike => ({
   id: "a1",
@@ -33,6 +46,7 @@ const fake = {
   classRoster: { deleteMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
   memberRank: { findFirst: vi.fn(), update: vi.fn(), delete: vi.fn() },
   attendanceRecord: { findMany: vi.fn(), deleteMany: vi.fn() },
+  memberStatusEvent: { create: vi.fn(), findFirst: vi.fn() },
 } satisfies Record<string, Record<string, Fn>>;
 const tx = fake as unknown as TxLike;
 const applyUndo = (t: TxLike, r: AuditRowLike) => applyUndoReal(t, r);
@@ -250,6 +264,140 @@ describe("applyUndo — restores exactly what was recorded, or refuses", () => {
     });
   });
 
+  // T7c (17 Oct 2026; basis 20 Oct 2026): the allowance set is restorable;
+  // rows recorded before T7c (maxClassesPerWeek only) still restore that column.
+  describe("membership.tier.update: undoing a class allowance change", () => {
+    const FIELDS = ["name", "description", "pricePence", "currency", "billingCycle", "maxClassesPerWeek", "classLimit", "classLimitBasis", "classLimitWeeks", "classLimitAnchor", "isKids", "isActive", "locationId"] as const;
+    const ALLOWANCE = ["classLimit", "classLimitBasis", "classLimitWeeks", "classLimitAnchor", "maxClassesPerWeek"];
+    const ANCHOR = new Date("2026-10-20T00:00:00.000Z");
+    const WEEKLY3 = { maxClassesPerWeek: 3, classLimit: 3, classLimitBasis: "week", classLimitWeeks: null, classLimitAnchor: null };
+    const FOUR4 = { maxClassesPerWeek: null, classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4, classLimitAnchor: ANCHOR };
+    const NONE = { maxClassesPerWeek: null, classLimit: null, classLimitBasis: null, classLimitWeeks: null, classLimitAnchor: null };
+    const tierRow = (over: Record<string, unknown>): Record<string, unknown> => ({
+      id: "tier1", name: "Plan A", pricePence: 4500, currency: "GBP", billingCycle: "monthly",
+      ...WEEKLY3, stripePriceId: null, ...over,
+    });
+    const asRow = (m: Record<string, unknown>) => row("membership.tier.update", m, { entityType: "MembershipTier", entityId: "tier1" });
+
+    it("3 each week -> 4 every 4 weeks: Undo restores every allowance column", async () => {
+      const after = tierRow(FOUR4);
+      const r = asRow(updateMetadata(ALLOWANCE, tierRow({}), after, FIELDS));
+      expect(decideUndo(r, false)).toEqual({ ok: true });
+      fake.membershipTier.findFirst.mockResolvedValue(after);
+      await applyUndo(tx, r);
+      expect(fake.membershipTier.update).toHaveBeenCalledWith({
+        where: { id: "tier1" },
+        data: WEEKLY3,
+      });
+    });
+
+    it("4 every 4 weeks -> Unlimited: Undo puts the allowance back, start date included", async () => {
+      const before = tierRow(FOUR4);
+      const after = tierRow(NONE);
+      const r = asRow(updateMetadata(ALLOWANCE, before, after, FIELDS));
+      fake.membershipTier.findFirst.mockResolvedValue(after);
+      await applyUndo(tx, r);
+      // The snapshot holds the date as its ISO string; Prisma accepts that for a DateTime column.
+      expect(fake.membershipTier.update).toHaveBeenCalledWith({
+        where: { id: "tier1" },
+        data: { classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4, classLimitAnchor: ANCHOR.toISOString() },
+      });
+    });
+
+    it("a later allowance change makes it stale: refused, nothing written", async () => {
+      const before = tierRow(FOUR4);
+      const after = tierRow({ ...FOUR4, classLimit: 6 });
+      const r = asRow(updateMetadata(ALLOWANCE, before, after, FIELDS));
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow({ ...FOUR4, classLimit: 8 }));
+      await expect(applyUndo(tx, r)).rejects.toBeInstanceOf(UndoStale);
+      expect(fake.membershipTier.update).not.toHaveBeenCalled();
+    });
+
+    it("a pre-T7c row restores maxClassesPerWeek alone", async () => {
+      const r = asRow({ fields: ["maxClassesPerWeek"], before: { maxClassesPerWeek: 3 }, after: { maxClassesPerWeek: null } });
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow(NONE));
+      await applyUndo(tx, r);
+      expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { maxClassesPerWeek: 3 } });
+    });
+
+    it.each([
+      ["a limit with no basis", { fields: ["classLimit"], before: { classLimit: 4 }, after: { classLimit: null } }],
+      ["every N weeks with no start date", { fields: ["classLimit", "classLimitBasis", "classLimitWeeks"], before: { classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4 }, after: { classLimit: null, classLimitBasis: null, classLimitWeeks: null } }],
+    ])("a restore that would leave the set inconsistent (%s) is refused in words, not by the database", async (_label, m) => {
+      fake.membershipTier.findFirst.mockResolvedValue(tierRow(NONE));
+      await expect(applyUndo(tx, asRow(m))).rejects.toThrow(/class allowance has changed since/);
+      expect(fake.membershipTier.update).not.toHaveBeenCalled();
+    });
+
+    // D3 (24 Oct 2026): the billing-period basis ships dark (BILLING_BASIS_AVAILABLE
+    // false) and both membership routes refuse to save it; Undo must not put it back.
+    describe("the billing-period basis while it ships dark", () => {
+      const BILLING3 = { maxClassesPerWeek: null, classLimit: 3, classLimitBasis: "billing", classLimitWeeks: null, classLimitAnchor: null };
+
+      it("billing -> weekly: Undo would switch the plan back to billing, so it is refused and nothing is written", async () => {
+        const before = tierRow(BILLING3);
+        const after = tierRow(WEEKLY3);
+        const r = asRow(updateMetadata(ALLOWANCE, before, after, FIELDS));
+        expect(r.metadata).toMatchObject({ before: { classLimitBasis: "billing" }, after: { classLimitBasis: "week" } });
+        fake.membershipTier.findFirst.mockResolvedValue(after);
+        await expect(applyUndo(tx, r)).rejects.toThrow(BILLING_BASIS_UNDO_REFUSAL);
+        await expect(applyUndo(tx, r)).rejects.toBeInstanceOf(UndoStale);
+        expect(fake.membershipTier.update).not.toHaveBeenCalled();
+      });
+
+      it("Unlimited -> ... a row whose before-state was billing is refused the same way", async () => {
+        const r = asRow(updateMetadata(ALLOWANCE, tierRow(BILLING3), tierRow(NONE), FIELDS));
+        fake.membershipTier.findFirst.mockResolvedValue(tierRow(NONE));
+        await expect(applyUndo(tx, r)).rejects.toThrow(BILLING_BASIS_UNDO_REFUSAL);
+        expect(fake.membershipTier.update).not.toHaveBeenCalled();
+      });
+
+      it("an unrelated restore on a plan whose stored basis is billing still works (a rename)", async () => {
+        const before = tierRow({ ...BILLING3, name: "Plan A" });
+        const after = tierRow({ ...BILLING3, name: "Plan B" });
+        const r = asRow(updateMetadata(["name"], before, after, FIELDS));
+        expect(r.metadata).toMatchObject({ before: { name: "Plan A" }, after: { name: "Plan B" } });
+        fake.membershipTier.findFirst.mockResolvedValue(after);
+        await applyUndo(tx, r);
+        expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { name: "Plan A" } });
+      });
+
+      it("a limit restore on a plan already counting per billing period works (3 -> 5 per billing period, undone to 3)", async () => {
+        const before = tierRow(BILLING3);
+        const after = tierRow({ ...BILLING3, classLimit: 5 });
+        const r = asRow(updateMetadata(ALLOWANCE, before, after, FIELDS));
+        expect(r.metadata).toMatchObject({ before: { classLimit: 3 }, after: { classLimit: 5 } });
+        fake.membershipTier.findFirst.mockResolvedValue(after);
+        await applyUndo(tx, r);
+        expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { classLimit: 3 } });
+      });
+
+      it("moving a plan OFF billing is undoable in the other direction: weekly -> billing undone back to weekly", async () => {
+        // A plan saved as billing before the gate (or by a script) and changed
+        // to weekly can have THAT change undone: it restores "week", not "billing".
+        const before = tierRow(WEEKLY3);
+        const after = tierRow(BILLING3);
+        const r = asRow(updateMetadata(ALLOWANCE, before, after, FIELDS));
+        fake.membershipTier.findFirst.mockResolvedValue(after);
+        await applyUndo(tx, r);
+        expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { maxClassesPerWeek: 3, classLimitBasis: "week" } });
+      });
+
+      it("the refusal follows the release gate: with the basis available, the same restore goes through", async () => {
+        billingGate.available = true;
+        try {
+          const after = tierRow(WEEKLY3);
+          const r = asRow(updateMetadata(ALLOWANCE, tierRow(BILLING3), after, FIELDS));
+          fake.membershipTier.findFirst.mockResolvedValue(after);
+          await applyUndo(tx, r);
+          expect(fake.membershipTier.update).toHaveBeenCalledWith({ where: { id: "tier1" }, data: { maxClassesPerWeek: null, classLimitBasis: "billing" } });
+        } finally {
+          billingGate.available = false;
+        }
+      });
+    });
+  });
+
   it("class.roster.add → removes the roster row; refused if already gone", async () => {
     fake.classRoster.deleteMany.mockResolvedValue({ count: 1 });
     await applyUndo(tx, row("class.roster.add", { classId: "c1", memberId: "m1" }, { entityType: "ClassRoster", entityId: "cr1" }));
@@ -371,5 +519,42 @@ describe("second review round (e9bed13 → follow-up)", () => {
     fake.memberRank.findFirst.mockResolvedValue(null);
     await expect(applyUndo(tx, row("member.rank.demote", { fromRankId: "blue", toRankId: "white", stripes: 0, fromStripes: 2, cancelledSubscriptions: 0 }))).rejects.toBeInstanceOf(UndoStale);
     expect(fake.memberRank.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ rankSystemId: "white", stripes: 0 }) }));
+  });
+});
+
+// T8a: a restored member status is a status transition — recorded through the
+// single writer, in the undo's transaction, attributed to the undoing user.
+describe("applyUndo — a restored status records its event (T8a)", () => {
+  it("undoing active -> inactive records one inactive -> active event by the undoing user", async () => {
+    fake.member.findFirst.mockResolvedValue({ id: "m1", status: "inactive", email: "a@x.test" });
+    await applyUndoReal(tx, row("member.update", { changes: { status: { from: "active", to: "inactive" } } }), { userId: "u-owner" });
+    expect(fake.member.update).toHaveBeenCalledWith({ where: { id: "m1" }, data: { status: "active" } });
+    expect(fake.memberStatusEvent.create).toHaveBeenCalledTimes(1);
+    expect(fake.memberStatusEvent.create).toHaveBeenCalledWith({
+      data: { tenantId: "t1", memberId: "m1", fromStatus: "inactive", toStatus: "active", reason: "staff_edit", changedById: "u-owner" },
+      select: { id: true },
+    });
+    // The status write lands before its event.
+    expect(fake.member.update.mock.invocationCallOrder[0]).toBeLessThan(fake.memberStatusEvent.create.mock.invocationCallOrder[0]);
+  });
+
+  it("a before/after snapshot that restores status records the event too", async () => {
+    fake.member.findFirst.mockResolvedValue({ id: "m1", status: "taster", name: "B", email: "a@x.test" });
+    await applyUndoReal(tx, row("member.update", { before: { status: "active", name: "A" }, after: { status: "taster", name: "B" } }), { userId: "u-owner" });
+    expect(fake.memberStatusEvent.create.mock.calls[0][0].data).toMatchObject({ fromStatus: "taster", toStatus: "active", changedById: "u-owner" });
+  });
+
+  it("an undo that does not touch status writes no event", async () => {
+    fake.member.findFirst.mockResolvedValue({ id: "m1", status: "active", name: "B", email: "a@x.test" });
+    await applyUndoReal(tx, row("member.update", { changes: { name: { from: "A", to: "B" } } }), { userId: "u-owner" });
+    expect(fake.memberStatusEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("a stale undo writes neither the status nor an event", async () => {
+    fake.member.findFirst.mockResolvedValue({ id: "m1", status: "active", email: "a@x.test" });
+    await expect(applyUndoReal(tx, row("member.update", { changes: { status: { from: "active", to: "inactive" } } }), { userId: "u-owner" }))
+      .rejects.toBeInstanceOf(UndoStale);
+    expect(fake.member.update).not.toHaveBeenCalled();
+    expect(fake.memberStatusEvent.create).not.toHaveBeenCalled();
   });
 });

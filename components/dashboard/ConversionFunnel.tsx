@@ -7,6 +7,8 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { formatDate } from "@/lib/date";
 import type { AttributionData, FunnelSteps, StaffConversionRow } from "@/lib/attribution";
+import { ratioCounts } from "@/components/dashboard/reports-primitives";
+import { percent } from "@/lib/percent";
 
 /**
  * The conversion funnel — ONE implementation, drawn on Reports (under the stat
@@ -113,14 +115,17 @@ function rateText(rate: number | null, suffix: string): string {
  * A drop-off share carries the SAME honesty guard as a rate: below `minTrials`
  * in the denominator it is noise ("1 of 2 = 50% lost" beside a conversion
  * rate that says "too few"), and 0/0 is not 0%. Returns null → count only.
+ * Q6 (agent default adopted 17 Oct 2026; not an owner decision; required by
+ * Sean's note relayed 14 Oct and the owner instruction of 24 Oct 2026): the
+ * share carries its base, "25% (3 of 12)".
  */
-function pctOf(part: number, whole: number, minTrials: number): string | null {
+export function pctOf(part: number, whole: number, minTrials: number): string | null {
   if (whole < Math.max(minTrials, 1)) return null;
-  return `${Math.round((part / whole) * 100)}%`;
+  return `${percent(part, whole)}% ${ratioCounts(part, whole)}`;
 }
 
-/** "−3 lost before joining · 25%", "0 lost before joining" — no minus on zero, no share when it is unguarded. */
-function dropText(count: number, label: string, pct: string | null, signed: boolean): string {
+/** "−3 lost before joining · 25% (3 of 12)", "0 lost before joining" — no minus on zero, no share when it is unguarded. */
+export function dropText(count: number, label: string, pct: string | null, signed: boolean): string {
   const n = count.toLocaleString("en-GB");
   const lead = signed && count > 0 ? `−${n}` : n;
   return pct ? `${lead} ${label} · ${pct}` : `${lead} ${label}`;

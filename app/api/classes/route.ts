@@ -8,7 +8,12 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { usableTimezone } from "@/lib/class-time";
-import { classRefError } from "@/lib/class-refs";
+import { classRefError, CLASS_REF_ERRORS } from "@/lib/class-refs";
+import { OPEN_RULES, rulesAfterEdit } from "@/lib/booking-eligibility";
+import { readRankOrders, restrictionPreview } from "@/lib/booking-eligibility-db";
+
+/** A tier vanished between the club check and the write: roll the class back. */
+class TierRefError extends Error {}
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -30,6 +35,8 @@ export async function GET(req: Request) {
           requiredRank: true,
           maxRank: true,
           coachUser: { select: { id: true, name: true } },
+          // T6a: the memberships that include the class ([] = everyone).
+          allowedTiers: { select: { tier: { select: { id: true, name: true, isActive: true } } } },
         },
         orderBy: { name: "asc" },
         cursor: cursor ? { id: cursor } : undefined,
@@ -38,7 +45,7 @@ export async function GET(req: Request) {
       }),
     );
     // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant class listing.
-    return NextResponse.json(classes, {
+    return NextResponse.json(classes.map(({ allowedTiers, ...c }) => ({ ...c, allowedTiers: allowedTiers.map((t) => t.tier) })), {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch {
@@ -70,7 +77,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { schedules, roster, ...classData } = parsed.data;
+  // `allowedTierIds` is destructured, never spread into `class.create`: it is
+  // written as ClassMembershipTier rows in the same transaction.
+  const { schedules, roster, allowedTierIds, ...classData } = parsed.data;
 
   // Roster mode and rank gates are mutually exclusive — the same rule the PATCH
   // route enforces by clearing one when the other is set. At create time there
@@ -89,15 +98,41 @@ export async function POST(req: Request) {
   // locations" is a timetable lie). Finding E-2 (6 Oct 2026): the belt and
   // coach ids follow the same rule — they were written unchecked, so gym A
   // could attach gym B's belt or coach and read their names back.
-  if (classData.locationId || classData.requiredRankId || classData.maxRankId || classData.coachUserId) {
+  if (
+    classData.locationId || classData.requiredRankId || classData.maxRankId || classData.coachUserId ||
+    (allowedTierIds && allowedTierIds.length > 0)
+  ) {
     const refError = await withTenantContext(session.user.tenantId, (tx) =>
-      classRefError(tx, session.user.tenantId, classData),
+      classRefError(tx, session.user.tenantId, { ...classData, allowedTierIds }),
     );
     if (refError) return NextResponse.json({ error: refError }, { status: 400 });
   }
 
+  // D2: `?dryRun=1` is the owner's restriction preview for a new class — who
+  // its squad list, rank gate and membership list would turn away (members
+  // of this club, without guardian or payer accounts, grouped by reason).
+  // Nothing is written. A new class has no bookings yet.
+  if (new URL(req.url).searchParams.get("dryRun") === "1") {
+    const tenantId = session.user.tenantId;
+    const restriction = await withTenantContext(tenantId, async (tx) => {
+      const rosterIds = roster && roster.length > 0
+        ? (await tx.member.findMany({ where: { id: { in: roster.map((r) => r.memberId) }, tenantId }, select: { id: true } })).map((m) => m.id)
+        : [];
+      const orders = await readRankOrders(tx, tenantId, [classData.requiredRankId, classData.maxRankId]);
+      const after = rulesAfterEdit(OPEN_RULES, {
+        roster: rosterIds.length > 0 ? rosterIds : undefined,
+        namesRank: false,
+        requiredRankOrder: classData.requiredRankId ? (orders.get(classData.requiredRankId) ?? null) : null,
+        maxRankOrder: classData.maxRankId ? (orders.get(classData.maxRankId) ?? null) : null,
+        allowedTierIds: allowedTierIds ?? [],
+      });
+      return (await restrictionPreview(tx, tenantId, { classId: null, before: OPEN_RULES, after })).preview;
+    });
+    return NextResponse.json({ dryRun: true, restriction });
+  }
+
   try {
-    const { cls, instancesCreated } = await withTenantContext(session.user.tenantId, async (tx) => {
+    const { cls, instancesCreated, tierIdsWritten, tiersWritten } = await withTenantContext(session.user.tenantId, async (tx) => {
       // The club's zone is needed BEFORE the write, not only for the window
       // below: `startDate` is a day marker and the club's calendar date is what
       // it must say (see `scheduleStartMarker`).
@@ -125,6 +160,33 @@ export async function POST(req: Request) {
           coachUser: { select: { id: true, name: true } },
         },
       });
+      // T6a: the memberships that include the class, in the same transaction
+      // so the class never exists open when the owner meant it restricted.
+      // Ids were checked against the club above; re-read here, in the write
+      // transaction, so a tier deleted in between rolls the create back.
+      let tierIdsWritten: string[] = [];
+      // The same {id, name, isActive} shape GET and PATCH return as
+      // `allowedTiers`, so the timetable's row (and the form reopened on it)
+      // shows the list without a refresh.
+      let tiersWritten: { id: string; name: string; isActive: boolean }[] = [];
+      if (allowedTierIds && allowedTierIds.length > 0) {
+        const tiers = await tx.membershipTier.findMany({
+          where: { id: { in: allowedTierIds }, tenantId: session.user.tenantId },
+          select: { id: true, name: true, isActive: true },
+        });
+        if (tiers.length !== allowedTierIds.length) throw new TierRefError();
+        await tx.classMembershipTier.createMany({
+          data: tiers.map((t) => ({
+            tenantId: session.user.tenantId,
+            classId: cls.id,
+            tierId: t.id,
+            createdByUserId: session.user.id,
+          })),
+          skipDuplicates: true,
+        });
+        tierIdsWritten = tiers.map((t) => t.id).sort();
+        tiersWritten = tiers;
+      }
       // The allow-list, in the same transaction as the class: a class that
       // exists with nobody on its roster is a class anyone can check into, so
       // the two must commit together. The ticked ids are re-read under the
@@ -159,7 +221,7 @@ export async function POST(req: Request) {
         days: ROLLING_WINDOW_DAYS,
       });
       const minted = rows.length > 0 ? await tx.classInstance.createMany({ data: rows, skipDuplicates: true }) : { count: 0 };
-      return { cls, instancesCreated: minted.count };
+      return { cls, instancesCreated: minted.count, tierIdsWritten, tiersWritten };
     });
     await logAudit({
       tenantId: session.user.tenantId,
@@ -167,11 +229,17 @@ export async function POST(req: Request) {
       action: "class.created",
       entityType: "Class",
       entityId: cls.id,
-      metadata: { name: cls.name, instancesCreated },
+      metadata: { name: cls.name, instancesCreated, allowedTierIds: { before: [], after: tierIdsWritten } },
       req,
     });
-    return NextResponse.json({ ...cls, instancesCreated }, { status: 201 });
-  } catch {
+    return NextResponse.json(
+      { ...cls, instancesCreated, allowedTierIds: tierIdsWritten, allowedTiers: tiersWritten },
+      { status: 201 },
+    );
+  } catch (e) {
+    if (e instanceof TierRefError) {
+      return NextResponse.json({ error: CLASS_REF_ERRORS.tier }, { status: 400 });
+    }
     return NextResponse.json({ error: "Failed to create class" }, { status: 500 });
   }
 }

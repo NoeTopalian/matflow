@@ -40,7 +40,8 @@ if (fs.existsSync(envPath)) {
 }
 
 const BASE_URL = "https://matflow.studio";
-const EMAIL = "noetopalian@gmail.com";
+if (!process.env.OPERATOR_EMAIL) { console.error("Set OPERATOR_EMAIL to the operator's own login address."); process.exit(2); }
+const EMAIL = process.env.OPERATOR_EMAIL;
 const PASSWORD = process.env.OPERATOR_PASSWORD;
 if (!PASSWORD) {
   console.error("OPERATOR_PASSWORD env var required (audit C-1: the previous hardcoded fallback was a leaked credential).");

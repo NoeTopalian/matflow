@@ -17,10 +17,13 @@ import {
 import { hex, readableOn } from "@/lib/color";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { POPULATION_COPY } from "@/lib/member-population";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/page-header";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
+import { formatPct, formatRatio, ratioCounts } from "@/components/dashboard/reports-primitives";
+import { percent } from "@/lib/percent";
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541"];
 const STATUS_COLORS: Record<string, string> = { active: "#67BA90", taster: "#C9F990", inactive: "#EB3163", cancelled: "#8E1F57" };
@@ -29,8 +32,11 @@ const STATUS_COLORS: Record<string, string> = { active: "#67BA90", taster: "#C9F
 
 interface Metrics {
   totalMembers: number;
+  /** Joined (new + rejoined) by the movement definition, this club month and last. */
   newThisMonth: number;
   newLastMonth: number;
+  /** Either month's joined figure is (partly) reconstructed rather than recorded. */
+  joinedEstimated?: boolean;
   checkinsThisMonth: number;
   checkinsLastMonth: number;
   activeClasses: number;
@@ -39,7 +45,10 @@ interface Metrics {
   activeMembersThisMonth: number;
   monthLabel: string;
   gymName: string;
+  /** Current members only (active, inactive, tasters) — Q4 A-2. */
   membersByStatus?: { status: string; label: string; count: number }[];
+  /** Training members who have left: a count, never a share of the mix. */
+  leftMembers?: number;
   monthlyTrend?: { label: string; value: number }[];
 }
 
@@ -62,15 +71,21 @@ const QUESTIONS = [
 
 // ─── Report generator ─────────────────────────────────────────────────────────
 
-function buildReport(metrics: Metrics, answers: string[]): string {
+export function buildReport(metrics: Metrics, answers: string[]): string {
   const growthDir = metrics.newThisMonth >= metrics.newLastMonth ? "up" : "down";
   const growthDiff = Math.abs(metrics.newThisMonth - metrics.newLastMonth);
   const checkinDir = metrics.checkinsThisMonth >= metrics.checkinsLastMonth ? "up" : "down";
   const checkinDiff = Math.abs(metrics.checkinsThisMonth - metrics.checkinsLastMonth);
   // Engagement = % of members with ≥1 check-in this month (bounded 0..100).
   const engagementRate = metrics.totalMembers > 0
-    ? Math.min(100, Math.round((metrics.activeMembersThisMonth / metrics.totalMembers) * 100))
+    ? Math.min(100, percent(metrics.activeMembersThisMonth, metrics.totalMembers))
     : 0;
+  // T2b: the rate always travels with its counts, "x% (n of m)".
+  const engagementText = formatRatio(
+    metrics.totalMembers > 0 ? engagementRate : null,
+    metrics.activeMembersThisMonth,
+    metrics.totalMembers,
+  );
 
   const referrals = answers[0] || "not specified";
   const events = answers[1] || "none reported";
@@ -86,13 +101,18 @@ function buildReport(metrics: Metrics, answers: string[]): string {
   lines.push("## Overview");
   lines.push(
     `This month ${metrics.gymName} maintained ${metrics.totalMembers} active members across ${metrics.activeClasses} classes. ` +
-    `You recorded ${metrics.checkinsThisMonth} check-ins — ${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} last month — ` +
-    `giving an engagement rate of approximately ${engagementRate}% of your membership base.`
+    `You recorded ${metrics.checkinsThisMonth} check-ins — ${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} last month` +
+    // An empty base has no rate: say so in words rather than printing "—".
+    (metrics.totalMembers > 0
+      ? ` — giving an engagement rate of ${engagementText} — active members who checked in at least once.`
+      : ", with no engagement rate yet (no active members).")
   );
   lines.push("");
   lines.push("## Member Growth");
   lines.push(
-    `**${metrics.newThisMonth} new members** joined this month, compared to ${metrics.newLastMonth} last month ` +
+    // The Reports "Joined" figure (new + rejoined, lib/membership-movement):
+    // an import is never a join (review 25 Oct; it used to count by joinedAt).
+    `**${metrics.newThisMonth} joined** (new + rejoined) this month${metrics.joinedEstimated ? " (partly estimated)" : ""}, compared to ${metrics.newLastMonth} last month ` +
     `(${growthDir === "up" ? `+${growthDiff} ↑` : `-${growthDiff} ↓`}). ` +
     (metrics.newThisMonth > 0
       ? `You reported that approximately ${referrals} of these came via referrals or word-of-mouth, which is a strong signal of community health.`
@@ -103,7 +123,10 @@ function buildReport(metrics: Metrics, answers: string[]): string {
   lines.push(
     `With ${metrics.checkinsThisMonth} total check-ins and ${metrics.totalMembers} active members, ` +
     `the average member attended roughly ${metrics.totalMembers > 0 ? (metrics.checkinsThisMonth / metrics.totalMembers).toFixed(1) : "0"} classes this month. ` +
-    (engagementRate >= 60
+    // No active members → no rate, so no verdict on it either.
+    (metrics.totalMembers === 0
+      ? ""
+      : engagementRate >= 60
       ? "This is a healthy engagement level — your members are showing up consistently."
       : engagementRate >= 35
       ? "Engagement is moderate. Look at who hasn't checked in recently and consider a personal outreach."
@@ -158,6 +181,15 @@ function delta(current: number, previous: number) {
   if (previous === 0) return null;
   const pct = Math.round(((current - previous) / previous) * 100);
   return pct;
+}
+
+/**
+ * A change pill always shows the two figures it compares (required by
+ * Sean's note relayed 14 Oct and the owner instruction of 24 Oct 2026):
+ * "+50% (6 vs 4)".
+ */
+export function changePillText(pct: number, current: number, previous: number): string {
+  return `${pct >= 0 ? "+" : ""}${pct}% (${current.toLocaleString("en-GB")} vs ${previous.toLocaleString("en-GB")})`;
 }
 
 function renderStrongText(text: string) {
@@ -220,7 +252,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
   const checkinDelta = delta(metrics.checkinsThisMonth, metrics.checkinsLastMonth);
   // Engagement = % of members with ≥1 check-in this month (bounded 0..100).
   const engagementRate = metrics.totalMembers > 0
-    ? Math.min(100, Math.round((metrics.activeMembersThisMonth / metrics.totalMembers) * 100))
+    ? Math.min(100, percent(metrics.activeMembersThisMonth, metrics.totalMembers))
     : 0;
 
   useEffect(() => {
@@ -299,7 +331,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="text-[11px] uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Member mix</p>
-                <p className="text-sm font-semibold mt-0.5" style={{ color: "var(--tx-1)" }}>By status</p>
+                <p className="text-sm font-semibold mt-0.5" style={{ color: "var(--tx-1)" }}>Current members by status</p>
               </div>
               <Users className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
             </div>
@@ -313,23 +345,32 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                   }))}
                   size={130}
                   thickness={20}
-                  // The centre is the sum of the slices around it. It used to be
-                  // `totalMembers` — ACTIVE members only — so "9 TOTAL" sat above
-                  // Active 9 + Cancelled 1 + Inactive 1 (end-user simulation,
-                  // 30 Sep 2026). Active alone is the "Active Members" tile.
+                  // The centre is the sum of the slices around it: current
+                  // members (Q4 A-2, the same base as Reports' "Current members
+                  // by status"). Those who have left are counted below, with
+                  // no share. Active alone is the "Active members" tile.
                   centerValue={String(metrics.membersByStatus.reduce((sum, m) => sum + m.count, 0))}
-                  centerLabel="All members"
+                  centerLabel="Current members"
                 />
                 <div className="flex-1 min-w-0">
-                  <DonutLegend data={metrics.membersByStatus.map((m, i): DonutSlice => ({
-                    label: m.label,
-                    value: m.count,
-                    color: STATUS_COLORS[m.status] ?? HERO_PALETTE[i % HERO_PALETTE.length],
-                  }))} />
+                  <DonutLegend
+                    showCounts
+                    data={metrics.membersByStatus.map((m, i): DonutSlice => ({
+                      label: m.label,
+                      value: m.count,
+                      color: STATUS_COLORS[m.status] ?? HERO_PALETTE[i % HERO_PALETTE.length],
+                    }))}
+                  />
                 </div>
               </div>
             ) : (
-              <p className="text-sm" style={{ color: "var(--tx-3)" }}>No member data yet</p>
+              <p className="text-sm" style={{ color: "var(--tx-3)" }}>No current members yet</p>
+            )}
+            {metrics.leftMembers !== undefined && (
+              <p data-testid="analysis-left-the-club" className="mt-3 border-t border-bd-default pt-2 text-xs text-tx-2">
+                Left the club: <span className="font-semibold tabular-nums text-tx-1">{metrics.leftMembers.toLocaleString("en-GB")}</span>
+                <span className="text-tx-3"> · cancelled members, not part of the shares above</span>
+              </p>
             )}
           </Card>
 
@@ -364,25 +405,38 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
         <aside className="grid grid-cols-2 gap-3 lg:order-2 lg:grid-cols-1 lg:content-start">
         {[
           {
-            label: "Active Members",
+            // Same population and wording as Reports and Members (T1).
+            label: POPULATION_COPY.active.label,
             value: metrics.totalMembers,
-            sub: `${metrics.newThisMonth} new this month`,
+            // The change pill is the change in members JOINED (the Reports
+            // movement definition: new + rejoined, imports never), with its two counts.
+            sub: `${metrics.newThisMonth} joined this month · ${metrics.newLastMonth} last month${metrics.joinedEstimated ? " · partly estimated" : ""}`,
             icon: Users,
             pct: memberDelta,
+            counts: [metrics.newThisMonth, metrics.newLastMonth] as const,
+            pillLabel: "members joined, this month vs last",
           },
           {
             label: "Check-ins",
             value: metrics.checkinsThisMonth,
-            sub: "this month",
+            sub: `this month · ${metrics.checkinsLastMonth} last month`,
             icon: CalendarCheck,
             pct: checkinDelta,
+            counts: [metrics.checkinsThisMonth, metrics.checkinsLastMonth] as const,
+            pillLabel: "check-ins, this month vs last",
           },
           {
             label: "Engagement",
-            value: `${engagementRate}%`,
-            sub: "members active",
+            // T2b: the percentage with its counts; "—" when there are no
+            // active members (an undefined rate is never "0%").
+            value: formatPct(metrics.totalMembers > 0 ? engagementRate : null, metrics.totalMembers),
+            sub: metrics.totalMembers > 0
+              ? `${ratioCounts(metrics.activeMembersThisMonth, metrics.totalMembers)} active members checked in this month`
+              : "No active members yet",
             icon: TrendingUp,
             pct: null,
+            counts: null,
+            pillLabel: "",
           },
           {
             label: "Active Classes",
@@ -390,8 +444,10 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             sub: "on the schedule",
             icon: Dumbbell,
             pct: null,
+            counts: null,
+            pillLabel: "",
           },
-        ].map(({ label, value, sub, icon: Icon, pct }) => (
+        ].map(({ label, value, sub, icon: Icon, pct, counts, pillLabel }) => (
           <Card key={label} padding="tight">
             <div className="flex items-start justify-between mb-3">
               <div
@@ -400,16 +456,18 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               >
                 <Icon className="w-4 h-4" style={{ color: primaryColor }} />
               </div>
-              {pct !== null && (
+              {pct !== null && counts && (
                 <div
-                  className="flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full"
+                  data-testid="analysis-change-pill"
+                  aria-label={`${changePillText(pct, counts[0], counts[1])}: ${pillLabel}`}
+                  className="flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap"
                   style={{
                     background: pct >= 0 ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
                     color: pct >= 0 ? "var(--hue-success)" : "var(--hue-danger)",
                   }}
                 >
                   {pct >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                  {pct >= 0 ? "+" : ""}{pct}%
+                  {changePillText(pct, counts[0], counts[1])}
                 </div>
               )}
             </div>

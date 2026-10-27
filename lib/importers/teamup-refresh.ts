@@ -157,8 +157,16 @@ export function changedFields(before: Standing, after: Standing): RefreshOwnedFi
   return REFRESH_OWNED_FIELDS.filter((f) => before[f] !== after[f]);
 }
 
-export function tierMap(tiers: ResolvedMembershipTier[]): Map<string, ResolvedMembershipTier> {
-  return new Map(tiers.map((t) => [t.name.trim().toLowerCase(), t]));
+/**
+ * Plan name (trimmed, case-insensitive) → the club's plan. Two plans whose names
+ * differ only by case or spacing are both left out: a name that fits two plans
+ * is not a match (25 Oct 2026), so the person keeps the label with no plan and
+ * is listed for the owner instead of being given one of them at random.
+ */
+export function tierMap<T extends { name: string }>(tiers: readonly T[]): Map<string, T> {
+  const seen = new Map<string, number>();
+  for (const t of tiers) seen.set(t.name.trim().toLowerCase(), (seen.get(t.name.trim().toLowerCase()) ?? 0) + 1);
+  return new Map(tiers.filter((t) => seen.get(t.name.trim().toLowerCase()) === 1).map((t) => [t.name.trim().toLowerCase(), t]));
 }
 
 /**
@@ -218,7 +226,14 @@ export function planRefresh(input: {
       exceptions.holdKept!.push({ memberId: m.id, name: m.name, teamUpSays: after.paymentStatus });
       after = { ...after, paymentStatus: "paused" };
     }
-    matched.push({ memberId: m.id, name: m.name, sourceKey: d.sourceKey, fields: changedFields(before, after), before, after });
+    matched.push({
+      memberId: m.id,
+      name: m.name,
+      sourceKey: d.sourceKey,
+      fields: changedFields(before, after),
+      before,
+      after,
+    });
   }
 
   for (const m of input.members) {
@@ -304,4 +319,38 @@ export function planRefreshRollback(
 /** Human words for a field, for the preview list. */
 export function refreshFieldLabel(f: RefreshOwnedField): string {
   return FIELD_WORDS[f];
+}
+
+/**
+ * The date each restored member's FORWARD refresh event carries, so the
+ * rollback's reverse event can carry the same date (T8a, A-9): replayed for
+ * any day, history then reads as if the refresh never happened, and the
+ * reverse sorts after the forward on its later `createdAt`.
+ *
+ * `events` are the members' import events, newest first by
+ * (occurredAt, createdAt, id). The forward event is the newest import event
+ * moving that member from the change's `before` status to its `after` status;
+ * a member with none (an older run whose event cannot be found) is left out,
+ * and their reverse event is dated at write time as before.
+ *
+ * T8d: given `jobId`, the event this refresh job wrote (provenance
+ * `import_refresh` + `jobId`) is preferred. Without one, only an event with no
+ * provenance at all (written before T8d) may stand in for it: an event another
+ * job is known to have written is never taken as this job's forward move.
+ */
+export function forwardEventDates(
+  restore: Array<Pick<RefreshChange, "memberId" | "before" | "after">>,
+  events: Array<{ memberId: string; fromStatus: string | null; toStatus: string; occurredAt: Date; sourceJobId?: string | null; sourceAction?: string | null }>,
+  jobId?: string,
+): Map<string, Date> {
+  const out = new Map<string, Date>();
+  for (const c of restore) {
+    if (c.before.status === c.after.status) continue;
+    const moves = events.filter((x) => x.memberId === c.memberId && x.fromStatus === c.before.status && x.toStatus === c.after.status);
+    const e = jobId
+      ? moves.find((x) => x.sourceJobId === jobId && x.sourceAction === "import_refresh") ?? moves.find((x) => !x.sourceJobId)
+      : moves[0];
+    if (e) out.set(c.memberId, e.occurredAt);
+  }
+  return out;
 }

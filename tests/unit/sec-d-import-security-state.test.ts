@@ -60,20 +60,18 @@ describe("SEC-054 refresh writes standing only", () => {
 
 describe("SEC-054 members-import commit never rewrites an existing member's security state", () => {
   const src = readFileSync(path.resolve(__dirname, "../../app/api/admin/import/[id]/commit/route.ts"), "utf8");
-  it("the only member updates are the refresh's standing write and status bookkeeping (no email/password/factor/guardian/externalRef data keys)", () => {
-    const updates = [...src.matchAll(/tx\.member\.(update|updateMany|upsert)\(\{[\s\S]*?\}\);/g)].map((m) => m[0]);
-    // Exactly one member write exists today: the refresh's refreshWrite(...) (the scan is not vacuous).
-    expect(updates.length).toBeGreaterThanOrEqual(1);
-    expect(updates.some((u) => u.includes("data: refreshWrite("))).toBe(true);
-    for (const u of updates) {
-      for (const c of ["email:", "passwordHash", "totp", "sessionVersion", "guardianConfirmedAt", "externalRef:"]) {
-        const data = u.slice(u.indexOf("data:"));
-        expect(data.includes(c), `member write sets ${c}\n${u.slice(0, 300)}`).toBe(false);
-      }
-    }
+  it("the commit updates no existing member at all (owner decision 25 Oct 2026: a later upload never overwrites; differences are listed)", () => {
+    expect([...src.matchAll(/\.member\.(update|updateMany|upsert)\(/g)]).toEqual([]);
+    // The refresh's write helper is gone from the commit too.
+    expect(src).not.toMatch(/refreshWrite\(/);
   });
-  it("existing addresses are skipped, never overwritten (createMany with skipDuplicates + a pre-check by email)", () => {
+  it("existing addresses are never overwritten: createMany with skipDuplicates, and every match is compared, not skipped blind", () => {
     expect(src).toMatch(/skipDuplicates:\s*true/);
-    expect(src).toMatch(/existingEmails\.has\(d\.email\)/);
+    // Every match goes through the shared matcher (also used by the preview), which compares, never skips blind.
+    expect(src).toMatch(/await classifyAdults\(tx, tenantId, slice/);
+    expect(src).toMatch(/await classifyChildren\(tx, tenantId, slice/);
+    const matcher = readFileSync(path.resolve(__dirname, "../../lib/importers/import-match.ts"), "utf8");
+    expect(matcher).toMatch(/byEmail\.has\(d\.email\)/);
+    expect(matcher).toMatch(/classify\(\{ draft: d/);
   });
 });

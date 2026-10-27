@@ -2,12 +2,14 @@ import { NextResponse } from "next/server";
 import { readImportFile } from "@/lib/import-storage";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
-import { parseImport, unmatchedPlanLabels, withoutProvisionalStanding, type ImportSource } from "@/lib/importers";
+import { parseImport, unmatchedPlanLabels, withoutProvisionalStanding, type ImportSource, type MemberDraft } from "@/lib/importers";
+import { classifyAdults, classifyChildren, needsParent } from "@/lib/importers/import-match";
+import { normaliseEmail } from "@/lib/email-normalise";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import type { Prisma } from "@prisma/client";
 import { parseTeamUp } from "@/lib/importers/teamup";
-import { planRefresh, REFRESH_MEMBER_SELECT } from "@/lib/importers/teamup-refresh";
+import { planRefresh, REFRESH_MEMBER_SELECT, tierMap } from "@/lib/importers/teamup-refresh";
 import { asOfDate } from "@/lib/importers/as-of";
 import { buildExceptionRows } from "@/lib/importers/teamup-exceptions";
 
@@ -56,30 +58,49 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const { drafts, errors, summary: sourceSummary, rows: ledgerRows } = parseImport(job.source as ImportSource, text, { asOf });
 
     const summary = await withTenantContext(tenantId, async (tx) => {
-      // Synthesised (non-contactable) addresses are fresh on every parse, so
-      // the existing-email check cannot see them; the commit dedupes those by
-      // name + date of birth. Here they count as importable.
-      const emails = drafts.filter((d) => !d.nonContactable).map((d) => d.email);
-      const existing = emails.length
-        ? await tx.member.findMany({
-            where: { tenantId, email: { in: emails } },
-            select: { email: true },
-          })
-        : [];
-      const existingSet = new Set(existing.map((m) => m.email));
-      const tierNames = new Set((await tx.membershipTier.findMany({ where: { tenantId }, select: { name: true } })).map((t) => t.name.trim().toLowerCase()));
+      // The same classification the commit uses (lib/importers/import-match),
+      // so these counts are the commit's outcomes for this file (25 Oct 2026).
+      const tiers = await tx.membershipTier.findMany({ where: { tenantId }, select: { id: true, name: true } });
+      const tierByName = tierMap(tiers);
+      const tierNames = new Set(tierByName.keys());
+      const planOf = (d: MemberDraft) => {
+        const t = d.membershipType ? tierByName.get(d.membershipType.trim().toLowerCase()) : undefined;
+        return { tierId: t?.id ?? null, label: t?.name ?? d.membershipType ?? null };
+      };
+      // Rows the commit refuses because a staff login holds the address (AH-01).
+      const realEmails = [...new Set(drafts.filter((d) => !d.nonContactable).map((d) => normaliseEmail(d.email)))];
+      const staffEmails = new Set(
+        realEmails.length ? (await tx.user.findMany({ where: { tenantId, email: { in: realEmails } }, select: { email: true } })).map((u) => normaliseEmail(u.email)) : [],
+      );
+      const staffHeld = new Set(drafts.filter((d) => staffEmails.has(normaliseEmail(d.email))).map((d) => d.email));
+      const adults = drafts.filter((d) => !needsParent(d));
+      const children = drafts.filter(needsParent);
+      const parentsInFile = new Set(adults.flatMap((d) => [d.email, d.unverifiedEmail].filter((e): e is string => !!e)));
+      const adultOutcomes = await classifyAdults(tx, tenantId, adults, { jobId: job.id, planOf, skipEmails: staffHeld });
+      const childOutcomes = await classifyChildren(tx, tenantId, children, { jobId: job.id, planOf, skipEmails: staffHeld, parentsInFile });
+      const kinds = [...adultOutcomes.values(), ...[...childOutcomes.values()].flatMap((o) => (o.classification ? [o.classification] : []))].map((c) => c.kind);
+      const count = (k: string) => kinds.filter((x) => x === k).length;
+      const childrenWithoutParent = [...childOutcomes.values()].filter((o) => !o.classification).length;
       const totalRows = drafts.length + errors.length;
       // Plan labels a live membership carries with no tier: shown BEFORE commit.
       const unmatched = unmatchedPlanLabels(drafts, tierNames);
-      const willImport = drafts.filter((d) => !existingSet.has(d.email)).length;
-      const willSkipExisting = drafts.filter((d) => existingSet.has(d.email)).length;
+      const willImport = count("new");
+      const sameAsMatFlow = count("duplicate") + count("own");
+      const toReviewDiffers = count("conflict");
+      const toReviewUncertain = count("ambiguous");
       const s = {
         totalRows,
         validRows: drafts.length,
         errorRows: errors.length,
-        existingMatches: willSkipExisting,
+        // Everyone already in the club, whatever happens to them (kept for older clients).
+        existingMatches: sameAsMatFlow + toReviewDiffers + toReviewUncertain,
         willImport,
-        willSkip: willSkipExisting + errors.length,
+        sameAsMatFlow,
+        toReviewDiffers,
+        toReviewUncertain,
+        staffLoginRefused: staffHeld.size,
+        childrenWithoutParent,
+        willSkip: sameAsMatFlow + toReviewDiffers + toReviewUncertain + staffHeld.size + childrenWithoutParent + errors.length,
         sampleDrafts: drafts.slice(0, 5).map((d) => ({
           name: d.name,
           email: d.nonContactable ? "(no email)" : d.email,

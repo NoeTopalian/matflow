@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { owesMoneyClause } from "@/lib/overdue";
+import { paymentsDueWhere } from "@/lib/payments-due";
 import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import WeeklyCalendar, { DayClass } from "@/components/dashboard/WeeklyCalendar";
@@ -15,8 +16,9 @@ type TxClient = Prisma.TransactionClient;
 import DashboardStats from "@/components/dashboard/DashboardStats";
 import SetupBanner from "@/components/dashboard/SetupBanner";
 import DeniedNotice from "@/components/dashboard/DeniedNotice";
-import { atRiskMemberWhere, buildActionItems, type ActionItem } from "@/lib/dashboard-action-items";
-import { TRAINING_MEMBER } from "@/lib/member-population";
+import { birthdayCandidateWhere, buildActionItems, readAtRisk, type ActionItem, type AtRiskRead } from "@/lib/dashboard-action-items";
+import { ACTIVE_MEMBER, CAN_TRAIN_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
+import { liveClassWhere } from "@/lib/class-live";
 
 /**
  * Wizard v2 SetupBanner support: detect setup gaps for owner accounts that
@@ -31,7 +33,10 @@ async function getSetupGaps(tx: TxClient, tenantId: string, role: string): Promi
       select: { stripeConnected: true, onboardingCompleted: true, contactEmail: true, billingContactEmail: true },
     }),
     tx.membershipTier.count({ where: { tenantId } }),
-    tx.class.count({ where: { tenantId, deletedAt: null } }),
+    // T6b: classes ON THE TIMETABLE. A club whose classes are all paused,
+    // archived or imported history has nothing scheduled, so the banner says
+    // "Schedule a class".
+    tx.class.count({ where: liveClassWhere(tenantId) }),
     tx.member.count({ where: { tenantId } }),
   ]);
 
@@ -73,7 +78,7 @@ async function getWeekClasses(tx: TxClient, tenantId: string): Promise<DayClass[
     where: {
       // The week's live classes; sessions an attendance-history import created
       // (on a historical class, or with no recorded end) are history only.
-      class: { tenantId, isActive: true, deletedAt: null },
+      class: liveClassWhere(tenantId),
       sourceImportJobId: null,
       date: { gte: monday, lte: sunday },
       isCancelled: false,
@@ -98,7 +103,7 @@ async function getWeekClasses(tx: TxClient, tenantId: string): Promise<DayClass[
   }));
 }
 
-async function getStats(tx: TxClient, tenantId: string) {
+async function getStats(tx: TxClient, tenantId: string, role: string, atRisk: AtRiskRead) {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const startOfWeek = new Date(now);
@@ -113,11 +118,10 @@ async function getStats(tx: TxClient, tenantId: string) {
     waiverMissing,
     missingPhone,
     paymentsDue,
-    atRiskMembers,
   ] = await Promise.all([
     // Training members only: parent/guardian accounts are account holders,
     // not members (lib/member-population.ts, 2 Oct 2026).
-    tx.member.count({ where: { tenantId, status: "active", ...TRAINING_MEMBER } }),
+    tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
     tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth }, ...TRAINING_MEMBER } }),
     tx.attendanceRecord.count({
       where: { tenantId, checkInTime: { gte: startOfWeek } },
@@ -127,28 +131,23 @@ async function getStats(tx: TxClient, tenantId: string) {
     }),
     // A guardian/parent account never signs a training waiver and is not a
     // member to chase for a phone; both counts are training members only
-    // (acceptance S1 follow-up, 2 Oct 2026: 219 guardian drafts read as 531
-    // missing waivers).
+    // (acceptance S1 follow-up, 2 Oct 2026: a real import's guardian drafts
+    // were counted as missing waivers).
     tx.member.count({
-      where: { tenantId, status: { in: ["active", "taster"] }, waiverAccepted: false, ...TRAINING_MEMBER },
+      where: { tenantId, ...CAN_TRAIN_MEMBER, waiverAccepted: false },
     }),
     tx.member.count({
       where: {
         tenantId,
-        status: { in: ["active", "taster"] },
+        ...CAN_TRAIN_MEMBER,
         OR: [{ phone: null }, { phone: "" }],
-        ...TRAINING_MEMBER,
       },
     }),
-    // Everyone Payments → Outstanding lists: overdue (derived, not only
-    // Stripe-pushed) plus "No payment yet" — see lib/overdue.ts. The same clause
-    // feeds the action list below, so the headline number, the list of names
-    // and the Outstanding tab can never disagree.
-    tx.member.count({
-      where: { tenantId, status: { in: ["active", "taster"] }, OR: owesMoneyClause(new Date()) },
-    }),
-    // Joined inside the window and not in yet = new, not at risk (lib/dashboard-action-items).
-    tx.member.count({ where: atRiskMemberWhere(tenantId, now) }),
+    // Owner/manager: everyone Payments → Outstanding lists, overdue plus "No
+    // payment yet" (lib/overdue.ts) — the same clause feeds the action list
+    // below. Other roles: payers overdue only, the count of the Members chip
+    // their tile links to (round-3 review L5; lib/payments-due.ts).
+    tx.member.count({ where: paymentsDueWhere(tenantId, role, now) }),
   ]);
 
   return {
@@ -159,7 +158,12 @@ async function getStats(tx: TxClient, tenantId: string) {
     waiverMissing,
     missingPhone,
     paymentsDue,
-    atRiskMembers,
+    // Read once by readAtRisk (lib/dashboard-action-items): 0 and suppressed
+    // while the gate is closed, the same value the named list gets; the copy
+    // says why there is no number yet.
+    atRiskMembers: atRisk.count,
+    atRiskSuppressed: atRisk.suppressed,
+    atRiskCopy: atRisk.copy,
   };
 }
 
@@ -195,12 +199,12 @@ async function getUserTasks(tx: TxClient, tenantId: string, userId: string) {
  * The raw per-signal queries run here; lib/dashboard-action-items shapes + ranks
  * them into the typed list the UI renders.
  */
-async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionItem[]> {
+async function getActionItems(tx: TxClient, tenantId: string, atRisk: AtRiskRead): Promise<ActionItem[]> {
   const now = new Date();
   const thirtyDaysAgo = new Date(now);
   thirtyDaysAgo.setDate(now.getDate() - 30);
 
-  const [overdue, recentFailed, missingWaiver, atRisk, birthdayCandidates] = await Promise.all([
+  const [overdue, recentFailed, missingWaiver, birthdayCandidates] = await Promise.all([
     tx.member.findMany({
       where: { tenantId, status: { in: ["active", "taster"] }, OR: owesMoneyClause(now) },
       select: { id: true, name: true, paymentStatus: true, membershipTierId: true, billedBy: true },
@@ -213,18 +217,13 @@ async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionIte
       take: 25,
     }),
     tx.member.findMany({
-      where: { tenantId, status: { in: ["active", "taster"] }, waiverAccepted: false, ...TRAINING_MEMBER },
-      select: { id: true, name: true },
-      take: 25,
-    }),
-    tx.member.findMany({
-      where: atRiskMemberWhere(tenantId, now),
+      where: { tenantId, ...CAN_TRAIN_MEMBER, waiverAccepted: false },
       select: { id: true, name: true },
       take: 25,
     }),
     // DOBs are filtered to the next-7-day window in JS (month/day, year-agnostic).
     tx.member.findMany({
-      where: { tenantId, status: { in: ["active", "taster"] }, dateOfBirth: { not: null } },
+      where: birthdayCandidateWhere(tenantId),
       select: { id: true, name: true, dateOfBirth: true },
       take: 500,
     }),
@@ -245,7 +244,8 @@ async function getActionItems(tx: TxClient, tenantId: string): Promise<ActionIte
       createdAt: p.createdAt,
     })),
     missingWaiver,
-    atRisk,
+    atRisk: atRisk.members,
+    atRiskSuppressed: atRisk.suppressed,
     birthdayCandidates: birthdayCandidates
       .filter((m): m is { id: string; name: string; dateOfBirth: Date } => m.dateOfBirth !== null)
       .map((m) => ({ id: m.id, name: m.name, dateOfBirth: m.dateOfBirth })),
@@ -267,16 +267,24 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
   //
   // One shared transaction for all reads — avoids the connection-pool
   // contention that caused "Unable to start a transaction in the given time".
+  //
+  // At-Risk is read once, club-wide, and handed to both the tile and the named
+  // list so they are switched off together (readAtRiskGate: shown only once
+  // MatFlow has been the register for the whole 14-day window; imported
+  // visits count as visits once it is).
   const [classes, stats, setupGaps, userTasks, actionItems] = await withTenantContext(
     session!.user.tenantId,
-    (tx) =>
-      Promise.all([
+    async (tx) => {
+      const club = await tx.tenant.findUnique({ where: { id: session!.user.tenantId }, select: { timezone: true } });
+      const atRisk = await readAtRisk(tx, session!.user.tenantId, new Date(), club?.timezone);
+      return Promise.all([
         getWeekClasses(tx, session!.user.tenantId),
-        getStats(tx, session!.user.tenantId),
+        getStats(tx, session!.user.tenantId, session!.user.role, atRisk),
         getSetupGaps(tx, session!.user.tenantId, session!.user.role),
         getUserTasks(tx, session!.user.tenantId, session!.user.id),
-        getActionItems(tx, session!.user.tenantId),
-      ]),
+        getActionItems(tx, session!.user.tenantId, atRisk),
+      ]);
+    },
   );
 
   return (

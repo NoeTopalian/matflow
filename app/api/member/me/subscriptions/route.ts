@@ -5,6 +5,7 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
+import { liveClassWhere } from "@/lib/class-live";
 
 export async function GET() {
   const session = await auth();
@@ -25,7 +26,8 @@ export async function GET() {
         // deletes them and the member has no UI to clear them, so an
         // unfiltered read returned dead class ids forever. Scope to the
         // classes the member can actually still see (RULES §5).
-        class: { tenantId: session.user.tenantId, isActive: true, deletedAt: null },
+        // T6b: a pause keeps bookings but hides them; Resume shows them again.
+        class: liveClassWhere(session.user.tenantId),
       },
       select: { classId: true },
     }),

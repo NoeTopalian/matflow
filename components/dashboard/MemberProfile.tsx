@@ -1548,11 +1548,11 @@ export default function MemberProfile({
                 </div>
                 <div>
                   <label className="text-xs mb-1 block" style={{ color: "var(--tx-3)" }}>Membership Type</label>
-                  {/* Functional review F4 (30 Sep 2026): the plan of a member TeamUp
-                      bills is TeamUp's; an edit here is overwritten at the next refresh. */}
+                  {/* Owner decision 25 Oct 2026: an edit here is MatFlow's and stands; a
+                      later TeamUp upload lists a difference, never overwrites it. */}
                   {isBilledElsewhere(member) && (
                     <p className="text-xs mb-1" style={{ color: "var(--hue-warning-ink)" }} data-testid="teamup-owns-plan">
-                      TeamUp bills this member, so their plan and status come from TeamUp. Change them in TeamUp — the next status refresh replaces edits made here.
+                      TeamUp still bills this member. A plan or status you change here stays in MatFlow — a later TeamUp upload only lists the difference — so change the billing in TeamUp too.
                     </p>
                   )}
                   {tiers.length > 0 ? (

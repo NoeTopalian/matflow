@@ -17,8 +17,17 @@ import {
 import { Sheet } from "@/components/ui/sheet";
 import type { DayClass } from "@/components/dashboard/WeeklyCalendar";
 import { filterTodoItems } from "@/lib/dashboard-todo";
-import type { ActionItem, ActionItemKind } from "@/lib/dashboard-action-items";
+import {
+  AT_RISK_OPEN_DETAIL,
+  AT_RISK_SUPPRESSED_DETAIL,
+  AT_RISK_SUPPRESSED_NOTE,
+  AT_RISK_SUPPRESSED_TODO_NOTE,
+  type AtRiskCopy,
+  type ActionItem,
+  type ActionItemKind,
+} from "@/lib/dashboard-action-items";
 import { capacityLabel, spacesLeftText } from "@/lib/capacity-label";
+import { paymentsDueCopy } from "@/lib/payments-due";
 import AddTaskModal, { type CreatedTask } from "@/components/dashboard/AddTaskModal";
 
 export type UserTask = {
@@ -51,6 +60,10 @@ interface Props {
     missingPhone: number;
     paymentsDue: number;
     atRiskMembers: number;
+    /** True while the club has no MatFlow check-in: tile, to-do row and list are off. */
+    atRiskSuppressed?: boolean;
+    /** While suppressed: why there is no number yet (lib/dashboard-action-items atRiskClosedCopy). */
+    atRiskCopy?: AtRiskCopy;
   };
   classes: DayClass[];
   tenantName: string;
@@ -112,6 +125,7 @@ function classStatus(cls: DayClass) {
 function MetricCard({
   label,
   value,
+  note,
   detail,
   color,
   icon: Icon,
@@ -120,6 +134,8 @@ function MetricCard({
 }: {
   label: string;
   value: string | number;
+  /** Shown in place of `value` when there is no honest number to show yet. */
+  note?: string;
   detail: string;
   color: string;
   icon: React.ElementType;
@@ -133,9 +149,13 @@ function MetricCard({
           <p className="text-[11px] uppercase tracking-[0.12em] font-semibold" style={{ color: "var(--tx-2)" }}>
             {label}
           </p>
-          <p className="text-2xl font-bold mt-2 leading-none" style={{ color: "var(--tx-1)" }}>
-            {value}
-          </p>
+          {note ? (
+            <p className="text-sm font-medium mt-2 text-tx-2">{note}</p>
+          ) : (
+            <p className="text-2xl font-bold mt-2 leading-none" style={{ color: "var(--tx-1)" }}>
+              {value}
+            </p>
+          )}
           <p className="text-xs mt-2" style={{ color: "var(--tx-3)" }}>
             {detail}
           </p>
@@ -225,8 +245,10 @@ export default function DashboardStats({
   const [completing, setCompleting] = useState<string | null>(null);
   const myOpenTaskCount = tasks.filter((t) => t.assignedTo?.id === currentUserId).length;
   // Payments → Outstanding is owner/manager only; a coach gets the Members
-  // overdue filter rather than a "not allowed" redirect.
-  const paymentsDueHref = currentUserRole === "owner" || currentUserRole === "manager" ? "/dashboard/payments" : "/dashboard/members?filter=overdue";
+  // "Payers overdue" chip rather than a "not allowed" redirect, and the tile
+  // counts and names exactly that chip (round-3 review L5, lib/payments-due.ts).
+  const paymentsDue = paymentsDueCopy(currentUserRole);
+  const paymentsDueHref = paymentsDue.href;
 
   function handleCreated(t: CreatedTask) {
     // Normalise CreatedTask (where assignedTo / assigneeMember are optional
@@ -272,7 +294,17 @@ export default function DashboardStats({
   // Auto-derived gym-health items (waivers, payments, etc.) kept SEPARATE from
   // the badge total below so the "All caught up" empty state can gate on the
   // joint condition (no auto items AND no user tasks) — audit C-4 fix.
-  const autoTodoCount = stats.waiverMissing + stats.paymentsDue + stats.missingPhone + stats.atRiskMembers;
+  // At-Risk is off while its gate is closed (readAtRiskGate): until MatFlow
+  // has been the register for the whole 14-day window, a count would flag
+  // members who trained at classes registered elsewhere.
+  const atRiskOff = stats.atRiskSuppressed === true;
+  const atRiskCount = atRiskOff ? 0 : stats.atRiskMembers;
+  const atRiskCopy: AtRiskCopy = stats.atRiskCopy ?? {
+    note: AT_RISK_SUPPRESSED_NOTE,
+    detail: AT_RISK_SUPPRESSED_DETAIL,
+    todoNote: AT_RISK_SUPPRESSED_TODO_NOTE,
+  };
+  const autoTodoCount = stats.waiverMissing + stats.paymentsDue + stats.missingPhone + atRiskCount;
   const ownerTodoCount = autoTodoCount + myOpenTaskCount;
 
   const todoItems: TodoItem[] = [
@@ -286,8 +318,9 @@ export default function DashboardStats({
       action: "Review waivers",
     },
     {
-      // Payments → Outstanding's definition: overdue plus "No payment yet".
-      label: "Payments due (overdue or no payment yet)",
+      // Owner/manager: Outstanding's definition, overdue plus "No payment yet".
+      // Other roles: payers overdue, the chip the link opens.
+      label: paymentsDue.todoLabel,
       count: stats.paymentsDue,
       Icon: CreditCard,
       color: "#ef4444",
@@ -304,7 +337,7 @@ export default function DashboardStats({
     },
     {
       label: "Members not seen in 14 days",
-      count: stats.atRiskMembers,
+      count: atRiskCount,
       Icon: AlertTriangle,
       color: "#a78bfa",
       href: "/dashboard/members?filter=quiet",
@@ -400,7 +433,7 @@ export default function DashboardStats({
           previous xl breakpoint (1280px) wrapped them 2×2 on ordinary windows. */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <MetricCard label={todoListLabel} value={ownerTodoCount} detail="Tasks needing attention" color="#f59e0b" icon={ClipboardList} onClick={() => setTodoOpen(true)} />
-        <MetricCard label="Payments Due" value={stats.paymentsDue} detail="Overdue or no payment yet" color="#ef4444" icon={CreditCard} href={paymentsDueHref} />
+        <MetricCard label={paymentsDue.label} value={stats.paymentsDue} detail={paymentsDue.detail} color="#ef4444" icon={CreditCard} href={paymentsDueHref} />
         <MetricCard
           label="Today's Classes"
           value={todayClasses.length}
@@ -409,7 +442,17 @@ export default function DashboardStats({
           icon={CalendarCheck}
           href="/dashboard/coach"
         />
-        <MetricCard label="At-Risk Members" value={stats.atRiskMembers} detail="Not seen in 14 days" color="#a78bfa" icon={AlertTriangle} href="/dashboard/members?filter=quiet" />
+        {/* Suppressed: a neutral line instead of a number, and no link to a
+            list the tile does not stand behind. */}
+        <MetricCard
+          label="At-Risk Members"
+          value={atRiskCount}
+          note={atRiskOff ? atRiskCopy.note : undefined}
+          detail={atRiskOff ? atRiskCopy.detail : AT_RISK_OPEN_DETAIL}
+          color="#a78bfa"
+          icon={AlertTriangle}
+          href={atRiskOff ? undefined : "/dashboard/members?filter=quiet"}
+        />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] gap-4">
@@ -446,6 +489,8 @@ export default function DashboardStats({
               <div className="rounded-xl border px-3 py-6 flex flex-col items-center gap-2 text-center" style={{ borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                 <CheckCircle2 className="w-6 h-6" style={{ color: "#22c55e" }} />
                 <p className="text-sm">All caught up — nothing to action.</p>
+                {/* At-Risk is unknown, not zero, while suppressed (UI-RULES §7). */}
+                {atRiskOff && <p className="text-xs text-tx-3">{atRiskCopy.todoNote}</p>}
               </div>
             ) : (
               filterTodoItems(todoItems).map((item) => <TodoRow key={item.label} item={item} />)
@@ -598,6 +643,7 @@ export default function DashboardStats({
                 <div className="rounded-2xl border p-6 flex flex-col items-center gap-2 text-center" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-3)" }}>
                   <CheckCircle2 className="w-8 h-8" style={{ color: "#22c55e" }} />
                   <p className="text-sm">All caught up — nothing to action.</p>
+                  {atRiskOff && <p className="text-xs text-tx-3">{atRiskCopy.todoNote}</p>}
                 </div>
               ) : (
                 filterTodoItems(todoItems).map(({ label, count, Icon, color, href, action }) => (

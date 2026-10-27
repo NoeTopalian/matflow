@@ -19,11 +19,18 @@ import { emailDigest } from "@/lib/login-email";
 import { apiError } from "@/lib/api-error";
 import { recordStatusEventsBulk } from "@/lib/member-status";
 import {
+  forwardEventDates,
   planRefreshRollback,
   refreshWrite,
   REFRESH_MEMBER_SELECT,
   type RefreshChange,
 } from "@/lib/importers/teamup-refresh";
+import { holdOffMigrations, isMigrationInProgress, MIGRATION_IN_PROGRESS_MESSAGE } from "@/lib/migration-lock";
+
+/** A schema migration holds Prisma Migrate's lock (lib/migration-lock.ts): the rollback transaction wrote nothing. */
+function migrationInProgress() {
+  return NextResponse.json({ error: MIGRATION_IN_PROGRESS_MESSAGE, migrationInProgress: true }, { status: 503, headers: { "Retry-After": "120" } });
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -70,6 +77,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   try {
     const result = await withTenantContext(tenantId, async (tx) => {
+      await holdOffMigrations(tx);
       const candidates = await tx.member.findMany({
         where: { tenantId, importJobId: job.id },
         select: {
@@ -230,6 +238,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     return NextResponse.json({ ok: true, removed: result.removed.length, kept: result.kept, attendanceRemoved: result.attendanceRemoved });
   } catch (e) {
+    if (isMigrationInProgress(e)) return migrationInProgress();
     return apiError("Rollback failed — nothing was removed", 500, e, "[admin/import/rollback]");
   }
 }
@@ -257,17 +266,37 @@ async function rollbackRefresh(
   }
   try {
     const result = await withTenantContext(tenantId, async (tx) => {
+      await holdOffMigrations(tx);
       const current = await tx.member.findMany({
         where: { tenantId, id: { in: changes.map((c) => c.memberId) } },
         select: REFRESH_MEMBER_SELECT,
       });
       const { restore, kept } = planRefreshRollback(changes, current, alreadyRestored);
-      for (const c of restore) {
+      // D1 lock order: Member rows in id order, as the undo batch locks them.
+      for (const c of [...restore].sort((a, b) => (a.memberId < b.memberId ? -1 : a.memberId > b.memberId ? 1 : 0))) {
         await tx.member.updateMany({ where: { id: c.memberId, tenantId }, data: refreshWrite(c.before) });
       }
+      // T8a (A-9): each reverse event carries its forward event's date, so a
+      // replay for any day reads as if the refresh never happened; the later
+      // createdAt sorts it after the forward event. Read before the writes
+      // below add the reverse events themselves.
+      const moved = restore.filter((c) => c.before.status !== c.after.status);
+      const forwardEvents = moved.length
+        ? await tx.memberStatusEvent.findMany({
+            where: { tenantId, memberId: { in: moved.map((c) => c.memberId) }, reason: "import" },
+            orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+            select: { memberId: true, fromStatus: true, toStatus: true, occurredAt: true, sourceJobId: true, sourceAction: true },
+          })
+        : [];
+      // T8d: the forward event this job wrote is found by its provenance first.
+      const forwardAt = forwardEventDates(moved, forwardEvents, job.id);
       await recordStatusEventsBulk(
         tx,
-        restore.map((c) => ({ tenantId, memberId: c.memberId, fromStatus: c.after.status, toStatus: c.before.status, reason: "import" as const, changedById: null })),
+        restore.map((c) => {
+          const occurredAt = forwardAt.get(c.memberId);
+          // T8d: the reversal carries the same job, as a rollback.
+          return { tenantId, memberId: c.memberId, fromStatus: c.after.status, toStatus: c.before.status, reason: "import" as const, changedById: null, sourceJobId: job.id, sourceAction: "import_rollback" as const, ...(occurredAt ? { occurredAt } : {}) };
+        }),
       );
       const restoredIds = [...alreadyRestored, ...restore.map((c) => c.memberId)];
       await tx.importJob.update({
@@ -294,6 +323,7 @@ async function rollbackRefresh(
     });
     return NextResponse.json({ ok: true, mode: "refresh", restored: result.restored, kept: result.kept });
   } catch (e) {
+    if (isMigrationInProgress(e)) return migrationInProgress();
     return apiError("Rollback failed — nothing was changed", 500, e, "[admin/import/rollback]");
   }
 }

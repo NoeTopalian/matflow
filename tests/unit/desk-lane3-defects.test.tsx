@@ -211,12 +211,13 @@ const MEMBERS: MemberRow[] = [
 ];
 
 describe("D4 — members list shows standing and does not count cancelled as current", () => {
-  it("counts: All and the headline exclude the cancelled member; a Cancelled chip carries it", () => {
+  it("counts: All current and the headline exclude the cancelled member; a Cancelled chip carries it", () => {
     render(<MembersList members={MEMBERS} primaryColor="#3b82f6" role="owner" />);
-    expect(screen.getByText("All · 2")).toBeTruthy();
+    expect(screen.getByText("All current · 2")).toBeTruthy();
     expect(screen.getByText("Cancelled · 1")).toBeTruthy();
     expect(screen.getByText("On hold · 1")).toBeTruthy();
-    expect(screen.getByText(/^2 current members/)).toBeTruthy();
+    // T1 (Q4 A-1): the landing headline is Active, holds marked within it.
+    expect(screen.getByTestId("members-headline").textContent).toBe("2 active members, 1 on hold");
     expect(screen.queryAllByText("Cara Cancelled")).toHaveLength(0);
     // The on-hold member is on the row as such.
     expect(screen.getAllByText("On hold").length).toBeGreaterThan(0);

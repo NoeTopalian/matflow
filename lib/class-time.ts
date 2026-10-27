@@ -74,12 +74,13 @@ export function zoneOffsetMs(instant: Date, timeZone: string): number {
  * that Prisma round-trips as a UTC wall clock — so the calendar day is read from
  * its UTC components, never its local ones.
  *
- * The offset is applied twice on purpose. The first pass uses the offset at the
- * naive guess; near a DST boundary the corrected instant can fall on the other
- * side of the transition and carry a different offset, so it is re-read and
- * re-applied. Without that, one class a year on the changeover morning resolves
- * an hour out — which is exactly the class of bug this file exists to remove,
- * and it would be invisible for eleven months.
+ * Near a DST boundary the naive guess can sit on the other side of the
+ * transition from the real instant, so the offset is not read once at the
+ * guess: `wallClockToInstant` tries the offsets in force either side and
+ * applies one stated rule to the repeated and the skipped hour. Without
+ * that, one class a year on the changeover morning resolves an hour out —
+ * which is exactly the class of bug this file exists to remove, and it would
+ * be invisible for eleven months.
  */
 /**
  * THE one spelling of a calendar-day marker: `00:00:00.000Z` of that date.
@@ -122,14 +123,110 @@ export function parseTime(hhmm: string, baseDate: Date, timeZone: string): Date 
     0,
     0,
   );
+  return new Date(wallClockToInstant(naiveUtc, timeZone));
+}
 
-  const firstOffset = zoneOffsetMs(new Date(naiveUtc), timeZone);
-  let instant = naiveUtc - firstOffset;
+const DAY_MS = 86_400_000;
 
-  const secondOffset = zoneOffsetMs(new Date(instant), timeZone);
-  if (secondOffset !== firstOffset) instant = naiveUtc - secondOffset;
+/**
+ * The instant at which the wall clock `naiveUtc` (that wall clock spelled as
+ * if it were UTC) occurs in `timeZone`. The DST rule (D4, 24 Oct 2026):
+ *
+ *  - REPEATED hour (clocks go back; in London 01:00–01:59 on the last Sunday
+ *    of October happens twice): the LATER occurrence, after the clocks have
+ *    gone back. 01:30 on 25 Oct 2026 is 01:30Z (01:30 GMT), not 00:30Z.
+ *  - SKIPPED hour (clocks go forward; in London 01:00–01:59 on the last
+ *    Sunday of March never happens): read with the offset in force BEFORE the
+ *    gap, so the time moves forward by the gap's length. 01:30 on 29 Mar 2026
+ *    is 01:30Z, which the club's clocks show as 02:30 BST.
+ *  - Every other wall clock has exactly one instant.
+ *
+ * Why the later occurrence: it is what every London result already was, and
+ * the attendance importer and the export-time reader pin it (an imported
+ * visit's booking key carries its instant, so moving it would make a
+ * re-import of an already-imported file write a second row). What this
+ * replaces is the old two-pass offset read, which landed on whichever side
+ * of the transition its naive guess fell — so a zone WEST of UTC got the
+ * first occurrence of a repeated hour, and moved a skipped time BACKWARDS
+ * (02:30 on 8 Mar 2026 in New York came out as 01:30 EST). The rule is now
+ * the same in every zone.
+ *
+ * The candidates are the offsets in force a day either side, which covers
+ * every zone with at most one transition in any 48 hours (all of them in the
+ * tz database today).
+ */
+function wallClockToInstant(naiveUtc: number, timeZone: string): number {
+  const before = zoneOffsetMs(new Date(naiveUtc - DAY_MS), timeZone);
+  const after = zoneOffsetMs(new Date(naiveUtc + DAY_MS), timeZone);
+  const fits = (offset: number) => zoneOffsetMs(new Date(naiveUtc - offset), timeZone) === offset;
+  const candidates = [before, after].filter(fits).map((offset) => naiveUtc - offset);
+  if (candidates.length > 0) return Math.max(...candidates);
+  return naiveUtc - before;
+}
 
-  return new Date(instant);
+/**
+ * THE overnight rule (D4, 24 Oct 2026), the same one lib/schedule-state.ts
+ * draws with (`spanMinutes`): a session whose `endTime` is at or before its
+ * `startTime` ends on the NEXT club day. 23:00–00:30 on Saturday ends at 00:30
+ * on Sunday; 18:00–18:00 lasts 24 hours. Both times are the club's wall clock.
+ */
+export function endsNextDay(startTime: string, endTime: string): boolean {
+  return wallMinutes(endTime) <= wallMinutes(startTime);
+}
+
+function wallMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+}
+
+/**
+ * When a session starts and ends, as instants.
+ *
+ * The rule, stated once for every door and screen that asks:
+ *  1. `startTime` and `endTime` are the CLUB's wall clock (`Tenant.timezone`),
+ *     never the server's or the viewer's.
+ *  2. The start is `startTime` on the session's date (`ClassInstance.date`,
+ *     the club's calendar date).
+ *  3. The end is `endTime` on the same date — unless it is at or before the
+ *     start, when it is `endTime` on the next calendar date (`endsNextDay`).
+ *  4. Each wall clock becomes an instant by `wallClockToInstant`: a time in
+ *     the repeated hour is its later occurrence (after the clocks go back); a
+ *     time in the skipped hour moves forward by the gap. So the elapsed
+ *     length can differ from the printed one on a changeover night:
+ *     00:30–02:30 on 25 Oct 2026 in London runs three hours, on 29 Mar 2026
+ *     one hour.
+ *  5. A session with no recorded end (imported history) has `end` null.
+ */
+export function sessionBounds(
+  inst: { date: Date; startTime: string; endTime: string | null },
+  timeZone: string,
+): { start: Date; end: Date | null } {
+  const start = parseTime(inst.startTime, inst.date, timeZone);
+  if (inst.endTime === null) return { start, end: null };
+  const endDay = endsNextDay(inst.startTime, inst.endTime)
+    ? new Date(dayMarkerUtc(inst.date).getTime() + DAY_MS)
+    : inst.date;
+  return { start, end: parseTime(inst.endTime, endDay, timeZone) };
+}
+
+/**
+ * The check-in window a window-enforcing door (member app, parent, kiosk)
+ * applies: from `beforeMin` minutes before the start until `afterMin` minutes
+ * after the end (`sessionBounds`, so an overnight session's window runs past
+ * midnight). A session with no recorded end closes `afterMin` after its start.
+ */
+export function checkinWindowVerdict(
+  inst: { date: Date; startTime: string; endTime: string | null },
+  timeZone: string,
+  window: { beforeMin: number; afterMin: number },
+  now: Date,
+): { open: true } | { open: false; when: "before" | "after" } {
+  const { start, end } = sessionBounds(inst, timeZone);
+  const opens = start.getTime() - window.beforeMin * 60_000;
+  const closes = (end ?? start).getTime() + window.afterMin * 60_000;
+  if (now.getTime() < opens) return { open: false, when: "before" };
+  if (now.getTime() > closes) return { open: false, when: "after" };
+  return { open: true };
 }
 
 /**
@@ -211,15 +308,17 @@ export function classStatus(
   timeZone: string,
   now: Date = new Date(),
 ): ClassStatus {
-  const start = parseTime(inst.startTime, inst.date, timeZone);
+  // sessionBounds: an overnight session (end at or before start) ends on the
+  // next club day, so 23:00–00:30 reads "Ongoing" at 23:15, not "Ended".
+  const { start, end } = sessionBounds(inst, timeZone);
   const minToStart = (start.getTime() - now.getTime()) / 60_000;
 
   // No recorded end (a past session brought in by an attendance-history
   // import, 3 Oct 2026): once it has started it is never offered as the
   // session on now, and nothing claims to know when it finished.
-  if (inst.endTime === null) {
+  if (end === null) {
     if (now >= start) return { label: "Started (end time not recorded)", variant: "ended" };
-  } else if (now > parseTime(inst.endTime, inst.date, timeZone)) {
+  } else if (now > end) {
     return { label: "Ended", variant: "ended" };
   }
   if (now >= start) return { label: "Ongoing", variant: "ongoing" };

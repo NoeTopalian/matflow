@@ -42,6 +42,8 @@ const {
   importedBookingDeleteManyMock,
   mappingCountMock,
   mappingDeleteManyMock,
+  statusEventCreateMock,
+  statusEventFindFirstMock,
 } = vi.hoisted(() => ({
   requireRoleMock: vi.fn(),
   checkRateLimitMock: vi.fn(),
@@ -83,6 +85,9 @@ const {
   importedBookingDeleteManyMock: vi.fn(),
   mappingCountMock: vi.fn(),
   mappingDeleteManyMock: vi.fn(),
+  // T8a: the erase records its status transition through the single writer.
+  statusEventCreateMock: vi.fn(),
+  statusEventFindFirstMock: vi.fn(),
 }));
 
 vi.mock("next/server", () => ({
@@ -114,8 +119,8 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     // The erase re-reads the member under a row lock (lane D3): answer with the row the first member read returned.
     $queryRaw: async () => {
-      const m = (await memberFindFirstMock.mock.results[0]?.value) as { email: string; name?: string; externalRef?: string | null } | null | undefined;
-      return m ? [{ email: m.email, name: m.name, externalRef: m.externalRef }] : [];
+      const m = (await memberFindFirstMock.mock.results[0]?.value) as { email: string; name?: string; externalRef?: string | null; status?: string; cancelledAt?: Date | null } | null | undefined;
+      return m ? [{ email: m.email, name: m.name, externalRef: m.externalRef, status: m.status ?? "active", cancelledAt: m.cancelledAt ?? null }] : [];
     },
     member: {
       findFirst: memberFindFirstMock,
@@ -140,6 +145,9 @@ vi.mock("@/lib/prisma", () => ({
     rankHistory: { count: rankHistoryCountMock, updateMany: rankHistoryUpdateManyMock },
     importedBooking: { count: importedBookingCountMock, deleteMany: importedBookingDeleteManyMock },
     importSourceMapping: { count: mappingCountMock, deleteMany: mappingDeleteManyMock },
+    // Import review lists are scrubbed of the subject (lib/importers/import-conflicts-scrub, 25 Oct 2026).
+    importJob: { findMany: vi.fn(async () => []), updateMany: vi.fn() },
+    memberStatusEvent: { create: statusEventCreateMock, findFirst: statusEventFindFirstMock },
   },
 }));
 
@@ -228,6 +236,8 @@ beforeEach(() => {
   mappingDeleteManyMock.mockResolvedValue({ count: 1 });
 
   delMock.mockResolvedValue(undefined);
+  statusEventCreateMock.mockResolvedValue({ id: "evt-1" });
+  statusEventFindFirstMock.mockResolvedValue(null);
 });
 
 function makeReq(origin = "http://localhost:3000") {
@@ -588,5 +598,62 @@ describe("POST /api/admin/dsar/erase — imported history (attendance import)", 
     // write (imported rows included) would throw and fail the erase.
     const res = await erase();
     expect(res.status).toBe(200);
+  });
+});
+
+// T8a (R1a-i): the erase sets status cancelled, so it records that transition
+// through the single writer and stamps cancelledAt — in the same transaction.
+describe("POST /api/admin/dsar/erase — status history (T8a)", () => {
+  it("records exactly one active -> cancelled event, staff_edit by the owner, and stamps cancelledAt", async () => {
+    const res = await erase();
+    expect(res.status).toBe(200);
+
+    expect(statusEventCreateMock).toHaveBeenCalledTimes(1);
+    expect(statusEventCreateMock).toHaveBeenCalledWith({
+      data: {
+        tenantId: TENANT_ID,
+        memberId: MEMBER_ID,
+        fromStatus: "active",
+        toStatus: "cancelled",
+        reason: "staff_edit",
+        changedById: "user-owner-A",
+      },
+      select: { id: true },
+    });
+    const data = memberUpdateMock.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.status).toBe("cancelled");
+    expect(data.cancelledAt).toBeInstanceOf(Date);
+    // The event is written after the status change it describes.
+    expect(memberUpdateMock.mock.invocationCallOrder[0]).toBeLessThan(statusEventCreateMock.mock.invocationCallOrder[0]);
+  });
+
+  it("records the transition from the status read under the lock (a taster), not a guess", async () => {
+    memberFindFirstMock.mockResolvedValue({
+      id: MEMBER_ID, status: "taster", email: ORIGINAL_EMAIL, stripeSubscriptionId: null, externalRef: EXTERNAL_REF,
+    });
+    await erase();
+    expect(statusEventCreateMock.mock.calls[0][0].data).toMatchObject({ fromStatus: "taster", toStatus: "cancelled" });
+  });
+
+  it("writes no event and keeps the existing cancelledAt for an already-cancelled member", async () => {
+    const left = new Date("2026-09-01T00:00:00.000Z");
+    memberFindFirstMock.mockResolvedValue({
+      id: MEMBER_ID, status: "cancelled", cancelledAt: left, email: ORIGINAL_EMAIL, stripeSubscriptionId: null, externalRef: EXTERNAL_REF,
+    });
+    const res = await erase();
+    expect(res.status).toBe(200);
+    expect(statusEventCreateMock).not.toHaveBeenCalled();
+    const data = memberUpdateMock.mock.calls[0][0].data as Record<string, unknown>;
+    expect("cancelledAt" in data).toBe(false);
+  });
+
+  it("fails the whole erase when the event cannot be written (one transaction)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    statusEventCreateMock.mockRejectedValue(new Error("db down"));
+    const res = await erase();
+    expect(res.status).toBe(500);
+    // Nothing after the failed write ran, and the blob deletes (after commit) never started.
+    expect(photoDeleteManyMock).not.toHaveBeenCalled();
+    expect(delMock).not.toHaveBeenCalled();
   });
 });
