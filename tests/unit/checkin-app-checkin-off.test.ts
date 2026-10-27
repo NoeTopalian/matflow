@@ -135,13 +135,15 @@ describe("POST /api/checkin when app check-in is on (the default)", () => {
 });
 
 describe("the other doors never read the switch", () => {
-  // The kiosk route, the card scanner and the coach register mark through
-  // their own routes (or the staff branch above). Pinned at source level so a
+  // The kiosk route, the card scanner and the coach register (its own
+  // attendance route, and RegisterPanel through the staff branch above) mark
+  // without the member-app switch. Pinned at source level so a
   // later edit cannot quietly put the member-app switch on a staff door.
   const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
   it.each([
     "app/api/kiosk/[token]/checkin/route.ts",
     "app/api/checkin/card/route.ts",
+    "app/api/coach/instances/[id]/attendance/route.ts",
     "lib/checkin.ts",
   ])("%s does not mention memberAppCheckin", (p) => {
     expect(src(p)).not.toMatch(/memberAppCheckin|app_checkin_off/);

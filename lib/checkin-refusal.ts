@@ -37,9 +37,10 @@ export type CheckinRefusalReason =
  * G5 (owner decision, 27 Oct 2026): the club has turned off check-in from the
  * member app. Sent by POST /api/checkin with reason "app_checkin_off" on the
  * member's own path (a parent for a child included); never by a staff door.
+ * Defined in lib/checkin-outcome.ts (client-safe) so the member sheet shows
+ * the same sentence.
  */
-export const APP_CHECKIN_OFF_MESSAGE =
-  "Check-ins from the app are turned off at this club. Please check in at the desk or the kiosk.";
+export { APP_CHECKIN_OFF_MESSAGE } from "@/lib/checkin-outcome";
 
 export type CheckinRefusal = {
   status: 402 | 403 | 404 | 409;

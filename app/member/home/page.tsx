@@ -11,7 +11,7 @@ import MemberActionsPanel from "@/components/member/MemberActionsPanel";
 import { linkify } from "@/lib/linkify";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { toBlobProxyUrl } from "@/lib/blob-url";
-import { classifyCheckinResponse } from "@/lib/checkin-outcome";
+import { classifyCheckinResponse, APP_CHECKIN_OFF_MESSAGE } from "@/lib/checkin-outcome";
 import { readableOn } from "@/lib/color";
 import { describeSaveFailure } from "@/lib/save-failure";
 import { capacityState, capacityLabel } from "@/lib/capacity-label";
@@ -1020,12 +1020,19 @@ function SignInSheet({
   classes,
   kids,
   memberName,
+  appCheckinOff = false,
 }: {
   onClose: () => void;
   primaryColor: string;
   classes: TodayClass[];
   kids: Array<{ id: string; name: string }>;
   memberName: string;
+  /**
+   * G5: the club has check-in from the app turned off. Only reachable when
+   * the sheet was opened while the home payload was still loading; the sheet
+   * then says so in the club's sentence instead of vanishing.
+   */
+  appCheckinOff?: boolean;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   // Session E (kids): which family member is signing in. null === parent.
@@ -1128,7 +1135,20 @@ function SignInSheet({
           </button>
         </div>
 
-        {done ? (
+        {appCheckinOff ? (
+          <div className="px-5 py-8" data-testid="signin-app-checkin-off">
+            <p role="alert" className="text-sm text-center" style={{ color: "var(--member-text-muted)" }}>
+              {APP_CHECKIN_OFF_MESSAGE}
+            </p>
+            <button
+              onClick={onClose}
+              className="w-full py-3.5 rounded-2xl font-semibold text-sm mt-5"
+              style={{ background: "var(--member-surface)", color: "var(--member-text-muted)", border: "1px solid var(--member-border)" }}
+            >
+              Close
+            </button>
+          </div>
+        ) : done ? (
           <div className="flex flex-col items-center py-10 px-5">
             <div className="w-14 h-14 rounded-full flex items-center justify-center mb-3" style={{ background: hex(primaryColor, 0.15) }}>
               <CheckCircle2 className="w-7 h-7" style={{ color: "var(--member-ink)" }} />
@@ -1788,8 +1808,8 @@ export default function MemberHomePage() {
       {/* ── Sign In CTA ──
           G5: hidden once the home payload says the club has turned check-in
           from the app off. While it loads the control shows as before (the
-          page's own landmark); the route refuses either way, and the sheet
-          below closes if the answer is off. The timetable, class sign-up and
+          page's own landmark); the route refuses either way, and a sheet
+          opened in that window shows the club's refusal sentence. The timetable, class sign-up and
           the allowance line elsewhere are unaffected. */}
       {appCheckin !== false && (
       <div className="px-5 mb-6" data-testid="home-checkin-cta">
@@ -1908,8 +1928,8 @@ export default function MemberHomePage() {
       )}
 
       {/* Sign-in sheet */}
-      {showSignIn && appCheckin !== false && (
-        <SignInSheet onClose={() => setShowSignIn(false)} primaryColor={primaryColor} classes={todayClasses} kids={kidsRoster} memberName={memberName} />
+      {showSignIn && (
+        <SignInSheet onClose={() => setShowSignIn(false)} primaryColor={primaryColor} classes={todayClasses} kids={kidsRoster} memberName={memberName} appCheckinOff={appCheckin === false} />
       )}
 
       {/* First-time onboarding questionnaire */}

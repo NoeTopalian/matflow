@@ -23,6 +23,14 @@ export type CheckinOutcome =
 
 const FALLBACK = "Couldn't sign you in. Please try again or ask staff.";
 
+/**
+ * G5 (owner decision, 27 Oct 2026): the club has turned off check-in from the
+ * member app. The route's 403 (reason "app_checkin_off") and the member sheet
+ * say exactly this. Re-exported by lib/checkin-refusal.ts.
+ */
+export const APP_CHECKIN_OFF_MESSAGE =
+  "Check-ins from the app are turned off at this club. Please check in at the desk or the kiosk.";
+
 export function classifyCheckinResponse(status: number, body: unknown): CheckinOutcome {
   const b = (body && typeof body === "object" ? body : {}) as { error?: unknown; reason?: unknown };
   const message = typeof b.error === "string" && b.error.trim() ? b.error : FALLBACK;

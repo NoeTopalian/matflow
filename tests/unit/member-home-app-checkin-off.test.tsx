@@ -8,7 +8,8 @@
 // (/api/member/home → me.memberAppCheckin); no extra request is made.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { APP_CHECKIN_OFF_MESSAGE } from "@/lib/checkin-outcome";
 import React from "react";
 
 vi.mock("next-auth/react", () => ({ signOut: vi.fn() }));
@@ -82,5 +83,34 @@ describe("Member home — app check-in switch", () => {
     setupFetch({});
     render(<MemberHomePage />);
     await waitFor(() => expect(screen.getByText(/Sign In to Class/i)).toBeTruthy());
+  });
+
+  it("opened while home is loading at a club with it off: the sheet shows the club's sentence, it does not vanish", async () => {
+    let release!: () => void;
+    const answered = new Promise<void>((res) => { release = res; });
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("/api/member/home")) {
+        await answered;
+        return new Response(JSON.stringify({
+          me: { name: "Member", primaryColor: "#3b82f6", onboardingCompleted: true, accountType: "adult", nextClass: null, memberAppCheckin: false },
+          schedule: [], children: [], announcements: { announcements: [] },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    render(<MemberHomePage />);
+    // The control shows while loading; the member opens the sheet.
+    fireEvent.click(await screen.findByText(/Sign In to Class/i));
+    expect(screen.getByText(/Sign in to a class/i)).toBeTruthy();
+    release();
+    const off = await screen.findByTestId("signin-app-checkin-off");
+    expect(off.textContent).toContain(APP_CHECKIN_OFF_MESSAGE);
+    expect(APP_CHECKIN_OFF_MESSAGE).toBe("Check-ins from the app are turned off at this club. Please check in at the desk or the kiosk.");
+    // The sheet stayed, offers no class to confirm, and the page control is gone.
+    expect(screen.queryByText(/Confirm Sign In/i)).toBeNull();
+    expect(screen.queryByTestId("home-checkin-cta")).toBeNull();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith("/api/checkin"))).toBe(false);
   });
 });
