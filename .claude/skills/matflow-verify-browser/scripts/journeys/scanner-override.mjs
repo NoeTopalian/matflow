@@ -1,8 +1,12 @@
-// Journey: the card scanner's allowance "Admit anyway" (review gap 6 / M-2, 21 Oct 2026).
+// Journey: the card scanner and a used-up class allowance. Until 27 Oct 2026 the scanner asked and offered "Admit
+// anyway" (review gap 6 / M-2, 21 Oct 2026); the owner then ruled that no door admits past the allowance. The file
+// keeps its name so earlier ledgers still line up.
 // The REAL CardScanner component runs with a mocked camera boundary: `navigator.mediaDevices.getUserMedia` returns a
 // canvas stream and `window.BarcodeDetector` is a class whose detect() yields one real card token once. The member's
-// weekly class is already used, so the scan is asked about; Admit anyway settles the SAME row to "Checked in" (no
-// stale askable row, no second row), the record exists and the card_scan audit row carries the override.
+// weekly class is already used, so the real server REFUSES the card with the staff sentence and records nothing, an
+// old scanner's acknowledgement admits no one, the row shows the sentence with no "Admit anyway" and no membership
+// hint, and — once the member holds a class pack — the same card is admitted on one pack credit, which an unmark
+// gives back.
 // Needs `fixture.mjs create` and `server.mjs start`.
 //   node journeys/scanner-override.mjs
 import { randomUUID, createHmac } from "node:crypto";
@@ -104,55 +108,75 @@ try {
   }, inst2);
   L.note("journey", "N0 first request to /api/checkin/card after server start (warm-up, junk token)", warm);
 
-  // The REAL server with the REAL token, from the page, without the component's 10 s abort: proves the server asks
-  // about this card and records nothing. (Timed, because on this laptop the full check-in path to Neon can exceed
+  // The REAL server with the REAL token, from the page, without the component's 10 s abort: proves the server
+  // refuses this card and records nothing. (Timed, because on this laptop the full check-in path to Neon can exceed
   // the scanner's 10 s client timeout, which then reads "Didn't reach MatFlow" — see N2.)
-  const real = await page.evaluate(async ({ id, tok }) => {
+  const scanReal = (acknowledged) => page.evaluate(async ({ id, tok, ack }) => {
     const t0 = Date.now();
-    const r = await fetch("/api/checkin/card", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ classInstanceId: id, tokens: [tok] }) });
+    const r = await fetch("/api/checkin/card", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ classInstanceId: id, tokens: [tok], ...(ack ? { acknowledged: ack } : {}) }) });
     const body = await r.json().catch(() => null);
     return { status: r.status, ms: Date.now() - t0, result: body?.results?.[0] ?? null, recorded: body?.recorded ?? null };
-  }, { id: inst2, tok: token });
-  const question = `Member 1 has used 1 of 1 class this week (resets on ${long(nextMonday)}). Admit anyway?`;
-  L.check("journey", "J1 the real server, given the real card, ASKS about the used allowance (needs_confirmation with the question) and records nothing",
-    real.status === 200 && real.result?.status === "needs_confirmation" && real.result?.reason === "allowance_reached" && real.result?.question === question && real.recorded === 0 && (await records()) === 0,
+  }, { id: inst2, tok: token, ack: acknowledged ?? null });
+  const real = await scanReal();
+  const staffSentence = `Member 1 has used their 1 class this week (resets on ${long(nextMonday)}) and has no class-pack credit, so they can't be checked in.`;
+  L.check("journey", "J1 the real server, given the real card, REFUSES the used allowance (refused, allowance_reached, the staff sentence) and records nothing",
+    real.status === 200 && real.result?.status === "refused" && real.result?.reason === "allowance_reached" && real.result?.message === staffSentence && !("question" in (real.result ?? {})) && real.recorded === 0 && (await records()) === 0,
     { status: real.status, ms: real.ms, result: real.result });
   L.note("journey", "N2 real card request time against the scanner's 10 s client timeout", { ms: real.ms, withinScannerTimeout: real.ms < 10000 });
+  const old = await scanReal(["allowance_reached"]);
+  L.check("journey", "J1b an old scanner's resend with acknowledged: [allowance_reached] is not a 400 and admits no one",
+    old.status === 200 && old.result?.status === "refused" && old.result?.reason === "allowance_reached" && old.recorded === 0 && (await records()) === 0,
+    { status: old.status, result: old.result });
 
-  // The component, driven by the mocked camera. The network boundary is served by the same answers the server gives
-  // (the asked answer above, then the admitted answer), so the row behaviour is judged on its own and not on tonight's
-  // Neon latency; the request bodies the component sends are asserted exactly.
+  // The component, driven by the mocked camera. The network boundary is served by the answer the server gave above,
+  // so the row behaviour is judged on its own and not on tonight's Neon latency; the request body the component sends
+  // is asserted exactly.
   const bodies = [];
   await page.route("**/api/checkin/card", async (route) => {
     const req = route.request();
     if (req.method() !== "POST") return route.fallback();
     const body = req.postDataJSON();
     bodies.push(body);
-    const confirmed = Array.isArray(body.acknowledged) && body.acknowledged.includes("allowance_reached");
-    const result = confirmed
-      ? { index: 0, status: "success", memberId: member.id, memberName: "Member 1" }
-      : { index: 0, status: "needs_confirmation", memberId: member.id, memberName: "Member 1", reason: "allowance_reached", question };
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ results: [result], recorded: confirmed ? 1 : 0 }) });
+    const result = { index: 0, status: "refused", memberId: member.id, memberName: "Member 1", reason: "allowance_reached", message: staffSentence };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ results: [result], recorded: 0, failed: 1 }) });
   });
   await page.getByRole("button", { name: "Start camera" }).click();
 
   const rowName = page.getByText("Member 1", { exact: true });
-  const asked = await page.getByRole("button", { name: "Admit anyway" }).waitFor({ timeout: 30000 }).then(() => true, () => false);
-  if (!asked) await shot(page, "scanner-no-ask");
-  L.check("journey", "J2 the real scanner reads the card through the mocked camera, sends that one token, and shows ONE askable row with the server's question",
-    asked && (await rowName.count()) === 1 && (await page.getByText("Allowance used").count()) >= 1 && bodies.length === 1 && bodies[0].tokens?.length === 1 && bodies[0].tokens[0] === token && !bodies[0].acknowledged && (await page.getByText(question).count()) === 1,
-    { asked, rows: await rowName.count(), posts: bodies.length });
-  await shot(page, "scanner-asked");
-
-  await page.getByRole("button", { name: "Admit anyway" }).click();
-  const settled = await page.getByText("Checked in", { exact: true }).waitFor({ timeout: 30000 }).then(() => true, () => false);
+  const shown = await page.getByText(staffSentence, { exact: true }).waitFor({ timeout: 30000 }).then(() => true, () => false);
+  if (!shown) await shot(page, "scanner-no-refusal");
   await page.waitForTimeout(800);
-  L.check("journey", "J3 Admit anyway resends that one card once with acknowledged: [allowance_reached], and the SAME row settles to Checked in — no stale askable row, no second row (review M-2)",
-    settled && bodies.length === 2 && bodies[1].tokens?.length === 1 && bodies[1].tokens[0] === token && JSON.stringify(bodies[1].acknowledged) === JSON.stringify(["allowance_reached"])
-      && (await rowName.count()) === 1 && (await page.getByRole("button", { name: "Admit anyway" }).count()) === 0,
-    { settled, resends: bodies.length - 1, acknowledged: bodies[1]?.acknowledged, rows: await rowName.count(), askButtons: await page.getByRole("button", { name: "Admit anyway" }).count() });
-  await shot(page, "scanner-admitted");
-  L.note("journey", "N3 what the confirmed request does on the server (record + card_scan audit override) is covered by tests/unit/checkin-allowance-doors.test.ts and the register journey; not re-proved here", "see evidence doc");
+  const status = await page.getByRole("status").filter({ hasText: "class allowance used" }).first().textContent({ timeout: 5000 }).catch(() => null);
+  L.check("journey", "J2 the real scanner reads the card through the mocked camera, sends that one token with no acknowledgement, and shows ONE refused row: the staff sentence, labelled Allowance used, no Admit anyway, no membership hint",
+    shown && (await rowName.count()) === 1 && (await page.getByText("Allowance used").count()) >= 1 && bodies.length === 1 && bodies[0].tokens?.length === 1 && bodies[0].tokens[0] === token && !bodies[0].acknowledged
+      && (await page.getByRole("button", { name: "Admit anyway" }).count()) === 0 && (await page.getByText(/Change their membership or the squad list/).count()) === 0,
+    { shown, rows: await rowName.count(), posts: bodies.length, askButtons: await page.getByRole("button", { name: "Admit anyway" }).count() });
+  L.check("journey", "J2b the screen reader hears \"Member 1, class allowance used. Can't be checked in.\"",
+    status === "Member 1, class allowance used. Can't be checked in.", { status });
+  await shot(page, "scanner-refused");
+  await page.unroute("**/api/checkin/card");
+
+  // A class pack pays instead of a refusal at the scanner too (owner, 27 Oct 2026: "they get what they paid for").
+  const packTpl = randomUUID(); const memberPack = randomUUID();
+  await q(`insert into "ClassPack" (id, "tenantId", name, "totalCredits", "validityDays", "pricePence", "updatedAt") values ($1, $2, 'Scan pack', 5, 90, 5000, now())`, [packTpl, tenantId]);
+  await q(`insert into "MemberClassPack" (id, "tenantId", "memberId", "packId", "creditsRemaining", "expiresAt", status) values ($1, $2, $3, $4, 2, now() + interval '60 days', 'active')`, [memberPack, tenantId, member.id, packTpl]);
+  const credits = async () => Number((await q(`select "creditsRemaining" as n from "MemberClassPack" where id = $1`, [memberPack]))[0].n);
+  try {
+    const paid = await scanReal();
+    const redeemed = (await q(`select r."attendanceRecordId" as rec from "ClassPackRedemption" r join "AttendanceRecord" a on a.id = r."attendanceRecordId" where r."memberPackId" = $1 and a."classInstanceId" = $2`, [memberPack, inst2]))[0];
+    L.check("journey", "J3 with a class pack the same card is admitted on ONE pack credit (2 → 1), the redemption names the new row, and the card_scan row carries no override",
+      paid.status === 200 && paid.result?.status === "success" && paid.recorded === 1 && (await records()) === 1 && (await credits()) === 1 && !!redeemed,
+      { status: paid.status, result: paid.result, credits: await credits(), redeemed: !!redeemed });
+    const scanAudit = (await q(`select metadata from "AuditLog" where "tenantId" = $1 and action = 'attendance.card_scan' and "entityId" = $2 order by "createdAt" desc limit 1`, [tenantId, inst2]))[0]?.metadata;
+    L.check("journey", "J3b the card_scan audit row has no overrides key", !!scanAudit && !("overrides" in scanAudit), { scanAudit });
+    const removed = await page.evaluate(async ({ id, mid }) => (await fetch(`/api/checkin?classInstanceId=${id}&memberId=${mid}`, { method: "DELETE" })).status, { id: inst2, mid: member.id });
+    L.check("journey", "J3c removing that check-in gives the pack credit back (1 → 2) and deletes the row",
+      removed === 200 && (await records()) === 0 && (await credits()) === 2, { removed, credits: await credits(), rows: await records() });
+  } finally {
+    await q(`delete from "ClassPackRedemption" where "memberPackId" = $1`, [memberPack]);
+    await q(`delete from "MemberClassPack" where id = $1`, [memberPack]);
+    await q(`delete from "ClassPack" where id = $1`, [packTpl]);
+  }
   L.check("journey", "J4 no uncaught page errors", errors.length === 0, errors);
 } finally {
   await browser.close();

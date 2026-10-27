@@ -32,7 +32,6 @@ import { NOT_ON_SQUAD_LABEL, SQUAD_ONLY_LABEL } from "@/lib/class-tier-gate";
 import { staleBillingWarning, billingSourceLabel } from "@/lib/billing-source";
 import type { TodaySession } from "@/components/dashboard/SessionPicker";
 import { isAdultAccount } from "@/lib/account-type";
-import { ALLOWANCE_BASES, allowanceAskSentence, type AllowanceBasis } from "@/lib/class-allowance";
 
 type RegisterMember = {
   memberId: string;
@@ -100,34 +99,13 @@ type Candidate = {
 
 /**
  * What the person marking was asked about and admitted anyway — recorded on
- * the audit row. The squad list and the membership list are not here: the
- * server refuses on them at every door and nothing the desk sends admits.
- * "allowance_reached" (T7) is the one rule-changing answer: the plan allowance
- * is used up and the desk admitted anyway.
+ * the audit row. None of them is a rule the server judges. The squad list,
+ * the membership list (owner decision, 20 Oct 2026) and the plan allowance
+ * (owner decision, 27 Oct 2026) are not here: the server refuses on them at
+ * every door, nothing the desk sends admits, and the refusal is shown in the
+ * server's own words.
  */
-type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class" | "allowance_reached";
-
-/** T7: the count and the period the server sends with an askable allowance refusal. */
-type AllowanceBody = {
-  used: number; limit: number; basis: AllowanceBasis; weeks?: number; resetsOn?: string;
-  period?: { start: string; end: string }; current?: boolean; periodUnknown?: true;
-};
-
-function allowanceFrom(body: unknown): AllowanceBody | null {
-  const a = (body as { allowance?: unknown } | null)?.allowance as Partial<AllowanceBody> | undefined;
-  if (!a || typeof a.used !== "number" || typeof a.limit !== "number") return null;
-  if (!(ALLOWANCE_BASES as readonly string[]).includes(a.basis as string)) return null;
-  // Either a dated period, or a billing-period plan with no period recorded.
-  if (typeof a.resetsOn !== "string" && a.periodUnknown !== true) return null;
-  return {
-    used: a.used, limit: a.limit, basis: a.basis as AllowanceBasis,
-    ...(typeof a.resetsOn === "string" ? { resetsOn: a.resetsOn } : {}),
-    ...(typeof a.weeks === "number" ? { weeks: a.weeks } : {}),
-    ...(a.period && typeof a.period.start === "string" && typeof a.period.end === "string" ? { period: { start: a.period.start, end: a.period.end } } : {}),
-    ...(typeof a.current === "boolean" ? { current: a.current } : {}),
-    ...(a.periodUnknown === true ? { periodUnknown: true as const } : {}),
-  };
-}
+type Acknowledged = "on_hold" | "waiver_unsigned" | "kids_class";
 
 /** Token-safe tint (UI-RULES §2). */
 function tint(color: string, percent: number) {
@@ -280,14 +258,11 @@ export default function RegisterPanel({
     who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & {
       waiverAccepted?: boolean; cancelled?: boolean; accountType?: string | null;
     },
-    /** Answers already given this attempt (the server asked about the allowance; the resend repeats them). */
-    alreadyAcknowledged: Acknowledged[] = [],
   ): Promise<boolean> {
-    const acknowledged: Acknowledged[] = [...alreadyAcknowledged];
-    const asked = (reason: Acknowledged) => alreadyAcknowledged.includes(reason);
+    const acknowledged: Acknowledged[] = [];
     if (who?.cancelled) return false;
     // F-8: an on-hold member can be admitted by staff, but not by accident.
-    if (who?.onHold && !asked("on_hold")) {
+    if (who?.onHold) {
       const until = who.holdUntil ? new Date(who.holdUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
       const confirmed = await ask({
         title: "This membership is on hold",
@@ -300,7 +275,7 @@ export default function RegisterPanel({
     // The member app and kiosk refuse an unsigned waiver; the desk may admit
     // (someone who has just signed on paper), but is asked first — the same
     // way as a hold. A child answers for their own waiver flag.
-    if (who && who.waiverAccepted === false && !asked("waiver_unsigned")) {
+    if (who && who.waiverAccepted === false) {
       const confirmed = await ask({
         title: "No signed waiver",
         body: `${who.name} hasn't signed the waiver. Admit anyway?`,
@@ -311,7 +286,7 @@ export default function RegisterPanel({
     }
     // Self and kiosk check-in refuse an adult into a kids class; the desk may
     // admit (a parent helping on the mat), but is asked first.
-    if (who && register?.instance?.isKids && isAdultAccount(who.accountType) && !asked("kids_class")) {
+    if (who && register?.instance?.isKids && isAdultAccount(who.accountType)) {
       const confirmed = await ask({
         title: "This is a kids class",
         body: `${who.name} is an adult — this is a kids class. Admit anyway?`,
@@ -320,8 +295,10 @@ export default function RegisterPanel({
       if (!confirmed) return false;
       acknowledged.push("kids_class");
     }
-    // The squad list and the membership list are not asked about: the server
-    // refuses a member they exclude, and the refusal below shows its sentence.
+    // The squad list, the membership list and the plan allowance are not asked
+    // about: the server refuses a member they exclude (or whose allowance is
+    // used up with no class pack to pay), and the refusal below shows its
+    // sentence.
     setMarking(memberId);
     setError(null);
     try {
@@ -337,30 +314,10 @@ export default function RegisterPanel({
       });
       const body = await res.json().catch(() => null);
       const outcome = classifyCheckinResponse(res.status, body);
-      // T7: the member's plan allowance is used up. The member app and kiosk
-      // refuse; the desk is asked with the count and the date it frees up,
-      // and the admission is recorded with that count on the audit row.
-      const allowance = allowanceFrom(body);
-      if (
-        outcome.kind === "refused" &&
-        outcome.reason === "allowance_reached" &&
-        (body as { askable?: unknown } | null)?.askable === true &&
-        allowance &&
-        !acknowledged.includes("allowance_reached")
-      ) {
-        setMarking(null);
-        const confirmed = await ask({
-          title: "Class allowance used",
-          body: allowanceAskSentence(who?.name ?? "This member", allowance),
-          confirmLabel: "Admit anyway",
-        });
-        if (!confirmed) return false;
-        return mark(memberId, who, [...acknowledged, "allowance_reached"]);
-      }
       // "Already checked in" is the truth, not a failure: the reload shows it.
       // Any other refusal (cancelled class, closed window, not on the squad
-      // list, a plan the class does not include) is shown in the server's
-      // own words — the sentence the member reads at their own door.
+      // list, a plan the class does not include, a used-up class allowance
+      // with no class-pack credit) is shown in the server's own words.
       if (outcome.kind === "refused" || outcome.kind === "signed_out") {
         const hasFields = !!body && typeof body === "object" && "details" in body;
         setError(hasFields ? describeApiError(body) : outcome.message);

@@ -225,7 +225,7 @@ async function bookingAllowance(
     timeZone: usableTimezone(tenant?.timezone),
   });
   if (!snap) return null;
-  // A per-billing-period plan with no period recorded: the door will ask staff; say so now.
+  // A per-billing-period plan with no period recorded: every door refuses until one is; say so now.
   if (snap.periodUnknown && snap.periodUnknownLimit !== null) {
     return { used: 0, limit: snap.periodUnknownLimit, basis: "billing" as const, periodUnknown: true as const };
   }

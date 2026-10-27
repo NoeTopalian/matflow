@@ -198,12 +198,14 @@ describe("formAllowance and allowanceNote (the summary shown before saving)", ()
     const n = allowanceNote(formAllowance(form({ classLimit: "4", classLimitBasis: "weeks" })), NOW);
     expect(n.summary).toBe("Attend up to 4 classes during each 4-week period. The next reset is Tuesday 17 November 2026.");
     expect(n.period).toBe("The current period runs Tuesday 20 October to Monday 16 November 2026.");
-    expect(n.enforcement).toContain("Attending a class uses one; booking does not.");
-    expect(n.enforcement).toContain("It is enforced as soon as you save");
-    expect(n.enforcement).toContain("the member app and the kiosk refuse once it is used up, a booking still goes through with a warning");
-    expect(n.enforcement).toContain("the desk and the card scanner ask before admitting");
-    expect(n.enforcement).toContain("applies from the next check-in; nothing already recorded changes");
-    expect(n.enforcement).toContain("Class-pack check-ins do not count");
+    // Owner wording, 27 Oct 2026: no door admits past a used-up allowance.
+    expect(n.enforcement).toBe(
+      "Attending a class uses one; signing up to a class does not. It is enforced as soon as you save: every check-in (member app, kiosk, desk, card scanner and the coach's register) refuses once it is used up. " +
+        "Signing up to a class still goes through, with a note. " +
+        "A member with a class pack can still check in once the allowance is used up: a pack credit is used automatically. " +
+        "A lower allowance applies from the next check-in; nothing already recorded changes.",
+    );
+    expect(n.enforcement).not.toMatch(/ask before admitting|Admit anyway|staff can admit/);
     expect(n.summary + n.period).not.toMatch(/rolling|before each class/);
     expect(allowanceNote(formAllowance(form({ classLimit: "3" })), NOW).summary).toBe("Attend up to 3 classes during each week. The next reset is Monday 26 October 2026.");
     expect(allowanceNote(formAllowance(form({ classLimit: "8", classLimitBasis: "month" })), NOW).summary).toBe("Attend up to 8 classes during each calendar month. The next reset is Sunday 1 November 2026.");

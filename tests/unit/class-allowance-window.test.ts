@@ -5,10 +5,10 @@
 // contains it, half-open [start, end), on the club's wall clock. Pure; no database.
 import { describe, it, expect } from "vitest";
 import {
-  allowanceAskSentence,
   allowanceBookingNotice,
   allowanceCountPhrase,
   allowanceRefusalSentence,
+  allowanceStaffSentence,
   allowanceSummary,
   allowanceUsageText,
   allowanceVerdict,
@@ -102,7 +102,7 @@ describe("allowanceVerdict (the period containing the session)", () => {
     expect(v.exhausted).toBe(true);
     expect(v.resetsOn).toBe("2026-11-17");
     expect(allowanceRefusalSentence(v)).toBe(
-      "4 of 4 classes used this 4-week period; it resets on Tuesday 17 November. Ask staff if you need to train before then.",
+      "You've used all 4 of your classes for this 4-week period; it resets on Tuesday 17 November. For further information, please speak to a coach.",
     );
   });
 
@@ -177,21 +177,48 @@ describe("the copy", () => {
 
   it("a parent checking in a child is told whose allowance it is", () => {
     expect(allowanceRefusalSentence(v, "Sam")).toBe(
-      "Sam: 4 of 4 classes used this 4-week period; it resets on Tuesday 17 November. Ask staff if Sam needs to train before then.",
+      "Sam has used all 4 of their classes for this 4-week period; it resets on Tuesday 17 November. For further information, please speak to a coach.",
+    );
+  });
+
+  it("a limit of 1 reads \"your 1 class\" / \"their 1 class\"", () => {
+    const one = allowanceVerdict({ limit: 1, basis: "week" }, at("2026-10-22", "18:00"), [at("2026-10-19", "18:00")]);
+    expect(allowanceRefusalSentence(one)).toBe(
+      "You've used your 1 class for this week; it resets on Monday 26 October. For further information, please speak to a coach.",
+    );
+    expect(allowanceRefusalSentence(one, "Sam")).toBe(
+      "Sam has used their 1 class for this week; it resets on Monday 26 October. For further information, please speak to a coach.",
+    );
+    expect(allowanceStaffSentence("Sam", one)).toBe(
+      "Sam has used their 1 class this week (resets on Monday 26 October) and has no class-pack credit, so they can't be checked in.",
+    );
+  });
+
+  it("a monthly plan's refusal says \"for this month\"", () => {
+    const m = allowanceVerdict(MONTHLY, at("2026-11-05", "18:00"), Array.from({ length: 8 }, (_, i) => at(`2026-11-0${i + 1}`, "07:00")));
+    expect(allowanceRefusalSentence(m)).toBe(
+      "You've used all 8 of your classes for this month; it resets on Tuesday 1 December. For further information, please speak to a coach.",
     );
   });
 
   it("booking is never refused for the allowance: the notice says what happens at the door", () => {
     expect(allowanceBookingNotice(v)).toBe(
-      "4 of 4 classes used this 4-week period. Booking doesn't use a class, but checking in before Tuesday 17 November will need a class-pack credit or staff to admit you.",
+      "4 of 4 classes used this 4-week period. Booking doesn't use a class, but checking in before Tuesday 17 November will need a class-pack credit. For further information, please speak to a coach.",
     );
   });
 
-  it("the staff question", () => {
-    expect(allowanceAskSentence("Jordan", v)).toBe("Jordan has used 4 of 4 classes this 4-week period (resets on Tuesday 17 November). Admit anyway?");
-    expect(allowanceAskSentence("Jordan", { ...v, used: 6 })).toBe("Jordan has used all 4 classes this 4-week period (6 recorded; resets on Tuesday 17 November). Admit anyway?");
+  it("the staff sentence: a statement, never a question", () => {
+    expect(allowanceStaffSentence("Jordan", v)).toBe(
+      "Jordan has used all 4 classes this 4-week period (resets on Tuesday 17 November) and has no class-pack credit, so they can't be checked in.",
+    );
+    expect(allowanceStaffSentence("Jordan", { ...v, used: 6 })).toBe(
+      "Jordan has used all 4 classes this 4-week period (6 recorded; resets on Tuesday 17 November) and has no class-pack credit, so they can't be checked in.",
+    );
     const weekly = allowanceVerdict(WEEKLY, at("2026-10-22", "18:00"), [at("2026-10-19", "18:00"), at("2026-10-20", "18:00"), at("2026-10-21", "18:00")]);
-    expect(allowanceAskSentence("Jordan", weekly)).toBe("Jordan has used 3 of 3 classes this week (resets on Monday 26 October). Admit anyway?");
+    expect(allowanceStaffSentence("Jordan", weekly)).toBe(
+      "Jordan has used all 3 classes this week (resets on Monday 26 October) and has no class-pack credit, so they can't be checked in.",
+    );
+    expect(allowanceStaffSentence("Jordan", v)).not.toMatch(/\?|Admit anyway/);
   });
 
   it("a monthly plan says this month", () => {
@@ -235,8 +262,11 @@ describe("historical periods are named, never called \"this\" (review gap 5)", (
   it("every-N-weeks: the period is named from its start date", () => {
     const past = allowanceVerdict(FOUR_IN_FOUR, at("2026-10-19", "18:00"), visits, nowNov);
     expect(allowanceCountPhrase(past)).toBe("4 of 4 classes used the 4-week period from Tuesday 22 September");
-    expect(allowanceAskSentence("Ava Green", past)).toBe(
-      "Ava Green has used 4 of 4 classes the 4-week period from Tuesday 22 September (resets on Tuesday 20 October). Admit anyway?",
+    expect(allowanceStaffSentence("Ava Green", past)).toBe(
+      "Ava Green has used all 4 classes in the 4-week period from Tuesday 22 September (resets on Tuesday 20 October) and has no class-pack credit, so they can't be checked in.",
+    );
+    expect(allowanceRefusalSentence(past)).toBe(
+      "You've used all 4 of your classes for the 4-week period from Tuesday 22 September; it resets on Tuesday 20 October. For further information, please speak to a coach.",
     );
   });
 
@@ -245,6 +275,14 @@ describe("historical periods are named, never called \"this\" (review gap 5)", (
     expect(allowanceCountPhrase(week)).toBe("2 of 2 classes used the week of Monday 12 October");
     const month = allowanceVerdict({ limit: 1, basis: "month" }, at("2026-10-14", "18:00"), [at("2026-10-02", "18:00")], nowNov);
     expect(allowanceCountPhrase(month)).toBe("1 of 1 class used October 2026");
+    // The member's refusal for a past month names it: "for October 2026".
+    const pastMonth = allowanceVerdict({ limit: 2, basis: "month" }, at("2026-10-14", "18:00"), [at("2026-10-02", "18:00"), at("2026-10-03", "18:00")], nowNov);
+    expect(allowanceRefusalSentence(pastMonth)).toBe(
+      "You've used all 2 of your classes for October 2026; it resets on Sunday 1 November. For further information, please speak to a coach.",
+    );
+    expect(allowanceStaffSentence("Sam", pastMonth)).toBe(
+      "Sam has used all 2 classes in October 2026 (resets on Sunday 1 November) and has no class-pack credit, so they can't be checked in.",
+    );
   });
 
   it("the current period still reads \"this\"", () => {
@@ -340,11 +378,16 @@ describe("per member's billing period (owner scope, 21 Oct 2026; review round 3)
 
   it("copy for a member whose period is unknown: refusal, question, booking notice, portal line", () => {
     const v = { used: 0, limit: 4, basis: "billing" as const, periodUnknown: true as const };
-    expect(allowanceRefusalSentence(v)).toBe("Your plan counts classes per billing period, but no renewal date is recorded for you. Ask staff.");
-    expect(allowanceRefusalSentence(v, "Sam")).toBe("Sam's plan counts classes per billing period, but no renewal date is recorded for Sam. Ask staff.");
-    expect(allowanceAskSentence("Ava Green", v)).toBe("No renewal date is recorded for Ava Green, so their 4 classes per billing period can't be counted. Admit anyway?");
-    expect(allowanceBookingNotice(v)).toMatch(/^Your plan counts classes per billing period, but no renewal date is recorded for you\. Ask staff\. Booking doesn't use a class/);
-    expect(allowanceUsageText(v)).toBe("Your plan allows 4 classes per billing period, but no renewal date is recorded for you — ask staff");
+    expect(allowanceRefusalSentence(v)).toBe("Your plan counts classes per billing period, but no renewal date is recorded for you. For further information, please speak to a coach.");
+    expect(allowanceRefusalSentence(v, "Sam")).toBe("Sam's plan counts classes per billing period, but no renewal date is recorded for Sam. For further information, please speak to a coach.");
+    expect(allowanceStaffSentence("Ava Green", v)).toBe("No renewal date is recorded for Ava Green, so their 4 classes per billing period can't be counted and they can't be checked in.");
+    expect(allowanceBookingNotice(v)).toBe(
+      "Your plan counts classes per billing period, but no renewal date is recorded for you. Booking doesn't use a class, but you can't check in until a renewal date is recorded. For further information, please speak to a coach.",
+    );
+    expect(allowanceUsageText(v)).toBe("Your plan allows 4 classes per billing period, but no renewal date is recorded for you — for further information, please speak to a coach");
+    for (const text of [allowanceRefusalSentence(v), allowanceRefusalSentence(v, "Sam"), allowanceStaffSentence("Ava", v), allowanceBookingNotice(v), allowanceUsageText(v)]) {
+      expect(text).not.toMatch(/Ask staff|ask staff|Admit anyway|staff to admit/);
+    }
   });
 
   it("R4-M1: a Stripe period 31 Jan → 28 Feb keeps the 31st: the stored period is returned verbatim and the next ends 31 Mar, then 30 Apr", () => {
@@ -413,6 +456,6 @@ describe("per member's billing period (owner scope, 21 Oct 2026; review round 3)
     const a = withMemberBillingPeriod(tier, { nextDueAt: D("2026-11-02"), billingCycle: "four_weekly" }, LONDON)!;
     const v = allowanceVerdict(a, at("2026-10-19", "18:00"), [at("2026-10-05", "18:00"), at("2026-10-12", "07:00"), at("2026-10-12", "18:00"), at("2026-10-14", "18:00")], at("2026-10-21", "12:00"));
     expect(v).toMatchObject({ used: 4, limit: 4, basis: "billing", exhausted: true, period: { start: "2026-10-05", end: "2026-11-02" }, resetsOn: "2026-11-02", current: true });
-    expect(allowanceRefusalSentence(v)).toBe("4 of 4 classes used this billing period; it resets on Monday 2 November. Ask staff if you need to train before then.");
+    expect(allowanceRefusalSentence(v)).toBe("You've used all 4 of your classes for this billing period; it resets on Monday 2 November. For further information, please speak to a coach.");
   });
 });

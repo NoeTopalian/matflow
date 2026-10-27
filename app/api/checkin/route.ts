@@ -28,16 +28,17 @@ export const checkinSchema = z.object({
   checkInMethod: z.enum(["admin", "self", "auto"]).default("admin"),
   // Staff marks only: what the register asked about and the person admitted
   // anyway (a hold, an unsigned waiver, an adult in a kids class). Recorded on
-  // the attendance.mark audit row. Only "allowance_reached" (T7) changes a
-  // rule: staff saw that the member's plan allowance is used up and admitted
-  // anyway. The squad list and the membership list have no acknowledgement:
-  // they refuse at every door (owner decision, 20 Oct 2026). A register tab
-  // loaded before that change may still send "tier_not_included"; it is
-  // dropped here, so the mark is judged (and refused) exactly as if it had
-  // not been sent, and nothing records it.
+  // the attendance.mark audit row; none of them changes a rule the engine
+  // judges. The squad list, the membership list (owner decision, 20 Oct 2026)
+  // and the plan allowance (owner decision, 27 Oct 2026) have no
+  // acknowledgement: they refuse at every door. A register tab loaded before
+  // either change may still send "tier_not_included" or "allowance_reached";
+  // both are dropped here, so the mark is judged (and refused) exactly as if
+  // they had not been sent, nothing records them, and the request is never
+  // turned away for carrying them.
   acknowledged: z.preprocess(
-    (v) => (Array.isArray(v) ? v.filter((x) => x !== "tier_not_included") : v),
-    z.array(z.enum(["on_hold", "waiver_unsigned", "kids_class", "allowance_reached"])).max(4).optional(),
+    (v) => (Array.isArray(v) ? v.filter((x) => x !== "tier_not_included" && x !== "allowance_reached") : v),
+    z.array(z.enum(["on_hold", "waiver_unsigned", "kids_class"])).max(4).optional(),
   ),
 });
 
@@ -80,6 +81,8 @@ export async function POST(req: Request) {
   let actorMemberId: string | null = null;
   // T7: a parent checking in a child is told whose allowance is used up.
   let childName: string | null = null;
+  // T7: the staff path names the member in the staff sentence.
+  let staffMemberName: string | null = null;
 
   if (memberId) {
     // Admin checking in a specific member — validate member belongs to this tenant
@@ -98,7 +101,7 @@ export async function POST(req: Request) {
       Promise.all([
         tx.member.findFirst({
           where: { id: memberId, tenantId },
-          select: { id: true },
+          select: { id: true, name: true },
         }),
         tx.classInstance.findFirst({
           where: {
@@ -116,6 +119,7 @@ export async function POST(req: Request) {
     }
     if (!adminMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = adminMember.id;
+    staffMemberName = adminMember.name || "This member";
     // Staff path: trust the staff-supplied method (admin / auto for special flows).
     effectiveMethod = checkInMethod;
   } else if (onBehalfOfMemberId) {
@@ -192,12 +196,11 @@ export async function POST(req: Request) {
     // T6b: a paused or archived class is closed to the member deciding; the
     // desk still admits (T4c owns the per-door modes).
     enforceClassStateGate: isSelf,
-    // T7: the plan allowance ("N classes every M weeks"). The member deciding
-    // is refused with the count and the date the next class frees up; the
-    // desk is asked and admits only with the register's confirmation, which
-    // the audit row records with the count.
-    allowanceGate: isSelf ? "refuse" : "ask",
-    allowanceOverrideConfirmed: !isSelf && !!acknowledged?.includes("allowance_reached"),
+    // T7: the plan allowance ("N classes every M weeks"). Refused at every
+    // door, the desk included, with the count and the date it resets; a
+    // usable class pack pays instead. No staff override (owner decision,
+    // 27 Oct 2026).
+    allowanceGate: "refuse",
     // Record which staff user clicked "check in" so the attendance row can
     // show "by [admin name]". Only stamped on staff-driven check-ins.
     checkedInByUserId: effectiveMethod === "admin" ? session.user.id : null,
@@ -205,9 +208,10 @@ export async function POST(req: Request) {
 
   switch (result.kind) {
     case "success":
-      // T7: a staff override is always recorded, so a staff "auto" admission
-      // past the allowance writes the row as an "admin" one does.
-      if (effectiveMethod === "admin" || (effectiveMethod === "auto" && (result.overrides?.length ?? 0) > 0)) {
+      // A staff or system mark that spent a class-pack credit (the plan's
+      // classes were used up) is audited with that fact, so a credit never
+      // leaves without a row saying why.
+      if (effectiveMethod === "admin" || (effectiveMethod === "auto" && result.coverage?.kind === "pack")) {
         // A staff mark is audited. The coach register's raw upsert used to be
         // the only staff mark that wrote a row; since 18 Sep 2026 every screen
         // marks through this route, so the row lives here — the same shape as
@@ -226,11 +230,8 @@ export async function POST(req: Request) {
             // is a refusal), so the undo may remove exactly this record.
             recordId: result.record.id,
             created: true,
+            ...(result.coverage?.kind === "pack" ? { paidByClassPack: true, packCreditsRemaining: result.coverage.creditsRemaining ?? null } : {}),
             ...(acknowledged && acknowledged.length > 0 ? { acknowledged: [...new Set(acknowledged)] } : {}),
-            // The gates the engine actually admitted past on staff say-so.
-            ...(result.overrides && result.overrides.length > 0 ? { overrides: result.overrides } : {}),
-            // T7: the allowance count staff admitted past.
-            ...(result.overAllowance ? { overAllowance: result.overAllowance } : {}),
           },
           req,
         });
@@ -278,7 +279,7 @@ export async function POST(req: Request) {
           paymentRail = null;
         }
       }
-      const refusal = checkinRefusal(result, { paymentRail, timeZone, memberName: childName });
+      const refusal = checkinRefusal(result, { paymentRail, timeZone, memberName: childName, staffMemberName });
       if (refusal) return NextResponse.json(refusal.body, { status: refusal.status });
       return NextResponse.json({ error: "Unknown check-in result" }, { status: 500 });
     }

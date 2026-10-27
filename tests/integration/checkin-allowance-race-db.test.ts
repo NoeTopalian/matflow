@@ -41,12 +41,13 @@ function selfArgs(tenantId: string, memberId: string, classInstanceId: string): 
     enforceVenueGate: true, enforceClassStateGate: true, allowanceGate: "refuse",
   };
 }
-function deskArgs(tenantId: string, memberId: string, classInstanceId: string, confirmed: boolean): PerformCheckinArgs {
+/** The desk register: refuses at the limit like every door (owner decision, 27 Oct 2026). */
+function deskArgs(tenantId: string, memberId: string, classInstanceId: string): PerformCheckinArgs {
   return {
     tenantId, memberId, classInstanceId, method: "admin",
     enforceRankGate: false, enforceTimeWindow: false, requireCoverage: false,
-    enforceCapacity: false, enforceWaiverGate: false, allowanceGate: "ask",
-    allowanceOverrideConfirmed: confirmed, checkedInByUserId: null,
+    enforceCapacity: false, enforceWaiverGate: false, allowanceGate: "refuse",
+    checkedInByUserId: null,
   };
 }
 
@@ -163,7 +164,8 @@ describe.skipIf(!HAS_DB)("Check-in class allowance - real database concurrency",
     const kinds = results.map((r) => r.kind).sort();
     expect(kinds).toEqual(["allowance_reached", "success"]);
     const refused = results.find((r) => r.kind === "allowance_reached") as Extract<PerformCheckinResult, { kind: "allowance_reached" }>;
-    expect(refused).toMatchObject({ used: 1, limit: 1, weeks: 2, askable: false });
+    expect(refused).toMatchObject({ used: 1, limit: 1, weeks: 2 });
+    expect(refused).not.toHaveProperty("askable");
     expect(await recordsIn([x, y])).toBe(1);
   });
 
@@ -224,39 +226,30 @@ describe.skipIf(!HAS_DB)("Check-in class allowance - real database concurrency",
     expect(await recordsIn([x])).toBe(1);
   });
 
-  it("desk override under contention: past the allowance only with the override recorded", async () => {
+  it("a desk mark parked on the Member lock behind the member's own: exactly one admission, no override (27 Oct 2026)", async () => {
     const { x, y } = await freshPair();
     const gate = holdLock((tx) => tx.$queryRaw`SELECT "id" FROM "Member" WHERE "id" = ${memberId} FOR UPDATE`);
     await gate.isReady;
     const own = performCheckin(selfArgs(tenantId, memberId, x));
-    const desk = performCheckin(deskArgs(tenantId, memberId, y, true));
+    const desk = performCheckin(deskArgs(tenantId, memberId, y));
     await waitForLockWaiters(MEMBER_LOCK_SQL, 2);
     gate.release();
     await gate.done;
     const [o, d] = await Promise.all([own, desk]);
     noDeadlock([o, d]);
-    expect(d.kind).toBe("success");
-    if (d.kind !== "success") return;
-    if (o.kind === "success") {
-      // The member's own check-in won the lock; the desk then admitted past
-      // the allowance, and says so with the count.
-      expect(d.overrides).toEqual(["allowance_reached"]);
-      expect(d.overAllowance).toMatchObject({ used: 1, limit: 1, weeks: 2 });
-      expect(await recordsIn([x, y])).toBe(2);
-    } else {
-      // The desk won within the allowance (no override); the member's own
-      // check-in then counted the desk's visit and was refused.
-      expect(d.overrides).toBeUndefined();
-      expect(o).toMatchObject({ kind: "allowance_reached", used: 1, limit: 1 });
-      expect(await recordsIn([x, y])).toBe(1);
-    }
+    // Whichever won the lock took the last place; the other was refused. The
+    // desk has no way to admit past it.
+    expect([o.kind, d.kind].sort()).toEqual(["allowance_reached", "success"]);
+    expect(d).not.toHaveProperty("overrides");
+    expect(d).not.toHaveProperty("overAllowance");
+    expect(await recordsIn([x, y])).toBe(1);
   });
 
-  it("an unconfirmed desk mark under contention: exactly one admission", async () => {
+  it("a desk mark under contention: exactly one admission", async () => {
     const { x, y } = await freshPair();
     const results = await Promise.all([
       performCheckin(selfArgs(tenantId, memberId, x)),
-      performCheckin(deskArgs(tenantId, memberId, y, false)),
+      performCheckin(deskArgs(tenantId, memberId, y)),
     ]);
     noDeadlock(results);
     expect(results.filter((r) => r.kind === "success")).toHaveLength(1);

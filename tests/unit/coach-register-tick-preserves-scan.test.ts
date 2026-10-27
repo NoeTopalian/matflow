@@ -50,8 +50,9 @@ vi.mock("@/lib/checkin", () => ({
   restorePackCreditsForAttendance: vi.fn(async () => 0),
   // The class has no squad list or membership list here, so it is open.
   lockedClassEligibility: vi.fn(async () => null),
-  // T7: the plan has no allowance here, so the allowance ask is open.
-  staffAllowanceAsk: vi.fn(async () => ({ kind: "open", overridden: false })),
+  // T7: the plan has no allowance here, so the allowance gate is open and spends no pack.
+  staffAllowanceGate: vi.fn(async () => ({ kind: "open", pack: null })),
+  returnClaimedPack: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
