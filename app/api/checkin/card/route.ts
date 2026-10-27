@@ -16,7 +16,9 @@
 // deliberately does NOT match the kiosk, which is a public unattended surface
 // and gates far harder. The squad list and the membership list are the
 // exception: they refuse here as at every door (owner decision, 20 Oct 2026),
-// and the card's row carries the sentence the member would read.
+// and the card's row carries the sentence the member would read. So does the
+// plan allowance (owner decision, 27 Oct 2026): a used-up allowance spends a
+// usable class pack, or the card is refused with the staff sentence.
 //
 // The permission rule is the one every attendance writer now shares: any
 // staff role may write to any instance in the club. Until 17 Sep 2026 this
@@ -36,7 +38,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { verifyCardToken } from "@/lib/card-token";
 import { loadCheckinInstance, performCheckin } from "@/lib/checkin";
 import { logAudit } from "@/lib/audit-log";
-import { allowanceAskSentence } from "@/lib/class-allowance";
+import { allowanceStaffSentence } from "@/lib/class-allowance";
 import { checkinRefusal } from "@/lib/checkin-refusal";
 
 /**
@@ -63,14 +65,15 @@ const SCAN_RATE_WINDOW_MS = 5 * 60 * 1000;
 const schema = z.object({
   classInstanceId: z.string().min(1),
   tokens: z.array(z.string().min(1).max(4096)).min(1).max(MAX_TOKENS_PER_REQUEST),
-  // T7: the scanner ASKS about a member whose plan allowance is used up. The
-  // coach's "Admit anyway" resends that one card with this confirmation; the
-  // admission is recorded on the card_scan audit row as an override. The
-  // scanner never admits past the squad list or the membership list: an old
-  // client's "tier_not_included" is stripped here and admits no one.
+  // The scanner admits past nothing on a coach's say-so: not the squad list,
+  // not the membership list, not the plan allowance (owner decisions, 20 and
+  // 27 Oct 2026). A scanner loaded before then may still resend a card with
+  // "tier_not_included" or "allowance_reached"; both are stripped here, the
+  // card is judged as if they had not been sent, and the request is not
+  // turned away for carrying them.
   acknowledged: z.preprocess(
-    (v) => (Array.isArray(v) ? v.filter((x) => x !== "tier_not_included") : v),
-    z.array(z.enum(["allowance_reached"])).max(1).optional(),
+    (v) => (Array.isArray(v) ? v.filter((x) => x !== "tier_not_included" && x !== "allowance_reached") : v),
+    z.array(z.never()).max(0).optional(),
   ),
 });
 
@@ -88,11 +91,9 @@ type ScanStatus =
   | "member_not_found"
   | "class_not_found"
   | "class_cancelled"
-  // T7: their plan allowance is used up. Nothing was recorded; the coach is
-  // asked and may resend with `acknowledged`.
-  | "needs_confirmation"
-  // The class's squad list or memberships do not admit this member. Nothing
-  // was recorded and nothing the coach sends admits them.
+  // The class's squad list or memberships do not admit this member, or their
+  // plan allowance is used up and no class pack paid (T7). Nothing was
+  // recorded and nothing the coach sends admits them.
   | "refused"
   | "error";
 
@@ -103,11 +104,9 @@ type ScanResult = {
   status: ScanStatus;
   memberId?: string;
   memberName?: string;
-  /** needs_confirmation and refused: the machine reason. */
+  /** refused only: the machine reason. */
   reason?: "tier_not_included" | "roster_not_listed" | "allowance_reached";
-  /** needs_confirmation only: the question to put to the coach. */
-  question?: string;
-  /** refused only: the sentence the member would read. */
+  /** refused only: the sentence to show (the member's for eligibility, the staff sentence for the allowance). */
   message?: string;
 };
 
@@ -130,13 +129,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data" }, { status: 400 });
   }
-  const { classInstanceId, tokens, acknowledged } = parsed.data;
-  const allowanceConfirmed = !!acknowledged?.includes("allowance_reached");
-  // A confirmation answers ONE question about ONE card: it never admits a
-  // whole stack past their allowances.
-  if (allowanceConfirmed && tokens.length !== 1) {
-    return NextResponse.json({ error: "Confirm one card at a time" }, { status: 400 });
-  }
+  const { classInstanceId, tokens } = parsed.data;
 
   let rl;
   try {
@@ -223,7 +216,6 @@ export async function POST(req: Request) {
   const memberById = new Map(members.map((m) => [m.id, m]));
 
   let recorded = 0;
-  const overrides: { memberId: string; reasons: string[]; overAllowance?: unknown }[] = [];
   for (const v of verified) {
     const member = memberById.get(v.memberId);
     if (!member) {
@@ -260,10 +252,9 @@ export async function POST(req: Request) {
       enforceWaiverGate: false,
       // The squad list and the membership list refuse here too; the engine
       // has no flag for them.
-      // T7: the plan allowance is asked about rather than refused; the coach
-      // confirms and the card is resent with the acknowledgement.
-      allowanceGate: "ask",
-      allowanceOverrideConfirmed: allowanceConfirmed,
+      // T7: the plan allowance refuses here as at every door; a usable class
+      // pack pays instead (owner decision, 27 Oct 2026).
+      allowanceGate: "refuse",
       checkedInByUserId: userId,
       // D6: the session read once above; revocation judged under the Member
       // lock against the version on the card (the read above is only the
@@ -277,13 +268,6 @@ export async function POST(req: Request) {
       case "success":
         recorded += 1;
         results[v.index] = { ...base, status: "success" };
-        if (outcome.overrides && outcome.overrides.length > 0) {
-          overrides.push({
-            memberId: member.id,
-            reasons: outcome.overrides,
-            ...(outcome.overAllowance ? { overAllowance: outcome.overAllowance } : {}),
-          });
-        }
         break;
       case "tier_not_included":
       case "roster_not_listed":
@@ -298,11 +282,12 @@ export async function POST(req: Request) {
         };
         break;
       case "allowance_reached":
+        // The coach reads why; there is nothing to resend.
         results[v.index] = {
           ...base,
-          status: "needs_confirmation",
+          status: "refused",
           reason: "allowance_reached",
-          question: allowanceAskSentence(member.name, outcome),
+          message: allowanceStaffSentence(member.name, outcome),
         };
         break;
       case "duplicate":
@@ -344,8 +329,6 @@ export async function POST(req: Request) {
         scanned: tokens.length,
         recorded,
         memberIds: results.filter((r) => r.status === "success").map((r) => r.memberId),
-        // T7: the cards admitted past the allowance on the coach's say-so.
-        ...(overrides.length > 0 ? { overrides } : {}),
       },
       req,
     });

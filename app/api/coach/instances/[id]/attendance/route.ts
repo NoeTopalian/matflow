@@ -7,23 +7,23 @@ import { assertSameOrigin } from "@/lib/csrf";
 import {
   restorePackCreditsForAttendance,
   lockedClassEligibility,
-  staffAllowanceAsk,
-  type AllowanceFacts,
+  staffAllowanceGate,
+  returnClaimedPack,
+  type ClaimedPack,
 } from "@/lib/checkin";
 import { checkinRefusal } from "@/lib/checkin-refusal";
-import { ALLOWANCE_OVERRIDE_REASON } from "@/lib/class-allowance";
 
-// `acknowledged` carries one answer only: "allowance_reached" (T7), the
-// coach's confirmation after being asked about a used-up plan allowance. The
-// squad list and the membership list refuse a tick as they refuse every door
-// (owner decision, 20 Oct 2026): an old client's "tier_not_included" is
-// stripped here and admits no one.
+// A tick admits past nothing on a coach's say-so: the squad list and the
+// membership list (owner decision, 20 Oct 2026) and the plan allowance (owner
+// decision, 27 Oct 2026) refuse a tick as they refuse every door. An old
+// client's "tier_not_included" or "allowance_reached" is stripped here,
+// admits no one, and never turns the request away.
 const schema = z.object({
   memberId: z.string().min(1),
   attended: z.boolean(),
   acknowledged: z.preprocess(
-    (v) => (Array.isArray(v) ? v.filter((x) => x !== "tier_not_included") : v),
-    z.array(z.enum([ALLOWANCE_OVERRIDE_REASON])).max(1).optional(),
+    (v) => (Array.isArray(v) ? v.filter((x) => x !== "tier_not_included" && x !== "allowance_reached") : v),
+    z.array(z.never()).max(0).optional(),
   ),
 });
 
@@ -40,7 +40,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid data" }, { status: 400 });
-  const allowanceConfirmed = parsed.data.acknowledged?.includes(ALLOWANCE_OVERRIDE_REASON) === true;
 
   try {
     const outcome = await withTenantContext(tenantId, async (tx) => {
@@ -56,7 +55,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (!instance) return "no-instance" as const;
       const member = await tx.member.findFirst({
         where: { id: parsed.data.memberId, tenantId },
-        select: { id: true },
+        select: { id: true, name: true },
       });
       if (!member) return "no-member" as const;
       if (parsed.data.attended) {
@@ -71,7 +70,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // refuse-only, exactly as every other door. Only when the tick would
         // admit someone: a tick on a member already in writes nothing, so it
         // is not re-judged.
-        let overAllowance: AllowanceFacts | null = null;
+        // T7: a pack credit the allowance gate spent for this tick.
+        let pack: ClaimedPack | null = null;
         if (!existing) {
           const refused = await lockedClassEligibility(
             tx,
@@ -81,17 +81,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           );
           if (refused?.kind === "member_not_found") return "no-member" as const;
           if (refused) return refused;
-          // T7: the plan allowance is ASKED about, as the desk register asks,
-          // under the Member lock lockedClassEligibility already holds (Class,
-          // then Member: the engine's order).
-          const allowance = await staffAllowanceAsk(
+          // T7: the plan allowance REFUSES, as at every door (owner decision,
+          // 27 Oct 2026), under the Member lock lockedClassEligibility already
+          // holds (Class, then Member, then pack: the engine's order). A
+          // used-up allowance spends a usable pack credit instead; an unknown
+          // billing period spends nothing and is refused.
+          const allowance = await staffAllowanceGate(
             tx,
-            { tenantId, memberId: member.id, confirmed: allowanceConfirmed, timeZone: instance.class.tenant.timezone },
+            { tenantId, memberId: member.id, timeZone: instance.class.tenant.timezone },
             { id: instance.id, date: instance.date, startTime: instance.startTime },
           );
           if (allowance.kind === "member_not_found") return "no-member" as const;
-          if (allowance.kind === "allowance_reached") return allowance;
-          if (allowance.kind === "open" && allowance.overridden) overAllowance = allowance.facts;
+          if (allowance.kind === "allowance_reached") return { ...allowance, memberName: member.name };
+          if (allowance.kind === "open") pack = allowance.pack;
         }
         const record = await tx.attendanceRecord.upsert({
           where: { memberId_classInstanceId: { memberId: member.id, classInstanceId } },
@@ -113,16 +115,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // A row another device created between the read and the upsert hits
         // the no-op update branch; it is ours only if it reads as this tick's.
         const created = !existing && record.checkInMethod === "admin" && record.checkedInById === userId;
-        const overrides: string[] = [];
-        if (created && overAllowance) overrides.push(ALLOWANCE_OVERRIDE_REASON);
-        return {
-          kind: "marked" as const,
-          memberId: member.id,
-          recordId: record.id,
-          created,
-          overrides,
-          overAllowance: created ? overAllowance : null,
-        };
+        if (pack) {
+          // The credit pays for the row this tick created, and an unmark or
+          // an undo gives it back (restorePackCreditsForAttendance). A row
+          // another device made first was not paid by this tick: the credit
+          // goes back now, in the same transaction.
+          if (created) {
+            await tx.classPackRedemption.create({ data: { memberPackId: pack.id, attendanceRecordId: record.id } });
+          } else {
+            await returnClaimedPack(tx, pack);
+          }
+        }
+        return { kind: "marked" as const, memberId: member.id, recordId: record.id, created };
       } else {
         // Unmark is the inverse of a check-in: if the attendance was covered
         // by a class pack, the credit goes back in the same transaction
@@ -138,19 +142,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           await tx.attendanceRecord.deleteMany({ where: { id: { in: ids } } });
         }
       }
-      return {
-        kind: "marked" as const, memberId: member.id, recordId: null, created: false,
-        overrides: [] as string[], overAllowance: null as AllowanceFacts | null,
-      };
+      return { kind: "marked" as const, memberId: member.id, recordId: null, created: false };
     });
 
     if (outcome === "no-instance") return NextResponse.json({ error: "Class not found" }, { status: 404 });
     if (outcome === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
     if (outcome.kind === "tier_not_included" || outcome.kind === "roster_not_listed" || outcome.kind === "allowance_reached") {
       // Nothing was written. The eligibility refusals carry the sentence the
-      // member reads at their own door; the allowance answer is askable: the
-      // register confirms, then resends with acknowledged: ["allowance_reached"].
-      const refusal = checkinRefusal(outcome)!;
+      // member reads at their own door; the allowance refusal is the staff
+      // sentence, naming the member. Nothing the client resends admits.
+      const refusal = checkinRefusal(outcome, outcome.kind === "allowance_reached" ? { staffMemberName: outcome.memberName || "This member" } : {})!;
       return NextResponse.json(refusal.body, { status: refusal.status });
     }
 
@@ -162,9 +163,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       metadata: parsed.data.attended
         ? {
             classInstanceId, memberId: outcome.memberId, recordId: outcome.recordId, created: outcome.created,
-            // The gates staff admitted past, as POST /api/checkin records them.
-            ...(outcome.overrides.length > 0 ? { overrides: outcome.overrides } : {}),
-            ...(outcome.overAllowance ? { overAllowance: outcome.overAllowance } : {}),
           }
         : { classInstanceId, memberId: outcome.memberId },
       req,

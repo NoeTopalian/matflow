@@ -398,8 +398,8 @@ export type MemberBillingView = {
  * Resolve a tier's "billing" allowance for one member, on the club's
  * calendar (`timeZone` converts Stripe's instants). Returns the allowance with
  * the member's recurrence attached, or `null` when no period is known — the
- * caller must treat that as "cannot be counted" (refuse at member-decided
- * doors, ask at staff doors), never fall back to a calendar period. Non-billing
+ * caller must treat that as "cannot be counted" (refused at every door,
+ * without spending a pack), never fall back to a calendar period. Non-billing
  * allowances pass through unchanged.
  */
 export function withMemberBillingPeriod(a: ClassAllowance | null, member: MemberBillingView, timeZone: string): ClassAllowance | null {
@@ -499,11 +499,19 @@ function asAllowance(v: VerdictCopy): ClassAllowance {
   return { limit: v.limit, basis: v.basis };
 }
 
+/**
+ * The owner's closing line wherever a member is turned away for the
+ * allowance (Noe, 27 Oct 2026: "for further information please speak to a
+ * coach"). No door admits past a used-up allowance, so no sentence promises
+ * that staff can.
+ */
+export const SPEAK_TO_A_COACH = "For further information, please speak to a coach.";
+
 /** The member's sentence when their plan counts per billing period and no period is recorded. */
-export const PERIOD_UNKNOWN_MEMBER = "Your plan counts classes per billing period, but no renewal date is recorded for you. Ask staff.";
+export const PERIOD_UNKNOWN_MEMBER = `Your plan counts classes per billing period, but no renewal date is recorded for you. ${SPEAK_TO_A_COACH}`;
 export function periodUnknownSentence(who?: string | null): string {
   return who
-    ? `${who}'s plan counts classes per billing period, but no renewal date is recorded for ${who}. Ask staff.`
+    ? `${who}'s plan counts classes per billing period, but no renewal date is recorded for ${who}. ${SPEAK_TO_A_COACH}`
     : PERIOD_UNKNOWN_MEMBER;
 }
 
@@ -550,7 +558,9 @@ export function thisPeriodText(v: VerdictCopy): string {
  * The count, worded once for the portal, the doors and the questions:
  *  - "2 of 4 classes used this week"
  *  - "4 of 4 classes used this 4-week period (6 recorded)" when more than the
- *    allowance has been recorded (a lowered limit, or desk overrides) — it
+ *    allowance has been recorded (a lowered limit, or staff overrides
+ *    recorded before 27 Oct 2026, when the desk could still admit past the
+ *    allowance; those older visits can still exist) — it
  *    never reads "6 of 4".
  */
 export function allowanceCountPhrase(v: VerdictCopy): string {
@@ -566,49 +576,66 @@ export function allowanceCountPhrase(v: VerdictCopy): string {
  * "2 of 4 classes used this 4-week period — resets Monday 17 November".
  */
 export function allowanceUsageText(v: VerdictCopy): string {
-  if (v.periodUnknown || !v.resetsOn) return `Your plan allows ${v.limit} ${v.limit === 1 ? "class" : "classes"} per billing period, but no renewal date is recorded for you — ask staff`;
+  if (v.periodUnknown || !v.resetsOn) return `Your plan allows ${v.limit} ${v.limit === 1 ? "class" : "classes"} per billing period, but no renewal date is recorded for you — for further information, please speak to a coach`;
   return `${allowanceCountPhrase(v)} — resets ${dateText(v.resetsOn)}`;
 }
 
 /**
- * What the member app, the kiosk and the parent's check-in say: "4 of 4
- * classes used this 4-week period; it resets on Monday 17 November. Ask staff
- * if you need to train before then." A parent checking in a child passes the
- * child's name: "Sam: 4 of 4 classes ... Ask staff if Sam needs to train
- * before then."
+ * What the member app, the kiosk and the parent's check-in say when the
+ * allowance is used up (owner wording, 27 Oct 2026):
+ *  - "You've used all 4 of your classes for this 4-week period; it resets on
+ *    Monday 17 November. For further information, please speak to a coach."
+ *  - a limit of 1: "You've used your 1 class for this week; …";
+ *  - a parent checking in a child passes the child's name: "Sam has used all
+ *    4 of their classes for this 4-week period; …".
+ * The period reads "for this week", "for this month", or by name for a
+ * period that is not the current one ("for October 2026").
  */
 export function allowanceRefusalSentence(v: VerdictCopy, who?: string | null): string {
   if (v.periodUnknown || !v.resetsOn) return periodUnknownSentence(who);
-  const usage = allowanceCountPhrase(v);
-  const lead = who ? `${who}: ${usage}` : usage;
-  const subject = who ? `${who} needs` : "you need";
-  return `${lead}; it resets on ${dateText(v.resetsOn)}. Ask staff if ${subject} to train before then.`;
+  const owner = who ? "their" : "your";
+  const used = v.limit === 1 ? `${owner} 1 class` : `all ${v.limit} of ${owner} classes`;
+  const lead = who ? `${who} has used` : "You've used";
+  return `${lead} ${used} for ${thisPeriodText(v)}; it resets on ${dateText(v.resetsOn)}. ${SPEAK_TO_A_COACH}`;
 }
 
 /**
  * What booking adds when the session's period is already used up. Booking
  * consumes nothing and is never refused for the allowance, but the member
- * should know what will happen at the door.
+ * should know what will happen at the door: only a class-pack credit pays
+ * for a class past the allowance (no door admits past it, 27 Oct 2026).
  */
 export function allowanceBookingNotice(v: VerdictCopy): string {
-  if (v.periodUnknown || !v.resetsOn) return `${PERIOD_UNKNOWN_MEMBER} Booking doesn't use a class, but checking in will need staff to admit you.`;
-  return `${allowanceCountPhrase(v)}. Booking doesn't use a class, but checking in before ${dateText(v.resetsOn)} will need a class-pack credit or staff to admit you.`;
+  if (v.periodUnknown || !v.resetsOn) {
+    return `Your plan counts classes per billing period, but no renewal date is recorded for you. Booking doesn't use a class, but checking in can't be counted until one is. ${SPEAK_TO_A_COACH}`;
+  }
+  return `${allowanceCountPhrase(v)}. Booking doesn't use a class, but checking in before ${dateText(v.resetsOn)} will need a class-pack credit. ${SPEAK_TO_A_COACH}`;
 }
 
-/** The question the register, the card scanner and the coach tick put to staff. */
-export function allowanceAskSentence(memberName: string, v: VerdictCopy): string {
+/**
+ * What the register, the card scanner row and the coach tick show when a
+ * member's allowance is used up and no class-pack credit can pay. A
+ * statement, not a question: staff cannot admit past the allowance (owner
+ * decision, 27 Oct 2026). "Sam has used all 4 classes this 4-week period
+ * (resets on Monday 17 November) and has no class-pack credit, so they can't
+ * be checked in." More than the limit recorded (a lowered limit, or an
+ * admission from before 27 Oct) adds "(6 recorded; resets on …)".
+ */
+export function allowanceStaffSentence(memberName: string, v: VerdictCopy): string {
   if (v.periodUnknown || !v.resetsOn) {
-    return `No renewal date is recorded for ${memberName}, so their ${v.limit} ${v.limit === 1 ? "class" : "classes"} per billing period can't be counted. Admit anyway?`;
+    return `No renewal date is recorded for ${memberName}, so their ${v.limit} ${v.limit === 1 ? "class" : "classes"} per billing period can't be counted and they can't be checked in.`;
   }
   const n = Math.max(0, Math.floor(v.used));
   const noun = v.limit === 1 ? "class" : "classes";
-  const where = thisPeriodText(v);
-  const over = n > v.limit;
-  const count = over
-    ? `${v.limit === 1 ? "their 1 class" : `all ${v.limit} classes`} ${where}`
-    : `${n} of ${v.limit} ${noun} ${where}`;
-  const extras = [over ? `${n} recorded` : null, `resets on ${dateText(v.resetsOn)}`].filter((x): x is string => x !== null);
-  return `${memberName} has used ${count} (${extras.join("; ")}). Admit anyway?`;
+  const period = thisPeriodText(v);
+  // "this week" reads on its own; a named period needs "in" ("in October 2026").
+  const where = v.current === false && v.period ? `in ${period}` : period;
+  const count =
+    n >= v.limit
+      ? `${v.limit === 1 ? "their 1 class" : `all ${v.limit} classes`} ${where}`
+      : `${n} of ${v.limit} ${noun} ${where}`;
+  const extras = [n > v.limit ? `${n} recorded` : null, `resets on ${dateText(v.resetsOn)}`].filter((x): x is string => x !== null);
+  return `${memberName} has used ${count} (${extras.join("; ")}) and has no class-pack credit, so they can't be checked in.`;
 }
 
 /**
@@ -623,7 +650,7 @@ export function allowanceSummary(a: ClassAllowance | null, now: number): { sente
     const noun = a.limit === 1 ? "class" : "classes";
     return {
       sentence: `Attend up to ${a.limit} ${noun} during each member's own billing period, from one renewal date to the next. There is no shared reset date: each member's period follows their renewal date (Stripe's paid period, or the next due date MatFlow tracks).`,
-      period: "A member with no renewal date recorded can't be counted: the member app and the kiosk refuse them and the desk and the scanner ask before admitting.",
+      period: "A member with no renewal date recorded can't be counted, so every check-in refuses them until a renewal date is recorded.",
       nextReset: null,
     };
   }
@@ -640,18 +667,19 @@ export function allowanceSummary(a: ClassAllowance | null, now: number): { sente
 }
 
 /**
- * How a door treats a member whose allowance is used up, as T6a's tier gate:
- *  - "refuse": member-decided doors (member app, parent, kiosk);
- *  - "ask": staff doors (register, card scanner, coach tick) — refused with an
- *    askable answer unless staff confirmed, then admitted and recorded;
+ * How a door treats a member whose allowance is used up:
+ *  - "refuse": every door — the member app, a parent, the kiosk, the desk
+ *    register, the card scanner and the coach tick. A usable class pack pays
+ *    for the class instead; otherwise the member is refused;
  *  - "off": not checked (system paths, tests).
- * Unlike class eligibility, an allowance can be overridden by staff: it is a
- * usage count the club may choose to waive, not a rule about who may attend.
+ * There is no staff override (owner decision, 27 Oct 2026: "They get what
+ * they paid for, and if they are on unlimited they get unlimited"). Until
+ * then staff doors had an "ask" mode that admitted on confirmation; audit
+ * rows written by it (`overrides: ["allowance_reached"]`, `overAllowance`)
+ * stay as they are and are shown as written. Nothing reads those keys, so no
+ * constant is kept for them.
  */
-export type AllowanceGateMode = "refuse" | "ask" | "off";
-
-/** The override reason recorded when staff admit someone past their allowance. */
-export const ALLOWANCE_OVERRIDE_REASON = "allowance_reached" as const;
+export type AllowanceGateMode = "refuse" | "off";
 
 // ── Write side (both membership routes) ──────────────────────────────────────
 

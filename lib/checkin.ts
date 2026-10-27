@@ -33,12 +33,14 @@
 // in lib/class-allowance.ts: an explicit reset basis, never a rolling window)
 // is enforced as soon as the owner sets it. A session is judged against the
 // period IT falls in; only confirmed attendance counts (a booking consumes
-// nothing; an undone visit is a deleted row, so the count recomputes). Doors:
-// self and kiosk "refuse" with the count and the date the period resets; the
-// register (admin), the card scanner (qr) and the coach tick "ask", and an
-// admission past the allowance is reported in `overrides` as
-// "allowance_reached" with `overAllowance` for the route's audit row. A
-// check-in paid by a class pack is not counted and not gated.
+// nothing; an undone visit is a deleted row, so the count recomputes). Every
+// door "refuses" once the allowance is used up — self, parent and kiosk with
+// the member's sentence, the register (admin), the card scanner (qr) and the
+// coach tick with the staff sentence. There is no staff override (owner
+// decision, 27 Oct 2026: "they get what they paid for"); until then staff
+// doors asked and admitted on confirmation, and audit rows from that time
+// (`overrides: ["allowance_reached"]`, `overAllowance`) are left as written.
+// A check-in paid by a class pack is not counted and not gated.
 //
 // Lock order on EVERY check-in write transaction: Class FOR UPDATE
 // (capacityState), then the Member row (memberLock: FOR NO KEY UPDATE, see
@@ -78,10 +80,11 @@
 // owner decision: a pack redemption does not count against the plan). Which pays is decided in ONE write transaction:
 //  - a member the plan does not cover pays with a pack where they have one,
 //    at the member app and the kiosk alike: not counted, not gated;
-//  - a covered member is counted against the allowance; once it is used up
-//    on a refusing door (member app, parent, kiosk), a usable pack pays for
-//    the class instead of a refusal (and that visit is not counted);
-//  - staff doors never spend a pack: they ask, as before.
+//  - a covered member is counted against the allowance; once it is used up,
+//    at EVERY door (member app, parent, kiosk, register, card scanner, and
+//    the coach tick through staffAllowanceGate), a usable pack pays for the
+//    class instead of a refusal (and that visit is not counted). An unknown
+//    billing period spends nothing and is refused (review round 3, M-4).
 //
 // CAPACITY, added round 3. `Class.maxCapacity` was enforced at BOOKING only
 // (`/api/member/class-subscriptions/[classId]`, round 1 defect L-F 1) and
@@ -131,7 +134,6 @@ import { isAdultAccount } from "@/lib/account-type";
 import { classTierCovers } from "@/lib/class-tier-gate";
 import { doorLifecycle } from "@/lib/class-lifecycle";
 import {
-  ALLOWANCE_OVERRIDE_REASON,
   allowanceVerdict,
   nowMinute,
   slotMinute,
@@ -210,16 +212,14 @@ export type PerformCheckinArgs = {
    */
   enforceClassStateGate?: boolean;
   /**
-   * T7: the member's plan allowance ("N classes every M weeks"). "refuse" for
-   * the member-decided doors (self, parent, kiosk); "ask" for the staff doors
-   * (register, card scanner), refused with an askable answer unless
-   * `allowanceOverrideConfirmed`, then admitted and reported in `overrides`.
-   * Omitted = "off" (system paths, tests). Judged inside the write
-   * transaction after the Class lock, under the Member lock.
+   * T7: the member's plan allowance ("N classes every M weeks"). "refuse" at
+   * every door that checks it — member app, parent, kiosk, register, card
+   * scanner — with a usable class pack paying instead of a refusal. There is
+   * no staff override (owner decision, 27 Oct 2026). Omitted = "off" (system
+   * paths, tests). Judged inside the write transaction after the Class lock,
+   * under the Member lock.
    */
   allowanceGate?: AllowanceGateMode;
-  /** Staff saw the "allowance used" question and admitted anyway. */
-  allowanceOverrideConfirmed?: boolean;
   // Staff user id when method=admin (the person clicking "check in" in the
   // dashboard). Null/undefined for self / kiosk / auto / system.
   checkedInByUserId?: string | null;
@@ -268,14 +268,7 @@ export async function loadCheckinInstance(tx: Prisma.TransactionClient, tenantId
 
 export type CheckinInstance = NonNullable<Awaited<ReturnType<typeof loadCheckinInstance>>>;
 
-/**
- * A gate a staff door admitted past on confirmation. Only the allowance: the
- * squad list and the membership list refuse at every door (owner decision,
- * 20 Oct 2026) and have no override.
- */
-export type CheckinOverride = typeof ALLOWANCE_OVERRIDE_REASON;
-
-/** The allowance count a refusal, a question or an override carries. */
+/** The allowance count a refusal carries. */
 export type AllowanceFacts = {
   /** Counted classes in the period containing this session (excluding it). */
   used: number;
@@ -292,7 +285,7 @@ export type AllowanceFacts = {
   /**
    * The plan counts per billing period and this member has no recorded
    * period (no Stripe paid period, no next due date): the count cannot be
-   * made, so member-decided doors refuse and staff doors ask (never a silent
+   * made, so every door refuses without spending a pack (never a silent
    * calendar fallback). `used` is 0 and `limit` is the plan's.
    */
   periodUnknown?: true;
@@ -309,10 +302,6 @@ export type PerformCheckinResult =
        * let the room quietly fill past what the coach planned for.
        */
       overCapacity?: { taken: number; maxCapacity: number };
-      /** Gates staff admitted past (T7 "allowance_reached"). Recorded by the route. */
-      overrides?: Array<CheckinOverride>;
-      /** T7: set when staff admitted past the allowance; the facts the audit row records. */
-      overAllowance?: AllowanceFacts;
     }
   | { kind: "class_not_found" }
   | { kind: "class_full"; taken: number; maxCapacity: number }
@@ -340,10 +329,8 @@ export type PerformCheckinResult =
       tierName: string | null;
     }
   | ({
-      /** T7: the member's plan allowance is used up for this session's window. */
+      /** T7: the member's plan allowance is used up for this session's period and no class pack paid. */
       kind: "allowance_reached";
-      /** True on a staff door: staff may admit after confirming. */
-      askable: boolean;
     } & AllowanceFacts)
   | {
       kind: "outside_window";
@@ -540,18 +527,17 @@ export async function lockedClassEligibility(
   // judges) or waits behind it. Without the lock here the tick read the tier,
   // then queued on the Member row for the allowance, and could admit on a
   // plan the member no longer held (review gap 4, 21 Oct 2026). The same
-  // lock is taken again by staffAllowanceAsk; a second FOR NO KEY UPDATE on a
+  // lock is taken again by staffAllowanceGate; a second FOR NO KEY UPDATE on a
   // row this transaction already holds is a no-op.
   if (!(await memberLock(tx, args.tenantId, args.memberId))) return { kind: "member_not_found" };
   return classEligibility(tx, args.tenantId, args.memberId, classId, className);
 }
 
 export type AllowanceGateState =
-  | { kind: "open"; overridden: false }
-  | ({ kind: "open"; overridden: true } & { facts: AllowanceFacts })
+  | { kind: "open" }
   | { kind: "duplicate" }
   | { kind: "member_not_found" }
-  | ({ kind: "allowance_reached"; askable: boolean } & AllowanceFacts);
+  | ({ kind: "allowance_reached" } & AllowanceFacts);
 
 /**
  * The columns of the Member row the gates and the coverage decision read
@@ -671,13 +657,13 @@ async function memberLock(tx: Prisma.TransactionClient, tenantId: string, member
  */
 async function judgeAllowance(
   tx: Prisma.TransactionClient,
-  args: Pick<PerformCheckinArgs, "tenantId" | "memberId" | "allowanceGate" | "allowanceOverrideConfirmed">,
+  args: Pick<PerformCheckinArgs, "tenantId" | "memberId" | "allowanceGate">,
   session: { id: string; date: Date; startTime: string },
   /** The club's IANA zone: decides only whether the session's period is the current one (copy), never the count. */
   timeZone: string,
 ): Promise<AllowanceGateState> {
   const mode = args.allowanceGate ?? "off";
-  if (mode === "off") return { kind: "open", overridden: false };
+  if (mode === "off") return { kind: "open" };
   const zone = usableTimezone(timeZone);
   const snap = await readAllowanceSnapshot(tx, {
     tenantId: args.tenantId,
@@ -690,43 +676,62 @@ async function judgeAllowance(
   if (snap.alreadyIn) return { kind: "duplicate" };
   if (snap.periodUnknown && snap.periodUnknownLimit !== null) {
     // Per-billing-period plan, no period recorded for this member: judged as
-    // "cannot be counted" — refused where the member decides, asked where
-    // staff do, recorded as an override when admitted.
-    const facts: AllowanceFacts = { used: 0, limit: snap.periodUnknownLimit, basis: "billing", periodUnknown: true };
-    if (mode === "ask" && args.allowanceOverrideConfirmed === true) return { kind: "open", overridden: true, facts };
-    return { kind: "allowance_reached", askable: mode === "ask", ...facts };
+    // "cannot be counted" and refused at every door.
+    return { kind: "allowance_reached", used: 0, limit: snap.periodUnknownLimit, basis: "billing", periodUnknown: true };
   }
-  if (!snap.allowance) return { kind: "open", overridden: false };
+  if (!snap.allowance) return { kind: "open" };
   const v = allowanceVerdict(snap.allowance, slotMinute(session), snap.visits, nowMinute(new Date(), zone));
-  if (!v.exhausted) return { kind: "open", overridden: false };
-  const facts: AllowanceFacts = {
+  if (!v.exhausted) return { kind: "open" };
+  return {
+    kind: "allowance_reached",
     used: v.used, limit: v.limit, basis: v.basis,
     ...(v.weeks !== undefined ? { weeks: v.weeks } : {}),
     period: v.period, resetsOn: v.resetsOn,
     ...(v.current !== undefined ? { current: v.current } : {}),
   };
-  if (mode === "ask" && args.allowanceOverrideConfirmed === true) return { kind: "open", overridden: true, facts };
-  return { kind: "allowance_reached", askable: mode === "ask", ...facts };
 }
+
+/** A pack credit a staff door spent, for the caller to tie to the attendance row it writes. */
+export type ClaimedPack = { id: string; creditsRemaining: number };
 
 /**
  * T7 for a staff door that marks without performCheckin (the coach tick
- * route): the Member lock, then the allowance in "ask" mode. MUST be called
- * after lockedClassEligibility in the same transaction, so the Class lock is
- * already held and the order stays Class, then Member.
+ * route): the Member lock, then the allowance in "refuse" mode with the same
+ * fall-through as every other door — a used-up allowance spends one usable
+ * pack credit (Class, then Member, then pack: MUST be called after
+ * lockedClassEligibility in the same transaction, so the Class lock is
+ * already held). An UNKNOWN billing period spends nothing and is refused
+ * (review round 3, M-4). An Unlimited plan is never counted.
+ *
+ * On "open" with a pack, the caller MUST either write the
+ * ClassPackRedemption for the attendance row it creates, or, when no row was
+ * created (the upsert found one), hand the credit back with
+ * returnClaimedPack in the same transaction.
  */
-export async function staffAllowanceAsk(
+export async function staffAllowanceGate(
   tx: Prisma.TransactionClient,
-  args: { tenantId: string; memberId: string; confirmed: boolean; timeZone?: string | null },
+  args: { tenantId: string; memberId: string; timeZone?: string | null },
   session: { id: string; date: Date; startTime: string },
-): Promise<AllowanceGateState> {
+): Promise<{ kind: "open"; pack: ClaimedPack | null } | Exclude<AllowanceGateState, { kind: "open" }>> {
   if (!(await memberLock(tx, args.tenantId, args.memberId))) return { kind: "member_not_found" };
-  return judgeAllowance(
+  const allowance = await judgeAllowance(
     tx,
-    { tenantId: args.tenantId, memberId: args.memberId, allowanceGate: "ask", allowanceOverrideConfirmed: args.confirmed },
+    { tenantId: args.tenantId, memberId: args.memberId, allowanceGate: "refuse" },
     session,
     args.timeZone ?? DEFAULT_TIMEZONE,
   );
+  if (allowance.kind === "open") return { kind: "open", pack: null };
+  if (allowance.kind !== "allowance_reached" || allowance.periodUnknown) return allowance;
+  const pack = await claimPack(tx, args.tenantId, args.memberId);
+  return pack ? { kind: "open", pack } : allowance;
+}
+
+/** Give back a credit staffAllowanceGate spent when the caller ended up writing no attendance row. */
+export async function returnClaimedPack(tx: Prisma.TransactionClient, pack: ClaimedPack): Promise<void> {
+  await tx.memberClassPack.update({
+    where: { id: pack.id },
+    data: { creditsRemaining: { increment: 1 } },
+  });
 }
 
 /**
@@ -763,20 +768,6 @@ async function claimPack(
     select: { creditsRemaining: true },
   });
   return { id: pack.id, creditsRemaining: refreshed?.creditsRemaining ?? 0 };
-}
-
-/** The overrides and facts a success carries for the route to record. */
-function overrideFields(allowance: AllowanceGateState): {
-  overrides?: CheckinOverride[];
-  overAllowance?: AllowanceFacts;
-} {
-  const overrides: CheckinOverride[] = [];
-  const allowanceOverridden = allowance.kind === "open" && allowance.overridden;
-  if (allowanceOverridden) overrides.push(ALLOWANCE_OVERRIDE_REASON);
-  return {
-    ...(overrides.length > 0 ? { overrides } : {}),
-    ...(allowanceOverridden ? { overAllowance: allowance.facts } : {}),
-  };
 }
 
 /**
@@ -1104,10 +1095,9 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     //  - the kiosk, for a member the plan does not cover, spends a usable pack
     //    first (as it always has, so credits do not pile up): not counted, not
     //    gated - the same answer the member app gives that member;
-    //  - otherwise the visit is counted against the allowance; on a refusing
-    //    door (member app, kiosk) a used-up allowance falls through to a
-    //    usable pack, which pays instead and is not counted;
-    //  - staff doors (register, card scanner) never spend a pack: they ask.
+    //  - otherwise the visit is counted against the allowance; at every door
+    //    (member app, kiosk, register, card scanner) a used-up allowance falls
+    //    through to a usable pack, which pays instead and is not counted.
     const kioskPackFirst = method === "kiosk" && !covered;
     const straight = await withTenantContext(tenantId, async (tx) => {
       const { cap, cancelled } = await capacityState(tx, tenantId, instance.classId, classInstanceId, memberId);
@@ -1127,19 +1117,16 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       const refused = await classEligibility(tx, tenantId, memberId, instance.classId, instance.class.name);
       if (refused) return refused;
       let pack = kioskPackFirst ? await claimPack(tx, tenantId, memberId) : null;
-      let allowance: AllowanceGateState = { kind: "open", overridden: false };
       if (!pack) {
-        allowance = await judgeAllowance(tx, args, instance, tenant?.timezone || DEFAULT_TIMEZONE);
+        const allowance = await judgeAllowance(tx, args, instance, tenant?.timezone || DEFAULT_TIMEZONE);
         if (allowance.kind === "member_not_found" || allowance.kind === "duplicate") return allowance;
         if (allowance.kind === "allowance_reached") {
-          // A used-up allowance falls through to a usable pack on a refusing
-          // door (agent default adopted 17 Oct 2026; not an owner decision;
-          // open as PK1). An UNKNOWN billing period is
-          // not a used-up allowance: nothing is spent, the member is refused
-          // (review round 3, M-4).
-          if (!allowance.askable && !allowance.periodUnknown) pack = await claimPack(tx, tenantId, memberId);
+          // A used-up allowance falls through to a usable pack at every door,
+          // staff doors included (owner, 27 Oct 2026: "they get what they
+          // paid for"). An UNKNOWN billing period is not a used-up allowance:
+          // nothing is spent, the member is refused (review round 3, M-4).
+          if (!allowance.periodUnknown) pack = await claimPack(tx, tenantId, memberId);
           if (!pack) return allowance;
-          allowance = { kind: "open", overridden: false };
         }
       }
       const created = await tx.attendanceRecord.create({
@@ -1162,7 +1149,6 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         // A staff override that took the room past its ceiling. The check-in
         // stands; the caller says so.
         overCapacity: cap && cap.taken >= cap.maxCapacity ? cap : undefined,
-        allowance,
         pack,
         subscribed,
       };
@@ -1173,9 +1159,9 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     if (straight.kind === "card_revoked") return { kind: "card_revoked" };
     if (straight.kind === "duplicate") return { kind: "duplicate" };
     if (straight.kind === "allowance_reached") {
-      const { kind, askable, used, limit, basis, weeks, period, resetsOn, current, periodUnknown } = straight;
+      const { kind, used, limit, basis, weeks, period, resetsOn, current, periodUnknown } = straight;
       return {
-        kind, askable, used, limit, basis,
+        kind, used, limit, basis,
         ...(weeks !== undefined ? { weeks } : {}),
         ...(period ? { period } : {}),
         ...(resetsOn ? { resetsOn } : {}),
@@ -1188,7 +1174,6 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     }
     const record = straight.record;
     const overCapacity = straight.overCapacity;
-    const overrides = overrideFields(straight.allowance);
 
     if (straight.pack) {
       return {
@@ -1196,7 +1181,6 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         record,
         coverage: { kind: "pack", creditsRemaining: straight.pack.creditsRemaining },
         ...(overCapacity ? { overCapacity } : {}),
-        ...overrides,
       };
     }
     if (method === "kiosk" && !straight.subscribed) {
@@ -1205,7 +1189,6 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         record,
         coverage: { kind: "uncovered_kiosk" },
         ...(overCapacity ? { overCapacity } : {}),
-        ...overrides,
       };
     }
 
@@ -1214,7 +1197,6 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       record,
       coverage: { kind: straight.subscribed ? "subscription" : "manual" },
       ...(overCapacity ? { overCapacity } : {}),
-      ...overrides,
     };
   } catch (e: unknown) {
     // Not a failure: performCheckin restarts the whole check-in.

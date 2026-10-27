@@ -10,7 +10,7 @@
 import type { PerformCheckinResult as CheckinResult } from "@/lib/checkin";
 import { tierRefusalSentence, ROSTER_REFUSAL_SENTENCE } from "@/lib/class-tier-gate";
 import { classNotLiveSentence } from "@/lib/class-live";
-import { allowanceRefusalSentence } from "@/lib/class-allowance";
+import { allowanceRefusalSentence, allowanceStaffSentence } from "@/lib/class-allowance";
 import { paymentEvidenceSentence, type PaymentEvidence } from "@/lib/overdue";
 
 export type CheckinRefusalReason =
@@ -37,8 +37,7 @@ export type CheckinRefusal = {
   body: {
     error: string;
     reason: CheckinRefusalReason;
-    askable?: boolean;
-    /** allowance_reached only: the count and the period, so a staff client can word its question. */
+    /** allowance_reached only: the count and the period the sentence was built from. */
     allowance?: {
       used: number;
       limit: number;
@@ -97,6 +96,12 @@ export function checkinRefusal(
     timeZone?: string | null;
     /** A parent checking in a child: the child's name, for the allowance refusal. */
     memberName?: string | null;
+    /**
+     * A staff door (the register, the coach tick): the member's name. The
+     * allowance refusal then reads as the staff sentence
+     * (allowanceStaffSentence) rather than the member's own.
+     */
+    staffMemberName?: string | null;
   } = {},
 ): CheckinRefusal | null {
   switch (result.kind) {
@@ -188,15 +193,17 @@ export function checkinRefusal(
         body: { error: tierRefusalSentence(result.className, result.tierName), reason: "tier_not_included" },
       };
     case "allowance_reached":
-      // T7: the count and the date the period resets, in the member's words.
-      // On a staff door the answer is askable: the register confirms and
-      // resends with acknowledged: ["allowance_reached"].
+      // T7: the count and the date the period resets. Every door refuses and
+      // nothing a client sends admits past it (owner decision, 27 Oct 2026):
+      // the member's words at the member app, a parent's and the kiosk; the
+      // staff sentence, naming the member, on a staff door.
       return {
         status: 403,
         body: {
-          error: allowanceRefusalSentence(result, club.memberName ?? null),
+          error: club.staffMemberName
+            ? allowanceStaffSentence(club.staffMemberName, result)
+            : allowanceRefusalSentence(result, club.memberName ?? null),
           reason: "allowance_reached",
-          ...(result.askable ? { askable: true } : {}),
           allowance: {
             used: result.used, limit: result.limit, basis: result.basis,
             ...(result.weeks !== undefined ? { weeks: result.weeks } : {}),
