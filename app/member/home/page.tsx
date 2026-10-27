@@ -1786,10 +1786,12 @@ export default function MemberHomePage() {
       )}
 
       {/* ── Sign In CTA ──
-          G5: shown once the home data has loaded and only while the club
-          allows check-in from the app. The timetable, class sign-up and the
-          allowance line elsewhere are unaffected. */}
-      {homeLoaded && appCheckin !== false && (
+          G5: hidden once the home payload says the club has turned check-in
+          from the app off. While it loads the control shows as before (the
+          page's own landmark); the route refuses either way, and the sheet
+          below closes if the answer is off. The timetable, class sign-up and
+          the allowance line elsewhere are unaffected. */}
+      {appCheckin !== false && (
       <div className="px-5 mb-6" data-testid="home-checkin-cta">
         <button
           onClick={() => setShowSignIn(true)}
