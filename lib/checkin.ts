@@ -42,6 +42,13 @@
 // (`overrides: ["allowance_reached"]`, `overAllowance`) are left as written.
 // A check-in paid by a class pack is not counted and not gated.
 //
+// COACH ONE-OFF (G4, owner 27 Oct 2026): the one exception to the squad list,
+// the plan restriction and the allowance above. A staff user, from a session's
+// register, admits a named member to THAT session with a reason (`oneOff`,
+// method "admin" only). It is not counted and spends no pack; the hold, waiver
+// and kids-class questions still apply (the route asks them), and it is
+// recorded in ClassOneOff beside the attendance row it admitted.
+//
 // Lock order on EVERY check-in write transaction: Class FOR UPDATE
 // (capacityState), then the Member row (memberLock: FOR NO KEY UPDATE, see
 // there for why not FOR UPDATE), then the eligibility reads (classEligibility:
@@ -142,6 +149,7 @@ import {
   type IsoDate,
 } from "@/lib/class-allowance";
 import { readAllowanceSnapshot } from "@/lib/class-allowance-count";
+import { oneOffReason } from "@/lib/one-off";
 
 
 /**
@@ -241,6 +249,18 @@ export type PerformCheckinArgs = {
    * route read before the lock.
    */
   expectedCardVersion?: number;
+  /**
+   * G4 (owner, 27 Oct 2026): a coach's one-off. A staff user admits this
+   * member to THIS session from its register, with a reason. Only for
+   * `method: "admin"` (anything else answers "error" and writes nothing).
+   * It skips exactly three gates: the squad list, the plan restriction and
+   * the class allowance. It spends no pack and is not counted (the
+   * ClassOneOff row excludes the visit in lib/class-allowance-count.ts). Every
+   * other gate runs as the caller set it; the lock order is unchanged (Class,
+   * then Member). The attendance row and the ClassOneOff row are written in
+   * the same transaction. `grantedById` is the session's user, never input.
+   */
+  oneOff?: { reason: string; grantedById: string };
 };
 
 /** The session row and the class facts every door reads before the write transaction. */
@@ -302,6 +322,8 @@ export type PerformCheckinResult =
        * let the room quietly fill past what the coach planned for.
        */
       overCapacity?: { taken: number; maxCapacity: number };
+      /** G4: the visit was admitted as a coach's one-off (not counted, no pack). */
+      oneOff?: { id: string; reason: string };
     }
   | { kind: "class_not_found" }
   | { kind: "class_full"; taken: number; maxCapacity: number }
@@ -835,6 +857,18 @@ export async function performCheckin(args: PerformCheckinArgs): Promise<PerformC
 async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<PerformCheckinResult> {
   const { tenantId, memberId, classInstanceId, method } = args;
 
+  // G4: a one-off is a deliberate staff action at the register, nothing else.
+  // A caller that passes one on another door, or with no valid reason, is a
+  // bug: refuse it before anything is read or written.
+  let oneOff: { reason: string; grantedById: string } | null = null;
+  if (args.oneOff) {
+    const reason = oneOffReason(args.oneOff.reason);
+    if (method !== "admin" || args.requireCoverage || !reason || !args.oneOff.grantedById) {
+      return { kind: "error", error: new Error("A one-off is only for a staff mark at the register, with a reason") };
+    }
+    oneOff = { reason, grantedById: args.oneOff.grantedById };
+  }
+
   // Validate the class instance belongs to this tenant + load rank requirements + tenant config.
   // D6: a caller that already read it in this request (the card scanner, once
   // per stack of cards) hands it over; it must be this session of this club.
@@ -1121,6 +1155,45 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       const subscribed = memberRecord
         ? hasActiveSubscription
         : !!locked.stripeSubscriptionId && locked.paymentStatus === "paid";
+      if (oneOff) {
+        // G4: a coach's one-off skips the squad list, the plan restriction and
+        // the allowance, and spends no pack. Judging the allowance is what
+        // reports a member already in this session as "duplicate", so that is
+        // asked here instead, under the same Member lock.
+        const already = await tx.attendanceRecord.findFirst({
+          where: { tenantId, memberId, classInstanceId },
+          select: { id: true },
+        });
+        if (already) return { kind: "duplicate" as const };
+        const created = await tx.attendanceRecord.create({
+          data: {
+            tenantId,
+            memberId,
+            classInstanceId,
+            checkInMethod: method,
+            checkedInById: args.checkedInByUserId ?? null,
+          },
+        });
+        const row = await tx.classOneOff.create({
+          data: {
+            tenantId,
+            classInstanceId,
+            memberId,
+            attendanceRecordId: created.id,
+            grantedById: oneOff.grantedById,
+            reason: oneOff.reason,
+          },
+          select: { id: true, reason: true },
+        });
+        return {
+          kind: "created" as const,
+          record: created,
+          overCapacity: cap && cap.taken >= cap.maxCapacity ? cap : undefined,
+          pack: null,
+          subscribed,
+          oneOff: row,
+        };
+      }
       const refused = await classEligibility(tx, tenantId, memberId, instance.classId, instance.class.name);
       if (refused) return refused;
       let pack = kioskPackFirst ? await claimPack(tx, tenantId, memberId) : null;
@@ -1158,6 +1231,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         overCapacity: cap && cap.taken >= cap.maxCapacity ? cap : undefined,
         pack,
         subscribed,
+        oneOff: null,
       };
     });
     if (straight.kind === "tier_not_included" || straight.kind === "roster_not_listed") return straight;
@@ -1204,6 +1278,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       record,
       coverage: { kind: straight.subscribed ? "subscription" : "manual" },
       ...(overCapacity ? { overCapacity } : {}),
+      ...(straight.oneOff ? { oneOff: straight.oneOff } : {}),
     };
   } catch (e: unknown) {
     // Not a failure: performCheckin restarts the whole check-in.

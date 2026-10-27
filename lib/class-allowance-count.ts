@@ -12,7 +12,8 @@
  * (unmark, then this check-in, then the edit); a competing check-in, an undo
  * batch, a deletion or the webhook's period write all wait on the Member
  * lock. Counted rows: not imports, not cancelled sessions, not class-pack
- * redemptions, not the judged session. The member portal reads the same way
+ * redemptions, not a coach's one-off (ClassOneOff, G4), not the judged
+ * session. The member portal reads the same way
  * for "now".
  */
 import type { Prisma } from "@prisma/client";
@@ -162,6 +163,9 @@ export async function readAllowanceSnapshot(
                 AND ci."date" <= ${toIso}::timestamp
                 AND NOT EXISTS (
                   SELECT 1 FROM "ClassPackRedemption" r WHERE r."attendanceRecordId" = a."id"
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM "ClassOneOff" o WHERE o."attendanceRecordId" = a."id"
                 )
            ), '[]'::json) AS "visits"
   `;

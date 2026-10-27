@@ -319,6 +319,9 @@ async function walkTenant(
         });
         if (instances.length === 0) return 0;
         const instanceIds = instances.map((i) => i.id);
+        // G4: one-offs cascade from their attendance row; deleted first anyway
+        // so the purge does not lean on the cascade (Tenant FK is RESTRICT).
+        await tx.classOneOff.deleteMany({ where: { classInstanceId: { in: instanceIds } } });
         await tx.attendanceRecord.deleteMany({ where: { classInstanceId: { in: instanceIds } } });
         await tx.classWaitlist.deleteMany({ where: { classInstanceId: { in: instanceIds } } });
         await tx.classInstance.deleteMany({ where: { id: { in: instanceIds } } });
