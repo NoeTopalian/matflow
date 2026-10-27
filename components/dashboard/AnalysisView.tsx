@@ -23,7 +23,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import { formatPct, formatRatio, ratioCounts } from "@/components/dashboard/reports-primitives";
-import { formatChange, pctChange, percent } from "@/lib/percent";
+import { formatChange, MONTH_SO_FAR, pctChange, percent } from "@/lib/percent";
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541"];
 const STATUS_COLORS: Record<string, string> = { active: "#67BA90", taster: "#C9F990", inactive: "#EB3163", cancelled: "#8E1F57" };
@@ -404,20 +404,24 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             value: metrics.totalMembers,
             // The change pill is the change in members JOINED (the Reports
             // movement definition: new + rejoined, imports never), with its two counts.
-            sub: `${metrics.newThisMonth} joined this month · ${metrics.newLastMonth} last month${metrics.joinedEstimated ? " · partly estimated" : ""}`,
+            // This month runs from the 1st to now, against the whole of last
+            // month (review finding 1, 27 Oct 2026). The pill is too narrow
+            // for the words on a phone (two cards a row), so the line under
+            // the figure says it and the pill's accessible name says it in full.
+            sub: `${metrics.newThisMonth} joined so far this month · ${metrics.newLastMonth} in all of last month${metrics.joinedEstimated ? " · partly estimated" : ""}`,
             icon: Users,
             pct: memberDelta,
             counts: [metrics.newThisMonth, metrics.newLastMonth] as const,
-            pillLabel: "members joined, this month vs last",
+            pillLabel: "members joined",
           },
           {
             label: "Check-ins",
             value: metrics.checkinsThisMonth,
-            sub: `this month · ${metrics.checkinsLastMonth} last month`,
+            sub: `so far this month · ${metrics.checkinsLastMonth} in all of last month`,
             icon: CalendarCheck,
             pct: checkinDelta,
             counts: [metrics.checkinsThisMonth, metrics.checkinsLastMonth] as const,
-            pillLabel: "check-ins, this month vs last",
+            pillLabel: "check-ins",
           },
           {
             label: "Engagement",
@@ -453,7 +457,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               {pct !== null && counts && (
                 <div
                   data-testid="analysis-change-pill"
-                  aria-label={`${changePillText(counts[0], counts[1])}: ${pillLabel}`}
+                  aria-label={`${formatChange(counts[0], counts[1], MONTH_SO_FAR)}: ${pillLabel}`}
                   className="flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap"
                   style={{
                     background: pct >= 0 ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",

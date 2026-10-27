@@ -66,7 +66,15 @@ import {
   type TooltipPayload,
 } from "./reports-primitives";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
-import { formatChange, formatGuardedRatio as funnelRate, formatGuardedRatioNote as funnelRateNote } from "@/lib/percent";
+import {
+  changeCounts,
+  formatChange,
+  formatGuardedRatio as funnelRate,
+  formatGuardedRatioNote as funnelRateNote,
+  MONTH_SO_FAR,
+  WEEK_SO_FAR,
+  type ChangePeriods,
+} from "@/lib/percent";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import InitiativesPanel from "@/components/dashboard/InitiativesPanel";
@@ -288,16 +296,24 @@ const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled t
  * and the owner instruction of 24 Oct 2026): "+13% (45 vs 40)". The
  * percentage is lib/percent's `formatChange` (multiply first), so 229 vs 200
  * reads "+15%" here, in Analysis and in the AI report alike.
+ *
+ * `periods` names the two sides when the current one is not over yet (this
+ * week since Monday against all of last week): "-90% (12 so far this week vs
+ * 120 all last week)". With no previous figure there is no percentage, only
+ * the difference: "+12", or "+12 (12 so far this week vs 0 all last week)".
  */
-export function trendDelta(current: number, previous: number) {
+export function trendDelta(current: number, previous: number, periods?: ChangePeriods) {
   const delta = current - previous;
   if (delta === 0) return null;
-  if (previous === 0) return `${delta > 0 ? "+" : ""}${formatNumber(delta)}`;
-  return formatChange(current, previous);
+  if (previous === 0) {
+    const diff = `${delta > 0 ? "+" : ""}${formatNumber(delta)}`;
+    return periods ? `${diff} ${changeCounts(current, previous, periods)}` : diff;
+  }
+  return formatChange(current, previous, periods);
 }
 
-function trendText(current: number, previous: number) {
-  return trendDelta(current, previous) ?? "No change";
+function trendText(current: number, previous: number, periods?: ChangePeriods) {
+  return trendDelta(current, previous, periods) ?? "No change";
 }
 
 function trendTone(current: number, previous: number) {
@@ -527,12 +543,15 @@ function TrendBadge({
   current,
   previous,
   label,
+  periods,
 }: {
   current: number;
   previous: number;
-  label: string;
+  label?: string;
+  /** The current period is not over: the figures say "so far this week vs all last week". */
+  periods?: ChangePeriods;
 }) {
-  const delta = trendDelta(current, previous);
+  const delta = trendDelta(current, previous, periods);
   // Nothing moved: say nothing. A pill announcing "no change" costs more room than it earns.
   if (delta === null) return null;
 
@@ -543,14 +562,18 @@ function TrendBadge({
   // Both inks on an 8% tint measure ≥4.58:1 (assessment lane 3, 2026-09-23).
   const ink = up ? "var(--hue-success-ink)" : "var(--hue-warning-ink)";
   const tint = up ? "var(--hue-success)" : "var(--hue-warning)";
+  // With periods named the text is longer ("-90% (12 so far this week vs 120
+  // all last week)"), so it may wrap inside the tile rather than be clipped
+  // at its edge; the rounded rectangle holds two lines where a pill would not.
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] whitespace-nowrap"
+      data-testid="trend-badge"
+      className="inline-flex items-start gap-1 rounded-[var(--r-sm)] px-2 py-1 text-[11px] max-w-full"
       style={{ color: ink, background: `color-mix(in srgb, ${tint} 8%, transparent)` }}
     >
-      <Icon className="w-3 h-3 shrink-0" />
+      <Icon className="w-3 h-3 shrink-0 mt-px" />
       <span className="font-semibold tabular-nums">{delta}</span>
-      <span style={{ color: "var(--tx-3)" }}>{label}</span>
+      {label && <span style={{ color: "var(--tx-3)" }}>{label}</span>}
     </span>
   );
 }
@@ -635,7 +658,7 @@ function MetricCard({
   value: ReactNode;
   detail?: string;
   primaryColor: string;
-  trend?: { current: number; previous: number; label: string };
+  trend?: { current: number; previous: number; label?: string; periods?: ChangePeriods };
   compactValue?: boolean;
   /** Drill-through target — the member rows behind this tile (Track A). */
   href?: string;
@@ -678,7 +701,7 @@ function MetricCard({
             shrinks between filters and the rows beneath never shift. */}
         {trend && (
           <div className="mt-2 min-w-0 min-h-[26px]">
-            <TrendBadge current={trend.current} previous={trend.previous} label={trend.label} />
+            <TrendBadge current={trend.current} previous={trend.previous} label={trend.label} periods={trend.periods} />
           </div>
         )}
       </div>
@@ -802,12 +825,15 @@ function InsightRow({
   value,
   detail,
   color,
+  wrapValue = false,
 }: {
   icon: ElementType;
   label: string;
   value: string;
   detail: string;
   color: string;
+  /** Let a long value (a change with its periods named) wrap rather than be cut off. */
+  wrapValue?: boolean;
 }) {
   return (
     <div className="flex gap-3 py-3 border-b last:border-b-0" style={{ borderColor: "var(--bd-default)" }}>
@@ -816,7 +842,7 @@ function InsightRow({
       </div>
       <div className="min-w-0">
         <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--tx-3)" }}>{label}</p>
-        <p className="text-sm font-semibold truncate mt-0.5" style={{ color: "var(--tx-1)" }}>{value}</p>
+        <p className={`text-sm font-semibold mt-0.5 ${wrapValue ? "break-words" : "truncate"}`} style={{ color: "var(--tx-1)" }}>{value}</p>
         <p className="text-xs mt-0.5" style={{ color: "var(--tx-2)" }}>{detail}</p>
       </div>
     </div>
@@ -1204,7 +1230,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           value={formatNumber(summary.attendanceThisWeek)}
           detail={filterSuffix ? `Check-ins since Monday · ${filterSuffix}` : "Check-ins since Monday"}
           primaryColor={primaryColor}
-          trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, label: "on last week" }}
+          // Monday to now against the whole of last week (lib/reports): the
+          // badge says so, or a Monday morning reads as a collapse.
+          trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, periods: WEEK_SO_FAR }}
         />
         <MetricCard
           icon={UserPlus}
@@ -1212,7 +1240,8 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           value={formatNumber(summary.newMembersThisMonth)}
           detail={[NEW_SCOPE, monthPairEstimateNote(membership)].filter(Boolean).join(" · ")}
           primaryColor={primaryColor}
-          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: "on last month" }}
+          // The 1st to now against the whole of last month.
+          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, periods: MONTH_SO_FAR }}
           href={monthDrillHref("new-this-month", period)}
         />
         <MetricCard
@@ -1286,8 +1315,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <InsightRow
               icon={Activity}
               label="Attendance pulse"
-              value={trendText(summary.attendanceThisWeek, summary.attendanceLastWeek)}
-              detail={`${formatNumber(summary.attendanceThisWeek)} this week, ${formatNumber(summary.attendanceLastWeek)} last week`}
+              value={trendText(summary.attendanceThisWeek, summary.attendanceLastWeek, WEEK_SO_FAR)}
+              wrapValue
+              detail="This week counts from Monday; last week is the whole week"
               color={trendTone(summary.attendanceThisWeek, summary.attendanceLastWeek) === "down" ? "#f59e0b" : "#22c55e"}
             />
             <InsightRow

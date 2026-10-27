@@ -50,6 +50,7 @@ import ReportsView, {
 import NetNewMembersCard from "@/components/dashboard/NetNewMembersCard";
 import MembersList from "@/components/dashboard/MembersList";
 import { createEmptyReportsData, type ReportsData } from "@/lib/reports";
+import { MONTH_SO_FAR, WEEK_SO_FAR } from "@/lib/percent";
 import { emptyMembershipReport, type MembershipReport } from "@/lib/membership-report";
 import {
   combinedBasis,
@@ -206,9 +207,29 @@ describe("estimate labels: Reports screen", () => {
     expect(trendDelta(5, 0)).toBe("+5");
     expect(trendDelta(4, 4)).toBeNull();
     render(<ReportsView data={reports()} attribution={ATTRIBUTION as never} primaryColor="#3b82f6" />);
-    // The Attendance this week pill and the Attendance pulse insight.
-    expect(screen.getAllByText("+13% (45 vs 40)")).toHaveLength(2);
-    expect(screen.getAllByText("on last week").length).toBeGreaterThan(0);
+    // The Attendance this week pill and the Attendance pulse insight: this
+    // week is Monday to now, last week the whole week, and both say so
+    // (review finding 1, 27 Oct 2026).
+    expect(screen.getAllByText("+13% (45 so far this week vs 40 all last week)")).toHaveLength(2);
+    expect(screen.queryByText("on last week")).toBeNull();
+    expect(screen.getByText("This week counts from Monday; last week is the whole week")).toBeTruthy();
+  });
+
+  it("a part period against a whole one says so: a Monday morning, and the month so far", () => {
+    expect(trendDelta(12, 120, WEEK_SO_FAR)).toBe("-90% (12 so far this week vs 120 all last week)");
+    expect(trendDelta(3, 10, MONTH_SO_FAR)).toBe("-70% (3 so far this month vs 10 all last month)");
+    expect(trendDelta(5, 0, WEEK_SO_FAR)).toBe("+5 (5 so far this week vs 0 all last week)");
+    expect(trendDelta(4, 4, WEEK_SO_FAR)).toBeNull();
+    const data = reports();
+    data.summary = { ...data.summary, attendanceThisWeek: 12, attendanceLastWeek: 120, newMembersThisMonth: 3, newMembersLastMonth: 10 };
+    render(<ReportsView data={data} attribution={ATTRIBUTION as never} primaryColor="#3b82f6" />);
+    const badges = screen.getAllByTestId("trend-badge").map((b) => b.textContent);
+    expect(badges).toEqual([
+      "-90% (12 so far this week vs 120 all last week)",
+      "-70% (3 so far this month vs 10 all last month)",
+    ]);
+    // The Owner Insights pulse row prints the same text.
+    expect(screen.getAllByText("-90% (12 so far this week vs 120 all last week)")).toHaveLength(2);
   });
 });
 

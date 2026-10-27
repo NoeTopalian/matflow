@@ -87,13 +87,31 @@ export function pctChange(current: number, previous: number): number | null {
   return Math.round(((current - previous) * 100) / previous);
 }
 
+/** What each side of a change covers, when the two are not like for like: a part period against a whole one. */
+export type ChangePeriods = { current: string; previous: string };
+
+/** A part period (this week, Monday to now) against the whole of the one before. */
+export const WEEK_SO_FAR: ChangePeriods = { current: "so far this week", previous: "all last week" };
+/** A part period (this month, the 1st to now) against the whole of the one before. */
+export const MONTH_SO_FAR: ChangePeriods = { current: "so far this month", previous: "all last month" };
+
+/** "(56 vs 50)", or with periods "(12 so far this week vs 120 all last week)". */
+export function changeCounts(current: number, previous: number, periods?: ChangePeriods): string {
+  return periods
+    ? `(${count(current)} ${periods.current} vs ${count(previous)} ${periods.previous})`
+    : `(${count(current)} vs ${count(previous)})`;
+}
+
 /**
  * A percentage change with the two figures it compares: "+12% (56 vs 50)",
- * "-4% (48 vs 50)", "0% (50 vs 50)". With nothing to compare against
- * (previous is 0) there is no percentage: "—".
+ * "-4% (48 vs 50)", "0% (50 vs 50)". When the current period is not over
+ * yet, `periods` says so beside the figures: "-90% (12 so far this week vs
+ * 120 all last week)" (review finding 1, 27 Oct 2026: a Monday morning read
+ * "-90%" with nothing saying the week had only begun). With nothing to
+ * compare against (previous is 0) there is no percentage: "—".
  */
-export function formatChange(current: number, previous: number): string {
+export function formatChange(current: number, previous: number, periods?: ChangePeriods): string {
   const pct = pctChange(current, previous);
   if (pct === null) return "—";
-  return `${pct > 0 ? "+" : ""}${pct}% (${count(current)} vs ${count(previous)})`;
+  return `${pct > 0 ? "+" : ""}${pct}% ${changeCounts(current, previous, periods)}`;
 }
