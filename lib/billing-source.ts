@@ -34,25 +34,12 @@ function toDate(d: Date | string | null | undefined): Date | null {
 }
 
 /**
- * "Imported from TeamUp on 3 Oct 2026" (owner decision, 27 Oct 2026). Imports
- * no longer update an existing member, so the date is the one import that
- * brought the member over and never moves. It used to read "status as of",
- * with an 8-day staleness warning that, once the date stopped moving, would
- * have stayed on for good; both are retired. Null for a member MatFlow bills.
- */
-export function importedFromTeamUpLabel(
-  m: { billedBy?: string | null; billingStatusAsOf?: Date | string | null } | null | undefined,
-): string | null {
-  if (!isBilledElsewhere(m)) return null;
-  const d = toDate(m?.billingStatusAsOf ?? null);
-  return d
-    ? `Imported from TeamUp on ${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })}`
-    : "Imported from TeamUp, date unknown";
-}
-
-/**
  * Who bills the member and when they came over, without saying TeamUp twice:
  * "Billed by TeamUp · imported 3 Oct 2026". Null for a member MatFlow bills.
+ * Owner decision, 27 Oct 2026: imports no longer update an existing member,
+ * so the date never moves. It used to read "status as of", with an 8-day
+ * staleness warning that, once the date stopped moving, would have stayed on
+ * for good; both are retired.
  */
 export function billingSourceLabel(
   m: { billedBy?: string | null; billingStatusAsOf?: Date | string | null } | null | undefined,

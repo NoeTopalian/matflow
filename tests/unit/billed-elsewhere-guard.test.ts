@@ -7,7 +7,6 @@ import { vi, describe, it, expect, beforeEach, beforeAll } from "vitest";
 import {
   BILLED_ELSEWHERE_REFUSAL,
   billingSourceLabel,
-  importedFromTeamUpLabel,
 } from "@/lib/billing-source";
 import * as billingSource from "@/lib/billing-source";
 
@@ -109,8 +108,8 @@ describe("a card subscription for a member TeamUp bills is refused before any pr
 });
 
 // Owner decision, 27 Oct 2026: imports no longer update an existing member,
-// so the date never moves. "status as of <date>" became "Imported from TeamUp
-// on <date>", and the 8-day staleness warning is gone.
+// so the date never moves. "status as of <date>" became "imported <date>",
+// and the 8-day staleness warning is gone.
 describe("billing source labels", () => {
   it("labels only TeamUp-billed members, with the import date or 'date unknown'", () => {
     expect(billingSourceLabel({ billedBy: "matflow", billingStatusAsOf: new Date("2026-10-03T08:00:00Z") })).toBeNull();
@@ -120,16 +119,12 @@ describe("billing source labels", () => {
     expect(billingSourceLabel({ billedBy: "teamup", billingStatusAsOf: null })).toBe("Billed by TeamUp · import date unknown");
   });
 
-  it("gives the import line on its own", () => {
-    expect(importedFromTeamUpLabel({ billedBy: "teamup", billingStatusAsOf: "2026-09-20T09:00:00.000Z" })).toBe("Imported from TeamUp on 20 Sept 2026");
-    expect(importedFromTeamUpLabel({ billedBy: "matflow", billingStatusAsOf: "2026-09-20T09:00:00.000Z" })).toBeNull();
-  });
-
   it("has no staleness rule left: a months-old import reads the same as yesterday's", () => {
     const keys = Object.keys(billingSource);
     expect(keys).not.toContain("BILLING_STATUS_STALE_AFTER_DAYS");
     expect(keys).not.toContain("isBillingStatusStale");
     expect(keys).not.toContain("staleBillingWarning");
+    expect(keys).not.toContain("importedFromTeamUpLabel");
     expect(billingSourceLabel({ billedBy: "teamup", billingStatusAsOf: new Date("2026-01-03T08:00:00Z") })).toBe(
       "Billed by TeamUp · imported 3 Jan 2026",
     );
