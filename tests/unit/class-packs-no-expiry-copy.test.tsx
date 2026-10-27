@@ -19,7 +19,7 @@ beforeEach(() => {
 describe("member class pack list", () => {
   it("an owned pack reads \"6 classes left\", with no expiry date or days-left count", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
-      owned: [{ id: "mp1", packId: "p1", name: "Ten classes", creditsRemaining: 6, totalCredits: 10, purchasedAt: "2026-10-01T10:00:00.000Z", expiresAt: null }],
+      owned: [{ id: "mp1", packId: "p1", name: "Ten classes", creditsRemaining: 6, totalCredits: 10, purchasedAt: "2026-10-01T10:00:00.000Z" }],
       available: [{ id: "p1", name: "Ten classes", description: null, totalCredits: 10, pricePence: 8000, currency: "GBP" }],
     }), { status: 200 }));
     const { container } = render(<ClassPacksWidget />);

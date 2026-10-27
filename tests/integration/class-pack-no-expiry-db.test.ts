@@ -1,17 +1,16 @@
 // G6 (owner decision, 27 Oct 2026): "It should be till it runs out". A class
-// pack is usable until its credits are used; MemberClassPack.expiresAt NULL
-// means it never expires (migration 20261027120100_class_pack_no_expiry).
+// pack is usable until its credits are used or it is refunded. The code does
+// not read MemberClassPack.expiresAt or the legacy status "expired".
 //
 // Against the real database, through performCheckin (the path every door
 // takes to claim a pack):
 //   - a pack with NULL expiry is claimed;
+//   - a pack whose old expiry date has passed is claimed (a pack bought
+//     through the previous build during the deploy carries such a date);
+//   - a legacy "expired" pack with credits left is claimed;
 //   - with several usable packs, the oldest purchase is spent first;
-//   - a stray active pack whose non-NULL expiry has passed is still not spent
-//     (the rule as written; the migration made such a row impossible);
 //   - a refunded pack is never spent;
-//   - the CHECK MemberClassPack_expired_has_expiry_check refuses marking a
-//     never-expiring pack "expired" (the guard for the previous build's
-//     lazy-expiry write during the deploy window).
+//   - the schema end state: both columns nullable, no expiry CHECK.
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { withRlsBypass } from "@/lib/prisma-tenant";
@@ -117,15 +116,23 @@ describe.skipIf(!HAS_DB)("class packs never expire (G6)", () => {
     expect((await packState(ids.newer))?.creditsRemaining).toBe(3);
   });
 
-  it("a stray active pack whose expiry has passed is not spent; the never-expiring one is", async () => {
-    const ids = await resetPacks([
-      { key: "stale", expiresAt: new Date(Date.now() - 86_400_000), purchasedAt: new Date("2026-06-01T10:00:00Z") },
-      { key: "forever", expiresAt: null, purchasedAt: new Date("2026-09-01T10:00:00Z") },
-    ]);
+  it("a pack whose old expiry date has passed is claimed", async () => {
+    const ids = await resetPacks([{ key: "dated", expiresAt: new Date(Date.now() - 86_400_000), purchasedAt: new Date("2026-06-01T10:00:00Z") }]);
     const r = await checkIn(instances[2]);
     expect(r.kind).toBe("success");
-    expect((await packState(ids.stale))?.creditsRemaining).toBe(3);
-    expect((await packState(ids.forever))?.creditsRemaining).toBe(2);
+    if (r.kind === "success") expect(r.coverage).toMatchObject({ kind: "pack", creditsRemaining: 2 });
+    expect(await packState(ids.dated)).toMatchObject({ creditsRemaining: 2, status: "active" });
+  });
+
+  it("a legacy expired pack with credits left is claimed, before a newer pack, and its status is not rewritten", async () => {
+    const ids = await resetPacks([
+      { key: "legacy", expiresAt: new Date("2026-07-01T00:00:00Z"), purchasedAt: new Date("2026-04-01T10:00:00Z"), status: "expired" },
+      { key: "newer", expiresAt: null, purchasedAt: new Date("2026-10-01T10:00:00Z") },
+    ]);
+    const r = await checkIn(instances[4]);
+    expect(r.kind).toBe("success");
+    expect(await packState(ids.legacy)).toMatchObject({ creditsRemaining: 2, status: "expired" });
+    expect((await packState(ids.newer))?.creditsRemaining).toBe(3);
   });
 
   it("a refunded pack still stops working", async () => {
@@ -138,17 +145,15 @@ describe.skipIf(!HAS_DB)("class packs never expire (G6)", () => {
     expect(redemptions).toBe(0);
   });
 
-  it("the database refuses marking a never-expiring pack expired, and allows it for a dated one", async () => {
-    const ids = await resetPacks([
-      { key: "forever", expiresAt: null, purchasedAt: new Date("2026-09-01T10:00:00Z") },
-      { key: "dated", expiresAt: new Date(Date.now() - 86_400_000), purchasedAt: new Date("2026-06-01T10:00:00Z") },
-    ]);
-    await expect(
-      withRlsBypass((tx) => tx.memberClassPack.updateMany({ where: { id: ids.forever }, data: { status: "expired" } })),
-    ).rejects.toThrow(/MemberClassPack_expired_has_expiry_check|check constraint/i);
-    expect((await packState(ids.forever))?.status).toBe("active");
-    await withRlsBypass((tx) => tx.memberClassPack.updateMany({ where: { id: ids.dated }, data: { status: "expired" } }));
-    expect((await packState(ids.dated))?.status).toBe("expired");
+  it("schema end state: expiresAt and validityDays nullable, and no expiry CHECK on MemberClassPack", async () => {
+    const cols = await withRlsBypass((tx) => tx.$queryRaw<Array<{ table_name: string; column_name: string; is_nullable: string }>>`
+      select table_name, column_name, is_nullable from information_schema.columns
+      where table_schema = 'public' and ((table_name = 'MemberClassPack' and column_name = 'expiresAt') or (table_name = 'ClassPack' and column_name = 'validityDays'))`);
+    expect(cols).toHaveLength(2);
+    for (const c of cols) expect(c.is_nullable).toBe("YES");
+    const checks = await withRlsBypass((tx) => tx.$queryRaw<Array<{ conname: string }>>`
+      select conname from pg_constraint where conrelid = '"MemberClassPack"'::regclass and contype = 'c'`);
+    expect(checks.map((c) => c.conname)).not.toContain("MemberClassPack_expired_has_expiry_check");
   });
 
   it("a pack template can be stored with no validity period", async () => {

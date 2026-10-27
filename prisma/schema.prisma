@@ -1168,11 +1168,12 @@ model MemberClassPack {
   pack                  ClassPack @relation(fields: [packId], references: [id])
   creditsRemaining      Int
   purchasedAt           DateTime  @default(now())
-  // NULL = never expires (owner decision, 27 Oct 2026). Every pack sold from
-  // then on is NULL; a non-NULL past date is still honoured as expired.
+  // Not read since G6 (owner decision, 27 Oct 2026: a pack lasts until its
+  // credits are used or it is refunded). Packs sold from then on store NULL;
+  // a date left on an older pack is history only.
   expiresAt             DateTime?
   stripePaymentIntentId String?   @unique
-  status                String    @default("active") // active | expired | refunded
+  status                String    @default("active") // active | refunded; legacy "expired" (no longer written) is usable like active
 
   redemptions ClassPackRedemption[]
 

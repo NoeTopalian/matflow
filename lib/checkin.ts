@@ -392,9 +392,9 @@ export async function restorePackCreditsForAttendance(
   // (app/api/payments/[id]/refund and the Stripe webhook) set
   // { status: "refunded", creditsRemaining: 0 } — the member already has their
   // money back, so handing them a usable credit as well would be paying them
-  // twice for the same class. An EXPIRED pack still gets its credit back: the
-  // member paid for it and was not compensated, and expiry is enforced at
-  // redemption time anyway, so the restored credit is inert rather than free.
+  // twice for the same class. Any other pack gets its credit back: the member
+  // paid for it and was not compensated. Since G6 (27 Oct 2026) packs do not
+  // expire, so a legacy "expired" pack's restored credit is usable again.
   //
   // The pack's `status` itself is deliberately left untouched in both cases:
   // resurrecting it to "active" would be a billing decision, not an undo.
@@ -738,14 +738,18 @@ export async function returnClaimedPack(tx: Prisma.TransactionClient, tenantId: 
  * Spend one credit of the member's usable pack (oldest purchase first, so
  * credits are used in the order bought), or null when there is none.
  *
- * G6 (owner decision, 27 Oct 2026): a pack lasts until its credits are used,
- * so `expiresAt` is NULL on every pack sold from then on, and the migration
- * cleared it on every pack still active. A non-NULL date in the past can no
- * longer occur on an active pack; if one ever does, the old rule still holds
- * and it is not spent (it is marked expired when the member's pack list is
- * next read). A refunded pack is status "refunded" and never matches. The decrement is a single guarded UPDATE, so two
- * concurrent check-ins can never both take the last credit (security audit
- * iteration 2 / M10). Called after the Member lock: Class, Member, pack.
+ * G6 (owner decision, 27 Oct 2026): "It should be till it runs out". A pack is
+ * usable while it has credits and has not been refunded. `expiresAt` is not
+ * read: packs sold from then on store NULL, and a date left on an older pack
+ * (including one bought through the previous build during the deploy) means
+ * nothing. The legacy status "expired" (written by the old member pack list)
+ * means nothing either, so such a pack with credits left is spent like any
+ * other. A refunded pack is status "refunded" with 0 credits and never
+ * matches.
+ *
+ * The decrement is a single guarded UPDATE, so two concurrent check-ins can
+ * never both take the last credit (security audit iteration 2 / M10). Called
+ * after the Member lock: Class, Member, pack.
  */
 async function claimPack(
   tx: Prisma.TransactionClient,
@@ -756,9 +760,8 @@ async function claimPack(
     where: {
       memberId,
       tenantId,
-      status: "active",
+      status: { not: "refunded" },
       creditsRemaining: { gt: 0 },
-      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
     },
     orderBy: [{ purchasedAt: "asc" }, { id: "asc" }],
     select: { id: true },

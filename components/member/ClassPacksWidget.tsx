@@ -11,8 +11,6 @@ type OwnedPack = {
   creditsRemaining: number;
   totalCredits: number;
   purchasedAt: string;
-  /** G6: NULL on every pack sold from 27 Oct 2026 (never expires). Not shown. */
-  expiresAt: string | null;
 };
 
 type AvailablePack = {

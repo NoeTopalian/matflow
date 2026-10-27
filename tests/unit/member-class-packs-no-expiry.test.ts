@@ -1,8 +1,10 @@
 // G6 (owner decision, 27 Oct 2026): "It should be till it runs out".
-// GET /api/member/class-packs lists a pack with NULL expiry as active and never
-// marks it expired. A non-NULL past date (which the migration made impossible
-// on an active pack) is still honoured as written: hidden and marked expired.
+// GET /api/member/class-packs lists every pack the member can still use: an
+// active one whatever its old expiry date says, and a legacy "expired" one
+// with credits left. It never reads expiresAt and never writes "expired".
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 vi.mock("next/server", () => ({
   NextResponse: {
@@ -32,57 +34,49 @@ vi.mock("@/lib/prisma-tenant", () => ({
 import { GET } from "@/app/api/member/class-packs/route";
 
 const PACK = { name: "Ten", totalCredits: 10 };
-const row = (id: string, expiresAt: Date | null, creditsRemaining = 6) => ({
-  id, packId: "p1", pack: PACK, creditsRemaining, purchasedAt: new Date("2026-09-01T10:00:00Z"), expiresAt, status: "active",
+const row = (id: string, expiresAt: Date | null, status = "active", creditsRemaining = 6) => ({
+  id, packId: "p1", pack: PACK, creditsRemaining, purchasedAt: new Date("2026-09-01T10:00:00Z"), expiresAt, status,
 });
 
 beforeEach(() => {
   vi.clearAllMocks();
   authMock.mockResolvedValue({ user: { id: "u", tenantId: "t1", memberId: "m1", role: "member" } });
   templateFindMany.mockResolvedValue([{ id: "p1", name: "Ten", description: null, totalCredits: 10, validityDays: 90, pricePence: 8000, currency: "GBP" }]);
-  packUpdateMany.mockResolvedValue({ count: 0 });
 });
 
 describe("GET /api/member/class-packs", () => {
-  it("a pack with no expiry is listed, with expiresAt null, and nothing is marked expired", async () => {
-    packFindMany.mockResolvedValue([row("mp1", null)]);
+  it("asks for active packs and legacy expired packs that still have credits, oldest purchase first", async () => {
+    packFindMany.mockResolvedValue([]);
+    await GET();
+    expect(packFindMany.mock.calls[0][0]).toMatchObject({
+      where: {
+        memberId: "m1",
+        tenantId: "t1",
+        OR: [{ status: "active" }, { status: "expired", creditsRemaining: { gt: 0 } }],
+      },
+      orderBy: [{ purchasedAt: "asc" }, { id: "asc" }],
+    });
+    // Refunded packs are not asked for.
+    expect(JSON.stringify(packFindMany.mock.calls[0][0].where)).not.toContain("refunded");
+  });
+
+  it("lists a pack with a past expiry date and a legacy expired pack with credits, and writes nothing", async () => {
+    const past = new Date(Date.now() - 30 * 86_400_000);
+    packFindMany.mockResolvedValue([row("mp-past", past), row("mp-legacy", past, "expired", 4), row("mp-null", null)]);
     const res = await GET();
     const body = (await res.json()) as { owned: Array<Record<string, unknown>>; available: Array<Record<string, unknown>> };
-    expect(body.owned).toEqual([expect.objectContaining({ id: "mp1", creditsRemaining: 6, expiresAt: null })]);
+    expect(body.owned.map((p) => p.id)).toEqual(["mp-past", "mp-legacy", "mp-null"]);
+    expect(body.owned.find((p) => p.id === "mp-legacy")).toMatchObject({ creditsRemaining: 4 });
+    // No expiry is shown to the member, and nothing is marked expired.
+    for (const p of body.owned) expect(p).not.toHaveProperty("expiresAt");
     expect(packUpdateMany).not.toHaveBeenCalled();
     // The validity period is no longer part of what a member is shown.
     expect(body.available[0]).not.toHaveProperty("validityDays");
   });
 
-  it("lists packs in the order their credits are spent: oldest purchase first", async () => {
-    packFindMany.mockResolvedValue([]);
-    await GET();
-    expect(packFindMany.mock.calls[0][0]).toMatchObject({
-      where: { memberId: "m1", tenantId: "t1", status: "active" },
-      orderBy: [{ purchasedAt: "asc" }, { id: "asc" }],
-    });
-  });
-
-  it("a stray active pack with a past expiry is still honoured as expired: hidden and marked, NULL packs untouched", async () => {
-    const past = new Date(Date.now() - 86_400_000);
-    packFindMany.mockResolvedValue([row("mp-old", past), row("mp-new", null)]);
-    const res = await GET();
-    const body = (await res.json()) as { owned: Array<{ id: string }> };
-    expect(body.owned.map((p) => p.id)).toEqual(["mp-new"]);
-    expect(packUpdateMany).toHaveBeenCalledTimes(1);
-    const arg = packUpdateMany.mock.calls[0][0] as { where: Record<string, unknown>; data: unknown };
-    expect(arg.data).toEqual({ status: "expired" });
-    expect(arg.where).toMatchObject({ id: { in: ["mp-old"] }, tenantId: "t1" });
-    // The write itself refuses a NULL-expiry row, matching the database CHECK.
-    expect(arg.where.expiresAt).toMatchObject({ not: null });
-  });
-
-  it("a pack with a future date stays listed", async () => {
-    const future = new Date(Date.now() + 86_400_000);
-    packFindMany.mockResolvedValue([row("mp-dated", future)]);
-    const body = (await (await GET()).json()) as { owned: Array<{ id: string; expiresAt: string }> };
-    expect(body.owned).toHaveLength(1);
-    expect(body.owned[0].expiresAt).toBe(future.toISOString());
-    expect(packUpdateMany).not.toHaveBeenCalled();
+  it("the route source neither reads expiresAt nor writes the status expired", () => {
+    const src = readFileSync(join(process.cwd(), "app/api/member/class-packs/route.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(src).not.toMatch(/expiresAt/);
+    expect(src).not.toMatch(/updateMany|update\(/);
   });
 });
