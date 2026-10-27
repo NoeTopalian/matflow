@@ -1140,13 +1140,7 @@ function SignInSheet({
             <p role="alert" className="text-sm text-center" style={{ color: "var(--member-text-muted)" }}>
               {APP_CHECKIN_OFF_MESSAGE}
             </p>
-            <button
-              onClick={onClose}
-              className="w-full py-3.5 rounded-2xl font-semibold text-sm mt-5"
-              style={{ background: "var(--member-surface)", color: "var(--member-text-muted)", border: "1px solid var(--member-border)" }}
-            >
-              Close
-            </button>
+            {/* Closed with the sheet's own close button and swipe, like every state of this sheet. */}
           </div>
         ) : done ? (
           <div className="flex flex-col items-center py-10 px-5">
