@@ -30,6 +30,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
     fn({
       member: { findFirst: memberFindFirstMock },
       classInstance: { findFirst: instanceFindFirstMock },
+      // G5: the member's own path reads the club's app check-in switch (on).
+      tenant: { findUnique: async () => ({ memberAppCheckin: true }) },
     }),
 }));
 

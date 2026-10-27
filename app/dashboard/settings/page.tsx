@@ -44,6 +44,8 @@ export type TenantSettings = {
   kidsWaiverContent: string | null;
   checkinWindowBeforeMin: number;
   checkinWindowAfterMin: number;
+  /** G5: members may check themselves in from the member app (default on). */
+  memberAppCheckin: boolean;
 };
 
 export type StaffMember = {
@@ -166,6 +168,7 @@ export default async function Settings() {
     kidsWaiverContent: tenant.kidsWaiverContent,
     checkinWindowBeforeMin: tenant.checkinWindowBeforeMin,
     checkinWindowAfterMin: tenant.checkinWindowAfterMin,
+    memberAppCheckin: tenant.memberAppCheckin,
   };
 
   const now = new Date();

@@ -30,7 +30,16 @@ export type CheckinRefusalReason =
   | "venue_not_covered"
   | "tier_not_included"
   | "allowance_reached"
-  | "member_not_found";
+  | "member_not_found"
+  | "app_checkin_off";
+
+/**
+ * G5 (owner decision, 27 Oct 2026): the club has turned off check-in from the
+ * member app. Sent by POST /api/checkin with reason "app_checkin_off" on the
+ * member's own path (a parent for a child included); never by a staff door.
+ */
+export const APP_CHECKIN_OFF_MESSAGE =
+  "Check-ins from the app are turned off at this club. Please check in at the desk or the kiosk.";
 
 export type CheckinRefusal = {
   status: 402 | 403 | 404 | 409;

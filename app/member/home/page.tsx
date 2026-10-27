@@ -1307,6 +1307,10 @@ export default function MemberHomePage() {
   // load used to show "No classes coming up" and "0 classes" under the error
   // banner (UI-RULES §7: an HTTP error is never an empty state).
   const [homeLoaded, setHomeLoaded]         = useState(false);
+  // G5 (owner decision, 27 Oct 2026): the club may turn off check-in from the
+  // app. null until /api/member/home answers; only an explicit false hides the
+  // button (POST /api/checkin refuses either way, so this is presentation).
+  const [appCheckin, setAppCheckin]         = useState<boolean | null>(null);
   const [openedAnnouncement, setOpenedAnnouncement] = useState<Announcement | null>(null);
   const announcementTriggerRef = useRef<HTMLElement | null>(null);
   // Session E (kids): drives the "Who's signing in?" picker inside SignInSheet.
@@ -1368,6 +1372,7 @@ export default function MemberHomePage() {
           status?: string;
           joinedAt?: string;
           stats?: { totalClasses?: number; firstCheckInAt?: string | null };
+          memberAppCheckin?: boolean;
         } | null;
         schedule: Array<{ id: string; name: string; startTime: string; endTime: string; coach: string; location: string; capacity: number | null; dayOfWeek: number; classInstanceId?: string | null; eligibility?: string }> | null;
         children: Array<{
@@ -1413,6 +1418,7 @@ export default function MemberHomePage() {
         if (me?.nextClass) setNextClass(me.nextClass);
         if (typeof me?.accountType === "string") setAccountType(me.accountType);
         if (typeof me?.status === "string") setMemberStatus(me.status);
+        setAppCheckin(me?.memberAppCheckin === false ? false : true);
         setAnniversary(matAnniversary(
           me?.joinedAt ?? null,
           me?.stats?.firstCheckInAt ?? null,
@@ -1779,8 +1785,12 @@ export default function MemberHomePage() {
       </div>
       )}
 
-      {/* ── Sign In CTA ── */}
-      <div className="px-5 mb-6">
+      {/* ── Sign In CTA ──
+          G5: shown once the home data has loaded and only while the club
+          allows check-in from the app. The timetable, class sign-up and the
+          allowance line elsewhere are unaffected. */}
+      {homeLoaded && appCheckin !== false && (
+      <div className="px-5 mb-6" data-testid="home-checkin-cta">
         <button
           onClick={() => setShowSignIn(true)}
           className="w-full py-4 rounded-2xl flex items-center justify-center gap-2.5 font-bold text-white text-base transition-all active:scale-[0.98] shadow-lg"
@@ -1793,6 +1803,7 @@ export default function MemberHomePage() {
           Sign In to Class
         </button>
       </div>
+      )}
 
       {/* ── Today's Classes ── (D5: only once the home data has loaded) */}
       {homeLoaded && (
@@ -1895,7 +1906,7 @@ export default function MemberHomePage() {
       )}
 
       {/* Sign-in sheet */}
-      {showSignIn && (
+      {showSignIn && appCheckin !== false && (
         <SignInSheet onClose={() => setShowSignIn(false)} primaryColor={primaryColor} classes={todayClasses} kids={kidsRoster} memberName={memberName} />
       )}
 
