@@ -9,9 +9,12 @@
  *   - lib/percent.ts: the shared text helpers (screens and server alike);
  *   - the conversion funnel (Reports and /dashboard/attribution): bars and coach rows;
  *   - the attribution table's Conversion column;
- *   - the Reports CSV's conversion-funnel rows;
- *   - the AI monthly report prompt's check-ins line;
- *   - the attendance import progress line.
+ *   - the Reports CSV's conversion-funnel rows.
+ *
+ * Scope (owner decision, 27 Oct 2026, 23:30): the Reports and statistics
+ * section only — Reports, Analysis and Conversion. The AI monthly-report
+ * prompt and the attendance-import progress line are outside it; their
+ * changes were reverted and are listed as residuals, not tested here.
  *
  * The donut legend (Reports, Analysis) is in percent-share-sites.test.tsx.
  */
@@ -24,8 +27,6 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
   usePathname: () => "/",
 }));
-vi.mock("@/lib/prisma-tenant", () => ({ withTenantContext: vi.fn() }));
-vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
 
 import {
   formatChange,
@@ -41,11 +42,6 @@ import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import AttributionView from "@/components/dashboard/AttributionView";
 import { reportsCsv, trendDelta } from "@/components/dashboard/ReportsView";
 import { changePillText } from "@/components/dashboard/AnalysisView";
-import { withTenantContext } from "@/lib/prisma-tenant";
-import { bookingsProgressText, progressPct } from "@/components/dashboard/AttendanceImport";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { checkInsMetricLine, generateMonthlyReport } from "@/lib/ai-causal-report";
 import { buildFunnel, MIN_TRIALS_FOR_RATE, type AttributionData, type StaffConversionRow } from "@/lib/attribution";
 import { createEmptyReportsData } from "@/lib/reports";
 
@@ -175,76 +171,18 @@ describe("Reports CSV, conversion-funnel rows", () => {
 
 describe("one rounding rule for every change (review finding 2)", () => {
   // 229 vs 200 is exactly +14.5%. Dividing first gave 14.499999999999998 and
-  // "+14%" on Reports and Analysis while the AI prompt said "+15%".
-  it("229 vs 200 reads +15% on Reports, Analysis, the AI prompt and the stored snapshot", async () => {
+  // "+14%" on Reports and Analysis. (The AI report's own rounding is outside
+  // the statistics section and is a listed residual, not pinned here.)
+  it("229 vs 200 reads +15% on Reports and Analysis", () => {
     expect(pctChange(229, 200)).toBe(15);
     expect(formatChange(229, 200)).toBe("+15% (229 vs 200)");
     expect(trendDelta(229, 200)).toBe("+15% (229 vs 200)");
     expect(changePillText(229, 200)).toBe("+15% (229 vs 200)");
-    expect(checkInsMetricLine(229, 200)).toBe("Check-ins this period: 229 (last period: 200, change +15% (229 vs 200))");
-
-    // The stored metricSnapshot.checkInsPctChange, through the real gatherMetrics
-    // (under 10 members the report takes its placeholder path: no model call).
-    vi.mocked(withTenantContext).mockImplementation((async (_t: string, fn: (tx: unknown) => unknown) =>
-      fn({
-        member: { count: async () => 3, findMany: async () => [] },
-        tenant: { findUnique: async () => ({ timezone: "Europe/London" }) },
-        memberStatusEvent: { findMany: async () => [] },
-        importedMembership: { findMany: async () => [] },
-        attendanceRecord: {
-          count: async ({ where }: { where: { checkInTime: { lte?: Date } } }) => (where.checkInTime.lte ? 229 : 200),
-        },
-        class: { count: async () => 2 },
-      })) as never);
-    const report = await generateMonthlyReport({
-      tenantId: "t1", tenantName: "Club",
-      periodStart: new Date("2026-09-01T00:00:00Z"), periodEnd: new Date("2026-09-30T23:59:59Z"),
-    });
-    expect(report.metricSnapshot.checkInsThisPeriod).toBe(229);
-    expect(report.metricSnapshot.checkInsPrevPeriod).toBe(200);
-    expect(report.metricSnapshot.checkInsPctChange).toBe(15);
   });
 
   it("no change reads 0%, never +0%; a fall keeps its minus", () => {
     expect(changePillText(50, 50)).toBe("0% (50 vs 50)");
     expect(changePillText(170, 200)).toBe("-15% (170 vs 200)");
     expect(trendDelta(170, 200)).toBe("-15% (170 vs 200)");
-  });
-});
-
-describe("AI monthly report prompt, check-ins line", () => {
-  it("gives the percentage change with the two figures it compares", () => {
-    expect(checkInsMetricLine(56, 50)).toBe("Check-ins this period: 56 (last period: 50, change +12% (56 vs 50))");
-    expect(checkInsMetricLine(40, 50)).toBe("Check-ins this period: 40 (last period: 50, change -20% (40 vs 50))");
-  });
-
-  it("gives no percentage when there were no check-ins last period (it used to say +0%)", () => {
-    expect(checkInsMetricLine(56, 0)).toBe(
-      "Check-ins this period: 56 (last period: 0, no percentage change: there were no check-ins last period)",
-    );
-  });
-});
-
-describe("attendance import progress line", () => {
-  it("prints the share with its counts, rounded down, and '—' with no bookings", () => {
-    expect(bookingsProgressText(12, 50)).toBe("24% (12 of 50) of bookings");
-    expect(bookingsProgressText(1999, 2000)).toBe("99% (1,999 of 2,000) of bookings");
-    expect(bookingsProgressText(0, 0)).toBe("—");
-  });
-
-  // Review finding 3: the bar used (29 / 100) * 100, which floors to 28,
-  // while the text said 29%. Both now come from progressPct.
-  it("the bar, its aria value and the text use one number: 29 of 100 is 29 and 57 of 100 is 57", () => {
-    expect(progressPct(29, 100)).toBe(29);
-    expect(progressPct(57, 100)).toBe(57);
-    expect(Math.floor((29 / 100) * 100)).toBe(28); // the old divide-first value
-    expect(bookingsProgressText(29, 100)).toBe("29% (29 of 100) of bookings");
-    expect(progressPct(0, 0)).toBe(0);
-    expect(progressPct(50, 50)).toBe(100);
-    const src = readFileSync(join(process.cwd(), "components/dashboard/AttendanceImport.tsx"), "utf8");
-    // Every percentage in the file goes through progressPct: no divide-first left.
-    expect(src.match(/\/ [\w.?]+\) \* 100/g) ?? []).toEqual([]);
-    expect(src).toContain("const pct = progressPct(job.processed, job.total);");
-    expect(src).toMatch(/aria-valuenow=\{pct\} aria-label="Import progress"/);
   });
 });

@@ -26,9 +26,12 @@ export function wholePct(n: number, base: number): number | null {
 /*
  * Display text. Every percentage a person reads carries its count and base
  * (required by Sean's note relayed 14 Oct and the owner instruction of 24 Oct
- * 2026): "42% (21 of 50)". These live here, not in the client-only Reports
- * primitives, so server code (the AI report prompt) prints the same text the
- * screens do. `components/dashboard/reports-primitives.tsx` re-exports them.
+ * 2026): "42% (21 of 50)". These live here, pure and server-safe, rather
+ * than in the client-only Reports primitives;
+ * `components/dashboard/reports-primitives.tsx` re-exports them. Scope (owner
+ * decision, 27 Oct 2026): the Reports and statistics section (Reports,
+ * Analysis, Conversion) and the Reports CSV. Other surfaces, such as the AI
+ * monthly-report prompt, do not use them yet.
  */
 
 const count = (x: number) => x.toLocaleString("en-GB");
@@ -79,8 +82,9 @@ export function formatGuardedRatioNote(rate: number | null, n: number, base: num
  * The change from `previous` to `current` as a whole percentage, half-up, or
  * null when there is nothing to compare against (previous is 0). Multiply
  * first, like `percent`: 229 vs 200 is +15 (an exact 14.5), where dividing
- * first read 14.499999999999998 and gave +14. Every change badge, pill and
- * stored change goes through this, so one pair of numbers reads one way.
+ * first read 14.499999999999998 and gave +14. Every change badge and pill
+ * in the statistics section goes through this, so one pair of numbers reads
+ * one way there.
  */
 export function pctChange(current: number, previous: number): number | null {
   if (previous <= 0) return null;

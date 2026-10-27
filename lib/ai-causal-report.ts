@@ -14,7 +14,6 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { ACTIVE_MEMBER, LEFT_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { loadJoinedInWindows } from "@/lib/membership-report";
 import { liveClassWhere } from "@/lib/class-live";
-import { formatChange, pctChange } from "@/lib/percent";
 
 const MODEL = "claude-haiku-4-5-20251001";
 const MAX_OUTPUT_TOKENS = 1200;
@@ -100,11 +99,9 @@ async function gatherMetrics(input: ReportInput): Promise<Record<string, number>
   const newEstimated = estimated(joinedThis.basis) || estimated(joinedPrev.basis) ? 1 : 0;
 
   const checkInsDelta = checkInsThisPeriod - checkInsPrevPeriod;
-  // The prompt's figure (lib/percent, multiply first), so the stored snapshot
-  // and the prompt it came from agree: 229 vs 200 is 15 in both. Stored as
-  // 0 with no check-ins last period (the snapshot holds numbers only); the
-  // prompt says there is no percentage then.
-  const checkInsPctChange = pctChange(checkInsThisPeriod, checkInsPrevPeriod) ?? 0;
+  const checkInsPctChange = checkInsPrevPeriod > 0
+    ? Math.round((checkInsDelta / checkInsPrevPeriod) * 100)
+    : 0;
   const newDelta = newThisPeriod - newPrevPeriod;
 
   return {
@@ -121,20 +118,6 @@ async function gatherMetrics(input: ReportInput): Promise<Record<string, number>
     checkInsPctChange,
     activeClasses,
   };
-}
-
-/**
- * The check-ins line of the prompt. A percentage change always carries the
- * two figures it compares, "+12% (56 vs 50)" (owner instruction of 24 Oct
- * 2026), so the model is handed the pattern it is told to follow. With no
- * check-ins last period there is no percentage to give: it used to print
- * "+0%" there, a change the data does not show.
- */
-export function checkInsMetricLine(current: number, previous: number): string {
-  const change = previous > 0
-    ? `change ${formatChange(current, previous)}`
-    : "no percentage change: there were no check-ins last period";
-  return `Check-ins this period: ${current} (last period: ${previous}, ${change})`;
 }
 
 function parseSections(raw: string): ReportSections {
@@ -238,7 +221,7 @@ export async function generateMonthlyReport(input: ReportInput): Promise<Generat
 - Active members: ${metrics.activeMembers}
 - Members joined this period (new + rejoined, the Reports "Joined" figure; imports are never joins${metrics.newEstimated ? "; partly estimated from imported history" : ""}): ${metrics.newThisPeriod} (last period: ${metrics.newPrevPeriod}, delta: ${metrics.newDelta >= 0 ? "+" : ""}${metrics.newDelta})
 - Cancelled members (cumulative, all time; not "left this month"): ${metrics.cancelledMembers}
-- ${checkInsMetricLine(metrics.checkInsThisPeriod, metrics.checkInsPrevPeriod)}
+- Check-ins this period: ${metrics.checkInsThisPeriod} (last period: ${metrics.checkInsPrevPeriod}, ${metrics.checkInsPctChange >= 0 ? "+" : ""}${metrics.checkInsPctChange}%)
 - Active classes: ${metrics.activeClasses}
 
 # Owner-recorded initiatives during this period
@@ -266,7 +249,7 @@ One paragraph headline (50–80 words) that names the period, the headline metri
 
 # Hard rules
 - Total ≤ 500 words.
-- At least three numeric references (e.g. "+14% (57 vs 50)", "12 members", "£500").
+- At least three numeric references (e.g. "+14%", "12 members", "£500").
 - Never invent metrics — only cite numbers present above.
 - Never claim certainty — say "likely correlated with…" not "caused by…".
 - No preamble before the first H2. No trailing sign-off.`;
