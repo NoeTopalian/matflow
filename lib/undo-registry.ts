@@ -590,6 +590,9 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
   // and `created` (whether the tick made the row). The handler removes only a
   // row the action created, and never an imported one.
   "attendance.mark": attendanceHandler(),
+  // G4: removing the visit removes the one-off with it (ON DELETE CASCADE),
+  // so the member's count recomputes from the rows that remain.
+  "attendance.one_off": attendanceHandler(),
   "attendance.kiosk_checkin": attendanceHandler(),
   "attendance.self_checkin": attendanceHandler(),
 };

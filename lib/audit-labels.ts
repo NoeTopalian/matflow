@@ -63,6 +63,8 @@ export const AUDIT_LABELS: Record<string, string> = {
 
   // ── Attendance ────────────────────────────────────────────────────────────
   "attendance.mark": "Checked a member in",
+  // G4: a coach's one-off; auditEntryLabel adds the reason from the metadata.
+  "attendance.one_off": "Added a member to one session as a one-off",
   "attendance.override": "Removed a check-in from the register",
   "attendance.self_checkin": "Member checked themselves in",
   "attendance.kiosk_checkin": "Member checked in at the kiosk",
@@ -301,6 +303,10 @@ export function auditEntryLabel(action: string, metadata: unknown): string {
   }
   if (action === `${UNDO_PREFIX}class.updated` && typeof m.undoneLifecycle === "string" && m.undoneLifecycle in CLASS_LIFECYCLE_LABELS) {
     return `Undid: ${CLASS_LIFECYCLE_LABELS[m.undoneLifecycle]}`;
+  }
+  // G4: the one-off reads with its reason, as typed at the register.
+  if ((action === "attendance.one_off" || action === `${UNDO_PREFIX}attendance.one_off`) && typeof m.reason === "string" && m.reason.trim()) {
+    return `${auditLabelWithUndo(action)}: “${m.reason.trim()}”`;
   }
   return auditLabelWithUndo(action);
 }

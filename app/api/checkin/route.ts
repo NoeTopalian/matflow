@@ -14,6 +14,7 @@ import { checkinRefusal } from "@/lib/checkin-refusal";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit-log";
 import { performCheckin, restorePackCreditsForAttendance } from "@/lib/checkin";
+import { ONE_OFF_METHOD_ERROR, ONE_OFF_REASON_ERROR, ONE_OFF_REASON_MAX, ONE_OFF_REASON_MIN } from "@/lib/one-off";
 import { assertSameOrigin } from "@/lib/csrf";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 import { APP_CHECKIN_OFF_MESSAGE } from "@/lib/checkin-refusal";
@@ -41,6 +42,14 @@ export const checkinSchema = z.object({
     (v) => (Array.isArray(v) ? v.filter((x) => x !== "tier_not_included" && x !== "allowance_reached") : v),
     z.array(z.enum(["on_hold", "waiver_unsigned", "kids_class"])).max(4).optional(),
   ),
+  // G4 (owner, 27 Oct 2026): a coach's one-off. Staff, from a session's
+  // register, admit a named member to that session past the squad list, the
+  // plan restriction and the allowance, with a reason (3 to 200 characters).
+  // The admin method only; who granted it is the session's user, never input.
+  oneOff: z
+    .object({ reason: z.string().trim().min(ONE_OFF_REASON_MIN).max(ONE_OFF_REASON_MAX) })
+    .strict()
+    .optional(),
 });
 
 export async function POST(req: Request) {
@@ -59,10 +68,19 @@ export async function POST(req: Request) {
 
   const parsed = checkinSchema.safeParse(body);
   if (!parsed.success) {
+    // A one-off's reason is the field a person typed: say what is wrong with it.
+    if (parsed.error.issues.some((i) => i.path[0] === "oneOff")) {
+      return NextResponse.json({ error: ONE_OFF_REASON_ERROR, reason: "one_off_reason_invalid" }, { status: 400 });
+    }
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { classInstanceId, memberId, onBehalfOfMemberId, checkInMethod, acknowledged } = parsed.data;
+  const { classInstanceId, memberId, onBehalfOfMemberId, checkInMethod, acknowledged, oneOff } = parsed.data;
+  // G4: a one-off is a staff mark on a named member, method "admin". The
+  // member's own path, a parent's and "auto" never carry one.
+  if (oneOff && (!memberId || checkInMethod !== "admin")) {
+    return NextResponse.json({ error: ONE_OFF_METHOD_ERROR, reason: "one_off_not_allowed" }, { status: 400 });
+  }
   const session = await auth();
 
   if (!session) {
@@ -180,6 +198,13 @@ export async function POST(req: Request) {
 
   // Self-check-in: full rules. Admin / auto: bypass.
   const isSelf = effectiveMethod === "self";
+  // G4: a one-off does not bypass the safety and paperwork questions. The
+  // register asks them and sends what was confirmed; for a one-off the server
+  // holds it to that, so a hold, an unsigned waiver or an adult in a kids class
+  // that was NOT confirmed is refused (403) rather than admitted unasked.
+  const isOneOff = !!oneOff && effectiveMethod === "admin";
+  const confirmed = new Set(acknowledged ?? []);
+  const askOneOff = (q: "on_hold" | "waiver_unsigned" | "kids_class") => isOneOff && !confirmed.has(q);
   const result = await performCheckin({
     tenantId,
     memberId: resolvedMemberId,
@@ -197,13 +222,13 @@ export async function POST(req: Request) {
     // resolves to "self" above) must have a signed waiver on file; a staff
     // mark does not ask, so a front-desk override for someone who has just
     // signed on paper still goes through.
-    enforceWaiverGate: isSelf,
+    enforceWaiverGate: isSelf || askOneOff("waiver_unsigned"),
     // A membership on hold is refused on the same line: the member deciding
     // for themselves, not a staff mark.
-    enforceHoldGate: isSelf,
+    enforceHoldGate: isSelf || askOneOff("on_hold"),
     // An adult may not put themselves into a kids class; the desk's register
     // asks instead. A parent checking in their child is judged as the child.
-    enforceKidsGate: isSelf,
+    enforceKidsGate: isSelf || askOneOff("kids_class"),
     // A tier bound to one venue does not cover a class held at another; the
     // desk can still mark them (ADR-001 D2 slice 2).
     enforceVenueGate: isSelf,
@@ -220,10 +245,39 @@ export async function POST(req: Request) {
     // Record which staff user clicked "check in" so the attendance row can
     // show "by [admin name]". Only stamped on staff-driven check-ins.
     checkedInByUserId: effectiveMethod === "admin" ? session.user.id : null,
+    // G4: who granted it is the signed-in staff user, never the request body.
+    ...(isOneOff && oneOff ? { oneOff: { reason: oneOff.reason, grantedById: session.user.id } } : {}),
   });
 
   switch (result.kind) {
     case "success":
+      if (isOneOff && result.oneOff) {
+        // G4: the one-off is its own audit action, with the reason. The same
+        // shape as attendance.mark (recordId, created) so the Activity undo
+        // removes exactly this visit, and the one-off with it (cascade).
+        await logAudit({
+          tenantId,
+          userId: session.user.id,
+          action: "attendance.one_off",
+          entityType: "AttendanceRecord",
+          entityId: `${classInstanceId}:${resolvedMemberId}`,
+          metadata: {
+            classInstanceId,
+            memberId: resolvedMemberId,
+            method: "admin",
+            recordId: result.record.id,
+            created: true,
+            oneOffId: result.oneOff.id,
+            reason: result.oneOff.reason,
+            ...(acknowledged && acknowledged.length > 0 ? { acknowledged: [...new Set(acknowledged)] } : {}),
+          },
+          req,
+        });
+        return NextResponse.json(
+          { success: true, record: result.record, coverage: result.coverage, overCapacity: result.overCapacity ?? null, oneOff: result.oneOff },
+          { status: 201 },
+        );
+      }
       // A staff or system mark that spent a class-pack credit (the plan's
       // classes were used up) is audited with that fact, so a credit never
       // leaves without a row saying why.
@@ -294,6 +348,17 @@ export async function POST(req: Request) {
         } catch {
           paymentRail = null;
         }
+      }
+      // G4: a one-off refused on a question the register did not confirm says
+      // so to the staff user, in the staff's words.
+      if (isOneOff && (result.kind === "on_hold" || result.kind === "waiver_unsigned" || result.kind === "kids_class")) {
+        const who = staffMemberName ?? "This member";
+        const fact = {
+          on_hold: `${who}'s membership is on hold.`,
+          waiver_unsigned: `${who} hasn't signed the waiver.`,
+          kids_class: `${who} is an adult and this is a kids class.`,
+        }[result.kind];
+        return NextResponse.json({ error: `${fact} Confirm that before adding them as a one-off.`, reason: result.kind }, { status: 403 });
       }
       const refusal = checkinRefusal(result, { paymentRail, timeZone, memberName: childName, staffMemberName });
       if (refusal) return NextResponse.json(refusal.body, { status: refusal.status });
