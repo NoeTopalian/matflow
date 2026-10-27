@@ -66,6 +66,7 @@ import {
   type TooltipPayload,
 } from "./reports-primitives";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
+import { formatGuardedRatio as funnelRate, formatGuardedRatioNote as funnelRateNote } from "@/lib/percent";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import InitiativesPanel from "@/components/dashboard/InitiativesPanel";
@@ -306,23 +307,24 @@ function trendTone(current: number, previous: number) {
 
 function funnelCsvRows(attribution: AttributionData): (string | number | null)[][] {
   const { overall, rows, epochStart, minTrials } = attribution;
-  const rate = (r: number | null) => (r === null ? "N/A" : `${r.toFixed(1)}%`);
+  // The funnel's own text (ConversionFunnel funnelRate), so the file and the
+  // screen agree: "12.5% (5 of 40)", "N/A · too few (1 of 2)", or "—".
   const scope = `Club-wide${epochStart ? ` · counting trials from ${epochStart.slice(0, 10)}` : ""} · rates need ${minTrials}+ trials`;
   if (overall.trials === 0) return [["Conversion funnel", "Trials run", 0, "No trials recorded yet"]];
   return [
     ["Conversion funnel", "Trials run", overall.trials, scope],
     ["Conversion funnel", "Lost before joining", overall.lost, scope],
     ["Conversion funnel", "No decision recorded", overall.undecided, scope],
-    ["Conversion funnel", "Converted", overall.converted, `${rate(overall.conversionRate)} of trials`],
+    ["Conversion funnel", "Converted", overall.converted, funnelRateNote(overall.conversionRate, overall.converted, overall.trials, "of trials")],
     ["Conversion funnel", "No longer active", overall.churned, scope],
-    ["Conversion funnel", "Still active", overall.retained, `${rate(overall.retentionRate)} of converted`],
+    ["Conversion funnel", "Still active", overall.retained, funnelRateNote(overall.retentionRate, overall.retained, overall.converted, "of converted")],
     ...rows
       .filter((row) => row.trialsRun > 0)
       .map((row) => [
         "Conversion by coach",
         row.name,
         row.trialsRun,
-        `converted ${row.conversions} (${rate(row.conversionRate)}) · still active ${row.retained} (${rate(row.retentionRate)}) · lost ${row.lost} · no decision ${row.undecided}`,
+        `converted ${funnelRate(row.conversionRate, row.conversions, row.trialsRun)} · still active ${funnelRate(row.retentionRate, row.retained, row.conversions)} · lost ${row.lost} · no decision ${row.undecided}`,
       ]),
   ];
 }
@@ -492,7 +494,8 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     ["Owner insights", "Self-service check-in", formatRatio(shares.selfServicePct, shares.selfServiceCount, shares.totalMethodCount), `Self or QR · ${scopedWindowLabel}`],
     ["Owner insights", "Active share of current members", formatRatio(shares.activeSharePct, data.summary.activeMembers, data.summary.currentMembers), "Active members ÷ current members"],
     // The conversion funnel, club-wide then per coach — the same numbers and
-    // the same honesty guards as the screen (null rates export as "N/A").
+    // the same honesty guards as the screen (a rate under the trial minimum
+    // exports as "N/A · too few (1 of 2)", an empty base as "—").
     ...funnelCsvRows(attribution),
   ];
 
@@ -1145,7 +1148,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 centerValue={formatNumber(totalClassCheckins)}
               />
               <div className="flex-1 min-w-0 w-full">
-                <DonutLegend data={classCompositionSlices} showCounts />
+                <DonutLegend data={classCompositionSlices} />
               </div>
             </div>
           )}

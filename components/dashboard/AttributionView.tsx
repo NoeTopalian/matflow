@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
+import { formatGuardedRatio } from "@/lib/percent";
 import { formatDate } from "@/lib/date";
 import type { AttributionData, StaffConversionRow } from "@/lib/attribution";
 
@@ -61,13 +62,17 @@ export default function AttributionView({ data }: { data: AttributionData }) {
       header: "Conversion %",
       headerLabel: "Conversion %",
       align: "right",
+      // The rate with its counts, "12.5% (5 of 40)" (the funnel's own text,
+      // formatGuardedRatio); a coach with sign-ups but no trial has no rate: "—".
       cell: (row) =>
-        row.conversionRate === null ? (
+        row.trialsRun === 0 ? (
+          <span className="text-tx-3">—</span>
+        ) : row.conversionRate === null ? (
           <span className="text-tx-3">
             N/A <span className="text-tx-4">· too few</span>
           </span>
         ) : (
-          <span className="tabular-nums text-tx-1">{row.conversionRate.toFixed(1)}%</span>
+          <span className="tabular-nums text-tx-1">{formatGuardedRatio(row.conversionRate, row.conversions, row.trialsRun)}</span>
         ),
       // Nulls (too few trials) sort to the bottom via the primitive's blank rule.
       sortValue: (row) => row.conversionRate,

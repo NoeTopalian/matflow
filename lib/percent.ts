@@ -22,3 +22,66 @@ export function ratePct1dp(n: number, base: number): number | null {
 export function wholePct(n: number, base: number): number | null {
   return base > 0 ? percent(n, base) : null;
 }
+
+/*
+ * Display text. Every percentage a person reads carries its count and base
+ * (required by Sean's note relayed 14 Oct and the owner instruction of 24 Oct
+ * 2026): "42% (21 of 50)". These live here, not in the client-only Reports
+ * primitives, so server code (the AI report prompt) prints the same text the
+ * screens do. `components/dashboard/reports-primitives.tsx` re-exports them.
+ */
+
+const count = (x: number) => x.toLocaleString("en-GB");
+
+/** The percentage half of `formatRatio` ("10%", "3.2%"), or "—" on an empty base or an undefined rate. */
+export function formatPct(pct: number | null, base: number): string {
+  if (base <= 0 || pct === null || !Number.isFinite(pct)) return "—";
+  return `${pct.toLocaleString("en-GB", { maximumFractionDigits: 1 })}%`;
+}
+
+/** The counts half of `formatRatio`: "(1 of 10)". */
+export function ratioCounts(n: number, base: number): string {
+  return `(${count(n)} of ${count(base)})`;
+}
+
+/**
+ * A rate with its count and base: "10% (1 of 10)". `pct` is the
+ * already-computed percentage (it may carry one decimal). A base of 0, or a
+ * null or non-finite pct, renders "—": an undefined rate is never "0%"
+ * (MATFLOW-SPECIFICATION-2026-10.md:144, divide-by-zero → null). Counts use
+ * en-GB grouping ("1,234").
+ */
+export function formatRatio(pct: number | null, n: number, base: number): string {
+  const p = formatPct(pct, base);
+  return p === "—" ? p : `${p} ${ratioCounts(n, base)}`;
+}
+
+/**
+ * A rate behind a minimum-sample guard (the conversion funnel: a rate over
+ * fewer than `MIN_TRIALS_FOR_RATE` trials is null). Two guards, both visible:
+ * no base at all is "—" (never "0%" or "NaN%"); a base under the minimum is
+ * "N/A · too few (1 of 2)", the counts without a percentage. Otherwise
+ * `formatRatio`: "12.5% (5 of 40)".
+ */
+export function formatGuardedRatio(rate: number | null, n: number, base: number): string {
+  if (base <= 0) return "—";
+  if (rate === null || !Number.isFinite(rate)) return `N/A · too few ${ratioCounts(n, base)}`;
+  return formatRatio(rate, n, base);
+}
+
+/** `formatGuardedRatio` saying what the base is when there is a percentage: "12.5% (5 of 40) of trials". */
+export function formatGuardedRatioNote(rate: number | null, n: number, base: number, suffix: string): string {
+  const text = formatGuardedRatio(rate, n, base);
+  return base > 0 && rate !== null && Number.isFinite(rate) ? `${text} ${suffix}` : text;
+}
+
+/**
+ * A percentage change with the two figures it compares: "+12% (56 vs 50)",
+ * "-4% (48 vs 50)", "0% (50 vs 50)". With nothing to compare against
+ * (previous is 0) there is no percentage: "—".
+ */
+export function formatChange(current: number, previous: number): string {
+  if (previous <= 0) return "—";
+  const pct = Math.round(((current - previous) * 100) / previous);
+  return `${pct > 0 ? "+" : ""}${pct}% (${count(current)} vs ${count(previous)})`;
+}
