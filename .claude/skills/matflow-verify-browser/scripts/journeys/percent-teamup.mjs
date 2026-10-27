@@ -58,6 +58,8 @@ try {
   // The attribution page: the same funnel and the per-coach table.
   await page.goto("/dashboard/attribution");
   await page.waitForLoadState("load");
+  // The page streams in behind skeletons: wait for the funnel itself.
+  await page.getByText(/of trials|Trials run/).first().waitFor({ timeout: 60000 }).catch(() => {});
   const attrText = norm(await page.locator("main").innerText({ timeout: 60000 }));
   L.check("attribution", "G1c /dashboard/attribution shows the conversion rate with its counts", attrText.includes(CONVERSION),
     { around: attrText.slice(Math.max(0, attrText.indexOf("25%") - 80), attrText.indexOf("25%") + 80) });
@@ -96,6 +98,7 @@ try {
   const mText = norm(await p2.locator("main").innerText());
   L.check("mobile", "M2 the TeamUp label is shown in full at 390 px", mText.includes(TEAMUP), { found: mText.includes(TEAMUP) });
   await p2.goto("/dashboard/attribution");
+  await p2.getByText(/of trials|Trials run/).first().waitFor({ timeout: 60000 }).catch(() => {});
   const aText = norm(await p2.locator("main").innerText({ timeout: 60000 }));
   L.check("mobile", "M3 the attribution funnel's counts are visible at 390 px", aText.includes(CONVERSION), { found: aText.includes(CONVERSION) });
 
