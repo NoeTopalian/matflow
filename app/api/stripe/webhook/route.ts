@@ -708,7 +708,8 @@ export async function POST(req: NextRequest) {
         // app/api/payments/[id]/refund never runs. So if this payment funded a
         // class-pack purchase, the credits it paid for are taken back here too.
         // Otherwise the member keeps spendable credits at check-in
-        // (lib/checkin.ts only filters status='active' AND creditsRemaining>0)
+        // (lib/checkin.ts spends any pack that has credits and is not refunded,
+        // including a legacy 'expired' one: class packs never expire, 27 Oct 2026)
         // for money they got back.
         if (existing.stripePaymentIntentId) {
           const fundedPack = await tx.memberClassPack.findUnique({
@@ -716,7 +717,7 @@ export async function POST(req: NextRequest) {
             // The pack as it was SOLD — the denominator the apportionment needs.
             include: { pack: { select: { totalCredits: true } } },
           });
-          if (fundedPack && fundedPack.tenantId === tenantId && fundedPack.status === "active") {
+          if (fundedPack && fundedPack.tenantId === tenantId && fundedPack.status !== "refunded") {
             // Apportioned, not all-or-nothing. This branch used to void every
             // credit on any settled refund, so a dashboard-issued £5 goodwill
             // refund destroyed a whole ten-class pack. Same helper as the owner
@@ -839,7 +840,7 @@ export async function POST(req: NextRequest) {
           const fundedPack = await tx.memberClassPack.findUnique({
             where: { stripePaymentIntentId: existing.stripePaymentIntentId },
           });
-          if (fundedPack && fundedPack.tenantId === tenantId && fundedPack.status === "active") {
+          if (fundedPack && fundedPack.tenantId === tenantId && fundedPack.status !== "refunded") {
             await tx.memberClassPack.update({
               where: { id: fundedPack.id },
               data: { status: "refunded", creditsRemaining: 0 },
@@ -1060,7 +1061,7 @@ export async function POST(req: NextRequest) {
               const fundedPack = await tx.memberClassPack.findUnique({
                 where: { stripePaymentIntentId: linkedPayment.stripePaymentIntentId },
               });
-              if (fundedPack && fundedPack.tenantId === tenantId && fundedPack.status === "active") {
+              if (fundedPack && fundedPack.tenantId === tenantId && fundedPack.status !== "refunded") {
                 await tx.memberClassPack.update({
                   where: { id: fundedPack.id },
                   data: { status: "refunded", creditsRemaining: 0 },

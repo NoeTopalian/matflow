@@ -321,7 +321,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             // pack as it was SOLD, not what is left of it.
             include: { pack: { select: { totalCredits: true } } },
           });
-          if (fundedPack && fundedPack.status === "active") {
+          if (fundedPack && fundedPack.status !== "refunded") {
             // This used to be an unconditional
             // `{ status: "refunded", creditsRemaining: 0 }`, so a £5 goodwill
             // refund on a £100 ten-class pack destroyed all ten classes. The

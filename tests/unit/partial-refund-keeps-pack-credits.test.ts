@@ -294,6 +294,22 @@ describe("POST /api/payments/[id]/refund — the pack survives a partial", () =>
     expect(body.packCreditsRevoked).toBe(10);
   });
 
+  // class packs never expire (27 Oct 2026): a legacy 'expired' pack with credits is spendable, so a refund must revoke it too.
+  it("a full refund voids a legacy 'expired' pack that still has credits", async () => {
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({
+      id: "mcp-1", memberId: "mem-1", status: "expired", creditsRemaining: 10,
+      pack: { totalCredits: 10 },
+    } as never);
+    const res = await refund(undefined, PACK_PRICE);
+    const body = await res.json();
+    const arg = vi.mocked(prisma.memberClassPack.update).mock.calls[0][0] as {
+      data: { creditsRemaining: number; status?: string };
+    };
+    expect(arg.data.creditsRemaining).toBe(0);
+    expect(arg.data.status).toBe("refunded");
+    expect(body.packVoided).toBe(true);
+  });
+
   it("reads the pack's totalCredits, so the apportionment can be evaluated", async () => {
     await refund(2500);
     // Dropping this include would leave the helper dividing by undefined and

@@ -572,6 +572,27 @@ describe("Stripe webhook: charge.refunded", () => {
     }));
   });
 
+  // class packs never expire (27 Oct 2026): a legacy 'expired' pack with credits is spendable, so a refund must revoke it too.
+  it("charge.refunded voids a legacy 'expired' pack that still has credits", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-refund-pack-exp",
+      type: "charge.refunded",
+      account: "acct_test",
+      data: { object: { id: "ch_pack_e", payment_intent: "pi_pack_e", amount_refunded: 5000 } },
+    });
+    mockPaymentFindFirst.mockResolvedValueOnce({
+      id: "pay-pack-e", status: "succeeded", stripePaymentIntentId: "pi_pack_e", amountPence: 5000,
+    } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({ id: "pack-e", memberId: "mem-1", tenantId: "tenant-A", status: "expired", creditsRemaining: 10, pack: { totalCredits: 10 } } as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(prisma.memberClassPack.update)).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "pack-e" },
+      data: expect.objectContaining({ status: "refunded", creditsRemaining: 0 }),
+    }));
+  });
+
   // A partial refund must NOT wipe the pack. Before the apportionment, a £5
   // goodwill refund issued from the Stripe dashboard destroyed all ten classes
   // on a £100 pack — 5% of the money back, 100% of the entitlement gone.
@@ -933,6 +954,21 @@ describe("Stripe webhook: charge.dispute.* sync", () => {
     const packAt = packUpdate.mock.invocationCallOrder[0];
     expect(memberAt).toBeLessThan(packAt);
   });
+
+  // class packs never expire (27 Oct 2026): a legacy 'expired' pack with credits is spendable, so a refund must revoke it too.
+  it("a lost dispute voids a legacy 'expired' pack that still has credits", async () => {
+    constructEventMock.mockReturnValue(
+      disputeEvent({ charge: "ch_xe", customer: "cus_x", status: "lost", payment_intent: "pi_xe" }),
+    );
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-1e", tenantId: "tenant-A", memberId: "mem-1", stripePaymentIntentId: "pi_xe" } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({
+      id: "pack-de", tenantId: "tenant-A", status: "expired", creditsRemaining: 3, memberId: "mem-1",
+    } as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(vi.mocked(prisma.memberClassPack.update)).toHaveBeenCalledWith({ where: { id: "pack-de" }, data: { status: "refunded", creditsRemaining: 0 } });
+  });
 });
 
 // ── Audit keying + tenant-scoping (Batch 3a) ─────────────────────────────────
@@ -1084,6 +1120,21 @@ describe("Stripe webhook: out-of-order + void contingencies", () => {
     }));
     expect(vi.mocked(prisma.memberClassPack.update)).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "pack-v" }, data: expect.objectContaining({ status: "refunded", creditsRemaining: 0 }),
+    }));
+  });
+
+  // class packs never expire (27 Oct 2026): a legacy 'expired' pack with credits is spendable, so a refund must revoke it too.
+  it("invoice.voided voids a legacy 'expired' pack that still has credits", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-void-e", type: "invoice.voided", account: "acct_test",
+      data: { object: { id: "in_void_e" } },
+    });
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-ve", status: "succeeded", amountPence: 4000, stripePaymentIntentId: "pi_ve" } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({ id: "pack-ve", tenantId: "tenant-A", status: "expired", creditsRemaining: 5, pack: { totalCredits: 5 } } as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(vi.mocked(prisma.memberClassPack.update)).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "pack-ve" }, data: expect.objectContaining({ status: "refunded", creditsRemaining: 0 }),
     }));
   });
 
