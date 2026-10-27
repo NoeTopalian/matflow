@@ -11,7 +11,8 @@ type OwnedPack = {
   creditsRemaining: number;
   totalCredits: number;
   purchasedAt: string;
-  expiresAt: string;
+  /** G6: NULL on every pack sold from 27 Oct 2026 (never expires). Not shown. */
+  expiresAt: string | null;
 };
 
 type AvailablePack = {
@@ -19,7 +20,6 @@ type AvailablePack = {
   name: string;
   description: string | null;
   totalCredits: number;
-  validityDays: number;
   pricePence: number;
   currency: string;
 };
@@ -29,10 +29,9 @@ function formatPrice(pence: number, currency: string) {
   return `${symbol}${(pence / 100).toFixed(2)}`;
 }
 
-function daysLeft(iso: string) {
-  const d = new Date(iso);
-  const ms = d.getTime() - Date.now();
-  return Math.max(0, Math.ceil(ms / 86_400_000));
+/** G6 (owner decision, 27 Oct 2026): a pack lasts until it runs out, so the count is the whole story. */
+export function classesLeftLabel(creditsRemaining: number): string {
+  return `${creditsRemaining} ${creditsRemaining === 1 ? "class" : "classes"} left`;
 }
 
 export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primaryColor?: string }) {
@@ -107,8 +106,8 @@ export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primary
                 <li key={p.id} className="rounded-xl p-3 border" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
                   <div className="flex items-center justify-between gap-3 mb-1.5">
                     <p className="text-sm font-medium text-white">{p.name}</p>
-                    <p className="text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>
-                      {daysLeft(p.expiresAt)}d left
+                    <p className="text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }} data-testid="pack-classes-left">
+                      {classesLeftLabel(p.creditsRemaining)}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -133,7 +132,7 @@ export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primary
             Buy a class pack
           </p>
           <p className="text-xs mb-3" style={{ color: "rgba(255,255,255,0.5)" }}>
-            One-off purchase. Credits decrement when you check in to a class.
+            One-off purchase. Each class you check in to uses one credit, and credits never expire.
           </p>
           {error && (
             <div role="alert" className="mb-3 flex items-start gap-2 px-3 py-2 rounded-xl border text-xs" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}>
@@ -147,7 +146,7 @@ export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primary
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-white">{p.name}</p>
                   <p className="text-[11px] mt-0.5" style={{ color: "rgba(255,255,255,0.5)" }}>
-                    {p.totalCredits} classes · valid {p.validityDays} days
+                    {p.totalCredits} classes · no expiry
                   </p>
                   {p.description && <p className="text-[11px] mt-1" style={{ color: "rgba(255,255,255,0.55)" }}>{p.description}</p>}
                 </div>

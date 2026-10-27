@@ -9,7 +9,6 @@ type Pack = {
   name: string;
   description: string | null;
   totalCredits: number;
-  validityDays: number;
   pricePence: number;
   currency: string;
 };
@@ -100,7 +99,7 @@ export default function PurchasePackClient({
       <Card title="Options">
         <Option
           label={pack.name}
-          description={`${pack.totalCredits} classes · valid ${pack.validityDays} days`}
+          description={`${pack.totalCredits} classes · no expiry`}
           price={formatPrice(pack.pricePence, pack.currency)}
           selected
         />

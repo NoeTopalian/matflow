@@ -494,7 +494,6 @@ export async function POST(req: NextRequest) {
           select: { id: true },
         });
         if (pack && packMember) {
-          const expiresAt = new Date(Date.now() + pack.validityDays * 24 * 60 * 60 * 1000);
           const paymentIntentId = (obj.payment_intent as string) ?? null;
           // Mirror as a Payment row so the ledger is complete
           const amountPence = (obj.amount_total as number) ?? pack.pricePence;
@@ -507,7 +506,9 @@ export async function POST(req: NextRequest) {
                 memberId: metadata.memberId,
                 packId: pack.id,
                 creditsRemaining: pack.totalCredits,
-                expiresAt,
+                // G6 (owner decision, 27 Oct 2026): a pack lasts until its
+                // credits are used. NULL = never expires.
+                expiresAt: null,
                 stripePaymentIntentId: paymentIntentId,
                 status: "active",
               },

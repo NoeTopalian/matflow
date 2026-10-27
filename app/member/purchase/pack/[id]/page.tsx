@@ -15,7 +15,7 @@ export default async function PurchasePackPage({ params }: Props) {
   const { pack, tenant } = await withTenantContext(tenantId, async (tx) => {
     const pack = await tx.classPack.findFirst({
       where: { id, tenantId, isActive: true },
-      select: { id: true, name: true, description: true, totalCredits: true, validityDays: true, pricePence: true, currency: true },
+      select: { id: true, name: true, description: true, totalCredits: true, pricePence: true, currency: true },
     });
     const tenant = await tx.tenant.findUnique({
       where: { id: tenantId },

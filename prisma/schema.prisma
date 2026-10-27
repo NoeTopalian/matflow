@@ -1143,7 +1143,9 @@ model ClassPack {
   name            String
   description     String?
   totalCredits    Int
-  validityDays    Int
+  // No longer asked for or read (owner decision, 27 Oct 2026: a pack lasts
+  // until its credits are used). Kept, nullable, for packs created before.
+  validityDays    Int?
   pricePence      Int
   currency        String   @default("GBP")
   isActive        Boolean  @default(true)
@@ -1166,7 +1168,9 @@ model MemberClassPack {
   pack                  ClassPack @relation(fields: [packId], references: [id])
   creditsRemaining      Int
   purchasedAt           DateTime  @default(now())
-  expiresAt             DateTime
+  // NULL = never expires (owner decision, 27 Oct 2026). Every pack sold from
+  // then on is NULL; a non-NULL past date is still honoured as expired.
+  expiresAt             DateTime?
   stripePaymentIntentId String?   @unique
   status                String    @default("active") // active | expired | refunded
 

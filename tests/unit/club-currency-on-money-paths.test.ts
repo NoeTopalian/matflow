@@ -116,7 +116,7 @@ describe("manual payment — a EUR club's cash is not logged in sterling", () =>
 
 describe("class pack — the STRIPE PRICE carries the club's currency", () => {
   const body = {
-    name: "10 Class Pack", totalCredits: 10, validityDays: 90, pricePence: 10000,
+    name: "10 Class Pack", totalCredits: 10, pricePence: 10000,
   };
 
   it("creates the Stripe price in the club's currency, not GBP", async () => {
@@ -143,5 +143,26 @@ describe("class pack — the STRIPE PRICE carries the club's currency", () => {
     mockTenant.mockResolvedValue({ currency: null, stripeAccountId: "acct_1", stripeConnected: true });
     await packPOST(req(body));
     expect(mockPriceCreate.mock.calls[0][0].currency).toBe("gbp");
+  });
+});
+
+// G6 (owner decision, 27 Oct 2026): a pack lasts until its credits are used,
+// so creation asks for no validity period and stores none.
+describe("class pack — created without a validity period", () => {
+  it("creates a pack from name, credits and price alone; no validityDays is stored", async () => {
+    const res = await packPOST(req({ name: "10 Class Pack", totalCredits: 10, pricePence: 10000 }));
+    expect(res.status).toBe(201);
+    const data = mockPackCreate.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data).toMatchObject({ name: "10 Class Pack", totalCredits: 10, pricePence: 10000 });
+    expect("validityDays" in data).toBe(false);
+    // The Stripe product describes it the same way the app does.
+    expect(mockProductCreate.mock.calls[0][0].description).toBe("10 classes, no expiry");
+  });
+
+  it("an older tab that still sends validityDays is accepted, and the value is not stored", async () => {
+    const res = await packPOST(req({ name: "10 Class Pack", totalCredits: 10, validityDays: 90, pricePence: 10000 }));
+    expect(res.status).toBe(201);
+    expect("validityDays" in (mockPackCreate.mock.calls[0][0].data as Record<string, unknown>)).toBe(false);
+    expect(mockProductCreate.mock.calls[0][0].description).not.toMatch(/valid for/);
   });
 });

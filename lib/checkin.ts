@@ -735,8 +735,15 @@ export async function returnClaimedPack(tx: Prisma.TransactionClient, tenantId: 
 }
 
 /**
- * Spend one credit of the member's usable pack (earliest expiry first), or
- * null when there is none. The decrement is a single guarded UPDATE, so two
+ * Spend one credit of the member's usable pack (oldest purchase first, so
+ * credits are used in the order bought), or null when there is none.
+ *
+ * G6 (owner decision, 27 Oct 2026): a pack lasts until its credits are used,
+ * so `expiresAt` is NULL on every pack sold from then on, and the migration
+ * cleared it on every pack still active. A non-NULL date in the past can no
+ * longer occur on an active pack; if one ever does, the old rule still holds
+ * and it is not spent (it is marked expired when the member's pack list is
+ * next read). A refunded pack is status "refunded" and never matches. The decrement is a single guarded UPDATE, so two
  * concurrent check-ins can never both take the last credit (security audit
  * iteration 2 / M10). Called after the Member lock: Class, Member, pack.
  */
@@ -751,9 +758,9 @@ async function claimPack(
       tenantId,
       status: "active",
       creditsRemaining: { gt: 0 },
-      expiresAt: { gt: new Date() },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
     },
-    orderBy: { expiresAt: "asc" },
+    orderBy: [{ purchasedAt: "asc" }, { id: "asc" }],
     select: { id: true },
   });
   if (!pack) return null;

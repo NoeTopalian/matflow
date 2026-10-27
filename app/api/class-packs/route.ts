@@ -10,7 +10,9 @@ const createSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
   totalCredits: z.number().int().min(1).max(1000),
-  validityDays: z.number().int().min(1).max(3650),
+  // G6 (owner decision, 27 Oct 2026): no validity period. A pack lasts until
+  // its credits are used. A "validityDays" sent by an older tab is ignored
+  // (zod strips it) and never stored.
   pricePence: z.number().int().min(0).max(10_000_00),
   currency: z.string().min(3).max(3).optional(),
   isActive: z.boolean().optional(),
@@ -56,14 +58,14 @@ export async function POST(req: Request) {
   }
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
 
-  const { name, description, totalCredits, validityDays, pricePence, currency, isActive } = parsed.data;
+  const { name, description, totalCredits, pricePence, currency, isActive } = parsed.data;
 
   try {
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
 
     const product = await stripe.products.create(
-      { name, description: description ?? `${totalCredits} classes valid for ${validityDays} days` },
+      { name, description: description ?? `${totalCredits} classes, no expiry` },
       { stripeAccount: tenant.stripeAccountId },
     );
     const price = await stripe.prices.create(
@@ -96,7 +98,6 @@ export async function POST(req: Request) {
           name,
           description: description ?? null,
           totalCredits,
-          validityDays,
           pricePence,
           // Must match the Stripe price above, or the local row and the thing
           // members are actually charged disagree.

@@ -1036,6 +1036,34 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
     await POST(makeReq("{}") as never);
     expect(vi.mocked(prisma.memberClassPack.create)).toHaveBeenCalled();
   });
+
+  // G6 (owner decision, 27 Oct 2026): "It should be till it runs out". The
+  // webhook mints a pack with no expiry, whatever the template's old
+  // validityDays says, and a template created after the change (NULL
+  // validityDays) mints the same way.
+  it.each([[30], [null]])("G6: class_pack mints the pack with expiresAt NULL (template validityDays %j)", async (validityDays) => {
+    constructEventMock.mockReturnValue({
+      id: `evt-pack-g6-${validityDays}`,
+      type: "checkout.session.completed",
+      account: "acct_test",
+      data: {
+        object: {
+          id: "cs_g6", payment_intent: "pi_g6", currency: "gbp", amount_total: 5000,
+          metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-1", tenantId: "tenant-A" },
+        },
+      },
+    });
+    vi.mocked(prisma.classPack.findFirst).mockResolvedValue({
+      id: "pack-1", validityDays, totalCredits: 10, pricePence: 5000, currency: "gbp", name: "10pk",
+    } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(vi.mocked(prisma.memberClassPack.create)).toHaveBeenCalledWith({
+      data: expect.objectContaining({ creditsRemaining: 10, expiresAt: null, status: "active", memberId: "mem-1", packId: "pack-1" }),
+    });
+  });
 });
 
 // ── Out-of-order + void contingencies (Tier 2.6 / 3.12 / 3.13) ───────────────

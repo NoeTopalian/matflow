@@ -174,6 +174,30 @@ describe("performCheckin pack-redemption — M10 atomic decrement", () => {
     expect(redemptionCreateMock).not.toHaveBeenCalled();
   });
 
+  // G6 (owner decision, 27 Oct 2026): a pack lasts until its credits are
+  // used. The claim takes a pack with NULL expiry, still honours a non-NULL
+  // date (in the future only), and spends the oldest purchase first.
+  it("G6: claims a pack with no expiry; a dated pack only while the date is ahead; oldest purchase first", async () => {
+    findFirstMock.mockResolvedValueOnce({ id: "pack-1" });
+    updateManyMock.mockResolvedValueOnce({ count: 1 });
+    findUniqueMock.mockResolvedValueOnce({ creditsRemaining: 5 });
+
+    const before = Date.now();
+    const result = await performCheckin(BASE_ARGS);
+    expect(result.kind).toBe("success");
+
+    const query = findFirstMock.mock.calls[0][0] as {
+      where: { status: string; creditsRemaining: unknown; OR: Array<{ expiresAt: unknown }>; tenantId: string; memberId: string };
+      orderBy: unknown;
+    };
+    expect(query.where).toMatchObject({ memberId: "m-1", tenantId: "t-1", status: "active", creditsRemaining: { gt: 0 } });
+    expect(query.where.OR[0]).toEqual({ expiresAt: null });
+    const gt = (query.where.OR[1].expiresAt as { gt: Date }).gt;
+    expect(gt).toBeInstanceOf(Date);
+    expect(gt.getTime()).toBeGreaterThanOrEqual(before);
+    expect(query.orderBy).toEqual([{ purchasedAt: "asc" }, { id: "asc" }]);
+  });
+
   it("does NOT use update() with bare where:{id} (the OLD non-atomic pattern)", async () => {
     // This is a static safety check via the route.ts module text — we
     // already mock the whole client — but assert that the test file's mock
