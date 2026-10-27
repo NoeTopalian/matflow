@@ -27,6 +27,7 @@ import MemberProfile, { type MemberDetail } from "@/components/dashboard/MemberP
 import RegisterPanel from "@/components/dashboard/RegisterPanel";
 import OutstandingPanel from "@/components/dashboard/OutstandingPanel";
 import { BilledByTeamUpPill } from "@/components/dashboard/BilledByTeamUpPill";
+import TeamUpHistory from "@/components/dashboard/TeamUpHistory";
 import { CHASE_ELSEWHERE_NOTE, HOLD_ACCESS_ONLY_NOTE } from "@/lib/billing-source";
 
 const json = (body: unknown, status = 200) =>
@@ -268,6 +269,32 @@ describe("manual chase", () => {
     fireEvent.click(buttons[1]);
     await waitFor(() => expect(chases()).toHaveLength(1));
     expect(screen.queryByText(CHASE_ELSEWHERE_NOTE)).toBeNull();
+  });
+});
+
+// ─── Profile: membership history from TeamUp ─────────────────────────────────
+
+describe("TeamUp history panel", () => {
+  // The date never moves after the import (27 Oct 2026), so the panel no
+  // longer says "standing as of <date>".
+  it("says the standing is from the import, with its date, and never 'as of'", async () => {
+    installFetch(() => json({ billedBy: "teamup", billingStatusAsOf: AS_OF, standing: {}, rows: [] }));
+    render(<TeamUpHistory memberId="m1" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("teamup-history-intro").textContent).toBe(
+        "TeamUp standing when imported, 20 Sept 2026. Not purchased here — MatFlow has charged nothing for these.",
+      ),
+    );
+    expect(screen.getByTestId("teamup-history").textContent).not.toMatch(/as of/);
+  });
+
+  it("without a date it says where the history came from and no date", async () => {
+    installFetch(() => json({ billedBy: "teamup", billingStatusAsOf: null, standing: {}, rows: [] }));
+    render(<TeamUpHistory memberId="m1" />);
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect(screen.getByTestId("teamup-history-intro").textContent).toBe(
+      "As recorded at TeamUp. Imported, not purchased here — MatFlow has charged nothing for these.",
+    );
   });
 });
 
