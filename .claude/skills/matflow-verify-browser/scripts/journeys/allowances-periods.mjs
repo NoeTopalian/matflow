@@ -2,8 +2,8 @@
 // The owner creates a plan in the plan editor and walks its allowance through weekly -> monthly -> every 4 weeks from a
 // start date -> Unlimited, each save keeping price, cycle and description and writing an audit row; the editor never
 // offers "each member's own billing period" and both membership routes refuse it with the exact message, writing
-// nothing. Then consumption at the doors: "1 each week" at the desk register (real UI: admit, ask, undo gives the
-// class back), "1 each calendar month" across the month boundary, "2 every 4 weeks from a start date" either side of a
+// nothing. Then consumption at the doors: "1 each week" at the desk register (real UI: admit, refuse with the staff
+// sentence — no "Admit anyway" since the owner decision of 27 Oct 2026 — undo gives the class back), "1 each calendar month" across the month boundary, "2 every 4 weeks from a start date" either side of a
 // period boundary, attendance reversal at a boundary then a re-check-in, a duplicate tap, two simultaneous check-ins
 // at the last place, a failed save / lost response / retry on the register, the real card-scanner request (latency
 // recorded) and phone width. Every expected number is computed here from the seed, on the club's calendar.
@@ -27,19 +27,19 @@
 //          with updateMetadata fields/before/after, lib/audit-snapshot.ts:57-71; Dates as ISO strings)
 //   billing message lib/class-allowance.ts:679-680:
 //     "Counting classes per member's billing period is not available yet — choose each week, each month or every N weeks"
-//   desk POST /api/checkin (admin) app/api/checkin/route.ts:163-204; allowance gate "ask" for staff, refusal 403 with askable + allowance
-//     lib/checkin-refusal.ts:169-188; error = allowanceRefusalSentence lib/class-allowance.ts:580-586:
-//     `${count phrase}; it resets on ${dateText(resetsOn)}. Ask staff if you need to train before then.`
-//     count phrase :556-562 with thisPeriodText :536-547 ("this week" / "this month" / "this 4-week period"; past period:
-//     "the week of …", "September 2026", "the 4-week period from …")
-//   register ask lib/class-allowance.ts:599-612: `${name} has used 1 of 1 class this week (resets on ${dateText(resetsOn)}). Admit anyway?`
-//     dialog title "Class allowance used" RegisterPanel.tsx:347; undo "Remove check-in" :386; network failure
+//   desk POST /api/checkin (admin) app/api/checkin/route.ts; allowance gate "refuse" for staff as for members (27 Oct
+//     2026), refusal 403 with allowance facts and no askable; error = allowanceStaffSentence lib/class-allowance.ts:
+//     `${name} has used ${their 1 class | all N classes} ${where} (resets on ${dateText(resetsOn)}) and has no
+//     class-pack credit, so they can't be checked in.` — where = thisPeriodText ("this week" / "this month" /
+//     "this 4-week period"), or for a past period "in the week of …", "in September 2026", "in the 4-week period from …"
+//   register: the refusal is shown in the register's error line (role alert), no dialog; undo "Remove check-in"; network failure
 //     "Couldn't reach MatFlow — check your signal and try again." :369; 409 already_checked_in is not an error lib/checkin-outcome.ts:32-34
 //   undo DELETE /api/checkin route.ts:285-330 (audit attendance.override); duplicate 409 {error:"Already checked in", reason:"already_checked_in"}
 //     lib/checkin-refusal.ts:130-131; the duplicate is judged before the allowance (lib/checkin.ts:622)
 //   counting: lib/class-allowance-count.ts:148-167 (rows by the class's own date; not imports, cancelled sessions or pack redemptions);
 //     periods lib/class-allowance.ts:239-263 (week Monday-Monday, calendar month, anchor + k*N*7 days; half-open)
-//   card scanner POST /api/checkin/card app/api/checkin/card/route.ts:63-75,245-349 (needs_confirmation + question; audit attendance.card_scan :330)
+//   card scanner POST /api/checkin/card app/api/checkin/card/route.ts (refused + reason allowance_reached + the staff sentence;
+//     an old acknowledged ["allowance_reached"] is dropped and admits no one; audit attendance.card_scan only when a card records)
 //  The monthly and 4-weekly sessions sit on past dates the register does not list (it shows today, /api/coach/today), so those
 //  desk check-ins go through POST /api/checkin — the request the register itself sends (RegisterPanel.tsx:322-331).
 import { randomUUID, createHmac } from "node:crypto";
@@ -171,10 +171,12 @@ await seedAttend(fay.id, iX2);
 await seedAttend(sam.id, iSa);
 
 // ── Expected allowance answers (period arithmetic done here) ──
-const sentence = (count, resetsOn) => `${count}; it resets on ${dateText(resetsOn)}. Ask staff if you need to train before then.`;
+/** The staff sentence the desk and the scanner show (lib/class-allowance.ts allowanceStaffSentence). */
+const staffSentence = (name, limit, where, resetsOn) =>
+  `${name} has used ${limit === 1 ? "their 1 class" : `all ${limit} classes`} ${where} (resets on ${dateText(resetsOn)}) and has no class-pack credit, so they can't be checked in.`;
 function refusedAs(r, want, text) {
   const a = r.body?.allowance ?? {};
-  return r.status === 403 && r.body?.reason === "allowance_reached" && r.body?.askable === true && r.body?.error === text
+  return r.status === 403 && r.body?.reason === "allowance_reached" && !r.body?.askable && r.body?.error === text
     && a.used === want.used && a.limit === want.limit && a.basis === want.basis && (want.weeks === undefined || a.weeks === want.weeks)
     && a.period?.start === want.period.start && a.period?.end === want.period.end && a.resetsOn === want.resetsOn && a.current === want.current;
 }
@@ -347,13 +349,13 @@ try {
     !!w1 && (await dialog.count()) === 0 && w1a?.created === true && !w1a?.overrides, { audit: w1a });
   await openSession(Tb, WEEK_CLASS);
   await searchEnter(wendy.name);
-  const askQ = `${wendy.name} has used 1 of 1 class this week (resets on ${dateText(nextMonday)}). Admit anyway?`;
-  const asked = await dialog.getByText("Class allowance used").waitFor({ timeout: 20000 }).then(() => true, () => false);
-  L.check("journey", "J16 the second class the same week ASKS, with the count and the reset date",
-    asked && (await dialog.getByText(askQ).count()) === 1, { asked, askQ, dialog: asked ? null : await page.getByRole("alert").allTextContents().catch(() => null) });
-  await shot(page, "allowances-week-ask");
-  if (asked) await dialog.getByRole("button", { name: "Cancel" }).click();
-  L.check("journey", "J17 Cancel records nothing and writes no audit row",
+  const refusalText = staffSentence(wendy.name, 1, "this week", nextMonday);
+  const refused = await page.getByRole("alert").filter({ hasText: refusalText }).waitFor({ timeout: 20000 }).then(() => true, () => false);
+  L.check("journey", "J16 the second class the same week is REFUSED with the staff sentence (count and reset date): no question, no Admit anyway",
+    refused && (await dialog.count()) === 0 && (await page.getByRole("button", { name: "Admit anyway" }).count()) === 0,
+    { refused, refusalText, alerts: refused ? null : await page.getByRole("alert").allTextContents().catch(() => null) });
+  await shot(page, "allowances-week-refused");
+  L.check("journey", "J17 the refusal records nothing and writes no audit row",
     (await rows(iTb, wendy.id)) === 0 && (await auditsSettled("attendance.mark", `${iTb}:${wendy.id}`, 0)).length === 0, "0 rows");
   await openSession(Ta, WEEK_CLASS);
   await page.getByRole("button", { name: `Mark ${wendy.name} absent` }).click();
@@ -365,19 +367,19 @@ try {
   await searchEnter(wendy.name);
   const w2 = await until(async () => (await rows(iTb, wendy.id)) === 1);
   const w2a = (await auditsSettled("attendance.mark", `${iTb}:${wendy.id}`, 1))[0]?.metadata ?? null;
-  L.check("journey", "J19 after the undo the next attempt is admitted without a question (consumption reversed): one row, no override",
+  L.check("journey", "J19 after the undo the next attempt is admitted (consumption reversed): one row, no override",
     !!w2 && w2a?.created === true && !w2a?.overrides, { audit: w2a });
 
   // ── 4. "1 each calendar month" across the month boundary (desk request) ──
   const monthNow = { used: 1, limit: 1, basis: "month", period: { start: monthStart, end: nextMonthStart }, resetsOn: nextMonthStart, current: true };
   const monthPrev = { used: 1, limit: 1, basis: "month", period: { start: prevMonthStart, end: monthStart }, resetsOn: monthStart, current: false };
-  const monthNowText = sentence("1 of 1 class used this month", nextMonthStart);
-  const monthPrevText = sentence(`1 of 1 class used ${monthYear(prevMonthStart)}`, monthStart);
+  const monthNowText = staffSentence(mona.name, 1, "this month", nextMonthStart);
+  const monthPrevText = staffSentence(mona.name, 1, `in ${monthYear(prevMonthStart)}`, monthStart);
   let r = await desk(iQ, mona.id);
   let a = await admitted(r, iQ, mona.id);
   L.check("boundary", `B1 month: a class on the last day of last month (${prevMonthLast}) does not count against the 1st (${monthStart}): admitted`, a.ok, a.saw);
   r = await desk(iR, mona.id);
-  L.check("boundary", "B2 month: a second class this month is asked (403 askable) with used 1 of 1, this month's dates and the sentence; nothing recorded",
+  L.check("boundary", "B2 month: a second class this month is refused (403, no askable) with used 1 of 1, this month's dates and the staff sentence; nothing recorded",
     refusedAs(r, monthNow, monthNowText) && (await rows(iR, mona.id)) === 0, r.body);
   r = await desk(iP2, mona.id);
   L.check("boundary", "B3 month: another class on last month's last day is judged in LAST month (named, not 'this month'), used 1 of 1; nothing recorded",
@@ -389,7 +391,7 @@ try {
   a = await admitted(r, iP2, mona.id);
   L.check("boundary", "B5 month: re-check-in on the boundary day after the reversal is admitted (the period went back to 0)", a.ok, a.saw);
   r = await desk(iP, mona.id);
-  L.check("boundary", "B6 month: the reversed session asks again (last month's class is used by the re-check-in); nothing recorded",
+  L.check("boundary", "B6 month: the reversed session is refused again (last month's class is used by the re-check-in); nothing recorded",
     refusedAs(r, monthPrev, monthPrevText) && (await rows(iP, mona.id)) === 0, r.body);
   r = await undo(iQ, mona.id);
   const rr = await desk(iR, mona.id);
@@ -399,8 +401,8 @@ try {
   // ── 5. "2 every 4 weeks" from a Tuesday start date, either side of a period boundary (desk request) ──
   const fourNow = { used: 2, limit: 2, basis: "weeks", weeks: 4, period: { start: A4, end: isoAdd(A4, 28) }, resetsOn: isoAdd(A4, 28), current: true };
   const fourPrev = { used: 2, limit: 2, basis: "weeks", weeks: 4, period: { start: isoAdd(A4, -28), end: A4 }, resetsOn: A4, current: false };
-  const fourNowText = sentence("2 of 2 classes used this 4-week period", isoAdd(A4, 28));
-  const fourPrevText = sentence(`2 of 2 classes used the 4-week period from ${dateText(isoAdd(A4, -28))}`, A4);
+  const fourNowText = staffSentence(fay.name, 2, "this 4-week period", isoAdd(A4, 28));
+  const fourPrevText = staffSentence(fay.name, 2, `in the 4-week period from ${dateText(isoAdd(A4, -28))}`, A4);
   r = await desk(iY1, fay.id);
   a = await admitted(r, iY1, fay.id);
   L.check("boundary", `B8 4-weekly: two classes on ${isoAdd(A4, -1)} (the day before the period starts, ${A4}) do not count: the first class of the new period is admitted`, a.ok, a.saw);
@@ -408,7 +410,7 @@ try {
   a = await admitted(r, iY2, fay.id);
   L.check("boundary", "B9 4-weekly: the second class of the period is admitted (2 allowed)", a.ok, a.saw);
   r = await desk(iY3, fay.id);
-  L.check("boundary", "B10 4-weekly: the third class in the period is asked: used 2 of 2, this 4-week period, resets on the start date + 28 days; nothing recorded",
+  L.check("boundary", "B10 4-weekly: the third class in the period is refused: used 2 of 2, this 4-week period, resets on the start date + 28 days; nothing recorded",
     refusedAs(r, fourNow, fourNowText) && (await rows(iY3, fay.id)) === 0, r.body);
   r = await desk(iX3, fay.id);
   L.check("boundary", "B11 4-weekly: a class in the previous period is judged in that period (named by its start date), used 2 of 2; nothing recorded",
@@ -418,7 +420,7 @@ try {
   a = await admitted(x3, iX3, fay.id);
   L.check("boundary", "B12 4-weekly: reversing a class on the last day of the previous period frees that period only; the earlier class is then admitted", r.status === 200 && a.ok, a.saw);
   r = await desk(iX1, fay.id);
-  L.check("boundary", "B13 4-weekly: re-check-in into the reversed session now asks (the previous period is full again); nothing recorded",
+  L.check("boundary", "B13 4-weekly: re-check-in into the reversed session is now refused (the previous period is full again); nothing recorded",
     refusedAs(r, fourPrev, fourPrevText) && (await rows(iX1, fay.id)) === 0, r.body);
   r = await undo(iY2, fay.id);
   const y3 = await desk(iY3, fay.id);
@@ -442,8 +444,8 @@ try {
   a = await admitted(r, iDb, dee.id);
   L.check("journey", "J22 the duplicate consumed nothing: with 2 each week the next session is admitted", a.ok, a.saw);
   r = await desk(iDc, dee.id);
-  L.check("journey", "J23 ...and the session after that asks: used 2 of 2 this week",
-    refusedAs(r, { used: 2, limit: 2, basis: "week", period: { start: monday, end: nextMonday }, resetsOn: nextMonday, current: true }, sentence("2 of 2 classes used this week", nextMonday)) && (await rows(iDc, dee.id)) === 0, r.body);
+  L.check("journey", "J23 ...and the session after that is refused: used 2 of 2 this week",
+    refusedAs(r, { used: 2, limit: 2, basis: "week", period: { start: monday, end: nextMonday }, resetsOn: nextMonday, current: true }, staffSentence(dee.name, 2, "this week", nextMonday)) && (await rows(iDc, dee.id)) === 0, r.body);
 
   // ── 7. Two simultaneous check-ins at the last place (twice) ──
   for (const [round, x, y] of [[1, iLa, iLb], [2, iLc, iLd]]) {
@@ -516,20 +518,19 @@ try {
   const warm = await api(page, "POST", "/api/checkin/card", { classInstanceId: iSb, tokens: ["warm-up"] });
   L.note("journey", "N1 first request to /api/checkin/card (warm-up, junk token)", { status: warm.status, ms: warm.ms });
   const scan = await api(page, "POST", "/api/checkin/card", { classInstanceId: iSb, tokens: [token] });
-  const scanQ = `${sam.name} has used 1 of 1 class this week (resets on ${dateText(nextMonday)}). Admit anyway?`;
+  const scanText = staffSentence(sam.name, 1, "this week", nextMonday);
   const res0 = scan.body?.results?.[0];
-  L.check("journey", "J24 end-to-end: the real server, given the real card, asks (needs_confirmation, the question) and records nothing",
-    scan.status === 200 && res0?.status === "needs_confirmation" && res0?.reason === "allowance_reached" && res0?.question === scanQ && scan.body?.recorded === 0 && (await rows(iSb, sam.id)) === 0,
+  L.check("journey", "J24 end-to-end: the real server, given the real card, REFUSES (refused, allowance_reached, the staff sentence) and records nothing",
+    scan.status === 200 && res0?.status === "refused" && res0?.reason === "allowance_reached" && res0?.message === scanText && !("question" in (res0 ?? {})) && scan.body?.recorded === 0 && (await rows(iSb, sam.id)) === 0,
     { status: scan.status, result: res0 });
   L.note("journey", "N2 real card request latency (the scanner's client timeout is 10 s)", { ms: scan.ms, withinScannerTimeout: scan.ms < 10000 });
   const conf = await api(page, "POST", "/api/checkin/card", { classInstanceId: iSb, tokens: [token], acknowledged: ["allowance_reached"] });
-  const scanAudit = (await auditsSettled("attendance.card_scan", iSb, 1))[0]?.metadata ?? null;
-  const ov = scanAudit?.overrides?.[0];
-  L.check("journey", "J25 end-to-end: the confirmed resend admits that one card: one qr row; card_scan audit carries the override with the count",
-    conf.status === 200 && conf.body?.results?.[0]?.status === "success" && conf.body?.recorded === 1 && (await record(iSb, sam.id))?.checkInMethod === "qr"
-      && ov?.memberId === sam.id && JSON.stringify(ov?.reasons) === JSON.stringify(["allowance_reached"]) && ov?.overAllowance?.used === 1 && ov?.overAllowance?.limit === 1 && ov?.overAllowance?.basis === "week" && ov?.overAllowance?.resetsOn === nextMonday,
-    { status: conf.status, result: conf.body?.results?.[0], audit: ov });
-  L.note("journey", "N3 confirmed card request latency", { ms: conf.ms, withinScannerTimeout: conf.ms < 10000 });
+  const scanAudits = await auditsSettled("attendance.card_scan", iSb, 0);
+  L.check("journey", "J25 end-to-end: an old scanner's resend with acknowledged: [allowance_reached] is not a 400 and admits no one: still refused, no row, no card_scan audit row",
+    conf.status === 200 && conf.body?.results?.[0]?.status === "refused" && conf.body?.results?.[0]?.reason === "allowance_reached" && conf.body?.recorded === 0
+      && (await rows(iSb, sam.id)) === 0 && scanAudits.length === 0,
+    { status: conf.status, result: conf.body?.results?.[0], audits: scanAudits.length });
+  L.note("journey", "N3 old-client card request latency", { ms: conf.ms, withinScannerTimeout: conf.ms < 10000 });
 
   // ── 10. Phone width ──
   const phone = await context(browser, "10.96.0.2", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState() });

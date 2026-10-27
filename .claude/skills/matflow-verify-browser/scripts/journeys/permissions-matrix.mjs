@@ -78,12 +78,13 @@
 //   would flip its member back to active.
 // X25 GET /api/member/me/allowance (app/api/member/me/allowance/route.ts:22-38) takes NO id: it reads
 //   session.user.memberId only. Asserted: the same 200 body with or without club B ids in the query, nothing of B in it.
-// X26 the allowance "Admit anyway" door: app/api/checkin/route.ts:86-87 every staff role (owner, manager, coach, admin)
-//   may mark a member; :199-200 staff get allowanceGate "ask" and are admitted only with acknowledged
-//   ["allowance_reached"]; :203 checkedInById = the acting user; :215-233 audit attendance.mark with userId = the acting
-//   user, metadata.overrides and overAllowance. Without the acknowledgement: lib/checkin-refusal.ts:184-200 → 403
-//   reason "allowance_reached", askable, allowance {used, limit, basis}. lib/authz.ts:29 STAFF_ROLES. So coach AND admin
-//   may admit past the allowance; a member on the staff door gets 403 "Forbidden" (:87).
+// X26 the allowance at the staff door (owner decision, 27 Oct 2026: no door admits past a used-up allowance):
+//   app/api/checkin/route.ts every staff role (owner, manager, coach, admin) may mark a member, with allowanceGate
+//   "refuse" for staff as for members; an old client's acknowledged ["allowance_reached"] is dropped by the schema and
+//   admits no one (never a 400). lib/checkin-refusal.ts → 403 reason "allowance_reached", the staff sentence
+//   (allowanceStaffSentence, naming the member), allowance {used, limit, basis}, no askable; nothing recorded, no
+//   attendance.mark audit row. So NO staff role admits past the allowance; a member on the staff door gets 403
+//   "Forbidden".
 import { randomUUID, randomBytes, createHmac } from "node:crypto";
 import { chromium, state, q, ledger, shot, context, ownerSignIn, bcrypt, newSecret, freshCode, BASE } from "../lib.mjs";
 import { testEnv } from "../../../matflow-verify-local/scripts/env.mjs";
@@ -555,7 +556,7 @@ try {
     al0.status === 200 && al1.status === 200 && al0.text === al1.text && ![B.m1, B.cls, B.inst, B.tier].some((id) => al1.text.includes(id)),
     { status: [al0.status, al1.status], sameBody: al0.text === al1.text, allowance: al0.json?.allowance ?? null });
 
-  // X26: coach and admin on the allowance "Admit anyway" door.
+  // X26: coach and admin at the allowance — refused with or without an old acknowledgement.
   const limTier = (await one(`select id from "MembershipTier" where "tenantId" = $1 and name = 'PM Limited 1 a week'`, [A]))?.id ?? randomUUID();
   await q(`insert into "MembershipTier" (id, "tenantId", name, "pricePence", currency, "billingCycle", "classLimit", "classLimitBasis", "updatedAt")
            values ($1, $2, 'PM Limited 1 a week', 0, 'GBP', 'monthly', 1, 'week', now())
@@ -573,22 +574,21 @@ try {
   await q(`insert into "AttendanceRecord" (id, "tenantId", "memberId", "classInstanceId", "checkInMethod") values ($1, $2, $3, $4, 'admin')`, [randomUUID(), A, allowM, alw.used]);
   const rec = async (i) => one(`select "checkedInById" from "AttendanceRecord" where "memberId" = $1 and "classInstanceId" = $2`, [allowM, i]);
   const markAudit = async (i) => one(`select "userId", metadata from "AuditLog" where "tenantId" = $1 and action = 'attendance.mark' and "entityId" = $2 order by "createdAt" desc limit 1`, [A, `${i}:${allowM}`]);
-  for (const [r, i, used] of [["coach", alw.coach, 1], ["admin", alw.admin, 2]]) {
-    const ask = await api(pages[r], "POST", "/api/checkin", { classInstanceId: i, memberId: allowM, checkInMethod: "admin" });
-    L.check("x26", `X26 ${r} without the acknowledgement → 403 reason allowance_reached, askable, ${used} of 1 used this week, nothing recorded`,
-      ask.status === 403 && ask.json?.reason === "allowance_reached" && ask.json?.askable === true && ask.json?.allowance?.used === used && ask.json?.allowance?.limit === 1 && ask.json?.allowance?.basis === "week" && !(await rec(i)),
-      { status: ask.status, reason: ask.json?.reason, askable: ask.json?.askable, allowance: ask.json?.allowance ?? null });
-    const adm = await api(pages[r], "POST", "/api/checkin", { classInstanceId: i, memberId: allowM, checkInMethod: "admin", acknowledged: ["allowance_reached"] });
-    const row = await rec(i);
+  const staffSentence = /^PM Allowance Member has used their 1 class (this week|in the week of [A-Za-z]+ \d+ [A-Za-z]+) \(resets on [A-Za-z]+ \d+ [A-Za-z]+\) and has no class-pack credit, so they can't be checked in\.$/;
+  for (const [r, i] of [["coach", alw.coach], ["admin", alw.admin]]) {
+    const plain = await api(pages[r], "POST", "/api/checkin", { classInstanceId: i, memberId: allowM, checkInMethod: "admin" });
+    L.check("x26", `X26 ${r} at the limit → 403 reason allowance_reached with the staff sentence, 1 of 1 used this week, no askable, nothing recorded`,
+      plain.status === 403 && plain.json?.reason === "allowance_reached" && !plain.json?.askable && staffSentence.test(plain.json?.error ?? "") && plain.json?.allowance?.used === 1 && plain.json?.allowance?.limit === 1 && plain.json?.allowance?.basis === "week" && !(await rec(i)),
+      { status: plain.status, reason: plain.json?.reason, error: plain.json?.error ?? null, askable: plain.json?.askable, allowance: plain.json?.allowance ?? null });
+    const old = await api(pages[r], "POST", "/api/checkin", { classInstanceId: i, memberId: allowM, checkInMethod: "admin", acknowledged: ["allowance_reached"] });
     const au = await markAudit(i);
-    L.check("x26", `X26 ${r} with acknowledged ['allowance_reached'] → 201; the record and the audit row name the ${r}; overrides + overAllowance ${used}/1`,
-      adm.status === 201 && row?.checkedInById === ROLE[r].id && au?.userId === ROLE[r].id && Array.isArray(au?.metadata?.overrides) && au.metadata.overrides.includes("allowance_reached") &&
-        au?.metadata?.overAllowance?.used === used && au?.metadata?.overAllowance?.limit === 1,
-      { status: adm.status, error: adm.json?.error ?? null, recordBy: row?.checkedInById === ROLE[r].id, auditBy: au?.userId === ROLE[r].id, overrides: au?.metadata?.overrides, overAllowance: au?.metadata?.overAllowance });
+    L.check("x26", `X26 ${r} with an old client's acknowledged ['allowance_reached'] → still 403 allowance_reached (not 400), nothing recorded, no attendance.mark audit row`,
+      old.status === 403 && old.json?.reason === "allowance_reached" && !(await rec(i)) && !au,
+      { status: old.status, reason: old.json?.reason, error: old.json?.error ?? null, audit: au ?? null });
   }
   const mDoor = await api(pages.member, "POST", "/api/checkin", { classInstanceId: alw.member, memberId: allowM, checkInMethod: "admin", acknowledged: ["allowance_reached"] });
   L.check("x26", "X26 a member on the staff door with the acknowledgement → 403 'Forbidden', nothing recorded", mDoor.status === 403 && mDoor.json?.error === "Forbidden" && !(await rec(alw.member)), { status: mDoor.status, error: mDoor.json?.error });
-  L.note("x26", "N5 owner and manager admissions past the allowance (and every allowed mutation in this matrix) are exercised by the other journeys (allowance-eligibility J9–J13 for the owner), not repeated here", "see allowance-eligibility.mjs");
+  L.note("x26", "N5 the owner at the desk register (refused, then a class pack paying, then undo) is exercised by allowance-eligibility J9–J13, not repeated here", "see allowance-eligibility.mjs");
 
   const bAfter = await snapB();
   L.check("cross-tenant", "X27 after X22–X26 club B is byte-for-byte unchanged (incl. attendance and class membership lists)", same(bBefore, bAfter), same(bBefore, bAfter) ? "unchanged" : { before: bBefore, after: bAfter });

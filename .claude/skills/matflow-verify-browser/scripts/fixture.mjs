@@ -35,6 +35,11 @@ async function deleteTenant(tx, tenantId) {
     await del(m, { tenantId });
     if (FAULT === "teardown-crash" && m === "attendanceRecord") { console.log("[fault] teardown-crash: exiting inside the delete transaction"); process.exit(9); }
   }
+  // Class packs a journey gave a member (allowance-eligibility, scanner-override): the redemption first, then the
+  // member's pack (it references the member), then the pack template.
+  await del("classPackRedemption", { memberPack: { tenantId } });
+  await del("memberClassPack", { tenantId });
+  await del("classPack", { tenantId });
   await tx.$executeRawUnsafe(`delete from "LoginEvent" where "tenantId" = $1`, tenantId);
   await tx.$executeRawUnsafe(`delete from "PasswordHistory" where "userId" in (select id from "User" where "tenantId" = $1)`, tenantId);
   const rankIds = (await tx.memberRank.findMany({ where: { member: { tenantId } }, select: { id: true } })).map((r) => r.id);

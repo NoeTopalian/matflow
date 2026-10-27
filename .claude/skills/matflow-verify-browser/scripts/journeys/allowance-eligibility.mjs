@@ -1,10 +1,12 @@
 // Journey: plan allowance (explicit reset periods) and mandatory class eligibility, 21 Oct 2026.
 // Owner creates a "1 each week" plan in the editor (summary + period dates shown before saving; failed saves keep the
-// typed values; the retry sends one request), a member on that plan who already attended once this week is ASKED
-// about at the desk register (cancel records nothing; Admit anyway records the override with the count on the audit
-// row), undoing the check-in gives the class back (the next mark asks again), and a class whose membership list
-// excludes the plan REFUSES at the register with the member's own sentence — an old client's "tier_not_included"
-// acknowledgement admits no one. Then the same pages at phone width.
+// typed values; the retry sends one request), a member on that plan who already attended once this week is REFUSED
+// at the desk register with the staff sentence and no "Admit anyway" (owner decision, 27 Oct 2026: no door admits
+// past the allowance; an old client's "allowance_reached" acknowledgement admits no one), with a class pack the same
+// mark is recorded on one pack credit and no override, undoing it gives the credit back, and without the pack the
+// next mark is refused again; a class whose membership list excludes the plan REFUSES at the register with the
+// member's own sentence — an old client's "tier_not_included" acknowledgement admits no one. Then the same pages at
+// phone width.
 // Needs `fixture.mjs create` and `server.mjs start`.
 //   node journeys/allowance-eligibility.mjs
 import { randomUUID } from "node:crypto";
@@ -125,58 +127,73 @@ try {
   // One confirmed attendance this week: the plan's single class is used.
   await q(`insert into "AttendanceRecord" (id, "tenantId", "memberId", "classInstanceId", "checkInMethod") values ($1, $2, $3, $4, 'admin')`, [randomUUID(), tenantId, member.id, inst1]);
 
-  // ── Desk register: the allowance ASKS; cancel records nothing; Admit anyway records the override ──
+  // ── Desk register: the allowance REFUSES (no Admit anyway); a class pack pays; undo gives the credit back ──
   await page.goto("/dashboard/checkin");
   await page.getByRole("button", { name: new RegExp(`${T2} · Open Mat`) }).click();
   const search = page.getByLabel("Search members");
   await search.waitFor();
-  await search.fill("");
-  await search.fill("Member 1");
-  await page.getByRole("button", { name: /^Member 1/ }).first().waitFor();
-  await page.keyboard.press("Enter");
+  const markMember1 = async () => {
+    await search.fill("");
+    await search.fill("Member 1");
+    await page.getByRole("button", { name: /^Member 1/ }).first().waitFor();
+    await page.keyboard.press("Enter");
+  };
   const dialog = page.getByRole("dialog");
-  const askSeen = await dialog.getByText("Class allowance used").waitFor({ timeout: 15000 }).then(() => true, () => false);
-  const question = `Member 1 has used 1 of 1 class this week (resets on ${long(nextMonday)}). Admit anyway?`;
-  const seen = askSeen ? null : { dialog: await dialog.textContent().catch(() => null), alert: await page.getByRole("alert").allTextContents().catch(() => null) };
-  L.check("journey", "J9 a member whose weekly class is used is ASKED about at the desk, with the count and the reset date",
-    askSeen && (await dialog.getByText(question).count()) === 1, { askSeen, question, ...(seen ? { seen } : {}) });
-  if (!askSeen) await shot(page, "allowance-register-unexpected");
-  await shot(page, "allowance-register-ask");
-  await dialog.getByRole("button", { name: "Cancel" }).click();
-  await page.waitForTimeout(500);
-  L.check("journey", "J10 Cancel records nothing", (await records(inst2)) === 0, "0 rows");
-  await search.fill("");
-  await search.fill("Member 1");
-  await page.getByRole("button", { name: /^Member 1/ }).first().waitFor();
-  await page.keyboard.press("Enter");
-  await dialog.getByText("Class allowance used").waitFor({ timeout: 15000 });
-  await dialog.getByRole("button", { name: "Admit anyway" }).click();
-  for (let i = 0; i < 30 && (await records(inst2)) === 0; i++) await page.waitForTimeout(500);
-  // The register re-reads after a mark; a reload proves the walk-in row is what the server holds, not local state.
-  await page.reload();
-  await page.getByRole("button", { name: new RegExp(`${T2} · Open Mat`) }).click();
-  const absentBtn = page.getByRole("button", { name: "Mark Member 1 absent" });
-  const rowShown = await absentBtn.waitFor({ timeout: 45000 }).then(() => true, () => false);
-  if (!rowShown) await shot(page, "allowance-register-after-admit");
-  L.check("journey", "J11a after Admit anyway the register shows Member 1 as attended (walk-in row)", rowShown, { rowShown });
-  const audit =(await q(`select metadata from "AuditLog" where "tenantId" = $1 and action = 'attendance.mark' and "entityId" = $2 order by "createdAt" desc limit 1`, [tenantId, `${inst2}:${member.id}`]))[0]?.metadata ?? null;
-  L.check("journey", "J11 Admit anyway records the check-in and the override with the count on the audit row",
-    (await records(inst2)) === 1 && audit && Array.isArray(audit.overrides) && audit.overrides.includes("allowance_reached") && audit.overAllowance?.basis === "week" && audit.overAllowance?.used === 1 && audit.overAllowance?.limit === 1,
-    { rows: await records(inst2), overrides: audit?.overrides, overAllowance: audit?.overAllowance });
+  const staffSentence = `Member 1 has used their 1 class this week (resets on ${long(nextMonday)}) and has no class-pack credit, so they can't be checked in.`;
+  await markMember1();
+  const refusedAlert = page.getByRole("alert").filter({ hasText: staffSentence });
+  const refusedSeen = await refusedAlert.waitFor({ timeout: 15000 }).then(() => true, () => false);
+  const seen = refusedSeen ? null : { dialog: await dialog.textContent().catch(() => null), alert: await page.getByRole("alert").allTextContents().catch(() => null) };
+  L.check("journey", "J9 a member whose weekly class is used is REFUSED at the desk with the staff sentence (count and reset date), no question, no Admit anyway",
+    refusedSeen && (await dialog.count()) === 0 && (await page.getByRole("button", { name: "Admit anyway" }).count()) === 0, { refusedSeen, staffSentence, ...(seen ? { seen } : {}) });
+  if (!refusedSeen) await shot(page, "allowance-register-unexpected");
+  await shot(page, "allowance-register-refused");
+  L.check("journey", "J10 the refusal records nothing", (await records(inst2)) === 0, "0 rows");
+  const forcedAllowance = await page.evaluate(async ({ id, mid }) => {
+    const r = await fetch("/api/checkin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ classInstanceId: id, memberId: mid, checkInMethod: "admin", acknowledged: ["allowance_reached"] }) });
+    return { status: r.status, body: await r.json().catch(() => null) };
+  }, { id: inst2, mid: member.id });
+  L.check("journey", "J10b an old register's acknowledged: ['allowance_reached'] is not a 400: 403 allowance_reached with the staff sentence, nothing recorded",
+    forcedAllowance.status === 403 && forcedAllowance.body?.reason === "allowance_reached" && forcedAllowance.body?.error === staffSentence && !forcedAllowance.body?.askable && (await records(inst2)) === 0, forcedAllowance);
 
-  // Undo gives the class back: the next mark is asked about again (the count recomputes from rows).
-  await absentBtn.click();
-  await dialog.getByRole("button", { name: "Remove check-in" }).click();
-  for (let i = 0; i < 30 && (await records(inst2)) === 1; i++) await page.waitForTimeout(500);
-  await page.waitForTimeout(500);
-  L.check("journey", "J12 undo removes the row", (await records(inst2)) === 0, "0 rows");
-  await search.fill("");
-  await search.fill("Member 1");
-  await page.getByRole("button", { name: /^Member 1/ }).first().waitFor();
-  await page.keyboard.press("Enter");
-  const askedAgain = await dialog.getByText("Class allowance used").waitFor({ timeout: 15000 }).then(() => true, () => false);
-  L.check("journey", "J13 after the undo the desk is asked again (the earlier session still counts; this one does not)", askedAgain, { askedAgain });
-  await dialog.getByRole("button", { name: "Cancel" }).click();
+  // A class pack pays instead (owner, 27 Oct 2026: "they get what they paid for").
+  const packTpl = randomUUID(); const memberPack = randomUUID();
+  await q(`insert into "ClassPack" (id, "tenantId", name, "totalCredits", "validityDays", "pricePence", "updatedAt") values ($1, $2, 'Desk pack', 5, 90, 5000, now())`, [packTpl, tenantId]);
+  await q(`insert into "MemberClassPack" (id, "tenantId", "memberId", "packId", "creditsRemaining", "expiresAt", status) values ($1, $2, $3, $4, 2, now() + interval '60 days', 'active')`, [memberPack, tenantId, member.id, packTpl]);
+  const credits = async () => Number((await q(`select "creditsRemaining" as n from "MemberClassPack" where id = $1`, [memberPack]))[0].n);
+  const dropPack = async () => {
+    await q(`delete from "ClassPackRedemption" where "memberPackId" = $1`, [memberPack]);
+    await q(`delete from "MemberClassPack" where id = $1`, [memberPack]);
+    await q(`delete from "ClassPack" where id = $1`, [packTpl]);
+  };
+  try {
+    await markMember1();
+    for (let i = 0; i < 30 && (await records(inst2)) === 0; i++) await page.waitForTimeout(500);
+    // The register re-reads after a mark; a reload proves the walk-in row is what the server holds, not local state.
+    await page.reload();
+    await page.getByRole("button", { name: new RegExp(`${T2} · Open Mat`) }).click();
+    const absentBtn = page.getByRole("button", { name: "Mark Member 1 absent" });
+    const rowShown = await absentBtn.waitFor({ timeout: 45000 }).then(() => true, () => false);
+    if (!rowShown) await shot(page, "allowance-register-after-pack");
+    L.check("journey", "J11a with a class pack the desk mark is recorded and the register shows Member 1 as attended (walk-in row)", rowShown, { rowShown });
+    const audit = (await q(`select metadata from "AuditLog" where "tenantId" = $1 and action = 'attendance.mark' and "entityId" = $2 order by "createdAt" desc limit 1`, [tenantId, `${inst2}:${member.id}`]))[0]?.metadata ?? null;
+    L.check("journey", "J11 the pack paid ONE credit (2 → 1) for that one row, and the audit row carries no override or overAllowance",
+      (await records(inst2)) === 1 && (await credits()) === 1 && audit && !("overrides" in audit) && !("overAllowance" in audit),
+      { rows: await records(inst2), credits: await credits(), audit });
+
+    // Undo gives the credit back.
+    await absentBtn.click();
+    await dialog.getByRole("button", { name: "Remove check-in" }).click();
+    for (let i = 0; i < 30 && (await records(inst2)) === 1; i++) await page.waitForTimeout(500);
+    await page.waitForTimeout(500);
+    L.check("journey", "J12 undo removes the row and gives the pack credit back (1 → 2)", (await records(inst2)) === 0 && (await credits()) === 2, { rows: await records(inst2), credits: await credits() });
+  } finally {
+    await dropPack();
+  }
+  // Without the pack the next mark is refused again (the earlier session still counts; this one does not).
+  await markMember1();
+  const refusedAgain = await refusedAlert.waitFor({ timeout: 15000 }).then(() => true, () => false);
+  L.check("journey", "J13 without a pack the desk is refused again, nothing recorded", refusedAgain && (await records(inst2)) === 0, { refusedAgain });
 
   // ── Eligibility: the membership list refuses at the register; no acknowledgement admits ──
   await page.getByRole("button", { name: new RegExp(`${T3} · Squad Only`) }).click();

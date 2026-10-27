@@ -1,7 +1,8 @@
 // Journey: the member booking warning (review gap 6, 21 Oct 2026).
 // A member on a "1 each week" plan who has already attended this week books the class's next session from the member
 // schedule. The booking is NOT refused (owner decision: booking consumes nothing, guarantees nothing); the member
-// sees the warning that the door will refuse unless a pack credit or staff admit them; the booking row exists.
+// sees the notice that checking in will need a class-pack credit (no door admits past the allowance, 27 Oct 2026),
+// ending with the owner's line; the booking row exists.
 // Needs `fixture.mjs create` and `server.mjs start`.
 //   node journeys/member-booking-notice.mjs
 import { randomUUID } from "node:crypto";
@@ -40,7 +41,7 @@ await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime
 await q(`insert into "AttendanceRecord" (id, "tenantId", "memberId", "classInstanceId", "checkInMethod") values ($1, $2, $3, $4, 'admin')`, [randomUUID(), tenantId, member.id, inst1]);
 const bookings = async () => Number((await q(`select count(*)::int as n from "ClassSubscription" where "memberId" = $1 and "classId" = $2`, [member.id, cls]))[0].n);
 
-const NOTICE = `1 of 1 class used this week. Booking doesn't use a class, but checking in before ${long(nextMonday)} will need a class-pack credit or staff to admit you.`;
+const NOTICE = `1 of 1 class used this week. Booking doesn't use a class, but checking in before ${long(nextMonday)} will need a class-pack credit. For further information, please speak to a coach.`;
 
 const browser = await chromium.launch();
 try {
