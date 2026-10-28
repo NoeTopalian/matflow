@@ -5,13 +5,17 @@ import { Package, Plus, Trash2, Loader2, AlertCircle, Check } from "lucide-react
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
+import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/Toast";
+import { PACK_VALIDITY_MAX_DAYS, packValidityLabel } from "@/lib/class-pack-terms";
 
 type Pack = {
   id: string;
   name: string;
   description: string | null;
   totalCredits: number;
+  /** Days after purchase, or null for "Never expires". Chosen when the pack is created. */
+  validityDays: number | null;
   pricePence: number;
   currency: string;
   isActive: boolean;
@@ -30,7 +34,10 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", description: "", totalCredits: "10", price: "80" });
+  // `expiry` is the owner's per-product choice (27 Oct 2026): a number of days
+  // after purchase, or never.
+  const EMPTY_FORM = { name: "", description: "", totalCredits: "10", expiry: "days" as "days" | "never", validityDays: "90", price: "80" };
+  const [form, setForm] = useState(EMPTY_FORM);
   // The pack awaiting deactivation, or null. Drives the ConfirmDialog that
   // replaced the browser's native confirm prompt (UI-RULES §5.4).
   const [pendingDeactivate, setPendingDeactivate] = useState<Pack | null>(null);
@@ -66,6 +73,7 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
           name: form.name.trim(),
           description: form.description.trim() || undefined,
           totalCredits: Number(form.totalCredits),
+          validityDays: form.expiry === "never" ? null : Number(form.validityDays),
           pricePence: Math.round(parseFloat(form.price) * 100),
         }),
       });
@@ -75,7 +83,7 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
       } else {
         setPacks((prev) => [data, ...prev]);
         setDrawerOpen(false);
-        setForm({ name: "", description: "", totalCredits: "10", price: "80" });
+        setForm(EMPTY_FORM);
       }
     } catch {
       setError("Couldn't reach the server — the pack was not created.");
@@ -131,7 +139,7 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
             Class packs
           </h2>
           <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
-            Pre-paid bundles. Members buy N classes for £X and use them until they run out. Decremented on each check-in when there is no recurring subscription.
+            Pre-paid bundles. Members buy N classes for £X, valid Y days or with no expiry. Decremented on each check-in when there is no recurring subscription.
           </p>
         </div>
         <button
@@ -172,7 +180,7 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
                   {!p.isActive && <span className="text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wider" style={{ background: "var(--sf-1)", color: "var(--tx-3)" }}>Inactive</span>}
                 </div>
                 <p className="text-[11px] mt-1" style={{ color: "var(--tx-3)" }}>
-                  {p.totalCredits} classes · no expiry · {formatPrice(p.pricePence, p.currency)}
+                  {p.totalCredits} classes · {packValidityLabel(p.validityDays)} · {formatPrice(p.pricePence, p.currency)}
                 </p>
                 {p.description && <p className="text-[11px] mt-1" style={{ color: "var(--tx-3)" }}>{p.description}</p>}
               </div>
@@ -227,8 +235,6 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
                   style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
                 />
               </div>
-              {/* G6 (owner decision, 27 Oct 2026): no validity period. A pack
-                  lasts until its credits are used, so the form asks for none. */}
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Credits</label>
@@ -241,6 +247,37 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
                     className="w-full px-3 py-2.5 rounded-xl text-sm bg-transparent border outline-none" style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }} />
                 </div>
               </div>
+              {/* Owner decision, 27 Oct 2026: the club chooses an expiry or no
+                  expiry per pack product. Fixed once created; packs already
+                  sold keep the expiry they were sold with. */}
+              <div className="grid grid-cols-2 gap-2 items-end">
+                <div>
+                  <label htmlFor={`${formId}-expiry`} className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Expiry</label>
+                  <Select
+                    id={`${formId}-expiry`}
+                    aria-label="Expiry"
+                    className="w-full"
+                    value={form.expiry}
+                    onChange={(e) => setForm((f) => ({ ...f, expiry: e.target.value === "never" ? "never" : "days" }))}
+                  >
+                    <option value="days">Expires after a set time</option>
+                    <option value="never">Never expires</option>
+                  </Select>
+                </div>
+                {form.expiry === "days" && (
+                  <div>
+                    <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Days after purchase</label>
+                    <input aria-label="Days after purchase" type="number" min={1} max={PACK_VALIDITY_MAX_DAYS} step={1} required value={form.validityDays} onChange={(e) => setForm((f) => ({ ...f, validityDays: e.target.value }))}
+                      className="w-full px-3 py-2.5 rounded-xl text-sm bg-transparent border outline-none" style={{ borderColor: "var(--bd-default)", color: "var(--tx-1)" }} />
+                  </div>
+                )}
+              </div>
+              <p className="text-[11px]" style={{ color: "var(--tx-3)" }}>
+                {form.expiry === "never"
+                  ? "Credits never expire: members use them until they run out."
+                  : `Each pack expires ${form.validityDays || "N"} days after the member buys it.`}{" "}
+                This cannot be changed after the pack is created; packs already sold keep their own terms.
+              </p>
               <div>
                 <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Description (optional)</label>
                 <textarea aria-label="Description (optional)" value={form.description} maxLength={500} rows={2} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
@@ -249,7 +286,7 @@ export default function ClassPacksManager({ primaryColor }: { primaryColor: stri
               </div>
               {error && <div role="alert" className="flex items-start gap-2 px-3 py-2 rounded-xl border text-xs" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "#f87171" }}><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
               <p className="text-[11px] text-center" style={{ color: "var(--tx-4)" }}>
-                Credits never expire: a pack lasts until they are used. A Stripe Product + Price is created on your connected account. Audit-logged.
+                A Stripe Product + Price is created on your connected account. Audit-logged.
               </p>
             </form>
       </Dialog>

@@ -1143,8 +1143,9 @@ model ClassPack {
   name            String
   description     String?
   totalCredits    Int
-  // No longer asked for or read (owner decision, 27 Oct 2026: a pack lasts
-  // until its credits are used). Kept, nullable, for packs created before.
+  // Days a purchase lasts, or NULL for "Never expires" (owner decision,
+  // 27 Oct 2026: the club chooses per pack product). Set when the product is
+  // created; read only at sale (lib/class-pack-terms.ts packExpiresAt).
   validityDays    Int?
   pricePence      Int
   currency        String   @default("GBP")
@@ -1168,12 +1169,12 @@ model MemberClassPack {
   pack                  ClassPack @relation(fields: [packId], references: [id])
   creditsRemaining      Int
   purchasedAt           DateTime  @default(now())
-  // Not read since G6 (owner decision, 27 Oct 2026: a pack lasts until its
-  // credits are used or it is refunded). Packs sold from then on store NULL;
-  // a date left on an older pack is history only.
+  // The purchase's own term, recorded at sale: purchasedAt + the product's
+  // validityDays, or NULL when the product never expires. Never rewritten.
+  // Usable while status = 'active', credits > 0 and (NULL or > now).
   expiresAt             DateTime?
   stripePaymentIntentId String?   @unique
-  status                String    @default("active") // active | refunded; legacy "expired" (no longer written) is usable like active
+  status                String    @default("active") // active | expired (legacy, no longer written; never usable) | refunded
 
   redemptions ClassPackRedemption[]
 

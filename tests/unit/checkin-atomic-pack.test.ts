@@ -174,22 +174,28 @@ describe("performCheckin pack-redemption — M10 atomic decrement", () => {
     expect(redemptionCreateMock).not.toHaveBeenCalled();
   });
 
-  // G6 (owner decision, 27 Oct 2026): a pack lasts until its credits are
-  // used or it is refunded. The claim does not read expiresAt at all (a past
-  // date and NULL are the same), treats the legacy status "expired" as usable,
-  // and spends the oldest purchase first.
-  it("G6: usable = credits left and not refunded; expiresAt is not read; oldest purchase first", async () => {
+  // Packs per product (owner decision, 27 Oct 2026): usable = status "active",
+  // credits left, and no expiry or an expiry still ahead. A legacy "expired"
+  // pack is never matched. Earliest expiry first, no-expiry packs last, then
+  // the oldest purchase.
+  it("usable = active, credits left, expiresAt NULL or in the future; earliest expiry first, no-expiry last", async () => {
     findFirstMock.mockResolvedValueOnce({ id: "pack-1" });
     updateManyMock.mockResolvedValueOnce({ count: 1 });
     findUniqueMock.mockResolvedValueOnce({ creditsRemaining: 5 });
 
+    const before = Date.now();
     const result = await performCheckin(BASE_ARGS);
     expect(result.kind).toBe("success");
 
     const query = findFirstMock.mock.calls[0][0] as { where: Record<string, unknown>; orderBy: unknown };
-    expect(query.where).toEqual({ memberId: "m-1", tenantId: "t-1", status: { not: "refunded" }, creditsRemaining: { gt: 0 } });
-    expect(JSON.stringify(query)).not.toContain("expiresAt");
-    expect(query.orderBy).toEqual([{ purchasedAt: "asc" }, { id: "asc" }]);
+    expect(query.where).toEqual({
+      memberId: "m-1", tenantId: "t-1", status: "active", creditsRemaining: { gt: 0 },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: expect.any(Date) } }],
+    });
+    const cutoff = ((query.where.OR as Array<{ expiresAt: { gt?: Date } | null }>)[1].expiresAt as { gt: Date }).gt.getTime();
+    expect(cutoff).toBeGreaterThanOrEqual(before);
+    expect(cutoff).toBeLessThanOrEqual(Date.now());
+    expect(query.orderBy).toEqual([{ expiresAt: { sort: "asc", nulls: "last" } }, { purchasedAt: "asc" }, { id: "asc" }]);
   });
 
   it("does NOT use update() with bare where:{id} (the OLD non-atomic pattern)", async () => {

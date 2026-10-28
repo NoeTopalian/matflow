@@ -5,6 +5,12 @@ import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 
+// Name, description and the on-sale switch only. Credits, price and validity
+// are fixed when the product is created (owner decision, 27 Oct 2026: "Later
+// product edits must not silently rewrite sold entitlements"); a validityDays
+// sent here is stripped by zod. This route touches ClassPack alone: every sold
+// MemberClassPack keeps the expiresAt and credits it was sold with, and no
+// edit re-sends anything to Stripe.
 const patchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(500).optional().nullable(),

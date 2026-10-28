@@ -175,12 +175,12 @@ await c.query(
 // A pack credit behind the attendance row that is about to be discarded.
 await c.query(
   `INSERT INTO "ClassPack" (id, "tenantId", name, "totalCredits", "validityDays", "pricePence", "updatedAt")
-   VALUES ($1, $2, 'Dedupe fixture pack', 10, NULL, 5000, CURRENT_TIMESTAMP)`,
+   VALUES ($1, $2, 'Dedupe fixture pack', 10, 90, 5000, CURRENT_TIMESTAMP)`,
   [PACK, tenantId],
 );
 await c.query(
   `INSERT INTO "MemberClassPack" (id, "tenantId", "memberId", "packId", "creditsRemaining", "expiresAt", status)
-   VALUES ($1, $2, $3, $4, 5, NULL, 'active')`,
+   VALUES ($1, $2, $3, $4, 5, '2032-01-01 00:00:00'::timestamp, 'active')`,
   [MPACK, tenantId, memberA, PACK],
 );
 await c.query(

@@ -5,14 +5,17 @@ import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { PACK_VALIDITY_MAX_DAYS } from "@/lib/class-pack-terms";
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
   totalCredits: z.number().int().min(1).max(1000),
-  // G6 (owner decision, 27 Oct 2026): no validity period. A pack lasts until
-  // its credits are used. A "validityDays" sent by an older tab is ignored
-  // (zod strips it) and never stored.
+  // Owner decision, 27 Oct 2026: the club chooses per pack product. A whole
+  // number of days after purchase, or null for "Never expires". Required, so a
+  // product is never created with an unstated term. Fixed once created (the
+  // edit route does not accept it): sold packs carry their own expiresAt.
+  validityDays: z.number().int().min(1).max(PACK_VALIDITY_MAX_DAYS).nullable(),
   pricePence: z.number().int().min(0).max(10_000_00),
   currency: z.string().min(3).max(3).optional(),
   isActive: z.boolean().optional(),
@@ -58,14 +61,21 @@ export async function POST(req: Request) {
   }
   if (!process.env.STRIPE_SECRET_KEY) return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
 
-  const { name, description, totalCredits, pricePence, currency, isActive } = parsed.data;
+  const { name, description, totalCredits, validityDays, pricePence, currency, isActive } = parsed.data;
 
   try {
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
 
     const product = await stripe.products.create(
-      { name, description: description ?? `${totalCredits} classes, no expiry` },
+      {
+        name,
+        description:
+          description ??
+          (validityDays === null
+            ? `${totalCredits} classes · no expiry`
+            : `${totalCredits} classes valid for ${validityDays} days`),
+      },
       { stripeAccount: tenant.stripeAccountId },
     );
     const price = await stripe.prices.create(
@@ -98,6 +108,7 @@ export async function POST(req: Request) {
           name,
           description: description ?? null,
           totalCredits,
+          validityDays,
           pricePence,
           // Must match the Stripe price above, or the local row and the thing
           // members are actually charged disagree.
@@ -114,7 +125,7 @@ export async function POST(req: Request) {
       action: "class_pack.create",
       entityType: "ClassPack",
       entityId: created.id,
-      metadata: { name, totalCredits, pricePence },
+      metadata: { name, totalCredits, validityDays, pricePence },
       req,
     });
 

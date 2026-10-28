@@ -1072,18 +1072,17 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
     expect(vi.mocked(prisma.memberClassPack.create)).toHaveBeenCalled();
   });
 
-  // G6 (owner decision, 27 Oct 2026): "It should be till it runs out". The
-  // webhook mints a pack with no expiry, whatever the template's old
-  // validityDays says, and a template created after the change (NULL
-  // validityDays) mints the same way.
-  it.each([[30], [null]])("G6: class_pack mints the pack with expiresAt NULL (template validityDays %j)", async (validityDays) => {
+  // Packs per product (owner decision, 27 Oct 2026): the club chooses an
+  // expiry or no expiry per pack product. At sale the purchase records its
+  // own term: purchasedAt + validityDays, or NULL for a no-expiry product.
+  async function sellPack(validityDays: number | null) {
     constructEventMock.mockReturnValue({
-      id: `evt-pack-g6-${validityDays}`,
+      id: `evt-pack-terms-${validityDays}`,
       type: "checkout.session.completed",
       account: "acct_test",
       data: {
         object: {
-          id: "cs_g6", payment_intent: "pi_g6", currency: "gbp", amount_total: 5000,
+          id: "cs_terms", payment_intent: "pi_terms", currency: "gbp", amount_total: 5000,
           metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-1", tenantId: "tenant-A" },
         },
       },
@@ -1092,12 +1091,24 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       id: "pack-1", validityDays, totalCredits: 10, pricePence: 5000, currency: "gbp", name: "10pk",
     } as never);
     mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
-
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
-    expect(vi.mocked(prisma.memberClassPack.create)).toHaveBeenCalledWith({
-      data: expect.objectContaining({ creditsRemaining: 10, expiresAt: null, status: "active", memberId: "mem-1", packId: "pack-1" }),
-    });
+    const create = vi.mocked(prisma.memberClassPack.create);
+    expect(create).toHaveBeenCalledTimes(1);
+    return (create.mock.calls[0][0] as { data: { purchasedAt?: Date; expiresAt: Date | null; creditsRemaining: number; status: string } }).data;
+  }
+
+  it("a no-expiry product (validityDays NULL) produces a purchase with expiresAt NULL", async () => {
+    const data = await sellPack(null);
+    expect(data).toMatchObject({ creditsRemaining: 10, status: "active", expiresAt: null });
+  });
+
+  it("a dated product produces a purchase that expires validityDays after its purchasedAt", async () => {
+    const data = await sellPack(30);
+    expect(data.purchasedAt).toBeInstanceOf(Date);
+    expect(data.expiresAt).toBeInstanceOf(Date);
+    expect(data.expiresAt!.getTime() - data.purchasedAt!.getTime()).toBe(30 * 86_400_000);
+    expect(data).toMatchObject({ creditsRemaining: 10, status: "active" });
   });
 });
 

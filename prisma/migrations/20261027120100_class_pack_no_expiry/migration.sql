@@ -6,23 +6,22 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '15s';
 
--- G6 (owner decision, 27 Oct 2026): "It should be till it runs out". A class
--- pack is usable until its credits are used or it is refunded.
+-- Owner decision, 27 Oct 2026: "Class packs: the club chooses an expiry or no
+-- expiry per new pack product. Existing purchases keep their recorded terms
+-- and remaining credits; do not revive expired credits or extend existing
+-- purchases through a blanket never-expire change."
 --
--- Expand-only: both columns become nullable and nothing else changes. No row
--- is rewritten, so while the previous build serves during the deploy it sees
--- exactly the data it sees today. The new code does not read
--- "MemberClassPack"."expiresAt" or the legacy status 'expired' at all
--- (lib/checkin.ts claimPack, app/api/member/class-packs), and writes NULL for
--- every pack it sells, so old dates — including on a pack bought through the
--- previous build during the deploy — are inert and need no data step.
--- "ClassPack"."validityDays" keeps its values (the previous build's webhook
--- still reads it while this deploy builds); new templates store NULL.
+-- Expand-only: both columns become nullable so a product can say "Never
+-- expires" (validityDays NULL) and a purchase from such a product records no
+-- expiry (expiresAt NULL). No data step: every existing row keeps its values,
+-- so existing purchases keep their dates and expired packs stay expired. The
+-- previous build serving during the deploy sees exactly the data it sees
+-- today; only the new build creates a NULL-validity product.
 --
 -- History: this file was first written (unshipped, test branch only) with a
--- CHECK and an UPDATE clearing active packs' expiry. Review of 27 Oct 2026
--- replaced that with the code-side rule above; 20261027130000 removes the
--- CHECK from any database that applied the first version.
+-- CHECK and an UPDATE clearing active packs' expiry. That was withdrawn the
+-- same day; 20261027130000 removes the CHECK from any database that applied
+-- the first version.
 ALTER TABLE "MemberClassPack" ALTER COLUMN "expiresAt" DROP NOT NULL;
 ALTER TABLE "ClassPack" ALTER COLUMN "validityDays" DROP NOT NULL;
 
