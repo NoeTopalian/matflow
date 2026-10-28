@@ -1034,7 +1034,7 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       account: "acct_test",
       data: {
         object: {
-          id: "cs_x", payment_intent: "pi_x", currency: "gbp", amount_total: 5000,
+          id: "cs_x", payment_status: "paid", payment_intent: "pi_x", currency: "gbp", amount_total: 5000,
           metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-foreign", tenantId: "tenant-A" },
         },
       },
@@ -1057,7 +1057,7 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       account: "acct_test",
       data: {
         object: {
-          id: "cs_y", payment_intent: "pi_y", currency: "gbp", amount_total: 5000,
+          id: "cs_y", payment_status: "paid", payment_intent: "pi_y", currency: "gbp", amount_total: 5000,
           metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-1", tenantId: "tenant-A" },
         },
       },
@@ -1082,7 +1082,7 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       account: "acct_test",
       data: {
         object: {
-          id: "cs_terms", payment_intent: "pi_terms", currency: "gbp", amount_total: 5000,
+          id: "cs_terms", payment_status: "paid", payment_intent: "pi_terms", currency: "gbp", amount_total: 5000,
           metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-1", tenantId: "tenant-A" },
         },
       },

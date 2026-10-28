@@ -476,8 +476,23 @@ export async function POST(req: NextRequest) {
       // trusted as authoritative for the tenant scope of this checkout.
       // (Security audit iteration 2 / M8, 2026-05-07.)
       const metadata = (obj.metadata as Record<string, string> | undefined) ?? {};
+      // A completed Checkout Session is not a payment: Stripe completes a
+      // session paid by a delayed method (Bacs Direct Debit, SEPA, bank
+      // transfer) with payment_status "unpaid", and the money may never
+      // arrive. Credits are spendable the moment they exist, so they are
+      // minted only for a session Stripe reports as paid (W6, 28 Oct 2026).
+      // The pack checkout is card-only (app/api/member/class-packs/buy), so a
+      // genuine purchase always completes "paid".
+      const sessionPaid = obj.payment_status === "paid";
+      if (metadata.matflowKind === "class_pack" && !sessionPaid) {
+        console.warn(
+          `[stripe-webhook] checkout.session.completed — class pack session ${String(obj.id)} completed with ` +
+          `payment_status=${String(obj.payment_status)}; no credits minted.`,
+        );
+      }
       if (
         metadata.matflowKind === "class_pack" &&
+        sessionPaid &&
         metadata.packId && metadata.memberId && metadata.tenantId &&
         metadata.tenantId === tenantId
       ) {
