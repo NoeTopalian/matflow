@@ -202,20 +202,21 @@ describe("Reports tiles, CSV and drill-through agree on the club's month", () =>
     expect(data.summary.newMembersThisMonth).toBe(2);
     expect(data.churn.joined).toBe(2);
     expect(data.churn.cancelled).toBe(1);
-    expect(data.monthlySignups.at(-1)).toEqual({ month: "Nov 26", count: 2, isCurrentMonth: true, basis: data.membership.movementsByMonth.at(-1)!.basis });
+    expect(data.monthlySignups.at(-1)).toEqual({ month: "Nov 26", count: 2, isCurrentMonth: true, inPeriod: true, basis: data.membership.movementsByMonth.at(-1)!.basis });
     // The movement series (T8c) buckets on the same club month: with no status
     // history it falls back to these join and cancel dates, so it agrees here.
     expect(data.membership.movementsByMonth.at(-1)).toMatchObject({ month: data.period.monthKey, new: 2, lostCancelled: 1 });
     // CSV: the same numbers, and it says which month and zone.
     expect(csvValue("New members this month")).toBe("2");
     expect(csvValue("Joined this month (new + rejoined)")).toBe("2");
-    expect(csv).toContain("This month,November 2026");
+    expect(csv).toContain("Period,November 2026");
     expect(csv).toContain("Pacific/Auckland");
     // Drill-through: the same members, by id.
     expect(newRows.names.sort()).toEqual(["n1", "n2"]);
     expect(newRows.headline).toBe("2 new this month");
     expect(churnedRows.names).toEqual(["c1"]);
     expect(churnedRows.headline).toBe("1 cancelled this month");
+    expect(csvValue("Churn (cancellations) this month")).toBe("1");
   });
 
   it("mirror: Los Angeles club, UTC server, Auckland browser, 2026-11-01T05:00Z: all three still count October", async () => {

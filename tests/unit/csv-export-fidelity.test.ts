@@ -1,3 +1,4 @@
+import { resolveReportPeriod } from "@/lib/report-period";
 import { describe, it, expect, vi } from "vitest";
 import { csvCell, csvDocument, CSV_UTF8_BOM } from "@/lib/csv";
 
@@ -114,11 +115,10 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
       attendanceRate: { mode: "per_member_week", label: "Rate", value: null, formula: "a / b", numerator: 0, denominator: 0 },
       retentionRate: null,
       retention: { ratePct: null, survived: 0, cohort: 0 },
-      // T2b: churn with its counts and joined beside it (8 active now + 1
-      // cancelled this month = base 9; 2 joined, net +1).
-      churnRate: 11.1,
-      // D11: joined and net are the movement figures for the current month (Oct: 2 new + 1 rejoined).
-      churn: { ratePct: 11.1, cancelled: 1, base: 9, joined: 3, net: 3 },
+      // Churn (27 Oct 2026): the period's cancellations, a count (October has
+      // none: lostCancelled 0 below). D11: joined and net are the movement
+      // figures for the current month (Oct: 2 new + 1 rejoined).
+      churn: { cancelled: 0, joined: 3, net: 3 },
       paymentHealth: {
         overdueCount: 0, noPaymentYetCount: 0, failedLast30Days: 0, recoveryRate: 50,
         recovery: { ratePct: 50, recovered: 1, failedMembers: 2 },
@@ -149,6 +149,13 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
       },
       // T2c: the CSV states when its figures were computed.
       generatedAt: new Date(2026, 9, 17, 14, 5).toISOString(),
+      // The statistics period (this month) and its movement: October's tally.
+      range: resolveReportPeriod({}, new Date(2026, 9, 17, 14, 5), "Europe/London"),
+      periodMovement: {
+        totals: { new: 2, rejoined: 1, lost: 0, lostCancelled: 0, lostCompleted: 0, net: 3, imported: 5, otherIn: 0, otherOut: 0, tasterAdded: 0 },
+        basis: "mixed",
+        previousBasis: "estimated",
+      },
     };
     const attribution = {
       rows: [{ name: "Zoé \"Coach\" 🥋", trialsRun: 2, conversions: 1, conversionRate: null, retained: 1, retentionRate: null, lost: 0, undecided: 1 }],
@@ -176,8 +183,11 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
     const left = rows.find((r) => r[0] === "Left the club");
     expect(left?.[2]).toBe("1");
     expect(left?.[3]).not.toMatch(/%/);
-    // T2b: churn row carries the same numbers as the tile; joined beside it.
-    expect(rows.find((r) => r[1] === "Churn this month")?.[2]).toBe("11.1% (1 of 9)");
+    // Churn row: the tile's count of cancellations, what it counts, the period's estimate note, no percentage.
+    const churnRow = rows.find((r) => r[1] === "Churn (cancellations) this month");
+    expect(churnRow?.[2]).toBe("0");
+    expect(churnRow?.[3]).toBe("Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide · Partly estimated");
+    expect(rows.some((r) => /churn/i.test(r[1]) && /%/.test(r[2]))).toBe(false);
     // D11: the Joined tile line for line — the movement definition, the card's figures.
     const joined = rows.find((r) => r[1] === "Joined this month (new + rejoined)");
     expect(joined?.[2]).toBe("3");
@@ -226,11 +236,13 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
       summary: { totalMembers: 0, currentMembers: 0, activeMembers: 0, cancelledMembers: 0, totalCheckIns: 0, totalActiveClasses: 0, attendanceThisWeek: 0, attendanceLastWeek: 0, newMembersThisMonth: 0, newMembersLastMonth: 0 },
       attendanceRate: { mode: "checkins-per-member", label: "Rate", value: null, formula: "a / b", numerator: 0, denominator: 0 },
       retention: { ratePct: null, survived: 0, cohort: 0 },
-      churn: { ratePct: null, cancelled: 0, base: 0, joined: 0, net: 0 },
+      churn: { cancelled: 0, joined: 0, net: 0 },
       paymentHealth: { recovery: { ratePct: null, recovered: 0, failedMembers: 0 } },
       weeklyAttendance: [], monthlySignups: [], topClasses: [], currentMembersByStatus: [], checkInMethods: [],
       membership: { movementsByMonth: [], headcountByMonth: [] },
       generatedAt,
+      range: resolveReportPeriod({}, new Date(generatedAt), "Europe/London"),
+      periodMovement: { totals: { new: 0, rejoined: 0, lost: 0, lostCancelled: 0, lostCompleted: 0, net: 0, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0 }, basis: "none", previousBasis: "none" },
     };
     const attribution = { rows: [], overall: { trials: 0, lost: 0, undecided: 0, converted: 0, conversionRate: null, churned: 0, retained: 0, retentionRate: null }, epochStart: null, minTrials: 5 };
     const rows = parseCsv(stripBom(reportsCsv(minimal as never, attribution as never)));

@@ -216,7 +216,8 @@ describe("MembersList — totals independent of the row cap", () => {
 
   it("the drill-through slices use the server's month totals too", () => {
     currentSearch = "filter=churned-this-month";
-    render(<MembersList members={loaded} primaryColor="#3b82f6" role="owner" truncatedAt={10} serverCounts={full} monthWindow={{ ...MONTH, isCurrent: true }} />);
+    // The churn slice is headed by the server's count of cancellations in the month (owner decision, 27 Oct 2026).
+    render(<MembersList members={loaded} primaryColor="#3b82f6" role="owner" truncatedAt={10} serverCounts={full} movers={{ new: 0, rejoined: 0, lost: 5, tasterAdded: 0, cancelled: 4 }} monthWindow={{ ...MONTH, isCurrent: true }} />);
     expect(screen.getByTestId("members-headline").textContent).toBe("4 cancelled this month");
   });
 

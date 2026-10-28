@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 /**
  * T2b (17 Oct 2026) — every percentage on Reports and Analysis shows its
- * numerator and denominator ("10% (1 of 10)"), churn has "Joined this month"
+ * numerator and denominator ("10% (1 of 10)"), churn (a count of
+ * cancellations since 27 Oct 2026, no percentage) has "Joined this month"
  * immediately beside it, an empty base reads "—" (never "0%"), and the status
  * card is split per Q4 A-2: current members by status, plus "Left the club: N"
  * with no percentage. The screen and the CSV print the same text.
  */
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import React from "react";
 
 vi.mock("next/navigation", () => ({
@@ -34,6 +35,9 @@ import { formatRatio, formatPct, formatSigned, wholePct } from "@/components/das
 import ReportsView, { reportsCsv } from "@/components/dashboard/ReportsView";
 import AnalysisView from "@/components/dashboard/AnalysisView";
 import { createEmptyReportsData, type ReportsData } from "@/lib/reports";
+import { resolveReportPeriod } from "@/lib/report-period";
+/** The Analysis fixtures describe October 2026 (the default period, "this month"). */
+const OCTOBER = resolveReportPeriod({}, new Date("2026-10-15T12:00:00.000Z"), "Europe/London");
 
 describe("formatRatio", () => {
   it.each([
@@ -83,14 +87,19 @@ function reports(overrides: Partial<ReportsData> = {}): ReportsData {
       totalMembers: 15, currentMembers: 12, activeMembers: 9, inactiveMembers: 2, tasterMembers: 1, cancelledMembers: 3,
       newMembersThisMonth: 3,
     },
-    churn: { ratePct: 10, cancelled: 1, base: 10, joined: 3, net: 2 },
-    churnRate: 10,
+    churn: { cancelled: 1, joined: 3, net: 2 },
     // The net beside churn comes from the Net New Members card's current month (T8c review).
     membership: {
       ...base.membership,
       movementsByMonth: [
         { month: "2026-10", label: "Oct 26", new: 2, rejoined: 1, lost: 1, lostCancelled: 1, lostCompleted: 0, net: 2, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0, basis: "recorded", isCurrentMonth: true },
       ],
+    },
+    // The period's movement (this month): October's tally.
+    periodMovement: {
+      totals: { new: 2, rejoined: 1, lost: 1, lostCancelled: 1, lostCompleted: 0, net: 2, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0 },
+      basis: "recorded",
+      previousBasis: "none",
     },
     retention: { ratePct: 75, survived: 15, cohort: 20 },
     retentionRate: 75,
@@ -128,11 +137,17 @@ function tileFor(label: string): HTMLElement {
   return card as HTMLElement;
 }
 
-describe("ReportsView — churn tile with counts, joined beside it", () => {
-  it("shows 10% (1 of 10) and the Joined tile immediately after it", () => {
+describe("ReportsView — churn is a count of cancellations, joined beside it (owner decision, 27 Oct 2026)", () => {
+  it("titled \"Churn\": the count worded for the period, what it counts, no percentage, and the Joined tile immediately after it", () => {
     renderReports(reports());
-    const churn = tileFor("Churn rate this month");
-    expect(churn.textContent).toContain("10% (1 of 10)");
+    const churn = tileFor("Churn");
+    const ps = [...churn.querySelectorAll("p")].map((p) => p.textContent);
+    expect(ps[0]).toBe("1 cancellation this month");
+    expect(ps[1]).toBe("Churn");
+    expect(ps[2]).toBe("Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide");
+    expect(churn.textContent).not.toMatch(/%/);
+    expect(churn.closest("a")?.getAttribute("aria-label")).toBe("Churn: 1 cancellation this month — see the members behind this number");
+    expect(churn.closest("a")?.getAttribute("href")).toMatch(/^\/dashboard\/members\?filter=churned-this-month&month=\d{4}-\d{2}$/);
     // D11: the Joined tile sits immediately after churn, by the movement definition.
     const joined = screen.getByTestId("reports-joined-tile");
     // The churn tile is a drill-through link around its card.
@@ -146,11 +161,20 @@ describe("ReportsView — churn tile with counts, joined beside it", () => {
     expect(screen.getByTestId("reports-joined-net").textContent).toBe("Net +2 this month (new + rejoined − left)");
   });
 
-  it("an empty base renders a dash on the churn tile, not 0%", () => {
-    renderReports(reports({ churn: { ratePct: null, cancelled: 0, base: 0, joined: 0, net: 0 }, churnRate: 0 }));
-    const churn = tileFor("Churn rate this month");
-    expect(churn.textContent).toContain("—");
-    expect(churn.textContent).not.toMatch(/0%/);
+  it("plural and zero: \"4 cancellations\", \"0 cancellations\" — a count, never a dash or a percentage", () => {
+    renderReports(reports({ churn: { cancelled: 4, joined: 3, net: 2 } }));
+    expect(tileFor("Churn").querySelector("p")!.textContent).toBe("4 cancellations this month");
+    cleanup();
+    renderReports(reports({ churn: { cancelled: 0, joined: 0, net: 0 } }));
+    const zero = tileFor("Churn");
+    expect(zero.querySelector("p")!.textContent).toBe("0 cancellations this month");
+    expect(zero.textContent).not.toMatch(/—|%/);
+  });
+
+  it("the CSV row is the same count, named with its unit, and carries no percentage", () => {
+    const csv = reportsCsv(reports({ churn: { cancelled: 4, joined: 3, net: 2 } }), ATTRIBUTION as never);
+    expect(csv).toContain("Health,Churn (cancellations) this month,4,");
+    expect(csv).not.toMatch(/Churn[^\n]*%/);
   });
 
   it("payment recovery and 6-month survival carry their counts", () => {
@@ -191,8 +215,10 @@ describe("ReportsView — every percentage shows its counts, matching the CSV", 
     const data = reports();
     const csv = reportsCsv(data, ATTRIBUTION as never);
     renderReports(data);
+    // Churn is a count (27 Oct 2026): the screen says "1 cancellation this month", the CSV row carries 1.
+    expect(document.body.textContent).toContain("1 cancellation this month");
+    expect(csv).toContain("Health,Churn (cancellations) this month,1,");
     for (const text of [
-      "10% (1 of 10)",
       "50% (1 of 2)",
       "75% (15 of 20)",
       "75% (9 of 12)",
@@ -209,7 +235,7 @@ describe("ReportsView — every percentage shows its counts, matching the CSV", 
 describe("AnalysisView — engagement shows its counts", () => {
   const metrics = {
     totalMembers: 312, newThisMonth: 7, newLastMonth: 4, checkinsThisMonth: 50, checkinsLastMonth: 40,
-    activeClasses: 6, activeMembersThisMonth: 31, monthLabel: "October 2026", gymName: "Test club",
+    activeClasses: 6, activeMembersThisMonth: 31, monthLabel: "October 2026", gymName: "Test club", range: OCTOBER,
   };
 
   it("prints the rate with (n of m), and the change pills' two counts", () => {

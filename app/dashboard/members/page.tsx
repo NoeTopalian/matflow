@@ -2,6 +2,7 @@ import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import MembersList, { MemberRow, type MonthWindowProp } from "@/components/dashboard/MembersList";
 import { clubMonthWindow, clubMonthWindowForKey } from "@/lib/club-month";
+import { rangeAsMonthWindow, resolveReportPeriod } from "@/lib/report-period";
 import { getMemberListCounts } from "@/lib/member-list-counts-server";
 import PrintCardsLink from "@/components/dashboard/PrintCardsLink";
 import PromotionAlerts from "@/components/dashboard/PromotionAlerts";
@@ -145,23 +146,31 @@ async function getMembers(tenantId: string, now: Date, timeZone: string): Promis
  * client compares instants against these boundaries and never recomputes the
  * month in the browser's zone.
  */
-async function getMonthWindow(tenantId: string, monthParam: string | undefined): Promise<MonthWindowProp> {
+async function getMonthWindow(tenantId: string, monthParam: string | undefined, fromParam?: string, toParam?: string): Promise<MonthWindowProp> {
   const club = await withTenantContext(tenantId, (tx) =>
     tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }),
   );
   const current = clubMonthWindow(new Date(), club?.timezone);
+  // A Reports period of several months (lib/report-period) links with from/to:
+  // the slice lists the whole run, start of `from` to the end of `to`, with
+  // the same validation as Reports (whole months, ending no later than this
+  // month, at most 24). A run of one month is that month.
+  if (fromParam && toParam) {
+    const run = resolveReportPeriod({ period: "custom", from: fromParam, to: toParam }, new Date(), club?.timezone);
+    if (run.key === "custom") return rangeAsMonthWindow(run);
+  }
   const requested = clubMonthWindowForKey(monthParam, club?.timezone);
   const window = requested ?? current;
   return { ...window, isCurrent: window.monthKey === current.monthKey };
 }
 
 interface Props {
-  searchParams: Promise<{ month?: string | string[] }>;
+  searchParams: Promise<{ month?: string | string[]; from?: string | string[]; to?: string | string[] }>;
 }
 
 export default async function MembersPage({ searchParams }: Props) {
   const { session } = await requireStaff();
-  const { month } = await searchParams;
+  const { month, from, to } = await searchParams;
 
   // UI-RULES §7: unguarded on purpose. Catching here rendered "No members yet"
   // whenever the database was unreachable — a gym with 200 members told it has
@@ -171,7 +180,12 @@ export default async function MembersPage({ searchParams }: Props) {
   // One instant for the rows' shown payment status and the server counts, so
   // a member cannot be "overdue" in the table and "paid" in a total.
   const now = new Date();
-  const monthWindow = await getMonthWindow(session!.user.tenantId, typeof month === "string" ? month : undefined);
+  const monthWindow = await getMonthWindow(
+    session!.user.tenantId,
+    typeof month === "string" ? month : undefined,
+    typeof from === "string" ? from : undefined,
+    typeof to === "string" ? to : undefined,
+  );
   const { rows: members, truncated } = await getMembers(session!.user.tenantId, now, monthWindow.timeZone);
   const counts = await getMemberListCounts(session!.user.tenantId, now, monthWindow);
   // D9 (23 Oct 2026): inactive or cancelled accounts with a confirmed debt,
@@ -188,9 +202,11 @@ export default async function MembersPage({ searchParams }: Props) {
   // its last millisecond), so each drill-through lists exactly who was counted.
   const moveWindow = {
     start: new Date(monthWindow.monthStart),
-    at: monthWindow.isCurrent ? now : new Date(new Date(monthWindow.nextMonthStart).getTime() - 1),
+    // Counted to now, or to the window's last instant when it ended before now (a past month, or a
+    // Reports run of months that ends this month: up to now, as Reports counts it).
+    at: new Date(Math.min(now.getTime(), new Date(monthWindow.nextMonthStart).getTime() - 1)),
   };
-  const { movers, basis: moversBasis, caption: moversCaption } = await withTenantContext(
+  const { movers, basis: moversBasis, caption: moversCaption, cancelledMoves } = await withTenantContext(
     session!.user.tenantId,
     (tx) => loadMonthMovement(tx, session!.user.tenantId, now, moveWindow),
     { maxWait: 10_000, timeout: 30_000 },
@@ -245,7 +261,8 @@ export default async function MembersPage({ searchParams }: Props) {
         monthWindow={monthWindow}
         serverCounts={counts}
         otherOwing={otherOwingTotals(otherOwingRows)}
-        movers={{ new: movers.new.length, rejoined: movers.rejoined.length, lost: movers.lost.length, tasterAdded: movers.tasterAdded.length }}
+        // Churn's headline is the tile's count of cancellations (moves); its rows are the people, each once.
+        movers={{ new: movers.new.length, rejoined: movers.rejoined.length, lost: movers.lost.length, tasterAdded: movers.tasterAdded.length, cancelled: cancelledMoves }}
         moversBasis={{ basis: moversBasis, caption: moversCaption }}
         supportScope={(session!.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
       />

@@ -359,12 +359,13 @@ test.describe("Additional dashboard routes", () => {
 // ─── API smoke tests (authenticated, using Playwright's request fixture) ─────
 
 test.describe("API smoke tests (authenticated)", () => {
-  test("TC-API-01: GET /api/reports returns 200 with churnRate field", async ({ request }) => {
+  test("TC-API-01: GET /api/reports returns 200 with churn as a count of cancellations", async ({ request }) => {
     const res = await request.get(`${BASE}/api/reports`);
     expect(res.status()).toBe(200);
     const body = await res.json();
-    expect(body).toHaveProperty("churnRate");
-    expect(typeof body.churnRate).toBe("number");
+    // Owner decision, 27 Oct 2026: churn is the cancellations in the period; no percentage (churnRate removed).
+    expect(typeof body.churn?.cancelled).toBe("number");
+    expect(body).not.toHaveProperty("churnRate");
   });
 
   test("TC-API-02: GET /api/reports returns retentionRate field", async ({ request }) => {

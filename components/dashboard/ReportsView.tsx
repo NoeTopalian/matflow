@@ -22,6 +22,7 @@ import {
   PieChart,
   Pie,
   CartesianGrid,
+  ReferenceArea,
 } from "recharts";
 import {
   Activity,
@@ -53,6 +54,9 @@ import { Select } from "@/components/ui/select";
 import NetNewMembersCard from "./NetNewMembersCard";
 import { MEMBERSHIP_COPY, combinedBasis, emptyTally, estimatedCaption, type MembershipBasis } from "@/lib/membership-movement";
 import type { MembershipReport } from "@/lib/membership-report";
+import { clubMonthWindow } from "@/lib/club-month";
+import { periodWords, windowLabelOf, type ReportRange } from "@/lib/report-period";
+import PeriodSelector, { periodSearchParams, type PeriodChoice } from "./PeriodSelector";
 import { basisNote } from "@/lib/net-new-series";
 import {
   EmptyChart,
@@ -71,7 +75,25 @@ import Sparkline from "@/components/dashboard/charts/Sparkline";
 import InitiativesPanel from "@/components/dashboard/InitiativesPanel";
 import MonthlyReportView from "@/components/dashboard/MonthlyReportView";
 
-const WEEK_OPTIONS = [4, 8, 12, 16, 24] as const;
+/** The estimate line for a period figure compared with the run before it (the New tile and its CSV row). */
+export function periodPairEstimateNote(data: Pick<ReportsData, "membership" | "range" | "periodMovement">): string | null {
+  const caption = estimatedCaption(data.membership);
+  const pm = data.periodMovement;
+  const w = periodWords(data.range);
+  const parts: string[] = [];
+  const now = estimateLabel(pm.basis, caption);
+  const before = estimateLabel(pm.previousBasis, caption);
+  if (now) parts.push(`${w.during} ${now.charAt(0).toLowerCase()}${now.slice(1)}`);
+  if (before) parts.push(`${w.before} ${before.charAt(0).toLowerCase()}${before.slice(1)}`);
+  if (parts.length === 0) return null;
+  const text = parts.join(" · ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The CSV's statement of the period, and in which zone its months run. */
+export function rangeCsvDetail(range: Pick<ReportRange, "timeZone" | "isCurrent">): string {
+  return `Whole months, midnight to midnight in the club's time zone (${range.timeZone})${range.isCurrent ? ", to today" : ""}`;
+}
 
 /** D9: "Inactive or left, marked overdue, not chased", with the guardian count when any. Screen and CSV share it. */
 export function otherOwingDetail(guardians: number): string {
@@ -243,9 +265,18 @@ export function classComposition(topClasses: ReportsData["topClasses"]) {
  */
 export type MonthDrillFilter = "new-this-month" | "rejoined-this-month" | "lost-this-month" | "tasters-this-month" | "churned-this-month";
 
-export function monthDrillHref(filter: MonthDrillFilter, period: ReportsData["period"] | undefined): string {
+export function monthDrillHref(filter: MonthDrillFilter, period: ReportsData["period"] | undefined, range?: Pick<ReportRange, "fromMonth" | "toMonth">): string {
   const params = new URLSearchParams({ filter });
-  if (period?.monthKey) params.set("month", period.monthKey);
+  // A period of several months lists the members of the whole run (the Members
+  // page reads from/to as one window); one month keeps the `month` link.
+  if (range && range.fromMonth !== range.toMonth) {
+    params.set("from", range.fromMonth);
+    params.set("to", range.toMonth);
+  } else if (range) {
+    params.set("month", range.toMonth);
+  } else if (period?.monthKey) {
+    params.set("month", period.monthKey);
+  }
   return `/dashboard/members?${params.toString()}`;
 }
 
@@ -260,7 +291,7 @@ export function periodCsvDetail(period: ReportsData["period"]): string {
  * included) and account type, and "recovered" is the stored status paid
  * (lib/reports.ts). Not a payer total, so it does not say "payers".
  */
-export const RECOVERY_SCOPE = "Accounts with a failed payment in the last 90 days now marked paid (any status, parents and guardians included)";
+export const RECOVERY_SCOPE = "Accounts with a failed payment in the period now marked paid (any status, parents and guardians included)";
 
 /**
  * D11 (23 Oct 2026): ONE movement definition (lib/membership-movement.ts) for
@@ -279,7 +310,28 @@ export function joinedTileDetail(t: MembershipReport["totals"]): string {
 
 /** The "New this month" tile's scope, in the movement words. */
 export const NEW_SCOPE = "First ever start. Rejoins, tasters and imports are counted apart";
-const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";
+/**
+ * Churn (owner decision, 27 Oct 2026, superseding the opening-cohort rate of
+ * 26 Oct): the total cancellations in the period, as a count. No percentage:
+ * its denominator is not approved. The tile is titled "Churn", the word the
+ * owner and Sean use; its value line names the unit ("4 cancellations in the
+ * last 3 months"), so "Churn (cancellations)" would say it twice. The CSV has
+ * no value words, so its row names the unit: "Churn (cancellations) …".
+ */
+export const CHURN_TITLE = "Churn";
+/** What the churn count includes and leaves out, on the tile and in the CSV. */
+export const CHURN_COUNTED =
+  "Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide";
+
+/** "cancellations in the last 3 months": the words after the churn count. */
+export function churnUnitText(cancelled: number, words: Pick<ReturnType<typeof periodWords>, "during">): string {
+  return `${cancelled === 1 ? "cancellation" : "cancellations"} ${words.during}`;
+}
+
+/** "4 cancellations in the last 3 months": the churn tile's value line. */
+export function churnValueText(cancelled: number, words: Pick<ReturnType<typeof periodWords>, "during">): string {
+  return `${formatNumber(cancelled)} ${churnUnitText(cancelled, words)}`;
+}
 
 /**
  * Delta as display text, or null when nothing moved. A percentage always
@@ -404,7 +456,11 @@ export function membershipCsvRows(m: MembershipReport): (string | number | null)
  * old its numbers are.
  */
 export function reportsCsv(data: ReportsData, attribution: AttributionData): string {
-  const windowLabel = `Last ${data.weeksBack} weeks`;
+  const range = data.range;
+  const words = periodWords(range);
+  const pm = data.periodMovement;
+  const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+  const windowLabel = windowLabelOf(range);
   // Same scoping as the on-screen labels (ReportsView.scopedWindowLabel): the
   // class/age filters only narrow attendance-derived rows below, never the
   // membership/payment ones, so a downloaded CSV can't be misread as a
@@ -417,34 +473,36 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
   const { churn, retention } = data;
   const recovery = data.paymentHealth.recovery;
   const shares = derivedShares(data);
-  const thisMonthEstimate = estimateLabel(thisAndLastMonthBasis(data.membership).current, estimatedCaption(data.membership));
+  const thisMonthEstimate = estimateLabel(pm.basis, estimatedCaption(data.membership));
   const rows: (string | number | null)[][] = [
     ["Section", "Metric", "Value", "Detail"],
     ["Report", "Generated at", validGeneratedAt(data.generatedAt) ? formatDateTime(data.generatedAt) : "—", "Figures cached for up to 60 seconds"],
-    ...(data.period ? [["Report", "This month", data.period.label, periodCsvDetail(data.period)]] : []),
+    ["Report", "Period", range.label, rangeCsvDetail(range)],
     ["Summary", "Total members", data.summary.totalMembers, "Every training member on record, including those who have left"],
     ["Summary", "Current members", data.summary.currentMembers, "Active and inactive members and tasters"],
     ["Summary", "Active members", data.summary.activeMembers, activeMembersDetail(data.summary)],
     // Attendance this week IS narrowed by the class/age filters (lib/reports.ts
     // attendanceScope), so its export row must say so — it was the one scoped
     // number leaving the page unlabelled (assessment lane 5).
-    ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Last week: ${data.summary.attendanceLastWeek}${filterSuffix ? ` · ${filterSuffix}` : ""}`],
-    ["Summary", "New members this month", data.summary.newMembersThisMonth, [`Last month: ${data.summary.newMembersLastMonth}`, NEW_SCOPE, monthPairEstimateNote(data.membership)].filter(Boolean).join(" · ")],
+    ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Now · last week: ${data.summary.attendanceLastWeek}${filterSuffix ? ` · ${filterSuffix}` : ""}`],
+    ["Summary", `New members ${words.during}`, data.summary.newMembersThisMonth, [`${cap(words.before)}: ${data.summary.newMembersLastMonth}`, NEW_SCOPE, periodPairEstimateNote(data)].filter(Boolean).join(" · ")],
     ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
     // The rate definition the owner chose on screen, with its formula — the
     // headline of the filter bar, previously missing from the file.
     ["Summary", `Attendance rate — ${data.attendanceRate.label}`, [formatAttendanceRateValue(data.attendanceRate.mode, data.attendanceRate.value), attendanceRateCounts(data.attendanceRate)].filter(Boolean).join(" "), `${data.attendanceRate.formula} · ${scopedWindowLabel}`],
-    ["Summary", "Active classes", data.summary.totalActiveClasses, ""],
+    ["Summary", "Active classes", data.summary.totalActiveClasses, "Now · live timetable classes"],
     // Health rows (T2b): the same text the tiles print, so the file and the
     // screen agree. Club-wide — the class/age filters never scope them.
-    ["Health", "Churn this month", formatRatio(churn.ratePct, churn.cancelled, churn.base), `${CHURN_FORMULA} · club-wide`],
+    // Churn: the count of cancellations, never a percentage (no denominator is approved).
+    ["Health", `${CHURN_TITLE} (cancellations) ${words.during}`, churn.cancelled, withEstimate(CHURN_COUNTED, thisMonthEstimate)],
     // D11: the Joined tile, line for line, and the members behind each figure.
-    ["Health", MEMBERSHIP_COPY.joinedLabel, churn.joined, withEstimate(`${joinedTileDetail(currentMonthMovement(data.membership))} · ${MEMBERSHIP_COPY.definition}`, thisMonthEstimate)],
-    ["Health", "New this month", currentMonthMovement(data.membership).new, withEstimate("First ever start", thisMonthEstimate)],
-    ["Health", "Rejoined this month", currentMonthMovement(data.membership).rejoined, withEstimate("Started again after leaving", thisMonthEstimate)],
-    ["Health", "Tasters added this month", currentMonthMovement(data.membership).tasterAdded ?? 0, withEstimate("Not in Joined or Net", thisMonthEstimate)],
-    ["Health", "Left this month", currentMonthMovement(data.membership).lost, withEstimate("Cancelled, or finished a prepaid course", thisMonthEstimate)],
+    ["Health", `Joined ${words.during} (new + rejoined)`, churn.joined, withEstimate(`${joinedTileDetail(pm.totals)} · ${MEMBERSHIP_COPY.definition}`, thisMonthEstimate)],
+    ["Health", `New ${words.during}`, pm.totals.new, withEstimate("First ever start", thisMonthEstimate)],
+    ["Health", `Rejoined ${words.during}`, pm.totals.rejoined, withEstimate("Started again after leaving", thisMonthEstimate)],
+    ["Health", `Tasters added ${words.during}`, pm.totals.tasterAdded ?? 0, withEstimate("Not in Joined or Net", thisMonthEstimate)],
+    ["Health", `Left ${words.during}`, pm.totals.lost, withEstimate("Cancelled, or finished a prepaid course", thisMonthEstimate)],
     ["Health", "Payment recovery", formatRatio(recovery.ratePct, recovery.recovered, recovery.failedMembers), RECOVERY_SCOPE],
+    ["Payments", `Failed payments ${words.during}`, data.paymentHealth.failedInPeriod, "Charges that failed, any account"],
     // Review L2: payer totals, the Payments → Outstanding definition; the
     // detail says guardians who pay are counted, and how many.
     ["Payments", PAYER_COPY.label, data.paymentHealth.overdueCount, payerGuardianNote(data.paymentHealth.overdueGuardianCount ?? 0)],
@@ -455,14 +513,16 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // Owner instruction of 24 Oct 2026: a failed charge is not a debt until it
     // is reconciled, so it is its own row and in no debt total.
     ["Payments", FAILED_TO_RECONCILE_COPY.label, data.paymentHealth.failedToReconcileCount ?? 0, failedToReconcileDetail(data.paymentHealth.failedToReconcileGuardianCount ?? 0)],
-    ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
+    ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of churn"],
     ...membershipCsvRows(data.membership),
-    ...data.weeklyAttendance.map((row) => ["Weekly attendance", row.week, row.count, row.isCurrentWeek ? "Current week" : ""]),
+    ...data.weeklyAttendance.map((row) => (data.attendanceBucket === "month"
+      ? ["Monthly attendance", row.week, row.count, row.isCurrentWeek ? "Current month" : ""]
+      : ["Weekly attendance", row.week, row.count, [row.isCurrentWeek ? "Current week" : null, row.inPeriod === false ? "Outside the period (shown for context)" : null].filter(Boolean).join(" · ")])),
     ...data.monthlySignups.map((row) => [
       "Joined by month (new + rejoined)",
       row.month,
       row.count,
-      [row.isCurrentMonth ? "Current month" : null, estimateLabel(row.basis, estimatedCaption(data.membership))].filter(Boolean).join(" · "),
+      [row.isCurrentMonth ? "Current month" : null, row.inPeriod === false ? "Outside the period (shown for context)" : null, estimateLabel(row.basis, estimatedCaption(data.membership))].filter(Boolean).join(" · "),
     ]),
     ...(() => {
       const mix = classComposition(data.topClasses);
@@ -562,12 +622,16 @@ function JoinedThisMonthTile({
   joined,
   t,
   period,
+  range,
+  words,
   estimate = null,
 }: {
   joined: number;
   t: MembershipReport["totals"];
   period: ReportsData["period"] | undefined;
-  /** "Partly estimated" (or what an estimate came from) when this month is not wholly recorded. */
+  range: ReportRange;
+  words: ReturnType<typeof periodWords>;
+  /** "Partly estimated" (or what an estimate came from) when the period is not wholly recorded. */
   estimate?: string | null;
 }) {
   const lines: { label: string; value: number; filter: MonthDrillFilter }[] = [
@@ -585,12 +649,12 @@ function JoinedThisMonthTile({
         <UserPlus className="w-5 h-5" style={{ color: "var(--color-primary)" }} />
       </div>
       <p className="mt-5 text-2xl font-bold leading-tight text-tx-1" data-testid="reports-joined-value">{formatNumber(joined)}</p>
-      <p className="text-xs font-medium mt-1 text-tx-3">{MEMBERSHIP_COPY.joinedLabel}</p>
+      <p className="text-xs font-medium mt-1 text-tx-3">Joined {words.during} (new + rejoined)</p>
       <ul className="mt-2 space-y-0.5 text-[11px]">
         {lines.map((line) => (
           <li key={line.filter}>
             <Link
-              href={monthDrillHref(line.filter, period)}
+              href={monthDrillHref(line.filter, period, range)}
               className="flex items-center justify-between gap-2 rounded px-1 -mx-1 py-0.5 text-tx-2 transition-colors hover:bg-[var(--sf-2)]"
               data-testid={`reports-joined-${line.filter}`}
             >
@@ -604,11 +668,11 @@ function JoinedThisMonthTile({
         ))}
       </ul>
       <p className="mt-2 text-[11px] text-tx-2" data-testid="reports-joined-net">
-        Net {formatSigned(t.net)} this month (new + rejoined − left)
+        Net {formatSigned(t.net)} {words.during} (new + rejoined − left)
       </p>
       {estimate && (
         <p className="mt-1 text-[11px] text-tx-3" data-testid="reports-joined-estimate">
-          {estimate}: some of this month&apos;s moves are reconstructed, not recorded at the time.
+          {estimate}: some of {words.possessive} moves are reconstructed, not recorded at the time.
         </p>
       )}
     </Card>
@@ -833,13 +897,18 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     membership,
     paymentHealth,
     period,
-    weeksBack,
     classOptions,
     filters,
     attendanceRate,
     attendanceRateModes,
   } = data;
   const healthLine = paymentHealthLine(paymentHealth);
+  const range = data.range;
+  const words = periodWords(range);
+  const pm = data.periodMovement;
+  const byMonth = data.attendanceBucket === "month";
+  // The latest month a custom run may end in: this month, in the club's zone.
+  const latestMonth = clubMonthWindow(new Date(), range.timeZone).monthKey;
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -863,10 +932,12 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
   // click ("All classes" shown after choosing a class). useOptimistic shows
   // the clicked value for exactly the life of the transition and reverts to
   // the server value the moment the new page lands — no effect, no cleanup.
-  type ParamKey = "weeks" | "classId" | "ageGroup" | "rate";
-  type Shown = { weeks: string; classId: string; ageGroup: string | null; rate: string };
+  type ParamKey = "classId" | "ageGroup" | "rate";
+  type Shown = { period: string; from: string; to: string; classId: string; ageGroup: string | null; rate: string };
   const serverShown: Shown = {
-    weeks: String(weeksBack),
+    period: range.key,
+    from: range.fromMonth,
+    to: range.toMonth,
     classId: filters.classId ?? "",
     ageGroup: filters.ageGroup ?? null,
     rate: attendanceRate.mode,
@@ -894,7 +965,6 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     const update: Partial<Shown> =
       key === "ageGroup" ? { ageGroup: value } :
       key === "classId" ? { classId: value ?? "" } :
-      key === "weeks" ? { weeks: value ?? serverShown.weeks } :
       { rate: value ?? serverShown.rate };
     startTransition(() => {
       showOptimistically(update);
@@ -902,9 +972,21 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     });
   }
 
-  // Every attendance-derived figure on this page covers `weeksBack` weeks,
-  // not all time (audit memory-storage 2026-08-16 P1-12) — label them so.
-  const windowLabel = `Last ${weeksBack} weeks`;
+  // The period: a preset, or a custom run of months (lib/report-period). The
+  // old `weeks` parameter is dropped once a period is chosen.
+  function setPeriod(next: PeriodChoice) {
+    const params = periodSearchParams(requestedParams.current, next);
+    requestedParams.current = params;
+    startTransition(() => {
+      // The choice carries its months, so From/To change with the select at once (review finding 9).
+      showOptimistically({ period: next.period, from: next.from, to: next.to });
+      router.replace(`/dashboard/reports?${params.toString()}`);
+    });
+  }
+
+  // Every period figure on this page covers the chosen months, not all time
+  // (audit memory-storage 2026-08-16 P1-12) — label them so.
+  const windowLabel = windowLabelOf(range);
   // Class/age-group filters only narrow the attendance-derived sections
   // (lib/reports.ts documents the exact list on ReportsData.filters) — this
   // suffix is appended ONLY to those captions, never to growth/churn/
@@ -977,25 +1059,11 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
       <Card data-testid="reports-filters" padding="tight">
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
-              Window
-              <Select
-                aria-label="Reporting window"
-                className="w-[120px]"
-                value={shown.weeks}
-                onChange={(e) => setParam("weeks", e.target.value)}
-              >
-                {WEEK_OPTIONS.map((w) => (
-                  <option key={w} value={w}>{w} weeks</option>
-                ))}
-                {/* lib/reports.ts accepts any 4-24; a hand-typed `?weeks=7` is
-                    valid and rendered, so the control must say "7 weeks" rather
-                    than fall back to showing the first option (lane 5). */}
-                {!(WEEK_OPTIONS as readonly number[]).includes(weeksBack) && (
-                  <option value={weeksBack}>{weeksBack} weeks</option>
-                )}
-              </Select>
-            </label>
+            {/* The period (Noe, 26 Oct 2026): a preset, or a custom run of
+                whole months. From/To are always shown, holding the period's
+                months, so choosing never moves the row; editing either picks
+                "Custom months". Every period card below follows it. */}
+            <PeriodSelector shown={shown} latestMonth={latestMonth} timeZone={range.timeZone} onSelect={setPeriod} />
 
             <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
               <span className="inline-flex items-center gap-1">Class<ScopeInfo /></span>
@@ -1152,19 +1220,22 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         </Card>
 
         <Card>
-          <SectionTitle title="Check-in trend" subtitle={`Weekly attendance — ${scopedWindowLabel}`} icon={Activity} />
+          <SectionTitle title="Check-in trend" subtitle={`${byMonth ? "Monthly" : "Weekly"} attendance — ${scopedWindowLabel}`} icon={Activity} />
           {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
             <EmptyChart label="No attendance data yet" />
           ) : (
             <div className="flex flex-col gap-3 min-h-[180px]">
-              <div className="flex items-baseline gap-3">
-                <span className="text-3xl font-bold tabular-nums" style={{ color: "var(--tx-1)" }}>
-                  {formatNumber(summary.attendanceThisWeek)}
+              {/* The headline is the period's check-ins (the chart's subject);
+                  the badge is this week against last, said as such (now). */}
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="text-3xl font-bold tabular-nums" style={{ color: "var(--tx-1)" }} data-testid="reports-trend-total">
+                  {formatNumber(summary.totalCheckIns)}
                 </span>
+                <span className="text-xs text-tx-3">check-ins {words.during}</span>
                 <TrendBadge
                   current={summary.attendanceThisWeek}
                   previous={summary.attendanceLastWeek}
-                  label={`vs ${formatNumber(summary.attendanceLastWeek)} last week`}
+                  label={`this week (${formatNumber(summary.attendanceThisWeek)}) vs ${formatNumber(summary.attendanceLastWeek)} last week`}
                 />
               </div>
               <div className="w-full overflow-hidden [&>svg]:w-full [&>svg]:h-auto">
@@ -1190,7 +1261,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={Users}
           label="Active members"
           value={formatNumber(summary.activeMembers)}
-          detail={activeMembersDetail(summary)}
+          detail={`Now · ${activeMembersDetail(summary)}`}
           primaryColor={primaryColor}
           href="/dashboard/members?filter=active"
         />
@@ -1198,18 +1269,18 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={Activity}
           label="Attendance this week"
           value={formatNumber(summary.attendanceThisWeek)}
-          detail={filterSuffix ? `Check-ins since Monday · ${filterSuffix}` : "Check-ins since Monday"}
+          detail={filterSuffix ? `Now · check-ins since Monday · ${filterSuffix}` : "Now · check-ins since Monday"}
           primaryColor={primaryColor}
           trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, label: "on last week" }}
         />
         <MetricCard
           icon={UserPlus}
-          label="New this month"
+          label={`New ${words.during}`}
           value={formatNumber(summary.newMembersThisMonth)}
-          detail={[NEW_SCOPE, monthPairEstimateNote(membership)].filter(Boolean).join(" · ")}
+          detail={[NEW_SCOPE, periodPairEstimateNote(data)].filter(Boolean).join(" · ")}
           primaryColor={primaryColor}
-          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: "on last month" }}
-          href={monthDrillHref("new-this-month", period)}
+          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: `on ${words.before}` }}
+          href={monthDrillHref("new-this-month", period, range)}
         />
         <MetricCard
           icon={BarChart3}
@@ -1222,7 +1293,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           icon={Calendar}
           label="Active classes"
           value={formatNumber(summary.totalActiveClasses)}
-          detail="Live timetable classes"
+          detail="Now · live timetable classes"
           primaryColor={primaryColor}
         />
         <MetricCard
@@ -1242,7 +1313,11 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.55fr)_360px] gap-4">
         <Card>
-          <SectionTitle title="Weekly Attendance" subtitle={`${scopedWindowLabel}, current week highlighted`} icon={Activity} />
+          <SectionTitle
+            title={byMonth ? "Attendance by month" : "Weekly Attendance"}
+            subtitle={`${scopedWindowLabel}, current ${byMonth ? "month" : "week"} highlighted${weeklyAttendance.some((r) => r.inPeriod === false) ? ", earlier weeks faint for context" : ""}`}
+            icon={Activity}
+          />
           {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
             <EmptyChart label="No attendance data yet" />
           ) : (
@@ -1267,7 +1342,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   {weeklyAttendance.map((row) => (
                     <Cell
                       key={row.week}
-                      fill={row.isCurrentWeek ? primaryColor : hex(primaryColor, 0.42)}
+                      fill={row.isCurrentWeek ? primaryColor : hex(primaryColor, row.inPeriod === false ? 0.16 : 0.42)}
                     />
                   ))}
                 </Bar>
@@ -1317,7 +1392,13 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionTitle title="Joined" subtitle="Joined (new + rejoined) per month, last 6 months" icon={UserPlus} />
+          <SectionTitle
+            title="Joined"
+            subtitle={monthlySignups.some((r) => r.inPeriod === false)
+              ? `Joined (new + rejoined) per month · ${range.label} shaded, earlier months for context`
+              : `Joined (new + rejoined) per month · ${range.label}`}
+            icon={UserPlus}
+          />
           {monthlySignups.every((row) => row.count === 0) ? (
             <EmptyChart label="No joins yet" />
           ) : (
@@ -1337,6 +1418,15 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   allowDecimals={false}
                 />
                 <Tooltip content={<ChartTooltip suffix="joined (new + rejoined)" noteFor={(p) => estimateLabel((p as { basis?: MembershipBasis }).basis, estimatedCaption(membership))} />} />
+                {monthlySignups.some((r) => r.inPeriod === false) && monthlySignups.some((r) => r.inPeriod) && (
+                  <ReferenceArea
+                    x1={monthlySignups.find((r) => r.inPeriod)!.month}
+                    x2={[...monthlySignups].reverse().find((r) => r.inPeriod)!.month}
+                    fill="var(--color-primary)"
+                    fillOpacity={0.08}
+                    ifOverflow="extendDomain"
+                  />
+                )}
                 <Line
                   type="monotone"
                   dataKey="count"
@@ -1477,28 +1567,41 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             default adopted 17 Oct 2026; not an owner decision) puts it
             immediately beside churn, overriding the old "no neighbour" note
             for this tile only.
-            Every rate prints its counts, "x% (n of m)"; an empty base is "—". */}
+            Churn is a count of cancellations (owner decision, 27 Oct 2026),
+            never a percentage until a denominator is approved. Every rate
+            prints its counts, "x% (n of m)"; an empty base is "—". */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
           <MetricCard
             icon={UserMinus}
-            label="Churn rate this month"
-            value={<RatioValue pct={churn.ratePct} n={churn.cancelled} base={churn.base} />}
-            detail={churn.base > 0 ? CHURN_FORMULA : "No active or cancelled members this month"}
+            label={CHURN_TITLE}
+            value={
+              <>
+                {formatNumber(churn.cancelled)}{" "}
+                <span className="text-base font-semibold">
+                  {churnUnitText(churn.cancelled, words)}
+                </span>
+              </>
+            }
+            detail={withEstimate(CHURN_COUNTED, estimateLabel(pm.basis, estimatedCaption(membership)))}
             primaryColor={primaryColor}
-            href={monthDrillHref("churned-this-month", period)}
-            hrefLabel="Churn rate this month"
+            // The churn slice lists the people behind the count: everyone
+            // with a cancelled move in the period, joiners included.
+            href={monthDrillHref("churned-this-month", period, range)}
+            hrefLabel={`${CHURN_TITLE}: ${churnValueText(churn.cancelled, words)}`}
           />
           <JoinedThisMonthTile
             joined={churn.joined}
-            t={currentMonthMovement(membership)}
+            t={pm.totals}
             period={period}
-            estimate={estimateLabel(thisAndLastMonthBasis(membership).current, estimatedCaption(membership))}
+            range={range}
+            words={words}
+            estimate={estimateLabel(pm.basis, estimatedCaption(membership))}
           />
           <MetricCard
             icon={RefreshCcw}
             label="Payment recovery rate"
             value={<RatioValue pct={recovery.ratePct} n={recovery.recovered} base={recovery.failedMembers} />}
-            detail={recovery.failedMembers > 0 ? RECOVERY_SCOPE : "No failed payments in the last 90 days"}
+            detail={recovery.failedMembers > 0 ? RECOVERY_SCOPE : "No failed payments in the period"}
             primaryColor={primaryColor}
           />
         </div>
@@ -1515,7 +1618,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               6-month survival: {formatRatio(retention.ratePct, retention.survived, retention.cohort)}
             </p>
             <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
-              Of members who joined 6+ months ago, still active today. A different cohort and window to the monthly churn rate above — not its inverse, and the two numbers will not sum to 100%.
+              Of members who joined 6+ months ago, still active today. A different measure from the churn count above — not its inverse.
             </p>
           </div>
         </Card>
@@ -1526,7 +1629,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <NetNewMembersCard membership={membership} />
         <div className="grid grid-cols-1 gap-4">
           <Card>
-            <SectionTitle title="Payment Health" subtitle="Current overdue and recent failures" icon={CreditCard} />
+            <SectionTitle title="Payment Health" subtitle={`Overdue now · failures ${words.during}`} icon={CreditCard} />
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-6">
               <Link
                 href="/dashboard/members?filter=overdue"
@@ -1560,13 +1663,14 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: hex("#f59e0b", 0.12) }}>
                     <CreditCard className="w-4 h-4" style={{ color: "#f59e0b" }} />
                   </div>
-                  <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>Failed last 30 days</p>
+                  <p className="text-sm font-medium" style={{ color: "var(--tx-1)" }}>Failed {words.during}</p>
                 </div>
                 <span
                   className="text-xl font-bold tabular-nums"
-                  style={{ color: paymentHealth.failedLast30Days > 0 ? "#f59e0b" : "#22c55e" }}
+                  style={{ color: paymentHealth.failedInPeriod > 0 ? "#f59e0b" : "#22c55e" }}
+                  data-testid="reports-failed-in-period"
                 >
-                  {formatNumber(paymentHealth.failedLast30Days)}
+                  {formatNumber(paymentHealth.failedInPeriod)}
                 </span>
               </div>
               {/* D9: debts on inactive or cancelled accounts. Not chased and

@@ -108,6 +108,18 @@ describe("NetNewMembersCard", () => {
     expect(screen.getByTestId("net-new-definition").textContent).toMatch(/New: first ever start\. Rejoined: started again after leaving\. Joined = new \+ rejoined\. Left: cancelled, or finished a prepaid course\. Net = new \+ rejoined − left\. Tasters added are counted apart, and imports are never joins\./);
   });
 
+  it("a period that ended before this month names its last month, never 'today' (review 26 Oct 2026)", () => {
+    const past = report();
+    past.headcountByMonth = past.headcountByMonth.map((h) => ({ ...h, isCurrentMonth: false }));
+    past.reconciled = 2;
+    render(<NetNewMembersCard membership={past} />);
+    const tally = screen.getByTestId("net-new-tally").textContent ?? "";
+    expect(tally).toContain("41 active members at the end of October 2026");
+    expect(tally).not.toContain("today");
+    // The reconciliation is today's correction, not part of a past window.
+    expect(document.body.textContent).not.toContain("did not match their current status");
+  });
+
   it("marks months before the first recorded event as estimated from TeamUp history, and carries the deletion caveat", () => {
     render(<NetNewMembersCard membership={report()} />);
     expect(screen.getByTestId("net-new-estimated").textContent).toMatch(/^Estimated from your TeamUp history: months before 3 Oct 2026/);

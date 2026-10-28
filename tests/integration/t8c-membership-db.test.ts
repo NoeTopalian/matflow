@@ -18,8 +18,10 @@ import { describe, it, expect, afterAll } from "vitest";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { ACTIVE_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { buildMembership, type MovementEvent } from "@/lib/membership-movement";
-import { loadMembershipReport } from "@/lib/membership-report";
+import { loadMembershipReport, loadMonthMovement } from "@/lib/membership-report";
 import { applyTenantBackfill } from "@/lib/status-backfill";
+import { clubMonthWindow } from "@/lib/club-month";
+import { getReportsData } from "@/lib/reports";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = `t8c-${Date.now().toString(36)}`;
@@ -218,5 +220,54 @@ describe.skipIf(!HAS_DB)("T8c: movement and headcount on a real database", () =>
       expect(crossed.headcountByMonth.every((h) => h.basis === "none" && h.headcount === null)).toBe(true);
       expect(crossed.totals.new).toBe(0);
     }
+  }, 180_000);
+
+  // Churn (owner decision, 27 Oct 2026): the total cancellations in the
+  // selected period, joiners included; a finished prepaid course is Left, not
+  // churn; a cancellation is a move, so cancel-rejoin-cancel is two. The
+  // Members drill-through lists each person once, headed by the tile's count.
+  it("churn is every cancellation in this club month, from the rows on a real database", async () => {
+    const c = await mkClub("churn");
+    const now = new Date();
+    const month = clubMonthWindow(now, "Europe/London");
+    const start = new Date(month.monthStart).getTime();
+    // Distinct instants inside this club month, in order, never after now.
+    const at = (k: number) => new Date(Math.min(start + 60_000 * (k + 1), now.getTime() - 1000 * (20 - k)));
+    const LONG_AGO = new Date("2025-01-10T09:00:00.000Z");
+    const event = (memberId: string, fromStatus: string | null, toStatus: string, occurredAt: Date, source: { reason: string; sourceAction: string; sourceJobId: string } | null = null) =>
+      withRlsBypass((tx) => tx.memberStatusEvent.create({
+        data: { tenantId: c.tenantId, memberId, fromStatus, toStatus, reason: source?.reason ?? "staff_edit", changedById: source ? null : c.userId, occurredAt, sourceAction: source?.sourceAction ?? null, sourceJobId: source?.sourceJobId ?? null },
+      }));
+    const setStatus = (id: string, status: string, cancelledAt: Date | null) =>
+      withRlsBypass((tx) => tx.member.update({ where: { id }, data: { status, cancelledAt } }));
+
+    // A long-standing member who stays: in no movement figure this month.
+    await mkStaffMember(c, "stay", LONG_AGO);
+    // Joins this month and cancels this month: one cancellation.
+    const jo = await mkStaffMember(c, "jo", at(1));
+    await event(jo, "active", "cancelled", at(2));
+    await setStatus(jo, "cancelled", at(2));
+    // Long-standing; cancels, rejoins and cancels again this month: two cancellations, one person.
+    const rae = await mkStaffMember(c, "rae", LONG_AGO);
+    await event(rae, "active", "cancelled", at(3));
+    await event(rae, "cancelled", "active", at(4));
+    await event(rae, "active", "cancelled", at(5));
+    await setStatus(rae, "cancelled", at(5));
+    // Long-standing; a TeamUp refresh ends their prepaid course this month: Left, not churn.
+    const cole = await mkStaffMember(c, "cole", LONG_AGO);
+    await event(cole, "active", "inactive", at(6), { reason: "import", sourceAction: "import_refresh", sourceJobId: c.jobId });
+    await setStatus(cole, "inactive", null);
+
+    const reports = await getReportsData(c.tenantId);
+    expect(reports.period.monthKey).toBe(month.monthKey);
+    expect(reports.churn).toEqual({ cancelled: 3, joined: 2, net: -2 });
+    expect(reports.periodMovement.totals).toMatchObject({ new: 1, rejoined: 1, lostCancelled: 3, lostCompleted: 1, lost: 4 });
+
+    // The drill-through: the people behind the count, each once; its headline is the count.
+    const drill = await withTenantContext(c.tenantId, (tx) =>
+      loadMonthMovement(tx, c.tenantId, now, { start: new Date(month.monthStart), at: now }), { timeout: 60_000 });
+    expect([...drill.movers.cancelled].sort()).toEqual([jo, rae].sort());
+    expect(drill.cancelledMoves).toBe(3);
+    expect(drill.movers.lost.length).toBe(3); // jo, rae, cole: Left lists the completed course too
   }, 180_000);
 });

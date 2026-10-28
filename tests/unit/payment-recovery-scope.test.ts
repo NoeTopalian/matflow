@@ -5,7 +5,8 @@
 // base is every account with a failed payment in the last 90 days, whatever
 // its status (cancelled included) and account type, and "recovered" is the
 // stored payment status "paid" (lib/reports.ts recovery). The words now say
-// exactly that, on the tile and in the CSV. The numbers are unchanged.
+// exactly that, on the tile and in the CSV. Since 26 Oct 2026 the window is
+// the page's statistics period (lib/report-period), not a fixed 90 days.
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { reportsCsv, RECOVERY_SCOPE } from "@/components/dashboard/ReportsView";
@@ -20,7 +21,7 @@ const ATTRIBUTION = {
 
 describe("Payment recovery says what it counts", () => {
   it("the scope names accounts, any status, guardians included, and 'marked paid'", () => {
-    expect(RECOVERY_SCOPE).toBe("Accounts with a failed payment in the last 90 days now marked paid (any status, parents and guardians included)");
+    expect(RECOVERY_SCOPE).toBe("Accounts with a failed payment in the period now marked paid (any status, parents and guardians included)");
   });
 
   it("the CSV row carries the same words beside the unchanged ratio", () => {
@@ -34,9 +35,9 @@ describe("Payment recovery says what it counts", () => {
     expect(row).toBe(`Health,Payment recovery,50% (1 of 2),"${RECOVERY_SCOPE}"`);
   });
 
-  it("the metric itself is unchanged: base = every member with a failed payment in 90 days, recovered = stored paid", () => {
+  it("the metric: base = every member with a failed payment in the period, recovered = stored paid", () => {
     const src = readFileSync("lib/reports.ts", "utf8");
-    expect(src).toContain('where: { tenantId, status: "failed", createdAt: { gte: new Date(Date.now() - 90 * 86400000) } }');
+    expect(src).toContain('where: { tenantId, status: "failed", createdAt: inRange }');
     expect(src).toContain('tx.member.count({ where: { id: { in: failedMemberIds }, tenantId, paymentStatus: "paid" } })');
   });
 });
