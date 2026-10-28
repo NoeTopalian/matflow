@@ -49,6 +49,8 @@ vi.mock("@/lib/prisma", () => ({
     payment: { findFirst: vi.fn(), update: vi.fn(), upsert: vi.fn() },
     classPack: { findFirst: vi.fn() },
     memberClassPack: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+    // The refund legs lock the pack row (SELECT ... FOR UPDATE) before reading it (W6).
+    $queryRaw: vi.fn().mockResolvedValue([]),
     // The refund apportionment counts the classes actually attended, so the
     // same cumulative refund lands on the same answer here as it does in the
     // owner refund route however often Stripe reports it.

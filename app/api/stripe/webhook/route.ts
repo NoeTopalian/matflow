@@ -732,6 +732,21 @@ export async function POST(req: NextRequest) {
         // (lib/checkin.ts only filters status='active' AND creditsRemaining>0)
         // for money they got back.
         if (existing.stripePaymentIntentId) {
+          // Lock the pack row BEFORE reading it: the apportionment below
+          // writes an absolute creditsRemaining computed from this read and
+          // the redemption count, so a check-in spending a credit between the
+          // read and the write was overwritten and the member kept the credit
+          // they had just used (W6, 28 Oct 2026, lost update). With the row
+          // lock, a check-in that already decremented is committed (and its
+          // redemption counted) before this read, and one that comes later
+          // decrements what this writes. Lock order: this leg touches the
+          // pack and no Member row, so it cannot cycle with a check-in
+          // (Class, Member, pack).
+          await tx.$queryRaw`
+            SELECT "id" FROM "MemberClassPack"
+             WHERE "stripePaymentIntentId" = ${existing.stripePaymentIntentId} AND "tenantId" = ${tenantId}
+             FOR UPDATE
+          `;
           const fundedPack = await tx.memberClassPack.findUnique({
             where: { stripePaymentIntentId: existing.stripePaymentIntentId },
             // The pack as it was SOLD — the denominator the apportionment needs.

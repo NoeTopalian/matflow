@@ -315,6 +315,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         });
         if (applied.count === 0) throw new RefundLedgerConflict();
         if (refundSettled && payment.stripePaymentIntentId) {
+          // Lock the pack row BEFORE reading it, as the charge.refunded
+          // webhook leg does: the apportionment writes an absolute
+          // creditsRemaining from this read, so a credit spent at a door in
+          // between was overwritten (W6, 28 Oct 2026, lost update). Payment,
+          // then pack; no Member row, so no cycle with a check-in.
+          await tx.$queryRaw`
+            SELECT "id" FROM "MemberClassPack"
+             WHERE "stripePaymentIntentId" = ${payment.stripePaymentIntentId} AND "tenantId" = ${tenantId}
+             FOR UPDATE
+          `;
           const fundedPack = await tx.memberClassPack.findUnique({
             where: { stripePaymentIntentId: payment.stripePaymentIntentId },
             // `totalCredits` is the denominator the apportionment needs — the

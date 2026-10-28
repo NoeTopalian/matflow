@@ -194,6 +194,8 @@ vi.mock("@/lib/prisma", () => ({
     tenant: { findUnique: vi.fn() },
     member: { findFirst: vi.fn() },
     memberClassPack: { findUnique: vi.fn(), update: vi.fn() },
+    // The refund route locks the pack row (SELECT ... FOR UPDATE) before reading it (W6).
+    $queryRaw: vi.fn().mockResolvedValue([]),
     classPackRedemption: { count: vi.fn() },
   },
 }));
