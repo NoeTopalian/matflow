@@ -72,6 +72,16 @@ export type ReportPeriodParams = {
 
 const MONTH_KEY = /^\d{4}-(0[1-9]|1[0-2])$/;
 
+/**
+ * The earliest month a custom period may start. The URL is hostile text: a
+ * run in year 0001 made the comparison period and the chart's lead-in fall
+ * before year 1000, where keyOf's key is no longer four digits, the month
+ * window came back null and the resolver threw — a 500 on Reports, Analysis
+ * and the Members drill-through from a crafted link (W6, 28 Oct 2026). No
+ * club's history reaches back this far.
+ */
+const EARLIEST_CUSTOM_MONTH = "2000-01";
+
 function monthIndex(key: string): number {
   const [y, m] = key.split("-").map(Number);
   return y * 12 + (m - 1);
@@ -79,7 +89,8 @@ function monthIndex(key: string): number {
 
 function keyOf(index: number): string {
   const y = Math.floor(index / 12);
-  return `${y}-${String((index % 12) + 1).padStart(2, "0")}`;
+  const m = ((index % 12) + 12) % 12;
+  return `${String(y).padStart(4, "0")}-${String(m + 1).padStart(2, "0")}`;
 }
 
 const SHORT = (key: string) => {
@@ -147,7 +158,7 @@ export function resolveReportPeriod(params: ReportPeriodParams, now: Date, timeZ
       const to = params.to && MONTH_KEY.test(params.to) ? params.to : null;
       const fi = from ? monthIndex(from) : NaN;
       const ti = to ? monthIndex(to) : NaN;
-      const ok = from && to && fi <= ti && ti <= ci && ti - fi + 1 <= MAX_CUSTOM_MONTHS;
+      const ok = from && to && fi >= monthIndex(EARLIEST_CUSTOM_MONTH) && fi <= ti && ti <= ci && ti - fi + 1 <= MAX_CUSTOM_MONTHS;
       if (ok) {
         fromMonth = from;
         toMonth = to;
