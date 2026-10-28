@@ -1,4 +1,88 @@
-# Sean's requirements — authoritative task record (updated 22 Oct 2026, 22:40 UK)
+# Sean's requirements — authoritative task record (updated 28 Oct 2026; 22 Oct table kept below as history)
+
+## Status at 28 Oct 2026, the pre-Resend gate (supersedes the 22 Oct table below, kept as history)
+
+**Gate (Noe, 27 Oct 2026, 23:30):** Sean's agreed work must be complete, verified and usable before Sean is asked to pay for Resend. Two items are explicitly deferred to a later stage and are **not delivered**:
+- the public searchable club page;
+- "edit the taggings" (meaning still unknown, not pursued).
+
+These are separate dependencies, not part of this gate:
+- live email/SMS;
+- Stripe activation;
+- historical payment import (pending a TeamUp transactions export).
+
+**State words:**
+- *deployed*: on `main` and served by a successful production deployment;
+- *candidate*: verified on `candidate/pre-resend-2026-10-28`, not merged;
+- *deferred*: Noe moved it to a later stage.
+
+Pushed is not deployed. Deployed is not "checked by Sean".
+
+| # | Sean's request | Behaviour now | Where | Evidence | State |
+|---|---|---|---|---|---|
+| 1 | Choose which plans may attend each class | Strict at every door, with no override. The class editor previews who would be refused before saving. Bookings are kept and the refusal is explained. Interim booking-capacity rule unchanged. | `main` `9dc60b9c` (PR #47) | #47 journeys allowance-eligibility 26/0, permissions-matrix 166/0 at `41a356c2` | deployed |
+| 2 | One true member count on Members, Reports and Settings ("excludes cancelled and guardians") | Named populations; guardians and payers never inflate training counts; active, current and historical totals labelled | `main` (#47) | reporting-truth 71/0 at `dc544c2a`; DB `member-population-parity`, both roles | deployed |
+| 3 | Net new stuck at ±0; joins, rejoins, leavers | One movement definition: new and rejoined distinct, imports never joins, net reconciles | `main` (#47) | headcount-movement 38/0; DB `t8c-membership-db`, both roles | deployed |
+| 4 | Real headcount chart, distinct from joining activity | Zero-based headcount series; estimated and partly estimated months labelled; no production back-fill run | `main` (#47) | headcount-movement 38/0 | deployed (history shows as estimated until a back-fill is separately approved) |
+| 5 | Plan limits: per week, per calendar month, "4 every 4 weeks" | Clearable limits; several sessions in one week allowed within an N-week cycle; signing up is never refused, only noted. **No staff override anywhere, including direct API fields.** Billing-period allowance stays switched off. | `main` (#47, no-override merged at `41a356c2`) | allowances-periods 56/0, scanner-override 8/0 at `41a356c2`; security tests in the candidate (forged `acknowledged` refused at all five doors) | deployed; security hardening in candidate |
+| 6a | Churn % "show the number"; Joined beside churn | Churn = **every cancellation in the selected period**, joiners included; finished courses count in Left only. No percentage until Noe picks the denominator. Joined sits beside churn. | candidate (W2, from #48) | unit and DB red→green; reporting-truth 84/0, headcount-movement 38/0 at `47b8b1b4` | candidate (percentage awaits Noe) |
+| 6b | A number beside every % | Reports, Analysis and Conversion: every % shows its counts and base; meaningful counts show their %; no artificial 100%; part periods named ("so far this week vs all last week"); a zero baseline reads "—" | candidate (W3, from #50) | 14 tests red→green; percent-teamup 16/0, reporting-truth 71/0 at `b612c2a5` | candidate |
+| 6c | Statistics period (Noe's addition) | One period selector on Reports and Analysis | candidate (#48) | journeys at `b415d7a5`; re-run on the final candidate | candidate |
+| 6d | Missing attendance is not zero | Before a club's first attendance record: "—" and "No attendance records for this period (MatFlow's records start …)"; real zeros stay 0 | candidate (W5) | red→green; reporting-truth 86/0, percent-teamup 16/0 at `a85224a5` | candidate |
+| 7 | Class types, competition class, settings on any class | Eight categories, squad lists, pause / archive / restore with history | `main` (#47) | permissions-matrix 166/0; DB `squad-class-tier-db` | deployed |
+| 8 | App check-in, owner's choice | Settings switch, **on by default**; an off choice is kept; the server refuses when off; desk, kiosk, scanner and coach unaffected | candidate (from #51) | app-checkin-packs 17/0; security tests (self, parent, forged method all refused when off) | candidate |
+| 9 | Class packs | Owner chooses "Expires N days after purchase" or "Never expires" per new product. Sold packs keep their recorded terms; expired packs stay expired; validity cannot be edited after sale. | candidate (W1, from #51) | 23 unit + 6 DB tests red→green; app-checkin-packs 26/0 | candidate |
+| 10 | Imports fit MatFlow | Refresh never overwrites; exact repeats skip; differences are listed for normal editing. A plan is assigned only when name, billing period, price and currency all agree; a TeamUp file has no price, period or currency, so its new people arrive with no plan, listed, and the access consequence is stated. Preview, commit and retry agree. Erasure scrubs stored import records. | candidate (W4) | 6 DB + 9 unit tests red→green; import-review 14/0; `import-conflicts-db` 17/17 both roles | candidate |
+| — | Public club page | — | — | — | **deferred (Noe)** |
+| — | "Edit the taggings" | — | — | — | **deferred (Noe)**, meaning unknown |
+| — | Historical payments | — | — | — | **pending**: a TeamUp transactions export is needed |
+
+### Decisions in force: owner's words vs agent proposals
+
+**Noe decided (27–28 Oct):**
+- No staff allowance override, including API fields; eligibility refuse-only.
+- Billing-period allowance stays off.
+- App check-in on by default, with a per-club switch; enforced on the server.
+- Per-product pack expiry; sold packs keep their terms; expired stays expired.
+- Pack changes do not change refunds or automatic credit spending.
+- Churn = all cancellations in the period, joiners included, distinct from Left; no invented denominator.
+- Reports scope: counts with percentages in the statistics section only.
+- Missing attendance is not zero.
+- Import plan only on full evidence; otherwise no plan, flagged.
+- No coach "one-off" (27 Oct 16:09: "they just shouldn't be allowed unless they have a membership").
+- Public page and taggings deferred.
+
+**Agent proposals, not owner decisions:**
+- The churn denominator recommendation (option B, below).
+- The coverage start (the earliest attendance record of any kind).
+- The wording of notes and labels.
+
+**Open owner questions:**
+- The churn percentage denominator.
+- Automatic pack spending at staff doors once the allowance is used up. This is deployed behaviour, originally an agent default (PK1) and never explicitly approved.
+- Three import questions (W4 report).
+
+### Release checklist (candidate → available to Sean)
+
+- [ ] Verification on the exact final candidate head: unit, type check, lint, DB suites under both roles, build, journeys.
+- [ ] One independent review of all changes since the earlier reviews.
+- [ ] Owner approval to push (every push creates a Vercel preview).
+- [ ] Owner approval to merge the release PR at an exact SHA. Merging deploys and migrates production; there is no rollback, only fix forward.
+- [ ] Post-deploy: health check, then the owner checks Sean's screens in production.
+- [ ] Owner confirms the production Node runtime is 24.22.1 or later (it bundles undici 7.30.1; GHSA-xjj6-f33q-929c).
+- [ ] Owner subscribes the Stripe webhook to `checkout.session.async_payment_succeeded` and `…_failed` before any club takes delayed-method pack payments.
+
+**Migrations in this release** (all additive):
+- `20261027120000_tenant_member_app_checkin`: column, default true.
+- `20261027120100_class_pack_no_expiry`: two DROP NOT NULLs.
+- `20261027130000_class_pack_drop_expired_check`: a no-op on production.
+- `20261027140000_class_pack_expired_needs_date`: a CHECK. It validates against existing rows, which all have dates, because the column was NOT NULL before this release.
+
+The 22 Oct compatibility read (`PR41-RELEASE-COMPAT-2026-10-22.md`) covers #47's migrations, which are already deployed. The migrations above change no existing behaviour for current data, so no new production read is needed.
+
+---
+
+## History: the 22 Oct 2026 record
 
 One record for every requirement Sean raised plus four-week recurring billing and the per-member billing-period allowance. Each item carries: responsible branch, dependencies, approved behaviour, acceptance criteria, tested commit, evidence, unresolved decisions, deployment status.
 
