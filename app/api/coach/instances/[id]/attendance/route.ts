@@ -50,9 +50,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // 2026: coaches see all, theirs highlighted). Tenancy only.
           class: { tenantId },
         },
-        select: { id: true, classId: true, date: true, startTime: true, class: { select: { name: true, tenant: { select: { timezone: true } } } } },
+        select: {
+          id: true, classId: true, date: true, startTime: true, sourceImportJobId: true,
+          class: { select: { name: true, sourceImportJobId: true, tenant: { select: { timezone: true } } } },
+        },
       });
       if (!instance) return "no-instance" as const;
+      // A session an attendance-history import created is a record of the
+      // past, not a class anyone can be ticked into: not found, exactly as
+      // every other door answers (lib/checkin.ts). Unticking stays possible.
+      if (parsed.data.attended && (instance.sourceImportJobId || instance.class.sourceImportJobId)) return "no-instance" as const;
       const member = await tx.member.findFirst({
         where: { id: parsed.data.memberId, tenantId },
         select: { id: true, name: true },
@@ -81,6 +88,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           );
           if (refused?.kind === "member_not_found") return "no-member" as const;
           if (refused) return refused;
+          // A cancelled session admits no one, at this door as at every other
+          // (lib/checkin.ts capacityState re-reads it under the Class lock, as
+          // here): a tick must not spend a member's pack credit on a class
+          // that did not run (W6, 28 Oct 2026). Read after the Class lock
+          // lockedClassEligibility took, so it is the freshest committed value.
+          const live = await tx.classInstance.findFirst({
+            where: { id: instance.id, isCancelled: false },
+            select: { id: true },
+          });
+          if (!live) return { kind: "class_cancelled" as const };
           // T7: the plan allowance REFUSES, as at every door (owner decision,
           // 27 Oct 2026), under the Member lock lockedClassEligibility already
           // holds (Class, then Member, then pack: the engine's order). A
@@ -147,6 +164,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     if (outcome === "no-instance") return NextResponse.json({ error: "Class not found" }, { status: 404 });
     if (outcome === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    if (outcome.kind === "class_cancelled") {
+      const refusal = checkinRefusal(outcome)!;
+      return NextResponse.json(refusal.body, { status: refusal.status });
+    }
     if (outcome.kind === "tier_not_included" || outcome.kind === "roster_not_listed" || outcome.kind === "allowance_reached") {
       // Nothing was written. The eligibility refusals carry the sentence the
       // member reads at their own door; the allowance refusal is the staff
