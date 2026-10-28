@@ -1,8 +1,13 @@
-// Journey: the club's app check-in setting (G5) and class packs that never expire (G6), 27 Oct 2026.
+// Journey: the club's app check-in setting (G5) and class packs with expiry chosen per product, 27 Oct 2026.
 // The owner finds "Members can check themselves in from the app" ON by default, turns it off (keyboard, a forced failed
 // save first), and the member's home loses "Sign In to Class" while the server refuses the member's own check-in; the
-// desk still checks the member in. Turned back on, the member sees the button again. A pack with no expiry reads
-// "N classes left" with no date. Desktop and 390 px.
+// desk still checks the member in. Turned back on, the member sees the button again.
+// Packs (owner decision, 27 Oct 2026: "the club chooses an expiry or no expiry per new pack product"): the member holds
+// a no-expiry pack, a dated pack in date, a dated pack past its date and a legacy "expired" pack. The profile lists the
+// two usable ones ("4 classes left · expires <date>", "6 classes left"); the member's own check-in spends the dated pack
+// first (earliest expiry), then the no-expiry pack; with only the expired packs left it is refused and neither is spent.
+// The owner's create-pack form offers "Never expires" and sends validityDays null (Stripe calls intercepted, nothing
+// created). Desktop and 390 px.
 //   node journeys/app-checkin-packs.mjs
 import { randomUUID } from "node:crypto";
 import { chromium, state, q, ledger, shot, context, ownerSignIn, bcrypt } from "../lib.mjs";
@@ -34,10 +39,26 @@ const cls = randomUUID(); const inst = randomUUID();
 const today = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z");
 await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity") values ($1, $2, 'App Check-in Class', 60, 50)`, [cls, tenantId]);
 await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime") values ($1, $2, $3, '00:00', '23:59')`, [inst, cls, today]);
-const pack = randomUUID(); const memberPack = randomUUID();
-await q(`insert into "ClassPack" (id, "tenantId", name, "totalCredits", "validityDays", "pricePence", "isActive", "updatedAt") values ($1, $2, 'Ten Pack', 10, null, 8000, true, now())`, [pack, tenantId]);
-await q(`insert into "MemberClassPack" (id, "tenantId", "memberId", "packId", "creditsRemaining", "expiresAt", status) values ($1, $2, $3, $4, 6, null, 'active')`, [memberPack, tenantId, member.id, pack]);
-const attended = async () => Number((await q(`select count(*)::int as n from "AttendanceRecord" where "memberId" = $1 and "classInstanceId" = $2`, [member.id, inst]))[0].n);
+const inst2 = randomUUID();
+await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime") values ($1, $2, $3, '00:01', '23:58')`, [inst2, cls, today]);
+// Two products, one per choice, and four purchases recorded with their own terms.
+const tplOpen = randomUUID(); const tplDated = randomUUID();
+await q(`insert into "ClassPack" (id, "tenantId", name, "totalCredits", "validityDays", "pricePence", "isActive", "updatedAt") values ($1, $2, 'Open Pack', 10, null, 9000, true, now())`, [tplOpen, tenantId]);
+await q(`insert into "ClassPack" (id, "tenantId", name, "totalCredits", "validityDays", "pricePence", "isActive", "updatedAt") values ($1, $2, 'Dated Pack', 10, 30, 8000, true, now())`, [tplDated, tenantId]);
+const DAY = 86_400_000;
+// Midday UTC, so the calendar date is the same in the browser's zone and this script's.
+const datedExpiry = new Date(new Date(Date.now() + 20 * DAY).toISOString().slice(0, 10) + "T12:00:00.000Z");
+const datedLabel = `4 classes left · expires ${datedExpiry.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`;
+const packIds = { open: randomUUID(), dated: randomUUID(), past: randomUUID(), legacy: randomUUID() };
+const addPack = (id, tpl, credits, expiresAt, purchasedAt, status) => q(
+  `insert into "MemberClassPack" (id, "tenantId", "memberId", "packId", "creditsRemaining", "expiresAt", "purchasedAt", status) values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+  [id, tenantId, member.id, tpl, credits, expiresAt, purchasedAt, status]);
+await addPack(packIds.open, tplOpen, 6, null, new Date(Date.now() - 40 * DAY), "active");
+await addPack(packIds.dated, tplDated, 4, datedExpiry, new Date(Date.now() - 10 * DAY), "active");
+await addPack(packIds.past, tplDated, 5, new Date(Date.now() - DAY), new Date(Date.now() - 31 * DAY), "active");
+await addPack(packIds.legacy, tplDated, 7, new Date(Date.now() + 5 * DAY), new Date(Date.now() - 50 * DAY), "expired");
+const credits = async () => Object.fromEntries((await q(`select id, "creditsRemaining" as c from "MemberClassPack" where "tenantId" = $1`, [tenantId])).map((r) => [Object.keys(packIds).find((k) => packIds[k] === r.id), r.c]));
+const attended = async (instanceId = inst) => Number((await q(`select count(*)::int as n from "AttendanceRecord" where "memberId" = $1 and "classInstanceId" = $2`, [member.id, instanceId]))[0].n);
 
 const browser = await chromium.launch();
 try {
@@ -117,8 +138,13 @@ try {
   // The member's packs are listed on the profile (ClassPacksWidget), not the home page.
   await mp.goto("/member/profile");
   await mp.waitForLoadState("load");
-  const packText = await mp.getByTestId("pack-classes-left").filter({ visible: true }).first().innerText({ timeout: 15000 }).catch(() => null);
-  L.check("packs", "P1 the member's pack reads \"6 classes left\" with no expiry date", packText !== null && /6 classes left/.test(packText) && !/expir|until|valid/i.test(packText), { packText });
+  await mp.getByTestId("pack-classes-left").first().waitFor({ timeout: 30000 }).catch(() => {});
+  const packTexts = (await mp.getByTestId("pack-classes-left").filter({ visible: true }).allInnerTexts().catch(() => [])).map((t) => t.trim());
+  L.check("packs", "P1 the profile lists the two usable packs, dated first: the dated one with its date, the no-expiry one with none; the past-date and legacy expired packs are not listed",
+    packTexts.length === 2 && packTexts[0] === datedLabel && packTexts[1] === "6 classes left", { packTexts, expected: [datedLabel, "6 classes left"] });
+  const available = (await mp.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ");
+  L.check("packs", "P2 packs on sale say \"10 classes · no expiry\" and \"10 classes · valid 30 days\"", available.includes("10 classes · no expiry") && available.includes("10 classes · valid 30 days"),
+    (available.match(/10 classes · [^·]{0,20}/g) ?? []).slice(0, 4));
   await shot(mp, "app-checkin-member-profile-packs");
 
   // The desk is unaffected.
@@ -127,6 +153,11 @@ try {
     return { status: r.status };
   }, { classInstanceId: inst, memberId: member.id });
   L.check("desk", "D1 with the setting OFF the desk still checks the member in (201, one row)", desk.status === 201 && (await attended()) === 1, { ...desk, rows: await attended() });
+  // The member has no plan, so the plan allowance is open and the desk spends no pack (a desk mark spends a pack only
+  // once a plan allowance is used up; lib/checkin.ts, unchanged here).
+  const afterDesk = await credits();
+  L.check("packs", "P3 the desk mark spends no pack credit for a member whose plan allowance is open (4 / 6 / 5 / 7 unchanged)",
+    afterDesk.dated === 4 && afterDesk.open === 6 && afterDesk.past === 5 && afterDesk.legacy === 7, afterDesk);
 
   // ── Back ON ──
   await sw2.focus();
@@ -140,11 +171,92 @@ try {
   const btnOn = await mp.getByText("Sign In to Class", { exact: true }).filter({ visible: true }).first().waitFor({ timeout: 30000 }).then(() => true, () => false);
   L.check("member", "M3 with the setting ON the member sees \"Sign In to Class\" again", btnOn, { btnOn });
 
-  // ── Owner pack manager: no validity field ──
-  await owner.goto("/dashboard/memberships");
-  await owner.waitForLoadState("load");
-  const mgrText = (await owner.locator("main").innerText({ timeout: 60000 }).catch(() => "")).replace(/\s+/g, " ");
-  L.note("packs", "N1 owner memberships page mentions of validity or expiry", (mgrText.match(/.{0,40}(valid for|days valid|validity|expir).{0,40}/gi) ?? []).slice(0, 5));
+  // The member's own check-in (no plan, so a pack pays): earliest expiry first, then the no-expiry pack, never an
+  // expired one.
+  const selfCheckIn = async (classInstanceId) => mp.evaluate(async (id) => {
+    const r = await fetch("/api/checkin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ classInstanceId: id, checkInMethod: "self" }) });
+    return { status: r.status, body: await r.json().catch(() => null) };
+  }, classInstanceId);
+  const newSession = async (start, end) => {
+    const id = randomUUID();
+    await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime") values ($1, $2, $3, $4, $5)`, [id, cls, today, start, end]);
+    return id;
+  };
+  const self2 = await selfCheckIn(inst2);
+  const afterSelf = await credits();
+  L.check("packs", "P4 the member's own check-in spends the dated pack in date first (earliest expiry), ahead of the older no-expiry pack; the expired packs are untouched",
+    self2.status === 201 && (await attended(inst2)) === 1 && afterSelf.dated === 3 && afterSelf.open === 6 && afterSelf.past === 5 && afterSelf.legacy === 7,
+    { status: self2.status, body: self2.body, credits: afterSelf });
+  // The dated pack used up: the no-expiry pack pays next.
+  await q(`update "MemberClassPack" set "creditsRemaining" = 0 where id = $1 and "tenantId" = $2`, [packIds.dated, tenantId]);
+  const inst3 = await newSession("00:02", "23:57");
+  const self3 = await selfCheckIn(inst3);
+  const afterOpen = await credits();
+  L.check("packs", "P5 with the dated pack used up, the no-expiry pack pays (6 → 5); the expired packs are untouched",
+    self3.status === 201 && (await attended(inst3)) === 1 && afterOpen.open === 5 && afterOpen.past === 5 && afterOpen.legacy === 7,
+    { status: self3.status, body: self3.body, credits: afterOpen });
+  // Only the expired packs left with credits: nothing usable, so the member is refused and no credit is taken.
+  await q(`update "MemberClassPack" set "creditsRemaining" = 0 where id = $1 and "tenantId" = $2`, [packIds.open, tenantId]);
+  const inst4 = await newSession("00:03", "23:56");
+  const self4 = await selfCheckIn(inst4);
+  const afterOnlyExpired = await credits();
+  L.check("packs", "P6 with only expired packs holding credits (past-date 5, legacy 7) the member's check-in is refused and neither is spent",
+    self4.status !== 201 && (await attended(inst4)) === 0 && afterOnlyExpired.past === 5 && afterOnlyExpired.legacy === 7,
+    { status: self4.status, reason: self4.body?.reason ?? self4.body?.error ?? null, credits: afterOnlyExpired });
+
+  // ── Owner pack manager: the expiry choice per product ──
+  // The manager shows only for a Stripe-connected club. The fixture club is marked connected for this step only and
+  // every POST /api/class-packs is answered by the journey (never reaching Stripe), then the flag is put back.
+  await q(`update "Tenant" set "stripeConnected" = true, "stripeAccountId" = $2 where id = $1`, [tenantId, `acct_mfv_${randomUUID().slice(0, 8)}`]);
+  const sent = [];
+  let answer = { status: 500, body: { error: "Couldn't create pack (journey: forced failure)" } };
+  await owner.route("**/api/class-packs", async (r) => {
+    if (r.request().method() !== "POST") return r.continue();
+    sent.push(JSON.parse(r.request().postData() ?? "{}"));
+    return r.fulfill({ status: answer.status, contentType: "application/json", body: JSON.stringify(answer.body) });
+  });
+  try {
+    const packsBefore = Number((await q(`select count(*)::int as n from "ClassPack" where "tenantId" = $1`, [tenantId]))[0].n);
+    await owner.goto("/dashboard/settings?tab=revenue");
+    const newPack = owner.getByRole("button", { name: "New pack" }).filter({ visible: true }).first();
+    await newPack.waitFor({ timeout: 60000 });
+    const listText = (await owner.locator("main").innerText().catch(() => "")).replace(/\s+/g, " ");
+    L.check("owner-packs", "O1 the owner's pack list shows each product's terms: \"no expiry\" and \"valid 30 days\"",
+      listText.includes("10 classes · no expiry") && listText.includes("10 classes · valid 30 days"), (listText.match(/10 classes · [^·]{0,20}/g) ?? []).slice(0, 4));
+    await newPack.focus();
+    await owner.keyboard.press("Enter");
+    const dialog = owner.getByRole("dialog").filter({ visible: true }).first();
+    await dialog.waitFor({ timeout: 15000 });
+    await dialog.getByLabel("Name").fill("Journey pack");
+    const expiry = dialog.getByLabel("Expiry");
+    const options = await expiry.locator("option").allInnerTexts();
+    L.check("owner-packs", "O2 the create form asks for the expiry: \"Expires after a set time\" or \"Never expires\"", options.includes("Never expires") && options.includes("Expires after a set time"), options);
+    await expiry.focus();
+    await expiry.selectOption("never");
+    const daysHidden = (await dialog.getByLabel("Days after purchase").count()) === 0;
+    // Forced failed save: the error shows in the dialog and nothing is stored.
+    await dialog.getByLabel("Name").focus();
+    await owner.keyboard.press("Enter");
+    const alert = dialog.getByRole("alert").filter({ hasText: /couldn/i }).first();
+    const alertShown = await alert.waitFor({ timeout: 15000 }).then(() => true, () => false);
+    const packsAfterFail = Number((await q(`select count(*)::int as n from "ClassPack" where "tenantId" = $1`, [tenantId]))[0].n);
+    L.check("owner-packs", "O3 \"Never expires\" hides the days field and sends validityDays null; a failed save shows an error and stores nothing",
+      daysHidden && sent.length === 1 && sent[0].validityDays === null && alertShown && packsAfterFail === packsBefore, { daysHidden, sent, alertShown, packsBefore, packsAfterFail });
+    // Retry as a dated product: the days field returns and its value is sent.
+    await expiry.selectOption("days");
+    const days = dialog.getByLabel("Days after purchase");
+    await days.fill("45");
+    answer = { status: 201, body: { id: "journey-pack", name: "Journey pack", description: null, totalCredits: 10, validityDays: 45, pricePence: 8000, currency: "GBP", isActive: true } };
+    await owner.getByRole("button", { name: "Create pack" }).filter({ visible: true }).first().click();
+    await owner.getByText("10 classes · valid 45 days", { exact: false }).first().waitFor({ timeout: 15000 }).catch(() => {});
+    const listAfter = (await owner.locator("main").innerText().catch(() => "")).replace(/\s+/g, " ");
+    L.check("owner-packs", "O4 retried as \"Expires after a set time\", 45: validityDays 45 is sent and the new product reads \"valid 45 days\"",
+      sent.length === 2 && sent[1].validityDays === 45 && listAfter.includes("10 classes · valid 45 days"), { sent: sent[1] ?? null });
+    await shot(owner, "app-checkin-owner-packs");
+  } finally {
+    await owner.unroute("**/api/class-packs");
+    await q(`update "Tenant" set "stripeConnected" = false, "stripeAccountId" = null where id = $1`, [tenantId]);
+  }
 
   // ── Phone width ──
   const phone = await context(browser, "10.98.0.3", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await octx.storageState() });
