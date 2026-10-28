@@ -49,6 +49,8 @@ vi.mock("@/lib/prisma", () => ({
     payment: { findFirst: vi.fn(), update: vi.fn(), upsert: vi.fn() },
     classPack: { findFirst: vi.fn() },
     memberClassPack: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+    // The refund legs lock the pack row (SELECT ... FOR UPDATE) before reading it (W6).
+    $queryRaw: vi.fn().mockResolvedValue([]),
     // The refund apportionment counts the classes actually attended, so the
     // same cumulative refund lands on the same answer here as it does in the
     // owner refund route however often Stripe reports it.
@@ -1034,7 +1036,7 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       account: "acct_test",
       data: {
         object: {
-          id: "cs_x", payment_intent: "pi_x", currency: "gbp", amount_total: 5000,
+          id: "cs_x", payment_status: "paid", payment_intent: "pi_x", currency: "gbp", amount_total: 5000,
           metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-foreign", tenantId: "tenant-A" },
         },
       },
@@ -1057,7 +1059,7 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       account: "acct_test",
       data: {
         object: {
-          id: "cs_y", payment_intent: "pi_y", currency: "gbp", amount_total: 5000,
+          id: "cs_y", payment_status: "paid", payment_intent: "pi_y", currency: "gbp", amount_total: 5000,
           metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-1", tenantId: "tenant-A" },
         },
       },
@@ -1066,6 +1068,10 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       id: "pack-1", validityDays: 30, totalCredits: 10, pricePence: 5000, currency: "gbp", name: "10pk",
     } as never);
     mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+    // No purchase recorded yet for this payment intent (the mint reads it first, W6).
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue(null as never);
+    // Nor any Payment refunded before the mint (W6 review).
+    mockPaymentFindFirst.mockResolvedValue(null as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
@@ -1082,7 +1088,7 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       account: "acct_test",
       data: {
         object: {
-          id: "cs_terms", payment_intent: "pi_terms", currency: "gbp", amount_total: 5000,
+          id: "cs_terms", payment_status: "paid", payment_intent: "pi_terms", currency: "gbp", amount_total: 5000,
           metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-1", tenantId: "tenant-A" },
         },
       },
@@ -1091,6 +1097,10 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       id: "pack-1", validityDays, totalCredits: 10, pricePence: 5000, currency: "gbp", name: "10pk",
     } as never);
     mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+    // No purchase recorded yet for this payment intent (the mint reads it first, W6).
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue(null as never);
+    // Nor any Payment refunded before the mint (W6 review).
+    mockPaymentFindFirst.mockResolvedValue(null as never);
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
     const create = vi.mocked(prisma.memberClassPack.create);

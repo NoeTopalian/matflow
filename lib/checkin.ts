@@ -869,7 +869,9 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
   if (args.enforceRankGate && (instance.class.requiredRankId || instance.class.maxRankId)) {
     const memberRank = await withTenantContext(tenantId, (tx) =>
       tx.memberRank.findFirst({
-        where: { memberId },
+        // The member's rank in THIS club only: a member id from another club
+        // must not be judged on that club's belts (W6, 28 Oct 2026).
+        where: { memberId, member: { tenantId } },
         orderBy: { rankSystem: { order: "desc" } },
         select: { rankSystem: { select: { order: true } } },
       }),
@@ -932,8 +934,13 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     method === "kiosk";
   const memberRecord = needsPreRead
     ? await withTenantContext(tenantId, (tx) =>
+        // Tenant-scoped (docs/TENANT-SCOPE-CONVENTION.md): the gates below
+        // answer from this row before the Member lock, so a member id from
+        // another club must read as "not found" here, never as that club's
+        // hold date, waiver or venue (W6, 28 Oct 2026; RLS was the only
+        // backstop, and it is inert under a bypass-RLS role).
         tx.member.findUnique({
-          where: { id: memberId },
+          where: { id: memberId, tenantId },
           select: {
             paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true, membershipTierId: true, nextDueAt: true,
             accountType: true, billedBy: true,

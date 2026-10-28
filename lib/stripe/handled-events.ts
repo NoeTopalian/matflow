@@ -28,6 +28,11 @@ export const HANDLED_STRIPE_EVENT_TYPES = new Set<string>([
   "invoice.payment_succeeded",
   "invoice.voided",
   "checkout.session.completed",
+  // A delayed method (Bacs, SEPA, bank transfer) completes a class-pack session
+  // unpaid; these settle it. The webhook endpoint must be subscribed to both
+  // (Stripe dashboard), or a delayed pack payment never mints (W6, 28 Oct 2026).
+  "checkout.session.async_payment_succeeded",
+  "checkout.session.async_payment_failed",
   // An abandoned cart used to sit "pending" for ever, and mark-paid accepted it.
   "checkout.session.expired",
   "payment_intent.processing",

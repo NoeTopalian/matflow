@@ -111,6 +111,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "stripe.disconnect": "Disconnected Stripe",
   "stripe.account.deauthorized": "Stripe access was revoked",
   "stripe.checkout.expired": "A checkout expired unpaid",
+  "stripe.checkout.class_pack_payment_failed": "A delayed class-pack payment failed; no classes were added",
   "stripe.payment_intent.failed": "A card payment failed",
   "stripe.payment_method.detached": "A saved card was removed",
   "stripe.webhook.account_updated": "Stripe account status changed",

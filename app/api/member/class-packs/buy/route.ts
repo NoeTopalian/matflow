@@ -130,6 +130,11 @@ export async function POST(req: Request) {
     const checkoutSession = await stripe.checkout.sessions.create(
       {
         mode: "payment",
+        // No payment_method_types: the club's own Stripe payment methods
+        // apply, delayed ones included. The webhook mints credits only once
+        // the session is paid (checkout.session.completed with payment_status
+        // "paid", or checkout.session.async_payment_succeeded), never on an
+        // unpaid completion (W6, 28 Oct 2026).
         customer: customerId ?? undefined,
         // pack.stripePriceId narrowed to non-null by the no-pack guard above —
         // TypeScript can't track this through the withTenantContext closure.
