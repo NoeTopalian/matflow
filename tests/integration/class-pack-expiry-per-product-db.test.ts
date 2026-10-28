@@ -275,16 +275,18 @@ describe.skipIf(!HAS_DB)("class packs: expiry chosen per product (27 Oct 2026)",
         { key: "openOlder", expiresAt: null, purchasedAt: new Date(Date.now() - 50 * DAY), product: openProduct, credits: 1 },
         { key: "dated", expiresAt: new Date(Date.now() + 300 * DAY), purchasedAt: new Date(Date.now() - DAY), credits: 1 },
       ]);
+      // One read of all three packs per round (three check-ins plus a read each, over the pooler; this test ran close
+      // to the 30 s default with a read per pack).
+      const keyOf = Object.fromEntries(Object.entries(ids).map(([k, id]) => [id, k]));
       const spent: string[] = [];
       for (let n = 0; n < 3; n++) {
         await checkIn();
-        for (const key of ["dated", "openOlder", "openNewer"]) {
-          if (!spent.includes(key) && (await packState(ids[key]))?.creditsRemaining === 0) spent.push(key);
-        }
+        const rows = await withRlsBypass((tx) => tx.memberClassPack.findMany({ where: { id: { in: Object.values(ids) } }, select: { id: true, creditsRemaining: true } }));
+        for (const r of rows) if (r.creditsRemaining === 0 && !spent.includes(keyOf[r.id])) spent.push(keyOf[r.id]);
         expect(spent).toHaveLength(n + 1);
       }
       expect(spent).toEqual(["dated", "openOlder", "openNewer"]);
-    });
+    }, 90_000);
   });
 
   it("schema end state: expiresAt and validityDays nullable; the withdrawn draft's CHECK gone, the expired-needs-date guard present", async () => {
