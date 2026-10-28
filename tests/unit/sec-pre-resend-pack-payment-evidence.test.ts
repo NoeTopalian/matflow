@@ -246,8 +246,12 @@ describe("W6 webhook: forged or unconfirmed class-pack payment evidence", () => 
   });
 });
 
-describe("W6 buy route: the club's payment methods are kept; the session names the club's pack and the session's member", () => {
-  it("does not restrict payment methods (the club's own methods apply), and the metadata ignores forged body fields", async () => {
+// Owner instruction, 28 Oct 2026: the MVP release must not depend on the live
+// webhook being subscribed to the async checkout events. A card completes the
+// session paid, so pack checkout is card-only (wallets included) until those
+// events are subscribed and verified; the async handlers above stay, dormant.
+describe("buy route: card only, so credits never wait on an async event; the session names the club's pack and the session's member", () => {
+  it("restricts pack checkout to card (no delayed methods), and the metadata ignores forged body fields", async () => {
     m.auth.mockResolvedValue({ user: { tenantId: "tenant-A", memberId: "mem-a", role: "member" } });
     db.tenant.findUnique.mockResolvedValue({ stripeAccountId: "acct_club_a", stripeConnected: true, stripeAccountStatus: null, memberSelfBilling: true });
     db.member.findFirst.mockResolvedValue({ id: "mem-a", email: "a@example.test", name: "A", stripeCustomerId: "cus_a" });
@@ -259,7 +263,7 @@ describe("W6 buy route: the club's payment methods are kept; the session names t
     }))) as unknown as { status: number };
     expect(res.status).toBe(200);
     const [params] = m.checkoutCreate.mock.calls[0] as [Record<string, unknown>];
-    expect(params).not.toHaveProperty("payment_method_types");
+    expect(params.payment_method_types).toEqual(["card"]);
     expect(params.metadata).toMatchObject({ matflowKind: "class_pack", tenantId: "tenant-A", memberId: "mem-a", packId: "pack-a" });
     expect(params.line_items).toEqual([{ price: "price_a", quantity: 1 }]);
   });
