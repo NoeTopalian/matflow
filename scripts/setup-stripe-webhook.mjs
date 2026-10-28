@@ -10,7 +10,7 @@
  * Usage:
  *   node scripts/setup-stripe-webhook.mjs                 # dry-run (default) — shows the diff, mutates nothing
  *   node scripts/setup-stripe-webhook.mjs --apply         # create or reconcile for real
- *   node scripts/setup-stripe-webhook.mjs --apply --prune # also remove enabled events NOT in the desired 15
+ *   node scripts/setup-stripe-webhook.mjs --apply --prune # also remove enabled events NOT in the desired set
  *   node scripts/setup-stripe-webhook.mjs --url=https://staging.example/api/stripe/webhook
  *   node scripts/setup-stripe-webhook.mjs --id=we_123     # target a specific endpoint (skip URL matching)
  *
@@ -37,11 +37,19 @@ config();
 const DEFAULT_URL = "https://matflow.studio/api/stripe/webhook";
 const DEFAULT_API_VERSION = "2026-03-25.dahlia"; // must match the apiVersion pinned across the app
 
-// Keep in sync with HANDLED_EVENT_TYPES in app/api/stripe/webhook/route.ts (lines ~32-48).
+// Exactly HANDLED_STRIPE_EVENT_TYPES in lib/stripe/handled-events.ts, which the
+// webhook route handles. tests/unit/stripe-webhook-desired-events.test.ts fails
+// if the two lists differ (28 Oct 2026: six handled types were missing here,
+// including both async checkout events that mint a delayed-method pack payment).
 const DESIRED_EVENTS = [
+  "account.application.deauthorized",
   "account.updated",
+  "checkout.session.async_payment_failed",
+  "checkout.session.async_payment_succeeded",
   "checkout.session.completed",
+  "checkout.session.expired",
   "charge.refunded",
+  "charge.dispute.closed",
   "charge.dispute.created",
   "charge.dispute.updated",
   "customer.deleted",
@@ -51,6 +59,7 @@ const DESIRED_EVENTS = [
   "invoice.payment_failed",
   "invoice.voided",
   "mandate.updated",
+  "payment_intent.payment_failed",
   "payment_intent.succeeded",
   "payment_intent.processing",
   "payment_method.detached",
@@ -102,7 +111,7 @@ function reportDiff(have) {
   }
   const d = diff(have);
   if (d.missing.length === 0 && d.extra.length === 0) {
-    console.log("  ✓ enabled_events already match the desired 15 exactly.");
+    console.log(`  ✓ enabled_events already match the desired ${DESIRED_EVENTS.length} exactly.`);
   } else {
     if (d.missing.length) console.log(`  + missing (${d.missing.length}): ${d.missing.join(", ")}`);
     if (d.extra.length) console.log(`  ~ extra (${d.extra.length}, kept unless --prune): ${d.extra.join(", ")}`);
