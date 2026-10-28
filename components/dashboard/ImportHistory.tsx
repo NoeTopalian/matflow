@@ -20,6 +20,7 @@ import { describeApiError } from "@/lib/api-field-errors";
 import { formatDate, formatDateTime } from "@/lib/date";
 import type { ImportHistoryItem } from "@/app/api/admin/import/route";
 import type { ConflictView, WithoutPlanView } from "@/app/api/admin/import/[id]/conflicts/route";
+import { PLAN_RESTRICTED_SENTENCE, type PlanReviewTally } from "@/lib/importers/plan-match";
 
 /** "1 member" / "2 members". */
 export function plural(n: number, one: string, many: string): string {
@@ -159,7 +160,7 @@ type ReviewState =
   | { phase: "closed" }
   | { phase: "loading" }
   | { phase: "error" }
-  | { phase: "ready"; items: ConflictView[]; withoutPlan: WithoutPlanView[] };
+  | { phase: "ready"; items: ConflictView[]; withoutPlan: WithoutPlanView[]; planReview: PlanReviewTally };
 
 export const REVIEW_ERROR = "Couldn't load the people to review — try again";
 
@@ -176,9 +177,14 @@ export function ReviewList({ jobId, count }: { jobId: string; count: number }) {
     try {
       const res = await fetch(`/api/admin/import/${encodeURIComponent(jobId)}/conflicts`, { cache: "no-store" });
       if (!res.ok) { setState({ phase: "error" }); return; }
-      const data = (await res.json()) as { conflicts?: ConflictView[]; withoutPlan?: WithoutPlanView[] };
+      const data = (await res.json()) as { conflicts?: ConflictView[]; withoutPlan?: WithoutPlanView[]; planReview?: PlanReviewTally };
       if (!Array.isArray(data.conflicts)) { setState({ phase: "error" }); return; }
-      setState({ phase: "ready", items: data.conflicts, withoutPlan: Array.isArray(data.withoutPlan) ? data.withoutPlan : [] });
+      setState({
+        phase: "ready",
+        items: data.conflicts,
+        withoutPlan: Array.isArray(data.withoutPlan) ? data.withoutPlan : [],
+        planReview: Array.isArray(data.planReview) ? data.planReview : [],
+      });
     } catch {
       setState({ phase: "error" });
     }
@@ -214,7 +220,16 @@ export function ReviewList({ jobId, count }: { jobId: string; count: number }) {
           {state.withoutPlan.length > 0 && (
             <div className="mb-2" data-testid="import-review-without-plan">
               <p className="font-semibold text-tx-1">Imported without a plan ({state.withoutPlan.length.toLocaleString("en-GB")})</p>
-              <p>Their plan name matched no single MatFlow plan, so none was set. Plan-restricted classes may refuse them until you set one on their page.</p>
+              <p>
+                MatFlow sets a plan only when the file&rsquo;s plan name, billing period, price and currency all agree with one active MatFlow plan, so none was set for these people. Open a person to assign their plan. {PLAN_RESTRICTED_SENTENCE}
+              </p>
+              {state.planReview.length > 0 && (
+                <ul className="mt-0.5 list-disc ml-4" data-testid="import-review-plan-reasons">
+                  {state.planReview.map((r) => (
+                    <li key={`${r.label}-${r.reason}`}>File says <strong>{r.label}</strong>: {r.why}.</li>
+                  ))}
+                </ul>
+              )}
               <ul className="mt-0.5 space-y-0.5">
                 {state.withoutPlan.map((m) => (
                   <li key={m.id}>
@@ -228,14 +243,20 @@ export function ReviewList({ jobId, count }: { jobId: string; count: number }) {
             {state.items.map((c, i) =>
               c.kind === "ambiguous" ? (
                 <li key={`a-${i}`} data-testid="import-review-ambiguous">
-                  <strong className="text-tx-1">{c.name}</strong> — not matched: {c.reason}. Could be:{" "}
-                  {c.members.map((m, j) => (
-                    <span key={m.id}>
-                      {j > 0 ? ", " : ""}
-                      {m.href ? <a className="underline" href={m.href}>{m.name}</a> : "a member since deleted"}
-                    </span>
-                  ))}
-                  . Nobody was created or changed.
+                  <strong className="text-tx-1">{c.name}</strong> — not matched: {c.reason}.
+                  {c.members.length > 0 && (
+                    <>
+                      {" "}Could be:{" "}
+                      {c.members.map((m, j) => (
+                        <span key={m.id}>
+                          {j > 0 ? ", " : ""}
+                          {m.href ? <a className="underline" href={m.href}>{m.name}</a> : "a member since deleted"}
+                        </span>
+                      ))}
+                      .
+                    </>
+                  )}
+                  {" "}Nobody was created or changed.
                 </li>
               ) : (
                 <li key={`c-${i}`} data-testid="import-review-conflict">

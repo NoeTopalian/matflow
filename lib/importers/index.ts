@@ -13,7 +13,9 @@ export type ImportSource = "generic" | "mindbody" | "glofox" | "wodify" | "teamu
  * its header map or folding rules change.
  */
 export const MAPPING_VERSION: Record<ImportSource, string> = {
-  generic: "generic@2026-09-30",
+  // 27 Oct 2026: optional plan price, billing period and currency columns
+  // (lib/importers/plan-match.ts reads them for a new member's plan).
+  generic: "generic@2026-10-27",
   mindbody: "mindbody@2026-09-30",
   glofox: "glofox@2026-09-30",
   wodify: "wodify@2026-09-30",
@@ -108,12 +110,12 @@ export async function withoutProvisionalStanding<M extends { billingStatusSource
 export const LIVE_ENTITLEMENTS: readonly MembershipRowDraft["entitlement"][] = ["current", "scheduled", "held"];
 
 /**
- * Plan labels with no MatFlow tier, split by whether anyone is LIVE on them.
- *
- * The commit links a member to a tier by exact name (trimmed, case-insensitive
- * — commit/route.ts tierByName). A label carried by a current, scheduled or
- * held membership with no tier leaves those members with the plan name as
- * text and no tier: `live`, which the owner must see before committing. A
+ * Plan labels with no MatFlow tier of that name, split by whether anyone is
+ * LIVE on them. Information only: since 27 Oct 2026 a name match alone never
+ * sets a plan (lib/importers/plan-match: name, billing period, price and
+ * currency must all agree, and a TeamUp file states no money). A label
+ * carried by a current, scheduled or held membership with no tier of that
+ * name: `live`, which the owner sees before committing. A
  * label carried only by history rows needs no tier — the rows are kept whole
  * as ImportedMembership.planLabel, and a member's tier follows their
  * current/scheduled/held membership: `historyOnly`, for information.
@@ -190,6 +192,12 @@ export type MemberDraft = {
   guardianSuggestedBy?: "shared_email" | "emergency_contact";
   /** A contact address seen in the source but not verified — never a login (Member.unverifiedEmail). */
   unverifiedEmail?: string;
+  /**
+   * The plan's price, billing period and currency as the file states them
+   * (raw cells, read by lib/importers/plan-match.ts). Absent when the source
+   * carries none (TeamUp never does).
+   */
+  planFacts?: { price?: string; period?: string; currency?: string };
 };
 
 export type ParseResult = {
@@ -378,6 +386,11 @@ function parseRowsWithMap(rows: string[][], headerMap: Record<MappedField, strin
     // `errors` array: `errors` rows are dropped from the import entirely
     // (see the email/name checks above), and a garbled billing cell must
     // never cost the member their names+phone import — see brief guard.
+    const planFacts = {
+      price: trimOrUndef(row[idx.planPrice]),
+      period: trimOrUndef(row[idx.planPeriod]),
+      currency: trimOrUndef(row[idx.planCurrency]),
+    };
     const noteParts = [trimOrUndef(row[idx.notes]), dueDate.note, paymentStatus.note].filter(
       (p): p is string => Boolean(p),
     );
@@ -394,6 +407,7 @@ function parseRowsWithMap(rows: string[][], headerMap: Record<MappedField, strin
       joinedAt: parseISODate(row[idx.joinedAt]),
       nextDueAt: dueDate.value,
       paymentStatus: paymentStatus.value,
+      ...(planFacts.price || planFacts.period || planFacts.currency ? { planFacts } : {}),
     });
   }
 
@@ -402,7 +416,10 @@ function parseRowsWithMap(rows: string[][], headerMap: Record<MappedField, strin
 
 type MappedField =
   | "name" | "email" | "phone" | "dateOfBirth" | "membershipType" | "status"
-  | "accountType" | "notes" | "joinedAt" | "nextDueAt" | "paymentStatus";
+  | "accountType" | "notes" | "joinedAt" | "nextDueAt" | "paymentStatus"
+  // The plan's money, for matching a new member's plan (plan-match.ts). Only
+  // the generic template names these columns; the vendor maps leave them empty.
+  | "planPrice" | "planPeriod" | "planCurrency";
 
 const HEADER_MAPS: Record<Exclude<ImportSource, "teamup">, Record<MappedField, string[]>> = {
   generic: {
@@ -417,6 +434,9 @@ const HEADER_MAPS: Record<Exclude<ImportSource, "teamup">, Record<MappedField, s
     joinedAt: ["joined", "join date", "joined at", "signup date"],
     nextDueAt: ["next due", "next due date", "due date", "next payment date"],
     paymentStatus: ["payment status", "billing status"],
+    planPrice: ["plan price", "membership price", "price"],
+    planPeriod: ["billing period", "billing cycle", "plan period"],
+    planCurrency: ["currency", "plan currency"],
   },
   mindbody: {
     name: ["client name", "name"],
@@ -430,6 +450,7 @@ const HEADER_MAPS: Record<Exclude<ImportSource, "teamup">, Record<MappedField, s
     joinedAt: ["client since", "first visit"],
     nextDueAt: ["next auto-pay date", "next payment date", "autopay date"],
     paymentStatus: ["autopay status", "payment status", "account balance status"],
+    planPrice: [], planPeriod: [], planCurrency: [],
   },
   glofox: {
     name: ["name", "full name"],
@@ -443,6 +464,7 @@ const HEADER_MAPS: Record<Exclude<ImportSource, "teamup">, Record<MappedField, s
     joinedAt: ["sign up date", "joined"],
     nextDueAt: ["next payment date", "next billing date"],
     paymentStatus: ["payment status", "billing status"],
+    planPrice: [], planPeriod: [], planCurrency: [],
   },
   wodify: {
     name: ["athlete name", "name"],
@@ -456,6 +478,7 @@ const HEADER_MAPS: Record<Exclude<ImportSource, "teamup">, Record<MappedField, s
     joinedAt: ["start date", "joined"],
     nextDueAt: ["next billing date", "next payment date"],
     paymentStatus: ["billing status", "payment status"],
+    planPrice: [], planPeriod: [], planCurrency: [],
   },
 };
 

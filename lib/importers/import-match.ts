@@ -9,7 +9,8 @@
  */
 import type { Prisma } from "@prisma/client";
 import type { MemberDraft } from "@/lib/importers";
-import { CANDIDATE_SELECT, classify, type CandidateMember, type Classification } from "@/lib/importers/import-conflicts";
+import { CANDIDATE_SELECT, classify, isSynthesisedEmail, uploadValues, type CandidateMember, type Classification } from "@/lib/importers/import-conflicts";
+import { normaliseEmail } from "@/lib/email-normalise";
 
 type Reader = { member: Pick<Prisma.TransactionClient["member"], "findMany"> };
 type Plan = { tierId: string | null; label: string | null };
@@ -28,11 +29,53 @@ async function byExternalRef(tx: Reader, tenantId: string, drafts: readonly Memb
  * parent). `skipEmails`: addresses the caller refuses for another reason (a
  * staff login) — not classified.
  */
+/**
+ * Uncertainty inside the file itself (27 Oct 2026, preview = commit): two or
+ * more adult rows carrying one real email. If every stated value is equal the
+ * first is classified as usual and the rest are exact repeats (skipped); if
+ * they differ, nobody can say which person owns the address, so EVERY row of
+ * the group is ambiguous and nobody is created. Computed over the WHOLE file
+ * by both the preview and the commit (the commit's 25-row slices would
+ * otherwise see only part of a group, and its insert silently dropped the
+ * second row on the unique address).
+ */
+export function fileRepeats(drafts: readonly MemberDraft[]): Map<MemberDraft, Classification> {
+  const groups = new Map<string, MemberDraft[]>();
+  for (const d of drafts) {
+    if (!d.email || d.nonContactable || d.unverified || isSynthesisedEmail(d.email)) continue;
+    const k = normaliseEmail(d.email);
+    groups.set(k, [...(groups.get(k) ?? []), d]);
+  }
+  const stated = (d: MemberDraft) => JSON.stringify([uploadValues(d, { tierId: null, label: d.membershipType ?? null }), d.planFacts ?? null, d.parentEmail ?? null]);
+  const out = new Map<MemberDraft, Classification>();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const first = stated(group[0]);
+    if (group.every((d) => stated(d) === first)) {
+      for (const d of group.slice(1)) out.set(d, { kind: "repeat" });
+      continue;
+    }
+    for (const d of group) {
+      out.set(d, {
+        kind: "ambiguous", memberIds: [], name: d.name, sourceKey: d.sourceKey ?? null, rows: d.sourceRows ?? [],
+        reason: `${group.length} rows of this file share this email with different details`,
+      });
+    }
+  }
+  return out;
+}
+
 export async function classifyAdults(
   tx: Reader,
   tenantId: string,
   drafts: readonly MemberDraft[],
-  opts: { jobId: string; planOf: (d: MemberDraft) => Plan; skipEmails?: ReadonlySet<string> },
+  opts: {
+    jobId: string;
+    planOf: (d: MemberDraft) => Plan;
+    skipEmails?: ReadonlySet<string>;
+    /** fileRepeats() over the whole file: these drafts are classified by the file alone. */
+    repeats?: ReadonlyMap<MemberDraft, Classification>;
+  },
 ): Promise<Map<MemberDraft, Classification>> {
   const emails = drafts.map((d) => d.email).filter(Boolean);
   const existing = emails.length
@@ -70,6 +113,8 @@ export async function classifyAdults(
   const out = new Map<MemberDraft, Classification>();
   for (const d of drafts) {
     if (opts.skipEmails?.has(d.email)) continue;
+    const inFile = opts.repeats?.get(d);
+    if (inFile) { out.set(d, inFile); continue; }
     const byIdentity =
       d.unverified && d.unverifiedEmail
         ? byUnverified.get(d.unverifiedEmail) ?? []
@@ -80,6 +125,39 @@ export async function classifyAdults(
     out.set(d, classify({ draft: d, plan: opts.planOf(d), byIdentity, byKey: d.sourceKey ? byKey.get(d.sourceKey) ?? null : null, jobId: opts.jobId, nameOnly }));
   }
   return out;
+}
+
+/**
+ * Parents a child in this file cannot be attached to (27 Oct 2026: identity
+ * ambiguity is not permission to create guardian authority). Keyed by the
+ * address a child's `parentEmail` names, resolved the way classifyChildren
+ * resolves it (a real adult's login address wins over a guardian draft's
+ * payer address):
+ *  - `refused`: the parent's row is refused (a staff login holds the address),
+ *    so no parent is created: the child is "without parent";
+ *  - `uncertain`: the parent's row could not be matched with certainty, so the
+ *    child is listed for review and linked to nobody, even when a member
+ *    already holds the address (that member may be someone else).
+ */
+export function blockedParents(
+  adults: readonly MemberDraft[],
+  outcomes: ReadonlyMap<MemberDraft, Classification>,
+  refusedEmails: ReadonlySet<string>,
+): { refused: Set<string>; uncertain: Set<string> } {
+  const parentOf = new Map<string, MemberDraft>();
+  for (const d of adults) if (d.unverified && d.unverifiedEmail && !parentOf.has(d.unverifiedEmail)) parentOf.set(d.unverifiedEmail, d);
+  for (const d of adults) {
+    if (d.unverified || !d.email || isSynthesisedEmail(d.email)) continue;
+    const prior = parentOf.get(d.email);
+    if (!prior || prior.unverified) parentOf.set(d.email, d);
+  }
+  const refused = new Set<string>();
+  const uncertain = new Set<string>();
+  for (const [address, d] of parentOf) {
+    if (refusedEmails.has(d.email)) refused.add(address);
+    else if (outcomes.get(d)?.kind === "ambiguous") uncertain.add(address);
+  }
+  return { refused, uncertain };
 }
 
 export type ChildOutcome =
@@ -98,7 +176,14 @@ export async function classifyChildren(
   tx: Reader,
   tenantId: string,
   drafts: readonly MemberDraft[],
-  opts: { jobId: string; planOf: (d: MemberDraft) => Plan; skipEmails?: ReadonlySet<string>; parentsInFile?: ReadonlySet<string> },
+  opts: {
+    jobId: string;
+    planOf: (d: MemberDraft) => Plan;
+    skipEmails?: ReadonlySet<string>;
+    parentsInFile?: ReadonlySet<string>;
+    /** blockedParents() over this file's adults, from the same classification. */
+    blocked?: { refused: ReadonlySet<string>; uncertain: ReadonlySet<string> };
+  },
 ): Promise<Map<MemberDraft, ChildOutcome>> {
   const parentEmails = [...new Set(drafts.map((d) => d.parentEmail).filter((e): e is string => !!e))];
   const parents = parentEmails.length
@@ -118,6 +203,20 @@ export async function classifyChildren(
   const out = new Map<MemberDraft, ChildOutcome>();
   for (const d of drafts) {
     if (opts.skipEmails?.has(d.email)) continue;
+    if (d.parentEmail && opts.blocked?.refused.has(d.parentEmail)) {
+      out.set(d, { classification: null, parentId: null });
+      continue;
+    }
+    if (d.parentEmail && opts.blocked?.uncertain.has(d.parentEmail)) {
+      out.set(d, {
+        classification: {
+          kind: "ambiguous", memberIds: [], name: d.name, sourceKey: d.sourceKey ?? null, rows: d.sourceRows ?? [],
+          reason: "their parent in this file could not be matched with certainty, so the child was not linked to anyone",
+        },
+        parentId: null,
+      });
+      continue;
+    }
     const parent = d.parentEmail ? parentByEmail.get(d.parentEmail) : undefined;
     const key = d.sourceKey ? byKey.get(d.sourceKey) ?? null : null;
     if (!parent) {
