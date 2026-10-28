@@ -24,7 +24,8 @@
 // month. The screen, the drill-throughs and the CSV must then show the post-seed figures. (A delta is used because
 // the fixture club's own history — Member 1, Member 2, rows other journeys left — is replayed by
 // lib/membership-report.ts from join dates, the TeamUp ledger or back-fill, which this journey does not
-// re-implement.) Churn and Active members still come from SQL (status + cancelledAt in the club month).
+// re-implement.) Active members still come from SQL; churn is the movement's cancellations this month (owner decision,
+// 27 Oct 2026), so Eve counts and Dan's finished course does not.
 //
 // Needs `fixture.mjs create` and `server.mjs start` (server on the integrated build, migration 20261017022302 applied).
 //   node journeys/headcount-movement.mjs            (leaves its seed in place, like reporting-truth, so a following
@@ -70,14 +71,14 @@ const iso = (d) => d.toISOString(); // TIMESTAMP(3) WITHOUT TIME ZONE holding UT
 // ── Formatters and copy, in the source's exact formats (file:line in the combined worktree) ──────────────────
 const fmtNum = (n) => Number(n).toLocaleString("en-GB");                                               // reports-primitives.tsx formatNumber
 const signed = (n) => (n > 0 ? `+${fmtNum(n)}` : n < 0 ? `−${fmtNum(Math.abs(n))}` : "0");               // reports-primitives.tsx formatSigned
-const fmtPct = (p, b) => (b <= 0 || p === null || !Number.isFinite(p) ? "—" : `${p.toLocaleString("en-GB", { maximumFractionDigits: 1 })}%`);
-const fmtRatio = (p, n, b) => (fmtPct(p, b) === "—" ? "—" : `${fmtPct(p, b)} (${fmtNum(n)} of ${fmtNum(b)})`);
-const pct1 = (n, b) => (b > 0 ? Math.round((n / b) * 1000) / 10 : null);
 const norm = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 
 const DEFINITION = "New: first ever start. Rejoined: started again after leaving. Joined = new + rejoined. Left: cancelled, or finished a prepaid course. Net = new + rejoined − left. Tasters added are counted apart, and imports are never joins."; // membership-movement.ts:147-148
 const JOINED_LABEL = "Joined this month (new + rejoined)";                                                 // membership-movement.ts:150, ReportsView.tsx:506
-const CHURN_FORMULA = "Of the members active when the period began, how many left during it";        // ReportsView.tsx CHURN_FORMULA (26 Oct 2026)               // ReportsView.tsx:234
+// Churn (owner decision, 27 Oct 2026): ReportsView.tsx CHURN_TITLE, CHURN_COUNTED and churnValueText — a count, no percentage.
+const CHURN_TITLE = "Churn";
+const CHURN_COUNTED = "Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide";
+const churnText = (n) => `${fmtNum(n)} ${n === 1 ? "cancellation" : "cancellations"} this month`;
 const JOINED_LINES = [                                                                                      // ReportsView.tsx:491-496, 513
   { key: "new", label: "New", filter: "new-this-month" },
   { key: "rejoined", label: "Rejoined", filter: "rejoined-this-month" },
@@ -458,11 +459,13 @@ try {
   L.check("seed", "S7 D11: the report's Joined is the movement — churn.joined = new + rejoined this month, and the seed adds 2 (Ana new, Cara rejoined; not Ben, not Ivy)",
     post.churn.joined === cur.new + cur.rejoined && seedJoined === SEED_JOINED && JSON.stringify(seedNow) === JSON.stringify(SEED_NOW),
     { joined: post.churn.joined, newPlusRejoined: cur.new + cur.rejoined, seedJoined, seedNow, expected: { seedJoined: SEED_JOINED, seedNow: SEED_NOW } });
-  const churnSeed = { leavers: post.churn.cancelled - pre.churn.cancelled, base: post.churn.base - pre.churn.base };
-  const openingHead = M.headcountByMonth.at(-2)?.headcount ?? null;
-  L.check("seed", "S8 churn the normal way: the seed adds 2 leavers (Eve cancelled, Dan's course ended — both active when the month began; not Cara) and 2 to the base; the base is last month's closing headcount; Active members equal SQL",
-    churnSeed.leavers === 2 && churnSeed.base === 2 && post.churn.base === openingHead && post.summary.activeMembers === E.active,
-    { churnSeed, expected: { leavers: 2, base: 2 }, base: post.churn.base, openingHead, active: [post.summary.activeMembers, E.active] });
+  // Churn (owner decision, 27 Oct 2026): the cancellations this month. The seed adds exactly one — Eve. Dan's finished
+  // course is Left only, never churn; Cara's rejoin is no cancellation. No rate and no base in the report data.
+  const churnSeed = post.churn.cancelled - pre.churn.cancelled;
+  L.check("seed", "S8 churn = this month's cancellations: the report's count equals the movement's cancellations, the seed adds 1 (Eve; not Dan's finished course, not Cara), no percentage or base is carried, and Active members equal SQL",
+    post.churn.cancelled === cur.lostCancelled && churnSeed === 1 && !("ratePct" in post.churn) && !("base" in post.churn) && !("churnRate" in post)
+      && post.summary.activeMembers === E.active,
+    { churnSeed, expected: 1, cancelled: post.churn.cancelled, movementCancelled: cur.lostCancelled, keys: Object.keys(post.churn), active: [post.summary.activeMembers, E.active] });
   L.note("d11", "N3 D11 for the ledger: the retired joinedAt count would read this month vs the Joined tile now (the seed adds 3 by joinedAt — Ana, Ben, Ivy — and 2 by movement — Ana, Cara)", {
     retiredJoinedAt: { wholeClub: E.joinedAtCount, seed: E.joinedAtCount - tileBefore.joinedAtCount },
     joinedTile: { wholeClub: post.churn.joined, seed: seedJoined },
@@ -482,13 +485,23 @@ try {
     JSON.stringify(joinedTile.lines) === JSON.stringify(tileExpected.lines), { saw: joinedTile.lines, expected: tileExpected.lines });
   L.check("reports", "R3 Joined tile net \"Net ±N this month (new + rejoined − left)\" = movement net",
     joinedTile.net === tileExpected.net, { saw: joinedTile.net, expected: tileExpected.net });
-  const churnLink = tileLink(page, "Churn rate this month");
+  // 24 Oct 2026: a month not wholly recorded says so on every movement figure (ReportsView.tsx estimateLabel/withEstimate).
+  const estimateWords = cur.basis === "mixed" ? "Partly estimated"
+    : cur.basis === "estimated" ? (() => {
+      const parts = [];
+      if (M.historySource && M.historySource !== "none") parts.push("your TeamUp history");
+      if ((M.fromJoinDates ?? 0) > 0) parts.push("join and cancellation dates");
+      return parts.length > 0 ? `Estimated from ${parts.join(" and ")}` : "Estimated";
+    })() : null;
+  const est = (d) => (estimateWords ? `${d} · ${estimateWords}` : d);
+  const churnValue = churnText(post.churn.cancelled);
+  const churnLink = tileLink(page, `${CHURN_TITLE}: ${churnValue}`);
   const churnTile = await pTexts(churnLink);
-  const churnBase = post.churn.base;
-  const churnExpected = [fmtRatio(pct1(post.churn.cancelled, churnBase), post.churn.cancelled, churnBase), "Churn rate this month", CHURN_FORMULA];
+  const churnExpected = [churnValue, CHURN_TITLE, est(CHURN_COUNTED)];
   const nextToChurn = await churnLink.evaluate((el) => el.nextElementSibling?.getAttribute("data-testid") ?? null);
-  L.check("reports", "R4 churn beside it reads x% (n of m) of the report's leavers over its opening members, with the formula, and the Joined tile is its next tile",
-    JSON.stringify(churnTile) === JSON.stringify(churnExpected) && nextToChurn === "reports-joined-tile", { saw: churnTile, expected: churnExpected, nextTile: nextToChurn });
+  L.check("reports", "R4 churn beside it reads \"N cancellations this month\" (the report's cancellations), titled Churn, says what it counts, no percentage, and the Joined tile is its next tile",
+    JSON.stringify(churnTile) === JSON.stringify(churnExpected) && !churnTile.join(" ").includes("%") && nextToChurn === "reports-joined-tile",
+    { saw: churnTile, expected: churnExpected, nextTile: nextToChurn });
 
   const card = page.getByTestId("net-new-card");
   await card.scrollIntoViewIfNeeded();
@@ -557,24 +570,17 @@ try {
     joined: healthRow(JOINED_LABEL),
     new: healthRow("New this month"), rejoined: healthRow("Rejoined this month"),
     tasters: healthRow("Tasters added this month"), left: healthRow("Left this month"),
+    churn: healthRow("Churn (cancellations) this month"),
   };
-  // 24 Oct 2026: a month not wholly recorded says so on every movement row (ReportsView.tsx estimateLabel/withEstimate).
-  const estimateWords = cur.basis === "mixed" ? "Partly estimated"
-    : cur.basis === "estimated" ? (() => {
-      const parts = [];
-      if (M.historySource && M.historySource !== "none") parts.push("your TeamUp history");
-      if ((M.fromJoinDates ?? 0) > 0) parts.push("join and cancellation dates");
-      return parts.length > 0 ? `Estimated from ${parts.join(" and ")}` : "Estimated";
-    })() : null;
-  const est = (d) => (estimateWords ? `${d} · ${estimateWords}` : d);
   const csvJoinedExpected = {
     joined: ["Health", JOINED_LABEL, String(post.churn.joined), est(`${joinedTileDetail(cur)} · ${DEFINITION}`)],
     new: ["Health", "New this month", String(cur.new), est("First ever start")],
     rejoined: ["Health", "Rejoined this month", String(cur.rejoined), est("Started again after leaving")],
     tasters: ["Health", "Tasters added this month", String(cur.tasterAdded ?? 0), est("Not in Joined or Net")],
     left: ["Health", "Left this month", String(cur.lost), est("Cancelled, or finished a prepaid course")],
+    churn: ["Health", "Churn (cancellations) this month", String(post.churn.cancelled), est(CHURN_COUNTED)],
   };
-  L.check("csv", "C1 CSV Joined rows = the tile: \"Joined this month (new + rejoined)\" with its New · Rejoined · Tasters added · Left · Net detail, then one row per line",
+  L.check("csv", "C1 CSV Joined rows = the tile: \"Joined this month (new + rejoined)\" with its New · Rejoined · Tasters added · Left · Net detail, then one row per line; the churn row is the count of cancellations (Left keeps the finished course)",
     JSON.stringify(csvJoined) === JSON.stringify(csvJoinedExpected), { saw: csvJoined, expected: csvJoinedExpected });
   const csvWindow = csv.find((r) => r[0] === "Membership movement");
   L.check("csv", "C2 CSV window row = the tally: window, net, \"New · Rejoined · Left (cancelled, completed course) · Tasters added\" (ReportsView.tsx:321)",
@@ -617,8 +623,9 @@ try {
   await page.goto(`/dashboard/members?filter=churned-this-month&month=${K.now}`);
   const drillChurn = await membersHeadline(page);
   const churnRows = { eve: await listed(page, NAMES.eve), cara: await listed(page, NAMES.cara), dan: await listed(page, NAMES.dan) };
-  L.check("drill", "D5 the churn drill-through lists the churn count, with Eve and Dan (active when the month began, left in it) and without Cara (not active then)",
-    drillChurn === `${post.churn.cancelled} churned this month` && churnRows.eve && churnRows.dan && !churnRows.cara, { saw: drillChurn, expected: `${post.churn.cancelled} churned this month`, ...churnRows });
+  const churnHead = `${post.churn.cancelled} cancelled this month`;
+  L.check("drill", "D5 the churn drill-through reads \"N cancelled this month\" (the tile's count) with Eve (cancelled), without Dan (finished course: Left, not churn) and without Cara (rejoined)",
+    drillChurn === churnHead && churnRows.eve && !churnRows.dan && !churnRows.cara, { saw: drillChurn, expected: churnHead, ...churnRows });
 
   // ── Phone width (390 px), same session ─────────────────────────────────────────────────────────────────────
   const phone = await context(browser, "10.96.0.2", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState() });
