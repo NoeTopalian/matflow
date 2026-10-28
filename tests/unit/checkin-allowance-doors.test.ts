@@ -168,13 +168,23 @@ describe("POST /api/checkin", () => {
     expect(meta).not.toHaveProperty("acknowledged");
   });
 
-  it("a staff 'auto' mark is not audited as an override (there is none)", async () => {
+  it("a staff 'auto' mark is not audited as an override (there is none), but it is attributed and audited as a mark", async () => {
+    // W6 (28 Oct 2026): this used to assert that an "auto" mark wrote NO audit
+    // row at all, which let a staff member write an unattributed, unaudited
+    // attendance row by sending checkInMethod "auto". The mark is now audited
+    // like every staff mark; it still carries no override.
     h.auth.mockResolvedValue(coach);
     h.performCheckin.mockResolvedValue(SUCCESS);
     const { POST } = await import("@/app/api/checkin/route");
     await POST(req("http://test/api/checkin", { classInstanceId: "inst-1", memberId: "mem-1", checkInMethod: "auto" }));
-    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ method: "auto", allowanceGate: "refuse" });
-    expect(h.logAudit).not.toHaveBeenCalled();
+    expect(h.performCheckin.mock.calls[0][0]).toMatchObject({ method: "auto", allowanceGate: "refuse", checkedInByUserId: coach.user.id });
+    expect(h.logAudit).toHaveBeenCalledTimes(1);
+    const entry = h.logAudit.mock.calls[0][0] as { action: string; userId: string; metadata: Record<string, unknown> };
+    expect(entry).toMatchObject({ action: "attendance.mark", userId: coach.user.id });
+    expect(entry.metadata).toMatchObject({ method: "auto" });
+    expect(entry.metadata).not.toHaveProperty("overrides");
+    expect(entry.metadata).not.toHaveProperty("overAllowance");
+    expect(entry.metadata).not.toHaveProperty("acknowledged");
   });
 });
 
