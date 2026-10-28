@@ -204,7 +204,9 @@ describe("estimate labels: Reports screen", () => {
   it("a trend pill carries the two figures behind its percentage", () => {
     expect(trendDelta(45, 40)).toBe("+13% (45 vs 40)");
     expect(trendDelta(30, 40)).toBe("-25% (30 vs 40)");
-    expect(trendDelta(5, 0)).toBe("+5");
+    // W3 (owner decision, 27 Oct 2026, 23:30): no previous figure, no
+    // percentage, the counts kept (it read a bare "+5").
+    expect(trendDelta(5, 0)).toBe("— (5 vs 0)");
     expect(trendDelta(4, 4)).toBeNull();
     render(<ReportsView data={reports()} attribution={ATTRIBUTION as never} primaryColor="#3b82f6" />);
     // The Attendance this week pill and the Attendance pulse insight: this
@@ -218,7 +220,7 @@ describe("estimate labels: Reports screen", () => {
   it("a part period against a whole one says so: a Monday morning, and the month so far", () => {
     expect(trendDelta(12, 120, WEEK_SO_FAR)).toBe("-90% (12 so far this week vs 120 all last week)");
     expect(trendDelta(3, 10, MONTH_SO_FAR)).toBe("-70% (3 so far this month vs 10 all last month)");
-    expect(trendDelta(5, 0, WEEK_SO_FAR)).toBe("+5 (5 so far this week vs 0 all last week)");
+    expect(trendDelta(5, 0, WEEK_SO_FAR)).toBe("— (5 so far this week vs 0 all last week)");
     expect(trendDelta(4, 4, WEEK_SO_FAR)).toBeNull();
     const data = reports();
     data.summary = { ...data.summary, attendanceThisWeek: 12, attendanceLastWeek: 120, newMembersThisMonth: 3, newMembersLastMonth: 10 };

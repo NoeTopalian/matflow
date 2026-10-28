@@ -80,7 +80,7 @@ export default function ConversionFunnel({
         <ul className="divide-y" style={{ borderColor: "var(--bd-default)" }} aria-label="Conversion funnel by coach">
           {coachRows.map((row) => (
             <li key={row.userId}>
-              <CoachRow row={row} linkRows={linkRows} maxTrials={maxCoachTrials} />
+              <CoachRow row={row} linkRows={linkRows} maxTrials={maxCoachTrials} minTrials={minTrials} />
             </li>
           ))}
         </ul>
@@ -129,7 +129,27 @@ export function pctOf(part: number, whole: number, minTrials: number): string | 
   return formatRatio(wholePct(part, whole), part, whole);
 }
 
-/** "−3 lost before joining · 25% (3 of 12)", "0 lost before joining" — no minus on zero, no share when it is unguarded. */
+/**
+ * `pctOf` naming its base, as the bars' rates do: "52% (24 of 46) of
+ * trials" (owner decision, 27 Oct 2026, 23:30: a percentage carries its
+ * counts and a named denominator). Null under the guard. The screen's
+ * drop-offs and the Reports CSV share it.
+ */
+export function dropShare(part: number, whole: number, minTrials: number, base: "trials" | "converted"): string | null {
+  const pct = pctOf(part, whole, minTrials);
+  return pct ? `${pct} of ${base}` : null;
+}
+
+/**
+ * A coach's lost or no-decision count as a share of the trials they ran:
+ * "50% (20 of 40)", the form of the Converted figure beside it; under the
+ * trial minimum, the count alone ("1"). The CSV's coach rows print the same.
+ */
+export function coachShare(part: number, trialsRun: number, minTrials: number): string {
+  return pctOf(part, trialsRun, minTrials) ?? part.toLocaleString("en-GB");
+}
+
+/** "−3 lost before joining · 25% (3 of 12) of trials", "0 lost before joining" — no minus on zero, no share when it is unguarded. */
 export function dropText(count: number, label: string, pct: string | null, signed: boolean): string {
   const n = count.toLocaleString("en-GB");
   const lead = signed && count > 0 ? `−${n}` : n;
@@ -155,10 +175,10 @@ function OverallFunnel({ steps, minTrials }: { steps: FunnelSteps; minTrials: nu
         note={null}
       />
       <DropOff>
-        <DropItem tone="warning" text={dropText(steps.lost, "lost before joining", pctOf(steps.lost, steps.trials, minTrials), true)} />
+        <DropItem tone="warning" text={dropText(steps.lost, "lost before joining", dropShare(steps.lost, steps.trials, minTrials, "trials"), true)} />
         {/* Not "still deciding": a taster nobody has closed out for months is
             in this bucket too, and the data only says no decision was recorded. */}
-        <DropItem tone="neutral" text={dropText(steps.undecided, "no decision recorded", pctOf(steps.undecided, steps.trials, minTrials), false)} />
+        <DropItem tone="neutral" text={dropText(steps.undecided, "no decision recorded", dropShare(steps.undecided, steps.trials, minTrials, "trials"), false)} />
       </DropOff>
       <FunnelBar
         label="Converted"
@@ -170,7 +190,7 @@ function OverallFunnel({ steps, minTrials }: { steps: FunnelSteps; minTrials: nu
       <DropOff>
         {/* "No longer active", not "churned": gyms pause memberships for injury
             and travel, and this is derived from current status, not a leaving. */}
-        <DropItem tone="warning" text={dropText(steps.churned, "no longer active", pctOf(steps.churned, steps.converted, minTrials), true)} />
+        <DropItem tone="warning" text={dropText(steps.churned, "no longer active", dropShare(steps.churned, steps.converted, minTrials, "converted"), true)} />
       </DropOff>
       <FunnelBar
         label="Still active"
@@ -264,7 +284,7 @@ function DropItem({ tone, text }: { tone: "warning" | "neutral"; text: string })
  * track is a fixed width and every coach shares the same scale (`maxTrials`),
  * so a coach with 40 trials and one with 3 line up AND read proportionally.
  */
-function CoachRow({ row, linkRows, maxTrials }: { row: StaffConversionRow; linkRows: boolean; maxTrials: number }) {
+function CoachRow({ row, linkRows, maxTrials, minTrials }: { row: StaffConversionRow; linkRows: boolean; maxTrials: number; minTrials: number }) {
   const max = Math.max(maxTrials, 1);
   const w = (n: number) => (n > 0 ? `${Math.max((n / max) * 100, 3)}%` : "0%");
 
@@ -295,8 +315,10 @@ function CoachRow({ row, linkRows, maxTrials }: { row: StaffConversionRow; linkR
           value={funnelRate(row.retentionRate, row.retained, row.conversions)}
           muted={row.retentionRate === null}
         />
-        <Stat term="Lost" value={String(row.lost)} muted={row.lost === 0} />
-        <Stat term="No decision" value={String(row.undecided)} muted={row.undecided === 0} />
+        {/* Shares of the trials this coach ran, as the club-wide drop-offs
+            are; the count alone under the trial minimum. */}
+        <Stat term="Lost" value={coachShare(row.lost, row.trialsRun, minTrials)} muted={row.lost === 0} />
+        <Stat term="No decision" value={coachShare(row.undecided, row.trialsRun, minTrials)} muted={row.undecided === 0} />
       </dl>
     </div>
   );

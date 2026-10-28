@@ -116,9 +116,15 @@ export default function DonutChart({
  * owner instruction of 24 Oct 2026); an empty donut reads "—". The older
  * "count (x%)" form, which had no base, is gone with its `showCounts` switch,
  * so no caller can print a bare percentage.
+ *
+ * One slice is the whole by construction, so it reads its count alone
+ * ("90"), never an artificial "100% (90 of 90)" (owner decision, 27 Oct
+ * 2026, 23:30).
  */
 export function DonutLegend({ data }: { data: DonutSlice[] }) {
   const total = data.reduce((s, d) => s + d.value, 0);
+  const share = (d: DonutSlice) =>
+    data.length === 1 ? d.value.toLocaleString("en-GB") : formatRatio(wholePct(d.value, total), d.value, total);
   return (
     <ul className="w-full min-w-0 space-y-2">
       {data.map((d) => (
@@ -128,7 +134,7 @@ export function DonutLegend({ data }: { data: DonutSlice[] }) {
             <span className="truncate" style={{ color: "var(--tx-2)" }}>{d.label}</span>
           </span>
           <span className="shrink-0 tabular-nums" style={{ color: "var(--tx-3)" }}>
-            <span data-testid="donut-legend-ratio">{formatRatio(wholePct(d.value, total), d.value, total)}</span>
+            <span data-testid="donut-legend-ratio">{share(d)}</span>
           </span>
         </li>
       ))}

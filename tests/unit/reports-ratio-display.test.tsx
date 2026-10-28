@@ -174,7 +174,8 @@ describe("ReportsView — every percentage shows its counts, matching the CSV", 
 
   it("attention row counts inactive only and states the active share of current members", () => {
     renderReports(reports());
-    expect(screen.getByText("2 inactive to review")).toBeTruthy();
+    // W3 (owner decision, 27 Oct 2026, 23:30): the count with its share of the named population.
+    expect(screen.getByText("2 inactive to review · 17% of 12 current members")).toBeTruthy();
     expect(screen.getByText("75% (9 of 12) of current members are active")).toBeTruthy();
     expect(screen.queryByText(/need review/)).toBeNull();
   });
@@ -183,7 +184,7 @@ describe("ReportsView — every percentage shows its counts, matching the CSV", 
     renderReports(reports());
     expect(screen.getByText("75% (30 of 40) self or QR")).toBeTruthy();
     expect(screen.getByText("75% (30 of 40)")).toBeTruthy();
-    expect(screen.getByText("9/session · fill 45% (90 of 200)")).toBeTruthy();
+    expect(screen.getByText("9/session · fill 45% (90 of 200 places)")).toBeTruthy();
     expect(screen.getByTestId("rate-readout-counts").textContent).toBe("(3 of 9)");
   });
 
@@ -197,7 +198,7 @@ describe("ReportsView — every percentage shows its counts, matching the CSV", 
       "75% (15 of 20)",
       "75% (9 of 12)",
       "75% (30 of 40)",
-      "45% (90 of 200)",
+      "45% (90 of 200 places)",
     ]) {
       expect(csv).toContain(text);
       expect(document.body.textContent).toContain(text);

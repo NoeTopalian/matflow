@@ -112,10 +112,25 @@ export function changeCounts(current: number, previous: number, periods?: Change
  * yet, `periods` says so beside the figures: "-90% (12 so far this week vs
  * 120 all last week)" (review finding 1, 27 Oct 2026: a Monday morning read
  * "-90%" with nothing saying the week had only begun). With nothing to
- * compare against (previous is 0) there is no percentage: "—".
+ * compare against (previous is 0) there is no percentage, but the counts
+ * still show: "— (12 vs 0)" (owner decision, 27 Oct 2026, 23:30).
+ *
+ * This is a change between two COUNTS. A change between two rates is in
+ * percentage points, not a percentage of a percentage; no screen in the
+ * statistics section compares two rates today.
  */
 export function formatChange(current: number, previous: number, periods?: ChangePeriods): string {
   const pct = pctChange(current, previous);
-  if (pct === null) return "—";
+  if (pct === null) return `— ${changeCounts(current, previous, periods)}`;
   return `${pct > 0 ? "+" : ""}${pct}% ${changeCounts(current, previous, periods)}`;
+}
+
+/**
+ * A count as a share of a named population, for a count that is the
+ * headline and its share the aside: "9% of 130 active". Null when the
+ * population is empty (no percentage of nothing).
+ */
+export function shareOf(n: number, base: number, population: string): string | null {
+  if (base <= 0) return null;
+  return `${percent(n, base)}% of ${count(base)} ${population}`;
 }

@@ -88,12 +88,13 @@ describe("lib/percent text helpers", () => {
     expect(primitives.ratioCounts).toBe(ratioCounts);
   });
 
-  it("a percentage change reads '+12% (56 vs 50)'; nothing to compare against reads '—'", () => {
+  it("a percentage change reads '+12% (56 vs 50)'; nothing to compare against reads '— (56 vs 0)'", () => {
     expect(formatChange(56, 50)).toBe("+12% (56 vs 50)");
     expect(formatChange(48, 50)).toBe("-4% (48 vs 50)");
     expect(formatChange(50, 50)).toBe("0% (50 vs 50)");
     expect(formatChange(1500, 1000)).toBe("+50% (1,500 vs 1,000)");
-    expect(formatChange(56, 0)).toBe("—");
+    // W3 (owner decision, 27 Oct 2026, 23:30): no percentage, the counts kept.
+    expect(formatChange(56, 0)).toBe("— (56 vs 0)");
   });
 
   it("a guarded rate: the counts always, the percentage only above the minimum, '—' with no base", () => {
@@ -162,8 +163,9 @@ describe("Reports CSV, conversion-funnel rows", () => {
     const csv = reportsCsv(createEmptyReportsData(), ATTRIBUTION);
     expect(csv).toContain("Conversion funnel,Converted,6,13% (6 of 46) of trials");
     expect(csv).toContain("Conversion funnel,Still active,5,83.3% (5 of 6) of converted");
-    expect(csv).toContain("Conversion by coach,Marco Silva,40,converted 12.5% (5 of 40) · still active 80% (4 of 5) · lost 20 · no decision 15");
-    expect(csv).toContain("Conversion by coach,Sam Kerr,4,converted 0% (0 of 4) · still active — · lost 4 · no decision 0");
+    // W3: lost and no decision as shares of the coach's trials, as on screen.
+    expect(csv).toContain("Conversion by coach,Marco Silva,40,converted 12.5% (5 of 40) · still active 80% (4 of 5) · lost 50% (20 of 40) · no decision 38% (15 of 40)");
+    expect(csv).toContain("Conversion by coach,Sam Kerr,4,converted 0% (0 of 4) · still active — · lost 100% (4 of 4) · no decision 0% (0 of 4)");
     expect(csv).toContain("Conversion by coach,Priya Nair,2,converted N/A · too few (1 of 2) · still active N/A · too few (1 of 1) · lost 0 · no decision 1");
     expect(csv).not.toMatch(/\(N\/A\)|\d\.0%/);
   });
