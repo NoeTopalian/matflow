@@ -138,7 +138,8 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     await withRlsBypass(async (tx) => {
       await tx.importedMembership.deleteMany({ where: { tenantId: { in: ids } } });
       await tx.memberStatusEvent.deleteMany({ where: { tenantId: { in: ids } } });
-      await tx.member.updateMany({ where: { tenantId: { in: ids } }, data: { parentMemberId: null } });
+      // Children first: a kids row cannot lose its parent (Member_kids_must_have_parent).
+      await tx.member.deleteMany({ where: { tenantId: { in: ids }, parentMemberId: { not: null } } });
       await tx.member.deleteMany({ where: { tenantId: { in: ids } } });
       await tx.importJob.deleteMany({ where: { tenantId: { in: ids } } });
       await tx.membershipTier.deleteMany({ where: { tenantId: { in: ids } } });
