@@ -4,9 +4,9 @@
 
 ## Purpose
 
-The buy → use lifecycle for class packs. Member checks out a [ClassPack](class-packs-catalogue.md) on Stripe, the webhook materialises a `MemberClassPack` (their personal pack instance with credits), then each subsequent class check-in burns one credit until the pack is empty or refunded.
+The buy → use lifecycle for class packs. Member checks out a [ClassPack](class-packs-catalogue.md) on Stripe, the webhook materialises a `MemberClassPack` (their personal pack instance with credits + expiry), then each subsequent class check-in burns one credit until the pack is empty or expires.
 
-**G6 (owner decision, 27 Oct 2026): packs never expire.** A pack is usable until its credits are used or it is refunded. `MemberClassPack.expiresAt` and `ClassPack.validityDays` are nullable, new rows store NULL, and no code reads either to decide anything; the legacy status `expired` is usable like `active`.
+**Expiry is chosen per pack product (owner decision, 27 Oct 2026).** The club picks "Expires N days after purchase" or "Never expires" when it creates the product (`ClassPack.validityDays`, NULL = never). At sale the purchase records its own term once: `expiresAt = purchasedAt + validityDays`, or NULL. Existing purchases keep their recorded dates and credits; nothing extends them, nothing revives an expired pack, and editing a product never touches a sold pack (the edit route cannot change validity at all). Shared rules: [`lib/class-pack-terms.ts`](../lib/class-pack-terms.ts).
 
 ## Data model
 
@@ -20,9 +20,9 @@ model MemberClassPack {
   pack                  ClassPack @relation(fields: [packId], references: [id])
   creditsRemaining      Int                          // decrements on each redemption
   purchasedAt           DateTime  @default(now())
-  expiresAt             DateTime?                    // NULL since G6; never read
+  expiresAt             DateTime?                    // = purchasedAt + pack.validityDays at sale; NULL = never expires
   stripePaymentIntentId String?   @unique            // dedup key — webhook idempotency
-  status                String    @default("active") // active | refunded; legacy "expired" is usable
+  status                String    @default("active") // active | expired (legacy, never usable) | refunded
 
   redemptions ClassPackRedemption[]
 
@@ -46,8 +46,8 @@ model ClassPackRedemption {
 ## Surfaces
 
 - Member-facing buy: `/member/class-packs` listing or in-profile button → `POST /api/member/class-packs/buy` → Stripe Checkout
-- Member-facing use: silent — credit burns automatically on check-in. UI shows "N classes left" (no expiry) on the member profile (see [member-class-pack-purchase.md](member-class-pack-purchase.md))
-- Owner side: visible on member detail page → "Class Packs" section showing active packs with credits
+- Member-facing use: silent — credit burns automatically on check-in. The member profile shows "6 classes left" for a no-expiry pack and "6 classes left · expires 3 Feb 2027" for a dated one; a dated pack past its date is not listed (see [member-class-pack-purchase.md](member-class-pack-purchase.md))
+- Owner side: visible on member detail page → "Class Packs" section showing active packs with credits + expiry
 
 ## Purchase flow
 
@@ -126,6 +126,8 @@ case "checkout.session.completed": {
     });
     if (!pack) break;
 
+    const purchasedAt = new Date();
+    const expiresAt = packExpiresAt(purchasedAt, pack.validityDays); // NULL for a no-expiry product
     const stripePaymentIntentId = session.payment_intent as string;
 
     // Atomic — both rows or neither
@@ -133,7 +135,7 @@ case "checkout.session.completed": {
       prisma.memberClassPack.create({
         data: {
           tenantId: meta.tenantId, memberId: meta.memberId, packId: pack.id,
-          creditsRemaining: pack.totalCredits, expiresAt: null,
+          creditsRemaining: pack.totalCredits, purchasedAt, expiresAt,
           stripePaymentIntentId, status: "active",
         },
       }),
@@ -161,10 +163,12 @@ When a member is checked into a class (whether by themselves at the kiosk or by 
 const activePack = await prisma.memberClassPack.findFirst({
   where: {
     memberId, tenantId,
-    status: { not: "refunded" },   // legacy "expired" is usable (G6)
+    status: "active",                 // a legacy "expired" pack is never spent
     creditsRemaining: { gt: 0 },
+    OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],   // no expiry, or still in date
   },
-  orderBy: [{ purchasedAt: "asc" }, { id: "asc" }],   // oldest purchase first (G6)
+  // soonest-expiring first, no-expiry packs last, then oldest purchase
+  orderBy: [{ expiresAt: { sort: "asc", nulls: "last" } }, { purchasedAt: "asc" }, { id: "asc" }],
 });
 
 if (activePack) {
@@ -184,7 +188,7 @@ The `attendanceRecordId @unique` constraint means even a double-fire of the rede
 
 ## Expiry
 
-None since G6 (27 Oct 2026). Nothing reads `expiresAt` or writes `status = "expired"`: `lib/checkin.ts` claimPack spends any pack with credits that is not refunded, and the member pack list (`GET /api/member/class-packs`) lists active packs and legacy expired packs with credits. Dates left on older packs are history only.
+Nothing writes `status = "expired"` any more. The date is applied when reading: `lib/checkin.ts` claimPack spends only `active` packs with `expiresAt IS NULL OR expiresAt > now`, and the member pack list (`GET /api/member/class-packs`) leaves out an active pack past its date, with no write. (That list used to mark such packs `expired`; with nullable dates that write would have to be null-safe, because `null < now` is true in JavaScript, so it was removed instead. Nothing else depends on the stored status.) Rows already marked `expired` stay that way and are never spent.
 
 ## Customer race
 
@@ -204,10 +208,11 @@ Two simultaneous purchase attempts by the same member could both find `stripeCus
 
 ## Known limitations
 
-- **Stripe product descriptions** of packs created before G6 may still say "valid for N days" on Stripe Checkout; updating them is a manual Stripe step for the club.
+- **No expiry cron** — `status` field stays `active` past the date; runtime queries filter by the date instead. Reports may show "active packs" that have actually expired.
+- **No "extend pack" UI** — owner can't grant an extra week. Any adjustment to a sold pack is the separately authorised account-editing workflow, never a product edit.
 - **No refund-aware credit deduction** — if owner refunds a pack purchase via Stripe, the `MemberClassPack` row stays. `charge.refunded` webhook updates `Payment` but not `MemberClassPack.status`.
 - **No "transfer pack to family member"** — packs are tied to the buying member.
-- **Oldest purchase first** is the redemption order, but the UI doesn't surface which pack a credit came from.
+- **FIFO by expiry-date** (no-expiry packs last, then oldest purchase) is the redemption order, but UI doesn't surface "this credit is from pack X".
 - **Manual class-pack purchase (cash at desk)** isn't modelled — owner has to manually insert a `MemberClassPack` row via DB.
 
 ## Test coverage
