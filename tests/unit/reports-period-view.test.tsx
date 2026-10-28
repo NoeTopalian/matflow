@@ -155,7 +155,8 @@ describe("ReportsView with a period", () => {
     expect(csv).toContain("Health,Churn (cancellations) in the last 3 months,2,");
     expect(csv).not.toMatch(/Churn[^\n]*%/);
     // The detail has commas in it, so the cell is quoted.
-    expect(csv).toContain('Summary,New members in the last 3 months,7,"The 3 months before: 4');
+    // The change against the period before, worded by lib/report-period periodChange (W3 + #48).
+    expect(csv).toContain('Summary,New members in the last 3 months,7,"Change +75% (7 so far in the last 3 months vs 4 all the 3 months before)');
   });
 });
 

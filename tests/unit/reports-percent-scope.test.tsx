@@ -14,6 +14,7 @@
  * Every assertion below pins the exact text a person reads. The behavioural
  * ones fail on 013426f6 (draft PR #50) and pass after this change.
  */
+import { resolveReportPeriod } from "@/lib/report-period";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, within, cleanup } from "@testing-library/react";
 import React from "react";
@@ -104,6 +105,7 @@ describe("zero baseline: no percentage, '—' with the counts", () => {
         metrics={{
           totalMembers: 50, newThisMonth: 3, newLastMonth: 0, checkinsThisMonth: 50, checkinsLastMonth: 40,
           activeClasses: 4, activeMembersThisMonth: 31, monthLabel: "October 2026", gymName: "Test club",
+          range: resolveReportPeriod({}, new Date(), "Europe/London"),
           // One status: the legend reads its count, not "100% (50 of 50)".
           membersByStatus: [{ status: "active", label: "Active", count: 50 }],
         }}
@@ -147,7 +149,8 @@ describe("Reports: a count that is a share of a named population carries its per
       `Includes 0 on hold · 0 current members · ${excludes}`,
     );
     render(<ReportsView data={reports()} attribution={NO_TRIALS} primaryColor="#3b82f6" />);
-    expect(screen.getByText(`Includes 12 on hold · 9% of 130 active · 87% of 150 current members · ${excludes}`)).toBeTruthy();
+    // The tile also says it is a "Now" figure (the statistics period, #48).
+    expect(screen.getByText(`Now · Includes 12 on hold · 9% of 130 active · 87% of 150 current members · ${excludes}`)).toBeTruthy();
   });
 
   it("Member attention: the inactive count with its share of current members", () => {
@@ -173,9 +176,9 @@ describe("Reports: a count that is a share of a named population carries its per
     expect(document.body.textContent).not.toMatch(/100% \(/);
 
     const csv = reportsCsv(data, NO_TRIALS);
-    expect(csv).toMatch(/Class composition,Fundamentals,90,All check-ins across the top 1 class · Last \d+ weeks\r\n/);
+    expect(csv).toMatch(/Class composition,Fundamentals,90,All check-ins across the top 1 class · [^,\r\n]+\r\n/);
     expect(csv).toContain("Current members by status,Active,150,All current members\r\n");
-    expect(csv).toMatch(/Check-in methods,Staff check-in,40,All check-ins · Last \d+ weeks\r\n/);
+    expect(csv).toMatch(/Check-in methods,Staff check-in,40,All check-ins · [^,\r\n]+\r\n/);
     expect(csv).not.toMatch(/100% \(/);
   });
 
@@ -216,7 +219,8 @@ describe("Reports CSV matches the screen", () => {
   const csv = reportsCsv(reports(), ATTRIBUTION);
 
   it("the week and month changes, with their part periods", () => {
-    expect(csv).toContain("Summary,Attendance this week,12,Change -90% (12 so far this week vs 120 all last week)\r\n");
+    // "Now": attendance this week does not follow the statistics period (#48).
+    expect(csv).toContain("Summary,Attendance this week,12,Now · Change -90% (12 so far this week vs 120 all last week)\r\n");
     // Quoted: the scope note after it has a comma.
     expect(csv).toContain("Summary,New members this month,3,\"Change -70% (3 so far this month vs 10 all last month) · First ever start.");
   });

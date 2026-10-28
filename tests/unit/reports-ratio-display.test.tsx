@@ -245,8 +245,8 @@ describe("AnalysisView — engagement shows its counts", () => {
     expect(screen.getByText("(31 of 312) active members checked in this month")).toBeTruthy();
     // This month is the 1st to now, against the whole of last month: the
     // line under each figure says so (review finding 1, 27 Oct 2026).
-    expect(screen.getByText("7 joined so far this month · 4 in all of last month")).toBeTruthy();
-    expect(screen.getByText("so far this month · 40 in all of last month")).toBeTruthy();
+    expect(screen.getByText("7 joined so far this month · 4 in all last month")).toBeTruthy();
+    expect(screen.getByText("so far this month · 40 in all last month")).toBeTruthy();
     // Every change pill shows the two figures it compares, never a bare "+x%".
     const pillEls = screen.getAllByTestId("analysis-change-pill");
     const pills = pillEls.map((p) => p.textContent);
