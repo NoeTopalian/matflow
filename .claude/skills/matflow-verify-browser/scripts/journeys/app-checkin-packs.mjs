@@ -220,9 +220,14 @@ try {
     await owner.goto("/dashboard/settings?tab=revenue");
     const newPack = owner.getByRole("button", { name: "New pack" }).filter({ visible: true }).first();
     await newPack.waitFor({ timeout: 60000 });
-    const listText = (await owner.locator("main").innerText().catch(() => "")).replace(/\s+/g, " ");
-    L.check("owner-packs", "O1 the owner's pack list shows each product's terms: \"no expiry\" and \"valid 30 days\"",
-      listText.includes("10 classes · no expiry") && listText.includes("10 classes · valid 30 days"), (listText.match(/10 classes · [^·]{0,20}/g) ?? []).slice(0, 4));
+    // The list loads after the button renders; wait for each row's terms line (the page has more than one <main>, so
+    // read the rows themselves rather than a container's text).
+    const shows = (text) => owner.getByText(text, { exact: false }).filter({ visible: true }).first().waitFor({ timeout: 30000 }).then(() => true, () => false);
+    const openRow = await shows("10 classes · no expiry");
+    const datedRow = await shows("10 classes · valid 30 days");
+    L.check("owner-packs", "O1 the owner's pack list shows each product's terms: \"no expiry\" and \"valid 30 days\"", openRow && datedRow, { openRow, datedRow });
+    await owner.getByText("10 classes · no expiry", { exact: false }).first().scrollIntoViewIfNeeded().catch(() => {});
+    await shot(owner, "app-checkin-owner-pack-list");
     await newPack.focus();
     await owner.keyboard.press("Enter");
     const dialog = owner.getByRole("dialog").filter({ visible: true }).first();
@@ -248,10 +253,9 @@ try {
     await days.fill("45");
     answer = { status: 201, body: { id: "journey-pack", name: "Journey pack", description: null, totalCredits: 10, validityDays: 45, pricePence: 8000, currency: "GBP", isActive: true } };
     await owner.getByRole("button", { name: "Create pack" }).filter({ visible: true }).first().click();
-    await owner.getByText("10 classes · valid 45 days", { exact: false }).first().waitFor({ timeout: 15000 }).catch(() => {});
-    const listAfter = (await owner.locator("main").innerText().catch(() => "")).replace(/\s+/g, " ");
+    const newRow = await shows("10 classes · valid 45 days");
     L.check("owner-packs", "O4 retried as \"Expires after a set time\", 45: validityDays 45 is sent and the new product reads \"valid 45 days\"",
-      sent.length === 2 && sent[1].validityDays === 45 && listAfter.includes("10 classes · valid 45 days"), { sent: sent[1] ?? null });
+      sent.length === 2 && sent[1].validityDays === 45 && newRow, { sent: sent[1] ?? null, newRow });
     await shot(owner, "app-checkin-owner-packs");
   } finally {
     await owner.unroute("**/api/class-packs");
