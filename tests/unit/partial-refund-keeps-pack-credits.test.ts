@@ -294,20 +294,18 @@ describe("POST /api/payments/[id]/refund — the pack survives a partial", () =>
     expect(body.packCreditsRevoked).toBe(10);
   });
 
-  // class packs never expire (27 Oct 2026): a legacy 'expired' pack with credits is spendable, so a refund must revoke it too.
-  it("a full refund voids a legacy 'expired' pack that still has credits", async () => {
+  // Packs per product (owner decision, 27 Oct 2026): the revocation guard is
+  // status "active" only, as before. A legacy "expired" pack is not usable and
+  // is left as it is recorded.
+  it("a full refund leaves a legacy 'expired' pack as recorded (guard is active only)", async () => {
     vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({
       id: "mcp-1", memberId: "mem-1", status: "expired", creditsRemaining: 10,
       pack: { totalCredits: 10 },
     } as never);
     const res = await refund(undefined, PACK_PRICE);
     const body = await res.json();
-    const arg = vi.mocked(prisma.memberClassPack.update).mock.calls[0][0] as {
-      data: { creditsRemaining: number; status?: string };
-    };
-    expect(arg.data.creditsRemaining).toBe(0);
-    expect(arg.data.status).toBe("refunded");
-    expect(body.packVoided).toBe(true);
+    expect(vi.mocked(prisma.memberClassPack.update)).not.toHaveBeenCalled();
+    expect(body.packVoided).toBeFalsy();
   });
 
   it("reads the pack's totalCredits, so the apportionment can be evaluated", async () => {

@@ -572,8 +572,10 @@ describe("Stripe webhook: charge.refunded", () => {
     }));
   });
 
-  // class packs never expire (27 Oct 2026): a legacy 'expired' pack with credits is spendable, so a refund must revoke it too.
-  it("charge.refunded voids a legacy 'expired' pack that still has credits", async () => {
+  // Packs per product (owner decision, 27 Oct 2026): the revocation guard is
+  // status "active" only, as before. A legacy "expired" pack is not usable and
+  // is left as it is recorded.
+  it("charge.refunded leaves a legacy 'expired' pack as recorded (guard is active only)", async () => {
     constructEventMock.mockReturnValue({
       id: "evt-refund-pack-exp",
       type: "charge.refunded",
@@ -587,10 +589,7 @@ describe("Stripe webhook: charge.refunded", () => {
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(200);
-    expect(vi.mocked(prisma.memberClassPack.update)).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "pack-e" },
-      data: expect.objectContaining({ status: "refunded", creditsRemaining: 0 }),
-    }));
+    expect(vi.mocked(prisma.memberClassPack.update)).not.toHaveBeenCalled();
   });
 
   // A partial refund must NOT wipe the pack. Before the apportionment, a £5
@@ -955,8 +954,8 @@ describe("Stripe webhook: charge.dispute.* sync", () => {
     expect(memberAt).toBeLessThan(packAt);
   });
 
-  // class packs never expire (27 Oct 2026): a legacy 'expired' pack with credits is spendable, so a refund must revoke it too.
-  it("a lost dispute voids a legacy 'expired' pack that still has credits", async () => {
+  // Packs per product (owner decision, 27 Oct 2026): the guard is status "active" only, as before.
+  it("a lost dispute leaves a legacy 'expired' pack as recorded (guard is active only)", async () => {
     constructEventMock.mockReturnValue(
       disputeEvent({ charge: "ch_xe", customer: "cus_x", status: "lost", payment_intent: "pi_xe" }),
     );
@@ -967,7 +966,7 @@ describe("Stripe webhook: charge.dispute.* sync", () => {
     } as never);
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
-    expect(vi.mocked(prisma.memberClassPack.update)).toHaveBeenCalledWith({ where: { id: "pack-de" }, data: { status: "refunded", creditsRemaining: 0 } });
+    expect(vi.mocked(prisma.memberClassPack.update)).not.toHaveBeenCalledWith(expect.objectContaining({ where: { id: "pack-de" } }));
   });
 });
 
@@ -1123,8 +1122,8 @@ describe("Stripe webhook: out-of-order + void contingencies", () => {
     }));
   });
 
-  // class packs never expire (27 Oct 2026): a legacy 'expired' pack with credits is spendable, so a refund must revoke it too.
-  it("invoice.voided voids a legacy 'expired' pack that still has credits", async () => {
+  // Packs per product (owner decision, 27 Oct 2026): the guard is status "active" only, as before.
+  it("invoice.voided leaves a legacy 'expired' pack as recorded (guard is active only)", async () => {
     constructEventMock.mockReturnValue({
       id: "evt-void-e", type: "invoice.voided", account: "acct_test",
       data: { object: { id: "in_void_e" } },
@@ -1133,9 +1132,7 @@ describe("Stripe webhook: out-of-order + void contingencies", () => {
     vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({ id: "pack-ve", tenantId: "tenant-A", status: "expired", creditsRemaining: 5, pack: { totalCredits: 5 } } as never);
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
-    expect(vi.mocked(prisma.memberClassPack.update)).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "pack-ve" }, data: expect.objectContaining({ status: "refunded", creditsRemaining: 0 }),
-    }));
+    expect(vi.mocked(prisma.memberClassPack.update)).not.toHaveBeenCalledWith(expect.objectContaining({ where: { id: "pack-ve" } }));
   });
 
   it("2.6: payment_intent.succeeded does NOT mirror a Payment for an invoice-backed PI", async () => {
