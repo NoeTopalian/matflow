@@ -102,6 +102,10 @@ export const STEP_UP_ACTIONS = [
   // for the owner (admin hub lane F, 9 Oct 2026). Target =
   // stepUpTarget(tenantId, memberId, "change"); change = { newEmail }.
   "member.contact_email",
+  // A NON-OWNER staff account's login address, moved by the operator to free
+  // an address for the owner (hub conflicts, 12 Oct 2026). Target =
+  // stepUpTarget(tenantId, userId, "change"); change = { newEmail }.
+  "staff.login_email",
   // Incident revoke-all (security campaign lane A, 9 Oct 2026, AH-R7 /
   // SEC-013): end every session and retire every sign-in token of one staff
   // user, one member, or a whole club. Target = stepUpTarget(tenantId,
@@ -152,6 +156,7 @@ const CHANGE_SCHEMAS: Record<StepUpAction, z.ZodType<StepUpChange>> = {
   "owner.login_email": z.union([z.object({ newEmail: emailField(120) }).strict(), EMPTY_CHANGE]),
   "owner.profile": z.object({ name: displayNameSchema }).strict(),
   "member.contact_email": z.object({ newEmail: emailField(120) }).strict(),
+  "staff.login_email": z.object({ newEmail: emailField(120) }).strict(),
   "access.revoke_all": EMPTY_CHANGE,
 };
 
@@ -242,6 +247,15 @@ export async function stepUpVersion(
       });
       if (!m) return null;
       return `member:${m.id}:sv${m.sessionVersion}:email=${m.email.trim().toLowerCase()}:ext=${m.externalRef ?? "-"}:pw=${m.passwordHash != null}`;
+    }
+    case "staff.login_email": {
+      if (!subjectId) return null;
+      const u = await tx.user.findFirst({
+        where: { id: subjectId, tenantId },
+        select: { id: true, role: true, sessionVersion: true, email: true, passwordHash: true },
+      });
+      if (!u || u.role === "owner") return null;
+      return `user:${u.id}:role=${u.role}:sv${u.sessionVersion}:email=${u.email.trim().toLowerCase()}:pw=${u.passwordHash != null}`;
     }
     case "tenant.transfer_ownership": {
       if (!subjectId) return null;
@@ -564,6 +578,20 @@ export async function requireStepUp(
     versionDigest: payload.ver,
     requestId: sha256Hex(payload.n),
   };
+}
+
+/**
+ * Whether a grant (signature already verified) was issued for exactly this
+ * change: the keyed change digest, compared in constant time. A route's
+ * "already applied" answer uses it so a consumed grant re-sent with a
+ * DIFFERENT change is refused rather than reported as applied.
+ */
+export function grantCoversChange(payload: { chg: string }, action: StepUpAction, raw: unknown): boolean {
+  const change = canonicalStepUpChange(action, raw);
+  if (!change) return false;
+  const expected = Buffer.from(stepUpChangeDigest(action, change), "hex");
+  const actual = Buffer.from(/^[a-f0-9]{64}$/.test(payload.chg) ? payload.chg : "", "hex");
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
 /**
