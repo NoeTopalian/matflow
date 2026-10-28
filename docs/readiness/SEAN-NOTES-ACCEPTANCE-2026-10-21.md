@@ -37,6 +37,44 @@ Pushed is not deployed. Deployed is not "checked by Sean".
 | — | "Edit the taggings" | — | — | — | **deferred (Noe)**, meaning unknown |
 | — | Historical payments | — | — | — | **pending**: a TeamUp transactions export is needed |
 
+### Verification of the combined candidate (`candidate/pre-resend-2026-10-28`)
+
+**On `77438237`**, the candidate before the final review fixes and this document:
+
+- **Static checks and build:** tsc and lint clean (0 errors). Unit suite 590 files, 8,290 passed. Production build clean.
+- **Database suites, run as owner and as the restricted `matflow_app` role with RLS enforced:** 18 of 19 changed or affected files passed both roles.
+- **`import-conflicts-db`:** 16 of 17 passed both roles. One test ("a member deleted since the import…") hit its own 90 s limit after three imports over a slow link. The same test passed on the import branch, and nothing on its path changed. It was re-run on the final head (see below).
+- **Browser journeys (12):** all passed. smoke 9/0, import-review 14/0, allowance-eligibility 26/0, member-booking-notice 8/0, scanner-override 8/0, reporting-truth 86/0, headcount-movement 38/0, permissions-matrix 166/0, accounts-and-members 54/0, allowances-periods 56/0, app-checkin-packs 26/0, percent-teamup 16/0. Every fixture was torn down to 0 rows.
+- **Security:** adversarial testing made 48 attempts. 42 were refused; 6 vulnerabilities were confirmed and fixed, each with a test that was red before the fix and green after. They are:
+  - a foreign member pre-read in the check-in engine;
+  - unattributed staff marks;
+  - coach ticks into cancelled sessions;
+  - pack credits minted for unpaid or delayed payments (now minted on payment, keeping the club's payment methods);
+  - a refund racing a check-in;
+  - a hostile period link.
+- **Independent review** (one reviewer, all changes since the earlier reviews): CHANGES REQUIRED, with two medium findings, both fixed on the final head:
+  - the import's access-consequence sentence;
+  - the Stripe webhook event list.
+
+  Four low findings were also fixed: the coach-tick tenant filter, exact test assertions, a migration comment, and the event-list test.
+
+**Import access consequence, as stated to the owner:** a person imported without a plan cannot check themselves in from the member app until staff assign one. The desk and kiosk can still check them into classes open to everyone. Classes limited to certain plans refuse them.
+
+**Open owner questions** (no code change made; each needs Noe):
+
+1. **Churn percentage denominator.**
+   - Option A: cancellations ÷ members active at the start of the period.
+   - Option B: cancellations ÷ everyone who was a member at any point in the period.
+   - Synthetic example: 40 active on 1 Aug, 10 join, 6 cancel (4 of the 40 and 2 of the joiners). A = 15%, B = 12%.
+   - Agent recommendation: B, because the count includes joiners.
+2. **Automatic pack spending at staff doors** once the allowance is used up. This is deployed behaviour (PK1) that the owner never explicitly approved.
+3. **Churn and filters.** Churn stays club-wide. Should the age-group filter narrow it?
+4. **CSV import with a blank or unrecognised payment status.** These are recorded as "paid" (pre-existing). Recording "no evidence" would need a new status value.
+5. **Erasure.** After a member is erased, their name and email still sit in some stored import lists that carry no member id: the exceptions CSV, the "not in MatFlow" list, the preview rows and the row errors.
+6. **The "estimated next charge" note** guessed from a plan name: keep it or stop it?
+7. **Which plans a junior may be put on automatically** (kids or adult).
+8. **A £0 pack** never gets credits now; Stripe's handling of a £0 checkout is unconfirmed.
+
 ### Decisions in force: owner's words vs agent proposals
 
 **Noe decided (27–28 Oct):**
@@ -70,7 +108,7 @@ Pushed is not deployed. Deployed is not "checked by Sean".
 - [ ] Owner approval to merge the release PR at an exact SHA. Merging deploys and migrates production; there is no rollback, only fix forward.
 - [ ] Post-deploy: health check, then the owner checks Sean's screens in production.
 - [ ] Owner confirms the production Node runtime is 24.22.1 or later (it bundles undici 7.30.1; GHSA-xjj6-f33q-929c).
-- [ ] Owner subscribes the Stripe webhook to `checkout.session.async_payment_succeeded` and `…_failed` before any club takes delayed-method pack payments.
+- [ ] **Before merge:** owner subscribes the live Stripe webhook endpoint to every event in `scripts/setup-stripe-webhook.mjs` `DESIRED_EVENTS`, including `checkout.session.async_payment_succeeded` and `…_failed`. Without them, a delayed-method pack payment settles but credits no classes, which would be a regression from today.
 
 **Migrations in this release** (all additive):
 - `20261027120000_tenant_member_app_checkin`: column, default true.
