@@ -46,7 +46,14 @@ export function fileRepeats(drafts: readonly MemberDraft[]): Map<MemberDraft, Cl
     const k = normaliseEmail(d.email);
     groups.set(k, [...(groups.get(k) ?? []), d]);
   }
-  const stated = (d: MemberDraft) => JSON.stringify([uploadValues(d, { tierId: null, label: d.membershipType ?? null }), d.planFacts ?? null, d.parentEmail ?? null]);
+  // The payment status each row would store, stated or not: a blank cell and an
+  // explicit "pending" store the same thing (a repeat); "paid" beside a blank
+  // disagree about payment, so the group stays ambiguous (28 Oct 2026).
+  const stated = (d: MemberDraft) => {
+    const { paymentStatus: _stated, ...values } = uploadValues(d, { tierId: null, label: d.membershipType ?? null });
+    void _stated;
+    return JSON.stringify([values, d.paymentStatus ?? null, d.planFacts ?? null, d.parentEmail ?? null]);
+  };
   const out = new Map<MemberDraft, Classification>();
   for (const group of groups.values()) {
     if (group.length < 2) continue;

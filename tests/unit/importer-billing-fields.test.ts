@@ -109,6 +109,7 @@ describe("importer billing fields — payment status normalisation", () => {
     expect(errors).toEqual([]); // non-fatal — the row is not dropped
     expect(drafts).toHaveLength(1);
     expect(drafts[0].paymentStatus).toBe("pending");
+    expect(drafts[0].paymentStatusUnstated).toBe(true);
     expect(drafts[0].notes).toMatch(/unrecognised payment status/i);
   });
 
@@ -119,6 +120,7 @@ describe("importer billing fields — payment status normalisation", () => {
     ]);
     const { drafts } = parseImport("generic", text);
     expect(drafts[0].paymentStatus).toBe("pending");
+    expect(drafts[0].paymentStatusUnstated).toBe(true);
     expect(drafts[0].notes).toBeUndefined();
   });
 

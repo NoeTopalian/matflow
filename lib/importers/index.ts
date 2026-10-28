@@ -339,9 +339,11 @@ function parseDueDate(s: string | undefined): { value?: string; note?: string } 
  * Always resolves to a value. Missing payment evidence is never read as paid
  * (owner decision, 28 Oct 2026): a blank cell, a file with no payment column
  * and an unrecognised word all become "pending" — "No payment yet" — so the
- * member still imports and can still check in, and the owner sees them on
- * Outstanding until a payment is recorded. An unrecognised word also gets a
- * note so the owner can spot and correct it after import.
+ * member still imports and can still check in. Outstanding lists "No payment
+ * yet" only for members on a plan, so a person imported without a plan shows
+ * the label on Members but reaches Outstanding only once staff assign one. An
+ * unrecognised word also gets a note on a new person; for someone already in
+ * MatFlow it is no information and is not listed.
  */
 function normalisePaymentStatus(s: string | undefined): { value: string; note?: string; unstated?: true } {
   const t = trimOrUndef(s)?.toLowerCase();

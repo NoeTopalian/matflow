@@ -52,6 +52,22 @@ describe("rows of one file sharing an email", () => {
     expect(second.get(b)).toMatchObject({ kind: "ambiguous", memberIds: [] });
   });
 
+  // 28 Oct 2026: a blank payment cell stores "pending", the same as an explicit
+  // "pending", so those rows are a repeat; "paid" beside a blank disagree.
+  it("a blank payment status and an explicit pending store the same thing: a repeat", () => {
+    const a = adult("Ann Lee", "ann@example.test", { paymentStatus: "pending" });
+    const b = adult("Ann Lee", "ann@example.test", { paymentStatus: "pending", paymentStatusUnstated: true });
+    expect(fileRepeats([a, b]).get(b)).toEqual({ kind: "repeat" });
+  });
+
+  it("paid beside a blank payment status disagree: both rows uncertain, nobody created", () => {
+    const a = adult("Ann Lee", "ann@example.test", { paymentStatus: "paid" });
+    const b = adult("Ann Lee", "ann@example.test", { paymentStatus: "pending", paymentStatusUnstated: true });
+    const repeats = fileRepeats([a, b]);
+    expect(repeats.get(a)).toMatchObject({ kind: "ambiguous" });
+    expect(repeats.get(b)).toMatchObject({ kind: "ambiguous" });
+  });
+
   it("no-email people (synthesised logins) are never grouped", () => {
     const a = adult("Ann Lee", "x1@no-login.matflow.local", { nonContactable: true });
     const b = adult("Bob Lee", "x1@no-login.matflow.local", { nonContactable: true });
