@@ -82,6 +82,16 @@ describe("classify", () => {
     expect(c.kind === "conflict" && c.fields).toEqual([{ field: "paymentStatus", upload: "paid", matflow: "overdue" }]);
   });
 
+  // Owner decision, 28 Oct 2026: missing payment evidence is never read as
+  // paid. The parser records it as "No payment yet" for a new person, but for
+  // someone already in MatFlow it is no information, so it is never listed.
+  it("a payment status the file did not state is no information, never a difference", () => {
+    const m = member({ paymentStatus: "paid" });
+    const d = draft({ paymentStatus: "pending", paymentStatusUnstated: true });
+    expect(uploadValues(d, plan).paymentStatus).toBeUndefined();
+    expect(classify({ draft: d, plan, byIdentity: [m], byKey: m, jobId: JOB }).kind).toBe("duplicate");
+  });
+
   it("a value the file does not state is no information, never a difference", () => {
     const m = member({ phone: "07700 900123", dateOfBirth: new Date("1990-01-01T00:00:00Z") });
     expect(classify({ draft: draft({ phone: undefined, dateOfBirth: undefined }), plan, byIdentity: [m], byKey: m, jobId: JOB }).kind).toBe("duplicate");

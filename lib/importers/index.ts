@@ -163,6 +163,8 @@ export type MemberDraft = {
   joinedAt?: string;           // ISO datetime
   nextDueAt?: string;          // ISO date — when this member's membership is next due
   paymentStatus?: string;      // paid | overdue | paused | free | pending | cancelled
+  /** The file gave no usable payment status (blank, no column, unrecognised): paymentStatus is "pending" for a new person, and no difference for an existing one. */
+  paymentStatusUnstated?: true;
   cancelledAt?: string;        // ISO date — when a cancelled member left
   emergencyContactName?: string;
   emergencyContactPhone?: string;
@@ -334,22 +336,23 @@ function parseDueDate(s: string | undefined): { value?: string; note?: string } 
  * `Member.paymentStatus` CHECK vocabulary (migration 20260430000001): paid |
  * overdue | paused | free | pending | cancelled.
  *
- * Always resolves to a value — an unrecognised word defaults to "paid"
- * (the column's own DB default) rather than blocking the row, with a note so
- * the owner can spot and correct it after import. A blank cell defaults
- * silently, same tolerance as a blank status/account-type cell elsewhere in
- * this file.
+ * Always resolves to a value. Missing payment evidence is never read as paid
+ * (owner decision, 28 Oct 2026): a blank cell, a file with no payment column
+ * and an unrecognised word all become "pending" — "No payment yet" — so the
+ * member still imports and can still check in, and the owner sees them on
+ * Outstanding until a payment is recorded. An unrecognised word also gets a
+ * note so the owner can spot and correct it after import.
  */
-function normalisePaymentStatus(s: string | undefined): { value: string; note?: string } {
+function normalisePaymentStatus(s: string | undefined): { value: string; note?: string; unstated?: true } {
   const t = trimOrUndef(s)?.toLowerCase();
-  if (!t) return { value: "paid" };
+  if (!t) return { value: "pending", unstated: true };
   if (["paid", "active", "current"].includes(t)) return { value: "paid" };
   if (["overdue", "past due", "late"].includes(t)) return { value: "overdue" };
   if (["paused", "hold", "frozen"].includes(t)) return { value: "paused" };
   if (["free", "comp", "complimentary"].includes(t)) return { value: "free" };
   if (["pending"].includes(t)) return { value: "pending" };
   if (["cancelled", "canceled", "inactive"].includes(t)) return { value: "cancelled" };
-  return { value: "paid", note: `Import: unrecognised payment status "${t}" — defaulted to paid, check manually.` };
+  return { value: "pending", unstated: true, note: `Import: unrecognised payment status "${t}" — recorded as No payment yet, check manually.` };
 }
 
 function parseRowsWithMap(rows: string[][], headerMap: Record<MappedField, string[]>): ParseResult {
@@ -407,6 +410,7 @@ function parseRowsWithMap(rows: string[][], headerMap: Record<MappedField, strin
       joinedAt: parseISODate(row[idx.joinedAt]),
       nextDueAt: dueDate.value,
       paymentStatus: paymentStatus.value,
+      ...(paymentStatus.unstated ? { paymentStatusUnstated: true as const } : {}),
       ...(planFacts.price || planFacts.period || planFacts.currency ? { planFacts } : {}),
     });
   }

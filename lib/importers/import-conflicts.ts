@@ -139,7 +139,7 @@ export function uploadValues(d: MemberDraft, plan: Plan): Partial<Record<Compare
   if (d.accountType) out.accountType = d.accountType;
   if (plan.tierId || plan.label) { out.plan = plan.label ?? null; out._plan = plan; }
   if (d.status) out.status = d.status;
-  if (d.paymentStatus) out.paymentStatus = d.paymentStatus;
+  if (d.paymentStatus && !d.paymentStatusUnstated) out.paymentStatus = d.paymentStatus;
   if (d.cancelledAt) out.cancelledAt = day(d.cancelledAt);
   if (d.joinedAt) out.joinedAt = day(d.joinedAt);
   if (d.emergencyContactName?.trim()) out.emergencyContactName = d.emergencyContactName.trim();

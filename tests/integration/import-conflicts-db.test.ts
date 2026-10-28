@@ -389,6 +389,35 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     expect(await withRlsBypass((tx) => tx.member.count({ where: { tenantId: A.tenantId, email: { in: [E("nia"), E("oli"), E("pam"), E("quin")] } } }))).toBe(4);
   }, 120_000);
 
+  // Owner decision, 28 Oct 2026: never infer "paid" from missing imported
+  // payment evidence. New people with a blank or unrecognised status arrive as
+  // "No payment yet"; a later file with a blank status lists nobody, because
+  // no information is never a difference.
+  it("generic CSV: a blank or unrecognised payment status is stored as No payment yet, never paid; a later blank status lists nobody", async () => {
+    const csv = [
+      "name,email,payment status",
+      `Rae Paid,${E("rae")},paid`,
+      `Sol Blank,${E("sol")},`,
+      `Tam Odd,${E("tam")},who-knows`,
+    ].join("\n");
+    const { preview, committed } = await previewThenCommit(A, csv, "generic");
+    expect(preview.willImport).toBe(3);
+    expect(committed.imported).toBe(3);
+    expect((await memberBy(A.tenantId, E("rae"))).paymentStatus).toBe("paid");
+    expect((await memberBy(A.tenantId, E("sol"))).paymentStatus).toBe("pending");
+    const tam = await memberBy(A.tenantId, E("tam"));
+    expect(tam.paymentStatus).toBe("pending");
+    expect(tam.notes).toMatch(/recorded as No payment yet/);
+    const blankAgain = [
+      "name,email,payment status",
+      `Rae Paid,${E("rae")},`,
+    ].join("\n");
+    const again = await previewThenCommit(A, blankAgain, "generic");
+    expect(again.committed.imported).toBe(0);
+    expect(again.committed.toReview ?? 0).toBe(0);
+    expect((await memberBy(A.tenantId, E("rae"))).paymentStatus).toBe("paid");
+  }, 120_000);
+
   it("rows of one file sharing an email: an exact repeat is skipped, different people are both listed and nobody is created; the preview says so", async () => {
     const csv = [
       "name,email",

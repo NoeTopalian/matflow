@@ -100,7 +100,7 @@ describe("importer billing fields — payment status normalisation", () => {
     expect(drafts[0].paymentStatus).toBe(expected);
   });
 
-  it("unknown payment status defaults to paid, with a note, and still imports the row", () => {
+  it("unknown payment status is not read as paid: No payment yet, with a note, and the row still imports", () => {
     const text = csv([
       ["name", "email", "payment status"],
       ["Member Two", "member2@example.com", "gibberish-status"],
@@ -108,18 +108,50 @@ describe("importer billing fields — payment status normalisation", () => {
     const { drafts, errors } = parseImport("generic", text);
     expect(errors).toEqual([]); // non-fatal — the row is not dropped
     expect(drafts).toHaveLength(1);
-    expect(drafts[0].paymentStatus).toBe("paid");
+    expect(drafts[0].paymentStatus).toBe("pending");
     expect(drafts[0].notes).toMatch(/unrecognised payment status/i);
   });
 
-  it("blank payment status defaults to paid silently (no note)", () => {
+  it("blank payment status is not read as paid: No payment yet, silently (no note)", () => {
     const text = csv([
       ["name", "email", "payment status"],
       ["Member Three", "member3@example.com", ""],
     ]);
     const { drafts } = parseImport("generic", text);
-    expect(drafts[0].paymentStatus).toBe("paid");
+    expect(drafts[0].paymentStatus).toBe("pending");
     expect(drafts[0].notes).toBeUndefined();
+  });
+
+  // Owner decision, 28 Oct 2026: never infer "paid" from missing imported
+  // payment evidence. A file with no payment column says nothing about payment.
+  it("a file with no payment column is not read as paid", () => {
+    const text = csv([
+      ["name", "email", "membership"],
+      ["Member Ten", "member10@example.com", "BJJ Unlimited"],
+    ]);
+    const { drafts } = parseImport("generic", text);
+    expect(drafts[0].paymentStatus).toBe("pending");
+    expect(drafts[0].paymentStatusUnstated).toBe(true);
+  });
+
+  it("a stated status is marked stated", () => {
+    const text = csv([
+      ["name", "email", "payment status"],
+      ["Member Twelve", "member12@example.com", "pending"],
+    ]);
+    const { drafts } = parseImport("generic", text);
+    expect(drafts[0].paymentStatus).toBe("pending");
+    expect(drafts[0].paymentStatusUnstated).toBeUndefined();
+  });
+
+  it("the unrecognised-status note no longer says it defaulted to paid", () => {
+    const text = csv([
+      ["name", "email", "payment status"],
+      ["Member Eleven", "member11@example.com", "who-knows"],
+    ]);
+    const { drafts } = parseImport("generic", text);
+    expect(drafts[0].notes).toMatch(/recorded as No payment yet/);
+    expect(drafts[0].notes).not.toMatch(/defaulted to paid/);
   });
 });
 
@@ -173,7 +205,7 @@ describe("importer billing fields — next due date parsing", () => {
     expect(errors).toEqual([]);
     expect(drafts).toHaveLength(1);
     expect(drafts[0].nextDueAt).toBeUndefined();
-    expect(drafts[0].paymentStatus).toBe("paid");
+    expect(drafts[0].paymentStatus).toBe("pending");
     expect(drafts[0].notes).toMatch(/unrecognised next-due date/i);
     expect(drafts[0].notes).toMatch(/unrecognised payment status/i);
   });

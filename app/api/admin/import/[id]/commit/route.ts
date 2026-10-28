@@ -274,7 +274,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         status: d.status ?? "active",
         accountType: d.accountType ?? "adult",
         notes: d.notes ?? null,
-        paymentStatus: d.paymentStatus ?? "paid",
+        paymentStatus: d.paymentStatus ?? "pending",
         ...(tierCols.nextDueAt
           ? { nextDueAt: tierCols.nextDueAt }
           : d.nextDueAt
