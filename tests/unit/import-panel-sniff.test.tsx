@@ -156,7 +156,7 @@ describe("ImportPanel — people imported without a plan are a warning before co
       expect(box.textContent).toMatch(/File says Beginner Course \(2 people\): the TeamUp export has no price, billing period or currency/);
       expect(box.textContent).toMatch(/Kids Unlimited 2026/);
       expect(box.textContent).not.toMatch(/Kids & Beginners Course \(OLD\)/);
-      expect(box.textContent).toMatch(/Plan-restricted classes may refuse them until staff assign a plan\./);
+      expect(box.textContent).toMatch(/Until staff assign a plan, they can't check themselves in from the member app unless they hold a class pack\. The desk and the kiosk can still check them into classes open to everyone; classes limited to certain plans refuse them at every door\./);
       expect(box.textContent).not.toMatch(/Create the missing tiers/);
       expect(screen.queryByTestId("import-missing-tiers")).toBeNull();
       expect((screen.getByRole("button", { name: /Import 3 members/ }) as HTMLButtonElement).disabled).toBe(false);

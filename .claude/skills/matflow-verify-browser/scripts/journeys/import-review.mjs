@@ -138,9 +138,9 @@ try {
   const without = page.getByTestId("import-review-without-plan").first();
   const sawWithout = await without.waitFor({ timeout: 30000 }).then(() => true, () => false);
   const withoutText = (await without.textContent().catch(() => "")) ?? "";
-  L.check("journey", "J9 the first import lists Ada, Ben and Cy as imported without a plan, with the file's label, the reason and the plan-restricted sentence",
+  L.check("journey", "J9 the first import lists Ada, Ben and Cy as imported without a plan, with the file's label, the reason and the access-consequence sentence",
     sawWithout && /Ada Field/.test(withoutText) && /Ben Gale/.test(withoutText) && /Cy Holt/.test(withoutText) && /file says Mfv Open Mat/.test(withoutText)
-      && /no price, billing period or currency/.test(withoutText) && /Plan-restricted classes may refuse them until staff assign a plan\./.test(withoutText),
+      && /no price, billing period or currency/.test(withoutText) && /Until staff assign a plan, they can't check themselves in from the member app unless they hold a class pack\. The desk and the kiosk can still check them into classes open to everyone; classes limited to certain plans refuse them at every door\./.test(withoutText),
     { buttons: n, text: withoutText.slice(0, 300) });
 
   // 7. Ada is deleted: the refresh's review list shows no name or values for her.

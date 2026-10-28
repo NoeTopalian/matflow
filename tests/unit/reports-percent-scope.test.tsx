@@ -14,7 +14,7 @@
  * Every assertion below pins the exact text a person reads. The behavioural
  * ones fail on 013426f6 (draft PR #50) and pass after this change.
  */
-import { resolveReportPeriod } from "@/lib/report-period";
+import { resolveReportPeriod, windowLabelOf } from "@/lib/report-period";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, within, cleanup } from "@testing-library/react";
 import React from "react";
@@ -176,9 +176,14 @@ describe("Reports: a count that is a share of a named population carries its per
     expect(document.body.textContent).not.toMatch(/100% \(/);
 
     const csv = reportsCsv(data, NO_TRIALS);
-    expect(csv).toMatch(/Class composition,Fundamentals,90,All check-ins across the top 1 class · [^,\r\n]+\r\n/);
+    // The default period with no filters: the detail ends with the window label
+    // alone (scopedWindowLabel), computed as the component does, so it stays
+    // exact on any date.
+    const windowLabel = windowLabelOf(resolveReportPeriod({}, new Date(), undefined));
+    expect(windowLabel).not.toBe("");
+    expect(csv).toContain(`Class composition,Fundamentals,90,All check-ins across the top 1 class · ${windowLabel}\r\n`);
     expect(csv).toContain("Current members by status,Active,150,All current members\r\n");
-    expect(csv).toMatch(/Check-in methods,Staff check-in,40,All check-ins · [^,\r\n]+\r\n/);
+    expect(csv).toContain(`Check-in methods,Staff check-in,40,All check-ins · ${windowLabel}\r\n`);
     expect(csv).not.toMatch(/100% \(/);
   });
 

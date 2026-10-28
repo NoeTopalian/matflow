@@ -2,7 +2,7 @@
 // assigned only when name, billing period, price and currency agree with one
 // active, eligible plan; anything else is imported without a plan and listed.
 import { describe, it, expect } from "vitest";
-import { normaliseCurrency, normalisePeriod, parsePrice, planForNewMember, tallyPlanReview, type PlanTier } from "@/lib/importers/plan-match";
+import { PLAN_RESTRICTED_SENTENCE, normaliseCurrency, normalisePeriod, parsePrice, planForNewMember, tallyPlanReview, type PlanTier } from "@/lib/importers/plan-match";
 import { parseImport, type MemberDraft } from "@/lib/importers";
 
 const tier = (over: Partial<PlanTier> = {}): PlanTier => ({
@@ -120,5 +120,16 @@ describe("tallyPlanReview", () => {
       { kind: "none" },
     ]);
     expect(t).toEqual([{ label: "Open Mat", reason: "no_plan_with_name", why: "no MatFlow plan has this name", people: 2 }]);
+  });
+});
+
+describe("PLAN_RESTRICTED_SENTENCE", () => {
+  it("states the access consequence lib/checkin.ts applies to a member with no plan", () => {
+    // Member app: requireCoverage, and a member with no plan is covered only by a class pack.
+    expect(PLAN_RESTRICTED_SENTENCE).toMatch(/can't check themselves in from the member app unless they hold a class pack/);
+    // Desk and kiosk: requireCoverage false, so classes no plan list limits still admit them.
+    expect(PLAN_RESTRICTED_SENTENCE).toMatch(/desk and the kiosk can still check them into classes open to everyone/);
+    // classEligibility refuses a member with no plan at every door.
+    expect(PLAN_RESTRICTED_SENTENCE).toMatch(/classes limited to certain plans refuse them at every door/);
   });
 });
