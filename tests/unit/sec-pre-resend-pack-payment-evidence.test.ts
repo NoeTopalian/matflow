@@ -119,6 +119,7 @@ beforeEach(() => {
   // A stateful pack table keyed on the @unique payment intent, so a second
   // mint for the same payment is visible (and a duplicate insert is a P2002).
   minted.clear();
+  db.payment.findFirst.mockResolvedValue(null);
   db.memberClassPack.findUnique.mockImplementation(async ({ where }: { where: { stripePaymentIntentId?: string } }) =>
     where.stripePaymentIntentId && minted.has(where.stripePaymentIntentId) ? { id: `mcp-${where.stripePaymentIntentId}` } : null,
   );
@@ -189,6 +190,22 @@ describe("W6 webhook: forged or unconfirmed class-pack payment evidence", () => 
     await deliver(packSession({ payment_status: "unpaid" }, { tenantId: "tenant-B" }, "checkout.session.async_payment_failed"));
     expect(db.memberClassPack.create).not.toHaveBeenCalled();
     expect(auditLog).not.toHaveBeenCalledWith(expect.objectContaining({ action: "stripe.checkout.class_pack_payment_failed" }));
+  });
+
+  it("a delayed payment fully refunded before its async success mints nothing and stays refunded", async () => {
+    db.payment.findFirst.mockResolvedValue({ status: "refunded", amountPence: 5000, refundedAmountPence: 5000 });
+    await deliver(packSession({ payment_status: "paid" }, {}, "checkout.session.async_payment_succeeded"));
+    expect(db.memberClassPack.create).not.toHaveBeenCalled();
+    expect(db.payment.upsert).not.toHaveBeenCalled();
+  });
+
+  it("a delayed payment partly refunded before its async success mints the pack net of the refund, and the Payment is not re-marked", async () => {
+    // £25 back of £50 on a five-class pack: two whole classes (lib/pack-refund.ts).
+    db.payment.findFirst.mockResolvedValue({ status: "succeeded", amountPence: 5000, refundedAmountPence: 2500 });
+    await deliver(packSession({ payment_status: "paid" }, {}, "checkout.session.async_payment_succeeded"));
+    expect(db.memberClassPack.create).toHaveBeenCalledTimes(1);
+    expect(db.memberClassPack.create.mock.calls[0][0].data.creditsRemaining).toBe(3);
+    expect(db.payment.upsert.mock.calls[0][0].update).not.toHaveProperty("status");
   });
 
   it("a completed checkout with no payment_status at all mints nothing", async () => {

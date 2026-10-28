@@ -536,10 +536,35 @@ export async function POST(req: NextRequest) {
           const alreadyMinted = paymentIntentId
             ? await tx.memberClassPack.findUnique({ where: { stripePaymentIntentId: paymentIntentId }, select: { id: true } })
             : null;
+          // A delayed payment can be refunded before its async success is
+          // delivered (payment_intent.succeeded records the Payment first, the
+          // owner refunds it, then this event arrives). The purchase is then
+          // minted net of that refund, with the same apportionment the refund
+          // legs use (lib/pack-refund.ts; nothing redeemed yet), a fully
+          // refunded payment mints nothing, and the Payment upsert below never
+          // turns a refunded row back into "succeeded" (W6 review, 28 Oct 2026).
+          const priorPayment = paymentIntentId
+            ? await tx.payment.findFirst({
+                where: { tenantId: metadata.tenantId, stripePaymentIntentId: paymentIntentId },
+                select: { status: true, amountPence: true, refundedAmountPence: true },
+              })
+            : null;
+          const refundedFirst = !!priorPayment && (priorPayment.status === "refunded" || (priorPayment.refundedAmountPence ?? 0) > 0);
+          const netOfRefund = refundedFirst
+            ? packCreditsAfterRefund({
+                totalCredits: pack.totalCredits,
+                creditsRemaining: pack.totalCredits,
+                creditsRedeemed: 0,
+                paidPence: priorPayment!.amountPence,
+                refundedPence: priorPayment!.status === "refunded" ? Math.max(priorPayment!.refundedAmountPence ?? 0, priorPayment!.amountPence) : (priorPayment!.refundedAmountPence ?? 0),
+              })
+            : null;
           if (!paymentIntentId) {
             console.warn(`[stripe-webhook] ${event.type} — paid class pack session ${String(obj.id)} has no payment_intent; no credits minted.`);
           } else if (alreadyMinted) {
             // Already minted for this payment: nothing more to do.
+          } else if (netOfRefund && (netOfRefund.status === "refunded" || netOfRefund.creditsRemaining <= 0)) {
+            console.warn(`[stripe-webhook] ${event.type} — class pack session ${String(obj.id)}: payment already fully refunded; no credits minted.`);
           } else try {
             // Already inside a transaction (withRlsBypass) — sequential awaits
             // remain atomic without a nested $transaction.
@@ -548,7 +573,7 @@ export async function POST(req: NextRequest) {
                 tenantId: metadata.tenantId,
                 memberId: metadata.memberId,
                 packId: pack.id,
-                creditsRemaining: pack.totalCredits,
+                creditsRemaining: netOfRefund ? netOfRefund.creditsRemaining : pack.totalCredits,
                 purchasedAt,
                 expiresAt,
                 stripePaymentIntentId: paymentIntentId,
@@ -569,8 +594,10 @@ export async function POST(req: NextRequest) {
                 description: `Class pack: ${pack.name}`,
                 paidAt: new Date(),
               },
+              // A partly refunded payment stays "succeeded" (refund legs);
+              // a refunded one is never set back (handled above: no mint).
               update: {
-                status: "succeeded",
+                ...(refundedFirst ? {} : { status: "succeeded" }),
                 paidAt: new Date(),
               },
             });
