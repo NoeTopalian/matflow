@@ -33,7 +33,9 @@ vi.mock("@/lib/prisma", () => ({
     // Review L4: getReportsData reads the club zone for its month windows.
     tenant: { findUnique: vi.fn(async () => ({ timezone: "Europe/London" })) },
     classInstance: { findMany: vi.fn() },
-    attendanceRecord: { findMany: vi.fn(), groupBy: vi.fn(), count: vi.fn() },
+    // The coverage start (lib/attendance-coverage, 28 Oct 2026): records since 2020, so every period here is covered
+    // and its counts read as they always did. A plain function, so a mock reset never clears it.
+    attendanceRecord: { findMany: vi.fn(), groupBy: vi.fn(), count: vi.fn(), findFirst: async () => ({ checkInTime: new Date("2020-01-01T12:00:00.000Z") }) },
     member: { groupBy: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     payment: { count: vi.fn(), findMany: vi.fn() },
     // T8c: the membership series reads (lib/membership-report.ts); it reads

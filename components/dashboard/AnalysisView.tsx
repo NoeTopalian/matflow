@@ -28,6 +28,7 @@ import { formatChange, pctChange, percent } from "@/lib/percent";
 import { clubMonthWindow } from "@/lib/club-month";
 import { periodChange, periodWords, type ReportRange } from "@/lib/report-period";
 import PeriodSelector, { periodSearchParams, type PeriodChoice } from "@/components/dashboard/PeriodSelector";
+import { comparisonGap, coverageDate, noCoverage, noRecordsNote, partialNote, NO_ATTENDANCE_YET, type AttendanceCoverage, type CoverageState } from "@/lib/attendance-coverage";
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541"];
 const STATUS_COLORS: Record<string, string> = { active: "#67BA90", taster: "#C9F990", inactive: "#EB3163", cancelled: "#8E1F57" };
@@ -53,13 +54,33 @@ interface Metrics {
   membersByStatus?: { status: string; label: string; count: number }[];
   /** Training members who have left: a count, never a share of the mix. */
   leftMembers?: number;
-  monthlyTrend?: { label: string; value: number }[];
+  /** Check-ins per chart month; `coverage` says whether the club's attendance records cover that month (28 Oct 2026). */
+  monthlyTrend?: { label: string; value: number; coverage?: CoverageState }[];
   /**
    * The page's period (Noe, 26 Oct 2026; lib/report-period). "ThisMonth"
    * figures above count it, "LastMonth" ones the equal run before it; for the
    * default period those are exactly this month and last.
    */
   range: ReportRange;
+  /**
+   * Where the club's attendance records begin, and how they cover the period
+   * and the run before it (owner rule, 28 Oct 2026; lib/attendance-coverage).
+   * Absent (an older fixture), every span reads as covered.
+   */
+  coverage?: AttendanceCoverage;
+}
+
+/**
+ * The attendance figures' coverage words (28 Oct 2026): `missing` — the
+ * period has no records, so check-ins and engagement are "—" with this note;
+ * `partial` — "Records start 3 Mar 2026"; `gap` — the period before is not
+ * (fully) covered, so no percentage change, this text instead.
+ */
+export function analysisCoverage(metrics: Pick<Metrics, "coverage">): { missing: string | null; partial: string | null; gap: string | null } {
+  const c = metrics.coverage;
+  if (!c) return { missing: null, partial: null, gap: null };
+  const missing = noCoverage(c.period) ? noRecordsNote(c, c.period) : null;
+  return { missing, partial: partialNote(c, c.period), gap: missing ? null : comparisonGap(c.previous) };
 }
 
 interface Props {
@@ -114,15 +135,27 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
   lines.push(`# ${metrics.range.months.length === 1 ? "Monthly Analysis" : "Analysis"} — ${metrics.monthLabel}`);
   lines.push(`**${metrics.gymName}**`);
   lines.push("");
+  // Attendance coverage (28 Oct 2026): with no records for the period the
+  // report says so and draws no conclusion from check-ins; it never says
+  // "you recorded 0 check-ins" for a time MatFlow has no records of.
+  const cov = analysisCoverage(metrics);
+  const checkinComparison = !cov.gap
+    ? `${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} ${w.before}`
+    : metrics.coverage?.previous === "partial"
+      ? `no comparison, as ${w.before} is only partly covered by the records`
+      : `no comparison, as there are no records for ${w.before}`;
+
   lines.push("## Overview");
   lines.push(
     // Members and classes are today's counts; check-ins are the period's (26 Oct 2026: never present a "now" figure as the period's).
     `${metrics.gymName} has ${metrics.totalMembers} active members today across ${metrics.activeClasses} classes. ` +
-    `${cap(w.during)} you recorded ${metrics.checkinsThisMonth} check-ins — ${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} ${w.before}` +
-    // An empty base has no rate: say so in words rather than printing "—".
-    (metrics.totalMembers > 0
-      ? ` — giving an engagement rate of ${engagementText} — active members who checked in at least once.`
-      : ", with no engagement rate yet (no active members).")
+    (cov.missing
+      ? `${cov.missing}, so check-ins and engagement are not reported.`
+      : `${cap(w.during)} you recorded ${metrics.checkinsThisMonth} check-ins${cov.partial ? ` (${cov.partial.charAt(0).toLowerCase()}${cov.partial.slice(1)})` : ""} — ${checkinComparison}` +
+        // An empty base has no rate: say so in words rather than printing "—".
+        (metrics.totalMembers > 0
+          ? ` — giving an engagement rate of ${engagementText} — active members who checked in at least once.`
+          : ", with no engagement rate yet (no active members)."))
   );
   lines.push("");
   lines.push("## Member Growth");
@@ -137,7 +170,7 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
   );
   lines.push("");
   lines.push("## Attendance & Engagement");
-  lines.push(
+  lines.push(cov.missing ? `Not reported for this period. ${cov.missing}.` :
     `With ${metrics.checkinsThisMonth} total check-ins and ${metrics.totalMembers} active members, ` +
     `the average member attended roughly ${metrics.totalMembers > 0 ? (metrics.checkinsThisMonth / metrics.totalMembers).toFixed(1) : "0"} classes ${w.during}. ` +
     // No active members → no rate, so no verdict on it either.
@@ -181,7 +214,7 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
   if (metrics.newThisMonth < metrics.newLastMonth) {
     lines.push(`- Run a referral incentive — existing members are your cheapest acquisition channel`);
   }
-  if (engagementRate < 50) {
+  if (!cov.missing && engagementRate < 50) {
     lines.push(`- Introduce a monthly class challenge or attendance milestone to drive consistency`);
   }
   lines.push(`- Review class schedule utilisation — are your ${metrics.activeClasses} classes at the right times?`);
@@ -290,6 +323,19 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
 
   const memberDelta = pctChange(metrics.newThisMonth, metrics.newLastMonth);
   const checkinDelta = pctChange(metrics.checkinsThisMonth, metrics.checkinsLastMonth);
+  // Attendance coverage (28 Oct 2026): "—" and why for a period with no
+  // records; "Records start <date>" for one that starts before them; no
+  // percentage change against a period without (full) records.
+  const cov = analysisCoverage(metrics);
+  const trendPoints = (metrics.monthlyTrend ?? []).filter((p) => {
+    const state = p.coverage ?? (metrics.coverage && !metrics.coverage.start ? "none" : "covered");
+    return !noCoverage(state);
+  });
+  // Under the chart: months before the records start are left out, and it says where they start.
+  const c = metrics.coverage;
+  const trendNote = !c ? null
+    : !c.start ? NO_ATTENDANCE_YET
+    : (metrics.monthlyTrend ?? []).some((p) => noCoverage(p.coverage)) ? `Records start ${coverageDate(c.start, c.timeZone)}; earlier months have no records` : null;
   // Engagement = % of members with ≥1 check-in this month (bounded 0..100).
   const engagementRate = metrics.totalMembers > 0
     ? Math.min(100, percent(metrics.activeMembersThisMonth, metrics.totalMembers))
@@ -428,12 +474,13 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               </div>
               <CalendarCheck className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
             </div>
-            {metrics.monthlyTrend && metrics.monthlyTrend.length > 0 ? (
+            {trendPoints.length > 0 ? (
               <div className="w-full">
-                <Sparkline data={metrics.monthlyTrend} width={320} height={130} />
+                <Sparkline data={trendPoints} width={320} height={130} />
+                {trendNote && <p className="mt-2 text-[11px]" style={{ color: "var(--tx-3)" }} data-testid="analysis-trend-coverage">{trendNote}</p>}
               </div>
             ) : (
-              <p className="text-sm" style={{ color: "var(--tx-3)" }}>No attendance data yet</p>
+              <p className="text-sm" style={{ color: "var(--tx-3)" }}>{trendNote ?? (cov.missing || "No attendance data yet")}</p>
             )}
           </Card>
         </div>
@@ -469,21 +516,25 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
           },
           {
             label: "Check-ins",
-            value: metrics.checkinsThisMonth,
-            sub: `${change.current} · ${metrics.checkinsLastMonth} in ${change.previous}`,
+            // No records for the period: "—" and why, no pill. Against a
+            // period without (full) records: no percentage, the gap said
+            // instead (28 Oct 2026).
+            value: cov.missing ? "—" : metrics.checkinsThisMonth,
+            sub: cov.missing ?? [change.current, cov.partial, cov.gap ?? `${metrics.checkinsLastMonth} in ${change.previous}`].filter(Boolean).join(" · "),
             icon: CalendarCheck,
             pct: checkinDelta,
-            counts: [metrics.checkinsThisMonth, metrics.checkinsLastMonth] as const,
+            counts: cov.missing || cov.gap ? null : ([metrics.checkinsThisMonth, metrics.checkinsLastMonth] as const),
             pillLabel: "check-ins",
           },
           {
             label: "Engagement",
             // T2b: the percentage with its counts; "—" when there are no
-            // active members (an undefined rate is never "0%").
-            value: formatPct(metrics.totalMembers > 0 ? engagementRate : null, metrics.totalMembers),
-            sub: metrics.totalMembers > 0
-              ? `${ratioCounts(metrics.activeMembersThisMonth, metrics.totalMembers)} active members checked in ${words.during}`
-              : "No active members yet",
+            // active members (an undefined rate is never "0%"), or no
+            // attendance records for the period (28 Oct 2026).
+            value: cov.missing ? "—" : formatPct(metrics.totalMembers > 0 ? engagementRate : null, metrics.totalMembers),
+            sub: cov.missing ?? (metrics.totalMembers > 0
+              ? [`${ratioCounts(metrics.activeMembersThisMonth, metrics.totalMembers)} active members checked in ${words.during}`, cov.partial].filter(Boolean).join(" · ")
+              : "No active members yet"),
             icon: TrendingUp,
             pct: null,
             counts: null,

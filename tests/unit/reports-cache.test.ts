@@ -70,7 +70,8 @@ describe("getReportsDataCached", () => {
     // v9 (26 Oct): the statistics period (range, attendanceBucket,
     // paymentHealth.failedInPeriod, monthlySignups[].inPeriod) and churn over it.
     // v10 (27 Oct): churn is a count of cancellations — no ratePct, no base, no churnRate.
-    expect(REPORTS_CACHE_VERSION).toBe("v10");
+    // v11 (28 Oct): attendanceCoverage and weeklyAttendance[].coverage.
+    expect(REPORTS_CACHE_VERSION).toBe("v11");
     await getReportsDataCached("tenant-A");
     expect(calls[0].key[1]).toBe(REPORTS_CACHE_VERSION);
   });

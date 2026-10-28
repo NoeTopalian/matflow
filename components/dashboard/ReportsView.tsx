@@ -58,6 +58,7 @@ import { clubMonthWindow } from "@/lib/club-month";
 import { periodChange, periodWords, windowLabelOf, type ReportRange } from "@/lib/report-period";
 import PeriodSelector, { periodSearchParams, type PeriodChoice } from "./PeriodSelector";
 import { basisNote } from "@/lib/net-new-series";
+import { bucketNote, comparisonGap, noCoverage, noRecordsNote, partialNote } from "@/lib/attendance-coverage";
 import {
   EmptyChart,
   RatioValue,
@@ -283,6 +284,48 @@ function isWholeOfCurrent(rows: ReportsData["currentMembersByStatus"], currentMe
 export function inactiveToReview(inactive: number, currentMembers: number): string {
   if (inactive <= 0) return "No inactive members";
   return [`${formatNumber(inactive)} inactive to review`, shareOf(inactive, currentMembers, "current members")].filter(Boolean).join(" · ");
+}
+
+/**
+ * How the page's attendance figures read under the club's attendance coverage
+ * (owner rule, 28 Oct 2026: missing coverage is never a claim that nobody
+ * attended; lib/attendance-coverage). The screen and the CSV both read it, so
+ * the two say the same thing. Without `attendanceCoverage` (a fixture built
+ * before it existed) every span reads as covered, as the page always did.
+ *
+ *   - `missing`: the period has no records — its figures are "—" with this note;
+ *   - `partial`: "Records start 3 Mar 2026" — the period starts before them;
+ *   - `thisWeekMissing` / `thisWeekPartial`: the same for this week (Monday to now);
+ *   - `weekGap`: this week is counted but last week is not (fully) covered —
+ *     no percentage change, this text instead.
+ */
+export function attendanceCoverageView(data: Pick<ReportsData, "attendanceCoverage">) {
+  const c = data.attendanceCoverage;
+  if (!c) return { missing: null, partial: null, thisWeekMissing: null, thisWeekPartial: null, weekGap: null };
+  const thisWeekMissing = noCoverage(c.thisWeek) ? noRecordsNote(c, c.thisWeek) : null;
+  return {
+    missing: noCoverage(c.period) ? noRecordsNote(c, c.period) : null,
+    partial: partialNote(c, c.period),
+    thisWeekMissing,
+    thisWeekPartial: partialNote(c, c.thisWeek),
+    weekGap: thisWeekMissing ? null : comparisonGap(c.lastWeek),
+  };
+}
+
+/**
+ * The attendance chart's rows (28 Oct 2026): `value` is null for a bar the
+ * club's records do not cover, so it is drawn as no data rather than a zero
+ * bar, and `note` is what the tooltip and the CSV say about an uncovered or
+ * partly covered bar ("No records (MatFlow's records start 3 Mar 2026)",
+ * "Partly covered (records start 3 Mar 2026)").
+ */
+export function attendanceChartRows(data: Pick<ReportsData, "weeklyAttendance" | "attendanceCoverage">) {
+  const c = data.attendanceCoverage;
+  return data.weeklyAttendance.map((row) => ({
+    ...row,
+    value: c && noCoverage(row.coverage) ? null : row.count,
+    note: c ? bucketNote(c, row.coverage) : null,
+  }));
 }
 
 /** The top classes the class-mix donut shares check-ins across. */
@@ -528,6 +571,12 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
   const recovery = data.paymentHealth.recovery;
   const shares = derivedShares(data);
   const thisMonthEstimate = estimateLabel(pm.basis, estimatedCaption(data.membership));
+  // Attendance coverage (28 Oct 2026), exactly as on screen: "—" and the note
+  // for a period with no records, "Records start <date>" on a partly covered one.
+  const cov = attendanceCoverageView(data);
+  const attendanceLabel = [scopedWindowLabel, cov.partial].filter(Boolean).join(" · ");
+  const missingLabel = cov.missing ? `${scopedWindowLabel} · ${cov.missing}` : null;
+  const coverageBuckets = attendanceChartRows(data);
   const rows: (string | number | null)[][] = [
     ["Section", "Metric", "Value", "Detail"],
     ["Report", "Generated at", validGeneratedAt(data.generatedAt) ? formatDateTime(data.generatedAt) : "—", "Figures cached for up to 60 seconds"],
@@ -540,12 +589,17 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // number leaving the page unlabelled (assessment lane 5).
     // The tiles' change text, part period named (owner decision, 27 Oct 2026,
     // 23:30); attendance this week is "Now", whatever the period.
-    ["Summary", "Attendance this week", data.summary.attendanceThisWeek, ["Now", changeCsvDetail(data.summary.attendanceThisWeek, data.summary.attendanceLastWeek, WEEK_SO_FAR), filterSuffix].filter(Boolean).join(" · ")],
+    ["Summary", "Attendance this week", cov.thisWeekMissing ? "—" : data.summary.attendanceThisWeek, [
+      "Now",
+      cov.thisWeekMissing ?? cov.weekGap ?? changeCsvDetail(data.summary.attendanceThisWeek, data.summary.attendanceLastWeek, WEEK_SO_FAR),
+      cov.thisWeekMissing ? null : cov.thisWeekPartial,
+      filterSuffix,
+    ].filter(Boolean).join(" · ")],
     ["Summary", `New members ${words.during}`, data.summary.newMembersThisMonth, [changeCsvDetail(data.summary.newMembersThisMonth, data.summary.newMembersLastMonth, periodChange(range)), NEW_SCOPE, periodPairEstimateNote(data)].filter(Boolean).join(" · ")],
-    ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
+    ["Summary", "Check-ins", cov.missing ? "—" : data.summary.totalCheckIns, missingLabel ?? attendanceLabel],
     // The rate definition the owner chose on screen, with its formula — the
     // headline of the filter bar, previously missing from the file.
-    ["Summary", `Attendance rate — ${data.attendanceRate.label}`, [formatAttendanceRateValue(data.attendanceRate.mode, data.attendanceRate.value), attendanceRateCounts(data.attendanceRate)].filter(Boolean).join(" "), `${data.attendanceRate.formula} · ${scopedWindowLabel}`],
+    ["Summary", `Attendance rate — ${data.attendanceRate.label}`, cov.missing ? "—" : [formatAttendanceRateValue(data.attendanceRate.mode, data.attendanceRate.value), attendanceRateCounts(data.attendanceRate)].filter(Boolean).join(" "), `${data.attendanceRate.formula} · ${missingLabel ?? attendanceLabel}`],
     ["Summary", "Active classes", data.summary.totalActiveClasses, "Now · live timetable classes"],
     // Health rows (T2b): the same text the tiles print, so the file and the
     // screen agree. Club-wide — the class/age filters never scope them.
@@ -571,9 +625,10 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     ["Payments", FAILED_TO_RECONCILE_COPY.label, data.paymentHealth.failedToReconcileCount ?? 0, failedToReconcileDetail(data.paymentHealth.failedToReconcileGuardianCount ?? 0)],
     ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of churn"],
     ...membershipCsvRows(data.membership),
-    ...data.weeklyAttendance.map((row) => (data.attendanceBucket === "month"
-      ? ["Monthly attendance", row.week, row.count, row.isCurrentWeek ? "Current month" : ""]
-      : ["Weekly attendance", row.week, row.count, [row.isCurrentWeek ? "Current week" : null, row.inPeriod === false ? "Outside the period (shown for context)" : null].filter(Boolean).join(" · ")])),
+    // A bucket the records do not cover is "—" with its note, never 0 (28 Oct 2026).
+    ...coverageBuckets.map((row) => (data.attendanceBucket === "month"
+      ? ["Monthly attendance", row.week, row.value ?? "—", [row.isCurrentWeek ? "Current month" : null, row.note].filter(Boolean).join(" · ")]
+      : ["Weekly attendance", row.week, row.value ?? "—", [row.isCurrentWeek ? "Current week" : null, row.inPeriod === false ? "Outside the period (shown for context)" : null, row.note].filter(Boolean).join(" · ")])),
     ...data.monthlySignups.map((row) => [
       "Joined by month (new + rejoined)",
       row.month,
@@ -581,6 +636,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
       [row.isCurrentMonth ? "Current month" : null, row.inPeriod === false ? "Outside the period (shown for context)" : null, estimateLabel(row.basis, estimatedCaption(data.membership))].filter(Boolean).join(" · "),
     ]),
     ...(() => {
+      if (missingLabel) return [["Class composition", "All classes", "—", missingLabel]];
       const mix = classComposition(data.topClasses);
       // One class is the whole by construction: no artificial 100%, as on the legend.
       return mix.top.map((row) => [
@@ -588,16 +644,18 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
         row.name,
         row.count,
         mix.top.length === 1
-          ? `All check-ins across the ${mix.label} · ${scopedWindowLabel}`
-          : `${formatRatio(wholePct(row.count, mix.total), row.count, mix.total)} of check-ins across the ${mix.label} · ${scopedWindowLabel}`,
+          ? `All check-ins across the ${mix.label} · ${attendanceLabel}`
+          : `${formatRatio(wholePct(row.count, mix.total), row.count, mix.total)} of check-ins across the ${mix.label} · ${attendanceLabel}`,
       ]);
     })(),
-    ...data.topClasses.map((row) => [
-      "Top classes",
-      row.name,
-      row.count,
-      `${scopedWindowLabel}, ${row.averageAttendance}/session, fill rate ${formatFill(row)}`,
-    ]),
+    ...(missingLabel
+      ? [["Top classes", "All classes", "—", missingLabel]]
+      : data.topClasses.map((row) => [
+          "Top classes",
+          row.name,
+          row.count,
+          `${attendanceLabel}, ${row.averageAttendance}/session, fill rate ${formatFill(row)}`,
+        ])),
     // Q4 A-2 split: shares over current members; those who have left are a
     // count with no percentage — exactly as the status card shows them.
     ...data.currentMembersByStatus.map((row) => [
@@ -607,13 +665,15 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
       isWholeOfCurrent(data.currentMembersByStatus, data.summary.currentMembers) ? "All current members" : formatRatio(row.percentage, row.count, data.summary.currentMembers),
     ]),
     ["Left the club", "Cancelled members", data.summary.cancelledMembers, "Not part of current members, so no percentage"],
-    ...data.checkInMethods.map((row) => [
-      "Check-in methods",
-      row.label,
-      row.count,
-      `${data.checkInMethods.length === 1 ? "All check-ins" : formatRatio(row.percentage, row.count, shares.totalMethodCount)} · ${scopedWindowLabel}`,
-    ]),
-    ["Owner insights", "Self-service check-in", formatRatio(shares.selfServicePct, shares.selfServiceCount, shares.totalMethodCount), `Self or QR · ${scopedWindowLabel}`],
+    ...(missingLabel
+      ? [["Check-in methods", "All methods", "—", missingLabel]]
+      : data.checkInMethods.map((row) => [
+          "Check-in methods",
+          row.label,
+          row.count,
+          `${data.checkInMethods.length === 1 ? "All check-ins" : formatRatio(row.percentage, row.count, shares.totalMethodCount)} · ${attendanceLabel}`,
+        ])),
+    ["Owner insights", "Self-service check-in", cov.missing ? "—" : formatRatio(shares.selfServicePct, shares.selfServiceCount, shares.totalMethodCount), `Self or QR · ${missingLabel ?? attendanceLabel}`],
     ["Owner insights", "Active share of current members", formatRatio(shares.activeSharePct, data.summary.activeMembers, data.summary.currentMembers), "Active members ÷ current members"],
     // The conversion funnel, club-wide then per coach — the same numbers and
     // the same honesty guards as the screen (a rate under the trial minimum
@@ -648,12 +708,26 @@ function TrendBadge({
   current,
   previous,
   periods,
+  gap,
 }: {
   current: number;
   previous: number;
   /** The current period is not over: the figures say "so far this week vs all last week". */
   periods?: ChangePeriods;
+  /**
+   * The base is not (fully) covered by the club's attendance records (28 Oct
+   * 2026): no percentage change, this neutral text instead — "— (no records
+   * for the period before)".
+   */
+  gap?: string | null;
 }) {
+  if (gap) {
+    return (
+      <span data-testid="trend-badge" className="inline-flex items-start rounded-[var(--r-sm)] px-2 py-1 text-[11px] max-w-full bg-[var(--sf-2)] text-tx-2">
+        {gap}
+      </span>
+    );
+  }
   const delta = trendDelta(current, previous, periods);
   // Nothing moved: say nothing. A pill announcing "no change" costs more room than it earns.
   if (delta === null) return null;
@@ -764,7 +838,7 @@ function MetricCard({
   value: ReactNode;
   detail?: string;
   primaryColor: string;
-  trend?: { current: number; previous: number; periods?: ChangePeriods };
+  trend?: { current: number; previous: number; periods?: ChangePeriods; gap?: string | null };
   compactValue?: boolean;
   /** Drill-through target — the member rows behind this tile (Track A). */
   href?: string;
@@ -807,7 +881,7 @@ function MetricCard({
             shrinks between filters and the rows beneath never shift. */}
         {trend && (
           <div className="mt-2 min-w-0 min-h-[26px]">
-            <TrendBadge current={trend.current} previous={trend.previous} periods={trend.periods} />
+            <TrendBadge current={trend.current} previous={trend.previous} periods={trend.periods} gap={trend.gap} />
           </div>
         )}
       </div>
@@ -880,7 +954,10 @@ function ChartTooltip({
   noteFor?: (point: unknown) => string | null;
 }) {
   if (!active || !payload?.length) return null;
-  const value = Number(payload[0].value ?? 0);
+  // A point with no value is no data (a bar before the club's attendance
+  // records start, 28 Oct 2026): it reads "No records", never "0".
+  const raw = payload[0].value;
+  const value = raw === null || raw === undefined ? null : Number(raw);
   const note = noteFor ? noteFor((payload[0] as { payload?: unknown }).payload ?? {}) : null;
   return (
     <div
@@ -889,7 +966,7 @@ function ChartTooltip({
     >
       <p className="text-xs mb-1" style={{ color: "var(--tx-3)" }}>{label}</p>
       <p className="font-semibold" style={{ color: "var(--tx-1)" }}>
-        {formatNumber(value)} {suffix}
+        {value === null ? "No records" : `${formatNumber(value)} ${suffix}`}
       </p>
       {note && <p className="text-xs text-tx-3">{note}</p>}
     </div>
@@ -1069,12 +1146,18 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     filters.ageGroup === "adult" ? "Adults" : filters.ageGroup === "kids" ? "Kids" : null,
   ].filter(Boolean).join(" · ");
   const scopedWindowLabel = filterSuffix ? `${windowLabel} · ${filterSuffix}` : windowLabel;
+  // Attendance coverage (owner rule, 28 Oct 2026): with no records for the
+  // period the attendance figures are "—" with `cov.missing` as their note;
+  // a period that starts before the records names where they start.
+  const cov = attendanceCoverageView(data);
+  const attendanceLabel = [scopedWindowLabel, cov.partial].filter(Boolean).join(" · ");
+  const chartRows = attendanceChartRows(data);
+  const noDataRows = chartRows.filter((r) => r.value === null);
   // Computed once, used in two places (icon + its background tint) below —
   // avoids doubling the hex-literal count for the same ternary (UI-RULES §2
   // ratchet counts literals, not concepts).
   const retentionColor = (retentionRate ?? 70) >= 80 ? "#22c55e" : (retentionRate ?? 70) >= 60 ? "#f59e0b" : "#ef4444";
-  const bestClass = topClasses[0];
-  const maxAttendance = Math.max(...weeklyAttendance.map((row) => row.count), 0);
+  const bestClass = cov.missing ? undefined : topClasses[0];
   const maxTopClass = Math.max(...topClasses.map((row) => row.count), 1);
   const { totalMethodCount, selfServiceCount, selfServicePct, activeSharePct } = derivedShares(data);
   // Q4 A-2 (split): "need review" is inactive members only. Cancelled members
@@ -1095,7 +1178,8 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
   }));
   const totalClassCheckins = classMix.total;
 
-  const trendPoints = weeklyAttendance.map((row) => ({ label: row.week, value: row.count }));
+  // The sparkline draws only the weeks the records cover: a gap is not a zero.
+  const trendPoints = chartRows.filter((row) => row.value !== null).map((row) => ({ label: row.week, value: row.value as number }));
 
   return (
     // aria-busy on the whole page while a filter refetch is in flight — the
@@ -1224,11 +1308,12 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               className="inline-block min-w-[4ch] text-left text-lg font-bold tabular-nums"
               style={{ color: "var(--tx-1)" }}
             >
-              {formatAttendanceRateValue(attendanceRate.mode, attendanceRate.value)}
+              {formatAttendanceRateValue(attendanceRate.mode, cov.missing ? null : attendanceRate.value)}
             </span>
             {/* The counts behind the number (T2b) — kept beside it, never
-                truncated; the label after it gives way first. */}
-            {attendanceRateCounts(attendanceRate) && (
+                truncated; the label after it gives way first. None when the
+                period has no attendance records: there is nothing to count. */}
+            {!cov.missing && attendanceRateCounts(attendanceRate) && (
               <span
                 data-testid="rate-readout-counts"
                 className="shrink-0 text-xs tabular-nums whitespace-nowrap"
@@ -1240,6 +1325,12 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <span className="text-xs truncate" style={{ color: "var(--tx-3)" }} title={attendanceRate.label}>
               {attendanceRate.label}
             </span>
+            {/* Why the rate is "—", or that it counts only part of the period (28 Oct 2026). */}
+            {(cov.missing ?? cov.partial) && (
+              <span data-testid="rate-readout-note" className="text-xs truncate text-tx-3" title={cov.missing ?? cov.partial ?? undefined}>
+                {cov.missing ?? cov.partial}
+              </span>
+            )}
             {/* Freshness. The report is served from a 60-second per-club cache
                 (lib/reports.ts), so the page says when the figures were
                 computed instead of implying they are live (UI-RULES §7).
@@ -1270,11 +1361,14 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <Card>
           {/* Shares are over the check-ins of the classes shown (the top six at
               most), not over every check-in; the subtitle and centre say so. */}
-          <SectionTitle title="Class composition" subtitle={`Share of check-ins across the ${classMix.label} — ${scopedWindowLabel}`} icon={Trophy} />
+          <SectionTitle title="Class composition" subtitle={`Share of check-ins across the ${classMix.label} — ${attendanceLabel}`} icon={Trophy} />
           {/* Chart and its empty state share a minimum height so a filter that
-              empties one card does not move everything beneath it (lane 1). */}
-          {totalClassCheckins === 0 ? (
-            <EmptyChart label="No class attendance yet" />
+              empties one card does not move everything beneath it (lane 1).
+              No records is said as such; a covered period with no check-ins is a real zero. */}
+          {cov.missing ? (
+            <EmptyChart label={cov.missing} />
+          ) : totalClassCheckins === 0 ? (
+            <EmptyChart label="No check-ins in this period" />
           ) : (
             <div className="flex flex-col sm:flex-row items-center gap-5 min-h-[180px]">
               <DonutChart
@@ -1293,7 +1387,11 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
 
         <Card>
           <SectionTitle title="Check-in trend" subtitle={`${byMonth ? "Monthly" : "Weekly"} attendance — ${scopedWindowLabel}`} icon={Activity} />
-          {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
+          {/* No records for the period: "—" in words, never a 0 headline
+              (28 Oct 2026). A covered period with no check-ins keeps its 0. */}
+          {cov.missing ? (
+            <EmptyChart label={cov.missing} />
+          ) : weeklyAttendance.length === 0 ? (
             <EmptyChart label="No attendance data yet" />
           ) : (
             <div className="flex flex-col gap-3 min-h-[180px]">
@@ -1304,13 +1402,19 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   {formatNumber(summary.totalCheckIns)}
                 </span>
                 <span className="text-xs text-tx-3">check-ins {words.during}</span>
+                {cov.partial && (
+                  <span className="text-xs text-tx-3" data-testid="reports-trend-coverage">{cov.partial}</span>
+                )}
                 {/* Monday to now against the whole of last week, worded as on
                     the Attendance this week tile (now, whatever the period). */}
-                <TrendBadge
-                  current={summary.attendanceThisWeek}
-                  previous={summary.attendanceLastWeek}
-                  periods={WEEK_SO_FAR}
-                />
+                {!cov.thisWeekMissing && (
+                  <TrendBadge
+                    current={summary.attendanceThisWeek}
+                    previous={summary.attendanceLastWeek}
+                    periods={WEEK_SO_FAR}
+                    gap={cov.weekGap}
+                  />
+                )}
               </div>
               <div className="w-full overflow-hidden [&>svg]:w-full [&>svg]:h-auto">
                 <Sparkline data={trendPoints} width={520} height={150} />
@@ -1342,12 +1446,17 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <MetricCard
           icon={Activity}
           label="Attendance this week"
-          value={formatNumber(summary.attendanceThisWeek)}
-          detail={filterSuffix ? `Now · check-ins since Monday · ${filterSuffix}` : "Now · check-ins since Monday"}
+          value={cov.thisWeekMissing ? "—" : formatNumber(summary.attendanceThisWeek)}
+          detail={
+            cov.thisWeekMissing
+              ? `Now · ${cov.thisWeekMissing}`
+              : ["Now · check-ins since Monday", cov.thisWeekPartial, filterSuffix].filter(Boolean).join(" · ")
+          }
           primaryColor={primaryColor}
           // Monday to now against the whole of last week (lib/reports): the
-          // badge says so, or a Monday morning reads as a collapse.
-          trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, periods: WEEK_SO_FAR }}
+          // badge says so, or a Monday morning reads as a collapse. Against a
+          // week without records there is no percentage (28 Oct 2026).
+          trend={cov.thisWeekMissing ? undefined : { current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, periods: WEEK_SO_FAR, gap: cov.weekGap }}
         />
         <MetricCard
           icon={UserPlus}
@@ -1363,8 +1472,8 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <MetricCard
           icon={BarChart3}
           label="Check-ins"
-          value={formatNumber(summary.totalCheckIns)}
-          detail={scopedWindowLabel}
+          value={cov.missing ? "—" : formatNumber(summary.totalCheckIns)}
+          detail={cov.missing ?? attendanceLabel}
           primaryColor={primaryColor}
         />
         <MetricCard
@@ -1377,8 +1486,8 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <MetricCard
           icon={Trophy}
           label="Busiest class"
-          value={bestClass?.name ?? "No class data"}
-          detail={bestClass ? `${formatNumber(bestClass.count)} check-ins · ${scopedWindowLabel}` : "Waiting for attendance"}
+          value={cov.missing ? "—" : bestClass?.name ?? "No class data"}
+          detail={cov.missing ?? (bestClass ? `${formatNumber(bestClass.count)} check-ins · ${attendanceLabel}` : "No check-ins in this period")}
           primaryColor={primaryColor}
           compactValue
         />
@@ -1393,14 +1502,25 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <Card>
           <SectionTitle
             title={byMonth ? "Attendance by month" : "Weekly Attendance"}
-            subtitle={`${scopedWindowLabel}, current ${byMonth ? "month" : "week"} highlighted${weeklyAttendance.some((r) => r.inPeriod === false) ? ", earlier weeks faint for context" : ""}`}
+            subtitle={[
+              attendanceLabel,
+              weeklyAttendance.some((r) => r.isCurrentWeek) ? `current ${byMonth ? "month" : "week"} highlighted` : null,
+              weeklyAttendance.some((r) => r.inPeriod === false) ? "earlier weeks faint for context" : null,
+              !cov.missing && noDataRows.length > 0 ? `${byMonth ? "months" : "weeks"} before the records start shaded as no data` : null,
+            ].filter(Boolean).join(", ")}
             icon={Activity}
           />
-          {weeklyAttendance.length === 0 || maxAttendance === 0 ? (
+          {/* No records for the whole period: said in words. Otherwise bars
+              before the records start are drawn as no data — shaded, no bar,
+              "No records" in the tooltip — and a covered zero is a zero bar
+              (28 Oct 2026). */}
+          {cov.missing ? (
+            <EmptyChart label={cov.missing} />
+          ) : weeklyAttendance.length === 0 ? (
             <EmptyChart label="No attendance data yet" />
           ) : (
             <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={weeklyAttendance} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+              <BarChart data={chartRows} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
                 <CartesianGrid vertical={false} stroke="var(--bd-default)" />
                 <XAxis
                   dataKey="week"
@@ -1415,9 +1535,19 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   tickLine={false}
                   allowDecimals={false}
                 />
-                <Tooltip content={<ChartTooltip suffix="check-ins" />} cursor={{ fill: "var(--sf-2)" }} />
-                <Bar dataKey="count" radius={[6, 6, 0, 0]} maxBarSize={34}>
-                  {weeklyAttendance.map((row) => (
+                {noDataRows.length > 0 && (
+                  <ReferenceArea
+                    x1={noDataRows[0].week}
+                    x2={noDataRows[noDataRows.length - 1].week}
+                    fill="var(--tx-4)"
+                    fillOpacity={0.12}
+                    ifOverflow="extendDomain"
+                    label={{ value: "No records", position: "insideTop", fill: "var(--tx-3)", fontSize: 11 }}
+                  />
+                )}
+                <Tooltip content={<ChartTooltip suffix="check-ins" noteFor={(p) => (p as { note?: string | null }).note ?? null} />} cursor={{ fill: "var(--sf-2)" }} />
+                <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={34}>
+                  {chartRows.map((row) => (
                     <Cell
                       key={row.week}
                       fill={row.isCurrentWeek ? primaryColor : hex(primaryColor, row.inPeriod === false ? 0.16 : 0.42)}
@@ -1435,23 +1565,29 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <InsightRow
               icon={Activity}
               label="Attendance pulse"
-              value={trendText(summary.attendanceThisWeek, summary.attendanceLastWeek, WEEK_SO_FAR)}
+              value={
+                cov.thisWeekMissing
+                  ? "—"
+                  : cov.weekGap
+                    ? `${formatNumber(summary.attendanceThisWeek)} so far this week ${cov.weekGap}`
+                    : trendText(summary.attendanceThisWeek, summary.attendanceLastWeek, WEEK_SO_FAR)
+              }
               wrapValue
-              detail="This week counts from Monday; last week is the whole week"
+              detail={cov.thisWeekMissing ?? "This week counts from Monday; last week is the whole week"}
               color={trendTone(summary.attendanceThisWeek, summary.attendanceLastWeek) === "down" ? "#f59e0b" : "#22c55e"}
             />
             <InsightRow
               icon={Trophy}
               label="Class leader"
-              value={bestClass?.name ?? "No leader yet"}
-              detail={bestClass ? `${bestClass.averageAttendance} avg per attended session` : "Check-ins will reveal your leaders"}
+              value={cov.missing ? "—" : bestClass?.name ?? "No leader yet"}
+              detail={cov.missing ?? (bestClass ? `${bestClass.averageAttendance} avg per attended session` : "No check-ins in this period")}
               color={primaryColor}
             />
             <InsightRow
               icon={QrCode}
               label="Self-service check-in"
-              value={selfServicePct === null ? "No check-ins yet" : `${formatRatio(selfServicePct, selfServiceCount, totalMethodCount)} self or QR`}
-              detail={topMethod ? `${topMethod.label} is the top method` : "No method data yet"}
+              value={cov.missing ? "—" : selfServicePct === null ? "No check-ins in this period" : `${formatRatio(selfServicePct, selfServiceCount, totalMethodCount)} self or QR`}
+              detail={cov.missing ?? (topMethod ? `${topMethod.label} is the top method` : "No method data yet")}
               color="#6366f1"
             />
             <InsightRow
@@ -1526,9 +1662,11 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         </Card>
 
         <Card>
-          <SectionTitle title="Top Classes" subtitle={`Check-ins, average attendance, and fill rate — ${scopedWindowLabel}`} icon={Trophy} />
-          {topClasses.length === 0 ? (
-            <EmptyChart label="No class data yet" />
+          <SectionTitle title="Top Classes" subtitle={`Check-ins, average attendance, and fill rate — ${attendanceLabel}`} icon={Trophy} />
+          {cov.missing ? (
+            <EmptyChart label={cov.missing} />
+          ) : topClasses.length === 0 ? (
+            <EmptyChart label="No check-ins in this period" />
           ) : (
             <div className="space-y-4">
               {topClasses.map((cls, index) => (
@@ -1613,9 +1751,11 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         </Card>
 
         <Card>
-          <SectionTitle title="Check-In Methods" subtitle={`How attendance was recorded — ${scopedWindowLabel}`} icon={QrCode} />
-          {totalMethodCount === 0 ? (
-            <EmptyChart label="No check-in data yet" />
+          <SectionTitle title="Check-In Methods" subtitle={`How attendance was recorded — ${attendanceLabel}`} icon={QrCode} />
+          {cov.missing ? (
+            <EmptyChart label={cov.missing} />
+          ) : totalMethodCount === 0 ? (
+            <EmptyChart label="No check-ins in this period" />
           ) : (
             <div className="space-y-4">
               {checkInMethods.map((method) => (

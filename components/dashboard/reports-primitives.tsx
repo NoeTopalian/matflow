@@ -9,7 +9,8 @@ import type { ElementType } from "react";
 import { formatPct, formatRatio, ratioCounts, wholePct } from "@/lib/percent";
 
 export type TooltipPayload = {
-  value?: number | string;
+  /** null for a point with no data (a chart bar before the club's attendance records start). */
+  value?: number | string | null;
   payload?: Record<string, unknown>;
 };
 

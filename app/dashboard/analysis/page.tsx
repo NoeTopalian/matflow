@@ -5,6 +5,7 @@ import { ACTIVE_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { loadJoinedInWindows } from "@/lib/membership-report";
 import { liveClassWhere } from "@/lib/class-live";
 import { resolveReportPeriod } from "@/lib/report-period";
+import { attendanceCoverageFor, coverageOf, readAttendanceCoverageStart } from "@/lib/attendance-coverage";
 
 export const metadata = { title: "Analysis | MatFlow" };
 
@@ -40,6 +41,7 @@ export default async function AnalysisPage({ searchParams }: Props) {
     // to compute a true engagement % bounded by total membership (was
     // previously computed as `checkins / members` and could blow past 100%).
     activeMemberIdsThisMonth,
+    coverageStart,
   ] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       // Training members only (T1): guardian accounts are not members, so
@@ -68,8 +70,12 @@ export default async function AnalysisPage({ searchParams }: Props) {
           where: { tenantId, checkInTime: inPeriod, member: { ...ACTIVE_MEMBER } },
         })
         .then((groups) => groups.length),
+      // Where the club's attendance records begin (28 Oct 2026; the same read
+      // as Reports): before it, check-ins and engagement are "—", not 0.
+      readAttendanceCoverageStart(tx, tenantId, tenant?.timezone),
     ]),
   );
+  const coverage = attendanceCoverageFor(coverageStart, range.timeZone, range, range.previous);
 
   // Lane 1 iter-1 P-04 fix: now a count number directly, not an array.
   const activeMembersThisMonth = activeMemberIdsThisMonth;
@@ -96,6 +102,7 @@ export default async function AnalysisPage({ searchParams }: Props) {
   const monthlyTrend = range.chartMonths.map((m, i) => ({
     label: new Date(new Date(m.monthStart).getTime() + 15 * 86_400_000).toLocaleString("en-GB", { month: "short", ...(withYear ? { year: "2-digit" } : {}), timeZone: range.timeZone }),
     value: trendCounts[i],
+    coverage: coverageOf(coverageStart, m.monthStart, m.nextMonthStart),
   }));
 
   const STATUS_LABELS: Record<string, string> = { active: "Active", inactive: "Inactive", cancelled: "Cancelled", taster: "Taster" };
@@ -124,6 +131,7 @@ export default async function AnalysisPage({ searchParams }: Props) {
     leftMembers,
     monthlyTrend,
     range,
+    coverage,
   };
 
   return <AnalysisView metrics={metrics} primaryColor={session.user.primaryColor ?? "#3b82f6"} />;

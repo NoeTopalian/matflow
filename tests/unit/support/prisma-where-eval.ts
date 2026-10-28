@@ -117,7 +117,8 @@ export function fakeTx(members: Row[], opts: { timezone?: string | null } = {}) 
     tenant: { findUnique: async () => ({ timezone: opts.timezone ?? "Europe/London" }) },
     class: { findMany: async () => [], count: async () => 0 },
     classInstance: { findMany: async () => [] },
-    attendanceRecord: { findMany: async () => [], groupBy: async () => [], count: async () => 0 },
+    // No attendance rows, so no coverage start (lib/attendance-coverage, 28 Oct 2026).
+    attendanceRecord: { findMany: async () => [], groupBy: async () => [], count: async () => 0, findFirst: async () => null },
     payment: { count: async () => 0, findMany: async () => [] },
     // T8c: the membership series (lib/membership-report.ts) reads status
     // history and the import ledger; none here, so it falls back to the

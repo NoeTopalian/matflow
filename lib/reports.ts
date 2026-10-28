@@ -9,6 +9,7 @@ import { emptyMembershipReport, loadMembershipForPeriod, type MembershipReport }
 import { inReportRange, reportPeriodCacheKey, resolveReportPeriod, type ReportPeriodParams, type ReportRange } from "@/lib/report-period";
 import { cancellationsOf, joinedOf, type MembershipBasis } from "@/lib/membership-movement";
 import { liveClassWhere } from "@/lib/class-live";
+import { attendanceCoverageFor, coverageOf, noCoverage, readAttendanceCoverageStart, type AttendanceCoverage, type CoverageState } from "@/lib/attendance-coverage";
 
 export type { MembershipReport } from "@/lib/membership-report";
 
@@ -179,8 +180,23 @@ export interface ReportsData {
     newMembersThisMonth: number;
     newMembersLastMonth: number;
   };
-  /** The attendance chart: one bar per week (or month); `inPeriod` false for weeks shown for context before the period. */
-  weeklyAttendance: { week: string; count: number; isCurrentWeek: boolean; inPeriod?: boolean }[];
+  /**
+   * The attendance chart: one bar per week (or month); `inPeriod` false for
+   * weeks shown for context before the period. `coverage` (28 Oct 2026) says
+   * whether the club's attendance records cover the bar: a bar before they
+   * start is no data, not a zero (lib/attendance-coverage).
+   */
+  weeklyAttendance: { week: string; count: number; isCurrentWeek: boolean; inPeriod?: boolean; coverage?: CoverageState }[];
+  /**
+   * Where the club's attendance records begin, and how they cover the period,
+   * the run before it, this week and last week (owner rule, 28 Oct 2026:
+   * missing coverage is never a claim that nobody attended). Every
+   * attendance-derived figure reads it: with no records for the period the
+   * screen and the CSV show "—" and say why; a period that starts before the
+   * records counts what exists and says where they start. Optional only so a
+   * fixture without it renders as before; getReportsData always sets it.
+   */
+  attendanceCoverage?: AttendanceCoverage;
   /**
    * Joined (new + rejoined) per club month, last 6 months, by the movement
    * definition. `basis` says whether the month was recorded at the time or is
@@ -361,6 +377,15 @@ function computeAttendanceRate(
       break;
   }
   return { mode, value, label: meta.label, formula: meta.formula, numerator, denominator };
+}
+
+/**
+ * A rate over a period with no attendance records has no value (28 Oct 2026):
+ * "—" on screen and in the API, never a computed 0. The counts stay, so a
+ * reader can see what the formula would have used.
+ */
+function withoutRecords(rate: AttendanceRate, period: CoverageState): AttendanceRate {
+  return noCoverage(period) ? { ...rate, value: null } : rate;
 }
 
 function titleCase(value: string) {
@@ -558,6 +583,7 @@ export async function getReportsData(
     cancelledByMonth,
     activeOnHoldMembers,
     otherOwingRows,
+    coverageStart,
   ] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       // Audit memory-storage 2026-08-16 P1-12: this and the two aggregates
@@ -652,6 +678,11 @@ export async function getReportsData(
       // D9: inactive or cancelled accounts that still owe — counted beside
       // the payers, never inside them or a member total.
       loadOtherAccountsOwing(tx, tenantId),
+      // Where the club's attendance records begin (28 Oct 2026): the earliest
+      // record of any method, imported history included, club-wide (never
+      // narrowed by the class or age filter). Before it a count of zero is
+      // "no records", not "nobody attended".
+      readAttendanceCoverageStart(tx, tenantId, club?.timezone),
     ]),
     // ~12 parallel aggregate queries in one transaction — needs more than the
     // default budget on large tenants (was expiring with P2028/commit-expired).
@@ -711,7 +742,19 @@ export async function getReportsData(
       ]),
     { maxWait: 10_000, timeout: 30_000 },
   );
-  const weeklyAttendance = buckets.map((b, i) => ({ week: b.week, count: bucketCounts[i], isCurrentWeek: b.isCurrentWeek, inPeriod: b.inPeriod }));
+  const weeklyAttendance = buckets.map((b, i) => ({
+    week: b.week,
+    count: bucketCounts[i],
+    isCurrentWeek: b.isCurrentWeek,
+    inPeriod: b.inPeriod,
+    coverage: coverageOf(coverageStart, b.start, b.end),
+  }));
+  // The period, the run before it, this week and last week against the records' start.
+  const attendanceCoverage: AttendanceCoverage = {
+    ...attendanceCoverageFor(coverageStart, range.timeZone, range, range.previous),
+    thisWeek: coverageOf(coverageStart, currentWeekStart, addDays(currentWeekStart, 7)),
+    lastWeek: coverageOf(coverageStart, previousWeekStart, currentWeekStart),
+  };
 
   // T8c: movement and headcount, in its own read (one events findMany plus the
   // ledger when the back-fill has not been applied), after the block above so
@@ -970,14 +1013,18 @@ export async function getReportsData(
       recoveryRate,
       recovery: { ratePct: recoveryRate, recovered: recoveredCount, failedMembers: failedMemberIds.length },
     },
-    attendanceRate: computeAttendanceRate(attendanceRateMode, {
-      totalCheckIns,
-      activeMembers: scopedActiveMembers,
-      distinctAttendingMembers: distinctAttending,
-      capacitySum,
-      attendedAgainstCapacity,
-    }),
+    attendanceRate: withoutRecords(
+      computeAttendanceRate(attendanceRateMode, {
+        totalCheckIns,
+        activeMembers: scopedActiveMembers,
+        distinctAttendingMembers: distinctAttending,
+        capacitySum,
+        attendedAgainstCapacity,
+      }),
+      attendanceCoverage.period,
+    ),
     attendanceRateModes: ATTENDANCE_RATE_MODES,
+    attendanceCoverage,
     generatedAt: new Date().toISOString(),
   };
 }
@@ -1008,8 +1055,10 @@ export async function getReportsData(
  * period by the normal definition (26 Oct 2026).
  * "v10" = churn is a count of cancellations: `churn` loses `ratePct` and
  * `base`, and `churnRate` is gone (owner decision, 27 Oct 2026).
+ * "v11" = attendanceCoverage and weeklyAttendance[].coverage; a rate over a
+ * period with no attendance records is null (28 Oct 2026).
  */
-export const REPORTS_CACHE_VERSION = "v10";
+export const REPORTS_CACHE_VERSION = "v11";
 
 /**
  * The cached read the reports page and API use. Under 25 concurrent staff
