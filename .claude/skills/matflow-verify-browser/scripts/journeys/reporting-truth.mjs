@@ -598,6 +598,17 @@ try {
   const rateMatch = rateCounts?.match(/^\(([\d,]+) check-ins ÷ ([\d,]+) members\)$/);
   L.check("reports", "R10 attendance rate: — with no counts, or its counts with the active-member base",
     rateValue === "—" ? rateCounts === null : !!rateMatch && rateMatch[2] === fmtNum(E.active), { value: rateValue, counts: rateCounts, activeBase: E.active });
+  // 28 Oct 2026 (attendance coverage, lib/attendance-coverage.ts): a club with no attendance records reads "—" and
+  // "No attendance recorded yet" on the Check-ins tile, never 0. This seed writes no attendance, but other journeys
+  // on the same fixture club may check members in, so the expectation follows the database: no rows → the
+  // no-records display; rows → a number and no no-records note.
+  const anyVisit = (await q(`select 1 from "AttendanceRecord" where "tenantId" = $1 limit 1`, [tenantId])).length > 0;
+  const checkinsTile = await pTexts(page.getByTestId("metric-card").filter({ has: page.locator("p", { hasText: /^Check-ins$/ }) }).first());
+  L.check("reports", "R10b Check-ins tile: with no attendance records at all it reads — and \"No attendance recorded yet\"; with records, a number",
+    anyVisit
+      ? /^[\d,]+$/.test(checkinsTile[0] ?? "") && !(checkinsTile[2] ?? "").includes("No attendance record")
+      : checkinsTile[0] === "—" && checkinsTile[1] === "Check-ins" && checkinsTile[2] === "No attendance recorded yet",
+    { saw: checkinsTile, clubHasAttendance: anyVisit });
 
   // Round 3: the payer tile, its guardian note, the health line, and the drill links carrying the club month.
   const payerLink = page.getByRole("link", { name: `${PAYER_LABEL} — see the payers behind this number`, exact: true });
@@ -643,6 +654,12 @@ try {
   const csvText = fs.readFileSync(await dl.path(), "utf8").replace(/^﻿/, "");
   const csv = parseCsv(csvText);
   const row = (section, metric) => csv.find((r) => r[0] === section && r[1] === metric) ?? null;
+  // 28 Oct 2026 (attendance coverage): the CSV says what the tile says, "—" plus the note in Detail.
+  L.check("csv", "C1b CSV Check-ins row: — and \"No attendance recorded yet\" when the club has no attendance records; a number otherwise",
+    anyVisit
+      ? /^\d+$/.test(row("Summary", "Check-ins")?.[2] ?? "")
+      : row("Summary", "Check-ins")?.[2] === "—" && (row("Summary", "Check-ins")?.[3] ?? "").endsWith(" · No attendance recorded yet"),
+    { saw: row("Summary", "Check-ins"), clubHasAttendance: anyVisit });
   L.check("csv", "C1 the CSV file is dated from the report and starts with Generated at",
     /^matflow-reports-\d{4}-\d{2}-\d{2}\.csv$/.test(dl.suggestedFilename()) && csv[1]?.[0] === "Report" && csv[1]?.[1] === "Generated at",
     { file: dl.suggestedFilename(), row2: csv[1]?.slice(0, 2) });
