@@ -188,5 +188,16 @@ export function tallyPlanReview(decisions: readonly PlanDecision[]): PlanReviewT
   return [...by.values()].sort((a, b) => a.label.localeCompare(b.label, "en-GB") || a.reason.localeCompare(b.reason));
 }
 
-/** The sentence every "imported without a plan" surface carries (owner rule, 27 Oct 2026). */
-export const PLAN_RESTRICTED_SENTENCE = "Plan-restricted classes may refuse them until staff assign a plan.";
+/**
+ * The access consequence every "imported without a plan" surface carries
+ * (owner rule, 27 Oct 2026: "explain the access consequence"). It says what
+ * lib/checkin.ts does to a member with no plan:
+ *  - the member app (and a parent for their child) requires coverage, and a
+ *    member with no plan is covered only by a usable class pack, so the app
+ *    refuses them (`no_coverage`);
+ *  - the desk, the card scanner and the kiosk do not require coverage, so they
+ *    admit them to a class no plan list limits;
+ *  - a class limited to certain plans (`classEligibility`) refuses a member
+ *    with no plan at every door.
+ */
+export const PLAN_RESTRICTED_SENTENCE = "Until staff assign a plan, they can't check themselves in from the member app unless they hold a class pack. The desk and the kiosk can still check them into classes open to everyone; classes limited to certain plans refuse them at every door.";
