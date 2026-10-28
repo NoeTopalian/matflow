@@ -18,6 +18,7 @@ import {
   stillDiffers,
   type ImportConflict,
 } from "@/lib/importers/import-conflicts";
+import type { PlanReviewTally } from "@/lib/importers/plan-match";
 
 export const runtime = "nodejs";
 
@@ -33,8 +34,18 @@ export type ConflictView =
     }
   | { kind: "ambiguous"; name: string; rows: number[]; reason: string; members: ConflictMemberView[] };
 
-/** A person this import created with a plan name that matched no single MatFlow plan (25 Oct 2026: import and flag). */
+/**
+ * A person this import created without a plan (import and flag): the file named
+ * a plan, but its name, billing period, price and currency did not all agree
+ * with one active MatFlow plan (27 Oct 2026, lib/importers/plan-match).
+ * `planLabel` is the file's own label, kept as evidence.
+ */
 export type WithoutPlanView = { id: string; name: string; href: string; planLabel: string };
+
+function planReviewOf(manifest: unknown): PlanReviewTally {
+  const list = manifest && typeof manifest === "object" ? (manifest as { planReview?: unknown }).planReview : undefined;
+  return Array.isArray(list) ? (list as PlanReviewTally) : [];
+}
 
 function conflictsOf(manifest: unknown): ImportConflict[] {
   const list = manifest && typeof manifest === "object" ? (manifest as { conflicts?: unknown }).conflicts : undefined;
@@ -64,7 +75,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         orderBy: { name: "asc" },
         take: 500,
       });
-      return { conflicts, members: new Map(members.map((m) => [m.id, m])), withoutPlan };
+      return { conflicts, members: new Map(members.map((m) => [m.id, m])), withoutPlan, planReview: planReviewOf(job.manifest) };
     });
     if (!out) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -109,6 +120,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({
       conflicts: items,
       withoutPlan,
+      // Why, by the file's label (counts only; lib/importers/plan-match). Absent before 27 Oct 2026.
+      planReview: out.planReview,
       counts: {
         conflicts: items.filter((i) => i.kind === "conflict").length,
         ambiguous: items.filter((i) => i.kind === "ambiguous").length,

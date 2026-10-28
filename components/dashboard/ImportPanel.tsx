@@ -12,6 +12,7 @@ import AttendanceImport from "@/components/dashboard/AttendanceImport";
 import { describeApiError } from "@/lib/api-field-errors";
 import { formatDate, formatDateTime } from "@/lib/date";
 import { EXCEPTION_WORDS, countByKind, type ExceptionRow } from "@/lib/importers/teamup-exceptions";
+import { PLAN_RESTRICTED_SENTENCE, type PlanReviewTally } from "@/lib/importers/plan-match";
 import { sniffCsvKind, WRONG_PATH_MESSAGE, type CsvKind } from "@/lib/importers/sniff";
 
 const SOURCES = [
@@ -50,6 +51,8 @@ type Job = {
     mode?: Mode;
     refresh?: { changed: number; unchanged: number; exceptions: RefreshExceptions };
     created?: { total: number; unmatchedPlan: number };
+    /** 27 Oct 2026: why the people this import created have no plan, by the file's label (counts only). */
+    planReview?: PlanReviewTally;
     rollback?: { removed: number; kept: { memberId: string; name: string; reasons: string[] }[] };
     teamup2?: TeamUp2Facts;
     /** Owner decision 25 Oct 2026: people not written because they differ or could not be matched with certainty. */
@@ -89,6 +92,12 @@ type PreviewSummary = {
   toReviewUncertain?: number;
   staffLoginRefused?: number;
   childrenWithoutParent?: number;
+  /** 27 Oct 2026: rows that exactly repeat an earlier row of the file (skipped). */
+  repeatedInFile?: number;
+  /** 27 Oct 2026 (lib/importers/plan-match): of willImport, with the file's plan and without one. */
+  willImportWithPlan?: number;
+  willImportWithoutPlan?: number;
+  planReview?: PlanReviewTally;
   sampleDrafts: {
     name: string;
     email: string;
@@ -300,7 +309,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
   async function commit() {
     if (!job) return;
     const count = preview?.willImport ?? 0;
-    const missingTiers = preview?.teamup2?.exceptions.unmatchedPlanLabels.length ?? 0;
+    const withoutPlan = preview?.willImportWithoutPlan ?? 0;
     const ok = refreshPreview
       ? await ask({
           title: `Check ${plural(refreshPreview.matched, "member", "members")} against this TeamUp export?`,
@@ -309,7 +318,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
         })
       : await ask({
           title: `Import ${plural(count, "member", "members")}?`,
-          body: `${preview?.sameAsMatFlow !== undefined ? `${plural(count, "new person", "new people")} will be added; ${(preview.sameAsMatFlow ?? 0).toLocaleString("en-GB")} already match MatFlow exactly and are skipped; ${plural((preview.toReviewDiffers ?? 0) + (preview.toReviewUncertain ?? 0), "person", "people")} will be listed for you to review (${(preview.toReviewDiffers ?? 0).toLocaleString("en-GB")} differ, ${(preview.toReviewUncertain ?? 0).toLocaleString("en-GB")} uncertain). ` : ""}New people are added straight away; you can roll the import back afterwards for anyone nobody has touched yet. People already in MatFlow are never changed: an exact match is skipped, and anyone who differs, or could be more than one member, is listed in the import history for you to review. Nobody is emailed.${missingTiers > 0 ? ` ${missingTiers === 1 ? "1 live plan has" : `${missingTiers} live plans have`} no tier yet: those members are imported with the plan name only; set their tier on their page once it exists.` : ""}`,
+          body: `${preview?.sameAsMatFlow !== undefined ? `${plural(count, "new person", "new people")} will be added; ${(preview.sameAsMatFlow ?? 0).toLocaleString("en-GB")} already match MatFlow exactly and are skipped; ${plural((preview.toReviewDiffers ?? 0) + (preview.toReviewUncertain ?? 0), "person", "people")} will be listed for you to review (${(preview.toReviewDiffers ?? 0).toLocaleString("en-GB")} differ, ${(preview.toReviewUncertain ?? 0).toLocaleString("en-GB")} uncertain). ` : ""}New people are added straight away; you can roll the import back afterwards for anyone nobody has touched yet. People already in MatFlow are never changed: an exact match is skipped, and anyone who differs, or could be more than one member, is listed in the import history for you to review. Nobody is emailed.${withoutPlan > 0 ? ` ${withoutPlan === 1 ? "1 new person is" : `${withoutPlan.toLocaleString("en-GB")} new people are`} imported without a plan and listed in the import history. ${PLAN_RESTRICTED_SENTENCE}` : ""}`,
           confirmLabel: "Import",
         });
     if (!ok) return;
@@ -584,7 +593,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
               <p className="text-[11px] mt-1 text-tx-4">
                 {mode === "create"
                   ? "The first import: creates the people in the file who are not in MatFlow yet."
-                  : "A fresh TeamUp export updates status, payment standing and plan for people already imported. Nobody is created; contact details, internal notes, medical notes, waivers, holds and guardian links — suggested or confirmed — are never touched. A file exported before the standing already recorded is refused. The export time is required."}
+                  : "A check: a fresh TeamUp export is compared with the people already imported, and everyone whose status, payment standing, cancellation date or plan differs is listed for you to review. Nothing in MatFlow is changed and nobody is created; staff change a member by hand if the export is right. A file exported before the standing already recorded is refused. The export time is required."}
               </p>
             </div>
           )}
@@ -672,6 +681,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                   <Stat label="To review — uncertain" value={preview.toReviewUncertain ?? 0} />
                   <Stat label="Staff login (refused)" value={preview.staffLoginRefused ?? 0} tone="muted" />
                   <Stat label="Child without parent" value={preview.childrenWithoutParent ?? 0} tone="muted" />
+                  {(preview.repeatedInFile ?? 0) > 0 && <Stat label="Repeated in the file (skip)" value={preview.repeatedInFile ?? 0} tone="muted" />}
                 </div>
               )}
 
@@ -706,7 +716,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
 
               {preview.sampleDrafts.length > 0 && (
                 <details>
-                  <summary className="text-xs cursor-pointer text-tx-3">First {plural(preview.sampleDrafts.length, "member", "members")}</summary>
+                  <summary className="text-xs cursor-pointer text-tx-3">First {plural(preview.sampleDrafts.length, "row", "rows")} as the file states them (the plan named is the file&apos;s, not one MatFlow sets)</summary>
                   <ul className="mt-2 text-xs space-y-1">
                     {preview.sampleDrafts.map((d, i) => (
                       <li key={`${d.email}-${i}`} className="text-tx-2">
@@ -731,20 +741,24 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                 </details>
               )}
 
-              {(preview.teamup2?.exceptions.unmatchedPlanLabels.length ?? 0) > 0 && (
+              {(preview.willImportWithoutPlan ?? 0) > 0 && (
                 <div
                   role="alert"
-                  data-testid="import-missing-tiers"
+                  data-testid="import-without-plan"
                   className="rounded-xl border border-[color-mix(in_srgb,var(--hue-warning)_30%,transparent)] bg-[color-mix(in_srgb,var(--hue-warning)_8%,transparent)] p-3 text-xs text-tx-1 space-y-1"
                 >
                   <p className="font-semibold">
-                    Create the missing tiers first: {plural(preview.teamup2!.exceptions.unmatchedPlanLabels.length, "plan", "plans")} that members are on now, start soon or are on hold on {preview.teamup2!.exceptions.unmatchedPlanLabels.length === 1 ? "has" : "have"} no MatFlow tier.
+                    {(preview.willImportWithoutPlan ?? 0) === 1 ? "1 new person" : `${(preview.willImportWithoutPlan ?? 0).toLocaleString("en-GB")} new people`} will be imported without a plan{(preview.willImportWithPlan ?? 0) > 0 ? ` (${(preview.willImportWithPlan ?? 0).toLocaleString("en-GB")} with the plan the file names)` : ""}.
                   </p>
                   <ul className="list-disc ml-4">
-                    {preview.teamup2!.exceptions.unmatchedPlanLabels.map((l) => <li key={l}>{l}</li>)}
+                    {(preview.planReview ?? []).map((r) => (
+                      <li key={`${r.label}-${r.reason}`}>
+                        File says <strong>{r.label}</strong> ({plural(r.people, "person", "people")}): {r.why}.
+                      </li>
+                    ))}
                   </ul>
                   <p className="text-tx-2">
-                    Add each under Memberships with exactly this name, then start over and upload the file again. You can still import now: those members keep the plan name as text with no tier; once the tier exists, set it on each member&rsquo;s page (a later upload changes nobody in MatFlow).
+                    MatFlow sets a plan only when the file&rsquo;s plan name, billing period, price and currency all agree with one active MatFlow plan. They are listed in the import history afterwards; staff assign each plan on the member&rsquo;s page. {PLAN_RESTRICTED_SENTENCE}
                   </p>
                 </div>
               )}
@@ -795,7 +809,7 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                     : "Warning: the counts below do not add up to the people in the file — check the errors before relying on this import."}
                   {job.sourceExportedAt ? ` Source exported ${formatDateTime(job.sourceExportedAt)}${job.sourceExportedAtProvenance === "provisional" ? " — export time provisional (an estimate); each member's standing is marked provisional" : ""}.` : ""}
                   {job.manifest.created.unmatchedPlan > 0
-                    ? ` ${job.manifest.created.unmatchedPlan === 1 ? "1 member has" : `${job.manifest.created.unmatchedPlan} members have`} a plan name with no matching membership tier yet.`
+                    ? ` ${job.manifest.created.unmatchedPlan === 1 ? "1 member was" : `${job.manifest.created.unmatchedPlan.toLocaleString("en-GB")} members were`} imported without a plan and ${job.manifest.created.unmatchedPlan === 1 ? "is" : "are"} listed in the import history below. ${PLAN_RESTRICTED_SENTENCE}`
                     : ""}
                 </p>
               )}
@@ -864,7 +878,7 @@ function TeamUpFacts({ jobId, facts, committed = false }: { jobId: string; facts
         {committed && facts.ledger.persisted != null ? ` (${facts.ledger.persisted.toLocaleString("en-GB")} stored as membership history)` : ""}.
       </p>
       {rows.length === 0 ? (
-        <p className="font-medium text-tx-1">Nothing to decide: every person has one current plan, every guardian link was made by staff, and every plan has a tier.</p>
+        <p className="font-medium text-tx-1">Nothing to decide here: every person has one current plan in the file and every guardian link was made by staff.</p>
       ) : (
         <>
           <p className="font-semibold text-tx-1">

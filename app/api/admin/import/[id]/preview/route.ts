@@ -3,7 +3,8 @@ import { readImportFile } from "@/lib/import-storage";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
 import { parseImport, unmatchedPlanLabels, withoutProvisionalStanding, type ImportSource, type MemberDraft } from "@/lib/importers";
-import { classifyAdults, classifyChildren, needsParent } from "@/lib/importers/import-match";
+import { blockedParents, classifyAdults, classifyChildren, fileRepeats, needsParent } from "@/lib/importers/import-match";
+import { PLAN_TIER_SELECT, planForNewMember, tallyPlanReview } from "@/lib/importers/plan-match";
 import { normaliseEmail } from "@/lib/email-normalise";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -60,7 +61,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const summary = await withTenantContext(tenantId, async (tx) => {
       // The same classification the commit uses (lib/importers/import-match),
       // so these counts are the commit's outcomes for this file (25 Oct 2026).
-      const tiers = await tx.membershipTier.findMany({ where: { tenantId }, select: { id: true, name: true } });
+      const tiers = await tx.membershipTier.findMany({ where: { tenantId }, select: PLAN_TIER_SELECT });
       const tierByName = tierMap(tiers);
       const tierNames = new Set(tierByName.keys());
       const planOf = (d: MemberDraft) => {
@@ -76,9 +77,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const adults = drafts.filter((d) => !needsParent(d));
       const children = drafts.filter(needsParent);
       const parentsInFile = new Set(adults.flatMap((d) => [d.email, d.unverifiedEmail].filter((e): e is string => !!e)));
-      const adultOutcomes = await classifyAdults(tx, tenantId, adults, { jobId: job.id, planOf, skipEmails: staffHeld });
-      const childOutcomes = await classifyChildren(tx, tenantId, children, { jobId: job.id, planOf, skipEmails: staffHeld, parentsInFile });
+      // The same file-level reading as the commit: rows sharing an email, and
+      // children whose parent row is refused or uncertain (27 Oct 2026).
+      const adultOutcomes = await classifyAdults(tx, tenantId, adults, { jobId: job.id, planOf, skipEmails: staffHeld, repeats: fileRepeats(adults) });
+      const blocked = blockedParents(adults, adultOutcomes, staffHeld);
+      const childOutcomes = await classifyChildren(tx, tenantId, children, { jobId: job.id, planOf, skipEmails: staffHeld, parentsInFile, blocked });
       const kinds = [...adultOutcomes.values(), ...[...childOutcomes.values()].flatMap((o) => (o.classification ? [o.classification] : []))].map((c) => c.kind);
+      // The plan each NEW person will get, decided by the commit's own rule
+      // (lib/importers/plan-match): the preview never promises a plan the
+      // commit will not set.
+      const newPeople = [
+        ...[...adultOutcomes].filter(([, c]) => c.kind === "new").map(([d]) => d),
+        ...[...childOutcomes].filter(([, o]) => o.classification?.kind === "new").map(([d]) => d),
+      ];
+      const planDecisions = newPeople.map((d) => planForNewMember(d, tiers, job.source));
       const count = (k: string) => kinds.filter((x) => x === k).length;
       const childrenWithoutParent = [...childOutcomes.values()].filter((o) => !o.classification).length;
       const totalRows = drafts.length + errors.length;
@@ -88,6 +100,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const sameAsMatFlow = count("duplicate") + count("own");
       const toReviewDiffers = count("conflict");
       const toReviewUncertain = count("ambiguous");
+      const repeatedInFile = count("repeat");
       const s = {
         totalRows,
         validRows: drafts.length,
@@ -100,7 +113,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         toReviewUncertain,
         staffLoginRefused: staffHeld.size,
         childrenWithoutParent,
-        willSkip: sameAsMatFlow + toReviewDiffers + toReviewUncertain + staffHeld.size + childrenWithoutParent + errors.length,
+        repeatedInFile,
+        // Of those who will be imported: with the plan the file names, and
+        // without one (listed after the import for staff to assign), by label and reason.
+        willImportWithPlan: planDecisions.filter((p) => p.kind === "assign").length,
+        willImportWithoutPlan: planDecisions.filter((p) => p.kind === "review").length,
+        planReview: tallyPlanReview(planDecisions),
+        willSkip: sameAsMatFlow + toReviewDiffers + toReviewUncertain + repeatedInFile + staffHeld.size + childrenWithoutParent + errors.length,
         sampleDrafts: drafts.slice(0, 5).map((d) => ({
           name: d.name,
           email: d.nonContactable ? "(no email)" : d.email,

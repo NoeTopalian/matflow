@@ -187,15 +187,17 @@ async function runCommit(club: { tenantId: string; userId: string }, csv: string
 }
 async function dbShape(tenantId: string) {
   return withRlsBypass(async (tx) => {
-    const members = await tx.member.findMany({ where: { tenantId }, select: { id: true, accountType: true, parentMemberId: true, status: true, paymentStatus: true, email: true, membershipTier: { select: { name: true } } } });
+    const members = await tx.member.findMany({ where: { tenantId }, select: { id: true, accountType: true, parentMemberId: true, status: true, paymentStatus: true, email: true, membershipType: true, membershipTierId: true } });
+    // Owner rule 27 Oct 2026: a TeamUp import sets no plan (the export has no price, billing period or
+    // currency), so per-plan counts are read from the file's label each member keeps.
     const perPlan: Record<string, { active: number; hold: number }> = {};
     for (const m of members) {
-      const plan = m.membershipTier?.name; if (!plan) continue;
+      const plan = m.membershipType; if (!plan) continue;
       perPlan[plan] ??= { active: 0, hold: 0 };
       if (m.status === "active" && m.paymentStatus === "paused") perPlan[plan].hold += 1;
       else if (m.status === "active") perPlan[plan].active += 1;
     }
-    return { count: members.length, kidsWithoutParent: members.filter((m) => (m.accountType === "kids" || m.accountType === "junior") && !m.parentMemberId).length, kids: members.filter((m) => m.accountType === "kids" || m.accountType === "junior").length, cancelled: members.filter((m) => m.status === "cancelled").length, perPlan, duplicateEmails: members.length - new Set(members.map((m) => m.email)).size };
+    return { count: members.length, kidsWithoutParent: members.filter((m) => (m.accountType === "kids" || m.accountType === "junior") && !m.parentMemberId).length, kids: members.filter((m) => m.accountType === "kids" || m.accountType === "junior").length, cancelled: members.filter((m) => m.status === "cancelled").length, perPlan, withPlan: members.filter((m) => m.membershipTierId).length, duplicateEmails: members.length - new Set(members.map((m) => m.email)).size };
   });
 }
 
@@ -253,6 +255,7 @@ describe.skipIf(!HAS_DB)("TeamUp migration rehearsal on the catalogue-shaped exp
     expect(shape.cancelled).toBe(expected.cancelledOnly);
     expect(shape.duplicateEmails).toBe(0);
     for (const [plan, c] of Object.entries(expected.perPlan)) expect(shape.perPlan[plan], plan).toEqual(c);
+    expect(shape.withPlan, "a TeamUp import gives nobody a plan (27 Oct rule)").toBe(0);
     console.log(JSON.stringify({ cell: "commit", people: expected.people, ms: r.ms }));
   }, 300_000);
 

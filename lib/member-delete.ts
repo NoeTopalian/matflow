@@ -126,7 +126,7 @@ export async function deleteMemberCascade(
   });
 
   // The people an import listed for review keep no trace of this member (25 Oct 2026).
-  await scrubImportConflictsFor(tx, where.tenantId, memberId);
+  await scrubImportConflictsFor(tx, where.tenantId, memberId, member.externalRef);
 
   // Order matters: every table below RESTRICTs Member deletion until empty.
   // RankHistory references MemberRank, so wipe that first.
