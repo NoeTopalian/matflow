@@ -50,6 +50,12 @@ model Tenant {
   // still got a Stripe checkout. 'pay_at_desk' | 'stripe'
   paymentRail            String?
   memberSelfBilling      Boolean   @default(false)
+  // Members may check themselves (and a parent their child) in from the
+  // member app (owner decision, 27 Oct 2026: optional, on by default, turned
+  // off in Settings). Off refuses only the member's own path in
+  // POST /api/checkin; the desk, the kiosk, the card scanner and the coach
+  // register are unaffected.
+  memberAppCheckin       Boolean   @default(true)
   // The club's public contact address (1 Oct 2026): what members see and
   // reply to. Not a login — owner alerts and resets go to each staff member's
   // own address. billingContactEmail / privacyContactEmail fall back to it
@@ -1137,7 +1143,10 @@ model ClassPack {
   name            String
   description     String?
   totalCredits    Int
-  validityDays    Int
+  // Days a purchase lasts, or NULL for "Never expires" (owner decision,
+  // 27 Oct 2026: the club chooses per pack product). Set when the product is
+  // created; read only at sale (lib/class-pack-terms.ts packExpiresAt).
+  validityDays    Int?
   pricePence      Int
   currency        String   @default("GBP")
   isActive        Boolean  @default(true)
@@ -1160,9 +1169,12 @@ model MemberClassPack {
   pack                  ClassPack @relation(fields: [packId], references: [id])
   creditsRemaining      Int
   purchasedAt           DateTime  @default(now())
-  expiresAt             DateTime
+  // The purchase's own term, recorded at sale: purchasedAt + the product's
+  // validityDays, or NULL when the product never expires. Never rewritten.
+  // Usable while status = 'active', credits > 0 and (NULL or > now).
+  expiresAt             DateTime?
   stripePaymentIntentId String?   @unique
-  status                String    @default("active") // active | expired | refunded
+  status                String    @default("active") // active | expired (legacy, no longer written; never usable) | refunded
 
   redemptions ClassPackRedemption[]
 

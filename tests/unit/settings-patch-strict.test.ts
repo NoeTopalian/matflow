@@ -10,6 +10,7 @@
 //     memberSelfBilling · billingContactEmail · billingContactUrl · name ·
 //     primaryColor · secondaryColor · textColor · bgColor · fontFamily ·
 //     logoUrl · logoSize · checkinWindowBeforeMin · checkinWindowAfterMin ·
+//     memberAppCheckin (G5, 27 Oct 2026) ·
 //     waiverTitle · waiverContent · kidsWaiverTitle · kidsWaiverContent ·
 //     privacyContactEmail · privacyPolicyUrl · instagramUrl · facebookUrl ·
 //     tiktokUrl · youtubeUrl · twitterUrl · websiteUrl · groupChatUrl
@@ -127,6 +128,7 @@ describe("PATCH /api/settings refuses what it cannot save", () => {
       groupChatUrl: "https://chat.whatsapp.com/abc",
       checkinWindowBeforeMin: 30,
       checkinWindowAfterMin: 30,
+      memberAppCheckin: true,
     };
     const res = await patchWith(everyKey);
     expect(res.status).toBe(200);

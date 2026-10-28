@@ -19,6 +19,7 @@ import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import LocationsCard from "@/components/dashboard/LocationsCard";
 import { SettingImpact } from "@/components/dashboard/SettingImpact";
+import { MemberAppCheckinSetting } from "@/components/dashboard/MemberAppCheckinSetting";
 import { StaffUnlockControl } from "@/components/dashboard/UnlockSignIn";
 import { StaffTotpResetControl } from "@/components/dashboard/StaffTotpReset";
 import { ContactEmailSection } from "@/components/dashboard/ContactEmailSection";
@@ -2807,6 +2808,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         <div className="space-y-4 mb-6">
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <h2 className="font-semibold text-sm mb-4" style={{ color: "var(--tx-1)" }}>Check-in Window</h2>
+            {/* G5 (owner decision, 27 Oct 2026): app check-in is optional, on by default. */}
+            <MemberAppCheckinSetting initialEnabled={settings?.memberAppCheckin ?? true} />
             {/* Two short numeric fields paired (§4a.1). The panel takes the
                 full container width now, and a stack of 1090px-wide number
                 inputs is the absurd case — the answer is to pair the fields,

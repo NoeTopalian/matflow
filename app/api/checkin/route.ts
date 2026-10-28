@@ -16,6 +16,7 @@ import { logAudit } from "@/lib/audit-log";
 import { performCheckin, restorePackCreditsForAttendance } from "@/lib/checkin";
 import { assertSameOrigin } from "@/lib/csrf";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
+import { APP_CHECKIN_OFF_MESSAGE } from "@/lib/checkin-refusal";
 
 export const checkinSchema = z.object({
   classInstanceId: z.string().min(1),
@@ -83,6 +84,21 @@ export async function POST(req: Request) {
   let childName: string | null = null;
   // T7: the staff path names the member in the staff sentence.
   let staffMemberName: string | null = null;
+
+  // G5 (owner decision, 27 Oct 2026): the club may turn off check-in from the
+  // member app. Every request without a staff-supplied memberId is the
+  // member's own path (a parent checking in a child included: both resolve to
+  // "self" below), so that is what is refused. The staff path (admin / auto),
+  // the kiosk route, the card scanner and the coach register are unaffected.
+  // Read before any member lookup, so the refusal is the same for everyone.
+  if (!memberId) {
+    const club = await withTenantContext(tenantId, (tx) =>
+      tx.tenant.findUnique({ where: { id: tenantId }, select: { memberAppCheckin: true } }),
+    );
+    if (club?.memberAppCheckin === false) {
+      return NextResponse.json({ error: APP_CHECKIN_OFF_MESSAGE, reason: "app_checkin_off" }, { status: 403 });
+    }
+  }
 
   if (memberId) {
     // Admin checking in a specific member — validate member belongs to this tenant

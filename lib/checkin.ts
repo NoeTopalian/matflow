@@ -735,10 +735,17 @@ export async function returnClaimedPack(tx: Prisma.TransactionClient, tenantId: 
 }
 
 /**
- * Spend one credit of the member's usable pack (earliest expiry first), or
- * null when there is none. The decrement is a single guarded UPDATE, so two
- * concurrent check-ins can never both take the last credit (security audit
- * iteration 2 / M10). Called after the Member lock: Class, Member, pack.
+ * Spend one credit of the member's usable pack, or null when there is none.
+ *
+ * Usable (owner decision, 27 Oct 2026: expiry chosen per pack product; see
+ * lib/class-pack-terms.ts): status "active", credits left, and no expiry
+ * (NULL, a no-expiry product) or an expiry still ahead. The legacy status
+ * "expired" never matches, so an expired pack is not revived. Order: earliest
+ * expiry first, no-expiry packs last, then the oldest purchase.
+ *
+ * The decrement is a single guarded UPDATE, so two concurrent check-ins can
+ * never both take the last credit (security audit iteration 2 / M10). Called
+ * after the Member lock: Class, Member, pack.
  */
 async function claimPack(
   tx: Prisma.TransactionClient,
@@ -751,9 +758,9 @@ async function claimPack(
       tenantId,
       status: "active",
       creditsRemaining: { gt: 0 },
-      expiresAt: { gt: new Date() },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
     },
-    orderBy: { expiresAt: "asc" },
+    orderBy: [{ expiresAt: { sort: "asc", nulls: "last" } }, { purchasedAt: "asc" }, { id: "asc" }],
     select: { id: true },
   });
   if (!pack) return null;

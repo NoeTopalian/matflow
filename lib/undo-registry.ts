@@ -120,7 +120,7 @@ const RESTORABLE: Record<string, readonly string[]> = {
     "leaderboardOptOut", "preferredPaymentMethod",
   ],
   Tenant: [
-    "name", "timezone", "checkinWindowBeforeMin", "checkinWindowAfterMin", "primaryColor", "secondaryColor",
+    "name", "timezone", "checkinWindowBeforeMin", "checkinWindowAfterMin", "memberAppCheckin", "primaryColor", "secondaryColor",
     "textColor", "bgColor", "fontFamily", "logoUrl", "logoSize", "waiverTitle", "waiverContent",
     "kidsWaiverTitle", "kidsWaiverContent", "paymentRail", "acceptsBacs", "memberSelfBilling",
     "billingContactEmail", "billingContactUrl", "privacyContactEmail", "privacyPolicyUrl", "contactEmail",

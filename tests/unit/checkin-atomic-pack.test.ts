@@ -174,6 +174,30 @@ describe("performCheckin pack-redemption — M10 atomic decrement", () => {
     expect(redemptionCreateMock).not.toHaveBeenCalled();
   });
 
+  // Packs per product (owner decision, 27 Oct 2026): usable = status "active",
+  // credits left, and no expiry or an expiry still ahead. A legacy "expired"
+  // pack is never matched. Earliest expiry first, no-expiry packs last, then
+  // the oldest purchase.
+  it("usable = active, credits left, expiresAt NULL or in the future; earliest expiry first, no-expiry last", async () => {
+    findFirstMock.mockResolvedValueOnce({ id: "pack-1" });
+    updateManyMock.mockResolvedValueOnce({ count: 1 });
+    findUniqueMock.mockResolvedValueOnce({ creditsRemaining: 5 });
+
+    const before = Date.now();
+    const result = await performCheckin(BASE_ARGS);
+    expect(result.kind).toBe("success");
+
+    const query = findFirstMock.mock.calls[0][0] as { where: Record<string, unknown>; orderBy: unknown };
+    expect(query.where).toEqual({
+      memberId: "m-1", tenantId: "t-1", status: "active", creditsRemaining: { gt: 0 },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: expect.any(Date) } }],
+    });
+    const cutoff = ((query.where.OR as Array<{ expiresAt: { gt?: Date } | null }>)[1].expiresAt as { gt: Date }).gt.getTime();
+    expect(cutoff).toBeGreaterThanOrEqual(before);
+    expect(cutoff).toBeLessThanOrEqual(Date.now());
+    expect(query.orderBy).toEqual([{ expiresAt: { sort: "asc", nulls: "last" } }, { purchasedAt: "asc" }, { id: "asc" }]);
+  });
+
   it("does NOT use update() with bare where:{id} (the OLD non-atomic pattern)", async () => {
     // This is a static safety check via the route.ts module text — we
     // already mock the whole client — but assert that the test file's mock

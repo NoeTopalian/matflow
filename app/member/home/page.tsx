@@ -11,7 +11,7 @@ import MemberActionsPanel from "@/components/member/MemberActionsPanel";
 import { linkify } from "@/lib/linkify";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { toBlobProxyUrl } from "@/lib/blob-url";
-import { classifyCheckinResponse } from "@/lib/checkin-outcome";
+import { classifyCheckinResponse, APP_CHECKIN_OFF_MESSAGE } from "@/lib/checkin-outcome";
 import { readableOn } from "@/lib/color";
 import { describeSaveFailure } from "@/lib/save-failure";
 import { capacityState, capacityLabel } from "@/lib/capacity-label";
@@ -1020,12 +1020,19 @@ function SignInSheet({
   classes,
   kids,
   memberName,
+  appCheckinOff = false,
 }: {
   onClose: () => void;
   primaryColor: string;
   classes: TodayClass[];
   kids: Array<{ id: string; name: string }>;
   memberName: string;
+  /**
+   * G5: the club has check-in from the app turned off. Only reachable when
+   * the sheet was opened while the home payload was still loading; the sheet
+   * then says so in the club's sentence instead of vanishing.
+   */
+  appCheckinOff?: boolean;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   // Session E (kids): which family member is signing in. null === parent.
@@ -1128,7 +1135,14 @@ function SignInSheet({
           </button>
         </div>
 
-        {done ? (
+        {appCheckinOff ? (
+          <div className="px-5 py-8" data-testid="signin-app-checkin-off">
+            <p role="alert" className="text-sm text-center" style={{ color: "var(--member-text-muted)" }}>
+              {APP_CHECKIN_OFF_MESSAGE}
+            </p>
+            {/* Closed with the sheet's own close button and swipe, like every state of this sheet. */}
+          </div>
+        ) : done ? (
           <div className="flex flex-col items-center py-10 px-5">
             <div className="w-14 h-14 rounded-full flex items-center justify-center mb-3" style={{ background: hex(primaryColor, 0.15) }}>
               <CheckCircle2 className="w-7 h-7" style={{ color: "var(--member-ink)" }} />
@@ -1307,6 +1321,10 @@ export default function MemberHomePage() {
   // load used to show "No classes coming up" and "0 classes" under the error
   // banner (UI-RULES §7: an HTTP error is never an empty state).
   const [homeLoaded, setHomeLoaded]         = useState(false);
+  // G5 (owner decision, 27 Oct 2026): the club may turn off check-in from the
+  // app. null until /api/member/home answers; only an explicit false hides the
+  // button (POST /api/checkin refuses either way, so this is presentation).
+  const [appCheckin, setAppCheckin]         = useState<boolean | null>(null);
   const [openedAnnouncement, setOpenedAnnouncement] = useState<Announcement | null>(null);
   const announcementTriggerRef = useRef<HTMLElement | null>(null);
   // Session E (kids): drives the "Who's signing in?" picker inside SignInSheet.
@@ -1368,6 +1386,7 @@ export default function MemberHomePage() {
           status?: string;
           joinedAt?: string;
           stats?: { totalClasses?: number; firstCheckInAt?: string | null };
+          memberAppCheckin?: boolean;
         } | null;
         schedule: Array<{ id: string; name: string; startTime: string; endTime: string; coach: string; location: string; capacity: number | null; dayOfWeek: number; classInstanceId?: string | null; eligibility?: string }> | null;
         children: Array<{
@@ -1413,6 +1432,7 @@ export default function MemberHomePage() {
         if (me?.nextClass) setNextClass(me.nextClass);
         if (typeof me?.accountType === "string") setAccountType(me.accountType);
         if (typeof me?.status === "string") setMemberStatus(me.status);
+        setAppCheckin(me?.memberAppCheckin === false ? false : true);
         setAnniversary(matAnniversary(
           me?.joinedAt ?? null,
           me?.stats?.firstCheckInAt ?? null,
@@ -1779,8 +1799,14 @@ export default function MemberHomePage() {
       </div>
       )}
 
-      {/* ── Sign In CTA ── */}
-      <div className="px-5 mb-6">
+      {/* ── Sign In CTA ──
+          G5: hidden once the home payload says the club has turned check-in
+          from the app off. While it loads the control shows as before (the
+          page's own landmark); the route refuses either way, and a sheet
+          opened in that window shows the club's refusal sentence. The timetable, class sign-up and
+          the allowance line elsewhere are unaffected. */}
+      {appCheckin !== false && (
+      <div className="px-5 mb-6" data-testid="home-checkin-cta">
         <button
           onClick={() => setShowSignIn(true)}
           className="w-full py-4 rounded-2xl flex items-center justify-center gap-2.5 font-bold text-white text-base transition-all active:scale-[0.98] shadow-lg"
@@ -1793,6 +1819,7 @@ export default function MemberHomePage() {
           Sign In to Class
         </button>
       </div>
+      )}
 
       {/* ── Today's Classes ── (D5: only once the home data has loaded) */}
       {homeLoaded && (
@@ -1896,7 +1923,7 @@ export default function MemberHomePage() {
 
       {/* Sign-in sheet */}
       {showSignIn && (
-        <SignInSheet onClose={() => setShowSignIn(false)} primaryColor={primaryColor} classes={todayClasses} kids={kidsRoster} memberName={memberName} />
+        <SignInSheet onClose={() => setShowSignIn(false)} primaryColor={primaryColor} classes={todayClasses} kids={kidsRoster} memberName={memberName} appCheckinOff={appCheckin === false} />
       )}
 
       {/* First-time onboarding questionnaire */}

@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Members buy prepaid class packs (e.g. "10 classes for £100, valid 60 days"). Credits decrement on check-in via the [class-pack-purchase-and-redemption.md](class-pack-purchase-and-redemption.md) flow. This doc covers the BUY-side UX and route.
+Members buy prepaid class packs (e.g. "10 classes for £100, valid 60 days", or "10 classes · no expiry" when the club chose no expiry for that product, 27 Oct 2026). Credits decrement on check-in via the [class-pack-purchase-and-redemption.md](class-pack-purchase-and-redemption.md) flow. This doc covers the BUY-side UX and route.
 
 ## Surfaces
 
@@ -12,11 +12,11 @@ Members buy prepaid class packs (e.g. "10 classes for £100, valid 60 days"). Cr
 |---|---|
 | Pack detail + buy page | [/member/purchase/pack/[id]](../app/member/purchase/pack/[id]/page.tsx) — server-component fetch of pack details |
 | Client buy form | [PurchasePackClient](../components/member/PurchasePackClient.tsx) — payment-method radio + buy button + success/error |
-| Pack list (member profile) | [ClassPacksWidget](../components/member/ClassPacksWidget.tsx) embedded in [/member/profile](../app/member/profile/page.tsx) — owned packs (with credits remaining, days left) + available packs to buy |
+| Pack list (member profile) | [ClassPacksWidget](../components/member/ClassPacksWidget.tsx) embedded in [/member/profile](../app/member/profile/page.tsx) — owned packs ("6 classes left", plus "· expires 3 Feb 2027" when the pack has a date) + available packs to buy ("valid N days" or "no expiry") |
 
 ## API consumed
 
-- [`GET /api/class-packs/[id]`](../app/api/class-packs/[id]/route.ts) — pack details (name, description, totalCredits, validityDays, pricePence, currency)
+- [`GET /api/class-packs/[id]`](../app/api/class-packs/[id]/route.ts) — pack details (name, description, totalCredits, validityDays — days or null for never, pricePence, currency)
 - [`GET /api/member/class-packs`](../app/api/member/class-packs/route.ts) — `{ owned: MemberClassPack[], available: ClassPack[] }`
 - [`POST /api/member/class-packs/buy`](../app/api/member/class-packs/buy/route.ts) — body `{ packId, paymentMethod: "card"|"bank"|"cash" }`. Returns:
   - `card`: `{ stripeUrl }` for redirect to Stripe Checkout
@@ -54,9 +54,9 @@ Members buy prepaid class packs (e.g. "10 classes for £100, valid 60 days"). Cr
 ## Known limitations
 
 - **No pack stacking validation** — a member can buy a 10-pack while already holding a 20-pack with 18 credits left. Schema allows it; UX could warn.
-- **No partial refund** — if a pack expires with credits remaining, those credits are forfeit. No automatic refund flow.
+- **No partial refund** — if a dated pack expires with credits remaining, those credits are forfeit. No automatic refund flow. A no-expiry pack's credits stay usable until used or refunded.
 - **Card path requires Stripe Connect** — if tenant hasn't connected Stripe, the "Card" radio is disabled (greyed out).
-- **No "purchase history"** for the member — they see currently-active packs, but expired/refunded ones disappear.
+- **No "purchase history"** for the member — they see active packs that are still in date (or have no expiry), but expired/refunded ones disappear.
 - **Receipt email** — depends on Stripe's default; no MatFlow-branded receipt sent.
 
 ## Test coverage

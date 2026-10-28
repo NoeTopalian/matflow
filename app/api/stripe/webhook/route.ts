@@ -7,6 +7,7 @@ import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
 import { HANDLED_STRIPE_EVENT_TYPES } from "@/lib/stripe/handled-events";
 import { packCreditsAfterRefund } from "@/lib/pack-refund";
+import { packExpiresAt } from "@/lib/class-pack-terms";
 import * as Sentry from "@sentry/nextjs";
 
 import { resolveInvoicePaymentIds, resolveMandateCustomerId, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
@@ -494,7 +495,12 @@ export async function POST(req: NextRequest) {
           select: { id: true },
         });
         if (pack && packMember) {
-          const expiresAt = new Date(Date.now() + pack.validityDays * 24 * 60 * 60 * 1000);
+          // The purchase records its own term from the product as sold
+          // (owner decision, 27 Oct 2026: expiry chosen per pack product):
+          // purchasedAt + validityDays, or NULL for a no-expiry product.
+          // Written once, here; nothing rewrites it.
+          const purchasedAt = new Date();
+          const expiresAt = packExpiresAt(purchasedAt, pack.validityDays);
           const paymentIntentId = (obj.payment_intent as string) ?? null;
           // Mirror as a Payment row so the ledger is complete
           const amountPence = (obj.amount_total as number) ?? pack.pricePence;
@@ -507,6 +513,7 @@ export async function POST(req: NextRequest) {
                 memberId: metadata.memberId,
                 packId: pack.id,
                 creditsRemaining: pack.totalCredits,
+                purchasedAt,
                 expiresAt,
                 stripePaymentIntentId: paymentIntentId,
                 status: "active",
