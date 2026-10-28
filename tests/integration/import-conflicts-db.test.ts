@@ -83,7 +83,7 @@ async function importFile(club: Club, csv: string, mode: "create" | "refresh" = 
   FILES.set(url, csv);
   const job = await withRlsBypass((tx) =>
     tx.importJob.create({
-      data: { tenantId: club.tenantId, createdById: club.userId, source: "teamup", mode, fileName: `f${seq}.csv`, fileBlobUrl: url, status: "preview", fileHash: `${STAMP}-${seq}`, sourceExportedAt: new Date(`2026-10-${String(10 + seq).padStart(2, "0")}T08:00:00Z`), sourceExportedAtProvenance: "owner_stated" },
+      data: { tenantId: club.tenantId, createdById: club.userId, source: "teamup", mode, fileName: `f${seq}.csv`, fileBlobUrl: url, status: "preview", fileHash: `${STAMP}-${seq}`, sourceExportedAt: new Date(Date.UTC(2026, 9, 10 + seq, 8)), sourceExportedAtProvenance: "owner_stated" },
     }),
   );
   as(club);
