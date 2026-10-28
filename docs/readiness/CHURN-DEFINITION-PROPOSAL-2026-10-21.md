@@ -1,5 +1,7 @@
 # Churn: proposed definition, checked against the code (21 Oct 2026) — NOT YET APPROVED
 
+> **Superseded for the displayed churn figure (27 Oct 2026).** Noe's decision of 27 Oct 2026: "Churn: show the total cancellations in the selected period with optional filters, including people who joined during that period and then cancelled. Do not substitute an opening-cohort-only count. Keep churn distinct from broader Left/departure categories." The rate below, and the opening-cohort rate of 26 Oct (PR #48: "of the members active when the period began, how many left during it"), are no longer shown. Reports now shows a count of cancellations (`lostCancelled` moves in the period; a finished prepaid course stays in Left only) and **no percentage**: the denominator is still not approved (decision 1 below stays open). Branch `fix/churn-total-cancellations`; code `lib/membership-movement.ts` `cancellationsOf`. This document is kept as it was written, as the dated record.
+
 Branches read: `sean/batch-a-reporting-truth` (5046d763, the churn tile) and `sean/batch-c-headcount` (58055659, membership movement). Nothing here is implemented; this records the proposal, what the code and the data can support, one worked example, and the decisions Noe or Sean must take.
 
 ## The proposal (Noe, 20 Oct 2026)
