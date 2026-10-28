@@ -69,14 +69,16 @@ describe("getReportsDataCached", () => {
     // beside it, and monthlySignups[].basis.
     // v9 (26 Oct): the statistics period (range, attendanceBucket,
     // paymentHealth.failedInPeriod, monthlySignups[].inPeriod) and churn over it.
-    expect(REPORTS_CACHE_VERSION).toBe("v9");
+    // v10 (27 Oct): churn is a count of cancellations — no ratePct, no base, no churnRate.
+    expect(REPORTS_CACHE_VERSION).toBe("v10");
     await getReportsDataCached("tenant-A");
     expect(calls[0].key[1]).toBe(REPORTS_CACHE_VERSION);
   });
 
   it("an empty report carries the T2b count fields, with every undefined rate null", () => {
     const empty = createEmptyReportsData();
-    expect(empty.churn).toEqual({ ratePct: null, cancelled: 0, base: 0, joined: 0, net: 0 });
+    expect(empty.churn).toEqual({ cancelled: 0, joined: 0, net: 0 });
+    expect(empty).not.toHaveProperty("churnRate");
     expect(empty.retention).toEqual({ ratePct: null, survived: 0, cohort: 0 });
     expect(empty.paymentHealth.recovery).toEqual({ ratePct: null, recovered: 0, failedMembers: 0 });
     expect(empty.currentMembersByStatus).toEqual([]);

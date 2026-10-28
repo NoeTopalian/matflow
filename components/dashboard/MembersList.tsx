@@ -87,8 +87,7 @@ export interface MemberRow {
   parentMemberId?: string | null;
   hasKidsHint?: boolean;
   joinedAt: string; // ISO string
-  // Only set when status === "cancelled" (Member.cancelledAt). Drives the
-  // "churned-this-month" drill-through filter below.
+  // Only set when status === "cancelled" (Member.cancelledAt).
   cancelledAt?: string | null;
   /** "teamup" while TeamUp collects this member's money (readiness spec v3 §7). */
   billedBy?: string | null;
@@ -195,8 +194,8 @@ interface Props {
   otherOwing?: { count: number; guardians: number; toReconcile?: number; toReconcileGuardians?: number } | null;
   /**
    * D11: how many members each movement figure counted for the page's club
-   * month — the Reports Joined tile's numbers. Absent: counted from the
-   * flagged rows.
+   * month — the Reports Joined tile's numbers; `cancelled` is the churn
+   * tile's count of cancellations. Absent: counted from the flagged rows.
    */
   movers?: Record<MovementBucket, number> | null;
   /**
@@ -463,7 +462,7 @@ type StatusFilter = "all" | "attention" | "overdue" | "other-owing" | "failed-to
 
 // "new-this-month" / "churned-this-month": deep-link-only filters (no visible
 // chip, same pattern as "active"/"inactive"/"cancelled" below) — the Reports
-// page's "New this month" / "Churn rate this month" tiles link here so the
+// page's "New this month" / "Churn" tiles link here so the
 // owner can see the actual members behind those two numbers (Track A drill-
 // through). Review L4 (23 Oct 2026): the month is the CLUB's, resolved on the
 // server as [monthStart, nextMonthStart) (lib/club-month.ts) and passed in as
@@ -558,8 +557,8 @@ const MOVEMENT_FILTERS: Partial<Record<StatusFilter, MovementBucket>> = {
   "rejoined-this-month": "rejoined",
   "lost-this-month": "lost",
   "tasters-this-month": "tasterAdded",
-  // The churn tile's numerator (26 Oct 2026): active when the window opened, then left.
-  "churned-this-month": "churned",
+  // The churn tile (owner decision, 27 Oct 2026): everyone with a cancelled move in the window, joiners included.
+  "churned-this-month": "cancelled",
 };
 
 type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing" | "failedToReconcile" | "moved">>;
@@ -616,7 +615,7 @@ export function inStatusView(
     case "tasters-this-month":
     case "churned-this-month":
       // D11: the movement definition, flagged by the server — never joinedAt
-      // or cancelledAt (churn: active when the window opened, then left).
+      // or cancelledAt (churn: a cancelled move in the window).
       return !!m.moved?.includes(MOVEMENT_FILTERS[f]!);
     case "on-hold":
       return isOnHold(m);
@@ -655,12 +654,12 @@ function sliceHeadlineCopy(
   const when = month.isCurrent ? "this month" : `in ${month.label}`;
   const zone = `Months run midnight to midnight in the club's time zone (${month.timeZone})`;
   if (f === "churned-this-month") {
-    // Churn the normal way (D4, Noe 26 Oct 2026): the members active when the
-    // window began who then left — the churn tile's "n" in "x% (n of m)".
+    // Churn (owner decision, 27 Oct 2026): every cancellation in the window,
+    // joiners included — "N cancelled <period>", N the churn tile's count.
     return {
-      label: `Churned ${when}`,
-      includes: `Members who were active when ${month.isCurrent ? "the month" : "the period"} began and left ${when} (cancelled, or finished a prepaid course)`,
-      excludes: `Excludes guardians, and people who joined and left ${when}. ${zone}`,
+      label: `Cancelled ${when}`,
+      includes: `Training members who cancelled ${when}, including people who joined ${when}. Someone who cancelled twice is counted twice and listed once`,
+      excludes: `Excludes guardians and finished prepaid courses (those are in Left). ${zone}`,
     };
   }
   // D11: the movement definition (lib/membership-movement.ts), one slice per
@@ -871,11 +870,9 @@ export default function MembersList({ members: initial, primaryColor, role, guar
       ? toReconcileCount
       : MOVEMENT_FILTERS[statusFilter]
       ? (movers?.[MOVEMENT_FILTERS[statusFilter]!] ?? members.filter((m) => m.moved?.includes(MOVEMENT_FILTERS[statusFilter]!)).length)
-      : statusFilter === "churned-this-month"
-        ? counts.churnedThisMonth
-        : statusFilter === "overdue"
-          ? counts.overdue
-          : headlineCounts[headlineKey] ?? counts.all;
+      : statusFilter === "overdue"
+        ? counts.overdue
+        : headlineCounts[headlineKey] ?? counts.all;
   const headlineCopy = sliceCopy ?? payerCopy ?? otherOwingCopy ?? POPULATION_COPY[headlineKey];
   // Q4 A-1: members on hold stay inside the Active headline, marked as such.
   const holdNote = headlineKey === "active" && counts.activeOnHold > 0 ? `${counts.activeOnHold} on hold` : null;

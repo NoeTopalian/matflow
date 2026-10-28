@@ -38,7 +38,7 @@ import { MEMBER_LIST_COUNT_KEYS, countMemberRows } from "@/lib/member-list-count
 import { clubMonthWindow } from "@/lib/club-month";
 import { shownPaymentStatus } from "@/lib/overdue";
 import { getReportsData } from "@/lib/reports";
-import { loadMonthMovers } from "@/lib/membership-report";
+import { loadMonthMovement, loadMonthMovers } from "@/lib/membership-report";
 import { classifyDbTarget, assertTestBranch, skipReason } from "./helpers/db-target";
 
 const TARGET = classifyDbTarget(process.env.DATABASE_URL);
@@ -318,6 +318,14 @@ describe.skipIf(!HAS_DB)(`L5 Members totals above the ${CAP}-row cap on TEST${SK
       loadMonthMovers(tx, capIds.C, new Date(), { start: new Date(month.monthStart), at: new Date() }),
     );
     expect(reports.summary.newMembersThisMonth).toBe(movers.new.length);
+    // Churn (owner decision, 27 Oct 2026): the cancellations in the month, the
+    // count the Members churn slice is headed by. Each cancelled member here
+    // cancelled once, so it also equals the cancelledAt count in SQL.
+    const drill = await withTenantContext(capIds.C, (tx) =>
+      loadMonthMovement(tx, capIds.C, new Date(), { start: new Date(month.monthStart), at: new Date() }),
+    );
+    expect(reports.churn.cancelled).toBe(drill.cancelledMoves);
+    expect(drill.movers.cancelled.length).toBe(drill.cancelledMoves);
     expect(reports.churn.cancelled).toBe(server.churnedThisMonth);
     // Review L2: overdue is a PAYER total on both screens, guardians who pay
     // included (the fixture has active parent accounts marked overdue).

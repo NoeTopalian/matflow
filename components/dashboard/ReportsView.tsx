@@ -310,8 +310,28 @@ export function joinedTileDetail(t: MembershipReport["totals"]): string {
 
 /** The "New this month" tile's scope, in the movement words. */
 export const NEW_SCOPE = "First ever start. Rejoins, tasters and imports are counted apart";
-/** D4 (Noe, 26 Oct 2026: churn "how it normally is"). */
-const CHURN_FORMULA = "Of the members active when the period began, how many left during it";
+/**
+ * Churn (owner decision, 27 Oct 2026, superseding the opening-cohort rate of
+ * 26 Oct): the total cancellations in the period, as a count. No percentage:
+ * its denominator is not approved. The tile is titled "Churn", the word the
+ * owner and Sean use; its value line names the unit ("4 cancellations in the
+ * last 3 months"), so "Churn (cancellations)" would say it twice. The CSV has
+ * no value words, so its row names the unit: "Churn (cancellations) …".
+ */
+export const CHURN_TITLE = "Churn";
+/** What the churn count includes and leaves out, on the tile and in the CSV. */
+export const CHURN_COUNTED =
+  "Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide";
+
+/** "cancellations in the last 3 months": the words after the churn count. */
+export function churnUnitText(cancelled: number, words: Pick<ReturnType<typeof periodWords>, "during">): string {
+  return `${cancelled === 1 ? "cancellation" : "cancellations"} ${words.during}`;
+}
+
+/** "4 cancellations in the last 3 months": the churn tile's value line. */
+export function churnValueText(cancelled: number, words: Pick<ReturnType<typeof periodWords>, "during">): string {
+  return `${formatNumber(cancelled)} ${churnUnitText(cancelled, words)}`;
+}
 
 /**
  * Delta as display text, or null when nothing moved. A percentage always
@@ -473,7 +493,8 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     ["Summary", "Active classes", data.summary.totalActiveClasses, "Now · live timetable classes"],
     // Health rows (T2b): the same text the tiles print, so the file and the
     // screen agree. Club-wide — the class/age filters never scope them.
-    ["Health", `Churn ${words.during}`, formatRatio(churn.ratePct, churn.cancelled, churn.base), `${CHURN_FORMULA} · club-wide`],
+    // Churn: the count of cancellations, never a percentage (no denominator is approved).
+    ["Health", `${CHURN_TITLE} (cancellations) ${words.during}`, churn.cancelled, withEstimate(CHURN_COUNTED, thisMonthEstimate)],
     // D11: the Joined tile, line for line, and the members behind each figure.
     ["Health", `Joined ${words.during} (new + rejoined)`, churn.joined, withEstimate(`${joinedTileDetail(pm.totals)} · ${MEMBERSHIP_COPY.definition}`, thisMonthEstimate)],
     ["Health", `New ${words.during}`, pm.totals.new, withEstimate("First ever start", thisMonthEstimate)],
@@ -492,7 +513,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // Owner instruction of 24 Oct 2026: a failed charge is not a debt until it
     // is reconciled, so it is its own row and in no debt total.
     ["Payments", FAILED_TO_RECONCILE_COPY.label, data.paymentHealth.failedToReconcileCount ?? 0, failedToReconcileDetail(data.paymentHealth.failedToReconcileGuardianCount ?? 0)],
-    ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of monthly churn"],
+    ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of churn"],
     ...membershipCsvRows(data.membership),
     ...data.weeklyAttendance.map((row) => (data.attendanceBucket === "month"
       ? ["Monthly attendance", row.week, row.count, row.isCurrentWeek ? "Current month" : ""]
@@ -1546,18 +1567,27 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             default adopted 17 Oct 2026; not an owner decision) puts it
             immediately beside churn, overriding the old "no neighbour" note
             for this tile only.
-            Every rate prints its counts, "x% (n of m)"; an empty base is "—". */}
+            Churn is a count of cancellations (owner decision, 27 Oct 2026),
+            never a percentage until a denominator is approved. Every rate
+            prints its counts, "x% (n of m)"; an empty base is "—". */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
           <MetricCard
             icon={UserMinus}
-            label={`Churn rate ${words.during}`}
-            value={<RatioValue pct={churn.ratePct} n={churn.cancelled} base={churn.base} />}
-            detail={churn.base > 0 ? CHURN_FORMULA : "No active members when the period began"}
+            label={CHURN_TITLE}
+            value={
+              <>
+                {formatNumber(churn.cancelled)}{" "}
+                <span className="text-base font-semibold">
+                  {churnUnitText(churn.cancelled, words)}
+                </span>
+              </>
+            }
+            detail={withEstimate(CHURN_COUNTED, estimateLabel(pm.basis, estimatedCaption(membership)))}
             primaryColor={primaryColor}
-            // The churn slice lists exactly the tile's n: active when the
-            // period began, then left (the movement definition).
+            // The churn slice lists the people behind the count: everyone
+            // with a cancelled move in the period, joiners included.
             href={monthDrillHref("churned-this-month", period, range)}
-            hrefLabel={`Churn rate ${words.during}`}
+            hrefLabel={`${CHURN_TITLE}: ${churnValueText(churn.cancelled, words)}`}
           />
           <JoinedThisMonthTile
             joined={churn.joined}
@@ -1588,7 +1618,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               6-month survival: {formatRatio(retention.ratePct, retention.survived, retention.cohort)}
             </p>
             <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
-              Of members who joined 6+ months ago, still active today. A different cohort and window to the monthly churn rate above — not its inverse, and the two numbers will not sum to 100%.
+              Of members who joined 6+ months ago, still active today. A different measure from the churn count above — not its inverse.
             </p>
           </div>
         </Card>

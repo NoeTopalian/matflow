@@ -114,7 +114,7 @@ function reports(m: MembershipReport = membership()): ReportsData {
   return {
     ...base,
     summary: { ...base.summary, activeMembers: 32, currentMembers: 35, attendanceThisWeek: 45, attendanceLastWeek: 40, newMembersThisMonth: 2, newMembersLastMonth: 2 },
-    churn: { ratePct: 3, cancelled: 1, base: 33, joined: 3, net: 2 },
+    churn: { cancelled: 1, joined: 3, net: 2 },
     membership: m,
     // The period is this month: its movement is October's tally, the run before it September.
     periodMovement: { totals: tallyOf(m.movementsByMonth[2]), basis: m.movementsByMonth[2].basis, previousBasis: m.movementsByMonth[1].basis },
@@ -268,7 +268,7 @@ describe("estimate labels: a past month's Members drill-through", () => {
         primaryColor="#3b82f6"
         role="owner"
         monthWindow={{ ...sep, isCurrent: false }}
-        movers={{ new: 1, rejoined: 0, lost: 0, tasterAdded: 0, churned: 0 }}
+        movers={{ new: 1, rejoined: 0, lost: 0, tasterAdded: 0, cancelled: 0 }}
         moversBasis={{ basis, caption: "Estimated from your TeamUp history" }}
       />,
     );

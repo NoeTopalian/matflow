@@ -1,7 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { usableTimezone } from "./class-time";
 import { TRAINING_MEMBER } from "./member-population";
-import { clubMonthWindowForKey } from "./club-month";
 import {
   buildMembership,
   combinedBasis,
@@ -66,7 +65,6 @@ export function emptyMembershipReport(): MembershipReport {
     boundary: null,
     window: { from: "", to: "", months: MEMBERSHIP_WINDOW_MONTHS },
     openingHeadcount: 0,
-    openingChurned: 0,
     headcountByMonth: [],
     movementsByMonth: [],
     totals: { new: 0, rejoined: 0, lost: 0, lostCancelled: 0, lostCompleted: 0, net: 0, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 0 },
@@ -151,17 +149,13 @@ export async function loadMembershipReport(
 
 /** The movement figures for a statistics page's whole period (lib/report-period). */
 export interface PeriodMembership {
-  /** Moves inside the period: joined (new + rejoined), left, net, tasters. */
-  totals: MovementTally;
   /**
-   * Active members just before the period opened: the churn base (churn =
-   * left in the period ÷ this; Noe, 26 Oct 2026, the normal definition).
-   * Null when the club has no history from before the period, so the base is
-   * unknown — the page shows "—", never a churn worked out against 0.
+   * Moves inside the period: joined (new + rejoined), left, net, tasters, and
+   * the cancellations churn counts (`lostCancelled`, cancellationsOf; owner
+   * decision, 27 Oct 2026). No churn base: a percentage's denominator is not
+   * approved, so none is carried.
    */
-  openingHeadcount: number | null;
-  /** Churn's numerator: of those `openingHeadcount` members, how many left in the period (each once). */
-  churned: number;
+  totals: MovementTally;
   /** Whether the period's moves were recorded at the time or are (partly) estimated. */
   basis: MembershipBasis;
   /** The same figures for the equal run of months straight before (comparisons); null when that run has no data. */
@@ -171,8 +165,8 @@ export interface PeriodMembership {
 /**
  * A statistics page's membership figures for its period: the monthly series
  * over the chart's months (at least as long as the period, ending with it)
- * and the period's own totals and opening headcount. One read, two replays of
- * the same events, so the chart, the tiles and the churn base cannot disagree.
+ * and the period's own totals. One read, replays of the same events, so the
+ * chart, the Joined tile and the churn count cannot disagree.
  */
 export async function loadMembershipForPeriod(
   tx: TxClient,
@@ -185,18 +179,10 @@ export async function loadMembershipForPeriod(
   const own = buildMembership({ ...loaded.input, months, endMonth });
   const before = buildMembership({ ...loaded.input, months, endMonth: previousEndMonth });
   const beforeBasis = combinedBasis(before.movementsByMonth.map((m) => m.basis));
-  // The period opens at club midnight on the 1st of its first month. Its
-  // opening headcount means something only when the club's earliest event
-  // came before that instant; otherwise there is no base to divide by.
-  const firstMonth = own.headcountByMonth[0]?.month;
-  const opensAt = firstMonth ? new Date(clubMonthWindowForKey(firstMonth, own.timeZone)!.monthStart).getTime() : null;
-  const hasHistory = opensAt !== null && own.firstDataAt !== null && new Date(own.firstDataAt).getTime() < opensAt;
   return {
     report: { ...series, historySource: loaded.historySource, undatedHistory: loaded.undatedHistory, fromJoinDates: loaded.fromJoinDates },
     period: {
       totals: own.totals,
-      openingHeadcount: hasHistory ? own.openingHeadcount : null,
-      churned: hasHistory ? own.openingChurned : 0,
       basis: combinedBasis(own.movementsByMonth.map((m) => m.basis)),
       previous: beforeBasis === "none" ? null : { totals: before.totals, basis: beforeBasis },
     },
@@ -222,16 +208,19 @@ export async function loadMonthMovers(
  * loadMonthMovers plus whether that month's moves are recorded or (partly)
  * estimated, and what an estimate came from (estimatedCaption), so a past
  * month's drill-through is labelled exactly as the Reports chart labels it.
+ * `cancelledMoves` is the churn tile's count for the window (cancellations as
+ * moves, cancellationsOf): the churn drill-through's headline, while its rows
+ * are `movers.cancelled`, each person once.
  */
 export async function loadMonthMovement(
   tx: TxClient,
   tenantId: string,
   now: Date,
   window: { start: Date; at: Date },
-): Promise<{ movers: Record<MovementBucket, string[]>; basis: MembershipBasis; caption: string }> {
+): Promise<{ movers: Record<MovementBucket, string[]>; basis: MembershipBasis; caption: string; cancelledMoves: number }> {
   const loaded = await loadMembershipInput(tx, tenantId, now);
-  const { movers, basis } = moversAndBasisInWindow(loaded.input, window);
-  return { movers, basis, caption: estimatedCaption(loaded) };
+  const { movers, basis, cancelledMoves } = moversAndBasisInWindow(loaded.input, window);
+  return { movers, basis, caption: estimatedCaption(loaded), cancelledMoves };
 }
 
 /**

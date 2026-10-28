@@ -39,7 +39,7 @@ const CLUB: MemberRow[] = [
   member({ id: "a2", name: "Ben Active", joinedAt: thisMonth, moved: ["new"] }),
   member({ id: "i1", name: "Ivy Inactive", status: "inactive" }),
   member({ id: "t1", name: "Tom Taster", status: "taster", joinedAt: thisMonth, moved: ["tasterAdded"] }),
-  member({ id: "c1", name: "Cy Cancelled", status: "cancelled", joinedAt: thisMonth, cancelledAt: thisMonth, moved: ["new", "lost"] }),
+  member({ id: "c1", name: "Cy Cancelled", status: "cancelled", joinedAt: thisMonth, cancelledAt: thisMonth, moved: ["new", "lost", "cancelled"] }),
   member({ id: "c2", name: "Di Cancelled", status: "cancelled", cancelledAt: lastMonth }),
   member({ id: "g1", name: "Gus Guardian", accountType: "parent" }),
 ];
@@ -124,16 +124,18 @@ describe("search scope on Active", () => {
 });
 
 describe("Reports drill-through slices name themselves", () => {
-  it("churned-this-month: the header counts members active when the month began who left (churn the normal way, 26 Oct 2026)", () => {
+  it("churned-this-month: the header counts every cancellation this month, joiners included (owner decision, 27 Oct 2026)", () => {
     currentSearch = "filter=churned-this-month";
-    // Ed was a member before this month and left in it: churn. Cy joined AND left this month: never in the base, not churn.
-    const ed = member({ id: "c3", name: "Ed Earlier", status: "cancelled", joinedAt: lastMonth, cancelledAt: thisMonth, moved: ["lost", "churned"] });
+    // Ed was a member before this month and cancelled in it; Cy joined AND cancelled this month: both are churn.
+    const ed = member({ id: "c3", name: "Ed Earlier", status: "cancelled", joinedAt: lastMonth, cancelledAt: thisMonth, moved: ["lost", "cancelled"] });
     render(<MembersList members={[...CLUB, ed]} primaryColor="#3b82f6" role="owner" />);
-    expect(headline()).toBe("1 churned this month");
+    expect(headline()).toBe("2 cancelled this month");
     expect(shown("Ed Earlier")).toBe(true);
-    expect(shown("Cy Cancelled")).toBe(false);
+    expect(shown("Cy Cancelled")).toBe(true);
+    expect(scope()).toContain("including people who joined this month");
+    expect(scope()).toContain("finished prepaid courses (those are in Left)");
     expect(scope()).not.toContain("Excludes cancelled members");
-    expect(screen.getByTestId("members-tile-headline").querySelector("p")!.textContent).toBe("1");
+    expect(screen.getByTestId("members-tile-headline").querySelector("p")!.textContent).toBe("2");
   });
 
   it("new-this-month (D11): the header counts first starts by the movement definition, since-cancelled included, tasters apart", () => {

@@ -60,8 +60,7 @@ function reports(overrides: Partial<ReportsData> = {}): ReportsData {
       totalMembers: 15, currentMembers: 12, activeMembers: 9, inactiveMembers: 2, tasterMembers: 1, cancelledMembers: 3,
       activeOnHoldMembers: 1, newMembersThisMonth: 3,
     },
-    churn: { ratePct: 10, cancelled: 1, base: 10, joined: 3, net: 2 },
-    churnRate: 10,
+    churn: { cancelled: 1, joined: 3, net: 2 },
     topClasses: [
       { name: "Fundamentals", count: 30, sessions: 10, averageAttendance: 3, fillRate: null, capacityTotal: 0 },
       { name: "Open Mat", count: 10, sessions: 5, averageAttendance: 2, fillRate: null, capacityTotal: 0 },

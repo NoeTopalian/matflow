@@ -21,6 +21,9 @@
  *             course from its dated end (B-2: the member stays inactive,
  *             labelled "Completed course").
  * - Net       new + rejoined - left.
+ * - Churn     (owner decision, 27 Oct 2026) the cancellations alone: every
+ *             lostCancelled move in the period, joiners included, never a
+ *             completed course (that stays in Left only). See cancellationsOf.
  * - Tasters added  a person whose first known state is a taster. Counted on
  *             its own line, never in Joined or Net: a taster is "new" when
  *             they first start.
@@ -135,13 +138,6 @@ export interface MembershipSeries {
   window: { from: string; to: string; months: number };
   /** Active members just before the window opens, so the first month's change can be checked too. */
   openingHeadcount: number;
-  /**
-   * Churn's numerator (D4, Noe 26 Oct 2026: "how it normally is"): of the
-   * `openingHeadcount` members, how many left (cancelled, or finished a prepaid
-   * course) inside the window — each person once, however many times they
-   * left. Never more than `openingHeadcount`.
-   */
-  openingChurned: number;
   headcountByMonth: MonthHeadcount[];
   movementsByMonth: MonthMovement[];
   totals: MovementTally;
@@ -316,6 +312,32 @@ export function joinedOf(t: Pick<MovementTally, "new" | "rejoined">): number {
   return t.new + t.rejoined;
 }
 
+/**
+ * Churn (owner decision, 27 Oct 2026: "show the total cancellations in the
+ * selected period … including people who joined during that period and then
+ * cancelled. Do not substitute an opening-cohort-only count."), the one
+ * figure every churn shows.
+ *
+ * - Counted: every cancelled move in the period — a member active (or paused
+ *   by hand) who is cancelled. Joiners included; no opening-cohort rule.
+ * - Not counted: a finished prepaid course (lostCompleted: Left only); a
+ *   taster or an inactive former member who is cancelled (they were never in,
+ *   so nothing is lost); a cancelled member cancelled again (no move).
+ * - Repeats: the model counts MOVES, as Left and Joined do (memberMovements
+ *   emits one lostCancelled per crossing of the active line), so one person
+ *   who cancels, rejoins and cancels again inside the period is TWO
+ *   cancellations. The Members drill-through lists that person once. That
+ *   events-not-people choice came with the movement model (Q6, agent default
+ *   17 Oct; the 26 Oct review chose moves for Joined); the owner has not
+ *   ruled on it for churn — an open question, not settled here.
+ * - Scope: club-wide training members (never guardians). The Reports class
+ *   and age-group filters do not narrow it (lib/reports.ts `filters`).
+ * - No percentage: the denominator is not approved, so none is computed.
+ */
+export function cancellationsOf(t: Pick<MovementTally, "lostCancelled">): number {
+  return t.lostCancelled;
+}
+
 function addMove(t: MovementTally, kind: MovementKind) {
   t[kind] += 1;
   t.lost = t.lostCancelled + t.lostCompleted;
@@ -415,10 +437,11 @@ function reconciledEvents(input: Pick<BuildMembershipInput, "events" | "live" | 
 
 /**
  * The Members drill-throughs: one per figure on the Joined tile (D11), and
- * "churned" — members active just before the window who left inside it, the
- * churn tile's numerator (26 Oct 2026).
+ * "cancelled" — everyone with a cancelled move in the window, joiners
+ * included: the people behind the churn tile (owner decision, 27 Oct 2026;
+ * cancellationsOf).
  */
-export type MovementBucket = "new" | "rejoined" | "lost" | "tasterAdded" | "churned";
+export type MovementBucket = "new" | "rejoined" | "lost" | "tasterAdded" | "cancelled";
 
 export function movementBucket(kind: MovementKind): MovementBucket | null {
   if (kind === "new" || kind === "rejoined" || kind === "tasterAdded") return kind;
@@ -448,31 +471,35 @@ export function moversInWindow(
 export function moversAndBasisInWindow(
   input: Pick<BuildMembershipInput, "events" | "live" | "now" | "boundary">,
   window: { start: Date; at: Date },
-): { movers: Record<MovementBucket, string[]>; basis: MembershipBasis; joinedMoves: number } {
-  const out: Record<MovementBucket, Set<string>> = { new: new Set(), rejoined: new Set(), lost: new Set(), tasterAdded: new Set(), churned: new Set() };
+): { movers: Record<MovementBucket, string[]>; basis: MembershipBasis; joinedMoves: number; cancelledMoves: number } {
+  const out: Record<MovementBucket, Set<string>> = { new: new Set(), rejoined: new Set(), lost: new Set(), tasterAdded: new Set(), cancelled: new Set() };
   // Joins as MOVES (a member who rejoined twice joined twice): the Reports Joined tile's figure.
   let joinedMoves = 0;
+  // Cancellations as MOVES: the churn tile's figure (cancellationsOf), so the drill-through's headline equals it.
+  let cancelledMoves = 0;
   let first: number | null = null;
   let estimatedMoves = 0;
-  const openedAt = new Date(window.start.getTime() - 1);
   for (const list of reconciledEvents(input).byMember.values()) {
     const t0 = list[0]?.occurredAt.getTime();
     if (t0 !== undefined && (first === null || t0 < first)) first = t0;
-    const activeAtOpening = stateAt(list, openedAt) === "active";
     for (const m of memberMovements(list)) {
       const t = m.at.getTime();
       if (t < window.start.getTime() || t > window.at.getTime()) continue;
       if (m.estimated) estimatedMoves += 1;
       const bucket = movementBucket(m.kind);
       if (bucket) out[bucket].add(m.memberId);
-      if (bucket === "lost" && activeAtOpening) out.churned.add(m.memberId);
+      if (m.kind === "lostCancelled") {
+        out.cancelled.add(m.memberId);
+        cancelledMoves += 1;
+      }
       if (m.kind === "new" || m.kind === "rejoined") joinedMoves += 1;
     }
   }
   return {
-    movers: { new: [...out.new], rejoined: [...out.rejoined], lost: [...out.lost], tasterAdded: [...out.tasterAdded], churned: [...out.churned] },
+    movers: { new: [...out.new], rejoined: [...out.rejoined], lost: [...out.lost], tasterAdded: [...out.tasterAdded], cancelled: [...out.cancelled] },
     basis: movementWindowBasis(window, first, input.boundary?.getTime() ?? null, estimatedMoves),
     joinedMoves,
+    cancelledMoves,
   };
 }
 
@@ -513,18 +540,11 @@ export function buildMembership(input: BuildMembershipInput): MembershipSeries {
   // Active members at the instant whose state came from a reconstructed event (corrections aside).
   const estimatedActive = windows.map(() => 0);
   let openingHeadcount = 0;
-  let openingChurned = 0;
   const allMoves: Movement[] = [];
-  const windowEnd = windows[windows.length - 1].at.getTime();
 
   for (const list of byMember.values()) {
-    const moves = memberMovements(list);
-    allMoves.push(...moves);
-    if (stateAt(list, openingAt) === "active") {
-      openingHeadcount += 1;
-      const t0 = windows[0].start.getTime();
-      if (moves.some((m) => movementBucket(m.kind) === "lost" && m.at.getTime() >= t0 && m.at.getTime() <= windowEnd)) openingChurned += 1;
-    }
+    allMoves.push(...memberMovements(list));
+    if (stateAt(list, openingAt) === "active") openingHeadcount += 1;
     windows.forEach((w, i) => {
       let latest: MovementEvent | null = null;
       for (const e of list) {
@@ -578,7 +598,6 @@ export function buildMembership(input: BuildMembershipInput): MembershipSeries {
     firstDataAt: first === null ? null : new Date(first).toISOString(),
     window: { from: firstWithData.label, to: windows[windows.length - 1].label, months: windows.length - windows.indexOf(firstWithData) },
     openingHeadcount,
-    openingChurned,
     headcountByMonth: windows.map((w, i) => ({
       month: w.key,
       label: w.label,

@@ -206,7 +206,7 @@ export default async function MembersPage({ searchParams }: Props) {
     // Reports run of months that ends this month: up to now, as Reports counts it).
     at: new Date(Math.min(now.getTime(), new Date(monthWindow.nextMonthStart).getTime() - 1)),
   };
-  const { movers, basis: moversBasis, caption: moversCaption } = await withTenantContext(
+  const { movers, basis: moversBasis, caption: moversCaption, cancelledMoves } = await withTenantContext(
     session!.user.tenantId,
     (tx) => loadMonthMovement(tx, session!.user.tenantId, now, moveWindow),
     { maxWait: 10_000, timeout: 30_000 },
@@ -261,7 +261,8 @@ export default async function MembersPage({ searchParams }: Props) {
         monthWindow={monthWindow}
         serverCounts={counts}
         otherOwing={otherOwingTotals(otherOwingRows)}
-        movers={{ new: movers.new.length, rejoined: movers.rejoined.length, lost: movers.lost.length, tasterAdded: movers.tasterAdded.length, churned: movers.churned.length }}
+        // Churn's headline is the tile's count of cancellations (moves); its rows are the people, each once.
+        movers={{ new: movers.new.length, rejoined: movers.rejoined.length, lost: movers.lost.length, tasterAdded: movers.tasterAdded.length, cancelled: cancelledMoves }}
         moversBasis={{ basis: moversBasis, caption: moversCaption }}
         supportScope={(session!.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
       />

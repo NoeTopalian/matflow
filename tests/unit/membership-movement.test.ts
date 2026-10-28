@@ -8,12 +8,14 @@
 import { describe, it, expect } from "vitest";
 import {
   buildMembership,
+  cancellationsOf,
   clubMonthWindows,
   compareEvents,
   estimatedCaption,
   headcountSeries,
   memberMovements,
   movements,
+  moversAndBasisInWindow,
   stateAt,
   tallyChange,
   type MovementEvent,
@@ -546,44 +548,73 @@ describe("estimatedCaption: what an estimate came from", () => {
   });
 });
 
-// Churn the normal way (D4, Noe 26 Oct 2026): of the members active just before
-// the window, how many left inside it — each person once, so n ≤ m always.
-describe("openingChurned: churn's numerator", () => {
+// Churn (owner decision, 27 Oct 2026): the total cancellations in the period,
+// joiners included — no opening-cohort restriction. It supersedes the
+// opening-cohort count of 26 Oct. A finished prepaid course is Left, never
+// churn. A cancellation is a move (lostCancelled), so one person who cancels,
+// rejoins and cancels again inside the period is two cancellations, as Left
+// and Joined count moves; the Members drill-through lists that person once.
+describe("churn: every cancellation in the window (owner decision, 27 Oct 2026)", () => {
   const B = new Date("2025-01-01T00:00:00Z");
-  const build = (events: MovementEvent[], live: { id: string; status: string }[]) =>
-    buildMembership({ events, live, now: NOW, timeZone: TZ, boundary: B, months: 3, endMonth: "2026-10" });
-
-  it("a member there before the window who left in it is churn", () => {
-    const m = build([ev("a", "active", "2025-03-01T00:00:00Z"), ev("a", "cancelled", "2026-09-10T10:00:00Z", { fromStatus: "active" })], [{ id: "a", status: "cancelled" }]);
-    expect([m.openingChurned, m.openingHeadcount]).toEqual([1, 1]);
+  // Aug – Oct 2026 in the club's zone (London is on BST on 1 Aug), counted to NOW.
+  const WINDOW = { start: new Date("2026-07-31T23:00:00Z"), at: NOW };
+  const build = (events: MovementEvent[], live: { id: string; status: string }[]) => ({
+    series: buildMembership({ events, live, now: NOW, timeZone: TZ, boundary: B, months: 3, endMonth: "2026-10" }),
+    drill: moversAndBasisInWindow({ events, live, now: NOW, boundary: B }, WINDOW),
   });
 
-  it("someone who joined and left inside the window is not churn (never in the base), though they are Left", () => {
-    const m = build([ev("j", "active", "2026-08-05T10:00:00Z"), ev("j", "cancelled", "2026-09-20T10:00:00Z", { fromStatus: "active" })], [{ id: "j", status: "cancelled" }]);
-    expect([m.openingChurned, m.openingHeadcount, m.totals.lost]).toEqual([0, 0, 1]);
+  it("a member there before the window who cancelled in it is counted", () => {
+    const { series, drill } = build([ev("a", "active", "2025-03-01T00:00:00Z"), ev("a", "cancelled", "2026-09-10T10:00:00Z", { fromStatus: "active" })], [{ id: "a", status: "cancelled" }]);
+    expect(cancellationsOf(series.totals)).toBe(1);
+    expect([drill.movers.cancelled, drill.cancelledMoves]).toEqual([["a"], 1]);
   });
 
-  it("paused (inactive) before the window and cancelled in it: not active at the start, so not churn", () => {
-    const m = build([
-      ev("p", "active", "2025-03-01T00:00:00Z"),
-      ev("p", "inactive", "2026-06-01T10:00:00Z", { fromStatus: "active" }),
-      ev("p", "cancelled", "2026-09-01T10:00:00Z", { fromStatus: "inactive" }),
-    ], [{ id: "p", status: "cancelled" }]);
-    expect(m.openingChurned).toBe(0);
+  it("someone who joined and cancelled inside the window is counted (no opening-cohort restriction)", () => {
+    const { series, drill } = build([ev("j", "active", "2026-08-05T10:00:00Z"), ev("j", "cancelled", "2026-09-20T10:00:00Z", { fromStatus: "active" })], [{ id: "j", status: "cancelled" }]);
+    expect([cancellationsOf(series.totals), series.totals.new, series.totals.lost]).toEqual([1, 1, 1]);
+    expect([drill.movers.cancelled, drill.cancelledMoves]).toEqual([["j"], 1]);
   });
 
-  it("left twice in the window counts once; left and came back still left", () => {
-    const m = build([
+  it("a finished prepaid course is counted in Left, never as churn", () => {
+    const { series, drill } = build([
+      ev("d", "active", "2025-03-01T00:00:00Z"),
+      ev("d", "inactive", "2026-09-10T10:00:00Z", { reason: "import", fromStatus: "active", sourceAction: "import_refresh" }),
+    ], [{ id: "d", status: "inactive" }]);
+    expect([series.totals.lost, series.totals.lostCompleted, cancellationsOf(series.totals)]).toEqual([1, 1, 0]);
+    expect([drill.movers.lost, drill.movers.cancelled, drill.cancelledMoves]).toEqual([["d"], [], 0]);
+  });
+
+  it("cancel, rejoin and cancel again inside the window is two cancellations; the drill-through lists the person once", () => {
+    const { series, drill } = build([
       ev("t", "active", "2025-03-01T00:00:00Z"),
       ev("t", "cancelled", "2026-08-10T10:00:00Z", { fromStatus: "active" }),
       ev("t", "active", "2026-09-01T10:00:00Z", { fromStatus: "cancelled" }),
       ev("t", "cancelled", "2026-10-02T10:00:00Z", { fromStatus: "active" }),
-      ev("r", "active", "2025-03-01T00:00:00Z"),
-      ev("r", "cancelled", "2026-08-10T10:00:00Z", { fromStatus: "active" }),
-      ev("r", "active", "2026-09-01T10:00:00Z", { fromStatus: "cancelled" }),
-    ], [{ id: "t", status: "cancelled" }, { id: "r", status: "active" }]);
-    expect([m.openingChurned, m.openingHeadcount]).toEqual([2, 2]);
-    expect(m.totals.lost).toBe(3);
+    ], [{ id: "t", status: "cancelled" }]);
+    expect([cancellationsOf(series.totals), series.totals.lost, series.totals.rejoined]).toEqual([2, 2, 1]);
+    expect([drill.movers.cancelled, drill.cancelledMoves]).toEqual([["t"], 2]);
+  });
+
+  it("paused (set inactive by hand) before the window and cancelled in it is a cancellation", () => {
+    const { series, drill } = build([
+      ev("p", "active", "2025-03-01T00:00:00Z"),
+      ev("p", "inactive", "2026-06-01T10:00:00Z", { fromStatus: "active" }),
+      ev("p", "cancelled", "2026-09-01T10:00:00Z", { fromStatus: "inactive" }),
+    ], [{ id: "p", status: "cancelled" }]);
+    expect(cancellationsOf(series.totals)).toBe(1);
+    expect(drill.movers.cancelled).toEqual(["p"]);
+  });
+
+  it("not a cancellation: a taster who never started, or a cancelled member cancelled again", () => {
+    const { series, drill } = build([
+      ev("k", "taster", "2026-08-03T10:00:00Z"),
+      ev("k", "cancelled", "2026-08-20T10:00:00Z", { fromStatus: "taster" }),
+      ev("x", "active", "2025-03-01T00:00:00Z"),
+      ev("x", "cancelled", "2026-05-01T10:00:00Z", { fromStatus: "active" }),
+      ev("x", "cancelled", "2026-09-01T10:00:00Z", { fromStatus: "cancelled" }),
+    ], [{ id: "k", status: "cancelled" }, { id: "x", status: "cancelled" }]);
+    expect(cancellationsOf(series.totals)).toBe(0);
+    expect([drill.movers.cancelled, drill.cancelledMoves]).toEqual([[], 0]);
   });
 });
 
