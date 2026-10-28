@@ -33,6 +33,13 @@ await q(`insert into "Member" (id, "tenantId", email, name, status, "billedBy", 
   [teamupId, club.tenantId, `pt-teamup-${teamupId.slice(0, 8)}@example.test`, importedAt]);
 // Expected: trials 8, converted 2 (25%), retained 2 of 2 (100%).
 const CONVERSION = "25% (2 of 8)";
+// W3 (owner decision, 27 Oct 2026, 23:30): the drop-offs name their base, and
+// each coach's lost and no-decision counts carry their share of the trials.
+const LOST_SHARE = "13% (1 of 8) of trials"; // 12.5, half-up
+const UNDECIDED_SHARE = "63% (5 of 8) of trials"; // 62.5, half-up
+const COACH_LOST = /Lost ?13% \(1 of 8\)/;
+const COACH_UNDECIDED = /No decision ?63% \(5 of 8\)/;
+const ACTIVE_DETAIL = /Includes \d+ on hold · \d+% of \d+ active · \d+% of \d+ current members/;
 const TEAMUP = "Billed by TeamUp · imported 3 Oct 2026";
 L.note("seed", "N1 seeded 8 trials (2 converted, 1 lost, 5 deciding) and one TeamUp-billed member", { expectedConversion: CONVERSION, teamup: TEAMUP });
 
@@ -54,6 +61,14 @@ try {
     { found: reportsText.includes(CONVERSION), around: reportsText.slice(Math.max(0, reportsText.indexOf("25%") - 80), reportsText.indexOf("25%") + 80) });
   L.check("reports", "G1b no bare percentage without counts in the funnel (no \"25.0%\" or \"25%\" alone)", !/\b25\.0%/.test(reportsText) && !/25%(?! \(2 of 8\))/.test(reportsText),
     { matches: reportsText.match(/25(\.0)?%.{0,14}/g) });
+  L.check("reports", `W3a the funnel drop-offs name their base: "${LOST_SHARE}", "${UNDECIDED_SHARE}"`,
+    reportsText.includes(LOST_SHARE) && reportsText.includes(UNDECIDED_SHARE),
+    { lost: reportsText.includes(LOST_SHARE), undecided: reportsText.includes(UNDECIDED_SHARE) });
+  L.check("reports", "W3b the coach row gives lost and no decision as shares of the coach's trials",
+    COACH_LOST.test(reportsText) && COACH_UNDECIDED.test(reportsText),
+    { around: reportsText.slice(Math.max(0, reportsText.search(/Lost ?\d/) - 60), reportsText.search(/Lost ?\d/) + 80) });
+  L.check("reports", "W3c the Active members tile gives on hold and active as shares of named populations",
+    ACTIVE_DETAIL.test(reportsText), { match: reportsText.match(/Includes \d+ on hold.{0,80}/)?.[0] });
   await shot(page, "percent-teamup-reports");
 
   // The attribution page: the same funnel and the per-coach table.
@@ -74,6 +89,10 @@ try {
   const fs = await import("node:fs");
   const csv = fs.readFileSync(await dl.path(), "utf8");
   L.check("csv", "G1d the Reports CSV funnel rows carry the same \"25% (2 of 8)\"", csv.includes(CONVERSION), { lines: csv.split("\n").filter((l) => l.startsWith("Conversion funnel")).slice(0, 6) });
+  L.check("csv", "W3d the CSV drop-off and coach rows read as the screen does",
+    csv.includes(`Lost before joining,1,${LOST_SHARE}`) && csv.includes(`No decision recorded,5,${UNDECIDED_SHARE}`)
+      && csv.includes("lost 13% (1 of 8) · no decision 63% (5 of 8)") && ACTIVE_DETAIL.test(csv),
+    { lines: csv.split("\n").filter((l) => /^(Conversion|Summary,Active members)/.test(l)).slice(0, 10) });
 
   // G2: the member profile label.
   await page.goto(`/dashboard/members/${teamupId}`);
@@ -102,6 +121,9 @@ try {
   await p2.getByText(/of trials|Trials run/).first().waitFor({ timeout: 60000 }).catch(() => {});
   const aText = norm(await p2.locator("main").innerText({ timeout: 60000 }));
   L.check("mobile", "M3 the attribution funnel's counts are visible at 390 px", aText.includes(CONVERSION), { found: aText.includes(CONVERSION) });
+  L.check("mobile", "M4 the drop-off shares and the coach row shares are visible at 390 px",
+    aText.includes(LOST_SHARE) && aText.includes(UNDECIDED_SHARE) && COACH_LOST.test(aText) && COACH_UNDECIDED.test(aText),
+    { lost: aText.includes(LOST_SHARE), coachLost: COACH_LOST.test(aText) });
 
   L.check("journey", "J1 no uncaught page errors", errors.length === 0, errors);
 } finally {
