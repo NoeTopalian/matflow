@@ -13,7 +13,9 @@
 //     no-expiry pack and a dated pack still in date, refuses a dated pack past
 //     its date and a legacy "expired" pack, and never spends a refunded one;
 //   - claim order: earliest expiry first, no-expiry last, then oldest purchase;
-//   - the schema end state: both columns nullable, no expiry CHECK.
+//   - the schema end state: both columns nullable, the withdrawn draft's CHECK gone;
+//   - the guard (20261027140000): an expired pack must carry its date, so marking a no-expiry pack expired is
+//     refused and expiring a dated pack is allowed.
 
 import { vi, describe, it, beforeAll, afterAll, expect } from "vitest";
 
@@ -285,7 +287,7 @@ describe.skipIf(!HAS_DB)("class packs: expiry chosen per product (27 Oct 2026)",
     });
   });
 
-  it("schema end state: expiresAt and validityDays nullable, and no expiry CHECK on MemberClassPack", async () => {
+  it("schema end state: expiresAt and validityDays nullable; the withdrawn draft's CHECK gone, the expired-needs-date guard present", async () => {
     const cols = await withRlsBypass((tx) => tx.$queryRaw<Array<{ table_name: string; column_name: string; is_nullable: string }>>`
       select table_name, column_name, is_nullable from information_schema.columns
       where table_schema = 'public' and ((table_name = 'MemberClassPack' and column_name = 'expiresAt') or (table_name = 'ClassPack' and column_name = 'validityDays'))`);
@@ -294,5 +296,41 @@ describe.skipIf(!HAS_DB)("class packs: expiry chosen per product (27 Oct 2026)",
     const checks = await withRlsBypass((tx) => tx.$queryRaw<Array<{ conname: string }>>`
       select conname from pg_constraint where conrelid = '"MemberClassPack"'::regclass and contype = 'c'`);
     expect(checks.map((c) => c.conname)).not.toContain("MemberClassPack_expired_has_expiry_check");
+    expect(checks.map((c) => c.conname)).toContain("MemberClassPack_expired_needs_date_check");
+  });
+
+  // 20261027140000: the build before this release marks a pack "expired" when `expiresAt < now`, and `null < now`
+  // is true in JavaScript. The CHECK refuses that write for a no-expiry pack, so an older deployment still serving
+  // (deploy window, Vercel Skew Protection) cannot take a member's no-expiry pack away. Dated packs may still expire.
+  describe("guard: an expired pack must carry its date", () => {
+    const refused = (e: unknown) => /MemberClassPack_expired_needs_date_check|23514|check constraint/i.test(String((e as Error)?.message ?? e));
+
+    it("marking a no-expiry pack expired is refused (the older build's updateMany) and the pack stays active", async () => {
+      const ids = await resetPacks([{ key: "open", expiresAt: null, purchasedAt: new Date(Date.now() - DAY), product: openProduct, credits: 6 }]);
+      const err = await withRlsBypass((tx) => tx.memberClassPack.updateMany({ where: { id: { in: [ids.open] } }, data: { status: "expired" } }))
+        .then(() => null, (e: unknown) => e);
+      expect(err).not.toBeNull();
+      expect(refused(err)).toBe(true);
+      expect(await packState(ids.open)).toMatchObject({ status: "active", creditsRemaining: 6, expiresAt: null });
+    });
+
+    it("inserting an expired pack with no date is refused (raw SQL)", async () => {
+      const id = `ppp-raw-${STAMP}`;
+      const err = await withRlsBypass((tx) => tx.$executeRaw`
+        INSERT INTO "MemberClassPack" (id, "tenantId", "memberId", "packId", "creditsRemaining", "expiresAt", status)
+        VALUES (${id}, ${tenantId}, ${memberId}, ${openProduct}, 3, NULL, 'expired')`)
+        .then(() => null, (e: unknown) => e);
+      expect(err).not.toBeNull();
+      expect(refused(err)).toBe(true);
+      expect(await withRlsBypass((tx) => tx.memberClassPack.count({ where: { id } }))).toBe(0);
+    });
+
+    it("marking a dated pack past its date expired is allowed", async () => {
+      const past = new Date(Date.now() - DAY);
+      const ids = await resetPacks([{ key: "past", expiresAt: past, purchasedAt: new Date(Date.now() - 31 * DAY), credits: 2 }]);
+      const r = await withRlsBypass((tx) => tx.memberClassPack.updateMany({ where: { id: ids.past }, data: { status: "expired" } }));
+      expect(r.count).toBe(1);
+      expect(await packState(ids.past)).toMatchObject({ status: "expired", creditsRemaining: 2, expiresAt: past });
+    });
   });
 });
