@@ -434,6 +434,33 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     expect(preview.childrenWithoutParent).toBe(1);
   }, 90_000);
 
+  it("two different files of ONE club committed at the same instant, both naming one new person: the person exists once", async () => {
+    const uma = { name: "Uma West", email: E("uma"), plan: BEG, dob: "1998-03-03" };
+    const vic = { name: "Vic Yeo", email: E("vic"), plan: BEG, dob: "1998-04-04" };
+    const wyn = { name: "Wyn Zee", email: E("wyn"), plan: BEG, dob: "1998-05-05" };
+    const mk = async (people: P[]) => {
+      const url = `https://blob.test.local/${STAMP}/${++seq}.csv`;
+      FILES.set(url, fileOf(people));
+      return withRlsBypass((tx) => tx.importJob.create({
+        data: { tenantId: A.tenantId, createdById: A.userId, source: "teamup", mode: "create", fileName: `f${seq}.csv`, fileBlobUrl: url, status: "preview", fileHash: `${STAMP}-${seq}`, sourceExportedAt: new Date("2026-10-27T08:00:00Z"), sourceExportedAtProvenance: "owner_stated" },
+      }));
+    };
+    const [j1, j2] = [await mk([uma, vic]), await mk([uma, wyn])];
+    as(A);
+    const go = (id: string) => commit(
+      new Request(`https://test.local/api/admin/import/${id}/commit`, { method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: "{}" }),
+      { params: Promise.resolve({ id }) },
+    );
+    const [r1, r2] = await Promise.all([go(j1.id), go(j2.id)]);
+    expect([r1.status, r2.status]).toEqual([200, 200]);
+    const b1 = (await r1.json()) as { imported: number };
+    const b2 = (await r2.json()) as { imported: number };
+    expect(b1.imported + b2.imported).toBe(3); // Uma once, Vic, Wyn
+    for (const p of [uma, vic, wyn]) {
+      expect(await withRlsBypass((tx) => tx.member.count({ where: { tenantId: A.tenantId, email: p.email } })), p.name).toBe(1);
+    }
+  }, 120_000);
+
   it("rollback removes only what the import created and nobody touched: members who existed before, and a member edited since, stay", async () => {
     const sam = { name: "Sam Tor", email: E("sam"), plan: BEG, dob: "1999-01-01" };
     const tia = { name: "Tia Vos", email: E("tia"), plan: BEG, dob: "1999-02-02" };
