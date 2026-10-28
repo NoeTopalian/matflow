@@ -141,6 +141,17 @@ describe("coach tick — class eligibility, no override", () => {
     expect(audit.metadata).not.toHaveProperty("overrides");
   });
 
+  it("the cancelled-session re-read under the Class lock is filtered by tenant (TENANT-SCOPE-CONVENTION)", async () => {
+    setRoster(3, true);
+    setMemberTier("tier_adv", "Advanced");
+    const res = await POST(req({ memberId: "mem_1", attended: true }), { params });
+    expect(res.status).toBe(200);
+    expect(h.instanceFindFirst).toHaveBeenCalledWith({
+      where: { id: "inst_1", isCancelled: false, class: { tenantId: "tenant_a" } },
+      select: { id: true },
+    });
+  });
+
   it("a class with neither restriction admits anyone, as before", async () => {
     setTiers([]);
     setMemberTier(null, null);

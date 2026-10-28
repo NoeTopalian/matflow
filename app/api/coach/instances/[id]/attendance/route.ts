@@ -94,7 +94,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // that did not run (W6, 28 Oct 2026). Read after the Class lock
           // lockedClassEligibility took, so it is the freshest committed value.
           const live = await tx.classInstance.findFirst({
-            where: { id: instance.id, isCancelled: false },
+            where: { id: instance.id, isCancelled: false, class: { tenantId } },
             select: { id: true },
           });
           if (!live) return { kind: "class_cancelled" as const };
