@@ -37,6 +37,7 @@ import { POST as commit } from "@/app/api/admin/import/[id]/commit/route";
 import { GET as conflictsGET } from "@/app/api/admin/import/[id]/conflicts/route";
 import { GET as jobGET } from "@/app/api/admin/import/[id]/route";
 import { POST as previewPOST } from "@/app/api/admin/import/[id]/preview/route";
+import { POST as rollbackPOST } from "@/app/api/admin/import/[id]/rollback/route";
 import { deleteMemberCascade } from "@/lib/member-delete";
 
 const mockAuth = vi.mocked(auth);
@@ -94,6 +95,25 @@ async function importFile(club: Club, csv: string, mode: "create" | "refresh" = 
   expect(res.status, JSON.stringify(body)).toBe(200);
   return { jobId: job.id, body: body as { imported?: number; toReview?: number; manifest: Record<string, unknown> } };
 }
+/** Upload as the panel does: preview first, then commit the same job (real routes). */
+async function previewThenCommit(club: Club, csv: string, source: "teamup" | "generic" = "teamup") {
+  const url = `https://blob.test.local/${STAMP}/${++seq}.csv`;
+  FILES.set(url, csv);
+  const job = await withRlsBypass((tx) =>
+    tx.importJob.create({
+      data: { tenantId: club.tenantId, createdById: club.userId, source, mode: "create", fileName: `f${seq}.csv`, fileBlobUrl: url, status: "pending", fileHash: `${STAMP}-${seq}`, sourceExportedAt: new Date(`2026-10-${String(10 + (seq % 18)).padStart(2, "0")}T08:00:00Z`), sourceExportedAtProvenance: "owner_stated" },
+    }),
+  );
+  as(club);
+  const req = (path: string) => new Request(`https://test.local/api/admin/import/${job.id}/${path}`, { method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: "{}" });
+  const pv = await previewPOST(req("preview"), { params: Promise.resolve({ id: job.id }) });
+  const preview = (await pv.json()) as Record<string, unknown> & { willImport: number; willImportWithPlan?: number; willImportWithoutPlan?: number; toReviewUncertain: number; childrenWithoutParent: number; repeatedInFile?: number };
+  expect(pv.status, JSON.stringify(preview)).toBe(200);
+  const cm = await commit(req("commit"), { params: Promise.resolve({ id: job.id }) });
+  const committed = (await cm.json()) as { imported: number; toReview?: number; manifest: Record<string, unknown> & { existing: { ambiguous: number }; created: { unmatchedPlan: number } } };
+  expect(cm.status, JSON.stringify(committed)).toBe(200);
+  return { jobId: job.id, preview, committed };
+}
 async function review(club: Club, jobId: string, role: "owner" | "manager" = "owner") {
   as(club, role);
   const res = await conflictsGET(new Request(`https://test.local/api/admin/import/${jobId}/conflicts`), { params: Promise.resolve({ id: jobId }) });
@@ -135,6 +155,19 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     expect(body.toReview).toBe(0);
     expect(await count(A.tenantId)).toBe(3);
     expect(body.manifest.existing).toEqual({ duplicates: 3, conflicts: 0, ambiguous: 0 });
+  }, 60_000);
+
+  it("a TeamUp import gives no new person a plan, even on an exact name match: listed with the file's label and why (27 Oct rule)", async () => {
+    // Beginners 2026 exists as a MatFlow plan; the export states no price, billing period or currency.
+    for (const p of Object.values(PEOPLE)) {
+      const m = await memberBy(A.tenantId, p.email);
+      expect(m.membershipTierId, p.name).toBeNull();
+      expect(m.membershipType, p.name).toBe(BEG);
+    }
+    const r = (await review(A, firstJob)).body as unknown as { withoutPlan: { name: string; planLabel: string }[]; planReview: { label: string; reason: string; people: number }[] };
+    expect(r.withoutPlan.map((x) => x.name).sort()).toEqual(["Ann Lee", "Ben Ito", "Cat Ode"]);
+    expect(r.withoutPlan.every((x) => x.planLabel === BEG)).toBe(true);
+    expect(r.planReview).toEqual([expect.objectContaining({ label: BEG, reason: "source_has_no_price_facts", people: 3 })]);
   }, 60_000);
 
   it("a later upload never attaches its membership history to people already in the club (review 25 Oct, H-1)", async () => {
@@ -221,6 +254,9 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     await withRlsBypass((tx) => tx.member.updateMany({ where: { tenantId: A.tenantId, email: fox.email }, data: { phone: "07700 900456" } }));
     const { jobId } = await importFile(A, fileOf([{ ...fox }]).replace(",GB,,,", ",GB,,07700 900999,"));
     const id = (await memberBy(A.tenantId, fox.email)).id;
+    // A status refresh with a file Fox is not in lists Fox (by id and name) among its exceptions.
+    const { jobId: checkId } = await importFile(A, fileOf(Object.values(PEOPLE)), "refresh");
+    expect(JSON.stringify(await withRlsBypass((tx) => tx.importJob.findFirstOrThrow({ where: { id: checkId }, select: { manifest: true } })))).toContain("Fox Ward");
     // The real deletion path (lib/member-delete), which also scrubs the import review lists (task 4).
     await withRlsBypass(async (tx) => {
       await tx.importedMembership.updateMany({ where: { memberId: id }, data: { memberId: null } });
@@ -231,6 +267,8 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     const stored = JSON.stringify(await withRlsBypass((tx) => tx.importJob.findMany({ where: { tenantId: A.tenantId }, select: { manifest: true } })));
     expect(stored).not.toContain("07700 900999");
     expect(stored).not.toContain(id);
+    // 27 Oct 2026: not the review list only — the refresh's exceptions and every other entry naming Fox.
+    expect(stored).not.toContain("Fox Ward");
     const r = await review(A, jobId);
     expect(r.status).toBe(200);
     const text = JSON.stringify(r.body);
@@ -245,7 +283,9 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     expect(jobText).not.toContain("Fox Ward");
     expect(jobText).not.toContain("07700 900999");
     expect(jobText).toContain('"conflicts":[{"kind":"conflict"}]');
-  }, 60_000);
+    const check = await jobGET(new Request(`https://test.local/api/admin/import/${checkId}`), { params: Promise.resolve({ id: checkId }) });
+    expect(JSON.stringify(await check.json())).not.toContain("Fox Ward");
+  }, 90_000);
 
   it("the preview's counts are what the commit then does with the same file (task 2, 25 Oct)", async () => {
     // A mix: exact repeats, staff-edited people, an uncertain match and a new person.
@@ -274,7 +314,7 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     expect(p.toReviewUncertain).toBeGreaterThanOrEqual(1); // Eve
   }, 90_000);
 
-  it("a clear new person whose plan matches no single MatFlow plan is imported without one and listed (import and flag, 25 Oct)", async () => {
+  it("a clear new person whose plan matches no single MatFlow plan is imported without one and listed (import and flag, 25 Oct; 27 Oct rule)", async () => {
     // Two plans whose names differ only by case: a name that fits both matches neither.
     await withRlsBypass(async (tx) => {
       for (const name of ["Juniors 2026", "JUNIORS 2026"]) {
@@ -309,4 +349,109 @@ describe.skipIf(!HAS_DB)("later uploads never silently overwrite MatFlow (owner 
     expect(other.status).toBe(404);
     expect(other.body.conflicts).toBeUndefined();
   }, 60_000);
+
+  // ── 27 Oct 2026: preview = commit, including uncertainty inside the file ──
+
+  it("generic CSV: a plan is set only when name, billing period, price and currency agree; four-weekly is not monthly; preview, commit, review list and a retry agree", async () => {
+    await withRlsBypass(async (tx) => {
+      await tx.membershipTier.create({ data: { tenantId: A.tenantId, name: "Gen Monthly", pricePence: 7900, currency: "GBP", billingCycle: "monthly", isKids: false, isActive: true } });
+    });
+    const csv = [
+      "name,email,plan,plan price,billing period,currency",
+      `Nia Bell,${E("nia")},Gen Monthly,79.00,monthly,GBP`,
+      `Oli Rand,${E("oli")},Gen Monthly,79.00,every 4 weeks,GBP`,
+      `Pam Cole,${E("pam")},Gen Monthly,75.00,monthly,GBP`,
+      `Quin Dye,${E("quin")},Gen Monthly,79.00,monthly,`,
+    ].join("\n");
+    const { jobId, preview, committed } = await previewThenCommit(A, csv, "generic");
+    expect(preview.willImport).toBe(4);
+    expect(committed.imported).toBe(4);
+    expect(preview.willImportWithPlan).toBe(1);
+    expect(preview.willImportWithoutPlan).toBe(3);
+    expect(committed.manifest.created.unmatchedPlan).toBe(3);
+    expect(preview.planReview).toEqual(committed.manifest.planReview);
+    expect((await memberBy(A.tenantId, E("nia"))).membershipTierId).not.toBeNull();
+    for (const who of ["oli", "pam", "quin"]) {
+      const m = await memberBy(A.tenantId, E(who));
+      expect(m.membershipTierId, who).toBeNull();
+      expect(m.membershipType, who).toBe("Gen Monthly"); // the file's label, kept as evidence
+    }
+    const reasons = (committed.manifest.planReview as { reason: string }[]).map((r) => r.reason).sort();
+    expect(reasons).toEqual(["missing_currency", "period_differs", "price_differs"]);
+    const r = (await review(A, jobId)).body as unknown as { withoutPlan: { name: string }[] };
+    expect(r.withoutPlan.map((x) => x.name).sort()).toEqual(["Oli Rand", "Pam Cole", "Quin Dye"]);
+    // A retry of the same file (a new upload) creates nobody and never assigns a plan afterwards.
+    const again = await previewThenCommit(A, csv, "generic");
+    expect(again.preview.willImport).toBe(0);
+    expect(again.committed.imported).toBe(0);
+    expect((await memberBy(A.tenantId, E("oli"))).membershipTierId).toBeNull();
+    expect(await withRlsBypass((tx) => tx.member.count({ where: { tenantId: A.tenantId, email: { in: [E("nia"), E("oli"), E("pam"), E("quin")] } } }))).toBe(4);
+  }, 120_000);
+
+  it("rows of one file sharing an email: an exact repeat is skipped, different people are both listed and nobody is created; the preview says so", async () => {
+    const csv = [
+      "name,email",
+      `Liz Hart,${E("liz")}`,
+      `Lou Hart,${E("liz")}`,
+      `Mo May,${E("mo")}`,
+      `Mo May,${E("mo")}`,
+    ].join("\n");
+    const { preview, committed } = await previewThenCommit(A, csv, "generic");
+    expect(preview.willImport).toBe(committed.imported);
+    expect(committed.imported).toBe(1); // Mo, once
+    expect(preview.repeatedInFile).toBe(1);
+    expect(preview.toReviewUncertain).toBe(2);
+    expect(committed.manifest.existing.ambiguous).toBe(2);
+    expect(await withRlsBypass((tx) => tx.member.count({ where: { tenantId: A.tenantId, email: E("liz") } }))).toBe(0);
+  }, 90_000);
+
+  it("a child whose parent row is uncertain is listed and linked to nobody (never to the member holding the address)", async () => {
+    await withRlsBypass((tx) => tx.member.create({ data: { tenantId: A.tenantId, name: "Someone Else", email: E("pat") } }));
+    const csv = fileOf([
+      { name: "Pat Lane", email: E("pat"), plan: BEG, dob: "1985-01-01" },
+      { name: "Kit Lane", email: E("pat"), plan: BEG, dob: "2016-01-01" },
+    ]);
+    const before = await count(A.tenantId);
+    const { preview, committed } = await previewThenCommit(A, csv);
+    expect(preview.willImport).toBe(0);
+    expect(committed.imported).toBe(0);
+    expect(preview.toReviewUncertain).toBe(2);
+    expect(committed.manifest.existing.ambiguous).toBe(2);
+    expect(await count(A.tenantId)).toBe(before);
+    const other = await memberBy(A.tenantId, E("pat"));
+    expect(await withRlsBypass((tx) => tx.member.count({ where: { tenantId: A.tenantId, parentMemberId: other.id } }))).toBe(0);
+  }, 90_000);
+
+  it("a child whose parent row is refused (a staff login holds the address): the preview does not promise the child", async () => {
+    await withRlsBypass((tx) => tx.user.create({ data: { tenantId: A.tenantId, email: E("rex"), name: "Rex Staff", role: "coach", passwordHash: "x" } }));
+    const csv = fileOf([
+      { name: "Rex Moor", email: E("rex"), plan: BEG, dob: "1984-01-01" },
+      { name: "Kip Moor", email: E("rex"), plan: BEG, dob: "2017-01-01" },
+    ]);
+    const { preview, committed } = await previewThenCommit(A, csv);
+    expect(preview.willImport).toBe(committed.imported);
+    expect(committed.imported).toBe(0);
+    expect(preview.childrenWithoutParent).toBe(1);
+  }, 90_000);
+
+  it("rollback removes only what the import created and nobody touched: members who existed before, and a member edited since, stay", async () => {
+    const sam = { name: "Sam Tor", email: E("sam"), plan: BEG, dob: "1999-01-01" };
+    const tia = { name: "Tia Vos", email: E("tia"), plan: BEG, dob: "1999-02-02" };
+    const before = await withRlsBypass((tx) => tx.member.findMany({ where: { tenantId: A.tenantId }, select: { id: true }, orderBy: { id: "asc" } }));
+    const { jobId } = await importFile(A, fileOf([...Object.values(PEOPLE), sam, tia]));
+    // Staff edit Tia after the import (an edit newer than the job's completion).
+    await withRlsBypass((tx) => tx.member.updateMany({ where: { tenantId: A.tenantId, email: tia.email }, data: { phone: "07700 900111", updatedAt: new Date(Date.now() + 60_000) } }));
+    as(A);
+    const res = await rollbackPOST(
+      new Request(`https://test.local/api/admin/import/${jobId}/rollback`, { method: "POST", headers: { origin: "https://test.local", host: "test.local" } }),
+      { params: Promise.resolve({ id: jobId }) },
+    );
+    const body = (await res.json()) as { removed?: number; kept?: { name: string; reasons: string[] }[] };
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    expect(body.removed).toBe(1); // Sam
+    expect(body.kept?.map((k) => k.name)).toEqual(["Tia Vos"]);
+    const after = await withRlsBypass((tx) => tx.member.findMany({ where: { tenantId: A.tenantId, id: { in: before.map((m) => m.id) } }, select: { id: true } }));
+    expect(after.length).toBe(before.length);
+    expect((await memberBy(A.tenantId, tia.email)).phone).toBe("07700 900111");
+  }, 90_000);
 });

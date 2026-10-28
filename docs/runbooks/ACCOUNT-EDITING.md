@@ -160,7 +160,7 @@ Resolution is a human decision per group (correct one address through the normal
 Correcting a member's address does not change who they are to an import. Their source identity is
 `Member.externalRef` (`teamup:<email>|<name>`, written once by the first members import); no edit route rewrites it,
 so a later TeamUp status refresh or attendance import with the original rows still finds the same member, and a
-refresh never writes an address (it writes standing fields only). The attendance import has one fallback: a row whose
+refresh never writes anything to a member (since 25 Oct 2026 it lists differences for staff to resolve by hand). The attendance import has one fallback: a row whose
 key matches no externalRef is matched on name **and** the member's **current** address, and only when exactly one
 member carries both. So after a correction, rows with the old address and no stored key stay **pending** for the
 owner to decide (never matched to whoever holds that address now), and rows already carrying the new address match.
