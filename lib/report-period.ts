@@ -269,3 +269,16 @@ export function monthOptions(latest: string, count: number): { key: string; labe
     return { key, label: `${SHORT(key)} ${key.slice(0, 4)}` };
   });
 }
+
+/**
+ * The comparison words for a period figure against the equal period before it
+ * (owner decision, 27 Oct 2026, 23:30: part periods are named). A period that
+ * ends today is incomplete ("so far"), the one before it whole ("all"); the
+ * default "this month" reads exactly as lib/percent's MONTH_SO_FAR.
+ */
+export function periodChange(range: ReportRange): { current: string; previous: string } {
+  const words = periodWords(range);
+  return range.isCurrent
+    ? { current: `so far ${words.during}`, previous: `all ${words.before}` }
+    : { current: words.during, previous: words.before };
+}

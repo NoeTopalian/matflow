@@ -22,3 +22,115 @@ export function ratePct1dp(n: number, base: number): number | null {
 export function wholePct(n: number, base: number): number | null {
   return base > 0 ? percent(n, base) : null;
 }
+
+/*
+ * Display text. Every percentage a person reads carries its count and base
+ * (required by Sean's note relayed 14 Oct and the owner instruction of 24 Oct
+ * 2026): "42% (21 of 50)". These live here, pure and server-safe, rather
+ * than in the client-only Reports primitives;
+ * `components/dashboard/reports-primitives.tsx` re-exports them. Scope (owner
+ * decision, 27 Oct 2026): the Reports and statistics section (Reports,
+ * Analysis, Conversion) and the Reports CSV. Other surfaces, such as the AI
+ * monthly-report prompt, do not use them yet.
+ */
+
+const count = (x: number) => x.toLocaleString("en-GB");
+
+/** The percentage half of `formatRatio` ("10%", "3.2%"), or "—" on an empty base or an undefined rate. */
+export function formatPct(pct: number | null, base: number): string {
+  if (base <= 0 || pct === null || !Number.isFinite(pct)) return "—";
+  return `${pct.toLocaleString("en-GB", { maximumFractionDigits: 1 })}%`;
+}
+
+/** The counts half of `formatRatio`: "(1 of 10)". */
+export function ratioCounts(n: number, base: number): string {
+  return `(${count(n)} of ${count(base)})`;
+}
+
+/**
+ * A rate with its count and base: "10% (1 of 10)". `pct` is the
+ * already-computed percentage (it may carry one decimal). A base of 0, or a
+ * null or non-finite pct, renders "—": an undefined rate is never "0%"
+ * (MATFLOW-SPECIFICATION-2026-10.md:144, divide-by-zero → null). Counts use
+ * en-GB grouping ("1,234").
+ */
+export function formatRatio(pct: number | null, n: number, base: number): string {
+  const p = formatPct(pct, base);
+  return p === "—" ? p : `${p} ${ratioCounts(n, base)}`;
+}
+
+/**
+ * A rate behind a minimum-sample guard (the conversion funnel: a rate over
+ * fewer than `MIN_TRIALS_FOR_RATE` trials is null). Two guards, both visible:
+ * no base at all is "—" (never "0%" or "NaN%"); a base under the minimum is
+ * "N/A · too few (1 of 2)", the counts without a percentage. Otherwise
+ * `formatRatio`: "12.5% (5 of 40)".
+ */
+export function formatGuardedRatio(rate: number | null, n: number, base: number): string {
+  if (base <= 0) return "—";
+  if (rate === null || !Number.isFinite(rate)) return `N/A · too few ${ratioCounts(n, base)}`;
+  return formatRatio(rate, n, base);
+}
+
+/** `formatGuardedRatio` saying what the base is when there is a percentage: "12.5% (5 of 40) of trials". */
+export function formatGuardedRatioNote(rate: number | null, n: number, base: number, suffix: string): string {
+  const text = formatGuardedRatio(rate, n, base);
+  return base > 0 && rate !== null && Number.isFinite(rate) ? `${text} ${suffix}` : text;
+}
+
+/**
+ * The change from `previous` to `current` as a whole percentage, half-up, or
+ * null when there is nothing to compare against (previous is 0). Multiply
+ * first, like `percent`: 229 vs 200 is +15 (an exact 14.5), where dividing
+ * first read 14.499999999999998 and gave +14. Every change badge and pill
+ * in the statistics section goes through this, so one pair of numbers reads
+ * one way there.
+ */
+export function pctChange(current: number, previous: number): number | null {
+  if (previous <= 0) return null;
+  return Math.round(((current - previous) * 100) / previous);
+}
+
+/** What each side of a change covers, when the two are not like for like: a part period against a whole one. */
+export type ChangePeriods = { current: string; previous: string };
+
+/** A part period (this week, Monday to now) against the whole of the one before. */
+export const WEEK_SO_FAR: ChangePeriods = { current: "so far this week", previous: "all last week" };
+/** A part period (this month, the 1st to now) against the whole of the one before. */
+export const MONTH_SO_FAR: ChangePeriods = { current: "so far this month", previous: "all last month" };
+
+/** "(56 vs 50)", or with periods "(12 so far this week vs 120 all last week)". */
+export function changeCounts(current: number, previous: number, periods?: ChangePeriods): string {
+  return periods
+    ? `(${count(current)} ${periods.current} vs ${count(previous)} ${periods.previous})`
+    : `(${count(current)} vs ${count(previous)})`;
+}
+
+/**
+ * A percentage change with the two figures it compares: "+12% (56 vs 50)",
+ * "-4% (48 vs 50)", "0% (50 vs 50)". When the current period is not over
+ * yet, `periods` says so beside the figures: "-90% (12 so far this week vs
+ * 120 all last week)" (review finding 1, 27 Oct 2026: a Monday morning read
+ * "-90%" with nothing saying the week had only begun). With nothing to
+ * compare against (previous is 0) there is no percentage, but the counts
+ * still show: "— (12 vs 0)" (owner decision, 27 Oct 2026, 23:30).
+ *
+ * This is a change between two COUNTS. A change between two rates is in
+ * percentage points, not a percentage of a percentage; no screen in the
+ * statistics section compares two rates today.
+ */
+export function formatChange(current: number, previous: number, periods?: ChangePeriods): string {
+  const pct = pctChange(current, previous);
+  if (pct === null) return `— ${changeCounts(current, previous, periods)}`;
+  return `${pct > 0 ? "+" : ""}${pct}% ${changeCounts(current, previous, periods)}`;
+}
+
+/**
+ * A count as a share of a named population, for a count that is the
+ * headline and its share the aside: "9% of 130 active". Null when the
+ * population is empty (no percentage of nothing).
+ */
+export function shareOf(n: number, base: number, population: string): string | null {
+  if (base <= 0) return null;
+  return `${percent(n, base)}% of ${count(base)} ${population}`;
+}

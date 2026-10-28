@@ -7,8 +7,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { formatDate } from "@/lib/date";
 import type { AttributionData, FunnelSteps, StaffConversionRow } from "@/lib/attribution";
-import { ratioCounts } from "@/components/dashboard/reports-primitives";
-import { percent } from "@/lib/percent";
+import { formatGuardedRatio, formatGuardedRatioNote, formatRatio, wholePct } from "@/lib/percent";
 
 /**
  * The conversion funnel — ONE implementation, drawn on Reports (under the stat
@@ -81,7 +80,7 @@ export default function ConversionFunnel({
         <ul className="divide-y" style={{ borderColor: "var(--bd-default)" }} aria-label="Conversion funnel by coach">
           {coachRows.map((row) => (
             <li key={row.userId}>
-              <CoachRow row={row} linkRows={linkRows} maxTrials={maxCoachTrials} />
+              <CoachRow row={row} linkRows={linkRows} maxTrials={maxCoachTrials} minTrials={minTrials} />
             </li>
           ))}
         </ul>
@@ -107,9 +106,15 @@ function FunnelTitle({ onReports }: { onReports: boolean }) {
   );
 }
 
-function rateText(rate: number | null, suffix: string): string {
-  return rate === null ? "N/A · too few" : `${rate.toFixed(1)}% ${suffix}`;
-}
+/*
+ * Every funnel rate carries its count and base (owner instruction of 24 Oct
+ * 2026; Sean: "with all times a % is present"): "12.5% (5 of 40)", or
+ * "N/A · too few (1 of 2)" under the min-N guard, or "—" with no base. One
+ * text, from lib/percent.ts, for the bars, the coach rows, the attribution
+ * table and the Reports CSV.
+ */
+const funnelRate = formatGuardedRatio;
+const funnelRateNote = formatGuardedRatioNote;
 
 /**
  * A drop-off share carries the SAME honesty guard as a rate: below `minTrials`
@@ -121,10 +126,30 @@ function rateText(rate: number | null, suffix: string): string {
  */
 export function pctOf(part: number, whole: number, minTrials: number): string | null {
   if (whole < Math.max(minTrials, 1)) return null;
-  return `${percent(part, whole)}% ${ratioCounts(part, whole)}`;
+  return formatRatio(wholePct(part, whole), part, whole);
 }
 
-/** "−3 lost before joining · 25% (3 of 12)", "0 lost before joining" — no minus on zero, no share when it is unguarded. */
+/**
+ * `pctOf` naming its base, as the bars' rates do: "52% (24 of 46) of
+ * trials" (owner decision, 27 Oct 2026, 23:30: a percentage carries its
+ * counts and a named denominator). Null under the guard. The screen's
+ * drop-offs and the Reports CSV share it.
+ */
+export function dropShare(part: number, whole: number, minTrials: number, base: "trials" | "converted"): string | null {
+  const pct = pctOf(part, whole, minTrials);
+  return pct ? `${pct} of ${base}` : null;
+}
+
+/**
+ * A coach's lost or no-decision count as a share of the trials they ran:
+ * "50% (20 of 40)", the form of the Converted figure beside it; under the
+ * trial minimum, the count alone ("1"). The CSV's coach rows print the same.
+ */
+export function coachShare(part: number, trialsRun: number, minTrials: number): string {
+  return pctOf(part, trialsRun, minTrials) ?? part.toLocaleString("en-GB");
+}
+
+/** "−3 lost before joining · 25% (3 of 12) of trials", "0 lost before joining" — no minus on zero, no share when it is unguarded. */
 export function dropText(count: number, label: string, pct: string | null, signed: boolean): string {
   const n = count.toLocaleString("en-GB");
   const lead = signed && count > 0 ? `−${n}` : n;
@@ -150,29 +175,29 @@ function OverallFunnel({ steps, minTrials }: { steps: FunnelSteps; minTrials: nu
         note={null}
       />
       <DropOff>
-        <DropItem tone="warning" text={dropText(steps.lost, "lost before joining", pctOf(steps.lost, steps.trials, minTrials), true)} />
+        <DropItem tone="warning" text={dropText(steps.lost, "lost before joining", dropShare(steps.lost, steps.trials, minTrials, "trials"), true)} />
         {/* Not "still deciding": a taster nobody has closed out for months is
             in this bucket too, and the data only says no decision was recorded. */}
-        <DropItem tone="neutral" text={dropText(steps.undecided, "no decision recorded", pctOf(steps.undecided, steps.trials, minTrials), false)} />
+        <DropItem tone="neutral" text={dropText(steps.undecided, "no decision recorded", dropShare(steps.undecided, steps.trials, minTrials, "trials"), false)} />
       </DropOff>
       <FunnelBar
         label="Converted"
         count={steps.converted}
         width={width(steps.converted)}
         tone="primary"
-        note={rateText(steps.conversionRate, "of trials")}
+        note={funnelRateNote(steps.conversionRate, steps.converted, steps.trials, "of trials")}
       />
       <DropOff>
         {/* "No longer active", not "churned": gyms pause memberships for injury
             and travel, and this is derived from current status, not a leaving. */}
-        <DropItem tone="warning" text={dropText(steps.churned, "no longer active", pctOf(steps.churned, steps.converted, minTrials), true)} />
+        <DropItem tone="warning" text={dropText(steps.churned, "no longer active", dropShare(steps.churned, steps.converted, minTrials, "converted"), true)} />
       </DropOff>
       <FunnelBar
         label="Still active"
         count={steps.retained}
         width={width(steps.retained)}
         tone="success"
-        note={rateText(steps.retentionRate, "of converted")}
+        note={funnelRateNote(steps.retentionRate, steps.retained, steps.converted, "of converted")}
       />
     </div>
   );
@@ -200,8 +225,9 @@ function FunnelBar({
     // Three columns (label | bar | rate) only from lg: at 640-1023px the third
     // column left a ~136px track, shorter than the phone's, and the drop-off
     // text wrapped with its percentage orphaned. Below lg the rate sits under
-    // the bar instead.
-    <div className="grid grid-cols-[96px_minmax(0,1fr)] lg:grid-cols-[120px_minmax(0,1fr)_150px] items-center gap-x-3 gap-y-0.5">
+    // the bar instead. 200px holds a rate with its counts,
+    // "12.5% (1,234 of 2,000) of trials", without truncating.
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] lg:grid-cols-[120px_minmax(0,1fr)_200px] items-center gap-x-3 gap-y-0.5">
       {/* The count sits beside the label, not inside the fill, so a zero count
           draws a genuinely empty track rather than a 10px sliver of colour. */}
       <span className="text-xs truncate" style={{ color: "var(--tx-2)" }} title={`${label}: ${count.toLocaleString("en-GB")}`}>
@@ -223,7 +249,7 @@ function FunnelBar({
           the bar (col-start-2), on wider screens it is the third column. */}
       <span
         className="col-start-2 lg:col-start-auto text-[11px] tabular-nums truncate"
-        style={{ color: note?.startsWith("N/A") ? "var(--tx-3)" : "var(--tx-2)" }}
+        style={{ color: note?.startsWith("N/A") || note === "—" ? "var(--tx-3)" : "var(--tx-2)" }}
         title={note ?? undefined}
       >
         {note ?? ""}
@@ -234,7 +260,7 @@ function FunnelBar({
 
 function DropOff({ children }: { children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[96px_minmax(0,1fr)] lg:grid-cols-[120px_minmax(0,1fr)_150px] gap-3">
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] lg:grid-cols-[120px_minmax(0,1fr)_200px] gap-3">
       <span aria-hidden="true" />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 pl-1">{children}</div>
     </div>
@@ -258,7 +284,7 @@ function DropItem({ tone, text }: { tone: "warning" | "neutral"; text: string })
  * track is a fixed width and every coach shares the same scale (`maxTrials`),
  * so a coach with 40 trials and one with 3 line up AND read proportionally.
  */
-function CoachRow({ row, linkRows, maxTrials }: { row: StaffConversionRow; linkRows: boolean; maxTrials: number }) {
+function CoachRow({ row, linkRows, maxTrials, minTrials }: { row: StaffConversionRow; linkRows: boolean; maxTrials: number; minTrials: number }) {
   const max = Math.max(maxTrials, 1);
   const w = (n: number) => (n > 0 ? `${Math.max((n / max) * 100, 3)}%` : "0%");
 
@@ -276,20 +302,23 @@ function CoachRow({ row, linkRows, maxTrials }: { row: StaffConversionRow; linkR
 
       <dl className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-xs tabular-nums min-w-0">
         <Stat term="Trials" value={String(row.trialsRun)} />
-        {/* One decimal everywhere a rate is shown (overall bars, this row, the
-            attribution table) so the same coach never reads two ways. */}
+        {/* One text everywhere a rate is shown (overall bars, this row, the
+            attribution table, the CSV) so the same coach never reads two
+            ways: "12.5% (5 of 40)". */}
         <Stat
           term="Converted"
-          value={row.conversionRate === null ? `${row.conversions} · N/A` : `${row.conversions} · ${row.conversionRate.toFixed(1)}%`}
+          value={funnelRate(row.conversionRate, row.conversions, row.trialsRun)}
           muted={row.conversionRate === null}
         />
         <Stat
           term="Still active"
-          value={row.retentionRate === null ? `${row.retained} · N/A` : `${row.retained} · ${row.retentionRate.toFixed(1)}%`}
+          value={funnelRate(row.retentionRate, row.retained, row.conversions)}
           muted={row.retentionRate === null}
         />
-        <Stat term="Lost" value={String(row.lost)} muted={row.lost === 0} />
-        <Stat term="No decision" value={String(row.undecided)} muted={row.undecided === 0} />
+        {/* Shares of the trials this coach ran, as the club-wide drop-offs
+            are; the count alone under the trial minimum. */}
+        <Stat term="Lost" value={coachShare(row.lost, row.trialsRun, minTrials)} muted={row.lost === 0} />
+        <Stat term="No decision" value={coachShare(row.undecided, row.trialsRun, minTrials)} muted={row.undecided === 0} />
       </dl>
     </div>
   );

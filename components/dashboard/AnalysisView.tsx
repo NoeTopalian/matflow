@@ -24,9 +24,9 @@ import { PageHeader } from "@/components/ui/page-header";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import { formatPct, formatRatio, ratioCounts } from "@/components/dashboard/reports-primitives";
-import { percent } from "@/lib/percent";
+import { formatChange, pctChange, percent } from "@/lib/percent";
 import { clubMonthWindow } from "@/lib/club-month";
-import { periodWords, type ReportRange } from "@/lib/report-period";
+import { periodChange, periodWords, type ReportRange } from "@/lib/report-period";
 import PeriodSelector, { periodSearchParams, type PeriodChoice } from "@/components/dashboard/PeriodSelector";
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541"];
@@ -194,19 +194,15 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function delta(current: number, previous: number) {
-  if (previous === 0) return null;
-  const pct = Math.round(((current - previous) / previous) * 100);
-  return pct;
-}
-
 /**
  * A change pill always shows the two figures it compares (required by
  * Sean's note relayed 14 Oct and the owner instruction of 24 Oct 2026):
- * "+50% (6 vs 4)".
+ * "+50% (6 vs 4)". lib/percent's `formatChange` (multiply first), so 229 vs
+ * 200 reads "+15%" here as on Reports; no change reads "0%", never "+0%";
+ * nothing last month reads "— (3 vs 0)", the counts without a percentage.
  */
-export function changePillText(pct: number, current: number, previous: number): string {
-  return `${pct >= 0 ? "+" : ""}${pct}% (${current.toLocaleString("en-GB")} vs ${previous.toLocaleString("en-GB")})`;
+export function changePillText(current: number, previous: number): string {
+  return formatChange(current, previous);
 }
 
 function renderStrongText(text: string) {
@@ -268,6 +264,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
   const words = periodWords(metrics.range);
+  const change = periodChange(metrics.range);
   const QUESTIONS = questionsFor(metrics.range);
   // The latest month a custom run may end in: this month, in the club's zone.
   const latestMonth = clubMonthWindow(new Date(), metrics.range.timeZone).monthKey;
@@ -291,8 +288,8 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
     });
   }
 
-  const memberDelta = delta(metrics.newThisMonth, metrics.newLastMonth);
-  const checkinDelta = delta(metrics.checkinsThisMonth, metrics.checkinsLastMonth);
+  const memberDelta = pctChange(metrics.newThisMonth, metrics.newLastMonth);
+  const checkinDelta = pctChange(metrics.checkinsThisMonth, metrics.checkinsLastMonth);
   // Engagement = % of members with ≥1 check-in this month (bounded 0..100).
   const engagementRate = metrics.totalMembers > 0
     ? Math.min(100, percent(metrics.activeMembersThisMonth, metrics.totalMembers))
@@ -404,7 +401,6 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                 />
                 <div className="flex-1 min-w-0">
                   <DonutLegend
-                    showCounts
                     data={metrics.membersByStatus.map((m, i): DonutSlice => ({
                       label: m.label,
                       value: m.count,
@@ -460,20 +456,25 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             value: metrics.totalMembers,
             // The change pill is the change in members JOINED (the Reports
             // movement definition: new + rejoined, imports never), with its two counts.
-            sub: `${metrics.newThisMonth} joined ${words.during} · ${metrics.newLastMonth} ${words.before}${metrics.joinedEstimated ? " · partly estimated" : ""}`,
+            // The period against the equal period before it, a part period
+            // named (review finding 1 and owner decision, 27 Oct 2026). The
+            // pill is too narrow for the words on a phone (two cards a row),
+            // so the line under the figure says it and the pill's accessible
+            // name says it in full.
+            sub: `${metrics.newThisMonth} joined ${change.current} · ${metrics.newLastMonth} in ${change.previous}${metrics.joinedEstimated ? " · partly estimated" : ""}`,
             icon: Users,
             pct: memberDelta,
             counts: [metrics.newThisMonth, metrics.newLastMonth] as const,
-            pillLabel: `members joined, ${words.during} vs ${words.before}`,
+            pillLabel: "members joined",
           },
           {
             label: "Check-ins",
             value: metrics.checkinsThisMonth,
-            sub: `${words.during} · ${metrics.checkinsLastMonth} ${words.before}`,
+            sub: `${change.current} · ${metrics.checkinsLastMonth} in ${change.previous}`,
             icon: CalendarCheck,
             pct: checkinDelta,
             counts: [metrics.checkinsThisMonth, metrics.checkinsLastMonth] as const,
-            pillLabel: `check-ins, ${words.during} vs ${words.before}`,
+            pillLabel: "check-ins",
           },
           {
             label: "Engagement",
@@ -506,18 +507,21 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               >
                 <Icon className="w-4 h-4" style={{ color: primaryColor }} />
               </div>
-              {pct !== null && counts && (
+              {/* Nothing last month: no percentage, but the pill still shows
+                  the counts, neutral, "— (3 vs 0)" (owner decision, 27 Oct
+                  2026, 23:30). It used to disappear. Both zero: no pill. */}
+              {counts && (pct !== null || counts[0] !== counts[1]) && (
                 <div
                   data-testid="analysis-change-pill"
-                  aria-label={`${changePillText(pct, counts[0], counts[1])}: ${pillLabel}`}
+                  aria-label={`${formatChange(counts[0], counts[1], change)}: ${pillLabel}`}
                   className="flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap"
                   style={{
-                    background: pct >= 0 ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
-                    color: pct >= 0 ? "var(--hue-success)" : "var(--hue-danger)",
+                    background: pct === null ? "var(--sf-2)" : pct >= 0 ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
+                    color: pct === null ? "var(--tx-2)" : pct >= 0 ? "var(--hue-success)" : "var(--hue-danger)",
                   }}
                 >
-                  {pct >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                  {changePillText(pct, counts[0], counts[1])}
+                  {pct === null ? null : pct >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                  {changePillText(counts[0], counts[1])}
                 </div>
               )}
             </div>

@@ -283,7 +283,14 @@ const X = {
   membersHeadline: `${E.active} active members${E.activeOnHold > 0 ? `, ${E.activeOnHold} on hold` : ""}`,
   membersScope: `Active training members, including any on hold. ${ACTIVE_EXCLUDES}.`,
   membersTile: [String(E.active), "Active members", ...(E.activeOnHold > 0 ? [`Includes ${E.activeOnHold} on hold`] : []), ACTIVE_EXCLUDES],
-  activeDetail: `Includes ${fmtNum(E.activeOnHold)} on hold · of ${fmtNum(E.current)} current members · ${ACTIVE_EXCLUDES}`,
+  // W3 (owner decision, 27 Oct 2026, 23:30): each count that is a share of a
+  // named population carries its percentage (lib/percent shareOf, half-up).
+  activeDetail: [
+    `Includes ${fmtNum(E.activeOnHold)} on hold`,
+    E.active > 0 ? `${Math.round((E.activeOnHold * 100) / E.active)}% of ${fmtNum(E.active)} active` : null,
+    E.current > 0 ? `${Math.round((E.active * 100) / E.current)}% of ${fmtNum(E.current)} current members` : `${fmtNum(E.current)} current members`,
+    ACTIVE_EXCLUDES,
+  ].filter(Boolean).join(" · "),
   // The count of cancellations this month, joiners included: the tile's value line and its link name.
   churn: churnText(MV.cancelled, "this month"),
   joinedValue: fmtNum(MV.joined),                                                                  // ReportsView.tsx:505

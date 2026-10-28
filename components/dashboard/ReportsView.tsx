@@ -55,7 +55,7 @@ import NetNewMembersCard from "./NetNewMembersCard";
 import { MEMBERSHIP_COPY, combinedBasis, emptyTally, estimatedCaption, type MembershipBasis } from "@/lib/membership-movement";
 import type { MembershipReport } from "@/lib/membership-report";
 import { clubMonthWindow } from "@/lib/club-month";
-import { periodWords, windowLabelOf, type ReportRange } from "@/lib/report-period";
+import { periodChange, periodWords, windowLabelOf, type ReportRange } from "@/lib/report-period";
 import PeriodSelector, { periodSearchParams, type PeriodChoice } from "./PeriodSelector";
 import { basisNote } from "@/lib/net-new-series";
 import {
@@ -63,13 +63,24 @@ import {
   RatioValue,
   SectionTitle,
   formatNumber,
+  formatPct,
   formatRatio,
   formatSigned,
   ratioCounts,
   wholePct,
   type TooltipPayload,
 } from "./reports-primitives";
-import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
+import ConversionFunnel, { coachShare, dropShare } from "@/components/dashboard/ConversionFunnel";
+import {
+  changeCounts,
+  formatChange,
+  formatGuardedRatio as funnelRate,
+  formatGuardedRatioNote as funnelRateNote,
+  MONTH_SO_FAR,
+  shareOf,
+  WEEK_SO_FAR,
+  type ChangePeriods,
+} from "@/lib/percent";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import InitiativesPanel from "@/components/dashboard/InitiativesPanel";
@@ -190,10 +201,10 @@ function hex(h: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-/** A class's fill rate with the places behind it (T2b): "45% (90 of 200)", or "no capacity set". */
+/** A class's fill rate with the places behind it (T2b), the denominator named: "45% (90 of 200 places)", or "no capacity set". */
 function formatFill(cls: { fillRate: number | null; count: number; capacityTotal?: number }) {
   if (cls.fillRate === null || !cls.capacityTotal) return "no capacity set";
-  return formatRatio(cls.fillRate, cls.count, cls.capacityTotal);
+  return `${formatPct(cls.fillRate, cls.capacityTotal)} (${formatNumber(cls.count)} of ${formatNumber(cls.capacityTotal)} places)`;
 }
 
 /**
@@ -243,11 +254,35 @@ function derivedShares(data: ReportsData) {
 
 /**
  * What the "Active members" number counts (Q4 A-1): the shared population
- * copy plus the on-hold count it includes, so the tile, the CSV row and the
- * Members page describe one number the same way.
+ * copy plus the on-hold count it includes, so the tile and the CSV row
+ * describe one number the same way. Each count that is a share of a named
+ * population carries its percentage (owner decision, 27 Oct 2026, 23:30):
+ * "Includes 12 on hold · 9% of 130 active · 87% of 150 current members".
+ * An empty population has no percentage.
  */
-export function activeMembersDetail(summary: Pick<ReportsData["summary"], "activeOnHoldMembers" | "currentMembers">): string {
-  return `Includes ${formatNumber(summary.activeOnHoldMembers ?? 0)} on hold · of ${formatNumber(summary.currentMembers)} current members · ${POPULATION_COPY.active.excludes}`;
+export function activeMembersDetail(summary: Pick<ReportsData["summary"], "activeMembers" | "activeOnHoldMembers" | "currentMembers">): string {
+  const onHold = summary.activeOnHoldMembers ?? 0;
+  return [
+    `Includes ${formatNumber(onHold)} on hold`,
+    shareOf(onHold, summary.activeMembers, "active"),
+    shareOf(summary.activeMembers, summary.currentMembers, "current members") ?? `${formatNumber(summary.currentMembers)} current members`,
+    POPULATION_COPY.active.excludes,
+  ].filter(Boolean).join(" · ");
+}
+
+/**
+ * One status row that holds every current member: its share is 100% by
+ * construction, so the screen and CSV give the count, not an artificial
+ * "100% (n of n)" (owner decision, 27 Oct 2026, 23:30).
+ */
+function isWholeOfCurrent(rows: ReportsData["currentMembersByStatus"], currentMembers: number): boolean {
+  return rows.length === 1 && rows[0].count === currentMembers;
+}
+
+/** "12 inactive to review · 8% of 150 current members": the Member attention insight. */
+export function inactiveToReview(inactive: number, currentMembers: number): string {
+  if (inactive <= 0) return "No inactive members";
+  return [`${formatNumber(inactive)} inactive to review`, shareOf(inactive, currentMembers, "current members")].filter(Boolean).join(" · ");
 }
 
 /** The top classes the class-mix donut shares check-ins across. */
@@ -336,18 +371,34 @@ export function churnValueText(cancelled: number, words: Pick<ReturnType<typeof 
 /**
  * Delta as display text, or null when nothing moved. A percentage always
  * carries the two figures it compares (required by Sean's note relayed 14 Oct
- * and the owner instruction of 24 Oct 2026): "+13% (45 vs 40)".
+ * and the owner instruction of 24 Oct 2026): "+13% (45 vs 40)". The
+ * percentage is lib/percent's `formatChange` (multiply first), so 229 vs 200
+ * reads "+15%" here and in Analysis alike.
+ *
+ * `periods` names the two sides when the current one is not over yet (this
+ * week since Monday against all of last week): "-90% (12 so far this week vs
+ * 120 all last week)". With no previous figure there is no percentage, but
+ * the counts stay (owner decision, 27 Oct 2026, 23:30): "— (12 so far this
+ * week vs 0 all last week)". It used to read a bare "+12".
  */
-export function trendDelta(current: number, previous: number) {
-  const delta = current - previous;
-  if (delta === 0) return null;
-  if (previous === 0) return `${delta > 0 ? "+" : ""}${formatNumber(delta)}`;
-  const pct = Math.round((delta / previous) * 100);
-  return `${pct > 0 ? "+" : ""}${pct}% (${formatNumber(current)} vs ${formatNumber(previous)})`;
+export function trendDelta(current: number, previous: number, periods?: ChangePeriods) {
+  if (current === previous) return null;
+  return formatChange(current, previous, periods);
 }
 
-function trendText(current: number, previous: number) {
-  return trendDelta(current, previous) ?? "No change";
+/** `trendDelta` for a line that always shows: "No change (40 so far this week vs 40 all last week)" when nothing moved. */
+function trendText(current: number, previous: number, periods?: ChangePeriods) {
+  return trendDelta(current, previous, periods) ?? `No change ${changeCounts(current, previous, periods)}`;
+}
+
+/**
+ * The CSV's change cell: "Change -90% (12 so far this week vs 120 all last
+ * week)". The word "Change" leads so the cell never starts with "+" or "-",
+ * which the CSV's formula guard (lib/csv.ts) would prefix with a quote.
+ */
+export function changeCsvDetail(current: number, previous: number, periods: ChangePeriods): string {
+  const delta = trendDelta(current, previous, periods);
+  return delta === null ? trendText(current, previous, periods) : `Change ${delta}`;
 }
 
 function trendTone(current: number, previous: number) {
@@ -358,23 +409,26 @@ function trendTone(current: number, previous: number) {
 
 function funnelCsvRows(attribution: AttributionData): (string | number | null)[][] {
   const { overall, rows, epochStart, minTrials } = attribution;
-  const rate = (r: number | null) => (r === null ? "N/A" : `${r.toFixed(1)}%`);
+  // The funnel's own text (ConversionFunnel funnelRate, dropShare and
+  // coachShare), so the file and the screen agree: "12.5% (5 of 40)",
+  // "N/A · too few (1 of 2)", "—", and the drop-offs "52% (24 of 46) of trials".
   const scope = `Club-wide${epochStart ? ` · counting trials from ${epochStart.slice(0, 10)}` : ""} · rates need ${minTrials}+ trials`;
+  const withScope = (share: string | null) => (share ? `${share} · ${scope}` : scope);
   if (overall.trials === 0) return [["Conversion funnel", "Trials run", 0, "No trials recorded yet"]];
   return [
     ["Conversion funnel", "Trials run", overall.trials, scope],
-    ["Conversion funnel", "Lost before joining", overall.lost, scope],
-    ["Conversion funnel", "No decision recorded", overall.undecided, scope],
-    ["Conversion funnel", "Converted", overall.converted, `${rate(overall.conversionRate)} of trials`],
-    ["Conversion funnel", "No longer active", overall.churned, scope],
-    ["Conversion funnel", "Still active", overall.retained, `${rate(overall.retentionRate)} of converted`],
+    ["Conversion funnel", "Lost before joining", overall.lost, withScope(dropShare(overall.lost, overall.trials, minTrials, "trials"))],
+    ["Conversion funnel", "No decision recorded", overall.undecided, withScope(dropShare(overall.undecided, overall.trials, minTrials, "trials"))],
+    ["Conversion funnel", "Converted", overall.converted, funnelRateNote(overall.conversionRate, overall.converted, overall.trials, "of trials")],
+    ["Conversion funnel", "No longer active", overall.churned, withScope(dropShare(overall.churned, overall.converted, minTrials, "converted"))],
+    ["Conversion funnel", "Still active", overall.retained, funnelRateNote(overall.retentionRate, overall.retained, overall.converted, "of converted")],
     ...rows
       .filter((row) => row.trialsRun > 0)
       .map((row) => [
         "Conversion by coach",
         row.name,
         row.trialsRun,
-        `converted ${row.conversions} (${rate(row.conversionRate)}) · still active ${row.retained} (${rate(row.retentionRate)}) · lost ${row.lost} · no decision ${row.undecided}`,
+        `converted ${funnelRate(row.conversionRate, row.conversions, row.trialsRun)} · still active ${funnelRate(row.retentionRate, row.retained, row.conversions)} · lost ${coachShare(row.lost, row.trialsRun, minTrials)} · no decision ${coachShare(row.undecided, row.trialsRun, minTrials)}`,
       ]),
   ];
 }
@@ -484,8 +538,10 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // Attendance this week IS narrowed by the class/age filters (lib/reports.ts
     // attendanceScope), so its export row must say so — it was the one scoped
     // number leaving the page unlabelled (assessment lane 5).
-    ["Summary", "Attendance this week", data.summary.attendanceThisWeek, `Now · last week: ${data.summary.attendanceLastWeek}${filterSuffix ? ` · ${filterSuffix}` : ""}`],
-    ["Summary", `New members ${words.during}`, data.summary.newMembersThisMonth, [`${cap(words.before)}: ${data.summary.newMembersLastMonth}`, NEW_SCOPE, periodPairEstimateNote(data)].filter(Boolean).join(" · ")],
+    // The tiles' change text, part period named (owner decision, 27 Oct 2026,
+    // 23:30); attendance this week is "Now", whatever the period.
+    ["Summary", "Attendance this week", data.summary.attendanceThisWeek, ["Now", changeCsvDetail(data.summary.attendanceThisWeek, data.summary.attendanceLastWeek, WEEK_SO_FAR), filterSuffix].filter(Boolean).join(" · ")],
+    ["Summary", `New members ${words.during}`, data.summary.newMembersThisMonth, [changeCsvDetail(data.summary.newMembersThisMonth, data.summary.newMembersLastMonth, periodChange(range)), NEW_SCOPE, periodPairEstimateNote(data)].filter(Boolean).join(" · ")],
     ["Summary", "Check-ins", data.summary.totalCheckIns, scopedWindowLabel],
     // The rate definition the owner chose on screen, with its formula — the
     // headline of the filter bar, previously missing from the file.
@@ -526,11 +582,14 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     ]),
     ...(() => {
       const mix = classComposition(data.topClasses);
+      // One class is the whole by construction: no artificial 100%, as on the legend.
       return mix.top.map((row) => [
         "Class composition",
         row.name,
         row.count,
-        `${formatRatio(wholePct(row.count, mix.total), row.count, mix.total)} of check-ins across the ${mix.label} · ${scopedWindowLabel}`,
+        mix.top.length === 1
+          ? `All check-ins across the ${mix.label} · ${scopedWindowLabel}`
+          : `${formatRatio(wholePct(row.count, mix.total), row.count, mix.total)} of check-ins across the ${mix.label} · ${scopedWindowLabel}`,
       ]);
     })(),
     ...data.topClasses.map((row) => [
@@ -545,14 +604,20 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
       "Current members by status",
       row.label,
       row.count,
-      formatRatio(row.percentage, row.count, data.summary.currentMembers),
+      isWholeOfCurrent(data.currentMembersByStatus, data.summary.currentMembers) ? "All current members" : formatRatio(row.percentage, row.count, data.summary.currentMembers),
     ]),
     ["Left the club", "Cancelled members", data.summary.cancelledMembers, "Not part of current members, so no percentage"],
-    ...data.checkInMethods.map((row) => ["Check-in methods", row.label, row.count, `${formatRatio(row.percentage, row.count, shares.totalMethodCount)} · ${scopedWindowLabel}`]),
+    ...data.checkInMethods.map((row) => [
+      "Check-in methods",
+      row.label,
+      row.count,
+      `${data.checkInMethods.length === 1 ? "All check-ins" : formatRatio(row.percentage, row.count, shares.totalMethodCount)} · ${scopedWindowLabel}`,
+    ]),
     ["Owner insights", "Self-service check-in", formatRatio(shares.selfServicePct, shares.selfServiceCount, shares.totalMethodCount), `Self or QR · ${scopedWindowLabel}`],
     ["Owner insights", "Active share of current members", formatRatio(shares.activeSharePct, data.summary.activeMembers, data.summary.currentMembers), "Active members ÷ current members"],
     // The conversion funnel, club-wide then per coach — the same numbers and
-    // the same honesty guards as the screen (null rates export as "N/A").
+    // the same honesty guards as the screen (a rate under the trial minimum
+    // exports as "N/A · too few (1 of 2)", an empty base as "—").
     ...funnelCsvRows(attribution),
   ];
 
@@ -582,13 +647,14 @@ function exportCsv(data: ReportsData, attribution: AttributionData) {
 function TrendBadge({
   current,
   previous,
-  label,
+  periods,
 }: {
   current: number;
   previous: number;
-  label: string;
+  /** The current period is not over: the figures say "so far this week vs all last week". */
+  periods?: ChangePeriods;
 }) {
-  const delta = trendDelta(current, previous);
+  const delta = trendDelta(current, previous, periods);
   // Nothing moved: say nothing. A pill announcing "no change" costs more room than it earns.
   if (delta === null) return null;
 
@@ -599,14 +665,17 @@ function TrendBadge({
   // Both inks on an 8% tint measure ≥4.58:1 (assessment lane 3, 2026-09-23).
   const ink = up ? "var(--hue-success-ink)" : "var(--hue-warning-ink)";
   const tint = up ? "var(--hue-success)" : "var(--hue-warning)";
+  // With periods named the text is longer ("-90% (12 so far this week vs 120
+  // all last week)"), so it may wrap inside the tile rather than be clipped
+  // at its edge; the rounded rectangle holds two lines where a pill would not.
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] whitespace-nowrap"
+      data-testid="trend-badge"
+      className="inline-flex items-start gap-1 rounded-[var(--r-sm)] px-2 py-1 text-[11px] max-w-full"
       style={{ color: ink, background: `color-mix(in srgb, ${tint} 8%, transparent)` }}
     >
-      <Icon className="w-3 h-3 shrink-0" />
+      <Icon className="w-3 h-3 shrink-0 mt-px" />
       <span className="font-semibold tabular-nums">{delta}</span>
-      <span style={{ color: "var(--tx-3)" }}>{label}</span>
     </span>
   );
 }
@@ -695,7 +764,7 @@ function MetricCard({
   value: ReactNode;
   detail?: string;
   primaryColor: string;
-  trend?: { current: number; previous: number; label: string };
+  trend?: { current: number; previous: number; periods?: ChangePeriods };
   compactValue?: boolean;
   /** Drill-through target — the member rows behind this tile (Track A). */
   href?: string;
@@ -738,7 +807,7 @@ function MetricCard({
             shrinks between filters and the rows beneath never shift. */}
         {trend && (
           <div className="mt-2 min-w-0 min-h-[26px]">
-            <TrendBadge current={trend.current} previous={trend.previous} label={trend.label} />
+            <TrendBadge current={trend.current} previous={trend.previous} periods={trend.periods} />
           </div>
         )}
       </div>
@@ -862,12 +931,15 @@ function InsightRow({
   value,
   detail,
   color,
+  wrapValue = false,
 }: {
   icon: ElementType;
   label: string;
   value: string;
   detail: string;
   color: string;
+  /** Let a long value (a change with its periods named) wrap rather than be cut off. */
+  wrapValue?: boolean;
 }) {
   return (
     <div className="flex gap-3 py-3 border-b last:border-b-0" style={{ borderColor: "var(--bd-default)" }}>
@@ -876,7 +948,7 @@ function InsightRow({
       </div>
       <div className="min-w-0">
         <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--tx-3)" }}>{label}</p>
-        <p className="text-sm font-semibold truncate mt-0.5" style={{ color: "var(--tx-1)" }}>{value}</p>
+        <p className={`text-sm font-semibold mt-0.5 ${wrapValue ? "break-words" : "truncate"}`} style={{ color: "var(--tx-1)" }}>{value}</p>
         <p className="text-xs mt-0.5" style={{ color: "var(--tx-2)" }}>{detail}</p>
       </div>
     </div>
@@ -1213,7 +1285,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 centerValue={formatNumber(totalClassCheckins)}
               />
               <div className="flex-1 min-w-0 w-full">
-                <DonutLegend data={classCompositionSlices} showCounts />
+                <DonutLegend data={classCompositionSlices} />
               </div>
             </div>
           )}
@@ -1232,10 +1304,12 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   {formatNumber(summary.totalCheckIns)}
                 </span>
                 <span className="text-xs text-tx-3">check-ins {words.during}</span>
+                {/* Monday to now against the whole of last week, worded as on
+                    the Attendance this week tile (now, whatever the period). */}
                 <TrendBadge
                   current={summary.attendanceThisWeek}
                   previous={summary.attendanceLastWeek}
-                  label={`this week (${formatNumber(summary.attendanceThisWeek)}) vs ${formatNumber(summary.attendanceLastWeek)} last week`}
+                  periods={WEEK_SO_FAR}
                 />
               </div>
               <div className="w-full overflow-hidden [&>svg]:w-full [&>svg]:h-auto">
@@ -1271,7 +1345,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           value={formatNumber(summary.attendanceThisWeek)}
           detail={filterSuffix ? `Now · check-ins since Monday · ${filterSuffix}` : "Now · check-ins since Monday"}
           primaryColor={primaryColor}
-          trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, label: "on last week" }}
+          // Monday to now against the whole of last week (lib/reports): the
+          // badge says so, or a Monday morning reads as a collapse.
+          trend={{ current: summary.attendanceThisWeek, previous: summary.attendanceLastWeek, periods: WEEK_SO_FAR }}
         />
         <MetricCard
           icon={UserPlus}
@@ -1279,7 +1355,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           value={formatNumber(summary.newMembersThisMonth)}
           detail={[NEW_SCOPE, periodPairEstimateNote(data)].filter(Boolean).join(" · ")}
           primaryColor={primaryColor}
-          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, label: `on ${words.before}` }}
+          // The period against the equal period before it; a period that ends
+          // today is "so far", the one before it whole.
+          trend={{ current: summary.newMembersThisMonth, previous: summary.newMembersLastMonth, periods: periodChange(range) }}
           href={monthDrillHref("new-this-month", period, range)}
         />
         <MetricCard
@@ -1357,8 +1435,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <InsightRow
               icon={Activity}
               label="Attendance pulse"
-              value={trendText(summary.attendanceThisWeek, summary.attendanceLastWeek)}
-              detail={`${formatNumber(summary.attendanceThisWeek)} this week, ${formatNumber(summary.attendanceLastWeek)} last week`}
+              value={trendText(summary.attendanceThisWeek, summary.attendanceLastWeek, WEEK_SO_FAR)}
+              wrapValue
+              detail="This week counts from Monday; last week is the whole week"
               color={trendTone(summary.attendanceThisWeek, summary.attendanceLastWeek) === "down" ? "#f59e0b" : "#22c55e"}
             />
             <InsightRow
@@ -1378,7 +1457,8 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <InsightRow
               icon={attentionMembers > 0 ? AlertTriangle : ShieldCheck}
               label="Member attention"
-              value={attentionMembers > 0 ? `${formatNumber(attentionMembers)} inactive to review` : "No inactive members"}
+              value={inactiveToReview(attentionMembers, summary.currentMembers)}
+              wrapValue
               detail={
                 summary.currentMembers > 0
                   ? `${formatRatio(activeSharePct, summary.activeMembers, summary.currentMembers)} of current members are active`
@@ -1508,11 +1588,13 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                     <span className="text-sm">All current members are {currentMembersByStatus[0].label.toLowerCase()}.</span>
                   </div>
                 )}
+                {/* One status is the whole by construction: its count, not an
+                    artificial "100% (n of n)"; the line above says "all". */}
                 {currentMembersByStatus.map((entry, index) => (
                   <ProgressRow
                     key={entry.status}
                     label={entry.label}
-                    value={formatRatio(entry.percentage, entry.count, summary.currentMembers)}
+                    value={isWholeOfCurrent(currentMembersByStatus, summary.currentMembers) ? formatNumber(entry.count) : formatRatio(entry.percentage, entry.count, summary.currentMembers)}
                     pct={entry.percentage}
                     color={statusColor(entry.status, index)}
                   />
@@ -1540,7 +1622,8 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                 <ProgressRow
                   key={method.method}
                   label={method.label}
-                  value={formatRatio(method.percentage, method.count, totalMethodCount)}
+                  // One method is the whole by construction: its count, no artificial 100%.
+                  value={checkInMethods.length === 1 ? formatNumber(method.count) : formatRatio(method.percentage, method.count, totalMethodCount)}
                   pct={method.percentage}
                   color={methodColor(method.method)}
                 />

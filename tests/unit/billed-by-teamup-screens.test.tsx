@@ -2,11 +2,13 @@
 //
 // Honest screens for a member TeamUp bills (readiness spec v3 §7; contract
 // docs/readiness/TEAMUP-OPERATIONS-CONTRACT.md §2, §4, §5):
-//   - the staff profile says "Billed by TeamUp · status as of <date>" by the
-//     payment status, and warns once the standing is more than 8 days old
-//     (frozen clock: 7 d 23 h → no warning, 8 d 1 h → warning);
+//   - the staff profile says "Billed by TeamUp · imported
+//     <date>" by the payment status. The 8-day staleness warning is retired
+//     (owner decision, 27 Oct 2026: imports no longer update a member, so the
+//     date never moves and the warning would stay on for good);
 //   - the members list marks the row with a "TeamUp" pill carrying the full label;
-//   - the register shows the stale warning and never blocks the tick for it;
+//   - the register shows who bills the member, however old the import, and
+//     never blocks the tick;
 //   - the hold dialog says the pause is MatFlow-only;
 //   - the manual chase asks first, with TeamUp's own-reminders sentence.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -25,7 +27,8 @@ import MemberProfile, { type MemberDetail } from "@/components/dashboard/MemberP
 import RegisterPanel from "@/components/dashboard/RegisterPanel";
 import OutstandingPanel from "@/components/dashboard/OutstandingPanel";
 import { BilledByTeamUpPill } from "@/components/dashboard/BilledByTeamUpPill";
-import { CHASE_ELSEWHERE_NOTE, HOLD_ACCESS_ONLY_NOTE, staleBillingWarning } from "@/lib/billing-source";
+import TeamUpHistory from "@/components/dashboard/TeamUpHistory";
+import { CHASE_ELSEWHERE_NOTE, HOLD_ACCESS_ONLY_NOTE } from "@/lib/billing-source";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -98,11 +101,11 @@ async function renderProfile(member: MemberDetail = MEMBER) {
 }
 
 describe("staff profile", () => {
-  it("shows 'Billed by TeamUp · status as of <date>' for a TeamUp-billed member", async () => {
+  it("shows 'Billed by TeamUp · imported <date>' for a TeamUp-billed member", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(at(24));
     await renderProfile();
-    expect(screen.getByTestId("billing-source-label").textContent).toBe("Billed by TeamUp · status as of 20 Sept 2026");
+    expect(screen.getByTestId("billing-source-label").textContent).toBe("Billed by TeamUp · imported 20 Sept 2026");
   });
 
   it("shows no label for a member MatFlow bills", async () => {
@@ -111,20 +114,13 @@ describe("staff profile", () => {
     expect(screen.queryByTestId("stale-billing-warning")).toBeNull();
   });
 
-  it("frozen clock at 7 days 23 hours: no stale warning", async () => {
+  it("90 days after the import: the same label, and no staleness warning", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(at(7 * 24 + 23));
+    vi.setSystemTime(at(90 * 24));
     await renderProfile();
+    expect(screen.getByTestId("billing-source-label").textContent).toBe("Billed by TeamUp · imported 20 Sept 2026");
     expect(screen.queryByTestId("stale-billing-warning")).toBeNull();
-  });
-
-  it("frozen clock at 8 days 1 hour: the stale warning is shown", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(at(8 * 24 + 1));
-    await renderProfile();
-    expect(screen.getByTestId("stale-billing-warning").textContent).toBe(
-      "Billing status last updated 20 Sept — check TeamUp before relying on it.",
-    );
+    expect(document.body.textContent).not.toMatch(/Billing status last updated|status as of/);
   });
 
   it("the hold dialog says the pause is MatFlow-only, above the confirm button", async () => {
@@ -155,7 +151,8 @@ describe("members list marker", () => {
     const pill = screen.getByTestId("billed-by-teamup");
     // Functional review F5 (30 Sep 2026): "TeamUp" alone said nothing.
     expect(pill.textContent).toBe("Billed by TeamUp");
-    expect(pill.getAttribute("title")).toBe("Billed by TeamUp · status as of 20 Sept 2026");
+    expect(pill.getAttribute("title")).toBe("Billed by TeamUp · imported 20 Sept 2026");
+    expect(pill.getAttribute("aria-label")).toBe("Billed by TeamUp · imported 20 Sept 2026");
     rerender(<BilledByTeamUpPill member={{ billedBy: "matflow", billingStatusAsOf: null }} />);
     expect(screen.queryByTestId("billed-by-teamup")).toBeNull();
   });
@@ -170,7 +167,7 @@ const INSTANCE = {
 };
 
 describe("register", () => {
-  it("shows the stale warning on the row, and the tick still checks the member in", async () => {
+  it("10 days after the import: who bills, no stale warning, and the tick still checks the member in", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(at(10 * 24));
     installFetch((url, init) => {
@@ -185,15 +182,16 @@ describe("register", () => {
       return json({});
     });
     render(<RegisterPanel instance={INSTANCE} primaryColor="#3b82f6" onCountChange={() => {}} />);
-    const warn = await screen.findByTestId("register-stale-billing");
-    expect(warn.textContent).toMatch(/Billing status last updated 20 Sept/);
+    const label = await screen.findByTestId("register-billing-source");
+    expect(label.textContent).toBe("Billed by TeamUp · imported 20 Sept 2026");
+    expect(screen.queryByTestId("register-stale-billing")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Mark Tess Stale attended" }));
     await waitFor(() => expect(calls.some((c) => c.url === "/api/checkin" && c.init?.method === "POST")).toBe(true));
   });
 
   // Functional review F3 (30 Sep 2026): with a fresh standing the register
   // said nothing about who collects the member's money.
-  it("shows who collects the money when the standing is fresh", async () => {
+  it("shows who collects the money the day after the import", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(at(24));
     installFetch((url) => {
@@ -208,7 +206,7 @@ describe("register", () => {
     });
     render(<RegisterPanel instance={INSTANCE} primaryColor="#3b82f6" onCountChange={() => {}} />);
     const label = await screen.findByTestId("register-billing-source");
-    expect(label.textContent).toBe("Billed by TeamUp · status as of 20 Sept 2026");
+    expect(label.textContent).toBe("Billed by TeamUp · imported 20 Sept 2026");
     expect(screen.queryByTestId("register-stale-billing")).toBeNull();
   });
 
@@ -274,11 +272,29 @@ describe("manual chase", () => {
   });
 });
 
-describe("staleness boundary (pure)", () => {
-  it("is exactly 8 days", () => {
-    const m = { billedBy: "teamup", billingStatusAsOf: AS_OF };
-    expect(staleBillingWarning(m, at(8 * 24 - 1))).toBeNull();
-    expect(staleBillingWarning(m, at(8 * 24 + 1))).not.toBeNull();
-    expect(staleBillingWarning({ billedBy: "matflow", billingStatusAsOf: AS_OF }, at(30 * 24))).toBeNull();
+// ─── Profile: membership history from TeamUp ─────────────────────────────────
+
+describe("TeamUp history panel", () => {
+  // The date never moves after the import (27 Oct 2026), so the panel no
+  // longer says "standing as of <date>".
+  it("says the standing is from the import, with its date, and never 'as of'", async () => {
+    installFetch(() => json({ billedBy: "teamup", billingStatusAsOf: AS_OF, standing: {}, rows: [] }));
+    render(<TeamUpHistory memberId="m1" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("teamup-history-intro").textContent).toBe(
+        "TeamUp standing when imported, 20 Sept 2026. Not purchased here — MatFlow has charged nothing for these.",
+      ),
+    );
+    expect(screen.getByTestId("teamup-history").textContent).not.toMatch(/as of/);
+  });
+
+  it("without a date it says where the history came from and no date", async () => {
+    installFetch(() => json({ billedBy: "teamup", billingStatusAsOf: null, standing: {}, rows: [] }));
+    render(<TeamUpHistory memberId="m1" />);
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect(screen.getByTestId("teamup-history-intro").textContent).toBe(
+      "As recorded at TeamUp. Imported, not purchased here — MatFlow has charged nothing for these.",
+    );
   });
 });
+

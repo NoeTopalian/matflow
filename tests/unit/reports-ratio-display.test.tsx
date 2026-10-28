@@ -198,7 +198,8 @@ describe("ReportsView — every percentage shows its counts, matching the CSV", 
 
   it("attention row counts inactive only and states the active share of current members", () => {
     renderReports(reports());
-    expect(screen.getByText("2 inactive to review")).toBeTruthy();
+    // W3 (owner decision, 27 Oct 2026, 23:30): the count with its share of the named population.
+    expect(screen.getByText("2 inactive to review · 17% of 12 current members")).toBeTruthy();
     expect(screen.getByText("75% (9 of 12) of current members are active")).toBeTruthy();
     expect(screen.queryByText(/need review/)).toBeNull();
   });
@@ -207,7 +208,7 @@ describe("ReportsView — every percentage shows its counts, matching the CSV", 
     renderReports(reports());
     expect(screen.getByText("75% (30 of 40) self or QR")).toBeTruthy();
     expect(screen.getByText("75% (30 of 40)")).toBeTruthy();
-    expect(screen.getByText("9/session · fill 45% (90 of 200)")).toBeTruthy();
+    expect(screen.getByText("9/session · fill 45% (90 of 200 places)")).toBeTruthy();
     expect(screen.getByTestId("rate-readout-counts").textContent).toBe("(3 of 9)");
   });
 
@@ -223,7 +224,7 @@ describe("ReportsView — every percentage shows its counts, matching the CSV", 
       "75% (15 of 20)",
       "75% (9 of 12)",
       "75% (30 of 40)",
-      "45% (90 of 200)",
+      "45% (90 of 200 places)",
     ]) {
       expect(csv).toContain(text);
       expect(document.body.textContent).toContain(text);
@@ -242,12 +243,20 @@ describe("AnalysisView — engagement shows its counts", () => {
     render(<AnalysisView metrics={metrics} primaryColor="#3b82f6" />);
     expect(screen.getByText("10%")).toBeTruthy();
     expect(screen.getByText("(31 of 312) active members checked in this month")).toBeTruthy();
-    expect(screen.getByText("7 joined this month · 4 last month")).toBeTruthy();
-    expect(screen.getByText("this month · 40 last month")).toBeTruthy();
+    // This month is the 1st to now, against the whole of last month: the
+    // line under each figure says so (review finding 1, 27 Oct 2026).
+    expect(screen.getByText("7 joined so far this month · 4 in all of last month")).toBeTruthy();
+    expect(screen.getByText("so far this month · 40 in all of last month")).toBeTruthy();
     // Every change pill shows the two figures it compares, never a bare "+x%".
-    const pills = screen.getAllByTestId("analysis-change-pill").map((p) => p.textContent);
+    const pillEls = screen.getAllByTestId("analysis-change-pill");
+    const pills = pillEls.map((p) => p.textContent);
     expect(pills).toEqual(["+75% (7 vs 4)", "+25% (50 vs 40)"]);
     for (const p of pills) expect(p).toMatch(/^[+-]?\d+% \(\d+ vs \d+\)$/);
+    // ...and its accessible name says which periods they are.
+    expect(pillEls.map((p) => p.getAttribute("aria-label"))).toEqual([
+      "+75% (7 so far this month vs 4 all last month): members joined",
+      "+25% (50 so far this month vs 40 all last month): check-ins",
+    ]);
   });
 
   it("no active members → a dash, not 0%", () => {
