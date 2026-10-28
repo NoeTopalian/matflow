@@ -465,7 +465,13 @@ export async function POST(req: NextRequest) {
           },
         });
       }
-    } else if (event.type === "checkout.session.completed") {
+    } else if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
+      // A delayed payment method (Bacs Direct Debit, SEPA, bank transfer)
+      // completes the session first, unpaid, and settles later with
+      // async_payment_succeeded; a card completes it paid. Both events carry
+      // the session, and credits are minted by whichever of them first says
+      // "paid" (W6, 28 Oct 2026).
+      const isAsyncSuccess = event.type === "checkout.session.async_payment_succeeded";
       // One-off purchases (class packs etc.) flagged via metadata.matflowKind.
       // Cross-check metadata.tenantId against the tenant resolved from
       // event.account (line 92). Without this, an attacker controlling a
@@ -477,17 +483,17 @@ export async function POST(req: NextRequest) {
       // (Security audit iteration 2 / M8, 2026-05-07.)
       const metadata = (obj.metadata as Record<string, string> | undefined) ?? {};
       // A completed Checkout Session is not a payment: Stripe completes a
-      // session paid by a delayed method (Bacs Direct Debit, SEPA, bank
-      // transfer) with payment_status "unpaid", and the money may never
-      // arrive. Credits are spendable the moment they exist, so they are
-      // minted only for a session Stripe reports as paid (W6, 28 Oct 2026).
-      // The pack checkout is card-only (app/api/member/class-packs/buy), so a
-      // genuine purchase always completes "paid".
+      // session paid by a delayed method with payment_status "unpaid", and the
+      // money may never arrive. Credits are spendable the moment they exist,
+      // so nothing is recorded for an unpaid session (no MemberClassPack, no
+      // Payment): the credits and the succeeded Payment are written when
+      // checkout.session.async_payment_succeeded reports it paid, and nothing
+      // when async_payment_failed does (W6, 28 Oct 2026).
       const sessionPaid = obj.payment_status === "paid";
       if (metadata.matflowKind === "class_pack" && !sessionPaid) {
         console.warn(
-          `[stripe-webhook] checkout.session.completed — class pack session ${String(obj.id)} completed with ` +
-          `payment_status=${String(obj.payment_status)}; no credits minted.`,
+          `[stripe-webhook] ${event.type} — class pack session ${String(obj.id)} has ` +
+          `payment_status=${String(obj.payment_status)}; no credits minted yet.`,
         );
       }
       if (
@@ -519,7 +525,22 @@ export async function POST(req: NextRequest) {
           const paymentIntentId = (obj.payment_intent as string) ?? null;
           // Mirror as a Payment row so the ledger is complete
           const amountPence = (obj.amount_total as number) ?? pack.pricePence;
-          try {
+          // Idempotent on the purchase's payment intent (MemberClassPack
+          // .stripePaymentIntentId is @unique): a replay, or a completed event
+          // and an async-success event for the same session, mints once. Read
+          // first rather than relying on the P2002 below, which aborts the
+          // Postgres transaction; the P2002 stays the backstop for two
+          // deliveries racing past this read. No payment intent, no key to
+          // deduplicate on, so nothing is minted (a paid payment-mode session
+          // always carries one).
+          const alreadyMinted = paymentIntentId
+            ? await tx.memberClassPack.findUnique({ where: { stripePaymentIntentId: paymentIntentId }, select: { id: true } })
+            : null;
+          if (!paymentIntentId) {
+            console.warn(`[stripe-webhook] ${event.type} — paid class pack session ${String(obj.id)} has no payment_intent; no credits minted.`);
+          } else if (alreadyMinted) {
+            // Already minted for this payment: nothing more to do.
+          } else try {
             // Already inside a transaction (withRlsBypass) — sequential awaits
             // remain atomic without a nested $transaction.
             await tx.memberClassPack.create({
@@ -582,6 +603,9 @@ export async function POST(req: NextRequest) {
           }
         }
       } else if (
+        // Shop checkout is card-only (app/api/member/checkout), so its order is
+        // settled on completion; the async event is for class packs.
+        !isAsyncSuccess &&
         metadata.matflowKind === "shop_order" &&
         metadata.tenantId && metadata.orderRef &&
         metadata.tenantId === tenantId
@@ -1183,6 +1207,29 @@ export async function POST(req: NextRequest) {
             }
           }
         }
+      }
+    } else if (event.type === "checkout.session.async_payment_failed") {
+      // A delayed payment for a class pack failed. The completion minted
+      // nothing (it was unpaid), so there is nothing to take back: mint
+      // nothing, and say so in the log and the club's audit (W6, 28 Oct 2026).
+      const failedMeta = (obj.metadata as Record<string, string> | null) ?? {};
+      if (failedMeta.matflowKind === "class_pack" && failedMeta.tenantId === tenantId) {
+        console.warn(
+          `[stripe-webhook] checkout.session.async_payment_failed — class pack session ${String(obj.id)} ` +
+          `(pack=${failedMeta.packId ?? "?"}, member=${failedMeta.memberId ?? "?"}): payment failed; no credits minted.`,
+        );
+        pendingAuditLogs.push({
+          tenantId,
+          userId: null,
+          action: "stripe.checkout.class_pack_payment_failed",
+          entityType: "ClassPack",
+          entityId: failedMeta.packId ?? String(obj.id),
+          metadata: {
+            sessionId: (obj.id as string) ?? null,
+            memberId: failedMeta.memberId ?? null,
+            paymentIntentId: (obj.payment_intent as string) ?? null,
+          },
+        });
       }
     } else if (event.type === "checkout.session.expired") {
       // An abandoned Stripe cart used to stay "pending" for ever, and

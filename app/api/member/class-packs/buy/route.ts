@@ -130,12 +130,11 @@ export async function POST(req: Request) {
     const checkoutSession = await stripe.checkout.sessions.create(
       {
         mode: "payment",
-        // Card only, as the shop checkout (app/api/member/checkout). A card
-        // payment settles before the session completes, so the webhook's
-        // "paid" check never turns a genuine purchase away; a delayed method
-        // (Bacs, SEPA, bank transfer) would complete the session unpaid
-        // (W6, 28 Oct 2026). Apple Pay and Google Pay are card wallets.
-        payment_method_types: ["card"],
+        // No payment_method_types: the club's own Stripe payment methods
+        // apply, delayed ones included. The webhook mints credits only once
+        // the session is paid (checkout.session.completed with payment_status
+        // "paid", or checkout.session.async_payment_succeeded), never on an
+        // unpaid completion (W6, 28 Oct 2026).
         customer: customerId ?? undefined,
         // pack.stripePriceId narrowed to non-null by the no-pack guard above —
         // TypeScript can't track this through the withTenantContext closure.

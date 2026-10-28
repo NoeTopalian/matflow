@@ -5,9 +5,10 @@
 //    metadata.matflowKind "class_pack": credits are minted only for a session
 //    Stripe reports as PAID, for a pack and a member of the club the
 //    connected account belongs to, and only with a valid signature.
-//  - POST /api/member/class-packs/buy: the Checkout Session it creates only
-//    offers a payment method that settles before completion (card), as the
-//    shop checkout already does, so "completed" can never mean "not yet paid".
+//  - Delayed methods stay available (the club's own Stripe methods; the
+//    payment policy is unchanged): an unpaid completion records nothing,
+//    checkout.session.async_payment_succeeded mints the credits once, and
+//    async_payment_failed mints nothing.
 //
 // Synthetic only: Stripe's constructor and every database call are replaced;
 // nothing reaches a provider.
@@ -53,7 +54,8 @@ vi.mock("@/lib/stripe-account-status", () => ({
 vi.mock("@/lib/review-lock", () => ({ refuseIfReviewLocked: async () => null }));
 vi.mock("@/lib/billing-source-server", () => ({ refuseIfBilledElsewhere: async () => null }));
 vi.mock("@/lib/email", () => ({ sendEmail: vi.fn(async () => ({ ok: true })) }));
-vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => undefined) }));
+const auditLog = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock("@/lib/audit-log", () => ({ logAudit: auditLog }));
 vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
 
 const db = vi.hoisted(() => ({
@@ -83,10 +85,10 @@ function webhookReq() {
   });
 }
 
-function packSession(over: Record<string, unknown> = {}, metadata: Record<string, string> = {}) {
+function packSession(over: Record<string, unknown> = {}, metadata: Record<string, string> = {}, type = "checkout.session.completed") {
   return {
     id: `evt-w6-${Math.random().toString(36).slice(2)}`,
-    type: "checkout.session.completed",
+    type,
     account: "acct_club_a",
     data: {
       object: {
@@ -114,7 +116,19 @@ beforeEach(() => {
   db.member.findFirst.mockImplementation(async ({ where }: { where: { id: string; tenantId: string } }) =>
     where.id === "mem-a" && where.tenantId === "tenant-A" ? { id: "mem-a", name: "A", email: "a@example.test", tenant: { name: "Club A" } } : null,
   );
+  // A stateful pack table keyed on the @unique payment intent, so a second
+  // mint for the same payment is visible (and a duplicate insert is a P2002).
+  minted.clear();
+  db.memberClassPack.findUnique.mockImplementation(async ({ where }: { where: { stripePaymentIntentId?: string } }) =>
+    where.stripePaymentIntentId && minted.has(where.stripePaymentIntentId) ? { id: `mcp-${where.stripePaymentIntentId}` } : null,
+  );
+  db.memberClassPack.create.mockImplementation(async ({ data }: { data: { stripePaymentIntentId: string | null } }) => {
+    if (data.stripePaymentIntentId && minted.has(data.stripePaymentIntentId)) throw Object.assign(new Error("unique"), { code: "P2002" });
+    if (data.stripePaymentIntentId) minted.add(data.stripePaymentIntentId);
+    return { id: `mcp-${data.stripePaymentIntentId}` };
+  });
 });
+const minted = new Set<string>();
 
 async function deliver(event: unknown) {
   m.constructEvent.mockReturnValue(event);
@@ -137,6 +151,44 @@ describe("W6 webhook: forged or unconfirmed class-pack payment evidence", () => 
     expect(res.status).toBeLessThan(500);
     expect(db.memberClassPack.create).not.toHaveBeenCalled();
     expect(db.payment.upsert).not.toHaveBeenCalled();
+  });
+
+  it("an unpaid completion followed by async_payment_succeeded mints the pack exactly once, with a succeeded Payment", async () => {
+    await deliver(packSession({ payment_status: "unpaid" }));
+    expect(db.memberClassPack.create).not.toHaveBeenCalled();
+    expect(db.payment.upsert).not.toHaveBeenCalled();
+    const res = await deliver(packSession({ payment_status: "paid" }, {}, "checkout.session.async_payment_succeeded"));
+    expect(res.status).toBe(200);
+    expect(db.memberClassPack.create).toHaveBeenCalledTimes(1);
+    expect(db.memberClassPack.create.mock.calls[0][0].data).toMatchObject({ tenantId: "tenant-A", memberId: "mem-a", packId: "pack-a", creditsRemaining: 5, stripePaymentIntentId: "pi_w6", status: "active" });
+    expect(db.payment.upsert).toHaveBeenCalledTimes(1);
+    expect(db.payment.upsert.mock.calls[0][0].create).toMatchObject({ status: "succeeded", stripePaymentIntentId: "pi_w6" });
+  });
+
+  it("a duplicate async_payment_succeeded (or a paid completion plus an async success) mints once", async () => {
+    await deliver(packSession({ payment_status: "paid" }, {}, "checkout.session.async_payment_succeeded"));
+    await deliver(packSession({ payment_status: "paid" }, {}, "checkout.session.async_payment_succeeded"));
+    await deliver(packSession({ payment_status: "paid" }));
+    expect(minted.size).toBe(1);
+    expect(db.memberClassPack.create).toHaveBeenCalledTimes(1);
+    expect(db.payment.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("async_payment_failed mints nothing and is logged to the club's audit", async () => {
+    await deliver(packSession({ payment_status: "unpaid" }));
+    const res = await deliver(packSession({ payment_status: "unpaid" }, {}, "checkout.session.async_payment_failed"));
+    expect(res.status).toBe(200);
+    expect(db.memberClassPack.create).not.toHaveBeenCalled();
+    expect(db.payment.upsert).not.toHaveBeenCalled();
+    expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "tenant-A", action: "stripe.checkout.class_pack_payment_failed" }));
+  });
+
+  it("async events naming another club, or a paid session with no payment intent, mint nothing", async () => {
+    await deliver(packSession({ payment_status: "paid" }, { tenantId: "tenant-B" }, "checkout.session.async_payment_succeeded"));
+    await deliver(packSession({ payment_status: "paid", payment_intent: null }, {}, "checkout.session.async_payment_succeeded"));
+    await deliver(packSession({ payment_status: "unpaid" }, { tenantId: "tenant-B" }, "checkout.session.async_payment_failed"));
+    expect(db.memberClassPack.create).not.toHaveBeenCalled();
+    expect(auditLog).not.toHaveBeenCalledWith(expect.objectContaining({ action: "stripe.checkout.class_pack_payment_failed" }));
   });
 
   it("a completed checkout with no payment_status at all mints nothing", async () => {
@@ -177,8 +229,8 @@ describe("W6 webhook: forged or unconfirmed class-pack payment evidence", () => 
   });
 });
 
-describe("W6 buy route: the pack checkout only offers a method that settles before completion", () => {
-  it("creates a card-only Checkout Session (no delayed methods), with the club's pack and the session's member", async () => {
+describe("W6 buy route: the club's payment methods are kept; the session names the club's pack and the session's member", () => {
+  it("does not restrict payment methods (the club's own methods apply), and the metadata ignores forged body fields", async () => {
     m.auth.mockResolvedValue({ user: { tenantId: "tenant-A", memberId: "mem-a", role: "member" } });
     db.tenant.findUnique.mockResolvedValue({ stripeAccountId: "acct_club_a", stripeConnected: true, stripeAccountStatus: null, memberSelfBilling: true });
     db.member.findFirst.mockResolvedValue({ id: "mem-a", email: "a@example.test", name: "A", stripeCustomerId: "cus_a" });
@@ -190,7 +242,7 @@ describe("W6 buy route: the pack checkout only offers a method that settles befo
     }))) as unknown as { status: number };
     expect(res.status).toBe(200);
     const [params] = m.checkoutCreate.mock.calls[0] as [Record<string, unknown>];
-    expect(params.payment_method_types).toEqual(["card"]);
+    expect(params).not.toHaveProperty("payment_method_types");
     expect(params.metadata).toMatchObject({ matflowKind: "class_pack", tenantId: "tenant-A", memberId: "mem-a", packId: "pack-a" });
     expect(params.line_items).toEqual([{ price: "price_a", quantity: 1 }]);
   });

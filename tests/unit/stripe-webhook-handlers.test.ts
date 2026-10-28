@@ -1068,6 +1068,8 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       id: "pack-1", validityDays: 30, totalCredits: 10, pricePence: 5000, currency: "gbp", name: "10pk",
     } as never);
     mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+    // No purchase recorded yet for this payment intent (the mint reads it first, W6).
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue(null as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
@@ -1093,6 +1095,8 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       id: "pack-1", validityDays, totalCredits: 10, pricePence: 5000, currency: "gbp", name: "10pk",
     } as never);
     mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+    // No purchase recorded yet for this payment intent (the mint reads it first, W6).
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue(null as never);
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
     const create = vi.mocked(prisma.memberClassPack.create);
