@@ -530,7 +530,13 @@ try {
     { saw: activeTile, expected: [fmtNum(E.active), "Active members", `Now · ${X.activeDetail}`] });
 
   // 24 Oct 2026: a month not wholly recorded says so on every movement figure (ReportsView.tsx estimateLabel/withEstimate).
-  const apiReport = await page.request.get("/api/reports").then((r) => r.json()).catch(() => null);
+  // A failed read must not become an expectation of "no estimate" (29 Oct 2026: a network drop did exactly that).
+  let apiReport = null;
+  for (let i = 0; i < 3 && !apiReport; i++) {
+    apiReport = await page.request.get("/api/reports").then((r) => (r.ok() ? r.json() : null)).catch(() => null);
+    if (!apiReport) await page.waitForTimeout(3000);
+  }
+  if (!apiReport) throw new Error("could not read /api/reports after 3 attempts — the estimate words cannot be checked");
   const curBasis = apiReport?.membership?.movementsByMonth?.find((m) => m.isCurrentMonth)?.basis ?? null;
   const caption = (() => {
     const src = apiReport?.membership ?? {};
