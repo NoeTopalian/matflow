@@ -8,12 +8,14 @@
 import { describe, it, expect } from "vitest";
 import {
   buildMembership,
+  cancellationsOf,
   clubMonthWindows,
   compareEvents,
   estimatedCaption,
   headcountSeries,
   memberMovements,
   movements,
+  moversAndBasisInWindow,
   stateAt,
   tallyChange,
   type MovementEvent,
@@ -194,6 +196,51 @@ describe("clubMonthWindows: calendar months in the club's timezone", () => {
     });
     expect(m.movementsByMonth.find((r) => r.month === "2026-08")?.new).toBe(0);
     expect(m.movementsByMonth.find((r) => r.month === "2026-09")?.new).toBe(1);
+  });
+});
+
+describe("clubMonthWindows / buildMembership with an end month (statistics period, 26 Oct 2026)", () => {
+  const HISTORY = () => [
+    ev("a", "active", "2025-03-01T00:00:00Z"),
+    ev("a", "cancelled", "2026-06-15T10:00:00Z"),
+    ev("a", "active", "2026-09-10T10:00:00Z"),
+    ev("b", "active", "2025-04-01T00:00:00Z"),
+    ev("b", "cancelled", "2026-08-20T10:00:00Z"),
+    ev("c", "active", "2026-07-05T10:00:00Z"),
+  ];
+  const LIVE = [{ id: "a", status: "active" }, { id: "b", status: "cancelled" }, { id: "c", status: "active" }];
+
+  it("windows end with the given month, each counted to its last instant, and none is current", () => {
+    const w = clubMonthWindows(NOW, TZ, 3, "2026-08");
+    expect(w.map((x) => x.key)).toEqual(["2026-06", "2026-07", "2026-08"]);
+    expect(w.every((x) => !x.isCurrent)).toBe(true);
+    expect(w[2].at.toISOString()).toBe("2026-08-31T22:59:59.999Z");
+  });
+
+  it("an end month of this month (or later) is the same as none", () => {
+    expect(clubMonthWindows(NOW, TZ, 4, "2026-10")).toEqual(clubMonthWindows(NOW, TZ, 4));
+    expect(clubMonthWindows(NOW, TZ, 4, "2027-03")).toEqual(clubMonthWindows(NOW, TZ, 4));
+  });
+
+  it("a past period's totals and opening headcount match the same months in the full series", () => {
+    const full = buildMembership({ events: HISTORY(), live: LIVE, now: NOW, timeZone: TZ, boundary: new Date("2025-01-01T00:00:00Z") });
+    const jun_aug = buildMembership({ events: HISTORY(), live: LIVE, now: NOW, timeZone: TZ, boundary: new Date("2025-01-01T00:00:00Z"), months: 3, endMonth: "2026-08" });
+    const months = full.movementsByMonth.filter((r) => r.month >= "2026-06" && r.month <= "2026-08");
+    const sum = (k: "new" | "rejoined" | "lost" | "net") => months.reduce((n, r) => n + r[k], 0);
+    expect(jun_aug.totals).toMatchObject({ new: sum("new"), rejoined: sum("rejoined"), lost: sum("lost"), net: sum("net") });
+    expect(jun_aug.totals).toMatchObject({ new: 1, lost: 2, net: -1 }); // c joined July; a left June, b left August
+    // Opening = active at the end of May = the full series' May headcount (a and b).
+    expect(jun_aug.openingHeadcount).toBe(full.headcountByMonth.find((r) => r.month === "2026-05")!.headcount);
+    expect(jun_aug.openingHeadcount).toBe(2);
+    expect(jun_aug.headcountByMonth.map((r) => r.headcount)).toEqual(
+      full.headcountByMonth.filter((r) => r.month >= "2026-06" && r.month <= "2026-08").map((r) => r.headcount),
+    );
+  });
+
+  it("without an end month nothing changes", () => {
+    const a = buildMembership({ events: HISTORY(), live: LIVE, now: NOW, timeZone: TZ, boundary: null });
+    const b = buildMembership({ events: HISTORY(), live: LIVE, now: NOW, timeZone: TZ, boundary: null, endMonth: undefined });
+    expect(b).toEqual(a);
   });
 });
 
@@ -498,5 +545,95 @@ describe("estimatedCaption: what an estimate came from", () => {
     expect(estimatedCaption({ historySource: "ledger", fromJoinDates: 3 })).toBe("Estimated from your TeamUp history and join and cancellation dates");
     expect(estimatedCaption({ historySource: "none", fromJoinDates: 2 })).toBe("Estimated from join and cancellation dates");
     expect(estimatedCaption({ historySource: "none", fromJoinDates: 0 })).toBe("Estimated");
+  });
+});
+
+// Churn (owner decision, 27 Oct 2026): the total cancellations in the period,
+// joiners included — no opening-cohort restriction. It supersedes the
+// opening-cohort count of 26 Oct. A finished prepaid course is Left, never
+// churn. A cancellation is a move (lostCancelled), so one person who cancels,
+// rejoins and cancels again inside the period is two cancellations, as Left
+// and Joined count moves; the Members drill-through lists that person once.
+describe("churn: every cancellation in the window (owner decision, 27 Oct 2026)", () => {
+  const B = new Date("2025-01-01T00:00:00Z");
+  // Aug – Oct 2026 in the club's zone (London is on BST on 1 Aug), counted to NOW.
+  const WINDOW = { start: new Date("2026-07-31T23:00:00Z"), at: NOW };
+  const build = (events: MovementEvent[], live: { id: string; status: string }[]) => ({
+    series: buildMembership({ events, live, now: NOW, timeZone: TZ, boundary: B, months: 3, endMonth: "2026-10" }),
+    drill: moversAndBasisInWindow({ events, live, now: NOW, boundary: B }, WINDOW),
+  });
+
+  it("a member there before the window who cancelled in it is counted", () => {
+    const { series, drill } = build([ev("a", "active", "2025-03-01T00:00:00Z"), ev("a", "cancelled", "2026-09-10T10:00:00Z", { fromStatus: "active" })], [{ id: "a", status: "cancelled" }]);
+    expect(cancellationsOf(series.totals)).toBe(1);
+    expect([drill.movers.cancelled, drill.cancelledMoves]).toEqual([["a"], 1]);
+  });
+
+  it("someone who joined and cancelled inside the window is counted (no opening-cohort restriction)", () => {
+    const { series, drill } = build([ev("j", "active", "2026-08-05T10:00:00Z"), ev("j", "cancelled", "2026-09-20T10:00:00Z", { fromStatus: "active" })], [{ id: "j", status: "cancelled" }]);
+    expect([cancellationsOf(series.totals), series.totals.new, series.totals.lost]).toEqual([1, 1, 1]);
+    expect([drill.movers.cancelled, drill.cancelledMoves]).toEqual([["j"], 1]);
+  });
+
+  it("a finished prepaid course is counted in Left, never as churn", () => {
+    const { series, drill } = build([
+      ev("d", "active", "2025-03-01T00:00:00Z"),
+      ev("d", "inactive", "2026-09-10T10:00:00Z", { reason: "import", fromStatus: "active", sourceAction: "import_refresh" }),
+    ], [{ id: "d", status: "inactive" }]);
+    expect([series.totals.lost, series.totals.lostCompleted, cancellationsOf(series.totals)]).toEqual([1, 1, 0]);
+    expect([drill.movers.lost, drill.movers.cancelled, drill.cancelledMoves]).toEqual([["d"], [], 0]);
+  });
+
+  it("cancel, rejoin and cancel again inside the window is two cancellations; the drill-through lists the person once", () => {
+    const { series, drill } = build([
+      ev("t", "active", "2025-03-01T00:00:00Z"),
+      ev("t", "cancelled", "2026-08-10T10:00:00Z", { fromStatus: "active" }),
+      ev("t", "active", "2026-09-01T10:00:00Z", { fromStatus: "cancelled" }),
+      ev("t", "cancelled", "2026-10-02T10:00:00Z", { fromStatus: "active" }),
+    ], [{ id: "t", status: "cancelled" }]);
+    expect([cancellationsOf(series.totals), series.totals.lost, series.totals.rejoined]).toEqual([2, 2, 1]);
+    expect([drill.movers.cancelled, drill.cancelledMoves]).toEqual([["t"], 2]);
+  });
+
+  it("paused (set inactive by hand) before the window and cancelled in it is a cancellation", () => {
+    const { series, drill } = build([
+      ev("p", "active", "2025-03-01T00:00:00Z"),
+      ev("p", "inactive", "2026-06-01T10:00:00Z", { fromStatus: "active" }),
+      ev("p", "cancelled", "2026-09-01T10:00:00Z", { fromStatus: "inactive" }),
+    ], [{ id: "p", status: "cancelled" }]);
+    expect(cancellationsOf(series.totals)).toBe(1);
+    expect(drill.movers.cancelled).toEqual(["p"]);
+  });
+
+  it("not a cancellation: a taster who never started, or a cancelled member cancelled again", () => {
+    const { series, drill } = build([
+      ev("k", "taster", "2026-08-03T10:00:00Z"),
+      ev("k", "cancelled", "2026-08-20T10:00:00Z", { fromStatus: "taster" }),
+      ev("x", "active", "2025-03-01T00:00:00Z"),
+      ev("x", "cancelled", "2026-05-01T10:00:00Z", { fromStatus: "active" }),
+      ev("x", "cancelled", "2026-09-01T10:00:00Z", { fromStatus: "cancelled" }),
+    ], [{ id: "k", status: "cancelled" }, { id: "x", status: "cancelled" }]);
+    expect(cancellationsOf(series.totals)).toBe(0);
+    expect([drill.movers.cancelled, drill.cancelledMoves]).toEqual([[], 0]);
+  });
+});
+
+describe("moversAndBasisInWindow: joins as moves (Analysis agrees with the Reports Joined tile)", () => {
+  it("a member who rejoined twice in the window is one person but two joins", async () => {
+    const { moversAndBasisInWindow } = await import("@/lib/membership-movement");
+    const r = moversAndBasisInWindow({
+      events: [
+        ev("x", "active", "2025-03-01T00:00:00Z"),
+        ev("x", "cancelled", "2026-07-02T10:00:00Z", { fromStatus: "active" }),
+        ev("x", "active", "2026-08-02T10:00:00Z", { fromStatus: "cancelled" }),
+        ev("x", "cancelled", "2026-08-20T10:00:00Z", { fromStatus: "active" }),
+        ev("x", "active", "2026-09-02T10:00:00Z", { fromStatus: "cancelled" }),
+      ],
+      live: [{ id: "x", status: "active" }],
+      now: NOW,
+      boundary: new Date("2025-01-01T00:00:00Z"),
+    }, { start: new Date("2026-07-31T23:00:00Z"), at: NOW });
+    expect(r.movers.rejoined).toEqual(["x"]);
+    expect(r.joinedMoves).toBe(2);
   });
 });

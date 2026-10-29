@@ -1,8 +1,9 @@
 /**
  * GET /api/reports
  * Returns aggregated analytics for the owner reports dashboard.
- * Query params:
- *   weeks=12  Number of weekly attendance buckets, clamped from 4 to 24.
+ * Query params (lib/report-period):
+ *   period=this-month|last-month|3m|6m|12m|custom, with from=YYYY-MM&to=YYYY-MM for custom.
+ *   weeks=N   The earlier control; used only when period is absent, mapped to the nearest preset.
  */
 import { auth } from "@/auth";
 import { getReportsDataCached } from "@/lib/reports";
@@ -17,12 +18,12 @@ export async function GET(req: Request) {
   if (!canView) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
-  const requestedWeeks = Number(searchParams.get("weeks") ?? "12");
+  const period = { period: searchParams.get("period"), from: searchParams.get("from"), to: searchParams.get("to"), weeks: searchParams.get("weeks") };
   // 60-second per-tenant, per-window cache (lib/reports.ts) — the body
   // carries `generatedAt` so a client can say how old the figures are.
   let data: Awaited<ReturnType<typeof getReportsDataCached>>;
   try {
-    data = await getReportsDataCached(session.user.tenantId, { weeksBack: requestedWeeks });
+    data = await getReportsDataCached(session.user.tenantId, { period });
   } catch (e) {
     // Connection register gap 25 (30 Sep 2026): no catch meant a bare 500
     // with no reference and no Sentry event.

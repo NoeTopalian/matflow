@@ -168,6 +168,8 @@ export function paymentHealthLine(h: {
   /** Inactive or cancelled accounts whose last charge failed, to reconcile. Not owing, but not "good standing" either. */
   failedToReconcileCount?: number;
   failedLast30Days: number;
+  /** Failures in the Reports period shown above the line; when any, "good standing" is said to be now. */
+  failedInPeriod?: number;
 }): { tone: "good" | "owed"; text: string } | null {
   const noPaymentYet = h.noPaymentYetCount ?? 0;
   if (noPaymentYet > 0) {
@@ -175,7 +177,7 @@ export function paymentHealthLine(h: {
     return { tone: "owed", text: `${payersOverdueLabel(h.overdueCount)} · ${NO_PAYMENT_YET_REASON} ${noPaymentYet}` };
   }
   if (h.overdueCount === 0 && h.failedLast30Days === 0 && (h.otherOwingCount ?? 0) === 0 && (h.failedToReconcileCount ?? 0) === 0) {
-    return { tone: "good", text: "All payments are in good standing." };
+    return { tone: "good", text: (h.failedInPeriod ?? 0) > 0 ? "All payments are in good standing now." : "All payments are in good standing." };
   }
   return null;
 }

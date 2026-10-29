@@ -11,7 +11,9 @@ const t = testEnv();
 const roles = { owner: assertTestUrl(t.TEST_DATABASE_URL, "TEST_DATABASE_URL"), restricted: assertTestUrl(t.RESTRICTED_DATABASE_URL, "RESTRICTED_DATABASE_URL") };
 let failed = 0;
 for (const [role, url] of Object.entries(roles)) {
-  const env = { ...process.env, DATABASE_URL: url, TEST_DATABASE_URL: url };
+  // The restricted pass sets RLS_ENFORCED=1, as scripts/test-rls-enforced.mjs does: the security files assert
+  // it and fail their role check without it.
+  const env = { ...process.env, DATABASE_URL: url, TEST_DATABASE_URL: url, ...(role === "restricted" ? { RLS_ENFORCED: "1" } : {}) };
   delete env.NODE_TLS_REJECT_UNAUTHORIZED;
   delete env.MIGRATION_DATABASE_URL;
   const r = spawnSync(node24(), ["node_modules/vitest/vitest.mjs", "run", ...files], { cwd: APP, env, encoding: "utf8", timeout: 600000 });

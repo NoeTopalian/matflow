@@ -83,7 +83,8 @@ test.describe("J22 — the write allow-list, role by role", () => {
       expect(list.body, "the list never carries a password hash or TOTP seed").not.toHaveProperty("passwordHash");
       for (const m of (list.body as { members: Record<string, unknown>[] }).members) {
         // billedBy + billingStatusAsOf since 3ccc20d: the list shows "Billed by
-        // TeamUp · status as of …" (readiness spec v3 §7). Neither is sensitive.
+        // TeamUp · imported …" (readiness spec v3 §7; wording
+        // from the owner decision of 27 Oct 2026). Neither is sensitive.
         expect(Object.keys(m).sort(), `${c.role} member key-set is an allow-list`).toEqual([
           "accountType", "billedBy", "billingStatusAsOf", "dateOfBirth", "email", "hasKidsHint", "id", "joinedAt",
           "memberRanks", "membershipType", "name", "parentMemberId", "paymentStatus",

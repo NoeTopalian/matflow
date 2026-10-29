@@ -363,6 +363,18 @@ describe("F3 — PATCH /api/settings under an edit session", () => {
     noWrites();
   });
 
+  // G5 (27 Oct 2026): turning off a member door is the owner's call, so the
+  // app check-in switch is not on the edit-session allowlist.
+  it("memberAppCheckin refuses, alone and mixed with an allowed key, and is not allowlisted", async () => {
+    mockAuth.mockResolvedValue(editSession as never);
+    expect(SUPPORT_EDIT_FIELD_POLICY["settings.update"] as readonly string[]).not.toContain("memberAppCheckin");
+    for (const body of [{ memberAppCheckin: false }, { memberAppCheckin: true }, { checkinWindowBeforeMin: 20, memberAppCheckin: false }]) {
+      const res = await settingsPatch(req("https://x/api/settings", body));
+      expect(res.status, JSON.stringify(body)).toBe(403);
+    }
+    noWrites();
+  });
+
   it("branding-only body passes the guard", async () => {
     mockAuth.mockResolvedValue(editSession as never);
     const res = await settingsPatch(req("https://x/api/settings", { name: "Nice Club", primaryColor: "#112233" }));

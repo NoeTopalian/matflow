@@ -53,7 +53,7 @@ async function hold(token: string, ms = 500, gap = HOLD_GAP_MS + 250) {
 
 const STAFF_SENTENCE =
   "Ava Green has used all 4 classes this 4-week period (resets on Monday 26 October) and has no class-pack credit, so they can't be checked in.";
-const TIER_SENTENCE = "Advanced isn't included in your Beginners Unlimited membership. Ask staff about a membership that includes it.";
+const TIER_SENTENCE = "Advanced isn't included in your Beginners Unlimited membership. For further information, please speak to a coach.";
 const MEMBERSHIP_HINT = "Change their membership or the squad list to admit them.";
 
 beforeEach(() => {

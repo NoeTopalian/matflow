@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { Package, Loader2, AlertCircle, ShoppingCart, CheckCircle2 } from "lucide-react";
 import { ErrorState } from "@/components/ui/ErrorState";
+import { formatDate } from "@/lib/date";
+import { packValidityLabel } from "@/lib/class-pack-terms";
 
 type OwnedPack = {
   id: string;
@@ -11,7 +13,8 @@ type OwnedPack = {
   creditsRemaining: number;
   totalCredits: number;
   purchasedAt: string;
-  expiresAt: string;
+  /** The term recorded at sale; null for a pack from a no-expiry product. */
+  expiresAt: string | null;
 };
 
 type AvailablePack = {
@@ -19,7 +22,8 @@ type AvailablePack = {
   name: string;
   description: string | null;
   totalCredits: number;
-  validityDays: number;
+  /** Days after purchase, or null for "Never expires" (chosen per product). */
+  validityDays: number | null;
   pricePence: number;
   currency: string;
 };
@@ -29,10 +33,10 @@ function formatPrice(pence: number, currency: string) {
   return `${symbol}${(pence / 100).toFixed(2)}`;
 }
 
-function daysLeft(iso: string) {
-  const d = new Date(iso);
-  const ms = d.getTime() - Date.now();
-  return Math.max(0, Math.ceil(ms / 86_400_000));
+/** "6 classes left" for a no-expiry pack; "6 classes left · expires 3 Feb 2027" for a dated one. */
+export function classesLeftLabel(creditsRemaining: number, expiresAt: string | null): string {
+  const left = `${creditsRemaining} ${creditsRemaining === 1 ? "class" : "classes"} left`;
+  return expiresAt ? `${left} · expires ${formatDate(expiresAt)}` : left;
 }
 
 export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primaryColor?: string }) {
@@ -107,8 +111,8 @@ export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primary
                 <li key={p.id} className="rounded-xl p-3 border" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }}>
                   <div className="flex items-center justify-between gap-3 mb-1.5">
                     <p className="text-sm font-medium text-white">{p.name}</p>
-                    <p className="text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>
-                      {daysLeft(p.expiresAt)}d left
+                    <p className="text-[11px] text-right" style={{ color: "rgba(255,255,255,0.5)" }} data-testid="pack-classes-left">
+                      {classesLeftLabel(p.creditsRemaining, p.expiresAt)}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -147,7 +151,7 @@ export default function ClassPacksWidget({ primaryColor = "#3b82f6" }: { primary
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-white">{p.name}</p>
                   <p className="text-[11px] mt-0.5" style={{ color: "rgba(255,255,255,0.5)" }}>
-                    {p.totalCredits} classes · valid {p.validityDays} days
+                    {p.totalCredits} classes · {packValidityLabel(p.validityDays)}
                   </p>
                   {p.description && <p className="text-[11px] mt-1" style={{ color: "rgba(255,255,255,0.55)" }}>{p.description}</p>}
                 </div>

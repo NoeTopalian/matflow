@@ -1,7 +1,8 @@
 // Journey: reporting truth (PR #37, sean/batch-a-reporting-truth — Sean's notes 2 and 6).
 // One population definition behind every member count (lib/member-population.ts): the Members page Active headline,
-// the Reports "Active members" tile and the Settings status counts must agree; churn shows "x% (n of m)" with
-// "Joined this month" beside it; other rates show their counts or "—"; the CSV carries the same numbers.
+// the Reports "Active members" tile and the Settings status counts must agree; churn is the count of cancellations in
+// the period, joiners included, with no percentage (owner decision, 27 Oct 2026, superseding the 26 Oct opening-cohort
+// rate), with "Joined this month" beside it; other rates show their counts or "—"; the CSV carries the same numbers.
 // Seeds a known population into the fixture club (on top of the fixture's own Member 1 and Member 2), computes the
 // expected numbers from the same definitions in SQL, then checks the screens at desktop and 390 px.
 // Needs `fixture.mjs create` and `server.mjs start` (server on the PR #37 build).
@@ -59,6 +60,9 @@ const sixMonthsAgo = clubMonthStart(-5); // lib/reports.ts chartMonths[0].monthS
 const OLD = new Date(now.getFullYear(), now.getMonth() - 8, 15, 12);      // before the 6-month cohort line
 const EARLIER = new Date(now.getFullYear(), now.getMonth() - 2, 15, 12);  // cancelled, but not this month
 const THIS_MONTH = now;
+// A joiner who cancels inside this club month: starts two minutes ago (never before the month began), cancels 1 s later.
+const JL_START = new Date(Math.max(monthStart.getTime() + 1000, now.getTime() - 120_000));
+const JL_END = new Date(JL_START.getTime() + 1000);
 
 // ── Seed ────────────────────────────────────────────────────────────────────
 // Every row is one case of a definition. Emails are this journey's own, so a re-run replaces them (deterministic).
@@ -75,9 +79,13 @@ const SEED = [
   { key: "inactive", name: "RT Inactive", status: "inactive", pay: "paid", type: "adult", joined: OLD },
   // Created as a taster this month: first known state taster = Tasters added (not in Joined or Net).
   { key: "taster", name: "RT Taster", status: "taster", pay: "free", type: "adult", joined: THIS_MONTH, event: { from: null, to: "taster", at: THIS_MONTH }, move: "tasterAdded" },
-  // Long-standing members cancelled this month by staff: active → cancelled = Left (and the churn numerator).
+  // Long-standing members cancelled this month by staff: active → cancelled = Left, and a cancellation (churn).
   { key: "left-a", name: "RT Left A", status: "cancelled", pay: "cancelled", type: "adult", joined: OLD, cancelled: THIS_MONTH, event: { from: "active", to: "cancelled", at: THIS_MONTH }, move: "lost" },
   { key: "left-b", name: "RT Left B", status: "cancelled", pay: "cancelled", type: "adult", joined: OLD, cancelled: THIS_MONTH, event: { from: "active", to: "cancelled", at: THIS_MONTH }, move: "lost" },
+  // Owner decision, 27 Oct 2026: churn counts people who joined during the period and then cancelled. Created this
+  // month (null → active = New) and cancelled this month (active → cancelled = Left, and a cancellation).
+  { key: "joined-left", name: "RT Joined Left", status: "cancelled", pay: "cancelled", type: "adult", joined: JL_START, cancelled: JL_END,
+    events: [{ from: null, to: "active", at: JL_START, move: "new" }, { from: "active", to: "cancelled", at: JL_END, move: "lost" }] },
   { key: "left-earlier", name: "RT Left Earlier", status: "cancelled", pay: "cancelled", type: "adult", joined: OLD, cancelled: EARLIER },
   // D11: a former member reactivated this month: cancelled → active = Rejoined. cancelledAt cleared, so not churn.
   { key: "rejoiner", name: "RT Rejoiner", status: "active", pay: "paid", type: "adult", joined: OLD, event: { from: "cancelled", to: "active", at: THIS_MONTH }, move: "rejoined" },
@@ -107,6 +115,8 @@ const SEED = [
     payments: [{ status: "succeeded", at: new Date(now.getTime() - 33 * 86_400_000), amount: 5000 }] },
 ];
 const PAYMENT_TAG = "RT journey"; // Payment.description on the journey's own rows, so a re-run removes them
+// A row's status events in order: `events`, or its single `event` with the row's `move`.
+const eventsOf = (r) => r.events ?? (r.event ? [{ ...r.event, move: r.move }] : []);
 const dueAtOf = (r) => (r.dueDays !== undefined ? new Date(now.getTime() + r.dueDays * 86_400_000) : null);
 const emailFor = (key) => `${club.slug}-rt-${key}@example.test`;
 
@@ -188,11 +198,11 @@ for (const r of SEED) {
       [randomUUID(), tenantId, seededIds[r.key], p.amount, p.status, PAYMENT_TAG, p.status === "succeeded" ? iso(p.at) : null, iso(p.at)],
     );
   }
-  if (r.event) {
+  for (const e of eventsOf(r)) {
     await q(
       `insert into "MemberStatusEvent" (id, "tenantId", "memberId", "fromStatus", "toStatus", reason, "changedById", "occurredAt")
        values ($1, $2, $3, $4, $5, 'staff_edit', $6, $7)`,
-      [randomUUID(), tenantId, seededIds[r.key], r.event.from, r.event.to, club.owner.id, iso(r.event.at)],
+      [randomUUID(), tenantId, seededIds[r.key], e.from, e.to, club.owner.id, iso(e.at)],
     );
   }
 }
@@ -203,21 +213,28 @@ const seededAt = new Date();
 // in lib/membership-movement.ts): active → New at joinedAt; cancelled with a cancellation date → New at joinedAt and
 // Left at max(cancelledAt, joinedAt + 1 ms); inactive, taster or cancelled without a date → nothing (the
 // reconciliation at "now" is a correction, never a join, a loss or a taster added).
+// A loss rebuilt from a cancellation date is a cancellation (`cancel`), never a finished course.
 const noEventMoves = (status, joined, cancelled) => {
   if (status === "active") return [{ kind: "new", at: joined }];
-  if (status === "cancelled" && cancelled != null) return [{ kind: "new", at: joined }, { kind: "lost", at: Math.max(cancelled, joined + 1) }];
+  if (status === "cancelled" && cancelled != null) return [{ kind: "new", at: joined }, { kind: "lost", at: Math.max(cancelled, joined + 1), cancel: true }];
   return [];
 };
 const moveWindows = { thisMonth: [monthStart.getTime(), Infinity], lastMonth: [lastMonthStart.getTime(), monthStart.getTime() - 1] };
+// Churn (owner decision, 27 Oct 2026; lib/membership-movement.ts cancellationsOf): the cancellations in the window,
+// as moves, joiners included — `cancelled` below. A finished prepaid course would be Left without `cancel`.
 const tallyMoves = (moves, [from, to]) => {
-  const t = { new: 0, rejoined: 0, tasterAdded: 0, lost: 0 };
-  for (const m of moves) if (m.at >= from && m.at <= to) t[m.kind] += 1;
+  const t = { new: 0, rejoined: 0, tasterAdded: 0, lost: 0, cancelled: 0 };
+  for (const m of moves) {
+    if (m.at < from || m.at > to) continue;
+    t[m.kind] += 1;
+    if (m.cancel) t.cancelled += 1;
+  }
   return { ...t, joined: t.new + t.rejoined, net: t.new + t.rejoined - t.lost };
 };
 const allMoves = [
   ...baselineRows.flatMap((r) => noEventMoves(r.status, r.joined, r.cancelled)),
-  ...SEED.filter(training).flatMap((r) => (r.event
-    ? (r.move ? [{ kind: r.move, at: r.event.at.getTime() }] : [])
+  ...SEED.filter(training).flatMap((r) => (eventsOf(r).length
+    ? eventsOf(r).filter((e) => e.move).map((e) => ({ kind: e.move, at: e.at.getTime(), cancel: e.move === "lost" && e.to === "cancelled" }))
     : noEventMoves(r.status, r.joined.getTime(), r.cancelled ? r.cancelled.getTime() : null))),
 ];
 const MV = tallyMoves(allMoves, moveWindows.thisMonth);
@@ -227,13 +244,14 @@ const planned = Object.fromEntries(Object.keys(seedDelta).map((k) => [k, baselin
 L.check("seed", "S1 the database population after seeding is the baseline plus the planned seed, definition by definition",
   Object.keys(planned).every((k) => planned[k] === E[k]), { planned, observed: E });
 
-// Payment recovery inputs (lib/reports.ts: distinct members with a failed payment in 90 days; recovered = now paid).
+// Payment recovery inputs (lib/reports.ts: distinct members with a failed payment in the period — by default this
+// club month, 26 Oct 2026; it was the last 90 days before the period selector — recovered = now paid).
 const rec = (await q(
   `select count(distinct p."memberId")::int as failed,
           count(distinct p."memberId") filter (where m."paymentStatus" = 'paid')::int as recovered
      from "Payment" p left join "Member" m on m.id = p."memberId"
-    where p."tenantId" = $1 and p.status = 'failed' and p."createdAt" >= now() - interval '90 days' and p."memberId" is not null`,
-  [tenantId],
+    where p."tenantId" = $1 and p.status = 'failed' and p."createdAt" >= $2 and p."memberId" is not null`,
+  [tenantId, monthStart.toISOString()],
 ))[0];
 
 // ── Expected strings, in the source's exact formats ─────────────────────────
@@ -257,15 +275,24 @@ const JOINED_LINES = [
   { filter: "tasters-this-month", label: "Tasters added", value: MV.tasterAdded, headline: "tasters added this month" },
   { filter: "lost-this-month", label: "Left", value: MV.lost, headline: "left this month" },
 ];
-const CHURN_FORMULA = "Cancelled this month ÷ (active members now + cancelled this month)";
-const churnBase = E.active + E.cancelledThisMonth;
+// Churn (owner decision, 27 Oct 2026): ReportsView.tsx CHURN_TITLE, CHURN_COUNTED and churnValueText.
+const CHURN_TITLE = "Churn";
+const CHURN_COUNTED = "Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide";
+const churnText = (n, during) => `${fmtNum(n)} ${n === 1 ? "cancellation" : "cancellations"} ${during}`;
 const X = {
   membersHeadline: `${E.active} active members${E.activeOnHold > 0 ? `, ${E.activeOnHold} on hold` : ""}`,
   membersScope: `Active training members, including any on hold. ${ACTIVE_EXCLUDES}.`,
   membersTile: [String(E.active), "Active members", ...(E.activeOnHold > 0 ? [`Includes ${E.activeOnHold} on hold`] : []), ACTIVE_EXCLUDES],
-  activeDetail: `Includes ${fmtNum(E.activeOnHold)} on hold · of ${fmtNum(E.current)} current members · ${ACTIVE_EXCLUDES}`,
-  churn: fmtRatio(pct1(E.cancelledThisMonth, churnBase), E.cancelledThisMonth, churnBase),
-  churnDetail: churnBase > 0 ? CHURN_FORMULA : "No active or cancelled members this month",
+  // W3 (owner decision, 27 Oct 2026, 23:30): each count that is a share of a
+  // named population carries its percentage (lib/percent shareOf, half-up).
+  activeDetail: [
+    `Includes ${fmtNum(E.activeOnHold)} on hold`,
+    E.active > 0 ? `${Math.round((E.activeOnHold * 100) / E.active)}% of ${fmtNum(E.active)} active` : null,
+    E.current > 0 ? `${Math.round((E.active * 100) / E.current)}% of ${fmtNum(E.current)} current members` : `${fmtNum(E.current)} current members`,
+    ACTIVE_EXCLUDES,
+  ].filter(Boolean).join(" · "),
+  // The count of cancellations this month, joiners included: the tile's value line and its link name.
+  churn: churnText(MV.cancelled, "this month"),
   joinedValue: fmtNum(MV.joined),                                                                  // ReportsView.tsx:505
   joinedNet: `Net ${signed(MV.net)} this month (new + rejoined − left)`,                            // ReportsView.tsx:524-526
   // ReportsView.tsx:228-230 joinedTileDetail + :384 CSV row.
@@ -280,7 +307,7 @@ const X = {
   },
   left: `Left the club: ${fmtNum(E.left)} · cancelled members, not part of the shares above`,
 };
-L.note("seed", "N2 expected figures", { E, churnBase, recovery: rec, movement: { thisMonth: MV, lastMonth: MVLast }, X: { churn: X.churn, survival: X.survival, recovery: X.recovery, activeShare: X.activeShare, headline: X.membersHeadline } });
+L.note("seed", "N2 expected figures", { E, cancellations: MV.cancelled, recovery: rec, movement: { thisMonth: MV, lastMonth: MVLast }, X: { churn: X.churn, survival: X.survival, recovery: X.recovery, activeShare: X.activeShare, headline: X.membersHeadline } });
 
 // ── Round 3: payers, the club month, the CSV period ─────────────────────────
 // lib/overdue.ts overduePayerWhere / noPaymentYetPayerWhere, once in SQL: payers are active and taster rows of ANY
@@ -323,7 +350,7 @@ const Y = {
   healthLine: `${payersOverdue(P.overdue)} · No payment yet ${P.npy}`,                                       // lib/billing.ts paymentHealthLine (shown when npy > 0)
   csvOverdue: ["Payments", PAYER_LABEL, String(P.overdue), guardianNote(P.overdueGuardians)],               // ReportsView.tsx reportsCsv
   csvNpy: ["Payments", "Payers with no payment yet", String(P.npy), guardianNote(P.npyGuardians)],
-  csvPeriod: ["Report", "This month", monthLabelOf(0), `"This month" runs midnight to midnight in the club's time zone (${clubZone})`], // ReportsView.tsx periodCsvDetail
+  csvPeriod: ["Report", "Period", monthLabelOf(0), `Whole months, midnight to midnight in the club's time zone (${clubZone}), to today`], // ReportsView.tsx rangeCsvDetail
   outstandingSummary: `outstanding across ${payersLabel(owing)} (failed charges, and plan prices for missed due dates and first payments)`, // OutstandingPanel.tsx
   outstandingSplit: `${payersOverdue(P.overdue)} · ${P.npy.toLocaleString("en-GB")} with no payment yet. ${guardianNote(P.overdueGuardians + P.npyGuardians)}.`, // lib/billing.ts outstandingPayerSummary + OutstandingPanel.tsx
   lastMonthHeadline: `${MVLast.new} new in ${monthLabelOf(-1)}`,                                           // MembersList.tsx:648 sliceHeadlineCopy (past month), D11 movement New
@@ -498,14 +525,38 @@ try {
     { asOf: norm(await page.getByTestId("reports-generated-at").first().innerText()), seededAt: seededAt.toISOString() });
   const activeTile = await pTexts(activeLink);
   L.check("reports", "R1 Reports Active members tile equals the Members headline and Settings, and says what it counts",
-    activeTile[0] === fmtNum(E.active) && activeTile[1] === "Active members" && activeTile[2] === X.activeDetail,
-    { saw: activeTile, expected: [fmtNum(E.active), "Active members", X.activeDetail] });
+    // On screen the tile says it is a "now" figure (26 Oct 2026); the CSV row keeps the plain detail.
+    activeTile[0] === fmtNum(E.active) && activeTile[1] === "Active members" && activeTile[2] === `Now · ${X.activeDetail}`,
+    { saw: activeTile, expected: [fmtNum(E.active), "Active members", `Now · ${X.activeDetail}`] });
 
-  const churnLink = tileLink(page, "Churn rate this month");
+  // 24 Oct 2026: a month not wholly recorded says so on every movement figure (ReportsView.tsx estimateLabel/withEstimate).
+  // A failed read must not become an expectation of "no estimate" (29 Oct 2026: a network drop did exactly that).
+  let apiReport = null;
+  for (let i = 0; i < 3 && !apiReport; i++) {
+    apiReport = await page.request.get("/api/reports").then((r) => (r.ok() ? r.json() : null)).catch(() => null);
+    if (!apiReport) await page.waitForTimeout(3000);
+  }
+  if (!apiReport) throw new Error("could not read /api/reports after 3 attempts — the estimate words cannot be checked");
+  const curBasis = apiReport?.membership?.movementsByMonth?.find((m) => m.isCurrentMonth)?.basis ?? null;
+  const caption = (() => {
+    const src = apiReport?.membership ?? {};
+    const parts = [];
+    if (src.historySource && src.historySource !== "none") parts.push("your TeamUp history");
+    if ((src.fromJoinDates ?? 0) > 0) parts.push("join and cancellation dates");
+    return parts.length > 0 ? `Estimated from ${parts.join(" and ")}` : "Estimated";
+  })();
+  const wordsFor = (basis) => (basis === "mixed" ? "Partly estimated" : basis === "estimated" ? caption : null);
+  const estimateWords = wordsFor(curBasis);
+  const est = (d) => (estimateWords ? `${d} · ${estimateWords}` : d);
+  L.note("reports", "N6 this club month's movement basis (from /api/reports) and the estimate words the churn tile and the CSV must carry", { basis: curBasis, words: estimateWords });
+
+  // Churn (owner decision, 27 Oct 2026): "N cancellations this month" titled "Churn", what it counts, no percentage.
+  const churnLink = tileLink(page, `${CHURN_TITLE}: ${X.churn}`);
   const churnTile = await pTexts(churnLink);
-  L.check("reports", "R2 churn reads the percentage with its counts, and the formula",
-    churnTile[0] === X.churn && churnTile[1] === "Churn rate this month" && churnTile[2] === X.churnDetail,
-    { saw: churnTile, expected: [X.churn, "Churn rate this month", X.churnDetail] });
+  const churnWant = [X.churn, CHURN_TITLE, est(CHURN_COUNTED)];
+  L.check("reports", "R2 churn reads the count of cancellations this month (joiners included), titled Churn, says what it counts, and shows no percentage",
+    JSON.stringify(churnTile) === JSON.stringify(churnWant) && !churnTile.join(" ").includes("%"),
+    { saw: churnTile, expected: churnWant, movement: MV });
   // D11: the Joined tile (ReportsView.tsx:489-529 JoinedThisMonthTile).
   const joinedTileEl = page.getByTestId("reports-joined-tile").first();
   const joinedValue = norm(await joinedTileEl.getByTestId("reports-joined-value").innerText());
@@ -553,6 +604,17 @@ try {
   const rateMatch = rateCounts?.match(/^\(([\d,]+) check-ins ÷ ([\d,]+) members\)$/);
   L.check("reports", "R10 attendance rate: — with no counts, or its counts with the active-member base",
     rateValue === "—" ? rateCounts === null : !!rateMatch && rateMatch[2] === fmtNum(E.active), { value: rateValue, counts: rateCounts, activeBase: E.active });
+  // 28 Oct 2026 (attendance coverage, lib/attendance-coverage.ts): a club with no attendance records reads "—" and
+  // "No attendance recorded yet" on the Check-ins tile, never 0. This seed writes no attendance, but other journeys
+  // on the same fixture club may check members in, so the expectation follows the database: no rows → the
+  // no-records display; rows → a number and no no-records note.
+  const anyVisit = (await q(`select 1 from "AttendanceRecord" where "tenantId" = $1 limit 1`, [tenantId])).length > 0;
+  const checkinsTile = await pTexts(page.getByTestId("metric-card").filter({ has: page.locator("p", { hasText: /^Check-ins$/ }) }).first());
+  L.check("reports", "R10b Check-ins tile: with no attendance records at all it reads — and \"No attendance recorded yet\"; with records, a number",
+    anyVisit
+      ? /^[\d,]+$/.test(checkinsTile[0] ?? "") && !(checkinsTile[2] ?? "").includes("No attendance record")
+      : checkinsTile[0] === "—" && checkinsTile[1] === "Check-ins" && checkinsTile[2] === "No attendance recorded yet",
+    { saw: checkinsTile, clubHasAttendance: anyVisit });
 
   // Round 3: the payer tile, its guardian note, the health line, and the drill links carrying the club month.
   const payerLink = page.getByRole("link", { name: `${PAYER_LABEL} — see the payers behind this number`, exact: true });
@@ -598,6 +660,12 @@ try {
   const csvText = fs.readFileSync(await dl.path(), "utf8").replace(/^﻿/, "");
   const csv = parseCsv(csvText);
   const row = (section, metric) => csv.find((r) => r[0] === section && r[1] === metric) ?? null;
+  // 28 Oct 2026 (attendance coverage): the CSV says what the tile says, "—" plus the note in Detail.
+  L.check("csv", "C1b CSV Check-ins row: — and \"No attendance recorded yet\" when the club has no attendance records; a number otherwise",
+    anyVisit
+      ? /^\d+$/.test(row("Summary", "Check-ins")?.[2] ?? "")
+      : row("Summary", "Check-ins")?.[2] === "—" && (row("Summary", "Check-ins")?.[3] ?? "").endsWith(" · No attendance recorded yet"),
+    { saw: row("Summary", "Check-ins"), clubHasAttendance: anyVisit });
   L.check("csv", "C1 the CSV file is dated from the report and starts with Generated at",
     /^matflow-reports-\d{4}-\d{2}-\d{2}\.csv$/.test(dl.suggestedFilename()) && csv[1]?.[0] === "Report" && csv[1]?.[1] === "Generated at",
     { file: dl.suggestedFilename(), row2: csv[1]?.slice(0, 2) });
@@ -613,33 +681,20 @@ try {
   // D11: ReportsView.tsx:382-388 — the Joined row (value new + rejoined, detail the tile's lines and the definition)
   // and one row per line; the old "Joined this month" row is gone.
   const csvHealth = {
-    churn: row("Health", "Churn this month")?.[2],
+    churn: row("Health", "Churn (cancellations) this month")?.slice(2),
     joined: row("Health", JOINED_LABEL)?.slice(2), oldJoined: row("Health", "Joined this month"),
     new: row("Health", "New this month")?.slice(2), rejoined: row("Health", "Rejoined this month")?.slice(2),
     tasters: row("Health", "Tasters added this month")?.slice(2), left: row("Health", "Left this month")?.slice(2),
     recovery: row("Health", "Payment recovery")?.[2], survival: row("Health", "6-month survival")?.[2],
   };
-  // 24 Oct 2026: a month not wholly recorded says so on every movement row (ReportsView.tsx estimateLabel/withEstimate).
-  const apiReport = await page.request.get("/api/reports").then((r) => r.json()).catch(() => null);
-  const curBasis = apiReport?.membership?.movementsByMonth?.find((m) => m.isCurrentMonth)?.basis ?? null;
-  const caption = (() => {
-    const src = apiReport?.membership ?? {};
-    const parts = [];
-    if (src.historySource && src.historySource !== "none") parts.push("your TeamUp history");
-    if ((src.fromJoinDates ?? 0) > 0) parts.push("join and cancellation dates");
-    return parts.length > 0 ? `Estimated from ${parts.join(" and ")}` : "Estimated";
-  })();
-  const estimateWords = curBasis === "mixed" ? "Partly estimated" : curBasis === "estimated" ? caption : null;
-  const est = (d) => (estimateWords ? `${d} · ${estimateWords}` : d);
-  L.note("csv", "N6 this club month's movement basis (from /api/reports) and the estimate words the CSV must carry", { basis: curBasis, words: estimateWords });
   const csvHealthExpected = {
-    churn: X.churn,
+    churn: [String(MV.cancelled), est(CHURN_COUNTED)],
     joined: [String(MV.joined), est(X.joinedCsvDetail)], oldJoined: null,
     new: [String(MV.new), est("First ever start")], rejoined: [String(MV.rejoined), est("Started again after leaving")],
     tasters: [String(MV.tasterAdded), est("Not in Joined or Net")], left: [String(MV.lost), est("Cancelled, or finished a prepaid course")],
     recovery: X.recovery, survival: X.survival,
   };
-  L.check("csv", "C3 CSV churn, \"Joined this month (new + rejoined)\" with its lines and definition, the New / Rejoined / Tasters added / Left rows, recovery and survival read exactly as the tiles",
+  L.check("csv", "C3 CSV churn (the count of cancellations, what it counts, no percentage), \"Joined this month (new + rejoined)\" with its lines and definition, the New / Rejoined / Tasters added / Left rows, recovery and survival read exactly as the tiles",
     JSON.stringify(csvHealth) === JSON.stringify(csvHealthExpected), { saw: csvHealth, expected: csvHealthExpected });
   const csvShares = {
     Active: row("Current members by status", "Active")?.[3], Inactive: row("Current members by status", "Inactive")?.[3],
@@ -652,8 +707,8 @@ try {
   L.check("csv", "C5 CSV payer rows: Payers overdue and Payers with no payment yet, each with its guardian note",
     JSON.stringify(csvPayers.overdue) === JSON.stringify(Y.csvOverdue) && JSON.stringify(csvPayers.npy) === JSON.stringify(Y.csvNpy),
     { saw: csvPayers, expected: { overdue: Y.csvOverdue, npy: Y.csvNpy } });
-  const csvPeriod = row("Report", "This month");
-  L.check("csv", "C6 CSV \"This month\" row names the month and the club's time zone",
+  const csvPeriod = row("Report", "Period");
+  L.check("csv", "C6 CSV \"Period\" row names the month and the club's time zone",
     JSON.stringify(csvPeriod) === JSON.stringify(Y.csvPeriod), { saw: csvPeriod, expected: Y.csvPeriod });
   const csvOwing = row("Payments", OTHER_OWING_LABEL);
   L.check("csv", "OW2 CSV row \"Payments,Other accounts owing,N,<detail>\" as on the tile",
@@ -669,7 +724,12 @@ try {
   L.check("drill", "D1 Reports Active members tile opens Members with the same headline number", drillActive === X.membersHeadline, { saw: drillActive, expected: X.membersHeadline });
   await page.goto("/dashboard/members?filter=churned-this-month");
   const drillChurn = await membersHeadline(page);
-  L.check("drill", "D2 the churn drill-through lists exactly the members churn counted", drillChurn === `${E.cancelledThisMonth} cancelled this month`, { saw: drillChurn, expected: `${E.cancelledThisMonth} cancelled this month` });
+  const churnHeadExpected = `${MV.cancelled} cancelled this month`;
+  const shownOn = async (name) => (await page.getByText(name, { exact: true }).filter({ visible: true }).count()) > 0;
+  const churnRows = { leftA: await shownOn("RT Left A"), leftB: await shownOn("RT Left B"), joinedLeft: await shownOn("RT Joined Left"), rejoiner: await shownOn("RT Rejoiner"), leftEarlier: await shownOn("RT Left Earlier") };
+  L.check("drill", "D2 the churn drill-through reads \"N cancelled this month\" (the tile's count) and lists the cancellations, the joiner who cancelled included; not the rejoiner, not an earlier leaver",
+    drillChurn === churnHeadExpected && churnRows.leftA && churnRows.leftB && churnRows.joinedLeft && !churnRows.rejoiner && !churnRows.leftEarlier,
+    { saw: drillChurn, expected: churnHeadExpected, rows: churnRows });
   // D11: each Joined-tile line opens Members on exactly the members that figure counted (MembersList.tsx:646-657).
   for (const [i, line] of JOINED_LINES.entries()) {
     await page.goto(joinedHrefs[line.filter] ?? `/dashboard/members?filter=${line.filter}&month=${Y.thisMonthKey}`);
@@ -784,6 +844,115 @@ try {
     { line: outOwLine, list: owListSaw, appearances: owOnce, expected: { line: Z.outstandingLine, heading: Z.outstandingHeading, rows: Z.outstandingRows } });
   await shot(page, "reporting-truth-outstanding");
 
+  // ── The statistics period (Noe, 26 Oct 2026; lib/report-period) ────────────
+  // The last 3 club months, from this journey's own replay: the movement over the run, and its cancellations (churn,
+  // owner decision 27 Oct 2026). Labels as lib/report-period monthsLabel writes them.
+  const shortOf = (offset) => { const [y, m] = monthKeyOf(offset).split("-").map(Number); return new Date(Date.UTC(y, m - 1, 15, 12)).toLocaleString("en-GB", { month: "short", timeZone: "UTC" }); };
+  const yearOf = (offset) => monthKeyOf(offset).slice(0, 4);
+  const label3 = yearOf(-2) === yearOf(0) ? `${shortOf(-2)} – ${shortOf(0)} ${yearOf(0)}` : `${shortOf(-2)} ${yearOf(-2)} – ${shortOf(0)} ${yearOf(0)}`;
+  const start3 = clubMonthStart(-2);
+  const MV3 = tallyMoves(allMoves, [start3.getTime(), Infinity]);
+  // The run's basis (combined over its months) decides the estimate words on its churn tile.
+  const api3 = await page.request.get("/api/reports?period=3m").then((r) => r.json()).catch(() => null);
+  const est3 = (d) => (wordsFor(api3?.periodMovement?.basis) ? `${d} · ${wordsFor(api3?.periodMovement?.basis)}` : d);
+  const X3 = {
+    churn: churnText(MV3.cancelled, "in the last 3 months"),
+    churnDetail: est3(CHURN_COUNTED),
+    newHref: `/dashboard/members?filter=new-this-month&from=${monthKeyOf(-2)}&to=${monthKeyOf(0)}`,
+    lostHref: `/dashboard/members?filter=lost-this-month&from=${monthKeyOf(-2)}&to=${monthKeyOf(0)}`,
+    churnHref: `/dashboard/members?filter=churned-this-month&from=${monthKeyOf(-2)}&to=${monthKeyOf(0)}`,
+  };
+  L.note("period", "N4 expected figures for the last 3 months", { label3, movement: MV3, basis: api3?.periodMovement?.basis ?? null, X3 });
+
+  await page.goto("/dashboard/reports");
+  const periodSelect = page.getByLabel("Reporting period");
+  await periodSelect.waitFor({ timeout: 90000 });
+  L.check("period", "P0 the period selector opens on This month, with From and To both this month",
+    (await periodSelect.inputValue()) === "this-month" && (await page.getByLabel("Period from month").inputValue()) === monthKeyOf(0)
+      && (await page.getByLabel("Period to month").inputValue()) === monthKeyOf(0),
+    { period: await periodSelect.inputValue(), from: await page.getByLabel("Period from month").inputValue(), to: await page.getByLabel("Period to month").inputValue() });
+  await periodSelect.selectOption("3m");
+  await page.waitForURL(/period=3m/, { timeout: 60000 });
+  const churn3Link = tileLink(page, `${CHURN_TITLE}: ${X3.churn}`);
+  await churn3Link.waitFor({ timeout: 90000 });
+  const churn3 = await pTexts(churn3Link);
+  const churn3Want = [X3.churn, CHURN_TITLE, X3.churnDetail];
+  L.check("period", "P1 Last 3 months: churn is every cancellation in the run (joiners included), worded for the run, with no percentage",
+    JSON.stringify(churn3) === JSON.stringify(churn3Want) && !churn3.join(" ").includes("%"),
+    { saw: churn3, expected: churn3Want });
+  const joined3 = page.getByTestId("reports-joined-tile").first();
+  const joined3Saw = {
+    value: norm(await joined3.getByTestId("reports-joined-value").innerText()),
+    label: norm(await joined3.locator("p").nth(1).innerText()),
+    net: norm(await joined3.getByTestId("reports-joined-net").innerText()),
+    newHref: await joined3.getByTestId("reports-joined-new-this-month").getAttribute("href"),
+  };
+  const joined3Want = {
+    value: fmtNum(MV3.joined),
+    label: "Joined in the last 3 months (new + rejoined)",
+    net: `Net ${signed(MV3.net)} in the last 3 months (new + rejoined − left)`,
+    newHref: X3.newHref,
+  };
+  L.check("period", "P2 the Joined tile counts the run, says so, and drills through with from/to",
+    JSON.stringify(joined3Saw) === JSON.stringify(joined3Want), { saw: joined3Saw, expected: joined3Want });
+  const range3 = { from: await page.getByLabel("Period from month").inputValue(), to: await page.getByLabel("Period to month").inputValue() };
+  L.check("period", "P3 From and To show the run's first and last months", range3.from === monthKeyOf(-2) && range3.to === monthKeyOf(0), range3);
+  L.check("period", "P4 the churn tile drills to the churned slice for the whole run", (await churn3Link.getAttribute("href")) === X3.churnHref,
+    { saw: await churn3Link.getAttribute("href"), expected: X3.churnHref });
+  await shot(page, "reporting-truth-period-3m");
+
+  // The churn slice for the run: "N cancelled in <months>", N the tile's count.
+  await page.goto(X3.churnHref);
+  const cancelled3Headline = `${MV3.cancelled} cancelled in ${label3}`;
+  const cancelled3Seen = await page.getByText(cancelled3Headline, { exact: true }).first().waitFor({ timeout: 60000 }).then(() => true, () => false);
+  L.check("period", "P4b the Members churn slice for the run reads 'N cancelled in <months>'", cancelled3Seen, { expected: cancelled3Headline });
+
+  // The Left slice for the run lists exactly the leavers the tile counted, named by the run's months.
+  await page.goto(X3.lostHref);
+  const leftHeadline = `${MV3.lost} left in ${label3}`;
+  const leftSeen = await page.getByText(leftHeadline, { exact: true }).first().waitFor({ timeout: 60000 }).then(() => true, () => false);
+  L.check("period", "P5 the Members Left slice for the run reads 'N left in <months>'", leftSeen, { expected: leftHeadline });
+
+  // A custom run: editing From picks Custom months, ending this month.
+  await page.goto("/dashboard/reports?period=3m");
+  await page.getByLabel("Period from month").waitFor({ timeout: 90000 });
+  await page.getByLabel("Period from month").selectOption(monthKeyOf(-1));
+  await page.waitForURL(/period=custom/, { timeout: 60000 });
+  const customUrl = new URL(page.url());
+  L.check("period", "P6 editing From asks for a custom run ending this month",
+    customUrl.searchParams.get("from") === monthKeyOf(-1) && customUrl.searchParams.get("to") === monthKeyOf(0) && !customUrl.searchParams.has("weeks"),
+    { url: customUrl.search });
+  const MV2 = tallyMoves(allMoves, [clubMonthStart(-1).getTime(), Infinity]);
+  const label2 = yearOf(-1) === yearOf(0) ? `${shortOf(-1)} – ${shortOf(0)} ${yearOf(0)}` : `${shortOf(-1)} ${yearOf(-1)} – ${shortOf(0)} ${yearOf(0)}`;
+  const churnCustomName = `${CHURN_TITLE}: ${churnText(MV2.cancelled, `in ${label2}`)}`;
+  const churnCustom = await tileLink(page, churnCustomName).first().waitFor({ timeout: 90000 }).then(() => 1, () => 0);
+  L.check("period", "P7 the custom run's churn tile names its months and counts its cancellations", churnCustom >= 1, { expected: churnCustomName, found: churnCustom });
+
+  // Keyboard: the selector is reached by Tab and changed with the arrow keys.
+  await page.goto("/dashboard/reports");
+  await periodSelect.waitFor({ timeout: 90000 });
+  let reached = false;
+  for (let i = 0; i < 40 && !reached; i++) {
+    await page.keyboard.press("Tab");
+    reached = await periodSelect.evaluate((el) => el === document.activeElement);
+  }
+  L.check("period", "P8 the period selector is reached with Tab", reached, { tabs: "≤ 40" });
+  if (reached) {
+    await page.keyboard.press("ArrowDown");
+    const moved = await page.waitForURL(/period=last-month/, { timeout: 30000 }).then(() => true, () => false);
+    L.check("period", "P9 the arrow key changes the period (This month → Last month)", moved, { url: page.url() });
+  }
+
+  // Analysis follows the same period.
+  await page.goto("/dashboard/analysis?period=3m");
+  const aSelect = page.getByLabel("Reporting period");
+  await aSelect.waitFor({ timeout: 90000 });
+  const aDesc = norm(await page.getByText(/ · AI report$/).first().innerText());
+  L.check("period", "P10 Analysis opens on the same period and names its months",
+    (await aSelect.inputValue()) === "3m" && aDesc === `${label3} (to today) · AI report`,
+    { period: await aSelect.inputValue(), description: aDesc, expected: `${label3} (to today) · AI report` });
+  await shot(page, "reporting-truth-analysis-3m");
+
   // ── Phone width (390 px), same session ─────────────────────────────────────
   const phone = await context(browser, "10.95.0.2", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState() });
   const p2 = await phone.newPage();
@@ -803,19 +972,23 @@ try {
   await pActive.waitFor({ timeout: 90000 });
   const pActiveTile = await pTexts(pActive);
   L.check("mobile", "M3 at 390 px the Reports Active members tile shows the same number and detail",
-    pActiveTile[0] === fmtNum(E.active) && pActiveTile[2] === X.activeDetail, { saw: pActiveTile });
-  const pChurn = tileLink(p2, "Churn rate this month"); const pJoined = p2.getByTestId("reports-joined-tile").first();
+    pActiveTile[0] === fmtNum(E.active) && pActiveTile[2] === `Now · ${X.activeDetail}`, { saw: pActiveTile });
+  const pChurn = tileLink(p2, `${CHURN_TITLE}: ${X.churn}`); const pJoined = p2.getByTestId("reports-joined-tile").first();
   await pChurn.scrollIntoViewIfNeeded();
   const pChurnTile = await pTexts(pChurn);
   const pJoinedValue = norm(await pJoined.getByTestId("reports-joined-value").innerText());
   const pcb = await pChurn.boundingBox(); const pjb = await pJoined.boundingBox();
   const pNext = await pChurn.evaluate((el) => el.nextElementSibling?.getAttribute("data-testid") ?? null);
-  L.check("mobile", "M4 at 390 px churn reads x% (n of m) and the Joined tile follows it directly (stacked, next tile)",
+  L.check("mobile", "M4 at 390 px churn reads its count of cancellations and the Joined tile follows it directly (stacked, next tile)",
     pChurnTile[0] === X.churn && pJoinedValue === X.joinedValue && pNext === "reports-joined-tile"
       && pcb && pjb && pjb.y >= pcb.y + pcb.height - 1 && Math.abs(pjb.x - pcb.x) <= 2,
     { churn: pChurnTile[0], joined: pJoinedValue, nextTile: pNext, churnBox: pcb, joinedBox: pjb });
   const m2 = await noHScroll(p2);
   L.check("mobile", "M5 /dashboard/reports at 390 px has no horizontal page scroll", m2.scroll <= m2.width + 1, m2);
+  const pSel = await p2.getByLabel("Reporting period").boundingBox();
+  const pTo = await p2.getByLabel("Period to month").boundingBox();
+  L.check("mobile", "M5b at 390 px the period selector and its month pickers sit inside the screen",
+    !!pSel && !!pTo && pSel.x >= 0 && pSel.x + pSel.width <= 391 && pTo.x >= 0 && pTo.x + pTo.width <= 391, { select: pSel, to: pTo });
   await shot(p2, "reporting-truth-mobile-reports");
 
   await p2.goto("/dashboard/settings");

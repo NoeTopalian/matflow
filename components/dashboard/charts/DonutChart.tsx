@@ -1,8 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { formatRatio, wholePct } from "@/components/dashboard/reports-primitives";
-import { percent } from "@/lib/percent";
+import { formatRatio, wholePct } from "@/lib/percent";
 
 export type DonutSlice = {
   label: string;
@@ -112,36 +111,33 @@ export default function DonutChart({
 }
 
 /**
- * `showCounts` (Q6: agent default adopted 17 Oct 2026; not an owner
- * decision; required by Sean's note relayed 14 Oct and the owner instruction
- * of 24 Oct 2026): each share reads
- * "x% (n of m)" over the slices shown, so the base of every percentage is on
- * screen. Without it the legend keeps the older "count (x%)" form.
+ * Each share reads "x% (n of m)" over the slices shown, so the base of every
+ * percentage is on screen (required by Sean's note relayed 14 Oct and the
+ * owner instruction of 24 Oct 2026); an empty donut reads "—". The older
+ * "count (x%)" form, which had no base, is gone with its `showCounts` switch,
+ * so no caller can print a bare percentage.
+ *
+ * One slice is the whole by construction, so it reads its count alone
+ * ("90"), never an artificial "100% (90 of 90)" (owner decision, 27 Oct
+ * 2026, 23:30).
  */
-export function DonutLegend({ data, showCounts = false }: { data: DonutSlice[]; showCounts?: boolean }) {
+export function DonutLegend({ data }: { data: DonutSlice[] }) {
   const total = data.reduce((s, d) => s + d.value, 0);
+  const share = (d: DonutSlice) =>
+    data.length === 1 ? d.value.toLocaleString("en-GB") : formatRatio(wholePct(d.value, total), d.value, total);
   return (
     <ul className="w-full min-w-0 space-y-2">
-      {data.map((d) => {
-        const pct = total > 0 ? percent(d.value, total) : 0;
-        return (
-          <li key={d.label} className="flex items-center justify-between gap-3 text-sm">
-            <span className="flex items-center gap-2 min-w-0">
-              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color }} />
-              <span className="truncate" style={{ color: "var(--tx-2)" }}>{d.label}</span>
-            </span>
-            <span className="shrink-0 tabular-nums" style={{ color: "var(--tx-3)" }}>
-              {showCounts ? (
-                <span data-testid="donut-legend-ratio">{formatRatio(wholePct(d.value, total), d.value, total)}</span>
-              ) : (
-                <>
-                  {d.value} <span className="ml-1 text-xs">({pct}%)</span>
-                </>
-              )}
-            </span>
-          </li>
-        );
-      })}
+      {data.map((d) => (
+        <li key={d.label} className="flex items-center justify-between gap-3 text-sm">
+          <span className="flex items-center gap-2 min-w-0">
+            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color }} />
+            <span className="truncate" style={{ color: "var(--tx-2)" }}>{d.label}</span>
+          </span>
+          <span className="shrink-0 tabular-nums" style={{ color: "var(--tx-3)" }}>
+            <span data-testid="donut-legend-ratio">{share(d)}</span>
+          </span>
+        </li>
+      ))}
     </ul>
   );
 }

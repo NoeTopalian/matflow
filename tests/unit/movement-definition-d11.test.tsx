@@ -125,6 +125,8 @@ describe("D11: one movement definition", () => {
     // The tiles read the same events.
     expect(data.churn.joined).toBe(2);
     expect(data.churn.net).toBe(0);
+    // Churn is the cancellations: Eve. Dan's finished course is Left, not churn.
+    expect(data.churn.cancelled).toBe(1);
     expect(data.summary.newMembersThisMonth).toBe(1);
     // The "Joined" chart's current month.
     expect(data.monthlySignups.find((r) => r.isCurrentMonth)?.count).toBe(2);
@@ -136,6 +138,7 @@ describe("D11: one movement definition", () => {
     expect(csv).toContain("Health,Rejoined this month,1,Started again after leaving");
     expect(csv).toContain("Health,Tasters added this month,1,Not in Joined or Net");
     expect(csv).toContain("Health,Left this month,2,\"Cancelled, or finished a prepaid course\"");
+    expect(csv).toContain("Health,Churn (cancellations) this month,1,");
     expect(csv).toContain("New 1 · Rejoined 1 · Left 2 (cancelled 1, completed course 1) · Tasters added 1");
     expect(csv).toContain("Brought over by an import without dated history 1");
   });
@@ -153,7 +156,8 @@ describe("D11: one movement definition", () => {
     members = CLUB;
     events = EVENTS;
     const movers = await loadMonthMovers(tx() as never, "club", NOW, { start: at(START), at: NOW });
-    expect(movers).toEqual({ new: ["ana"], rejoined: ["cara"], lost: ["dan", "eve"], tasterAdded: ["ben"] });
+    // Dan's course ended and Eve cancelled: both Left; only Eve's cancellation is churn (owner decision, 27 Oct 2026).
+    expect(movers).toEqual({ new: ["ana"], rejoined: ["cara"], lost: ["dan", "eve"], tasterAdded: ["ben"], cancelled: ["eve"] });
     expect(monthDrillHref("rejoined-this-month", { monthKey: MONTH.monthKey } as never)).toBe(`/dashboard/members?filter=rejoined-this-month&month=${MONTH.monthKey}`);
 
     const moved = new Map<string, MemberRow["moved"]>();
@@ -168,10 +172,11 @@ describe("D11: one movement definition", () => {
     expect(listed("rejoined-this-month")).toEqual(["cara"]);
     expect(listed("lost-this-month")).toEqual(["dan", "eve"]);
     expect(listed("tasters-this-month")).toEqual(["ben"]);
+    expect(listed("churned-this-month")).toEqual(["eve"]);
     // Ivy joined "this month" by joinedAt but was imported: in no slice.
     for (const f of ["new-this-month", "rejoined-this-month", "lost-this-month", "tasters-this-month"]) expect(listed(f)).not.toContain("ivy");
 
-    const counts = { new: 1, rejoined: 1, lost: 2, tasterAdded: 1 };
+    const counts = { new: 1, rejoined: 1, lost: 2, tasterAdded: 1, cancelled: 1 };
     currentSearch = "filter=lost-this-month";
     render(<MembersList members={rows} primaryColor="#3b82f6" role="owner" movers={counts} monthWindow={{ ...MONTH, isCurrent: true }} />);
     expect(screen.getByTestId("members-headline").textContent).toBe("2 left this month");

@@ -55,7 +55,7 @@ async function markByEnter(input: HTMLInputElement, q: string) {
   await act(async () => {});
 }
 
-const TIER_SENTENCE = "Advanced isn't included in your Beginners Unlimited membership. Ask staff about a membership that includes it.";
+const TIER_SENTENCE = "Advanced isn't included in your Beginners Unlimited membership. For further information, please speak to a coach.";
 const AVA: Candidate = { id: "m1", name: "Ava Beginner", accountType: "adult", tierNotIncluded: true, membershipTierName: "Beginners Unlimited" };
 const BEN: Candidate = { id: "m2", name: "Ben Advanced", accountType: "adult", tierNotIncluded: false, membershipTierName: "Advanced Unlimited" };
 const bookedRow = (extra: Record<string, unknown>) => ({

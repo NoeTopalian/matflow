@@ -6,10 +6,11 @@
  * title row, empty frame and number format, so they are defined once here.
  */
 import type { ElementType } from "react";
-import { wholePct } from "@/lib/percent";
+import { formatPct, formatRatio, ratioCounts, wholePct } from "@/lib/percent";
 
 export type TooltipPayload = {
-  value?: number | string;
+  /** null for a point with no data (a chart bar before the club's attendance records start). */
+  value?: number | string | null;
   payload?: Record<string, unknown>;
 };
 
@@ -28,22 +29,12 @@ export function formatNumber(value: number) {
  * - A base of 0, or a null/non-finite pct, renders "—": an undefined rate is
  *   never "0%" (MATFLOW-SPECIFICATION-2026-10.md:144, divide-by-zero → null).
  * - Counts use en-GB grouping ("1,234").
+ *
+ * Defined in `lib/percent.ts` (pure, so server code prints the same text) and
+ * re-exported here for the screens: `formatRatio`, its two halves `formatPct`
+ * and `ratioCounts`.
  */
-export function formatRatio(pct: number | null, n: number, base: number): string {
-  const p = formatPct(pct, base);
-  return p === "—" ? p : `${p} ${ratioCounts(n, base)}`;
-}
-
-/** The percentage half of `formatRatio` ("10%", "3.2%"), or "—" on an empty base. */
-export function formatPct(pct: number | null, base: number): string {
-  if (base <= 0 || pct === null || !Number.isFinite(pct)) return "—";
-  return `${pct.toLocaleString("en-GB", { maximumFractionDigits: 1 })}%`;
-}
-
-/** The counts half of `formatRatio`: "(1 of 10)". */
-export function ratioCounts(n: number, base: number): string {
-  return `(${formatNumber(n)} of ${formatNumber(base)})`;
-}
+export { formatPct, formatRatio, ratioCounts };
 
 /** n ÷ base as a whole percentage, or null when the base is 0 (never NaN, never a fake 0). */
 export { wholePct };

@@ -50,6 +50,7 @@ import ReportsView, {
 import NetNewMembersCard from "@/components/dashboard/NetNewMembersCard";
 import MembersList from "@/components/dashboard/MembersList";
 import { createEmptyReportsData, type ReportsData } from "@/lib/reports";
+import { MONTH_SO_FAR, WEEK_SO_FAR } from "@/lib/percent";
 import { emptyMembershipReport, type MembershipReport } from "@/lib/membership-report";
 import {
   combinedBasis,
@@ -60,6 +61,9 @@ import {
 } from "@/lib/membership-movement";
 import { buildNetNewSeries, partlyEstimatedMonths } from "@/lib/net-new-series";
 import { clubMonthWindow, clubMonthWindowForKey } from "@/lib/club-month";
+import { resolveReportPeriod } from "@/lib/report-period";
+/** The Analysis fixtures describe October 2026 (the default period, "this month"). */
+const OCTOBER = resolveReportPeriod({}, new Date("2026-10-15T12:00:00.000Z"), "Europe/London");
 
 afterEach(() => {
   cleanup();
@@ -101,13 +105,20 @@ function membership(currentBasis: MembershipBasis = "mixed"): MembershipReport {
   };
 }
 
+/** A month row's tally, without its label fields. */
+function tallyOf(r: MembershipReport["movementsByMonth"][number]): MembershipReport["totals"] {
+  return { new: r.new, rejoined: r.rejoined, lost: r.lost, lostCancelled: r.lostCancelled, lostCompleted: r.lostCompleted, net: r.net, imported: r.imported, otherIn: r.otherIn, otherOut: r.otherOut, tasterAdded: r.tasterAdded };
+}
+
 function reports(m: MembershipReport = membership()): ReportsData {
   const base = createEmptyReportsData();
   return {
     ...base,
     summary: { ...base.summary, activeMembers: 32, currentMembers: 35, attendanceThisWeek: 45, attendanceLastWeek: 40, newMembersThisMonth: 2, newMembersLastMonth: 2 },
-    churn: { ratePct: 3, cancelled: 1, base: 33, joined: 3, net: 2 },
+    churn: { cancelled: 1, joined: 3, net: 2 },
     membership: m,
+    // The period is this month: its movement is October's tally, the run before it September.
+    periodMovement: { totals: tallyOf(m.movementsByMonth[2]), basis: m.movementsByMonth[2].basis, previousBasis: m.movementsByMonth[1].basis },
     monthlySignups: [
       { month: "Aug 2026", count: 4, isCurrentMonth: false, basis: "estimated" },
       { month: "Sep 2026", count: 2, isCurrentMonth: false, basis: "estimated" },
@@ -203,12 +214,34 @@ describe("estimate labels: Reports screen", () => {
   it("a trend pill carries the two figures behind its percentage", () => {
     expect(trendDelta(45, 40)).toBe("+13% (45 vs 40)");
     expect(trendDelta(30, 40)).toBe("-25% (30 vs 40)");
-    expect(trendDelta(5, 0)).toBe("+5");
+    // W3 (owner decision, 27 Oct 2026, 23:30): no previous figure, no
+    // percentage, the counts kept (it read a bare "+5").
+    expect(trendDelta(5, 0)).toBe("— (5 vs 0)");
     expect(trendDelta(4, 4)).toBeNull();
     render(<ReportsView data={reports()} attribution={ATTRIBUTION as never} primaryColor="#3b82f6" />);
-    // The Attendance this week pill and the Attendance pulse insight.
-    expect(screen.getAllByText("+13% (45 vs 40)")).toHaveLength(2);
-    expect(screen.getAllByText("on last week").length).toBeGreaterThan(0);
+    // The Attendance this week pill and the Attendance pulse insight: this
+    // week is Monday to now, last week the whole week, and both say so
+    // (review finding 1, 27 Oct 2026).
+    expect(screen.getAllByText("+13% (45 so far this week vs 40 all last week)")).toHaveLength(2);
+    expect(screen.queryByText("on last week")).toBeNull();
+    expect(screen.getByText("This week counts from Monday; last week is the whole week")).toBeTruthy();
+  });
+
+  it("a part period against a whole one says so: a Monday morning, and the month so far", () => {
+    expect(trendDelta(12, 120, WEEK_SO_FAR)).toBe("-90% (12 so far this week vs 120 all last week)");
+    expect(trendDelta(3, 10, MONTH_SO_FAR)).toBe("-70% (3 so far this month vs 10 all last month)");
+    expect(trendDelta(5, 0, WEEK_SO_FAR)).toBe("— (5 so far this week vs 0 all last week)");
+    expect(trendDelta(4, 4, WEEK_SO_FAR)).toBeNull();
+    const data = reports();
+    data.summary = { ...data.summary, attendanceThisWeek: 12, attendanceLastWeek: 120, newMembersThisMonth: 3, newMembersLastMonth: 10 };
+    render(<ReportsView data={data} attribution={ATTRIBUTION as never} primaryColor="#3b82f6" />);
+    const badges = screen.getAllByTestId("trend-badge").map((b) => b.textContent);
+    expect(badges).toEqual([
+      "-90% (12 so far this week vs 120 all last week)",
+      "-70% (3 so far this month vs 10 all last month)",
+    ]);
+    // The Owner Insights pulse row prints the same text.
+    expect(screen.getAllByText("-90% (12 so far this week vs 120 all last week)")).toHaveLength(2);
   });
 });
 
@@ -258,7 +291,7 @@ describe("estimate labels: a past month's Members drill-through", () => {
         primaryColor="#3b82f6"
         role="owner"
         monthWindow={{ ...sep, isCurrent: false }}
-        movers={{ new: 1, rejoined: 0, lost: 0, tasterAdded: 0 }}
+        movers={{ new: 1, rejoined: 0, lost: 0, tasterAdded: 0, cancelled: 0 }}
         moversBasis={{ basis, caption: "Estimated from your TeamUp history" }}
       />,
     );
@@ -297,16 +330,17 @@ describe("Analysis and the AI report show the Reports Joined figure (review 25 O
   it("the Analysis page counts Joined by movement in the club's months, and its report says so", async () => {
     const page = readFileSync(path.join(process.cwd(), "app/dashboard/analysis/page.tsx"), "utf8");
     expect(page).toMatch(/loadJoinedInWindows\(/);
-    expect(page).toMatch(/clubMonthWindow\(now, tenant\?\.timezone/);
+    // The club's months: the period resolves in Tenant.timezone (lib/report-period, 26 Oct 2026).
+    expect(page).toMatch(/resolveReportPeriod\(\{ period, from, to \}, now, tenant\?\.timezone\)/);
     expect(page).not.toMatch(/joinedAt:/);
     const { buildReport } = await import("@/components/dashboard/AnalysisView");
     const text = buildReport(
-      { totalMembers: 20, newThisMonth: 3, newLastMonth: 2, checkinsThisMonth: 50, checkinsLastMonth: 40, activeClasses: 4, activeMembersThisMonth: 10, monthLabel: "October 2026", gymName: "Test club" },
+      { totalMembers: 20, newThisMonth: 3, newLastMonth: 2, checkinsThisMonth: 50, checkinsLastMonth: 40, activeClasses: 4, activeMembersThisMonth: 10, monthLabel: "October 2026", gymName: "Test club", range: OCTOBER },
       [],
     );
     expect(text).toContain("**3 joined** (new + rejoined) this month, compared to 2 last month");
     const estimated = buildReport(
-      { totalMembers: 20, newThisMonth: 3, newLastMonth: 2, joinedEstimated: true, checkinsThisMonth: 50, checkinsLastMonth: 40, activeClasses: 4, activeMembersThisMonth: 10, monthLabel: "October 2026", gymName: "Test club" },
+      { totalMembers: 20, newThisMonth: 3, newLastMonth: 2, joinedEstimated: true, checkinsThisMonth: 50, checkinsLastMonth: 40, activeClasses: 4, activeMembersThisMonth: 10, monthLabel: "October 2026", gymName: "Test club", range: OCTOBER },
       [],
     );
     expect(estimated).toContain("**3 joined** (new + rejoined) this month (partly estimated)");

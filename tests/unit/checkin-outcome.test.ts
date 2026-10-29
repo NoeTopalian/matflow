@@ -86,7 +86,7 @@ describe("checkinRefusal", () => {
 
 describe("bookingFailureMessage (member schedule)", () => {
   it("shows the server's refusal sentence (tier, paused, roster, full)", () => {
-    const tier = "Advanced isn't included in your Beginners membership. Ask staff about a membership that includes it.";
+    const tier = "Advanced isn't included in your Beginners membership. For further information, please speak to a coach.";
     expect(bookingFailureMessage(403, { error: tier, reason: "tier_not_included" }, false)).toBe(tier);
     const paused = "No-Gi is paused at the moment, so check-in and booking are closed. Ask staff when it's back.";
     expect(bookingFailureMessage(409, { error: paused, reason: "class_paused" }, false)).toBe(paused);

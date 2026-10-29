@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 //
 // Track A (2026-09-21) — Reports page drill-through. The "New this month" and
-// "Churn rate this month" tiles on /dashboard/reports link to
+// "Churn" tiles on /dashboard/reports link to
 // /dashboard/members?filter=new-this-month and ?filter=churned-this-month so
 // an owner can see the actual member rows behind those two numbers, rather
 // than trusting a count. These cases pin the filtering logic MembersList
@@ -41,7 +41,12 @@ const MEMBERS: MemberRow[] = [
   // "new" by the movement definition — not a joinedAt comparison.
   member({ id: "m-new", name: "Nina New", joinedAt: thisMonth, moved: ["new"] }),
   member({ id: "m-old", name: "Oscar Old", joinedAt: lastMonth }),
-  member({ id: "m-churned", name: "Cara Churned", status: "cancelled", joinedAt: lastMonth, cancelledAt: thisMonth }),
+  // A member before this month who cancelled in it: flagged by the server as lost and cancelled (lib/membership-movement).
+  member({ id: "m-churned", name: "Cara Churned", status: "cancelled", joinedAt: lastMonth, cancelledAt: thisMonth, moved: ["lost", "cancelled"] }),
+  // Joined AND cancelled this month: churn counts them too (owner decision, 27 Oct 2026).
+  member({ id: "m-joined-left", name: "Jo Joiner", status: "cancelled", joinedAt: thisMonth, cancelledAt: thisMonth, moved: ["new", "lost", "cancelled"] }),
+  // A prepaid course that finished this month: Left only, never churn.
+  member({ id: "m-course", name: "Cole Course", status: "inactive", joinedAt: lastMonth, moved: ["lost"] }),
   member({ id: "m-churned-stale", name: "Sam Stale", status: "cancelled", joinedAt: lastMonth, cancelledAt: lastMonth }),
 ];
 
@@ -59,14 +64,17 @@ describe("MembersList — Reports drill-through filters", () => {
     expect(screen.queryAllByText("Sam Stale")).toHaveLength(0);
   });
 
-  it("?filter=churned-this-month shows only cancelled members whose cancelledAt is this calendar month", () => {
+  it("?filter=churned-this-month lists everyone the server flagged as cancelled this month, joiners included, and no finished course", () => {
     currentSearch = "filter=churned-this-month";
     render(<MembersList members={MEMBERS} primaryColor="#3b82f6" role="owner" />);
 
     expect(screen.getAllByText("Cara Churned").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Jo Joiner").length).toBeGreaterThan(0);
+    expect(screen.queryAllByText("Cole Course")).toHaveLength(0);
     expect(screen.queryAllByText("Sam Stale")).toHaveLength(0);
     expect(screen.queryAllByText("Nina New")).toHaveLength(0);
     expect(screen.queryAllByText("Oscar Old")).toHaveLength(0);
+    expect(screen.getByTestId("members-headline").textContent).toBe("2 cancelled this month");
   });
 });
 

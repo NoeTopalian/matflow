@@ -8,7 +8,7 @@ import { asOfDate } from "@/lib/importers/as-of";
 import { buildExceptionRows } from "@/lib/importers/teamup-exceptions";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
-import { membershipTierWrite, type ResolvedMembershipTier } from "@/lib/membership-tier";
+import { membershipTierWrite } from "@/lib/membership-tier";
 import { recordStatusEventsBulk } from "@/lib/member-status";
 // Audit iter-1-operator-admin A6I1-S-1: del() removes the publicly-readable
 // CSV from Vercel Blob storage after we've finished importing it. Combined
@@ -26,9 +26,10 @@ import {
   type RefreshChange,
 } from "@/lib/importers/teamup-refresh";
 import { holdOffMigrations, isMigrationInProgress, MIGRATION_IN_PROGRESS_MESSAGE } from "@/lib/migration-lock";
-import { type ImportConflict } from "@/lib/importers/import-conflicts";
+import { type Classification, type ImportConflict } from "@/lib/importers/import-conflicts";
 import { withoutConflictDetail } from "@/app/api/admin/import/upload/route";
-import { classifyAdults, classifyChildren, needsParent } from "@/lib/importers/import-match";
+import { blockedParents, classifyAdults, classifyChildren, fileRepeats, needsParent } from "@/lib/importers/import-match";
+import { PLAN_TIER_SELECT, planForNewMember, tallyPlanReview, type PlanDecision } from "@/lib/importers/plan-match";
 
 /** A schema migration holds Prisma Migrate's lock (lib/migration-lock.ts): nothing was written; retry shortly. */
 function migrationInProgress() {
@@ -204,20 +205,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const asOf = asOfDate(job.sourceExportedAt, tz?.timezone);
     const { drafts, errors, summary: sourceSummary, rows: ledgerRows } = parseImport(job.source as ImportSource, text, { asOf });
 
-    // Track F — membershipType→tier resolution. Fetched once, not per-row:
-    // a 1000-row import matching against the same handful of tenant tiers
-    // should not cost 1000 lookups. Matched case-insensitively on name
-    // because vendor CSVs are free-text ("BJJ Unlimited" vs "bjj unlimited")
-    // and the owner's tier name is the only thing we can compare against —
-    // no vendor ships our internal tier ids.
+    // The club's plans, fetched once, not per row. Two uses, kept apart:
+    //  - a NEW person's plan (owner rule 27 Oct 2026, lib/importers/plan-match):
+    //    set only when one active, eligible plan agrees on name, billing period,
+    //    price and currency; otherwise imported without a plan and listed;
+    //  - comparing an EXISTING person's plan with the file's (planOf): the name
+    //    only, to list a difference. Nothing is ever written to them.
     const tiers = await withTenantContext(tenantId, (tx) =>
-      tx.membershipTier.findMany({
-        where: { tenantId },
-        select: { id: true, name: true, billingCycle: true },
-      }),
+      tx.membershipTier.findMany({ where: { tenantId }, select: PLAN_TIER_SELECT }),
     );
     // A name two plans share (case or spacing apart) matches neither (tierMap).
-    const tierByName: Map<string, ResolvedMembershipTier> = tierMap(tiers);
+    const tierByName = tierMap(tiers);
+    // The plan decision per new person, as the preview made it (same function).
+    const planDecisions = new Map<MemberDraft, PlanDecision>();
+    const planFor = (d: MemberDraft) => {
+      let p = planDecisions.get(d);
+      if (!p) { p = planForNewMember(d, tiers, jobSource); planDecisions.set(d, p); }
+      return p;
+    };
+    // People this run created or had created (resumed): their plan decisions are the run's to report.
+    const newOrOwn = new Set<MemberDraft>();
+    let repeatedInFile = 0;
 
     let imported = 0;
     let skippedExisting = 0;
@@ -237,16 +245,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     /** The Member columns one draft writes. Shared by both passes below. */
     function columnsFor(d: MemberDraft, parentMemberId: string | null) {
-      // membershipType→tier: reuse the same "columns to write" helper
-      // the manual tier-picker uses (lib/membership-tier.ts), so a row
-      // that matches a tier gets both the id AND the tier's own name
-      // as the legacy label — never the CSV's own free-text spelling,
-      // which would drift from the tier the moment it's renamed. A row
-      // with no match, or no membershipType at all, keeps the CSV's
-      // free-text label only (membershipTierId stays null).
-      const matchedTier = d.membershipType
-        ? tierByName.get(d.membershipType.trim().toLowerCase())
-        : undefined;
+      // A plan only when name, billing period, price and currency all agree
+      // with one active, eligible plan (lib/importers/plan-match). Then the
+      // same "columns to write" helper the manual tier-picker uses
+      // (lib/membership-tier.ts) writes the id AND the tier's own name. Any
+      // other row keeps the file's label as text with no plan (the source
+      // evidence the review list shows) until staff assign one.
+      const decision = planFor(d);
+      const matchedTier = decision.kind === "assign" ? decision.tier : undefined;
       // Only seed nextDueAt from the tier's billing cycle when the CSV
       // didn't already carry an explicit due date — an imported row's own
       // billing data always wins over an inferred one. NEVER for a TeamUp
@@ -268,7 +274,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         status: d.status ?? "active",
         accountType: d.accountType ?? "adult",
         notes: d.notes ?? null,
-        paymentStatus: d.paymentStatus ?? "paid",
+        paymentStatus: d.paymentStatus ?? "pending",
         ...(tierCols.nextDueAt
           ? { nextDueAt: tierCols.nextDueAt }
           : d.nextDueAt
@@ -309,6 +315,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // one that carries a parentEmail is linked exactly like a kid.
     const firstPass = drafts.filter((d) => !needsParent(d));
     const kidPass = drafts.filter(needsParent);
+    // Uncertainty inside the file (rows sharing an email) is read over the
+    // whole file, as the preview reads it, not per slice.
+    const repeats = fileRepeats(firstPass);
+    // Each adult's outcome and the refused addresses, so a child is never
+    // attached to a parent row that was refused or uncertain (blockedParents).
+    const adultOutcomes = new Map<MemberDraft, Classification>();
+    const refusedAdultEmails = new Set<string>();
 
     // Batch in groups of 25 to keep transactions short.
     // Audit iter-1-operator-admin A6I1-P-1: collapse per-row N+1.
@@ -341,13 +354,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // with the preview): an exact duplicate is skipped, a difference or an
           // uncertain match is listed for the owner and nothing is written to
           // that member.
-          const outcomes = await classifyAdults(tx, tenantId, slice, { jobId, planOf, skipEmails: staffHeld });
+          const outcomes = await classifyAdults(tx, tenantId, slice, { jobId, planOf, skipEmails: staffHeld, repeats });
           const fresh: MemberDraft[] = [];
           for (const [d, c] of outcomes) {
-            if (c.kind === "new") fresh.push(d);
+            adultOutcomes.set(d, c);
+            if (c.kind === "new") { fresh.push(d); newOrOwn.add(d); }
+            else if (c.kind === "own") newOrOwn.add(d);
             else if (c.kind === "duplicate") duplicates += 1;
+            else if (c.kind === "repeat") repeatedInFile += 1;
             else if (c.kind === "conflict" || c.kind === "ambiguous") conflicts.push(c);
           }
+          for (const d of refused) refusedAdultEmails.add(d.email);
           if (fresh.length === 0) return { inserted: 0, refused };
           const result = await tx.member.createMany({
             data: fresh.map((d) => columnsFor(d, null)),
@@ -417,6 +434,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
+    const blocked = blockedParents(firstPass, adultOutcomes, refusedAdultEmails);
     for (let i = 0; i < kidPass.length; i += BATCH) {
       const slice = kidPass.slice(i, i + BATCH);
       try {
@@ -426,17 +444,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // row that carries a real address is claimed like an adult's.
           const claims = await claimLoginIdentities(tx, tenantId, slice.map((d) => d.email).filter(Boolean));
           const refused = slice.filter((d) => holdsStaffLogin(claims.get(normaliseEmail(d.email ?? ""))));
-          const outcomes = await classifyChildren(tx, tenantId, slice, { jobId, planOf, skipEmails: new Set(refused.map((d) => d.email)) });
+          const outcomes = await classifyChildren(tx, tenantId, slice, { jobId, planOf, skipEmails: new Set(refused.map((d) => d.email)), blocked });
           const fresh: Array<{ d: MemberDraft; parentId: string }> = [];
           for (const [idx, d] of slice.entries()) {
             const o = outcomes.get(d);
             if (!o) continue; // refused (staff login)
+            // A child whose parent row is uncertain is listed, linked to nobody (blockedParents).
+            if (o.classification?.kind === "ambiguous" && !o.parentId) {
+              skippedExisting += 1;
+              conflicts.push(o.classification);
+              continue;
+            }
             if (!o.classification || !o.parentId) {
               commitErrors.push({ row: i + idx, email: d.parentEmail, error: `${d.name}: parent ${d.parentEmail ?? "(none)"} was not imported, so this child was not either.` });
               continue;
             }
             const c = o.classification;
-            if (c.kind === "new") { fresh.push({ d, parentId: o.parentId }); continue; }
+            if (c.kind === "new") { fresh.push({ d, parentId: o.parentId }); newOrOwn.add(d); continue; }
+            if (c.kind === "own") newOrOwn.add(d);
             skippedExisting += 1;
             if (c.kind === "duplicate") duplicates += 1;
             else if (c.kind === "conflict" || c.kind === "ambiguous") conflicts.push(c);
@@ -600,6 +625,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           byPaymentStatus: tally((m) => m.paymentStatus),
           unmatchedPlan: created.filter((m) => m.membershipType && !m.membershipTierId).length,
         },
+        // Why people this run created have no plan, by the file's label (counts
+        // only, no person): the same decisions the preview reported.
+        planReview: tallyPlanReview([...newOrOwn].map(planFor)),
+        // Rows that exactly repeat an earlier row of the same file: skipped.
+        repeatedInFile,
         skippedExisting,
         // Of those already in the club: exact duplicates, and the people listed
         // for the owner to resolve (nothing written to them; owner decision 25 Oct 2026).

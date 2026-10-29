@@ -194,6 +194,8 @@ vi.mock("@/lib/prisma", () => ({
     tenant: { findUnique: vi.fn() },
     member: { findFirst: vi.fn() },
     memberClassPack: { findUnique: vi.fn(), update: vi.fn() },
+    // The refund route locks the pack row (SELECT ... FOR UPDATE) before reading it (W6).
+    $queryRaw: vi.fn().mockResolvedValue([]),
     classPackRedemption: { count: vi.fn() },
   },
 }));
@@ -292,6 +294,20 @@ describe("POST /api/payments/[id]/refund — the pack survives a partial", () =>
     expect(arg.data.status).toBe("refunded");
     expect(body.packVoided).toBe(true);
     expect(body.packCreditsRevoked).toBe(10);
+  });
+
+  // Packs per product (owner decision, 27 Oct 2026): the revocation guard is
+  // status "active" only, as before. A legacy "expired" pack is not usable and
+  // is left as it is recorded.
+  it("a full refund leaves a legacy 'expired' pack as recorded (guard is active only)", async () => {
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({
+      id: "mcp-1", memberId: "mem-1", status: "expired", creditsRemaining: 10,
+      pack: { totalCredits: 10 },
+    } as never);
+    const res = await refund(undefined, PACK_PRICE);
+    const body = await res.json();
+    expect(vi.mocked(prisma.memberClassPack.update)).not.toHaveBeenCalled();
+    expect(body.packVoided).toBeFalsy();
   });
 
   it("reads the pack's totalCredits, so the apportionment can be evaluated", async () => {

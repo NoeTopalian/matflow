@@ -16,7 +16,9 @@ const T = club.tenantId;
 const errors = [];
 const E = (who) => `${club.slug}-${who}@example.test`;
 
-// A synthetic TeamUp memberships export (26 columns). "Mfv Adults" matches a plan; "Mfv Open Mat" matches none.
+// A synthetic TeamUp memberships export (26 columns). "Mfv Adults" is a MatFlow plan's exact name; "Mfv Open Mat" is no
+// plan's name. Owner rule 27 Oct 2026: a plan is set only when name, billing period, price and currency agree, and a
+// TeamUp export states no money, so NOBODY gets a plan from it: all three are imported without one and listed.
 const HEADER = "Customer Name,Customer Email,Other Active,Membership Name,Type,Status,Payment Processor,Purchase Date,Start Date,Expiration Date,Cancelled Date,Is First Membership,Completed At,Address Line 1,Address Line 2,City,Region,Postcode,Country,Marketing Preference,Phone,Gender,Date of birth,Emergency Contact Name,Emergency Contact Phone,Emergency Contact Relationship";
 const row = (name, email, plan, dob) => [name, email, "", plan, "recurring", "active", "Stripe", "2026-01-05", "2026-01-05", "", "", "Yes", "", "", "", "", "", "", "GB", "", "", "", dob, "", "", ""].join(",");
 const PEOPLE = [
@@ -29,7 +31,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mfv-import-"));
 
 const memberByEmail = async (email) => (await q(`select id, status, "membershipTierId", "membershipType", "billingStatusSource" from "Member" where "tenantId" = $1 and email = $2`, [T, email]))[0] ?? null;
 
-// One "Mfv Adults" plan (a name two plans shared would match neither — the 25 Oct rule).
+// One "Mfv Adults" plan: an exact name match, which alone never sets a plan (27 Oct rule).
 await q(`insert into "MembershipTier" (id, "tenantId", name, "pricePence", currency, "billingCycle", "isKids", "isActive", "createdAt", "updatedAt")
          select $1, $2, 'Mfv Adults', 8800, 'GBP', 'monthly', false, true, now(), now()
           where not exists (select 1 from "MembershipTier" where "tenantId" = $2 and lower(trim(name)) = 'mfv adults')`, [`mfvtier${Date.now().toString(36)}`, T]);
@@ -78,8 +80,13 @@ try {
     { preview: { willImport: first.preview.willImport, same: first.preview.sameAsMatFlow, differs: first.preview.toReviewDiffers, uncertain: first.preview.toReviewUncertain }, imported: first.commit.imported });
   const ada = await memberByEmail(E("ada"));
   const cy = await memberByEmail(E("cy"));
-  L.check("journey", "J3 the three people exist; the matched plan is set; the unmatched one has no plan (import and flag)",
-    !!ada && !!ada.membershipTierId && !!cy && cy.membershipTierId === null && cy.membershipType === "Mfv Open Mat", { adaTier: !!ada?.membershipTierId, cyTier: cy?.membershipTierId, cyLabel: cy?.membershipType });
+  L.check("journey", "J2b the preview says what the commit does with plans: 0 with a plan, 3 without (TeamUp states no price, period or currency)",
+    first.preview.willImportWithPlan === 0 && first.preview.willImportWithoutPlan === 3 && first.commit.manifest?.created?.unmatchedPlan === 3
+      && (first.preview.planReview ?? []).every((r) => r.reason === "source_has_no_price_facts"),
+    { withPlan: first.preview.willImportWithPlan, withoutPlan: first.preview.willImportWithoutPlan, committedWithoutPlan: first.commit.manifest?.created?.unmatchedPlan });
+  L.check("journey", "J3 the three people exist with no plan and the file's label kept (an exact name match alone sets none: import and flag)",
+    !!ada && ada.membershipTierId === null && ada.membershipType === "Mfv Adults" && !!cy && cy.membershipTierId === null && cy.membershipType === "Mfv Open Mat",
+    { adaTier: ada?.membershipTierId, adaLabel: ada?.membershipType, cyTier: cy?.membershipTierId, cyLabel: cy?.membershipType });
   L.check("privacy", "P0 the import's response carries no person's name in its conflict list", !JSON.stringify(first.commit.manifest?.conflicts ?? []).includes("Ada"), first.commit.manifest?.conflicts);
 
   // 2. Staff edit Ada by hand through the normal member edit (the owner's PATCH route).
@@ -122,7 +129,7 @@ try {
   await page.waitForURL(/\/dashboard\/members\//, { timeout: 30000 });
   L.check("journey", "J8 the person's link opens their normal member page (the authorised edit)", page.url().includes(`/dashboard/members/${ada.id}`), new URL(page.url()).pathname);
 
-  // 6. The first import's list shows Cy as imported without a plan.
+  // 6. The first import's list shows everyone it created as imported without a plan, with the file's label and why.
   await page.goto("/dashboard/settings?tab=import");
   const buttons = page.getByRole("button", { name: /^Review \d+ (person|people)$/ });
   await buttons.first().waitFor({ timeout: 30000 });
@@ -130,7 +137,11 @@ try {
   await buttons.nth(n - 1).click(); // the oldest job: the first import
   const without = page.getByTestId("import-review-without-plan").first();
   const sawWithout = await without.waitFor({ timeout: 30000 }).then(() => true, () => false);
-  L.check("journey", "J9 the first import lists Cy as imported without a plan, linked to his page", sawWithout && /Cy Holt/.test((await without.textContent()) ?? ""), { buttons: n });
+  const withoutText = (await without.textContent().catch(() => "")) ?? "";
+  L.check("journey", "J9 the first import lists Ada, Ben and Cy as imported without a plan, with the file's label, the reason and the access-consequence sentence",
+    sawWithout && /Ada Field/.test(withoutText) && /Ben Gale/.test(withoutText) && /Cy Holt/.test(withoutText) && /file says Mfv Open Mat/.test(withoutText)
+      && /no price, billing period or currency/.test(withoutText) && /Until staff assign a plan, they can't check themselves in from the member app unless they hold a class pack\. The desk and the kiosk can still check them into classes open to everyone; classes limited to certain plans refuse them at every door\./.test(withoutText),
+    { buttons: n, text: withoutText.slice(0, 300) });
 
   // 7. Ada is deleted: the refresh's review list shows no name or values for her.
   // The member page's delete: a confirmed second call (the first, unconfirmed call is only a probe).

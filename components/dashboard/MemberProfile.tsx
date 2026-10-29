@@ -46,7 +46,7 @@ import { RevokeCardDialog } from "@/components/dashboard/RevokeCardDialog";
 import { LockedPill, MemberUnlockDialog, isSignInLocked } from "@/components/dashboard/UnlockSignIn";
 import AttributionFields, { attributionFromMember, type AttributionValue } from "@/components/dashboard/AttributionFields";
 import { resolveSignupCredit } from "@/lib/signup-credit";
-import { billingSourceLabel, HOLD_ACCESS_ONLY_NOTE, isBilledElsewhere, staleBillingWarning } from "@/lib/billing-source";
+import { billingSourceLabel, HOLD_ACCESS_ONLY_NOTE, isBilledElsewhere } from "@/lib/billing-source";
 import { paymentStatusLabel } from "@/lib/payment-status";
 import { paymentStatusFromHoldResponse } from "@/lib/member-hold";
 
@@ -1151,8 +1151,8 @@ export default function MemberProfile({
                 // column default "paid" would read as a settled membership.
                 <StatusPill icon={CreditCard} color={paymentMeta("no plan").color} bg={paymentMeta("no plan").bg} label="No plan" />
               )}
-              {/* TeamUp bridge (readiness spec v3 §7): the standing above is
-                  TeamUp's, as of the export it came from. */}
+              {/* TeamUp bridge (readiness spec v3 §7): TeamUp bills this
+                  member; the date is the import that brought them over. */}
               {billingSourceLabel(member) && (
                 <span data-testid="billing-source-label">
                   <StatusPill icon={CreditCard} color="var(--tx-2)" bg="var(--sf-2)" label={billingSourceLabel(member)} />
@@ -1177,12 +1177,6 @@ export default function MemberProfile({
               Member since {new Date(member.joinedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
               {hasAttention && <span className="ml-2" style={{ color: "#b45309" }}>· Action needed</span>}
             </p>
-            {staleBillingWarning(member) && (
-              // Staff only (this screen is the staff dashboard). Never blocks anything.
-              <p className="mt-1 text-xs font-medium text-[var(--hue-warning-ink)]" data-testid="stale-billing-warning">
-                {staleBillingWarning(member)}
-              </p>
-            )}
           </div>
         </div>
 

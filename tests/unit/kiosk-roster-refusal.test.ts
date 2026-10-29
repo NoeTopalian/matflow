@@ -85,7 +85,7 @@ describe("kiosk check-in — a member not on the roster", () => {
 
     // The staff route's sentence, so the two surfaces say the same thing about
     // the same state.
-    expect(body.error).toBe("You're not on the roster for this class.");
+    expect(body.error).toBe("You're not on the roster for this class. For further information, please speak to a coach.");
     expect(body.error).not.toContain("Could not check in");
     // T6d: the machine-readable reason, as the staff route sends.
     expect(body.reason).toBe("roster_not_listed");

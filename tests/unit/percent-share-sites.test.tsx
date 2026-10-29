@@ -26,7 +26,9 @@ describe("share formatters round half-up", () => {
     expect(computeRate(400, 201)).toBe(50.3); // 50.25 exactly; divide-first gave 50.2
   });
 
-  it("DonutChart legacy legend: 29 of 200 -> 15%", () => {
+  // G1 (27 Oct 2026): the legend has one form, "x% (n of m)". The legacy
+  // "29 (15%)" form, which had no base, is gone.
+  it("DonutChart legend: 29 of 200 -> 15% (29 of 200)", () => {
     render(
       <DonutLegend
         data={[
@@ -35,8 +37,13 @@ describe("share formatters round half-up", () => {
         ]}
       />,
     );
-    const row = screen.getByText("A").closest("li")!;
-    expect(row.textContent).toContain("29");
-    expect(row.textContent).toContain("(15%)");
+    const ratios = screen.getAllByTestId("donut-legend-ratio").map((el) => el.textContent);
+    expect(ratios).toEqual(["15% (29 of 200)", "86% (171 of 200)"]);
+    expect(screen.getByText("A").closest("li")!.textContent).toBe("A15% (29 of 200)");
+  });
+
+  it("DonutChart legend: an empty donut reads '—', never 0% or NaN%", () => {
+    render(<DonutLegend data={[{ label: "A", value: 0, color: "#111" }, { label: "B", value: 0, color: "#222" }]} />);
+    expect(screen.getAllByTestId("donut-legend-ratio").map((el) => el.textContent)).toEqual(["—", "—"]);
   });
 });

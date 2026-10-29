@@ -59,7 +59,11 @@ export type ImportConflict =
     }
   | {
       kind: "ambiguous";
-      /** Every member in this club the file person could be; none was chosen. */
+      /**
+       * Every member in this club the file person could be; none was chosen.
+       * Empty when the uncertainty is inside the file itself (two rows share an
+       * email with different details; a child whose parent in the file is uncertain).
+       */
       memberIds: string[];
       name: string;
       sourceKey: string | null;
@@ -135,7 +139,7 @@ export function uploadValues(d: MemberDraft, plan: Plan): Partial<Record<Compare
   if (d.accountType) out.accountType = d.accountType;
   if (plan.tierId || plan.label) { out.plan = plan.label ?? null; out._plan = plan; }
   if (d.status) out.status = d.status;
-  if (d.paymentStatus) out.paymentStatus = d.paymentStatus;
+  if (d.paymentStatus && !d.paymentStatusUnstated) out.paymentStatus = d.paymentStatus;
   if (d.cancelledAt) out.cancelledAt = day(d.cancelledAt);
   if (d.joinedAt) out.joinedAt = day(d.joinedAt);
   if (d.emergencyContactName?.trim()) out.emergencyContactName = d.emergencyContactName.trim();
@@ -206,6 +210,8 @@ export type Classification =
   | { kind: "new" }
   /** This job created it on an earlier, interrupted call: its own work, not a duplicate. */
   | { kind: "own"; memberId: string }
+  /** An exact repeat of an earlier row of this same file (same email, every stated value equal): skipped. */
+  | { kind: "repeat" }
   | { kind: "duplicate"; memberId: string }
   | Extract<ImportConflict, { kind: "conflict" }>
   | Extract<ImportConflict, { kind: "ambiguous" }>;

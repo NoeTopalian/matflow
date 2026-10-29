@@ -244,9 +244,9 @@ export function compareReconciliation(input: ReconciliationInput): Reconciliatio
     const unmatchedLive = planLabels.filter((l) => l.liveRows > 0 && !l.tierMatched);
     const reportedAtCommit = Array.isArray(t2Exceptions?.unmatchedPlanLabels) ? (t2Exceptions!.unmatchedPlanLabels as unknown[]).length : null;
     checks.push(baseline("Plans", "Plan labels on live rows with no tier of that name today", 0, unmatchedLive.length,
-      `Matched by name, trimmed, ignoring case. ${reportedAtCommit === null ? "" : `The importer reported ${reportedAtCommit} at commit. `}Create or rename a tier to match, then place the members.`));
+      `Matched by name, trimmed, ignoring case. ${reportedAtCommit === null ? "" : `The importer reported ${reportedAtCommit} at commit. `}A name match alone never sets a plan (27 Oct 2026); staff assign each member's plan on their page. Do not create or reprice a plan to force a match.`));
     checks.push(baseline("Plans", "Members on a live plan with no tier", 0, untiered.length,
-      "A live member without a tier is not counted under any tier and cannot be billed by MatFlow until placed.", rowsOf(untiered)));
+      "A TeamUp import sets no plan (the export has no price, billing period or currency), so every live member it created starts here until staff assign a plan. Until then they can't check themselves in from the member app unless they hold a class pack; the desk and the kiosk can still check them into classes open to everyone; classes limited to certain plans refuse them at every door.", rowsOf(untiered)));
 
     checks.push(invariant("Ledger", "Source rows recorded (manifest vs ledger)", num(t2Ledger?.rows), ledger.length,
       "One ledger row per CSV record; every record has exactly one disposition."));

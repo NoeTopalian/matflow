@@ -1,11 +1,13 @@
 /**
  * T2b (17 Oct 2026) — lib/reports.ts returns the counts behind every rate.
  *
- * Owner decision Q6: keep the churn formula (cancelled this month ÷ (active
- * now + cancelled this month)) but always show it as "x% (n of m)", with the
- * people who joined in the same month beside it. An empty base is null ("—"),
- * not the "0%" the old Math.max(…, 1) produced. Q4 A-2: status shares are over
- * current members only; cancelled members are a separate count.
+ * Churn (owner decision, 27 Oct 2026): the total cancellations in the
+ * selected period, joiners included, with the people who joined in the same
+ * period beside it. A finished prepaid course is Left, not churn. No
+ * percentage until its denominator is approved. Both come from the status
+ * history (lib/membership-movement.ts), so the fixtures below are events.
+ * Q4 A-2: status shares are over current members only; cancelled members are
+ * a separate count.
  *
  * The mocked transaction routes each `member.count` by the shape of its
  * `where`, so the test pins which population each number comes from rather
@@ -26,7 +28,9 @@ vi.mock("@/lib/prisma", () => ({
     // Review L4: getReportsData reads the club zone for its month windows.
     tenant: { findUnique: vi.fn(async () => ({ timezone: "Europe/London" })) },
     classInstance: { findMany: vi.fn() },
-    attendanceRecord: { findMany: vi.fn(), groupBy: vi.fn(), count: vi.fn() },
+    // The coverage start (lib/attendance-coverage, 28 Oct 2026): records since 2020, so every period here is covered
+    // and its counts read as they always did. A plain function, so a mock reset never clears it.
+    attendanceRecord: { findMany: vi.fn(), groupBy: vi.fn(), count: vi.fn(), findFirst: async () => ({ checkInTime: new Date("2020-01-01T12:00:00.000Z") }) },
     member: { groupBy: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     payment: { count: vi.fn(), findMany: vi.fn() },
     // T8c: the membership series reads (lib/membership-report.ts); it reads
@@ -42,6 +46,9 @@ import { zonedMonthStart } from "@/lib/club-month";
 
 type Where = Record<string, unknown>;
 
+type Ev = { id: string; memberId: string; fromStatus: string | null; toStatus: string; reason: string; sourceAction: string | null; occurredAt: Date; createdAt: Date };
+type Live = { id: string; status: string; joinedAt: Date; cancelledAt: Date | null };
+
 type Fixture = {
   active: number;
   cancelledThisMonth: number;
@@ -51,6 +58,8 @@ type Fixture = {
   failedMemberIds: string[];
   recovered: number;
   statusGroups: { status: string; _count: number }[];
+  /** The status history the churn and joined figures replay (none: no movement). */
+  history?: { events: Ev[]; live: Live[] };
 };
 
 const BASE: Fixture = {
@@ -69,6 +78,20 @@ const BASE: Fixture = {
   ],
 };
 
+
+/**
+ * The database's answer to the distinct-attendee groupBy (lib/reports.ts):
+ * the rows its `where.member` filter keeps (status, and accountType "not" /
+ * "in"), one per member. The filter, not the test, decides who counts.
+ */
+type AttendRow = { memberId: string; member?: { status?: string; accountType?: string } };
+function attendeeGroups(rows: AttendRow[], where: { member?: { status?: string; accountType?: { not?: string; in?: string[] } } }) {
+  const m = where.member ?? {};
+  const typeOk = (t: string) => (!m.accountType ? true : m.accountType.not !== undefined ? t !== m.accountType.not : (m.accountType.in ?? []).includes(t));
+  const kept = rows.filter((r) => (!m.status || r.member?.status === m.status) && typeOk(r.member?.accountType ?? "adult"));
+  return [...new Set(kept.map((r) => r.memberId))].map((memberId) => ({ memberId }));
+}
+
 function setup(f: Fixture) {
   vi.mocked(prisma.class.findMany).mockResolvedValue([] as never);
   vi.mocked(prisma.class.count).mockResolvedValue(0 as never);
@@ -83,6 +106,13 @@ function setup(f: Fixture) {
   ] as never);
   vi.mocked(prisma.attendanceRecord.groupBy).mockImplementation(((args: unknown) => {
     const by = (args as { by: string[] }).by;
+    if (by[0] === "memberId") {
+      // The three in-period check-ins: m1 twice and m2, both active.
+      return Promise.resolve(attendeeGroups(
+        [{ memberId: "m1", member: { status: "active" } }, { memberId: "m1", member: { status: "active" } }, { memberId: "m2", member: { status: "active" } }],
+        (args as { where: Parameters<typeof attendeeGroups>[1] }).where,
+      ) as never);
+    }
     if (by[0] === "classInstanceId") {
       return Promise.resolve([
         { classInstanceId: "i1", _count: 2 },
@@ -93,7 +123,12 @@ function setup(f: Fixture) {
   }) as never);
   vi.mocked(prisma.attendanceRecord.count).mockResolvedValue(3 as never);
   vi.mocked(prisma.member.groupBy).mockResolvedValue(f.statusGroups as never);
-  vi.mocked(prisma.member.findMany).mockResolvedValue([] as never);
+  // The membership replay reads every training member (its select carries joinedAt) and their events.
+  vi.mocked(prisma.member.findMany).mockImplementation(((args: unknown) => {
+    const select = (args as { select?: Where })?.select ?? {};
+    return Promise.resolve((select.joinedAt ? f.history?.live ?? [] : []) as never);
+  }) as never);
+  vi.mocked(prisma.memberStatusEvent.findMany).mockResolvedValue((f.history?.events ?? []) as never);
   vi.mocked(prisma.member.count).mockImplementation(((args: unknown) => {
     const where = ((args as { where?: Where })?.where ?? {}) as Where;
     const joinedAt = where.joinedAt as Where | undefined;
@@ -119,39 +154,125 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("getReportsData — churn with its counts (T2b, Q6)", () => {
-  it("9 active and 1 cancelled this month → 10% (1 of 10), with joined and net for the same month", async () => {
-    setup(BASE);
+const LONG_AGO = new Date("2025-01-06T10:00:00.000Z");
+let seq = 0;
+function ev(memberId: string, fromStatus: string | null, toStatus: string, at: Date, source: { reason: string; sourceAction: string } | null = null): Ev {
+  seq += 1;
+  return { id: `e${String(seq).padStart(5, "0")}`, memberId, fromStatus, toStatus, reason: source?.reason ?? "staff_edit", sourceAction: source?.sourceAction ?? null, occurredAt: at, createdAt: at };
+}
+/** The k-th of a few distinct instants inside this club month, in order, never after now. */
+function thisMonthAt(k = 0): Date {
+  const start = zonedMonthStart(new Date(), "Europe/London").getTime();
+  return new Date(Math.min(start + 60 * 60 * 1000 + k * 60_000, Date.now() - (10 - k) * 1000));
+}
+/** An instant inside last club month. */
+function lastMonthAt(): Date {
+  return new Date(zonedMonthStart(new Date(), "Europe/London", -1).getTime() + 2 * 86_400_000);
+}
+/** A TeamUp refresh ending a prepaid course: "Completed course", in Left and never a cancellation. */
+const COURSE_END = { reason: "import", sourceAction: "import_refresh" };
+/**
+ * `stayers` members active since 2025 and still active; `leaversNow` active
+ * since 2025 who cancel this month; `leaversLast` who cancelled last month;
+ * `joinersNow` whose first ever start is this month; `joinersLeft` who start
+ * AND cancel this month; `repeaters` active since 2025 who cancel, rejoin and
+ * cancel again this month; `courses` active since 2025 whose prepaid course
+ * ends this month.
+ */
+function history({ stayers = 0, leaversNow = 0, leaversLast = 0, joinersNow = 0, joinersLeft = 0, repeaters = 0, courses = 0 }): { events: Ev[]; live: Live[] } {
+  const events: Ev[] = [];
+  const live: Live[] = [];
+  const add = (id: string, final: string, moves: [string | null, string, Date, ({ reason: string; sourceAction: string } | null)?][]) => {
+    for (const [from, to, at, source] of moves) events.push(ev(id, from, to, at, source ?? null));
+    live.push({ id, status: final, joinedAt: moves[0][2], cancelledAt: final === "cancelled" ? moves[moves.length - 1][2] : null });
+  };
+  for (let i = 0; i < stayers; i++) add(`s${i}`, "active", [[null, "active", LONG_AGO]]);
+  for (let i = 0; i < leaversNow; i++) add(`l${i}`, "cancelled", [[null, "active", LONG_AGO], ["active", "cancelled", thisMonthAt()]]);
+  for (let i = 0; i < leaversLast; i++) add(`p${i}`, "cancelled", [[null, "active", LONG_AGO], ["active", "cancelled", lastMonthAt()]]);
+  for (let i = 0; i < joinersNow; i++) add(`j${i}`, "active", [[null, "active", thisMonthAt()]]);
+  for (let i = 0; i < joinersLeft; i++) add(`jl${i}`, "cancelled", [[null, "active", thisMonthAt(0)], ["active", "cancelled", thisMonthAt(1)]]);
+  for (let i = 0; i < repeaters; i++) {
+    add(`r${i}`, "cancelled", [[null, "active", LONG_AGO], ["active", "cancelled", thisMonthAt(1)], ["cancelled", "active", thisMonthAt(2)], ["active", "cancelled", thisMonthAt(3)]]);
+  }
+  for (let i = 0; i < courses; i++) add(`c${i}`, "inactive", [[null, "active", LONG_AGO], ["active", "inactive", thisMonthAt(1), COURSE_END]]);
+  return { events, live };
+}
+
+// Churn (owner decision, 27 Oct 2026, superseding the opening-cohort rate of
+// 26 Oct): the total cancellations in the selected period, joiners included.
+// No percentage: its denominator is not approved, so the report carries the
+// count and no rate or base at all.
+describe("getReportsData — churn is the total cancellations in the period", () => {
+  it("one long-standing member cancels this month → 1 cancellation; joined and net for the same month beside it", async () => {
+    setup({ ...BASE, history: history({ stayers: 9, leaversNow: 1, joinersNow: 2 }) });
     const data = await getReportsData("tenant-A");
-    // D11: joined and net are the movement figures (lib/membership-movement.ts)
-    // — this fixture has no status events, so 0 — never the joinedAt count (3).
-    expect(data.churn).toEqual({ ratePct: 10, cancelled: 1, base: 10, joined: 0, net: 0 });
-    // The compatibility field keeps the same number for its numeric readers.
-    expect(data.churnRate).toBe(10);
+    expect(data.churn).toEqual({ cancelled: 1, joined: 2, net: 1 });
   });
 
-  it("keeps one decimal place (1 of 313 → 0.3)", async () => {
-    setup({ ...BASE, active: 312, cancelledThisMonth: 1 });
+  it("carries no percentage and no denominator anywhere in the report data", async () => {
+    setup({ ...BASE, history: history({ stayers: 9, leaversNow: 1 }) });
     const data = await getReportsData("tenant-A");
-    expect(data.churn.ratePct).toBe(0.3);
-    expect(data.churn.base).toBe(313);
+    expect(data.churn).not.toHaveProperty("ratePct");
+    expect(data.churn).not.toHaveProperty("base");
+    expect(data).not.toHaveProperty("churnRate");
   });
 
-  it("an empty base is null — never the 0% the old Math.max(…, 1) printed", async () => {
-    setup({ ...BASE, active: 0, cancelledThisMonth: 0, joinedThisMonth: 0 });
+  it("a joiner who cancels inside the period is counted", async () => {
+    setup({ ...BASE, history: history({ stayers: 3, joinersLeft: 1 }) });
     const data = await getReportsData("tenant-A");
-    expect(data.churn).toEqual({ ratePct: null, cancelled: 0, base: 0, joined: 0, net: 0 });
-    expect(data.churnRate).toBe(0);
+    expect(data.churn).toEqual({ cancelled: 1, joined: 1, net: 0 });
+    expect(data.periodMovement.totals).toMatchObject({ new: 1, lost: 1, lostCancelled: 1 });
   });
 
-  it("D11: net is the movement net, not joinedAt joiners minus cancelledAt cancellations", async () => {
-    // The old tile said 1 − 4 = −3 here from the two date columns. With no
-    // status events nobody joined or left by the movement definition (a
-    // negative movement net is pinned in tests/unit/membership-movement.test.ts).
+  it("a club with no history before the period: a joiner who cancels is still 1 cancellation", async () => {
+    setup({ ...BASE, history: history({ joinersLeft: 1 }) });
+    const data = await getReportsData("tenant-A");
+    expect(data.churn.cancelled).toBe(1);
+  });
+
+  it("a finished prepaid course is counted in Left, not as churn", async () => {
+    setup({ ...BASE, history: history({ stayers: 3, courses: 1 }) });
+    const data = await getReportsData("tenant-A");
+    expect(data.churn.cancelled).toBe(0);
+    expect(data.periodMovement.totals).toMatchObject({ lost: 1, lostCompleted: 1, lostCancelled: 0 });
+  });
+
+  it("cancel, rejoin and cancel again inside the period is two cancellations (moves, as Left and Joined count them)", async () => {
+    setup({ ...BASE, history: history({ stayers: 3, repeaters: 1 }) });
+    const data = await getReportsData("tenant-A");
+    expect(data.churn.cancelled).toBe(2);
+    expect(data.periodMovement.totals).toMatchObject({ rejoined: 1, lostCancelled: 2, lost: 2 });
+  });
+
+  it("no members at all is 0 cancellations", async () => {
+    setup({ ...BASE, history: history({}) });
+    const data = await getReportsData("tenant-A");
+    expect(data.churn).toEqual({ cancelled: 0, joined: 0, net: 0 });
+  });
+
+  it("last month: only last month's cancellations", async () => {
+    setup({ ...BASE, history: history({ stayers: 8, leaversLast: 2, leaversNow: 1 }) });
+    const data = await getReportsData("tenant-A", { period: { period: "last-month" } });
+    expect(data.range.key).toBe("last-month");
+    expect(data.churn.cancelled).toBe(2);
+  });
+
+  it("stays club-wide: the age-group and class filters do not narrow it", async () => {
+    setup({ ...BASE, history: history({ stayers: 3, leaversNow: 2, joinersLeft: 1 }) });
+    const all = await getReportsData("tenant-A");
+    const kids = await getReportsData("tenant-A", { ageGroup: "kids" });
+    const adults = await getReportsData("tenant-A", { ageGroup: "adult" });
+    expect(all.churn.cancelled).toBe(3);
+    expect([kids.churn, adults.churn]).toEqual([all.churn, all.churn]);
+    expect(kids.filters.ageGroup).toBe("kids");
+  });
+
+  it("D11: joined and net are the movement figures, never the joinedAt or cancelledAt columns", async () => {
+    // The fixture's joinedAt count says 1 and its cancelledAt count says 4;
+    // with no status events nobody joined or left by the movement definition.
     setup({ ...BASE, cancelledThisMonth: 4, joinedThisMonth: 1 });
     const data = await getReportsData("tenant-A");
-    expect(data.churn.net).toBe(0);
-    expect(data.churn.cancelled).toBe(4);
+    expect(data.churn).toMatchObject({ joined: 0, net: 0, cancelled: 0 });
   });
 });
 

@@ -16,6 +16,7 @@ import { logAudit } from "@/lib/audit-log";
 import { performCheckin, restorePackCreditsForAttendance } from "@/lib/checkin";
 import { assertSameOrigin } from "@/lib/csrf";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
+import { APP_CHECKIN_OFF_MESSAGE } from "@/lib/checkin-refusal";
 
 export const checkinSchema = z.object({
   classInstanceId: z.string().min(1),
@@ -84,6 +85,21 @@ export async function POST(req: Request) {
   // T7: the staff path names the member in the staff sentence.
   let staffMemberName: string | null = null;
 
+  // G5 (owner decision, 27 Oct 2026): the club may turn off check-in from the
+  // member app. Every request without a staff-supplied memberId is the
+  // member's own path (a parent checking in a child included: both resolve to
+  // "self" below), so that is what is refused. The staff path (admin / auto),
+  // the kiosk route, the card scanner and the coach register are unaffected.
+  // Read before any member lookup, so the refusal is the same for everyone.
+  if (!memberId) {
+    const club = await withTenantContext(tenantId, (tx) =>
+      tx.tenant.findUnique({ where: { id: tenantId }, select: { memberAppCheckin: true } }),
+    );
+    if (club?.memberAppCheckin === false) {
+      return NextResponse.json({ error: APP_CHECKIN_OFF_MESSAGE, reason: "app_checkin_off" }, { status: 403 });
+    }
+  }
+
   if (memberId) {
     // Admin checking in a specific member — validate member belongs to this tenant
     const isStaff = ["owner", "manager", "coach", "admin"].includes(session.user.role);
@@ -120,8 +136,13 @@ export async function POST(req: Request) {
     if (!adminMember) return NextResponse.json({ error: "Member not found" }, { status: 404 });
     resolvedMemberId = adminMember.id;
     staffMemberName = adminMember.name || "This member";
-    // Staff path: trust the staff-supplied method (admin / auto for special flows).
-    effectiveMethod = checkInMethod;
+    // Staff path: a staff member is marking someone, so the row is theirs.
+    // "auto" keeps its label; anything else is "admin". A staff "self" used to
+    // pass through, writing a row that read as the member's own check-in with
+    // no staff name and no attendance.mark audit line, and "auto" wrote an
+    // unattributed, unaudited row (W6, 28 Oct 2026). Nothing in the product
+    // sends either: the register sends "admin".
+    effectiveMethod = checkInMethod === "auto" ? "auto" : "admin";
   } else if (onBehalfOfMemberId) {
     // Parent checking in a kid. Hard guards:
     //   1. Caller has a memberId on the session (real member, not staff-only User)
@@ -202,16 +223,17 @@ export async function POST(req: Request) {
     // 27 Oct 2026).
     allowanceGate: "refuse",
     // Record which staff user clicked "check in" so the attendance row can
-    // show "by [admin name]". Only stamped on staff-driven check-ins.
-    checkedInByUserId: effectiveMethod === "admin" ? session.user.id : null,
+    // show "by [admin name]". Stamped on every staff-path check-in (admin and
+    // auto); never on the member's own path.
+    checkedInByUserId: isSelf ? null : session.user.id,
   });
 
   switch (result.kind) {
     case "success":
-      // A staff or system mark that spent a class-pack credit (the plan's
-      // classes were used up) is audited with that fact, so a credit never
-      // leaves without a row saying why.
-      if (effectiveMethod === "admin" || (effectiveMethod === "auto" && result.coverage?.kind === "pack")) {
+      // Every staff-path mark (admin or auto) is audited, with the pack fact
+      // when a class-pack credit paid, so a credit never leaves without a row
+      // saying why and no staff mark goes unattributed (W6, 28 Oct 2026).
+      if (!isSelf) {
         // A staff mark is audited. The coach register's raw upsert used to be
         // the only staff mark that wrote a row; since 18 Sep 2026 every screen
         // marks through this route, so the row lives here — the same shape as

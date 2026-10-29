@@ -130,6 +130,16 @@ export async function POST(req: Request) {
     const checkoutSession = await stripe.checkout.sessions.create(
       {
         mode: "payment",
+        // Card only (wallets included). The webhook mints credits only once
+        // the session is paid, never on an unpaid completion (W6). A card
+        // completes the session paid, so credits never wait on the async
+        // checkout events; delayed methods (Bacs, SEPA, bank transfer) would,
+        // and the live endpoint's subscription to those events is not
+        // verified (owner instruction, 28 Oct 2026: this release must not
+        // depend on it). Allow delayed methods again only once
+        // checkout.session.async_payment_succeeded/_failed are subscribed and
+        // seen delivered; the webhook already handles both.
+        payment_method_types: ["card"],
         customer: customerId ?? undefined,
         // pack.stripePriceId narrowed to non-null by the no-pack guard above —
         // TypeScript can't track this through the withTenantContext closure.

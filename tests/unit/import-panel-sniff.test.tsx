@@ -123,11 +123,16 @@ describe("ImportPanel — the export time and its provenance", () => {
   });
 });
 
-describe("ImportPanel — live plans with no tier are a warning before commit, not a refusal", () => {
-  it("lists them under 'Create the missing tiers first' and leaves Import enabled", async () => {
+describe("ImportPanel — people imported without a plan are a warning before commit, not a refusal (27 Oct 2026 rule)", () => {
+  it("says who will be imported without a plan, with the file's label and the reason, never 'create the tiers', and leaves Import enabled", async () => {
     const job = { id: "job1", source: "teamup", mode: "create", fileName: "export.csv", status: "pending", totalRows: 0, processedRows: 0, importedRows: 0, skippedRows: 0, errorRows: 0, errorLog: null, dryRunSummary: null };
     const preview = {
       totalRows: 3, validRows: 3, errorRows: 0, existingMatches: 0, willImport: 3, willSkip: 0, sampleDrafts: [], sampleErrors: [],
+      willImportWithPlan: 0, willImportWithoutPlan: 3,
+      planReview: [
+        { label: "Beginner Course", reason: "source_has_no_price_facts", why: "the TeamUp export has no price, billing period or currency, so no plan can be confirmed", people: 2 },
+        { label: "Kids Unlimited 2026", reason: "source_has_no_price_facts", why: "the TeamUp export has no price, billing period or currency, so no plan can be confirmed", people: 1 },
+      ],
       teamup2: {
         asOf: "2026-10-02", asOfIsProvisional: false, asOfProvenance: "owner_stated",
         ledger: { rows: 3, byDisposition: { member_history: 3 } }, decisions: [], scheduled: [],
@@ -146,12 +151,14 @@ describe("ImportPanel — live plans with no tier are a warning before commit, n
       await waitFor(() => expect(sourceSelect(container).value).toBe("teamup"));
       fireEvent.change(container.querySelector("#import-exported-at") as HTMLInputElement, { target: { value: "2026-10-02T18:00" } });
       fireEvent.submit(submit().closest("form")!);
-      const box = await screen.findByTestId("import-missing-tiers");
-      expect(box.textContent).toMatch(/Create the missing tiers first: 2 plans/);
-      expect(box.textContent).toMatch(/Beginner Course/);
+      const box = await screen.findByTestId("import-without-plan");
+      expect(box.textContent).toMatch(/3 new people will be imported without a plan/);
+      expect(box.textContent).toMatch(/File says Beginner Course \(2 people\): the TeamUp export has no price, billing period or currency/);
       expect(box.textContent).toMatch(/Kids Unlimited 2026/);
       expect(box.textContent).not.toMatch(/Kids & Beginners Course \(OLD\)/);
-      expect(box.textContent).toMatch(/You can still import now/);
+      expect(box.textContent).toMatch(/Until staff assign a plan, they can't check themselves in from the member app unless they hold a class pack\. The desk and the kiosk can still check them into classes open to everyone; classes limited to certain plans refuse them at every door\./);
+      expect(box.textContent).not.toMatch(/Create the missing tiers/);
+      expect(screen.queryByTestId("import-missing-tiers")).toBeNull();
       expect((screen.getByRole("button", { name: /Import 3 members/ }) as HTMLButtonElement).disabled).toBe(false);
     } finally {
       vi.unstubAllGlobals();

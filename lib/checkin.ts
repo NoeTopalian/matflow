@@ -735,10 +735,17 @@ export async function returnClaimedPack(tx: Prisma.TransactionClient, tenantId: 
 }
 
 /**
- * Spend one credit of the member's usable pack (earliest expiry first), or
- * null when there is none. The decrement is a single guarded UPDATE, so two
- * concurrent check-ins can never both take the last credit (security audit
- * iteration 2 / M10). Called after the Member lock: Class, Member, pack.
+ * Spend one credit of the member's usable pack, or null when there is none.
+ *
+ * Usable (owner decision, 27 Oct 2026: expiry chosen per pack product; see
+ * lib/class-pack-terms.ts): status "active", credits left, and no expiry
+ * (NULL, a no-expiry product) or an expiry still ahead. The legacy status
+ * "expired" never matches, so an expired pack is not revived. Order: earliest
+ * expiry first, no-expiry packs last, then the oldest purchase.
+ *
+ * The decrement is a single guarded UPDATE, so two concurrent check-ins can
+ * never both take the last credit (security audit iteration 2 / M10). Called
+ * after the Member lock: Class, Member, pack.
  */
 async function claimPack(
   tx: Prisma.TransactionClient,
@@ -751,9 +758,9 @@ async function claimPack(
       tenantId,
       status: "active",
       creditsRemaining: { gt: 0 },
-      expiresAt: { gt: new Date() },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
     },
-    orderBy: { expiresAt: "asc" },
+    orderBy: [{ expiresAt: { sort: "asc", nulls: "last" } }, { purchasedAt: "asc" }, { id: "asc" }],
     select: { id: true },
   });
   if (!pack) return null;
@@ -862,7 +869,9 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
   if (args.enforceRankGate && (instance.class.requiredRankId || instance.class.maxRankId)) {
     const memberRank = await withTenantContext(tenantId, (tx) =>
       tx.memberRank.findFirst({
-        where: { memberId },
+        // The member's rank in THIS club only: a member id from another club
+        // must not be judged on that club's belts (W6, 28 Oct 2026).
+        where: { memberId, member: { tenantId } },
         orderBy: { rankSystem: { order: "desc" } },
         select: { rankSystem: { select: { order: true } } },
       }),
@@ -925,8 +934,13 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     method === "kiosk";
   const memberRecord = needsPreRead
     ? await withTenantContext(tenantId, (tx) =>
+        // Tenant-scoped (docs/TENANT-SCOPE-CONVENTION.md): the gates below
+        // answer from this row before the Member lock, so a member id from
+        // another club must read as "not found" here, never as that club's
+        // hold date, waiver or venue (W6, 28 Oct 2026; RLS was the only
+        // backstop, and it is inert under a bypass-RLS role).
         tx.member.findUnique({
-          where: { id: memberId },
+          where: { id: memberId, tenantId },
           select: {
             paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true, membershipTierId: true, nextDueAt: true,
             accountType: true, billedBy: true,

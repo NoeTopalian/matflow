@@ -1,6 +1,7 @@
 ﻿"use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useOptimistic, useTransition } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   BrainCircuit,
   TrendingUp,
@@ -23,7 +24,11 @@ import { PageHeader } from "@/components/ui/page-header";
 import DonutChart, { DonutLegend, type DonutSlice } from "@/components/dashboard/charts/DonutChart";
 import Sparkline from "@/components/dashboard/charts/Sparkline";
 import { formatPct, formatRatio, ratioCounts } from "@/components/dashboard/reports-primitives";
-import { percent } from "@/lib/percent";
+import { formatChange, pctChange, percent } from "@/lib/percent";
+import { clubMonthWindow } from "@/lib/club-month";
+import { periodChange, periodWords, type ReportRange } from "@/lib/report-period";
+import PeriodSelector, { periodSearchParams, type PeriodChoice } from "@/components/dashboard/PeriodSelector";
+import { comparisonGap, coverageDate, noCoverage, noRecordsNote, partialNote, NO_ATTENDANCE_YET, type AttendanceCoverage, type CoverageState } from "@/lib/attendance-coverage";
 
 const HERO_PALETTE = ["#67BA90", "#EB3163", "#C9F990", "#8E1F57", "#224541"];
 const STATUS_COLORS: Record<string, string> = { active: "#67BA90", taster: "#C9F990", inactive: "#EB3163", cancelled: "#8E1F57" };
@@ -49,7 +54,33 @@ interface Metrics {
   membersByStatus?: { status: string; label: string; count: number }[];
   /** Training members who have left: a count, never a share of the mix. */
   leftMembers?: number;
-  monthlyTrend?: { label: string; value: number }[];
+  /** Check-ins per chart month; `coverage` says whether the club's attendance records cover that month (28 Oct 2026). */
+  monthlyTrend?: { label: string; value: number; coverage?: CoverageState }[];
+  /**
+   * The page's period (Noe, 26 Oct 2026; lib/report-period). "ThisMonth"
+   * figures above count it, "LastMonth" ones the equal run before it; for the
+   * default period those are exactly this month and last.
+   */
+  range: ReportRange;
+  /**
+   * Where the club's attendance records begin, and how they cover the period
+   * and the run before it (owner rule, 28 Oct 2026; lib/attendance-coverage).
+   * Absent (an older fixture), every span reads as covered.
+   */
+  coverage?: AttendanceCoverage;
+}
+
+/**
+ * The attendance figures' coverage words (28 Oct 2026): `missing` — the
+ * period has no records, so check-ins and engagement are "—" with this note;
+ * `partial` — "Records start 3 Mar 2026"; `gap` — the period before is not
+ * (fully) covered, so no percentage change, this text instead.
+ */
+export function analysisCoverage(metrics: Pick<Metrics, "coverage">): { missing: string | null; partial: string | null; gap: string | null } {
+  const c = metrics.coverage;
+  if (!c) return { missing: null, partial: null, gap: null };
+  const missing = noCoverage(c.period) ? noRecordsNote(c, c.period) : null;
+  return { missing, partial: partialNote(c, c.period), gap: missing ? null : comparisonGap(c.previous) };
 }
 
 interface Props {
@@ -61,17 +92,23 @@ type Stage = "idle" | "interview" | "generating" | "report";
 
 // ─── Interview questions ───────────────────────────────────────────────────────
 
-const QUESTIONS = [
-  "How many new members joined through word-of-mouth or referrals this month?",
-  "Did you run any special events, promotions, or challenges? If so, what happened?",
-  "What's the biggest challenge you're facing right now — retention, marketing, space, staff?",
-  "How would you rate the energy and morale in the gym this month (1–10)? What's driving that?",
-  "What's your main goal for next month?",
-];
+/** The interview, in the period's words ("this month" for the default). */
+export function questionsFor(range: ReportRange): string[] {
+  const w = periodWords(range);
+  return [
+    `How many new members joined through word-of-mouth or referrals ${w.during}?`,
+    "Did you run any special events, promotions, or challenges? If so, what happened?",
+    "What's the biggest challenge you're facing right now — retention, marketing, space, staff?",
+    `How would you rate the energy and morale in the gym ${w.during} (1–10)? What's driving that?`,
+    "What's your main goal for next month?",
+  ];
+}
 
 // ─── Report generator ─────────────────────────────────────────────────────────
 
 export function buildReport(metrics: Metrics, answers: string[]): string {
+  const w = periodWords(metrics.range);
+  const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
   const growthDir = metrics.newThisMonth >= metrics.newLastMonth ? "up" : "down";
   const growthDiff = Math.abs(metrics.newThisMonth - metrics.newLastMonth);
   const checkinDir = metrics.checkinsThisMonth >= metrics.checkinsLastMonth ? "up" : "down";
@@ -95,34 +132,47 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
 
   const lines: string[] = [];
 
-  lines.push(`# Monthly Analysis — ${metrics.monthLabel}`);
+  lines.push(`# ${metrics.range.months.length === 1 ? "Monthly Analysis" : "Analysis"} — ${metrics.monthLabel}`);
   lines.push(`**${metrics.gymName}**`);
   lines.push("");
+  // Attendance coverage (28 Oct 2026): with no records for the period the
+  // report says so and draws no conclusion from check-ins; it never says
+  // "you recorded 0 check-ins" for a time MatFlow has no records of.
+  const cov = analysisCoverage(metrics);
+  const checkinComparison = !cov.gap
+    ? `${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} ${w.before}`
+    : metrics.coverage?.previous === "partial"
+      ? `no comparison, as ${w.before} is only partly covered by the records`
+      : `no comparison, as there are no records for ${w.before}`;
+
   lines.push("## Overview");
   lines.push(
-    `This month ${metrics.gymName} maintained ${metrics.totalMembers} active members across ${metrics.activeClasses} classes. ` +
-    `You recorded ${metrics.checkinsThisMonth} check-ins — ${checkinDir === "up" ? `${checkinDiff} more than` : `${checkinDiff} fewer than`} last month` +
-    // An empty base has no rate: say so in words rather than printing "—".
-    (metrics.totalMembers > 0
-      ? ` — giving an engagement rate of ${engagementText} — active members who checked in at least once.`
-      : ", with no engagement rate yet (no active members).")
+    // Members and classes are today's counts; check-ins are the period's (26 Oct 2026: never present a "now" figure as the period's).
+    `${metrics.gymName} has ${metrics.totalMembers} active members today across ${metrics.activeClasses} classes. ` +
+    (cov.missing
+      ? `${cov.missing}, so check-ins and engagement are not reported.`
+      : `${cap(w.during)} you recorded ${metrics.checkinsThisMonth} check-ins${cov.partial ? ` (${cov.partial.charAt(0).toLowerCase()}${cov.partial.slice(1)})` : ""} — ${checkinComparison}` +
+        // An empty base has no rate: say so in words rather than printing "—".
+        (metrics.totalMembers > 0
+          ? ` — giving an engagement rate of ${engagementText} — active members who checked in at least once.`
+          : ", with no engagement rate yet (no active members)."))
   );
   lines.push("");
   lines.push("## Member Growth");
   lines.push(
     // The Reports "Joined" figure (new + rejoined, lib/membership-movement):
     // an import is never a join (review 25 Oct; it used to count by joinedAt).
-    `**${metrics.newThisMonth} joined** (new + rejoined) this month${metrics.joinedEstimated ? " (partly estimated)" : ""}, compared to ${metrics.newLastMonth} last month ` +
+    `**${metrics.newThisMonth} joined** (new + rejoined) ${w.during}${metrics.joinedEstimated ? " (partly estimated)" : ""}, compared to ${metrics.newLastMonth} ${w.before} ` +
     `(${growthDir === "up" ? `+${growthDiff} ↑` : `-${growthDiff} ↓`}). ` +
     (metrics.newThisMonth > 0
       ? `You reported that approximately ${referrals} of these came via referrals or word-of-mouth, which is a strong signal of community health.`
-      : `No new members were added this month. This is worth investigating — consider a referral campaign or introductory offer.`)
+      : `No new members were added ${w.during}. This is worth investigating — consider a referral campaign or introductory offer.`)
   );
   lines.push("");
   lines.push("## Attendance & Engagement");
-  lines.push(
+  lines.push(cov.missing ? `Not reported for this period. ${cov.missing}.` :
     `With ${metrics.checkinsThisMonth} total check-ins and ${metrics.totalMembers} active members, ` +
-    `the average member attended roughly ${metrics.totalMembers > 0 ? (metrics.checkinsThisMonth / metrics.totalMembers).toFixed(1) : "0"} classes this month. ` +
+    `the average member attended roughly ${metrics.totalMembers > 0 ? (metrics.checkinsThisMonth / metrics.totalMembers).toFixed(1) : "0"} classes ${w.during}. ` +
     // No active members → no rate, so no verdict on it either.
     (metrics.totalMembers === 0
       ? ""
@@ -135,8 +185,8 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
   lines.push("");
   lines.push("## Events & Promotions");
   lines.push(events !== "none reported"
-    ? `This month you ran: **${events}**. These kinds of activities build community and retention — keep tracking their impact on attendance in the weeks following.`
-    : "No specific events were reported this month. Consider whether a small competition prep, seminar, or challenge could boost engagement and give members something to train towards."
+    ? `${cap(w.during)} you ran: **${events}**. These kinds of activities build community and retention — keep tracking their impact on attendance in the weeks following.`
+    : `No specific events were reported ${w.during}. Consider whether a small competition prep, seminar, or challenge could boost engagement and give members something to train towards.`
   );
   lines.push("");
   lines.push("## Challenges");
@@ -158,13 +208,13 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
   );
   lines.push("");
   lines.push("## Next Month Focus");
-  lines.push(`Your stated goal: **${goal}**. Based on this month's data, the highest-leverage actions to support that goal are:`);
+  lines.push(`Your stated goal: **${goal}**. Based on ${w.possessive} data, the highest-leverage actions to support that goal are:`);
   lines.push("");
   lines.push(`- Follow up personally with any members who haven't checked in for 2+ weeks`);
   if (metrics.newThisMonth < metrics.newLastMonth) {
     lines.push(`- Run a referral incentive — existing members are your cheapest acquisition channel`);
   }
-  if (engagementRate < 50) {
+  if (!cov.missing && engagementRate < 50) {
     lines.push(`- Introduce a monthly class challenge or attendance milestone to drive consistency`);
   }
   lines.push(`- Review class schedule utilisation — are your ${metrics.activeClasses} classes at the right times?`);
@@ -177,19 +227,15 @@ export function buildReport(metrics: Metrics, answers: string[]): string {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function delta(current: number, previous: number) {
-  if (previous === 0) return null;
-  const pct = Math.round(((current - previous) / previous) * 100);
-  return pct;
-}
-
 /**
  * A change pill always shows the two figures it compares (required by
  * Sean's note relayed 14 Oct and the owner instruction of 24 Oct 2026):
- * "+50% (6 vs 4)".
+ * "+50% (6 vs 4)". lib/percent's `formatChange` (multiply first), so 229 vs
+ * 200 reads "+15%" here as on Reports; no change reads "0%", never "+0%";
+ * nothing last month reads "— (3 vs 0)", the counts without a percentage.
  */
-export function changePillText(pct: number, current: number, previous: number): string {
-  return `${pct >= 0 ? "+" : ""}${pct}% (${current.toLocaleString("en-GB")} vs ${previous.toLocaleString("en-GB")})`;
+export function changePillText(current: number, previous: number): string {
+  return formatChange(current, previous);
 }
 
 function renderStrongText(text: string) {
@@ -247,9 +293,49 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
   const [currentAnswer, setCurrentAnswer] = useState("");
   const [report, setReport] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [isPending, startTransition] = useTransition();
+  const words = periodWords(metrics.range);
+  const change = periodChange(metrics.range);
+  const QUESTIONS = questionsFor(metrics.range);
+  // The latest month a custom run may end in: this month, in the club's zone.
+  const latestMonth = clubMonthWindow(new Date(), metrics.range.timeZone).monthKey;
 
-  const memberDelta = delta(metrics.newThisMonth, metrics.newLastMonth);
-  const checkinDelta = delta(metrics.checkinsThisMonth, metrics.checkinsLastMonth);
+  // As on Reports (review finding 8): the selector shows the choice for the
+  // life of the transition (useOptimistic), and each change builds on the last
+  // URL this page REQUESTED, so two quick changes never lose the first.
+  const serverShown = { period: metrics.range.key, from: metrics.range.fromMonth, to: metrics.range.toMonth };
+  const [shown, showOptimistically] = useOptimistic(serverShown, (s: typeof serverShown, u: Partial<typeof serverShown>) => ({ ...s, ...u }));
+  const requestedParams = useRef(new URLSearchParams(searchParams.toString()));
+  useEffect(() => {
+    requestedParams.current = new URLSearchParams(searchParams.toString());
+  }, [searchParams]);
+
+  function setPeriod(next: PeriodChoice) {
+    const params = periodSearchParams(requestedParams.current, next);
+    requestedParams.current = params;
+    startTransition(() => {
+      showOptimistically({ period: next.period, from: next.from, to: next.to });
+      router.replace(`/dashboard/analysis?${params.toString()}`);
+    });
+  }
+
+  const memberDelta = pctChange(metrics.newThisMonth, metrics.newLastMonth);
+  const checkinDelta = pctChange(metrics.checkinsThisMonth, metrics.checkinsLastMonth);
+  // Attendance coverage (28 Oct 2026): "—" and why for a period with no
+  // records; "Records start <date>" for one that starts before them; no
+  // percentage change against a period without (full) records.
+  const cov = analysisCoverage(metrics);
+  const trendPoints = (metrics.monthlyTrend ?? []).filter((p) => {
+    const state = p.coverage ?? (metrics.coverage && !metrics.coverage.start ? "none" : "covered");
+    return !noCoverage(state);
+  });
+  // Under the chart: months before the records start are left out, and it says where they start.
+  const c = metrics.coverage;
+  const trendNote = !c ? null
+    : !c.start ? NO_ATTENDANCE_YET
+    : (metrics.monthlyTrend ?? []).some((p) => noCoverage(p.coverage)) ? `Records start ${coverageDate(c.start, c.timeZone)}; earlier months have no records` : null;
   // Engagement = % of members with ≥1 check-in this month (bounded 0..100).
   const engagementRate = metrics.totalMembers > 0
     ? Math.min(100, percent(metrics.activeMembersThisMonth, metrics.totalMembers))
@@ -307,7 +393,7 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
       {/* §4: the one PageHeader treatment — no per-page heading inventions. */}
       <PageHeader
         title="Analysis"
-        description={`${metrics.monthLabel} · AI monthly report`}
+        description={`${metrics.monthLabel}${metrics.range.isCurrent ? " (to today)" : ""} · AI report`}
         action={
           <div
             className="flex size-10 items-center justify-center rounded-[var(--r-md)]"
@@ -321,6 +407,13 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
           </div>
         }
       />
+
+      {/* The period every figure below counts (shared with Reports). */}
+      <Card padding="tight" className="mb-4" aria-busy={isPending || undefined}>
+        <div className="flex flex-wrap items-center gap-3" data-testid="analysis-period">
+          <PeriodSelector shown={shown} latestMonth={latestMonth} timeZone={metrics.range.timeZone} onSelect={setPeriod} />
+        </div>
+      </Card>
 
       {/* Hero charts — donut (member status mix) + sparkline (6-month check-in
           trend). Full width: both read better wide, and the split below owns
@@ -354,7 +447,6 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
                 />
                 <div className="flex-1 min-w-0">
                   <DonutLegend
-                    showCounts
                     data={metrics.membersByStatus.map((m, i): DonutSlice => ({
                       label: m.label,
                       value: m.count,
@@ -378,16 +470,17 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="text-[11px] uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Engagement trend</p>
-                <p className="text-sm font-semibold mt-0.5" style={{ color: "var(--tx-1)" }}>6-month check-ins</p>
+                <p className="text-sm font-semibold mt-0.5" style={{ color: "var(--tx-1)" }}>Check-ins by month</p>
               </div>
               <CalendarCheck className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
             </div>
-            {metrics.monthlyTrend && metrics.monthlyTrend.length > 0 ? (
+            {trendPoints.length > 0 ? (
               <div className="w-full">
-                <Sparkline data={metrics.monthlyTrend} width={320} height={130} />
+                <Sparkline data={trendPoints} width={320} height={130} />
+                {trendNote && <p className="mt-2 text-[11px]" style={{ color: "var(--tx-3)" }} data-testid="analysis-trend-coverage">{trendNote}</p>}
               </div>
             ) : (
-              <p className="text-sm" style={{ color: "var(--tx-3)" }}>No attendance data yet</p>
+              <p className="text-sm" style={{ color: "var(--tx-3)" }}>{trendNote ?? (cov.missing || "No attendance data yet")}</p>
             )}
           </Card>
         </div>
@@ -410,29 +503,38 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
             value: metrics.totalMembers,
             // The change pill is the change in members JOINED (the Reports
             // movement definition: new + rejoined, imports never), with its two counts.
-            sub: `${metrics.newThisMonth} joined this month · ${metrics.newLastMonth} last month${metrics.joinedEstimated ? " · partly estimated" : ""}`,
+            // The period against the equal period before it, a part period
+            // named (review finding 1 and owner decision, 27 Oct 2026). The
+            // pill is too narrow for the words on a phone (two cards a row),
+            // so the line under the figure says it and the pill's accessible
+            // name says it in full.
+            sub: `${metrics.newThisMonth} joined ${change.current} · ${metrics.newLastMonth} in ${change.previous}${metrics.joinedEstimated ? " · partly estimated" : ""}`,
             icon: Users,
             pct: memberDelta,
             counts: [metrics.newThisMonth, metrics.newLastMonth] as const,
-            pillLabel: "members joined, this month vs last",
+            pillLabel: "members joined",
           },
           {
             label: "Check-ins",
-            value: metrics.checkinsThisMonth,
-            sub: `this month · ${metrics.checkinsLastMonth} last month`,
+            // No records for the period: "—" and why, no pill. Against a
+            // period without (full) records: no percentage, the gap said
+            // instead (28 Oct 2026).
+            value: cov.missing ? "—" : metrics.checkinsThisMonth,
+            sub: cov.missing ?? [change.current, cov.partial, cov.gap ?? `${metrics.checkinsLastMonth} in ${change.previous}`].filter(Boolean).join(" · "),
             icon: CalendarCheck,
             pct: checkinDelta,
-            counts: [metrics.checkinsThisMonth, metrics.checkinsLastMonth] as const,
-            pillLabel: "check-ins, this month vs last",
+            counts: cov.missing || cov.gap ? null : ([metrics.checkinsThisMonth, metrics.checkinsLastMonth] as const),
+            pillLabel: "check-ins",
           },
           {
             label: "Engagement",
             // T2b: the percentage with its counts; "—" when there are no
-            // active members (an undefined rate is never "0%").
-            value: formatPct(metrics.totalMembers > 0 ? engagementRate : null, metrics.totalMembers),
-            sub: metrics.totalMembers > 0
-              ? `${ratioCounts(metrics.activeMembersThisMonth, metrics.totalMembers)} active members checked in this month`
-              : "No active members yet",
+            // active members (an undefined rate is never "0%"), or no
+            // attendance records for the period (28 Oct 2026).
+            value: cov.missing ? "—" : formatPct(metrics.totalMembers > 0 ? engagementRate : null, metrics.totalMembers),
+            sub: cov.missing ?? (metrics.totalMembers > 0
+              ? [`${ratioCounts(metrics.activeMembersThisMonth, metrics.totalMembers)} active members checked in ${words.during}`, cov.partial].filter(Boolean).join(" · ")
+              : "No active members yet"),
             icon: TrendingUp,
             pct: null,
             counts: null,
@@ -456,18 +558,21 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
               >
                 <Icon className="w-4 h-4" style={{ color: primaryColor }} />
               </div>
-              {pct !== null && counts && (
+              {/* Nothing last month: no percentage, but the pill still shows
+                  the counts, neutral, "— (3 vs 0)" (owner decision, 27 Oct
+                  2026, 23:30). It used to disappear. Both zero: no pill. */}
+              {counts && (pct !== null || counts[0] !== counts[1]) && (
                 <div
                   data-testid="analysis-change-pill"
-                  aria-label={`${changePillText(pct, counts[0], counts[1])}: ${pillLabel}`}
+                  aria-label={`${formatChange(counts[0], counts[1], change)}: ${pillLabel}`}
                   className="flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap"
                   style={{
-                    background: pct >= 0 ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
-                    color: pct >= 0 ? "var(--hue-success)" : "var(--hue-danger)",
+                    background: pct === null ? "var(--sf-2)" : pct >= 0 ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
+                    color: pct === null ? "var(--tx-2)" : pct >= 0 ? "var(--hue-success)" : "var(--hue-danger)",
                   }}
                 >
-                  {pct >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                  {changePillText(pct, counts[0], counts[1])}
+                  {pct === null ? null : pct >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                  {changePillText(counts[0], counts[1])}
                 </div>
               )}
             </div>

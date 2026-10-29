@@ -53,7 +53,7 @@ describe("booking — tier gate", () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string; reason: string };
     expect(body.reason).toBe("tier_not_included");
-    expect(body.error).toBe("Advanced isn't included in your Beginners Unlimited membership. Ask staff about a membership that includes it.");
+    expect(body.error).toBe("Advanced isn't included in your Beginners Unlimited membership. For further information, please speak to a coach.");
     expect(h.subCreate).not.toHaveBeenCalled();
     expect(h.order).toEqual(["lock", "tiers"]);
   });
@@ -103,7 +103,7 @@ describe("booking — tier gate", () => {
       const res = await book();
       expect(res.status).toBe(403);
       const body = (await res.json()) as { error: string; reason: string };
-      expect(body).toEqual({ error: "You're not on the roster for this class.", reason: "roster_not_listed" });
+      expect(body).toEqual({ error: "You're not on the roster for this class. For further information, please speak to a coach.", reason: "roster_not_listed" });
     }
     expect(h.subCreate).not.toHaveBeenCalled();
     expect(h.rosterFindFirst).toHaveBeenCalledWith(expect.objectContaining({

@@ -119,7 +119,7 @@ describe("tier gate — every door refuses", () => {
     const refusal = checkinRefusal(r)!;
     expect(refusal.status).toBe(403);
     expect(refusal.body).toEqual({
-      error: "Advanced isn't included in your Beginners Unlimited membership. Ask staff about a membership that includes it.",
+      error: "Advanced isn't included in your Beginners Unlimited membership. For further information, please speak to a coach.",
       reason: "tier_not_included",
     });
   });
@@ -195,7 +195,7 @@ describe("roster gate — under the Class lock, at every door", () => {
     expect(h.recordCreate).not.toHaveBeenCalled();
     expect(h.order.indexOf("lock")).toBeGreaterThanOrEqual(0);
     expect(h.order.indexOf("lock")).toBeLessThan(h.order.indexOf("roster"));
-    expect(checkinRefusal(r)!.body).toEqual({ error: "You're not on the roster for this class.", reason: "roster_not_listed" });
+    expect(checkinRefusal(r)!.body).toEqual({ error: "You're not on the roster for this class. For further information, please speak to a coach.", reason: "roster_not_listed" });
   });
 
   it("reads the roster with the tenant filter (convention: RLS is the backstop, not the defence)", async () => {

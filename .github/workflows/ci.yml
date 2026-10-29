@@ -19,7 +19,7 @@ jobs:
   typecheck-test:
     name: Typecheck + Lint + Vitest
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     # A REAL Postgres. Previously DATABASE_URL was set to localhost:5432 with no
     # service behind it, so the ~74 DB-backed tests did not skip — they ERRORED

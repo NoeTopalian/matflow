@@ -3,6 +3,7 @@ import { usableTimezone } from "./class-time";
 import { TRAINING_MEMBER } from "./member-population";
 import {
   buildMembership,
+  combinedBasis,
   compareEvents,
   estimatedCaption,
   isImportOpening,
@@ -13,6 +14,7 @@ import {
   type MembershipSeries,
   type MovementBucket,
   type MovementEvent,
+  type MovementTally,
 } from "./membership-movement";
 import { planTenantBackfill, STATUS_BACKFILL_SOURCE_ACTION } from "./status-backfill";
 
@@ -145,6 +147,48 @@ export async function loadMembershipReport(
   return { ...series, historySource: loaded.historySource, undatedHistory: loaded.undatedHistory, fromJoinDates: loaded.fromJoinDates };
 }
 
+/** The movement figures for a statistics page's whole period (lib/report-period). */
+export interface PeriodMembership {
+  /**
+   * Moves inside the period: joined (new + rejoined), left, net, tasters, and
+   * the cancellations churn counts (`lostCancelled`, cancellationsOf; owner
+   * decision, 27 Oct 2026). No churn base: a percentage's denominator is not
+   * approved, so none is carried.
+   */
+  totals: MovementTally;
+  /** Whether the period's moves were recorded at the time or are (partly) estimated. */
+  basis: MembershipBasis;
+  /** The same figures for the equal run of months straight before (comparisons); null when that run has no data. */
+  previous: { totals: MovementTally; basis: MembershipBasis } | null;
+}
+
+/**
+ * A statistics page's membership figures for its period: the monthly series
+ * over the chart's months (at least as long as the period, ending with it)
+ * and the period's own totals. One read, replays of the same events, so the
+ * chart, the Joined tile and the churn count cannot disagree.
+ */
+export async function loadMembershipForPeriod(
+  tx: TxClient,
+  tenantId: string,
+  { now, endMonth, months, chartMonths, previousEndMonth }: { now: Date; endMonth: string; months: number; chartMonths: number; previousEndMonth: string },
+): Promise<{ report: MembershipReport; period: PeriodMembership }> {
+  const loaded = await loadMembershipInput(tx, tenantId, now);
+  // The Net New Members card keeps its 12 months at least (MEMBERSHIP_WINDOW_MONTHS); a longer period lengthens it.
+  const series = buildMembership({ ...loaded.input, months: Math.max(chartMonths, months, MEMBERSHIP_WINDOW_MONTHS), endMonth });
+  const own = buildMembership({ ...loaded.input, months, endMonth });
+  const before = buildMembership({ ...loaded.input, months, endMonth: previousEndMonth });
+  const beforeBasis = combinedBasis(before.movementsByMonth.map((m) => m.basis));
+  return {
+    report: { ...series, historySource: loaded.historySource, undatedHistory: loaded.undatedHistory, fromJoinDates: loaded.fromJoinDates },
+    period: {
+      totals: own.totals,
+      basis: combinedBasis(own.movementsByMonth.map((m) => m.basis)),
+      previous: beforeBasis === "none" ? null : { totals: before.totals, basis: beforeBasis },
+    },
+  };
+}
+
 /**
  * D11: the members behind each movement figure for one club month — the
  * Members drill-throughs (new-, rejoined-, lost- and tasters-this-month). The
@@ -164,16 +208,19 @@ export async function loadMonthMovers(
  * loadMonthMovers plus whether that month's moves are recorded or (partly)
  * estimated, and what an estimate came from (estimatedCaption), so a past
  * month's drill-through is labelled exactly as the Reports chart labels it.
+ * `cancelledMoves` is the churn tile's count for the window (cancellations as
+ * moves, cancellationsOf): the churn drill-through's headline, while its rows
+ * are `movers.cancelled`, each person once.
  */
 export async function loadMonthMovement(
   tx: TxClient,
   tenantId: string,
   now: Date,
   window: { start: Date; at: Date },
-): Promise<{ movers: Record<MovementBucket, string[]>; basis: MembershipBasis; caption: string }> {
+): Promise<{ movers: Record<MovementBucket, string[]>; basis: MembershipBasis; caption: string; cancelledMoves: number }> {
   const loaded = await loadMembershipInput(tx, tenantId, now);
-  const { movers, basis } = moversAndBasisInWindow(loaded.input, window);
-  return { movers, basis, caption: estimatedCaption(loaded) };
+  const { movers, basis, cancelledMoves } = moversAndBasisInWindow(loaded.input, window);
+  return { movers, basis, caption: estimatedCaption(loaded), cancelledMoves };
 }
 
 /**
@@ -191,8 +238,10 @@ export async function loadJoinedInWindows(
   const loaded = await loadMembershipInput(tx, tenantId, now);
   const caption = estimatedCaption(loaded);
   return windows.map((w) => {
-    const { movers, basis } = moversAndBasisInWindow(loaded.input, w);
-    return { joined: movers.new.length + movers.rejoined.length, basis, caption };
+    // Joins counted as moves, as the Reports Joined tile counts them (review 26 Oct: distinct people
+    // made Analysis lower than Reports when someone rejoined twice in one period).
+    const { joinedMoves, basis } = moversAndBasisInWindow(loaded.input, w);
+    return { joined: joinedMoves, basis, caption };
   });
 }
 

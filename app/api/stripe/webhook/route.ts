@@ -7,6 +7,7 @@ import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
 import { HANDLED_STRIPE_EVENT_TYPES } from "@/lib/stripe/handled-events";
 import { packCreditsAfterRefund } from "@/lib/pack-refund";
+import { packExpiresAt } from "@/lib/class-pack-terms";
 import * as Sentry from "@sentry/nextjs";
 
 import { resolveInvoicePaymentIds, resolveMandateCustomerId, NO_INVOICE_PAYMENT, type InvoicePaymentIds } from "@/lib/stripe/invoice-payment";
@@ -464,7 +465,13 @@ export async function POST(req: NextRequest) {
           },
         });
       }
-    } else if (event.type === "checkout.session.completed") {
+    } else if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
+      // A delayed payment method (Bacs Direct Debit, SEPA, bank transfer)
+      // completes the session first, unpaid, and settles later with
+      // async_payment_succeeded; a card completes it paid. Both events carry
+      // the session, and credits are minted by whichever of them first says
+      // "paid" (W6, 28 Oct 2026).
+      const isAsyncSuccess = event.type === "checkout.session.async_payment_succeeded";
       // One-off purchases (class packs etc.) flagged via metadata.matflowKind.
       // Cross-check metadata.tenantId against the tenant resolved from
       // event.account (line 92). Without this, an attacker controlling a
@@ -475,8 +482,23 @@ export async function POST(req: NextRequest) {
       // trusted as authoritative for the tenant scope of this checkout.
       // (Security audit iteration 2 / M8, 2026-05-07.)
       const metadata = (obj.metadata as Record<string, string> | undefined) ?? {};
+      // A completed Checkout Session is not a payment: Stripe completes a
+      // session paid by a delayed method with payment_status "unpaid", and the
+      // money may never arrive. Credits are spendable the moment they exist,
+      // so nothing is recorded for an unpaid session (no MemberClassPack, no
+      // Payment): the credits and the succeeded Payment are written when
+      // checkout.session.async_payment_succeeded reports it paid, and nothing
+      // when async_payment_failed does (W6, 28 Oct 2026).
+      const sessionPaid = obj.payment_status === "paid";
+      if (metadata.matflowKind === "class_pack" && !sessionPaid) {
+        console.warn(
+          `[stripe-webhook] ${event.type} — class pack session ${String(obj.id)} has ` +
+          `payment_status=${String(obj.payment_status)}; no credits minted yet.`,
+        );
+      }
       if (
         metadata.matflowKind === "class_pack" &&
+        sessionPaid &&
         metadata.packId && metadata.memberId && metadata.tenantId &&
         metadata.tenantId === tenantId
       ) {
@@ -494,11 +516,56 @@ export async function POST(req: NextRequest) {
           select: { id: true },
         });
         if (pack && packMember) {
-          const expiresAt = new Date(Date.now() + pack.validityDays * 24 * 60 * 60 * 1000);
+          // The purchase records its own term from the product as sold
+          // (owner decision, 27 Oct 2026: expiry chosen per pack product):
+          // purchasedAt + validityDays, or NULL for a no-expiry product.
+          // Written once, here; nothing rewrites it.
+          const purchasedAt = new Date();
+          const expiresAt = packExpiresAt(purchasedAt, pack.validityDays);
           const paymentIntentId = (obj.payment_intent as string) ?? null;
           // Mirror as a Payment row so the ledger is complete
           const amountPence = (obj.amount_total as number) ?? pack.pricePence;
-          try {
+          // Idempotent on the purchase's payment intent (MemberClassPack
+          // .stripePaymentIntentId is @unique): a replay, or a completed event
+          // and an async-success event for the same session, mints once. Read
+          // first rather than relying on the P2002 below, which aborts the
+          // Postgres transaction; the P2002 stays the backstop for two
+          // deliveries racing past this read. No payment intent, no key to
+          // deduplicate on, so nothing is minted (a paid payment-mode session
+          // always carries one).
+          const alreadyMinted = paymentIntentId
+            ? await tx.memberClassPack.findUnique({ where: { stripePaymentIntentId: paymentIntentId }, select: { id: true } })
+            : null;
+          // A delayed payment can be refunded before its async success is
+          // delivered (payment_intent.succeeded records the Payment first, the
+          // owner refunds it, then this event arrives). The purchase is then
+          // minted net of that refund, with the same apportionment the refund
+          // legs use (lib/pack-refund.ts; nothing redeemed yet), a fully
+          // refunded payment mints nothing, and the Payment upsert below never
+          // turns a refunded row back into "succeeded" (W6 review, 28 Oct 2026).
+          const priorPayment = paymentIntentId
+            ? await tx.payment.findFirst({
+                where: { tenantId: metadata.tenantId, stripePaymentIntentId: paymentIntentId },
+                select: { status: true, amountPence: true, refundedAmountPence: true },
+              })
+            : null;
+          const refundedFirst = !!priorPayment && (priorPayment.status === "refunded" || (priorPayment.refundedAmountPence ?? 0) > 0);
+          const netOfRefund = refundedFirst
+            ? packCreditsAfterRefund({
+                totalCredits: pack.totalCredits,
+                creditsRemaining: pack.totalCredits,
+                creditsRedeemed: 0,
+                paidPence: priorPayment!.amountPence,
+                refundedPence: priorPayment!.status === "refunded" ? Math.max(priorPayment!.refundedAmountPence ?? 0, priorPayment!.amountPence) : (priorPayment!.refundedAmountPence ?? 0),
+              })
+            : null;
+          if (!paymentIntentId) {
+            console.warn(`[stripe-webhook] ${event.type} — paid class pack session ${String(obj.id)} has no payment_intent; no credits minted.`);
+          } else if (alreadyMinted) {
+            // Already minted for this payment: nothing more to do.
+          } else if (netOfRefund && (netOfRefund.status === "refunded" || netOfRefund.creditsRemaining <= 0)) {
+            console.warn(`[stripe-webhook] ${event.type} — class pack session ${String(obj.id)}: payment already fully refunded; no credits minted.`);
+          } else try {
             // Already inside a transaction (withRlsBypass) — sequential awaits
             // remain atomic without a nested $transaction.
             await tx.memberClassPack.create({
@@ -506,7 +573,8 @@ export async function POST(req: NextRequest) {
                 tenantId: metadata.tenantId,
                 memberId: metadata.memberId,
                 packId: pack.id,
-                creditsRemaining: pack.totalCredits,
+                creditsRemaining: netOfRefund ? netOfRefund.creditsRemaining : pack.totalCredits,
+                purchasedAt,
                 expiresAt,
                 stripePaymentIntentId: paymentIntentId,
                 status: "active",
@@ -526,8 +594,10 @@ export async function POST(req: NextRequest) {
                 description: `Class pack: ${pack.name}`,
                 paidAt: new Date(),
               },
+              // A partly refunded payment stays "succeeded" (refund legs);
+              // a refunded one is never set back (handled above: no mint).
               update: {
-                status: "succeeded",
+                ...(refundedFirst ? {} : { status: "succeeded" }),
                 paidAt: new Date(),
               },
             });
@@ -560,6 +630,9 @@ export async function POST(req: NextRequest) {
           }
         }
       } else if (
+        // Shop checkout is card-only (app/api/member/checkout), so its order is
+        // settled on completion; the async event is for class packs.
+        !isAsyncSuccess &&
         metadata.matflowKind === "shop_order" &&
         metadata.tenantId && metadata.orderRef &&
         metadata.tenantId === tenantId
@@ -710,6 +783,21 @@ export async function POST(req: NextRequest) {
         // (lib/checkin.ts only filters status='active' AND creditsRemaining>0)
         // for money they got back.
         if (existing.stripePaymentIntentId) {
+          // Lock the pack row BEFORE reading it: the apportionment below
+          // writes an absolute creditsRemaining computed from this read and
+          // the redemption count, so a check-in spending a credit between the
+          // read and the write was overwritten and the member kept the credit
+          // they had just used (W6, 28 Oct 2026, lost update). With the row
+          // lock, a check-in that already decremented is committed (and its
+          // redemption counted) before this read, and one that comes later
+          // decrements what this writes. Lock order: this leg touches the
+          // pack and no Member row, so it cannot cycle with a check-in
+          // (Class, Member, pack).
+          await tx.$queryRaw`
+            SELECT "id" FROM "MemberClassPack"
+             WHERE "stripePaymentIntentId" = ${existing.stripePaymentIntentId} AND "tenantId" = ${tenantId}
+             FOR UPDATE
+          `;
           const fundedPack = await tx.memberClassPack.findUnique({
             where: { stripePaymentIntentId: existing.stripePaymentIntentId },
             // The pack as it was SOLD — the denominator the apportionment needs.
@@ -1146,6 +1234,29 @@ export async function POST(req: NextRequest) {
             }
           }
         }
+      }
+    } else if (event.type === "checkout.session.async_payment_failed") {
+      // A delayed payment for a class pack failed. The completion minted
+      // nothing (it was unpaid), so there is nothing to take back: mint
+      // nothing, and say so in the log and the club's audit (W6, 28 Oct 2026).
+      const failedMeta = (obj.metadata as Record<string, string> | null) ?? {};
+      if (failedMeta.matflowKind === "class_pack" && failedMeta.tenantId === tenantId) {
+        console.warn(
+          `[stripe-webhook] checkout.session.async_payment_failed — class pack session ${String(obj.id)} ` +
+          `(pack=${failedMeta.packId ?? "?"}, member=${failedMeta.memberId ?? "?"}): payment failed; no credits minted.`,
+        );
+        pendingAuditLogs.push({
+          tenantId,
+          userId: null,
+          action: "stripe.checkout.class_pack_payment_failed",
+          entityType: "ClassPack",
+          entityId: failedMeta.packId ?? String(obj.id),
+          metadata: {
+            sessionId: (obj.id as string) ?? null,
+            memberId: failedMeta.memberId ?? null,
+            paymentIntentId: (obj.payment_intent as string) ?? null,
+          },
+        });
       }
     } else if (event.type === "checkout.session.expired") {
       // An abandoned Stripe cart used to stay "pending" for ever, and

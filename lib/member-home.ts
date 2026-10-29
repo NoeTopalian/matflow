@@ -220,6 +220,10 @@ export async function buildMemberMeData(
         select: { url: true },
         take: 1,
       },
+      // G5: the club's "members can check themselves in from the app" switch,
+      // read in the same query so the member home learns it without a new
+      // round trip. The check-in route enforces it; this only hides the button.
+      tenant: { select: { memberAppCheckin: true } },
     },
   });
 
@@ -277,6 +281,7 @@ export async function buildMemberMeData(
     stats,
     nextClass,
     profilePictureUrl: m.photos[0]?.url ?? null,
+    memberAppCheckin: m.tenant.memberAppCheckin,
   };
 }
 

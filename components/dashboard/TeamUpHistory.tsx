@@ -51,6 +51,18 @@ function ended(r: Row): string | null {
   return null;
 }
 
+/**
+ * The panel's first line. The date is the import that brought the member over
+ * and never moves (owner decision, 27 Oct 2026: imports no longer update an
+ * existing member), so it is not "standing as of" a date, which would read as
+ * stale for good: "TeamUp standing when imported, 3 Oct 2026."
+ */
+export function teamUpHistoryIntro(asOf: string | null): string {
+  return asOf
+    ? `TeamUp standing when imported, ${formatDate(asOf)}. Not purchased here — MatFlow has charged nothing for these.`
+    : "As recorded at TeamUp. Imported, not purchased here — MatFlow has charged nothing for these.";
+}
+
 export default function TeamUpHistory({ memberId }: { memberId: string }) {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState(false);
@@ -82,8 +94,8 @@ export default function TeamUpHistory({ memberId }: { memberId: string }) {
         <History className="w-4 h-4 text-tx-3" aria-hidden />
         Membership history from TeamUp
       </h3>
-      <p className="text-[11px] mb-3 text-tx-4">
-        As recorded at TeamUp{data?.billingStatusAsOf ? `, standing as of ${formatDate(data.billingStatusAsOf)}` : ""}. Imported, not purchased here — MatFlow has charged nothing for these.
+      <p className="text-[11px] mb-3 text-tx-4" data-testid="teamup-history-intro">
+        {teamUpHistoryIntro(data?.billingStatusAsOf ?? null)}
       </p>
       {error ? (
         <ErrorState message="Couldn't load the TeamUp history" onRetry={retry} />

@@ -3,9 +3,9 @@ import { billingSourceLabel } from "@/lib/billing-source";
 /**
  * A small "Billed by TeamUp" marker (functional review F5: "TeamUp" alone
  * said nothing on its own) for a member TeamUp bills during the bridge
- * (readiness spec v3 §7). The full sentence — "Billed by TeamUp · status as of
- * <date>" — is the title and the accessible name. Renders nothing for a member
- * MatFlow bills.
+ * (readiness spec v3 §7). The full sentence — "Billed by TeamUp · imported
+ * <date>" (owner decision, 27 Oct 2026) — is the title and the accessible
+ * name. Renders nothing for a member MatFlow bills.
  */
 export function BilledByTeamUpPill({ member }: { member: { billedBy?: string | null; billingStatusAsOf?: string | Date | null } }) {
   const label = billingSourceLabel(member);

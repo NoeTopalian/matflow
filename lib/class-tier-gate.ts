@@ -47,15 +47,15 @@ export function classTierCovers(input: ClassTierGateInput): boolean {
  */
 export function tierRefusalSentence(className: string, tierName: string | null | undefined): string {
   return tierName
-    ? `${className} isn't included in your ${tierName} membership. Ask staff about a membership that includes it.`
-    : `${className} is only open to certain memberships, and you don't have a membership plan set yet. Ask staff.`;
+    ? `${className} isn't included in your ${tierName} membership. For further information, please speak to a coach.`
+    : `${className} is only open to certain memberships, and you don't have a membership plan set yet. For further information, please speak to a coach.`;
 }
 
 /**
  * The sentence every door gives a member who is not on a squad class's
  * roster (check-in, kiosk, booking, and the staff doors, which refuse too).
  */
-export const ROSTER_REFUSAL_SENTENCE = "You're not on the roster for this class.";
+export const ROSTER_REFUSAL_SENTENCE = "You're not on the roster for this class. For further information, please speak to a coach.";
 
 /** The short label the member schedule shows on a class their plan does not include. */
 export const TIER_LOCKED_LABEL = "Not included in your membership";
@@ -88,4 +88,4 @@ export const NOT_ON_SQUAD_LABEL = "Not on the squad list";
  * not on it reads this rather than seeing their name and being refused.
  */
 export const SQUAD_NO_MATCH_SENTENCE =
-  "No one on the squad list matches that name. Only members on the squad list can check in to this class — ask staff.";
+  "No one on the squad list matches that name. Only members on the squad list can check in to this class. For further information, please speak to a coach.";

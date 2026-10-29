@@ -29,7 +29,7 @@ import { describeApiError } from "@/lib/api-field-errors";
 import { classifyCheckinResponse } from "@/lib/checkin-outcome";
 import { medicalNotesText } from "@/lib/medical-notes";
 import { NOT_ON_SQUAD_LABEL, SQUAD_ONLY_LABEL } from "@/lib/class-tier-gate";
-import { staleBillingWarning, billingSourceLabel } from "@/lib/billing-source";
+import { billingSourceLabel } from "@/lib/billing-source";
 import type { TodaySession } from "@/components/dashboard/SessionPicker";
 import { isAdultAccount } from "@/lib/account-type";
 
@@ -581,15 +581,9 @@ export default function RegisterPanel({
                     <span className="flex items-center gap-1">
                       <CalendarCheck className="size-3" /> Last seen {relativeDate(m.lastVisitAt)}
                     </span>
-                    {/* Who collects, when the standing is fresh (functional review F3). */}
-                    {!staleBillingWarning(m) && billingSourceLabel(m) && (
+                    {/* Who collects the money (functional review F3). */}
+                    {billingSourceLabel(m) && (
                       <span className="flex items-center gap-1" data-testid="register-billing-source">{billingSourceLabel(m)}</span>
-                    )}
-                    {/* Never blocks the tick: staleness is a note for the desk, not a door rule. */}
-                    {staleBillingWarning(m) && (
-                      <span className="flex items-center gap-1 text-[var(--hue-warning-ink)]" data-testid="register-stale-billing">
-                        <ShieldAlert className="size-3" /> {staleBillingWarning(m)}
-                      </span>
                     )}
                     {medicalNotesText(m.medicalConditions) && (
                       <span className="flex items-center gap-1" style={{ color: "var(--hue-danger)" }}>

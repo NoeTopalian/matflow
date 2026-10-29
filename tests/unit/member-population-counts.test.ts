@@ -68,11 +68,13 @@ describe("member population counts", () => {
     expect(unguarded, unguarded.join("\n---\n")).toEqual([]);
   });
 
-  it("Reports' Active members and churn counts use ACTIVE_MEMBER and LEFT_MEMBER (behaviour-identical refactor)", () => {
+  it("Reports' member counts carry a named population; churn comes from the movement replay, not a date column", () => {
     const src = readFileSync("lib/reports.ts", "utf8");
-    expect(src).toContain("tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } })");
-    // Review L4: the month is the club-zone half-open window (lib/club-month.ts).
-    expect(src).toContain("tx.member.count({ where: { tenantId, ...LEFT_MEMBER, cancelledAt: thisMonth } })");
+    expect(src).toContain("tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER, ...ON_HOLD } })");
+    // D4 (Noe, 26 Oct 2026): left in the period ÷ active at its start, both from
+    // the training members' status history (lib/membership-report.ts).
+    expect(src).toContain("loadMembershipForPeriod(tx, tenantId, {");
+    expect(src).not.toMatch(/LEFT_MEMBER, cancelledAt: thisMonth/);
     expect(src).not.toMatch(/status: "active", \.\.\.TRAINING_MEMBER/);
   });
 
@@ -134,14 +136,15 @@ describe("member population counts", () => {
     expect(src).not.toMatch(/status: "(active|cancelled)"/);
   });
 
-  it("Analysis closes last month half-open (lt startOfMonth), never lte a midnight", () => {
+  it("Analysis compares half-open windows (the period and the equal run before it), never lte a midnight", () => {
     const src = readFileSync("app/dashboard/analysis/page.tsx", "utf8");
     expect(src).not.toContain("endOfLastMonth");
     expect(src).not.toMatch(/lte:/);
-    // Check-ins last month; Joined last month ends 1 ms before the club's next month.
-    expect((src.match(/gte: startOfLastMonth, lt: startOfMonth/g) ?? []).length).toBe(1);
-    expect(src).toContain("new Date(new Date(prev.nextMonthStart).getTime() - 1)");
-    expect(src).toContain("monthWindows(now)");
+    // Check-ins in the run before the period: [previous.start, previous.end) (lib/report-period, 26 Oct 2026).
+    expect(src).toContain("const inPrevious = { gte: new Date(range.previous.start), lt: new Date(range.previous.end) };");
+    expect(src).toContain("checkInTime: inPrevious");
+    // Joined in that run ends at its last instant (previous.at = end − 1 ms).
+    expect(src).toContain("{ start: new Date(range.previous.start), at: new Date(range.previous.at) }");
   });
 
   it("Memberships counts each tier's active training members", () => {

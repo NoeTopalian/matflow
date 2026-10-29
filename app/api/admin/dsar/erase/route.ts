@@ -493,8 +493,8 @@ export async function POST(req: Request) {
     // source name and email behind on an unmatched row.
     await tx.importedBooking.deleteMany({ where: importedBookingWhere });
     await tx.importSourceMapping.deleteMany({ where: personMappingWhere });
-    // The people an import listed for review keep no trace of the subject (25 Oct 2026).
-    await scrubImportConflictsFor(tx, tenantId, memberId);
+    // The import records keep no trace of the subject: review list, exceptions, kept lists (25 and 27 Oct 2026).
+    await scrubImportConflictsFor(tx, tenantId, memberId, originalExternalRef);
 
     await tx.member.update({
       where: { id: memberId },

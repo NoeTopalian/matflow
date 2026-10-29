@@ -83,12 +83,10 @@ export function ledger(name) {
 /** Full-page screenshot with addresses masked. */
 export async function shot(page, name) {
   try {
-    await page.evaluate(() => {
-      const re = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}/g;
-      const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      for (let n = w.nextNode(); n; n = w.nextNode()) if (re.test(n.nodeValue)) n.nodeValue = n.nodeValue.replace(re, "[address]");
-    });
-    await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: true });
+    // Addresses are masked in the image, never rewritten in the page: rewriting text React had not hydrated yet made
+    // React compare the server's address with "[address]" and throw #418 (smoke J3, 29 Oct 2026).
+    const address = page.getByText(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}/);
+    await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: true, mask: [address], maskColor: "#6b7280" });
     return `${OUT}/${name}.png`;
   } catch (e) { console.log(`  (screenshot ${name} failed: ${String(e).slice(0, 120)})`); return null; }
 }

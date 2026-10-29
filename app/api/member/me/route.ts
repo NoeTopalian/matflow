@@ -27,6 +27,7 @@ const DEMO_RESPONSE = {
   joinedAt: "2025-09-01T00:00:00.000Z",
   primaryColor: "#3b82f6",
   onboardingCompleted: false,
+  memberAppCheckin: true,
   classReminders: true,
   beltPromotions: true,
   gymAnnouncements: true,

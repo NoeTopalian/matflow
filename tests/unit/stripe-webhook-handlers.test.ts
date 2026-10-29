@@ -49,6 +49,8 @@ vi.mock("@/lib/prisma", () => ({
     payment: { findFirst: vi.fn(), update: vi.fn(), upsert: vi.fn() },
     classPack: { findFirst: vi.fn() },
     memberClassPack: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+    // The refund legs lock the pack row (SELECT ... FOR UPDATE) before reading it (W6).
+    $queryRaw: vi.fn().mockResolvedValue([]),
     // The refund apportionment counts the classes actually attended, so the
     // same cumulative refund lands on the same answer here as it does in the
     // owner refund route however often Stripe reports it.
@@ -572,6 +574,26 @@ describe("Stripe webhook: charge.refunded", () => {
     }));
   });
 
+  // Packs per product (owner decision, 27 Oct 2026): the revocation guard is
+  // status "active" only, as before. A legacy "expired" pack is not usable and
+  // is left as it is recorded.
+  it("charge.refunded leaves a legacy 'expired' pack as recorded (guard is active only)", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-refund-pack-exp",
+      type: "charge.refunded",
+      account: "acct_test",
+      data: { object: { id: "ch_pack_e", payment_intent: "pi_pack_e", amount_refunded: 5000 } },
+    });
+    mockPaymentFindFirst.mockResolvedValueOnce({
+      id: "pay-pack-e", status: "succeeded", stripePaymentIntentId: "pi_pack_e", amountPence: 5000,
+    } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({ id: "pack-e", memberId: "mem-1", tenantId: "tenant-A", status: "expired", creditsRemaining: 10, pack: { totalCredits: 10 } } as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const res = await POST(makeReq("{}") as never);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(prisma.memberClassPack.update)).not.toHaveBeenCalled();
+  });
+
   // A partial refund must NOT wipe the pack. Before the apportionment, a £5
   // goodwill refund issued from the Stripe dashboard destroyed all ten classes
   // on a £100 pack — 5% of the money back, 100% of the entitlement gone.
@@ -933,6 +955,21 @@ describe("Stripe webhook: charge.dispute.* sync", () => {
     const packAt = packUpdate.mock.invocationCallOrder[0];
     expect(memberAt).toBeLessThan(packAt);
   });
+
+  // Packs per product (owner decision, 27 Oct 2026): the guard is status "active" only, as before.
+  it("a lost dispute leaves a legacy 'expired' pack as recorded (guard is active only)", async () => {
+    constructEventMock.mockReturnValue(
+      disputeEvent({ charge: "ch_xe", customer: "cus_x", status: "lost", payment_intent: "pi_xe" }),
+    );
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1", tenantId: "tenant-A" } as never);
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-1e", tenantId: "tenant-A", memberId: "mem-1", stripePaymentIntentId: "pi_xe" } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({
+      id: "pack-de", tenantId: "tenant-A", status: "expired", creditsRemaining: 3, memberId: "mem-1",
+    } as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(vi.mocked(prisma.memberClassPack.update)).not.toHaveBeenCalledWith(expect.objectContaining({ where: { id: "pack-de" } }));
+  });
 });
 
 // ── Audit keying + tenant-scoping (Batch 3a) ─────────────────────────────────
@@ -999,7 +1036,7 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       account: "acct_test",
       data: {
         object: {
-          id: "cs_x", payment_intent: "pi_x", currency: "gbp", amount_total: 5000,
+          id: "cs_x", payment_status: "paid", payment_intent: "pi_x", currency: "gbp", amount_total: 5000,
           metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-foreign", tenantId: "tenant-A" },
         },
       },
@@ -1022,7 +1059,7 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       account: "acct_test",
       data: {
         object: {
-          id: "cs_y", payment_intent: "pi_y", currency: "gbp", amount_total: 5000,
+          id: "cs_y", payment_status: "paid", payment_intent: "pi_y", currency: "gbp", amount_total: 5000,
           metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-1", tenantId: "tenant-A" },
         },
       },
@@ -1031,10 +1068,57 @@ describe("Stripe webhook: audit + tenant-scoping", () => {
       id: "pack-1", validityDays: 30, totalCredits: 10, pricePence: 5000, currency: "gbp", name: "10pk",
     } as never);
     mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+    // No purchase recorded yet for this payment intent (the mint reads it first, W6).
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue(null as never);
+    // Nor any Payment refunded before the mint (W6 review).
+    mockPaymentFindFirst.mockResolvedValue(null as never);
 
     const { POST } = await import("@/app/api/stripe/webhook/route");
     await POST(makeReq("{}") as never);
     expect(vi.mocked(prisma.memberClassPack.create)).toHaveBeenCalled();
+  });
+
+  // Packs per product (owner decision, 27 Oct 2026): the club chooses an
+  // expiry or no expiry per pack product. At sale the purchase records its
+  // own term: purchasedAt + validityDays, or NULL for a no-expiry product.
+  async function sellPack(validityDays: number | null) {
+    constructEventMock.mockReturnValue({
+      id: `evt-pack-terms-${validityDays}`,
+      type: "checkout.session.completed",
+      account: "acct_test",
+      data: {
+        object: {
+          id: "cs_terms", payment_status: "paid", payment_intent: "pi_terms", currency: "gbp", amount_total: 5000,
+          metadata: { matflowKind: "class_pack", packId: "pack-1", memberId: "mem-1", tenantId: "tenant-A" },
+        },
+      },
+    });
+    vi.mocked(prisma.classPack.findFirst).mockResolvedValue({
+      id: "pack-1", validityDays, totalCredits: 10, pricePence: 5000, currency: "gbp", name: "10pk",
+    } as never);
+    mockMemberFindFirst.mockResolvedValue({ id: "mem-1" } as never);
+    // No purchase recorded yet for this payment intent (the mint reads it first, W6).
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue(null as never);
+    // Nor any Payment refunded before the mint (W6 review).
+    mockPaymentFindFirst.mockResolvedValue(null as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    const create = vi.mocked(prisma.memberClassPack.create);
+    expect(create).toHaveBeenCalledTimes(1);
+    return (create.mock.calls[0][0] as { data: { purchasedAt?: Date; expiresAt: Date | null; creditsRemaining: number; status: string } }).data;
+  }
+
+  it("a no-expiry product (validityDays NULL) produces a purchase with expiresAt NULL", async () => {
+    const data = await sellPack(null);
+    expect(data).toMatchObject({ creditsRemaining: 10, status: "active", expiresAt: null });
+  });
+
+  it("a dated product produces a purchase that expires validityDays after its purchasedAt", async () => {
+    const data = await sellPack(30);
+    expect(data.purchasedAt).toBeInstanceOf(Date);
+    expect(data.expiresAt).toBeInstanceOf(Date);
+    expect(data.expiresAt!.getTime() - data.purchasedAt!.getTime()).toBe(30 * 86_400_000);
+    expect(data).toMatchObject({ creditsRemaining: 10, status: "active" });
   });
 });
 
@@ -1057,6 +1141,19 @@ describe("Stripe webhook: out-of-order + void contingencies", () => {
     expect(vi.mocked(prisma.memberClassPack.update)).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "pack-v" }, data: expect.objectContaining({ status: "refunded", creditsRemaining: 0 }),
     }));
+  });
+
+  // Packs per product (owner decision, 27 Oct 2026): the guard is status "active" only, as before.
+  it("invoice.voided leaves a legacy 'expired' pack as recorded (guard is active only)", async () => {
+    constructEventMock.mockReturnValue({
+      id: "evt-void-e", type: "invoice.voided", account: "acct_test",
+      data: { object: { id: "in_void_e" } },
+    });
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-ve", status: "succeeded", amountPence: 4000, stripePaymentIntentId: "pi_ve" } as never);
+    vi.mocked(prisma.memberClassPack.findUnique).mockResolvedValue({ id: "pack-ve", tenantId: "tenant-A", status: "expired", creditsRemaining: 5, pack: { totalCredits: 5 } } as never);
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    await POST(makeReq("{}") as never);
+    expect(vi.mocked(prisma.memberClassPack.update)).not.toHaveBeenCalledWith(expect.objectContaining({ where: { id: "pack-ve" } }));
   });
 
   it("2.6: payment_intent.succeeded does NOT mirror a Payment for an invoice-backed PI", async () => {

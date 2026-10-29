@@ -109,6 +109,10 @@ const updateSchema = z.object({
   groupChatUrl: httpsUrl().nullable().optional(),
   checkinWindowBeforeMin: z.number().int().min(0).max(180).optional(),
   checkinWindowAfterMin:  z.number().int().min(0).max(180).optional(),
+  // G5 (owner decision, 27 Oct 2026): whether members may check themselves
+  // (and a parent their child) in from the member app. Off refuses only that
+  // path in POST /api/checkin; staff, kiosk and scanner are unaffected.
+  memberAppCheckin: z.boolean().optional(),
   // The club's own zone. Read by app/api/coach/today (what is on today),
   // app/api/classes (which day an instance is minted for) and lib/checkin.ts
   // (the check-in window) — and, until now, written by nothing at all, so

@@ -40,6 +40,9 @@ import AnalysisView, { buildReport } from "@/components/dashboard/AnalysisView";
 import AttendanceView from "@/components/dashboard/AttendanceView";
 import { pctOf, dropText } from "@/components/dashboard/ConversionFunnel";
 import { createEmptyReportsData, type ReportsData } from "@/lib/reports";
+import { resolveReportPeriod } from "@/lib/report-period";
+/** The Analysis fixtures describe October 2026 (the default period, "this month"). */
+const OCTOBER = resolveReportPeriod({}, new Date("2026-10-15T12:00:00.000Z"), "Europe/London");
 
 const ATTRIBUTION = {
   rows: [],
@@ -57,8 +60,7 @@ function reports(overrides: Partial<ReportsData> = {}): ReportsData {
       totalMembers: 15, currentMembers: 12, activeMembers: 9, inactiveMembers: 2, tasterMembers: 1, cancelledMembers: 3,
       activeOnHoldMembers: 1, newMembersThisMonth: 3,
     },
-    churn: { ratePct: 10, cancelled: 1, base: 10, joined: 3, net: 2 },
-    churnRate: 10,
+    churn: { cancelled: 1, joined: 3, net: 2 },
     topClasses: [
       { name: "Fundamentals", count: 30, sessions: 10, averageAttendance: 3, fillRate: null, capacityTotal: 0 },
       { name: "Open Mat", count: 10, sessions: 5, averageAttendance: 2, fillRate: null, capacityTotal: 0 },
@@ -76,7 +78,7 @@ function tileFor(label: string): HTMLElement {
 
 const METRICS = {
   totalMembers: 9, newThisMonth: 2, newLastMonth: 1, checkinsThisMonth: 50, checkinsLastMonth: 40,
-  activeClasses: 6, activeMembersThisMonth: 6, monthLabel: "October 2026", gymName: "Test club",
+  activeClasses: 6, activeMembersThisMonth: 6, monthLabel: "October 2026", gymName: "Test club", range: OCTOBER,
   membersByStatus: [
     { status: "active", label: "Active", count: 9 },
     { status: "inactive", label: "Inactive", count: 2 },

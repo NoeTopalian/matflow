@@ -3,13 +3,15 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, CreditCard, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { packValidityLabel } from "@/lib/class-pack-terms";
 
 type Pack = {
   id: string;
   name: string;
   description: string | null;
   totalCredits: number;
-  validityDays: number;
+  /** Days after purchase, or null for "Never expires" (chosen per product). */
+  validityDays: number | null;
   pricePence: number;
   currency: string;
 };
@@ -100,7 +102,7 @@ export default function PurchasePackClient({
       <Card title="Options">
         <Option
           label={pack.name}
-          description={`${pack.totalCredits} classes · valid ${pack.validityDays} days`}
+          description={`${pack.totalCredits} classes · ${packValidityLabel(pack.validityDays)}`}
           price={formatPrice(pack.pricePence, pack.currency)}
           selected
         />

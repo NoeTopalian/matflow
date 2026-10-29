@@ -263,7 +263,7 @@ Failed payments never mark a member `overdue` and never email the member or the 
 1. https://dashboard.stripe.com → confirm you are in **live** mode (not test) → **Developers** → **Webhooks**.
 2. Find the endpoint pointing at `https://matflow.studio/api/stripe/webhook`. If there is also a stale one on `https://matflow-nine.vercel.app/…` from the old `docs/TODO.md` instructions, delete it — production is `matflow.studio` per `NEXTAUTH_URL` and `docs/RUNBOOK.md:12`.
 3. Check the endpoint's **type**. Stripe labels this at creation as *"Events on your account"* vs *"Events on connected accounts"*. It must be **connected accounts**. If it is not, you cannot convert it — **create a new endpoint** with the Connect option selected, at the same URL, then delete the old one.
-4. Tick the event types. The handler accepts exactly these sixteen (`app/api/stripe/webhook/route.ts:32-49`) and ignores everything else with a harmless 200:
+4. Tick the event types. **Superseded 28 Oct 2026:** the handler now accepts 21 types; tick the list in `docs/runbooks/GO-LIVE-2026-09.md` step 7 (the same as `DESIRED_EVENTS` in `scripts/setup-stripe-webhook.mjs`). As of August it accepted exactly these sixteen (`app/api/stripe/webhook/route.ts:32-49`) and ignores everything else with a harmless 200:
 
    ```
    customer.subscription.deleted    customer.subscription.updated
