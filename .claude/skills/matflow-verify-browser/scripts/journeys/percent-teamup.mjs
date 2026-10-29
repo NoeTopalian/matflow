@@ -97,6 +97,8 @@ try {
   // G2: the member profile label.
   await page.goto(`/dashboard/members/${teamupId}`);
   await page.waitForLoadState("load");
+  // The profile streams in after "load"; read it once the header has arrived (it read the loading state under load).
+  await page.getByTestId("billing-source-label").first().waitFor({ timeout: 60000 }).catch(() => {});
   const profileText = norm(await page.locator("main").innerText({ timeout: 60000 }));
   L.check("teamup", "G2a the member profile reads \"Billed by TeamUp · imported 3 Oct 2026\", no \"status as of\" and no staleness warning",
     profileText.includes(TEAMUP) && !/status as of/i.test(profileText) && !/stale|out of date|may be out of date/i.test(profileText),
