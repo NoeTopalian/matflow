@@ -166,6 +166,16 @@ const kit = await addMember({ key: "kit", name: `Kit Kid ${TAG}`, tierId: tierA,
 const ROSTER = [ella, ian, nina, cora, cole, kit];
 await q(`update "Tenant" set "kioskTokenHash" = $1 where id = $2`, [createHmac("sha256", SECRET).update(kioskRaw).digest("hex"), tenantId]);
 
+/** The D2 "who this turns away" confirm: waits for it, returns its text and presses its confirm button; null if it never appears. */
+async function confirmTurnAway(page, title, confirmLabel) {
+  const dialog = page.locator('[role="dialog"], [role="alertdialog"]').filter({ hasText: title }).last();
+  if (!(await dialog.waitFor({ timeout: 15000 }).then(() => true, () => false))) return null;
+  const text = (await dialog.innerText()).trim();
+  await dialog.getByRole("button", { name: confirmLabel, exact: true }).click();
+  await dialog.waitFor({ state: "hidden", timeout: 15000 }).catch(() => {});
+  return text;
+}
+
 async function memberSignIn(page, m) {
   await page.goto("/login");
   await page.getByLabel("Club code").fill(club.slug);
@@ -224,8 +234,13 @@ try {
   await page.getByLabel("Start time").last().fill(T_S);
   await shot(page, "classes-create-form");
   let posts = 0;
-  page.on("request", (r) => { if (r.method() === "POST" && new URL(r.url()).pathname === "/api/classes") posts++; });
+  page.on("request", (r) => { if (r.method() === "POST" && new URL(r.url()).pathname === "/api/classes" && !new URL(r.url()).searchParams.has("dryRun")) posts++; });
   await page.getByRole("button", { name: "Create class" }).click();
+  // D2 (21 Oct): a save that changes who can attend is previewed first; the owner confirms having seen who is turned away.
+  const createPreview = await confirmTurnAway(page, "Check who this class turns away", "Create class");
+  L.check("journey", "J2c before creating, the preview names who the class turns away and why: Ian (membership not included), Nina (no plan), Rhea (not on the squad list)",
+    !!createPreview && /Membership not included[\s\S]*Ian Ineligible/.test(createPreview) && /No membership plan[\s\S]*Nina Noplan/.test(createPreview) && /Not on the squad list[\s\S]*Rhea Offroster/.test(createPreview),
+    { preview: createPreview?.slice(0, 400) ?? null });
   const createdToast = await page.getByText(/Class created · \d+ sessions? added to the timetable/).first().waitFor({ timeout: 30000 }).then(() => true, () => false);
   const cls = await until(async () => (await q(`select id from "Class" where "tenantId" = $1 and name = $2`, [tenantId, CLASS]))[0]);
   if (!cls) throw new Error("class was not created — later steps need it");
@@ -269,7 +284,8 @@ try {
     sameSet(await tierIds(classId), [tierA]) && sameSet(await rosterIds(classId), ROSTER.map((m) => m.id)), { tiers: await tierIds(classId), roster: (await rosterIds(classId)).length });
   const upd = (await auditsSettled("class.updated", classId, 1)).at(-1)?.metadata ?? null;
   L.check("audit", "A2 class.updated audit row: category competition -> nogi, description recorded, no bookings cascaded",
-    upd?.before?.category === "competition" && upd?.after?.category === "nogi" && upd?.after?.description === "Edited by the classes journey" && upd?.cascadeCancelledSubscriptions === 0,
+    // D2 (21 Oct) removed the booking cascade, so the row carries no cascade fields at all.
+    upd?.before?.category === "competition" && upd?.after?.category === "nogi" && upd?.after?.description === "Edited by the classes journey" && !Object.keys(upd ?? {}).some((k) => /cascade/i.test(k)),
     { fields: upd?.fields, before: upd?.before, after: upd?.after });
 
   // Three more sessions today for the staff doors (staff doors have no time window).
@@ -394,12 +410,15 @@ try {
   const inForm = await ellaBox.waitFor({ timeout: 30000 }).then(() => true, () => false);
   if (inForm) await ellaBox.uncheck();
   await page.getByRole("button", { name: "Save changes" }).click();
+  const removePreview = await confirmTurnAway(page, "Check who this change turns away", "Save — bookings are kept");
+  L.check("journey", "J22a before saving, the preview names Ella as booked and no longer admitted, and says her booking is kept",
+    !!removePreview && removePreview.includes(ella.name) && /kept/i.test(removePreview), { preview: removePreview?.slice(0, 400) ?? null });
   const removed = await until(async () => !(await rosterIds(classId)).includes(ella.id));
   L.check("journey", "J22 unticking the member and saving removes them from the squad list (the rest stay)",
     inForm && !!removed && sameSet(await rosterIds(classId), ROSTER.filter((m) => m !== ella).map((m) => m.id)), { inForm, roster: (await rosterIds(classId)).length });
   const rmAudit = (await auditsSettled("class.updated", classId, 2)).at(-1)?.metadata ?? null;
   L.note("audit", "N3 class.updated row for the roster removal (fields, cascade)", { fields: rmAudit?.fields, cascadeCancelledMemberIds: rmAudit?.cascadeCancelledMemberIds });
-  L.check("journey", "J30 BRIEF: the member's booking is preserved after removal from the squad list (source cascades it — expected FAIL, see notes)",
+  L.check("journey", "J30 the member's booking is preserved after removal from the squad list (D2, 21 Oct: bookings are kept, the door refuses)",
     (await bookings(ella.id, classId)) === 1, { bookings: await bookings(ella.id, classId), cascadeCancelledMemberIds: rmAudit?.cascadeCancelledMemberIds });
   const afterRm = await api(page, "POST", "/api/checkin", { classInstanceId: S4, memberId: ella.id, checkInMethod: "admin" });
   L.check("journey", "J31 after removal the desk refuses her with the roster sentence and records nothing",
