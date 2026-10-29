@@ -11,20 +11,20 @@ Scope confirmed by Noe: these seven, nothing else. Deferred: the public club pag
 
 No item is production-checked yet.
 
-**Evidence is from the release candidate:**
-- Code commit `cbbc6e87`.
-- Browser journeys ran on the build of `882c2caf` unless marked; that build differs from `cbbc6e87` only in the importer and in tests.
-- Database files ran on `cbbc6e87`, as both the owner role and the restricted `matflow_app` role with RLS.
+**Evidence is from the release candidate (PR #52, rerun 29 Oct 2026):**
+- Product code is `7edfaa63`. After `cbbc6e87` it changes one thing, the refusal sentence: plan and squad refusals now end "For further information, please speak to a coach." (`lib/class-tier-gate.ts`, `app/member/home/page.tsx`). The later commits change only the browser harness, one journey check and the CI time limit.
+- All 15 browser journeys passed on the builds of `d27804d2` and `5ab352a1`, whose product code is `7edfaa63`. The counts in the table are from those runs, and every fixture was torn down to 0 rows.
+- Every database file ran on `7edfaa63` or `5602b27a`, as both the owner role and the restricted `matflow_app` role with RLS. The two commits have identical product and test code. The final tally is under "Final verification" below.
 
 | # | Requirement | State | Evidence |
 |---|---|---|---|
-| 1 | Choose which membership plans can attend each class, with clear refusals, keeping bookings | live (#47), verified, not production-checked | **classes-lifecycle 56/0 on the `cbbc6e87` build:** before saving, the class editor lists who it would turn away and why; desk, kiosk, coach and booking refuse with the member's sentence; a booking survives a squad removal. **allowance-eligibility 26/0.** **DB, both roles:** `class-membership-tier-db` 7/7; `booking-preservation-db` 8/8 (no loss-of-access path deletes a booking, and each kept booking is recorded durably). |
-| 2 | Member counts consistent across screens for the same population | live (#47), verified, not production-checked | **reporting-truth 86/0:** Members headline = Reports Active members = CSV; drill-throughs open the same number. **DB:** `member-population-parity` 10/10 both roles, on `80c2e9f0`. |
-| 3 | Joins, rejoins, departures, net movement; imports never create joins | live (#47), verified, not production-checked | **headcount-movement 38/0:** New, Rejoined, Left and Net equal the movement; the imported member appears in none. **DB:** `t8c-membership-db` and `teamup-rehearsal`, both roles, on `80c2e9f0`. |
+| 1 | Choose which membership plans can attend each class, with clear refusals, keeping bookings | live (#47), verified, not production-checked | **classes-lifecycle 56/0:** before saving, the class editor lists who it would turn away and why; desk, kiosk, coach and booking refuse with the member's sentence, which ends "For further information, please speak to a coach."; a booking survives a squad removal. **allowance-eligibility 26/0.** **DB, both roles:** `class-membership-tier-db` 7/7; `booking-preservation-db` 8/8 (no loss-of-access path deletes a booking, and each kept booking is recorded durably). |
+| 2 | Member counts consistent across screens for the same population | live (#47), verified, not production-checked | **reporting-truth 86/0:** Members headline = Reports Active members = CSV; drill-throughs open the same number. **DB:** `member-population-parity` 10/10 both roles. |
+| 3 | Joins, rejoins, departures, net movement; imports never create joins | live (#47), verified, not production-checked | **headcount-movement 38/0:** New, Rejoined, Left and Net equal the movement; the imported member appears in none. **DB, both roles:** `t8c-membership-db` 2/2, `teamup-rehearsal` 5/5. |
 | 4 | A real member-headcount chart over time, estimates labelled | live (#47), verified, not production-checked | **headcount-movement 38/0:** the axis starts at zero; each month's dot sits at its month-end headcount; today = Active members. **Estimate labels:** covered by unit tests of the chart component (`net-new-members-card`, `membership-movement`). The browser fixture has no import history, so it shows no estimated months. |
 | 5 | Editable weekly, monthly and fixed 4-week limits; four visits usable in one week; no staff override | live (#47), verified, not production-checked | **allowances-periods 56/0:** week, calendar month and every 4 weeks; clear to Unlimited; refusals at each boundary; no override; races. **member-booking-notice 8/0.** **DB, both roles:** `sean-four-every-four-weeks-db` 4/4 (all four classes in one week are admitted at the member's door and the desk; a fifth is refused at both with "used 4 of 4"; the next period starts fresh); `tier-class-allowance-db` 21/21. |
 | 6 | Counts beside percentages; Joined beside churn; churn shown as a count with no percentage until its denominator is decided; one period selector | implemented and tested, awaiting deployment (#52) | **reporting-truth 86/0:** churn is a count with no percentage; Joined is the next tile; every share reads "x% (n of m)"; the period selector works by keyboard and changes churn, Joined and the drill-throughs. **percent-teamup 16/0** (conversion "25% (2 of 8)"). **headcount-movement 38/0.** |
-| 7 | Class settings for ordinary and competition classes: categories, squad lists, pause, archive, restore | live (#47), verified, not production-checked | **classes-lifecycle 56/0 on the `cbbc6e87` build:** create a competition class with a squad and a plan; edit its category; pause closes check-in and booking and resume reopens them; archive states the kept counts and keeps the history; restore. **permissions-matrix 166/0:** only the owner can change these, and never another club's. **DB, both roles:** `class-lifecycle-db` 4/4, `squad-class-tier-db` 7/7. |
+| 7 | Class settings for ordinary and competition classes: categories, squad lists, pause, archive, restore | live (#47), verified, not production-checked | **classes-lifecycle 56/0:** create a competition class with a squad and a plan; edit its category; pause closes check-in and booking and resume reopens them; archive states the kept counts and keeps the history; restore. **permissions-matrix 166/0:** only the owner can change these, and never another club's. **DB, both roles:** `class-lifecycle-db` 4/4, `squad-class-tier-db` 7/7. |
 
 **Carried in #52 and left as built** (not part of the seven; no further work):
 - App check-in switch.
@@ -41,6 +41,27 @@ No item is production-checked yet.
 5. A plan set to "4 every 4 weeks" shows its period dates, and clearing the limit reads Unlimited.
 6. On Reports and Analysis, every percentage shows its counts, Joined sits beside churn, and churn is a count without a percentage. The period selector changes the figures.
 7. Create a competition class with a squad, then pause, archive and restore a class. Its history stays.
+
+### Final verification (29 Oct 2026; head `5602b27a`, product code `7edfaa63`)
+
+- **Lint, unit and build:** lint exit 0 and 597 unit files with 8,346 tests passed, both on `7edfaa63`. CI "Typecheck + Lint + Vitest" passed on `5602b27a`. Production build exit 0 on `5ab352a1`.
+- **Browser journeys, 15 of 15 green:**
+  - build of `d27804d2`: smoke 11/0, percent-teamup 16/0, classes-lifecycle 56/0, next-16-4-smoke 9/0, import-review 14/0, allowance-eligibility 26/0, member-booking-notice 8/0, scanner-override 8/0, app-checkin-packs 26/0, payment-evidence 23/0, allowances-periods 56/0, accounts-and-members 54/0;
+  - build of `5ab352a1`: reporting-truth 86/0, headcount-movement 38/0, permissions-matrix 166/0, smoke 11/0.
+- **Database:** 116 integration files × 2 roles = 232 passes. 226 are green. The other six are below; none is a product defect, and none involves code this release changes.
+  - **Restricted role only:** `campaign-db-helper` and `e2e-guard-real-database`. Both read the seeded demo club without a tenant context, which RLS hides by design. Both pass as owner.
+  - **`cron-smoke`, both roles, 2 of 18 tests:** the test branch holds about 186 leftover test clubs, so the class-instances job overruns its 240 s limit. The retention guard also refuses, because 2 clubs were soft-deleted more than 30 days ago. Cron code is unchanged here. The test-branch data is not deleted without the owner's word.
+  - **`sec-a3-lockout-oracle`, both roles, not completed:** its sampling test makes 368 sequential sign-in attempts under a hard-coded 20-minute limit. It had recorded a green run when the round trip to the test branch was 53 ms; today the round trip measured 203 ms, and the test ran out of time with no mismatch reported. Its positive control passed. The test is unchanged since 9 Oct, and this release does not touch `auth.ts`, `lib/rate-limit.ts` or `lib/login*`.
+- **Runner settings needed today:**
+  - `tenant-restore-purge-race` needed a 5-minute hook limit for its cleanup; 5/5 both roles.
+  - `sec-m1-demo-rotate` needed the test-branch `.env.test` present for the tool it spawns (copied in for the run, then removed); 6/6 both roles.
+  - `sec-a2-verify-disown` is intermittent on a slow link (see below); 8/8 both roles on its latest run.
+- **Found while verifying, not changed by this release:** the authenticator code is checked with no tolerance for the previous 30-second step. A code that changes between typing and the server's check is refused. This is why `sec-a2-verify-disown` fails intermittently when database round trips are slow. It is live already and is listed for the owner.
+- **Harness and CI fixes, no product change:**
+  - Screenshots mask addresses in the image instead of rewriting page text. The rewrite raced React hydration and produced error #418 in smoke, on production `main` as well.
+  - The TeamUp profile check waits for the streamed label.
+  - reporting-truth retries its `/api/reports` read and fails loudly instead of expecting no estimate.
+  - The CI test job's limit is 25 minutes, not 15. It was cancelled at 15 min 16 s twice. This was cherry-picked from #53.
 
 ---
 
