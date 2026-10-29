@@ -1,6 +1,50 @@
-# Sean's requirements — authoritative task record (updated 28 Oct 2026; 22 Oct table kept below as history)
+# Sean's requirements — authoritative task record (updated 29 Oct 2026; earlier tables kept below as history)
 
-## Status at 28 Oct 2026, the pre-Resend gate (supersedes the 22 Oct table below, kept as history)
+## Sean's seven requirements — acceptance checklist (Noe, 28 Oct 2026, 23:00; supersedes everything below)
+
+Scope confirmed by Noe: these seven, nothing else. Deferred: the public club page (item 8) and "edit the taggings". Stripe activation comes after the Resend stage. Sean's MVP is not ready until all seven are deployed and checked as usable in production.
+
+**State words:**
+- *live*: served by production. That is `main` `9dc60b9c`, Vercel production deployment 7352357165, which reported success on 27 Oct 2026 at 06:58 UTC.
+- *verified*: exercised on the Neon test branch against the release candidate.
+- *production-checked*: the owner has used it in Sean's club.
+
+No item is production-checked yet.
+
+**Evidence is from the release candidate:**
+- Code commit `cbbc6e87`.
+- Browser journeys ran on the build of `882c2caf` unless marked; that build differs from `cbbc6e87` only in the importer and in tests.
+- Database files ran on `cbbc6e87`, as both the owner role and the restricted `matflow_app` role with RLS.
+
+| # | Requirement | State | Evidence |
+|---|---|---|---|
+| 1 | Choose which membership plans can attend each class, with clear refusals, keeping bookings | live (#47), verified, not production-checked | **classes-lifecycle 56/0 on the `cbbc6e87` build:** before saving, the class editor lists who it would turn away and why; desk, kiosk, coach and booking refuse with the member's sentence; a booking survives a squad removal. **allowance-eligibility 26/0.** **DB, both roles:** `class-membership-tier-db` 7/7; `booking-preservation-db` 8/8 (no loss-of-access path deletes a booking, and each kept booking is recorded durably). |
+| 2 | Member counts consistent across screens for the same population | live (#47), verified, not production-checked | **reporting-truth 86/0:** Members headline = Reports Active members = CSV; drill-throughs open the same number. **DB:** `member-population-parity` 10/10 both roles, on `80c2e9f0`. |
+| 3 | Joins, rejoins, departures, net movement; imports never create joins | live (#47), verified, not production-checked | **headcount-movement 38/0:** New, Rejoined, Left and Net equal the movement; the imported member appears in none. **DB:** `t8c-membership-db` and `teamup-rehearsal`, both roles, on `80c2e9f0`. |
+| 4 | A real member-headcount chart over time, estimates labelled | live (#47), verified, not production-checked | **headcount-movement 38/0:** the axis starts at zero; each month's dot sits at its month-end headcount; today = Active members. **Estimate labels:** covered by unit tests of the chart component (`net-new-members-card`, `membership-movement`). The browser fixture has no import history, so it shows no estimated months. |
+| 5 | Editable weekly, monthly and fixed 4-week limits; four visits usable in one week; no staff override | live (#47), verified, not production-checked | **allowances-periods 56/0:** week, calendar month and every 4 weeks; clear to Unlimited; refusals at each boundary; no override; races. **member-booking-notice 8/0.** **DB, both roles:** `sean-four-every-four-weeks-db` 4/4 (all four classes in one week are admitted at the member's door and the desk; a fifth is refused at both with "used 4 of 4"; the next period starts fresh); `tier-class-allowance-db` 21/21. |
+| 6 | Counts beside percentages; Joined beside churn; churn shown as a count with no percentage until its denominator is decided; one period selector | implemented and tested, awaiting deployment (#52) | **reporting-truth 86/0:** churn is a count with no percentage; Joined is the next tile; every share reads "x% (n of m)"; the period selector works by keyboard and changes churn, Joined and the drill-throughs. **percent-teamup 16/0** (conversion "25% (2 of 8)"). **headcount-movement 38/0.** |
+| 7 | Class settings for ordinary and competition classes: categories, squad lists, pause, archive, restore | live (#47), verified, not production-checked | **classes-lifecycle 56/0 on the `cbbc6e87` build:** create a competition class with a squad and a plan; edit its category; pause closes check-in and booking and resume reopens them; archive states the kept counts and keeps the history; restore. **permissions-matrix 166/0:** only the owner can change these, and never another club's. **DB, both roles:** `class-lifecycle-db` 4/4, `squad-class-tier-db` 7/7. |
+
+**Carried in #52 and left as built** (not part of the seven; no further work):
+- App check-in switch.
+- Per-product pack expiry.
+- Import rules: never overwrite; a plan only on full evidence; a blank or unrecognised CSV payment status recorded as "No payment yet", never "paid".
+- Security fixes.
+- Pack checkout limited to card. The release therefore needs no Stripe webhook change. Delayed methods such as Bacs return once the async checkout events are subscribed.
+
+**Production check after the merge** (owner, in Sean's club):
+1. Edit a class and untick a plan. The editor names who would be turned away. A member on that plan is refused at the desk with the reason, and their existing booking is still listed.
+2. The Members headline and the Reports "Active members" figure are the same number for the same group.
+3. Reports shows Joined, Rejoined, Left and Net for this month, and the TeamUp import shows no joins.
+4. The Reports headcount chart shows real totals, with estimated months labelled.
+5. A plan set to "4 every 4 weeks" shows its period dates, and clearing the limit reads Unlimited.
+6. On Reports and Analysis, every percentage shows its counts, Joined sits beside churn, and churn is a count without a percentage. The period selector changes the figures.
+7. Create a competition class with a squad, then pause, archive and restore a class. Its history stays.
+
+---
+
+## Status at 28 Oct 2026, the pre-Resend gate (history; superseded by the checklist above)
 
 **Gate (Noe, 27 Oct 2026, 23:30):** Sean's agreed work must be complete, verified and usable before Sean is asked to pay for Resend. Two items are explicitly deferred to a later stage and are **not delivered**:
 - the public searchable club page;
@@ -108,7 +152,7 @@ Pushed is not deployed. Deployed is not "checked by Sean".
 - [ ] Owner approval to merge the release PR at an exact SHA. Merging deploys and migrates production; there is no rollback, only fix forward.
 - [ ] Post-deploy: health check, then the owner checks Sean's screens in production.
 - [ ] Owner confirms the production Node runtime is 24.22.1 or later (it bundles undici 7.30.1; GHSA-xjj6-f33q-929c).
-- [ ] **Before merge:** owner subscribes the live Stripe webhook endpoint to every event in `scripts/setup-stripe-webhook.mjs` `DESIRED_EVENTS`, including `checkout.session.async_payment_succeeded` and `…_failed`. Without them, a delayed-method pack payment settles but credits no classes, which would be a regression from today.
+- [x] ~~Before merge: subscribe the async checkout events~~. This is no longer needed for this release: pack checkout is card-only (`882c2caf`), and a card completes the session paid. Subscribe the events, and allow delayed methods again, only at the Stripe stage.
 
 **Migrations in this release** (all additive):
 - `20261027120000_tenant_member_app_checkin`: column, default true.
