@@ -1053,7 +1053,7 @@ function SignInSheet({
     // T6a: the member's plan does not include this class, so the door would
     // refuse a self check-in. Say so here instead of sending it.
     if (isTierLockedForSelf(cls, signingInAs)) {
-      setError(`${cls.name}: ${TIER_LOCKED_LABEL}. Ask staff about a membership that includes it.`);
+      setError(`${cls.name}: ${TIER_LOCKED_LABEL}. For further information, please speak to a coach.`);
       return;
     }
 

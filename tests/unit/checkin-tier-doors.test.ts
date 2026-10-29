@@ -57,8 +57,8 @@ vi.mock("@/lib/prisma-tenant", () => {
 const SUCCESS = { kind: "success", record: { id: "rec-1", tenantId: "t1", memberId: "mem-1", classInstanceId: "inst-1", checkInMethod: "admin" }, coverage: { kind: "manual" } };
 const TIER_REFUSED = { kind: "tier_not_included", className: "Advanced", tierName: "Beginners Unlimited" };
 const ROSTER_REFUSED = { kind: "roster_not_listed" };
-const TIER_SENTENCE = "Advanced isn't included in your Beginners Unlimited membership. Ask staff about a membership that includes it.";
-const ROSTER_SENTENCE = "You're not on the roster for this class.";
+const TIER_SENTENCE = "Advanced isn't included in your Beginners Unlimited membership. For further information, please speak to a coach.";
+const ROSTER_SENTENCE = "You're not on the roster for this class. For further information, please speak to a coach.";
 const NO_GATE_ARGS = ["tierGate", "tierOverrideConfirmed", "enforceRosterGate"];
 
 function req(url: string, body: unknown) {

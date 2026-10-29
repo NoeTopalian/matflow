@@ -38,15 +38,24 @@ describe("no staff override vocabulary is left", () => {
 describe("sentences", () => {
   it("name the class and the plan", () => {
     expect(tierRefusalSentence("Advanced", "Beginners Unlimited")).toBe(
-      "Advanced isn't included in your Beginners Unlimited membership. Ask staff about a membership that includes it.",
+      "Advanced isn't included in your Beginners Unlimited membership. For further information, please speak to a coach.",
     );
   });
 
   it("say plainly when there is no plan", () => {
-    expect(tierRefusalSentence("Advanced", null)).toMatch(/don't have a membership plan set yet/);
+    expect(tierRefusalSentence("Advanced", null)).toBe(
+      "Advanced is only open to certain memberships, and you don't have a membership plan set yet. For further information, please speak to a coach.",
+    );
   });
 
-  it("the roster sentence is the one the check-in has always sent", () => {
-    expect(ROSTER_REFUSAL_SENTENCE).toBe("You're not on the roster for this class.");
+  it("the roster sentence ends with the owner's coach sentence", () => {
+    expect(ROSTER_REFUSAL_SENTENCE).toBe("You're not on the roster for this class. For further information, please speak to a coach.");
+  });
+
+  // Owner's wording (27 Oct 2026): a member turned away is told to speak to a coach.
+  it("the kiosk's empty squad search ends with the coach sentence", () => {
+    expect(gate.SQUAD_NO_MATCH_SENTENCE).toBe(
+      "No one on the squad list matches that name. Only members on the squad list can check in to this class. For further information, please speak to a coach.",
+    );
   });
 });

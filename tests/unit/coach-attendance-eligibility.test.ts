@@ -95,7 +95,7 @@ describe("coach tick — class eligibility, no override", () => {
     const res = await POST(req({ memberId: "mem_1", attended: true }), { params });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({
-      error: "Advanced isn't included in your Beginners membership. Ask staff about a membership that includes it.",
+      error: "Advanced isn't included in your Beginners membership. For further information, please speak to a coach.",
       reason: "tier_not_included",
     });
     expect(h.upsert).not.toHaveBeenCalled();
@@ -114,7 +114,7 @@ describe("coach tick — class eligibility, no override", () => {
     setRoster(3, false);
     const res = await POST(req({ memberId: "mem_1", attended: true }), { params });
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "You're not on the roster for this class.", reason: "roster_not_listed" });
+    expect(await res.json()).toEqual({ error: "You're not on the roster for this class. For further information, please speak to a coach.", reason: "roster_not_listed" });
     expect(h.order).toEqual(["lock", "member-lock", "roster"]);
     expect(h.upsert).not.toHaveBeenCalled();
     expect(h.rosterCount).toHaveBeenCalledWith({ where: { tenantId: "tenant_a", classId: "cls_adv" } });

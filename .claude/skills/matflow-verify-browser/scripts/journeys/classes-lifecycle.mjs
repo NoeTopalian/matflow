@@ -11,9 +11,9 @@
 //
 // ── Notes: exact strings and routes this journey asserts (source: worktree batch-d, head cfd725e3) ──────────────
 //  Sentences
-//   tier, named plan     lib/class-tier-gate.ts:50  `${className} isn't included in your ${tierName} membership. Ask staff about a membership that includes it.`
-//   tier, no plan        lib/class-tier-gate.ts:51  `${className} is only open to certain memberships, and you don't have a membership plan set yet. Ask staff.`
-//   roster               lib/class-tier-gate.ts:58  "You're not on the roster for this class."
+//   tier, named plan     lib/class-tier-gate.ts:50  `${className} isn't included in your ${tierName} membership. For further information, please speak to a coach.`
+//   tier, no plan        lib/class-tier-gate.ts:51  `${className} is only open to certain memberships, and you don't have a membership plan set yet. For further information, please speak to a coach.`
+//   roster               lib/class-tier-gate.ts:58  "You're not on the roster for this class. For further information, please speak to a coach."
 //   paused / archived    lib/class-live.ts:80-81    `${n} is paused at the moment, so check-in and booking are closed. Ask staff when it's back.` /
 //                                                   `${n} is no longer on the timetable, so check-in and booking are closed.`
 //  Engine: classEligibility lib/checkin.ts:426-456 (roster judged first, then the tier list; no override at any door);
@@ -93,9 +93,9 @@ function signKioskMemberToken(memberId) {
 // ── Names and the sentences each door must give ──
 const CLASS = `Squad Comp ${TAG}`;
 const TIER_A = `Comp A ${TAG}`, TIER_B = `Comp B ${TAG}`;
-const ROSTER_SENTENCE = "You're not on the roster for this class.";
-const tierSentence = (tierName) => `${CLASS} isn't included in your ${tierName} membership. Ask staff about a membership that includes it.`;
-const NO_PLAN_SENTENCE = `${CLASS} is only open to certain memberships, and you don't have a membership plan set yet. Ask staff.`;
+const ROSTER_SENTENCE = "You're not on the roster for this class. For further information, please speak to a coach.";
+const tierSentence = (tierName) => `${CLASS} isn't included in your ${tierName} membership. For further information, please speak to a coach.`;
+const NO_PLAN_SENTENCE = `${CLASS} is only open to certain memberships, and you don't have a membership plan set yet. For further information, please speak to a coach.`;
 const PAUSED_SENTENCE = `${CLASS} is paused at the moment, so check-in and booking are closed. Ask staff when it's back.`;
 const ARCHIVED_SENTENCE = `${CLASS} is no longer on the timetable, so check-in and booking are closed.`;
 
