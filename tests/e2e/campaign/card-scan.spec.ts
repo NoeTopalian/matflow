@@ -456,13 +456,15 @@ test("a rate-limited scan says wait, and does not resubmit while the card is hel
   expect(await recordsFor(instance.id)).toHaveLength(0);
 });
 
-test("a server error is retried once by holding the card, never at 4 Hz", async ({ page }) => {
+test("a server error is retried by lifting the card and holding it again, never at 4 Hz", async ({ page }) => {
   const { serverDown: member } = fx.members;
   const instance = fx.instances.serverDown;
 
-  // Every request fails. The product un-sees the token once, so the card still
-  // under the lens is resubmitted exactly once; a third request is the 4 Hz
-  // storm that spends the limiter inside a minute.
+  // Every request fails. Since 24 Oct (202fcbe9, lib/scan-holds.ts) a card left
+  // under the lens is ONE hold and one request however long it lies there; the
+  // row tells the coach to lift it away and hold it again, and that new hold is
+  // the retry. Resubmitting while it lies still is the 4 Hz storm that spends
+  // the limiter inside a minute.
   let requests = 0;
   await page.route("**/api/checkin/card", async (route) => {
     requests += 1;
@@ -485,9 +487,19 @@ test("a server error is retried once by holding the card, never at 4 Hz", async 
   await expect(page.getByText("0 scanned in", { exact: true })).toBeVisible();
 
   await expect(row).toContainText("MatFlow couldn't record this", { timeout: 30_000 });
-  await expect(row).toContainText("if it fails twice, use the register");
+  await expect(row).toContainText("Lift the card away and hold it again — if it fails twice, use the register.");
+  // Still under the lens: no resubmission, at 4 Hz or otherwise.
   await page.waitForTimeout(2_000);
-  expect(requests, "a failing card is retried once while held, not at 4 Hz").toBe(2);
+  expect(requests, "a card lying still after a failure is not resubmitted").toBe(1);
+
+  // Lift it away for longer than HOLD_GAP_MS (1 s) and hold it again: one retry.
+  await hold(page, null);
+  await page.waitForTimeout(1_500);
+  await hold(page, member.token);
+  await expect(scanList(page)).toHaveCount(2, { timeout: 30_000 });
+  await expect(scanList(page).first()).toContainText("MatFlow couldn't record this", { timeout: 30_000 });
+  await page.waitForTimeout(2_000);
+  expect(requests, "the new hold is exactly one retry").toBe(2);
   expect(await scanList(page).count(), "one row per attempt, two attempts").toBe(2);
   await expect(page.getByText("0 scanned in · 2 need attention")).toBeVisible();
   expect(await recordsFor(instance.id)).toHaveLength(0);
