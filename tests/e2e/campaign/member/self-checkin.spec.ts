@@ -43,6 +43,11 @@ async function loginAsRunMember(browser: Browser): Promise<Page> {
 async function openSignInSheet(page: Page): Promise<void> {
   await page.goto("/member/home", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("button", { name: /Sign In to Class/i })).toBeVisible({ timeout: 45_000 });
+  // The button is server-rendered, so it shows before the page is interactive;
+  // a tap before then is lost (the phone project's screenshot: home not yet
+  // loaded, no sheet). Today's Classes appears only once home's data has loaded
+  // on the client, so wait for it as a member would, then tap.
+  await expect(page.getByText("Today's Classes").first()).toBeVisible({ timeout: 45_000 });
   await page.getByRole("button", { name: /Sign In to Class/i }).click();
   await expect(page.getByRole("heading", { name: /Sign in to a class/i })).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: new RegExp(`${RUN_STAMP} self class`, "i") }).click();
