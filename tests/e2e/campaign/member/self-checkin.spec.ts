@@ -67,10 +67,13 @@ test.beforeAll(async ({}, workerInfo) => {
   memberEmail = member.email;
   // Borrow the seeded password hash (every seeded account is `password123`) so
   // the member can use the real login form. No subscription, no pack.
+  // lastAnnouncementSeenAt: a fresh member has seen no announcement, so home
+  // auto-opens the seeded one over the sign-in sheet and swallows the clicks.
   await sql(
     `UPDATE "Member"
         SET "passwordHash" = (SELECT "passwordHash" FROM "Member" WHERE "tenantId" = $2 AND email = 'jordan@example.com'),
             "onboardingCompleted" = true,
+            "lastAnnouncementSeenAt" = now(),
             "waiverAccepted" = true,
             "membershipType" = 'monthly',
             "stripeSubscriptionId" = NULL

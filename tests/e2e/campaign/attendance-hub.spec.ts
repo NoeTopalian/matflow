@@ -146,6 +146,10 @@ test.beforeAll(async ({ browser, baseURL }) => {
   const a = await createMember({ name: `Campaign Hub Booked ${SCOPE}` });
   const b = await createMember({ name: `Campaign Hub Walkin ${SCOPE}` });
   const c = await createMember({ name: `Campaign Hub Coachmark ${SCOPE}` });
+  // Signed waivers: since 26 Sep (9ae3d6f6) ticking an unsigned member opens
+  // "No signed waiver — Admit anyway?", and these cases are about the tick,
+  // not the waiver warning.
+  await sql('UPDATE "Member" SET "waiverAccepted" = true, "waiverAcceptedAt" = now() WHERE id = ANY($1::text[])', [[a.id, b.id, c.id]]);
   await sql(
     `INSERT INTO "ClassSubscription" ("id", "memberId", "classId", "notificationsEnabled", "createdAt")
      VALUES (gen_random_uuid()::text, $1, $2, true, now()) ON CONFLICT ("memberId", "classId") DO NOTHING`,
