@@ -10,7 +10,7 @@ import { test, expect } from "@playwright/test";
 import {
   OWNER_EMAIL, COACH_EMAIL, ADMIN_EMAIL, MEMBER_EMAIL, PASSWORD,
   SCOPE, RUN_STAMP, sql, seededTenantId, sessionFor, memberSession, closeSessions, post, del, get,
-  mkClass, mkInstance, mkStaff, mkTenant, nowWindow, teardownClasses, teardownTenant,
+  mkClass, mkInstance, mkStaff, mkTenant, nowWindow, utcDayMarker, teardownClasses, teardownTenant,
   countRows, hashToken, tokenSecretOrThrow, resetBucketsLike,
 } from "./ld-shared";
 
@@ -561,7 +561,9 @@ test.describe("J39 member self check-in", () => {
     const ctx = await memberSession(browser, baseURL!);
     const cls = await mkClass(tenantId, NAME("self"));
     const open = await mkInstance(cls, nowWindow());
-    const closed = await mkInstance(cls, { startTime: "03:00", endTime: "04:00" });
+    // Yesterday, so it is closed at any hour the suite runs (a 03:00 session
+    // today is open on a run between about 02:15 and 04:30).
+    const closed = await mkInstance(cls, { startTime: "03:00", endTime: "04:00", date: utcDayMarker(new Date(Date.now() - 86_400_000)) });
 
     // Round 4: the self path asks for a signed waiver before it asks about
     // coverage, and the seeded member is created without one
@@ -611,7 +613,9 @@ test.describe("J39 member self check-in", () => {
   test("checkInMethod: admin from a member session does not bypass the gates", async ({ browser, baseURL }) => {
     const ctx = await memberSession(browser, baseURL!);
     const cls = await mkClass(tenantId, NAME("method-forge"));
-    const closed = await mkInstance(cls, { startTime: "03:00", endTime: "04:00" });
+    // Yesterday, so it is closed at any hour the suite runs (a 03:00 session
+    // today is open on a run between about 02:15 and 04:30).
+    const closed = await mkInstance(cls, { startTime: "03:00", endTime: "04:00", date: utcDayMarker(new Date(Date.now() - 86_400_000)) });
     const res = await post(ctx.request, "/api/checkin", origin, { classInstanceId: closed, checkInMethod: "admin" });
     expect(res.status(), "a member forged their way past the window with checkInMethod").not.toBe(201);
     expect(await countRows("AttendanceRecord", '"classInstanceId" = $1', [closed])).toBe(0);
