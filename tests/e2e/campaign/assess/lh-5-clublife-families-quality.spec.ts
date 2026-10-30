@@ -150,7 +150,8 @@ test.describe("B · a parent runs the whole family from a phone", () => {
 
     await page.getByRole("button", { name: `View ${kidA.name}'s profile` }).click();
     await page.waitForURL(new RegExp(`/member/family/${kidA.id}`));
-    await expect(page.getByText("Belt", { exact: true })).toBeVisible();
+    // The child's tiles also arrive after the page paints (same wait as above).
+    await expect(page.getByText("Belt", { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText("Waiver", { exact: true })).toBeVisible();
     // Honest state: the waiver is unsigned and says so in words.
     await expect(page.getByText("Missing", { exact: true })).toBeVisible();
