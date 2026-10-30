@@ -140,14 +140,18 @@ test.describe("B · a parent runs the whole family from a phone", () => {
   test("B-01 SCREEN · My Family lists both children; a child's page shows belt, waiver and attendance tiles", async () => {
     const page = await parentCtx.newPage();
     await page.goto("/member/profile");
-    await expect(page.getByText("My Family")).toBeVisible();
-    await expect(page.getByText(kidA.name)).toBeVisible();
+    // The children arrive from /api/member/me/children after the page paints;
+    // on a dev server against the remote test branch that outlasts the
+    // default 5 s (traced at 3.3 s for one plain member request).
+    await expect(page.getByText("My Family")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(kidA.name)).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText(kidB.name)).toBeVisible();
     await shot(page, "profile-family-375");
 
     await page.getByRole("button", { name: `View ${kidA.name}'s profile` }).click();
     await page.waitForURL(new RegExp(`/member/family/${kidA.id}`));
-    await expect(page.getByText("Belt", { exact: true })).toBeVisible();
+    // The child's tiles also arrive after the page paints (same wait as above).
+    await expect(page.getByText("Belt", { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText("Waiver", { exact: true })).toBeVisible();
     // Honest state: the waiver is unsigned and says so in words.
     await expect(page.getByText("Missing", { exact: true })).toBeVisible();

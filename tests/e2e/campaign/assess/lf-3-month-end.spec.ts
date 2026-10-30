@@ -44,15 +44,15 @@ test.describe("J55 reports — two numbers by SQL; a 500 is never zeros", () => 
     // reads the previous run's numbers while SQL reads now — so wait for a
     // report generated after this cell began before comparing the two.
     const cellStart = Date.now() - 1000;
-    let r = await apiGet(ownerCtx.request, "/api/reports?weeks=8");
+    let r = await apiGet(ownerCtx.request, "/api/reports?period=3m");
     for (let i = 0; i < 14; i++) {
       const gen = Date.parse(String((r.body as Record<string, unknown>)?.generatedAt ?? ""));
       if (r.status !== 200 || !Number.isFinite(gen) || gen >= cellStart) break;
       await new Promise((res) => setTimeout(res, 5000));
-      r = await apiGet(ownerCtx.request, "/api/reports?weeks=8");
+      r = await apiGet(ownerCtx.request, "/api/reports?period=3m");
     }
     expect(r.status, "the owner may read reports").toBe(200);
-    describeResponse("J55 owner GET /api/reports?weeks=8", r);
+    describeResponse("J55 owner GET /api/reports?period=3m", r);
     const body = r.body as Record<string, unknown>;
 
     // Number one: active members, recomputed in SQL.
@@ -72,20 +72,18 @@ test.describe("J55 reports — two numbers by SQL; a 500 is never zeros", () => 
     // Number two: attendance in the window, recomputed in SQL against the
     // database's own clock — never Date.now() in JavaScript.
     //
-    // The window is NOT a rolling `now() - 8 weeks`: lib/reports.ts:150-152
-    // defines it as the current partial week plus (weeksBack - 1) full weeks,
-    // aligned to Monday 00:00 in the server host's timezone (startOfWeek uses
-    // local time — Europe/London on this rig, UTC on Vercel). A rolling window
-    // agrees with that only when no check-ins fall in the alignment gap, which
-    // held by calendar luck until a Monday-morning run put a week's rows in it.
+    // The window is the report period (lib/report-period.ts, 28 Oct 2026; the
+    // old `weeks` control is gone): "3m" is the three club months ending with
+    // this one, from the first of the month two months back at 00:00 in the
+    // club's zone (Europe/London for the seeded club) until now.
     const attendance = await sql<{ n: string }>(
       `SELECT count(*)::text AS n FROM "AttendanceRecord"
        WHERE "tenantId" = $1
-         AND "checkInTime" >= ((date_trunc('week', now() AT TIME ZONE 'Europe/London')
-                                AT TIME ZONE 'Europe/London') AT TIME ZONE 'UTC')
-                              - interval '7 weeks'`, [tenantId],
+         AND "checkInTime" >= ((date_trunc('month', now() AT TIME ZONE 'Europe/London')
+                                - interval '2 months') AT TIME ZONE 'Europe/London')
+         AND "checkInTime" < now()`, [tenantId],
     );
-    console.log(`[L-F probe] J55 SQL says active=${active[0].n} attendance(8w)=${attendance[0].n}`);
+    console.log(`[L-F probe] J55 SQL says active=${active[0].n} attendance(3m)=${attendance[0].n}`);
     console.log(`[L-F probe] J55 report top-level keys: ${JSON.stringify(Object.keys(body))}`);
 
     const flat = JSON.stringify(body);
@@ -110,7 +108,7 @@ test.describe("J55 reports — two numbers by SQL; a 500 is never zeros", () => 
       ["member", member.email, THROWAWAY_PASSWORD],
     ] as const) {
       const ctx = await sessionFor(browser, baseURL, { email, password });
-      const r = await apiGet(ctx.request, "/api/reports?weeks=8");
+      const r = await apiGet(ctx.request, "/api/reports?period=3m");
       describeResponse(`J55 ${label} GET /api/reports`, r);
       expect(r.status, `${label} may not read reports`).toBe(403);
       // app/api/reports/route.ts gates with a raw auth() call — a bare { error }.
@@ -767,12 +765,12 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
     test(`every control keeps its exact position through every filter change (${viewport.name})`, async () => {
       const page = await ownerCtx.newPage();
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await page.goto("/dashboard/reports?weeks=8", { waitUntil: "networkidle" });
+      await page.goto("/dashboard/reports?period=3m", { waitUntil: "networkidle" });
 
       const filters = page.getByTestId("reports-filters");
       const readout = page.getByTestId("rate-readout");
       const controls = {
-        window: filters.getByLabel("Reporting window"),
+        window: filters.getByLabel("Reporting period"),
         klass: filters.getByLabel("Filter by class"),
         rate: filters.getByLabel("Attendance-rate definition"),
         all: filters.getByRole("button", { name: "All", exact: true }),
@@ -791,9 +789,14 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
       // A transition keeps the old page on screen and marks the readout busy;
       // wait for it to settle before measuring, or we'd measure the dimmed
       // in-flight state (same geometry, but be exact).
-      const settled = async () => {
+      // The settle waits for data, not speed: a period change rebuilds the
+      // whole report, which on a dev server against the remote test branch
+      // outlasts the default 5 s. A readout stuck busy still fails at 60 s.
+      const settled = async (label = "") => {
+        const t0 = Date.now();
         await page.waitForLoadState("networkidle");
-        await expect(readout).not.toHaveAttribute("aria-busy", "true");
+        await expect(readout).not.toHaveAttribute("aria-busy", "true", { timeout: 60_000 });
+        console.log(`[J55b] settled${label ? ` after "${label}"` : ""} in ${Date.now() - t0} ms`);
       };
 
       const before = await snapshot();
@@ -806,7 +809,7 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
         ["rate=attendance-percentage", () => controls.rate.selectOption("attendance-percentage")],
         ["rate=fill-rate", () => controls.rate.selectOption("fill-rate")],
         ["rate=checkins-per-member", () => controls.rate.selectOption("checkins-per-member")],
-        ["weeks=24", () => controls.window.selectOption("24")],
+        ["period=6m", () => controls.window.selectOption("6m")],
       ];
       // The longest class name is the one most likely to have widened the old
       // max-w select — pick it if the club has any classes.
@@ -819,7 +822,7 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
 
       for (const [label, apply] of changes) {
         await apply();
-        await settled();
+        await settled(label);
         const after = await snapshot();
         for (const key of Object.keys(before)) {
           expect(sameBox(after[key], before[key]), `${key} moved after "${label}": ${JSON.stringify(before[key])} → ${JSON.stringify(after[key])}`).toBe(true);
@@ -831,7 +834,7 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
 
       // Two clicks in quick succession must BOTH land (assessment lane 1: the
       // second used to be built from the stale url and silently drop the first).
-      await controls.window.selectOption("8");
+      await controls.window.selectOption("3m");
       await settled();
       await controls.kids.click();
       await controls.rate.selectOption("fill-rate"); // no wait between — the race
@@ -839,14 +842,14 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
       const url = new URL(page.url());
       expect(url.searchParams.get("ageGroup"), "the first of two rapid changes survived").toBe("kids");
       expect(url.searchParams.get("rate"), "the second of two rapid changes landed").toBe("fill-rate");
-      expect(url.searchParams.get("weeks"), "an earlier settled change was kept").toBe("8");
+      expect(url.searchParams.get("period"), "an earlier settled change was kept").toBe("3m");
       await page.close();
     });
 
     test(`stat tiles contain their own content — pills inside, names whole, no overflow (${viewport.name})`, async () => {
       const page = await ownerCtx.newPage();
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await page.goto("/dashboard/reports?weeks=24", { waitUntil: "networkidle" });
+      await page.goto("/dashboard/reports?period=6m", { waitUntil: "networkidle" });
 
       const tiles = page.getByTestId("metric-card");
       // MetricCard also draws the churn and payment-recovery cards further down
@@ -888,7 +891,7 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
     test(`net new members spans the content width and its view switch moves nothing else (${viewport.name})`, async () => {
       const page = await ownerCtx.newPage();
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await page.goto("/dashboard/reports?weeks=8", { waitUntil: "networkidle" });
+      await page.goto("/dashboard/reports?period=3m", { waitUntil: "networkidle" });
 
       const card = page.getByTestId("net-new-card");
       await expect(card).toBeVisible();

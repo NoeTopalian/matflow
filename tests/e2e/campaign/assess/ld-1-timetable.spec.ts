@@ -430,8 +430,8 @@ test.describe("today's column says live / next / ended in the same words as the 
     const other = await mkClass(fx.tenantId, NAME("a2 tomorrow"));
     const slot = (classId: string, day: number, start: string, end: string) =>
       sql(
-        `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime", "isActive")
-         VALUES (gen_random_uuid()::text, $1, $2, $3, $4, true)`,
+        `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime", "startDate", "isActive")
+         VALUES (gen_random_uuid()::text, $1, $2, $3, $4, date_trunc('day', now() AT TIME ZONE 'UTC') - interval '1 day', true)`,
         [classId, day, start, end],
       );
     await slot(live, dow, "18:00", "19:00");

@@ -43,6 +43,11 @@ async function loginAsRunMember(browser: Browser): Promise<Page> {
 async function openSignInSheet(page: Page): Promise<void> {
   await page.goto("/member/home", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("button", { name: /Sign In to Class/i })).toBeVisible({ timeout: 45_000 });
+  // The button is server-rendered, so it shows before the page is interactive;
+  // a tap before then is lost (the phone project's screenshot: home not yet
+  // loaded, no sheet). Today's Classes appears only once home's data has loaded
+  // on the client, so wait for it as a member would, then tap.
+  await expect(page.getByText("Today's Classes").first()).toBeVisible({ timeout: 45_000 });
   await page.getByRole("button", { name: /Sign In to Class/i }).click();
   await expect(page.getByRole("heading", { name: /Sign in to a class/i })).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: new RegExp(`${RUN_STAMP} self class`, "i") }).click();
@@ -67,10 +72,13 @@ test.beforeAll(async ({}, workerInfo) => {
   memberEmail = member.email;
   // Borrow the seeded password hash (every seeded account is `password123`) so
   // the member can use the real login form. No subscription, no pack.
+  // lastAnnouncementSeenAt: a fresh member has seen no announcement, so home
+  // auto-opens the seeded one over the sign-in sheet and swallows the clicks.
   await sql(
     `UPDATE "Member"
         SET "passwordHash" = (SELECT "passwordHash" FROM "Member" WHERE "tenantId" = $2 AND email = 'jordan@example.com'),
             "onboardingCompleted" = true,
+            "lastAnnouncementSeenAt" = now(),
             "waiverAccepted" = true,
             "membershipType" = 'monthly',
             "stripeSubscriptionId" = NULL
@@ -90,8 +98,8 @@ test.beforeAll(async ({}, workerInfo) => {
   classId = cls[0].id;
 
   const sched = await sql<{ id: string }>(
-    `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime", "isActive")
-     VALUES (gen_random_uuid()::text, $1, $2, $3, $4, true)
+    `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime", "startDate", "isActive")
+     VALUES (gen_random_uuid()::text, $1, $2, $3, $4, date_trunc('day', now() AT TIME ZONE 'UTC') - interval '1 day', true)
      RETURNING id`,
     [classId, now.getDay(), CLASS_START, CLASS_END],
   );
@@ -127,10 +135,12 @@ test("an uncovered member is told why, not shown a tick", async ({ browser }) =>
 
     // The copy, not the status. 402 rendered as "Signed in!" is exactly the
     // failure mode this campaign exists to catch.
-    await expect(page.getByRole("alert"), "the member was not told why they could not sign in").toContainText(
-      NO_COVERAGE_COPY,
-      { timeout: 20_000 },
-    );
+    // Filtered by its words: Next's empty route announcer is also role="alert",
+    // so a bare getByRole("alert") is ambiguous app-wide (identity.spec.ts:56).
+    await expect(
+      page.getByRole("alert").filter({ hasText: NO_COVERAGE_COPY }),
+      "the member was not told why they could not sign in",
+    ).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText(/^Signed in!$/)).toHaveCount(0);
 
     expect(await attendance(), "an uncovered member was checked in anyway").toHaveLength(0);

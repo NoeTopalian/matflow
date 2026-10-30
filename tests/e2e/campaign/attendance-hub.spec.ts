@@ -131,10 +131,14 @@ test.beforeAll(async ({ browser, baseURL }) => {
   );
   const classId = cls[0].id;
   // A schedule for today's weekday in the club's zone, and NO instance row:
-  // case 2 proves the hub creates it.
+  // case 2 proves the hub creates it. startDate is set to yesterday's marker:
+  // left to the column default (CURRENT_TIMESTAMP) it is an instant, and from
+  // 12:00 UTC buildInstanceRows rounds it to TOMORROW's marker, so an afternoon
+  // run made no session today. The app's writers always store a day marker
+  // (scheduleStartMarker), so only a raw insert meets this.
   await sql(
-    `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime")
-     VALUES (gen_random_uuid()::text, $1, $2, $3, $4)`,
+    `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime", "startDate")
+     VALUES (gen_random_uuid()::text, $1, $2, $3, $4, date_trunc('day', now() AT TIME ZONE 'UTC') - interval '1 day')`,
     [classId, londonDow(now), startTime, endTime],
   );
 
@@ -146,6 +150,10 @@ test.beforeAll(async ({ browser, baseURL }) => {
   const a = await createMember({ name: `Campaign Hub Booked ${SCOPE}` });
   const b = await createMember({ name: `Campaign Hub Walkin ${SCOPE}` });
   const c = await createMember({ name: `Campaign Hub Coachmark ${SCOPE}` });
+  // Signed waivers: since 26 Sep (9ae3d6f6) ticking an unsigned member opens
+  // "No signed waiver — Admit anyway?", and these cases are about the tick,
+  // not the waiver warning.
+  await sql('UPDATE "Member" SET "waiverAccepted" = true, "waiverAcceptedAt" = now() WHERE id = ANY($1::text[])', [[a.id, b.id, c.id]]);
   await sql(
     `INSERT INTO "ClassSubscription" ("id", "memberId", "classId", "notificationsEnabled", "createdAt")
      VALUES (gen_random_uuid()::text, $1, $2, true, now()) ON CONFLICT ("memberId", "classId") DO NOTHING`,
@@ -269,7 +277,9 @@ test("4 · the search marks someone who is not booked, lists them as a walk-in, 
   await expect(registerRow(page, fx.b.name)).toHaveCount(0);
 
   await page.getByLabel("Search members").fill(fx.b.name);
-  // Unique match → marked after the 600 ms window → the register reloads.
+  // Since 30 Sep (5f9122df) a unique match is highlighted, never marked by
+  // typing alone: Enter (or a tap) marks it, then the register reloads.
+  await page.getByLabel("Search members").press("Enter");
   await expect(page.getByRole("button", { name: `Mark ${fx.b.name} absent`, exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(registerRow(page, fx.b.name).getByText("WALK-IN", { exact: true })).toBeVisible();
   const marked = await records(fx.b.id);
@@ -352,6 +362,8 @@ test("7 · a coach marks from the same screen, and the old addresses land on it"
 
     await openHub(page);
     await page.getByLabel("Search members").fill(fx.c.name);
+    // Enter marks the highlighted unique match (5f9122df); typing alone never does.
+    await page.getByLabel("Search members").press("Enter");
     await expect(page.getByRole("button", { name: `Mark ${fx.c.name} absent`, exact: true })).toBeVisible({ timeout: 30_000 });
     const marked = await records(fx.c.id);
     expect(marked).toHaveLength(1);

@@ -276,6 +276,22 @@ describe("estimate labels: the Net New Members chart marks partly estimated mont
       "Partly estimated (dashed): Oct 26 — some of the moves are reconstructed, not recorded at the time.",
     );
   });
+
+  // The view switch changes the chart and nothing else on the page (e2e
+  // lf-3 J55b). The note's wording and months depend on the view, so at phone
+  // width it gained or lost a line and pushed Payment Health down. Both views'
+  // notes now share one grid cell, the inactive one hidden, so the slot is as
+  // tall as the taller of the two whichever view is showing.
+  it("keeps both views' notes in one slot, only the current one visible", () => {
+    const { container } = render(<NetNewMembersCard membership={membership()} />);
+    const slot = container.querySelector('[data-testid="net-new-partly-estimated-slot"]');
+    const notes = [...(slot?.querySelectorAll("p") ?? [])];
+    expect(notes).toHaveLength(2);
+    const hidden = notes.filter((p) => p.getAttribute("aria-hidden") === "true");
+    expect(hidden).toHaveLength(1);
+    expect(hidden[0].className).toContain("invisible");
+    expect(screen.getByTestId("net-new-partly-estimated").getAttribute("aria-hidden")).not.toBe("true");
+  });
 });
 
 describe("estimate labels: a past month's Members drill-through", () => {

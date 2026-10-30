@@ -143,7 +143,9 @@ function post(rc: APIRequestContext, url: string, origin: string, data: unknown 
 test.beforeAll(async ({ browser, baseURL }) => {
   // Ten print sheets are rendered and decoded here, per worker, on a cold
   // Turbopack server; the file-level timeout covers tests, not this hook.
-  test.setTimeout(180_000);
+  // 300 s: against the remote test branch each sheet took 12-14 s end to end
+  // (traced 30 Oct 2026) and the ten alone came to about 140 s.
+  test.setTimeout(300_000);
   const tenantId = await seededTenantId();
 
   const staff = await sql<{ id: string; email: string }>(
@@ -169,14 +171,16 @@ test.beforeAll(async ({ browser, baseURL }) => {
   // `ClassInstance.date` is timestamp(3) WITHOUT time zone, written by Prisma
   // as a UTC wall clock; node-pg would write the LOCAL wall clock. The cast
   // stores exactly what Prisma would, so /api/coach/today sees today.
-  const localNoonToday = new Date();
-  localNoonToday.setHours(12, 0, 0, 0);
+  // Today's UTC-midnight marker, not local noon: noon is 12:00Z under GMT and
+  // dayMarkerUtc (lib/class-time.ts) rounds that half-way point to tomorrow.
+  const now = new Date();
+  const todayMarker = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
   const mkInstance = async (startTime: string, endTime: string): Promise<Instance> => {
     const rows = await sql<{ id: string }>(
       `INSERT INTO "ClassInstance" ("id", "classId", "date", "startTime", "endTime", "isCancelled")
        VALUES (gen_random_uuid()::text, $1, ($2::timestamptz AT TIME ZONE 'UTC'), $3, $4, false)
        RETURNING id`,
-      [classId, localNoonToday.toISOString(), startTime, endTime],
+      [classId, todayMarker.toISOString(), startTime, endTime],
     );
     return { id: rows[0].id, startTime };
   };
@@ -329,7 +333,7 @@ test("a printed card, held under the camera, checks the right member into the ri
   // of the same screen rather than a link to a second one.
   const row = scanRow(page, member.name);
   await expect(row).toBeVisible({ timeout: 30_000 });
-  await expect(row).toContainText("Checked in");
+  await expect(row).toContainText("Checked in", { timeout: 30_000 });
   await expect(page.getByText("1 scanned in", { exact: true })).toBeVisible();
   await expect(page.getByText(`Last: ${member.name} — checked in`)).toBeVisible();
   await expect(announcer(page)).toHaveText(`${member.name}, checked in.`);
@@ -378,7 +382,7 @@ test("a card held in frame is submitted once, not once per tick", async ({ page 
   // for a reason that reads as a test defect rather than a product one.
   expect(requests, "one card in frame must be exactly one request").toBe(1);
   await expect(scanList(page)).toHaveCount(1);
-  await expect(scanRow(page, member.name)).toContainText("Checked in");
+  await expect(scanRow(page, member.name)).toContainText("Checked in", { timeout: 30_000 });
   expect(await recordsFor(instance.id)).toHaveLength(1);
 });
 
@@ -452,13 +456,15 @@ test("a rate-limited scan says wait, and does not resubmit while the card is hel
   expect(await recordsFor(instance.id)).toHaveLength(0);
 });
 
-test("a server error is retried once by holding the card, never at 4 Hz", async ({ page }) => {
+test("a server error is retried by lifting the card and holding it again, never at 4 Hz", async ({ page }) => {
   const { serverDown: member } = fx.members;
   const instance = fx.instances.serverDown;
 
-  // Every request fails. The product un-sees the token once, so the card still
-  // under the lens is resubmitted exactly once; a third request is the 4 Hz
-  // storm that spends the limiter inside a minute.
+  // Every request fails. Since 24 Oct (202fcbe9, lib/scan-holds.ts) a card left
+  // under the lens is ONE hold and one request however long it lies there; the
+  // row tells the coach to lift it away and hold it again, and that new hold is
+  // the retry. Resubmitting while it lies still is the 4 Hz storm that spends
+  // the limiter inside a minute.
   let requests = 0;
   await page.route("**/api/checkin/card", async (route) => {
     requests += 1;
@@ -481,9 +487,19 @@ test("a server error is retried once by holding the card, never at 4 Hz", async 
   await expect(page.getByText("0 scanned in", { exact: true })).toBeVisible();
 
   await expect(row).toContainText("MatFlow couldn't record this", { timeout: 30_000 });
-  await expect(row).toContainText("if it fails twice, use the register");
+  await expect(row).toContainText("Lift the card away and hold it again — if it fails twice, use the register.");
+  // Still under the lens: no resubmission, at 4 Hz or otherwise.
   await page.waitForTimeout(2_000);
-  expect(requests, "a failing card is retried once while held, not at 4 Hz").toBe(2);
+  expect(requests, "a card lying still after a failure is not resubmitted").toBe(1);
+
+  // Lift it away for longer than HOLD_GAP_MS (1 s) and hold it again: one retry.
+  await hold(page, null);
+  await page.waitForTimeout(1_500);
+  await hold(page, member.token);
+  await expect(scanList(page)).toHaveCount(2, { timeout: 30_000 });
+  await expect(scanList(page).first()).toContainText("MatFlow couldn't record this", { timeout: 30_000 });
+  await page.waitForTimeout(2_000);
+  expect(requests, "the new hold is exactly one retry").toBe(2);
   expect(await scanList(page).count(), "one row per attempt, two attempts").toBe(2);
   await expect(page.getByText("0 scanned in · 2 need attention")).toBeVisible();
   expect(await recordsFor(instance.id)).toHaveLength(0);
@@ -590,12 +606,18 @@ test("the Last line names the card that settled most recently, not the one scann
   const { orderFast: fast, orderSlow: slow } = fx.members;
   const instance = fx.instances.order;
 
-  // The slow card's answer is held back two seconds and then fails; the fast
-  // card records at once. Both are read in the same tick.
+  // The slow card's answer is held back until the fast card's real answer has
+  // arrived, and then fails; the fast card records. Both are read in the same
+  // tick. (A fixed 2 s hold-back assumed the real check-in answers within 2 s;
+  // on a dev server against the remote test branch it took 5.6 s, so the
+  // "slow" card settled first and the order the case is about flipped.)
+  let fastAnswered!: () => void;
+  const fastSettled = new Promise<void>((resolve) => { fastAnswered = resolve; });
   await page.route("**/api/checkin/card", async (route) => {
     const body = route.request().postDataJSON() as { tokens: string[] };
     if (body.tokens[0] === slow.token) {
-      await new Promise((r) => setTimeout(r, 2_000));
+      await fastSettled;
+      await new Promise((r) => setTimeout(r, 500));
       await route.fulfill({
         status: 503,
         headers: { "Content-Type": "application/json" },
@@ -603,7 +625,9 @@ test("the Last line names the card that settled most recently, not the one scann
       });
       return;
     }
-    await route.continue();
+    const response = await route.fetch();
+    await route.fulfill({ response });
+    fastAnswered();
   });
 
   await openScanner(page, instance);
