@@ -606,12 +606,18 @@ test("the Last line names the card that settled most recently, not the one scann
   const { orderFast: fast, orderSlow: slow } = fx.members;
   const instance = fx.instances.order;
 
-  // The slow card's answer is held back two seconds and then fails; the fast
-  // card records at once. Both are read in the same tick.
+  // The slow card's answer is held back until the fast card's real answer has
+  // arrived, and then fails; the fast card records. Both are read in the same
+  // tick. (A fixed 2 s hold-back assumed the real check-in answers within 2 s;
+  // on a dev server against the remote test branch it took 5.6 s, so the
+  // "slow" card settled first and the order the case is about flipped.)
+  let fastAnswered!: () => void;
+  const fastSettled = new Promise<void>((resolve) => { fastAnswered = resolve; });
   await page.route("**/api/checkin/card", async (route) => {
     const body = route.request().postDataJSON() as { tokens: string[] };
     if (body.tokens[0] === slow.token) {
-      await new Promise((r) => setTimeout(r, 2_000));
+      await fastSettled;
+      await new Promise((r) => setTimeout(r, 500));
       await route.fulfill({
         status: 503,
         headers: { "Content-Type": "application/json" },
@@ -619,7 +625,9 @@ test("the Last line names the card that settled most recently, not the one scann
       });
       return;
     }
-    await route.continue();
+    const response = await route.fetch();
+    await route.fulfill({ response });
+    fastAnswered();
   });
 
   await openScanner(page, instance);
