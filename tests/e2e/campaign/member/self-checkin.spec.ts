@@ -130,10 +130,12 @@ test("an uncovered member is told why, not shown a tick", async ({ browser }) =>
 
     // The copy, not the status. 402 rendered as "Signed in!" is exactly the
     // failure mode this campaign exists to catch.
-    await expect(page.getByRole("alert"), "the member was not told why they could not sign in").toContainText(
-      NO_COVERAGE_COPY,
-      { timeout: 20_000 },
-    );
+    // Filtered by its words: Next's empty route announcer is also role="alert",
+    // so a bare getByRole("alert") is ambiguous app-wide (identity.spec.ts:56).
+    await expect(
+      page.getByRole("alert").filter({ hasText: NO_COVERAGE_COPY }),
+      "the member was not told why they could not sign in",
+    ).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText(/^Signed in!$/)).toHaveCount(0);
 
     expect(await attendance(), "an uncovered member was checked in anyway").toHaveLength(0);
