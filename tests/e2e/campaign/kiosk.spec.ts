@@ -283,12 +283,14 @@ test("a parent tap offers the linked kid, and checking the kid in records the KI
     "monthly",
   ]);
   // Written the way app/api/member/children/route.ts writes a kid: synthetic
-  // email, accountType "kids", parentMemberId set, no password.
+  // email, accountType "kids", parentMemberId set, no password — and, since
+  // 4 Oct (64c26571), a CONFIRMED guardian link (lib/guardianship
+  // CONFIRMED_BY("member")); the kiosk offers only confirmed children.
   const kidRows = await sql<{ id: string }>(
     `INSERT INTO "Member" ("id", "tenantId", "name", "email", "status", "paymentStatus", "accountType",
-                            "parentMemberId", "dateOfBirth", "waiverAccepted", "onboardingCompleted",
-                            "joinedAt", "updatedAt")
-     VALUES (gen_random_uuid()::text, $1, $2, $3, 'active', 'paid', 'kids', $4, $5, true, true, now(), now())
+                            "parentMemberId", "guardianConfirmedAt", "guardianSuggestedBy", "dateOfBirth",
+                            "waiverAccepted", "onboardingCompleted", "joinedAt", "updatedAt")
+     VALUES (gen_random_uuid()::text, $1, $2, $3, 'active', 'paid', 'kids', $4, now(), 'member', $5, true, true, now(), now())
      RETURNING id`,
     [tenantId, kidName, `${RUN_STAMP}-kid@example.test`, parent.id, new Date("2016-06-01T00:00:00.000Z")],
   );
