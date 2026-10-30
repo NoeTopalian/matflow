@@ -98,8 +98,8 @@ test.beforeAll(async ({}, workerInfo) => {
   classId = cls[0].id;
 
   const sched = await sql<{ id: string }>(
-    `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime", "isActive")
-     VALUES (gen_random_uuid()::text, $1, $2, $3, $4, true)
+    `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime", "startDate", "isActive")
+     VALUES (gen_random_uuid()::text, $1, $2, $3, $4, date_trunc('day', now() AT TIME ZONE 'UTC') - interval '1 day', true)
      RETURNING id`,
     [classId, now.getDay(), CLASS_START, CLASS_END],
   );

@@ -370,8 +370,8 @@ export async function mkSchedule(
   over: Partial<{ dayOfWeek: number; startTime: string; endTime: string }> = {},
 ): Promise<string> {
   const rows = await sql<{ id: string }>(
-    `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime", "isActive")
-     VALUES (gen_random_uuid()::text, $1, $2, $3, $4, true)
+    `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime", "startDate", "isActive")
+     VALUES (gen_random_uuid()::text, $1, $2, $3, $4, date_trunc('day', now() AT TIME ZONE 'UTC') - interval '1 day', true)
      RETURNING id`,
     [classId, over.dayOfWeek ?? 3, over.startTime ?? "18:00", over.endTime ?? "19:00"],
   );

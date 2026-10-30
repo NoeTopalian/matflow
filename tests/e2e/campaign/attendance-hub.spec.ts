@@ -131,10 +131,14 @@ test.beforeAll(async ({ browser, baseURL }) => {
   );
   const classId = cls[0].id;
   // A schedule for today's weekday in the club's zone, and NO instance row:
-  // case 2 proves the hub creates it.
+  // case 2 proves the hub creates it. startDate is set to yesterday's marker:
+  // left to the column default (CURRENT_TIMESTAMP) it is an instant, and from
+  // 12:00 UTC buildInstanceRows rounds it to TOMORROW's marker, so an afternoon
+  // run made no session today. The app's writers always store a day marker
+  // (scheduleStartMarker), so only a raw insert meets this.
   await sql(
-    `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime")
-     VALUES (gen_random_uuid()::text, $1, $2, $3, $4)`,
+    `INSERT INTO "ClassSchedule" ("id", "classId", "dayOfWeek", "startTime", "endTime", "startDate")
+     VALUES (gen_random_uuid()::text, $1, $2, $3, $4, date_trunc('day', now() AT TIME ZONE 'UTC') - interval '1 day')`,
     [classId, londonDow(now), startTime, endTime],
   );
 
