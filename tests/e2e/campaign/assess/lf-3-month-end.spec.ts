@@ -789,9 +789,14 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
       // A transition keeps the old page on screen and marks the readout busy;
       // wait for it to settle before measuring, or we'd measure the dimmed
       // in-flight state (same geometry, but be exact).
-      const settled = async () => {
+      // The settle waits for data, not speed: a period change rebuilds the
+      // whole report, which on a dev server against the remote test branch
+      // outlasts the default 5 s. A readout stuck busy still fails at 60 s.
+      const settled = async (label = "") => {
+        const t0 = Date.now();
         await page.waitForLoadState("networkidle");
-        await expect(readout).not.toHaveAttribute("aria-busy", "true");
+        await expect(readout).not.toHaveAttribute("aria-busy", "true", { timeout: 60_000 });
+        console.log(`[J55b] settled${label ? ` after "${label}"` : ""} in ${Date.now() - t0} ms`);
       };
 
       const before = await snapshot();
@@ -817,7 +822,7 @@ test.describe("J55b reports layout — nothing moves when a filter is clicked, n
 
       for (const [label, apply] of changes) {
         await apply();
-        await settled();
+        await settled(label);
         const after = await snapshot();
         for (const key of Object.keys(before)) {
           expect(sameBox(after[key], before[key]), `${key} moved after "${label}": ${JSON.stringify(before[key])} → ${JSON.stringify(after[key])}`).toBe(true);
