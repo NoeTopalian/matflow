@@ -143,7 +143,9 @@ function post(rc: APIRequestContext, url: string, origin: string, data: unknown 
 test.beforeAll(async ({ browser, baseURL }) => {
   // Ten print sheets are rendered and decoded here, per worker, on a cold
   // Turbopack server; the file-level timeout covers tests, not this hook.
-  test.setTimeout(180_000);
+  // 300 s: against the remote test branch each sheet took 12-14 s end to end
+  // (traced 30 Oct 2026) and the ten alone came to about 140 s.
+  test.setTimeout(300_000);
   const tenantId = await seededTenantId();
 
   const staff = await sql<{ id: string; email: string }>(
