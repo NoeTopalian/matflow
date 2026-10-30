@@ -170,6 +170,14 @@ const nextConfig: NextConfig = {
           { key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" },
         ],
       },
+      {
+        // T9c: a club that has not opted in to a public page answers /<slug>
+        // with a redirect to its branded login. robots.txt already disallows
+        // /login; this header makes the sign-in door itself noindex, so no
+        // opted-out club is indexed via the redirect target.
+        source: "/login",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
     ];
   },
   async redirects() {
