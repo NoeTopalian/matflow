@@ -200,14 +200,16 @@ test.beforeAll(async () => {
   // local midnight and lets Prisma convert it). Casting an explicit instant
   // through `timestamptz AT TIME ZONE 'UTC'` stores exactly what Prisma would
   // have stored, so the register screen sees these instances as today's.
-  const localNoonToday = new Date();
-  localNoonToday.setHours(12, 0, 0, 0);
+  // Today's UTC-midnight marker, not local noon: noon is 12:00Z under GMT and
+  // dayMarkerUtc (lib/class-time.ts) rounds that half-way point to tomorrow.
+  const now = new Date();
+  const todayMarker = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
   const mkInstance = async (classId: string) => {
     const rows = await sql<{ id: string }>(
       `INSERT INTO "ClassInstance" ("id", "classId", "date", "startTime", "endTime", "isCancelled")
        VALUES (gen_random_uuid()::text, $1, ($2::timestamptz AT TIME ZONE 'UTC'), '18:00', '19:00', false)
        RETURNING id`,
-      [classId, localNoonToday.toISOString()],
+      [classId, todayMarker.toISOString()],
     );
     return rows[0].id;
   };

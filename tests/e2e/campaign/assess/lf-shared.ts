@@ -388,7 +388,9 @@ export async function mkInstance(
   classId: string,
   over: Partial<{ startTime: string; endTime: string; date: Date; isCancelled: boolean }> = {},
 ): Promise<string> {
-  const base = over.date ?? (() => { const d = new Date(); d.setHours(12, 0, 0, 0); return d; })();
+  // Today's UTC-midnight marker: a local-noon stamp is 12:00Z under GMT and
+  // dayMarkerUtc (lib/class-time.ts) rounds that half-way point to tomorrow.
+  const base = over.date ?? (() => { const d = new Date(); return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); })();
   const rows = await sql<{ id: string }>(
     `INSERT INTO "ClassInstance" ("id", "classId", "date", "startTime", "endTime", "isCancelled")
      VALUES (gen_random_uuid()::text, $1, ($2::timestamptz AT TIME ZONE 'UTC'), $3, $4, $5)

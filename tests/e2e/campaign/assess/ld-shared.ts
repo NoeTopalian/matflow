@@ -189,12 +189,21 @@ export async function mkClass(
  * the pattern authorisation.spec.ts:205-213 documents in full.
  *
  * `endTime` is NOT NULL and (classId, date, startTime) is unique.
+ *
+ * The default date is today's UTC-midnight marker — the cron's own spelling.
+ * A local-noon stamp is 12:00Z under GMT, exactly half-way, and
+ * `dayMarkerUtc` (lib/class-time.ts) rounds it UP to tomorrow: from 25 Oct
+ * 2026 every "today" instance this helper wrote was filed a day late.
  */
+export function utcDayMarker(d: Date): Date {
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+}
+
 export async function mkInstance(
   classId: string,
   over: Partial<{ startTime: string; endTime: string; date: Date; isCancelled: boolean }> = {},
 ): Promise<string> {
-  const base = over.date ?? (() => { const d = new Date(); d.setHours(12, 0, 0, 0); return d; })();
+  const base = over.date ?? utcDayMarker(new Date());
   const rows = await sql<{ id: string }>(
     `INSERT INTO "ClassInstance" ("id", "classId", "date", "startTime", "endTime", "isCancelled")
      VALUES (gen_random_uuid()::text, $1, ($2::timestamptz AT TIME ZONE 'UTC'), $3, $4, $5)
@@ -217,11 +226,12 @@ export function nowWindow(): { startTime: string; endTime: string; date: Date } 
   const end = new Date(now.getTime() + 55 * 60_000);
   // The instance's calendar DAY must match its startTime. Just after midnight,
   // `now - 5 min` rolls back to 23:5x on the PREVIOUS day; if the instance is
-  // still stamped "today" (mkInstance's noon default), the product reads that
+  // still stamped "today" (mkInstance's default), the product reads that
   // 23:5x class as ~24h in the future and refuses check-in as "not open yet" —
   // the midnight 409 that flaked ld-2 on a 00:1x run. Anchoring the date to
-  // `start`'s own day (kept at noon to match the default) makes the two agree.
-  const date = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 12, 0, 0, 0);
+  // `start`'s own day (as a UTC-midnight marker, like the default) makes the
+  // two agree.
+  const date = utcDayMarker(start);
   return {
     startTime: `${hh(start.getHours())}:${hh(start.getMinutes())}`,
     endTime: `${hh(end.getHours())}:${hh(end.getMinutes())}`,

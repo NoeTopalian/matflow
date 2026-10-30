@@ -169,14 +169,16 @@ test.beforeAll(async ({ browser, baseURL }) => {
   // `ClassInstance.date` is timestamp(3) WITHOUT time zone, written by Prisma
   // as a UTC wall clock; node-pg would write the LOCAL wall clock. The cast
   // stores exactly what Prisma would, so /api/coach/today sees today.
-  const localNoonToday = new Date();
-  localNoonToday.setHours(12, 0, 0, 0);
+  // Today's UTC-midnight marker, not local noon: noon is 12:00Z under GMT and
+  // dayMarkerUtc (lib/class-time.ts) rounds that half-way point to tomorrow.
+  const now = new Date();
+  const todayMarker = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
   const mkInstance = async (startTime: string, endTime: string): Promise<Instance> => {
     const rows = await sql<{ id: string }>(
       `INSERT INTO "ClassInstance" ("id", "classId", "date", "startTime", "endTime", "isCancelled")
        VALUES (gen_random_uuid()::text, $1, ($2::timestamptz AT TIME ZONE 'UTC'), $3, $4, false)
        RETURNING id`,
-      [classId, localNoonToday.toISOString(), startTime, endTime],
+      [classId, todayMarker.toISOString(), startTime, endTime],
     );
     return { id: rows[0].id, startTime };
   };
