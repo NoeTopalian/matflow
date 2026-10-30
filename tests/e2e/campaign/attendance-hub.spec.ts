@@ -358,6 +358,8 @@ test("7 · a coach marks from the same screen, and the old addresses land on it"
 
     await openHub(page);
     await page.getByLabel("Search members").fill(fx.c.name);
+    // Enter marks the highlighted unique match (5f9122df); typing alone never does.
+    await page.getByLabel("Search members").press("Enter");
     await expect(page.getByRole("button", { name: `Mark ${fx.c.name} absent`, exact: true })).toBeVisible({ timeout: 30_000 });
     const marked = await records(fx.c.id);
     expect(marked).toHaveLength(1);
