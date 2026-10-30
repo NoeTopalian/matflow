@@ -423,6 +423,10 @@ test.describe("check-in admits every staff role to every class in the club", () 
   test("the coach marks a member present on their own class, and it is really written", async ({ browser, baseURL }) => {
     const coach = await sessionFor(browser, baseURL!, COACH_EMAIL);
     const member = await createMember({ name: `Campaign RegisterAllowed ${SCOPE}` });
+    // A signed waiver: since 26 Sep (9ae3d6f6) ticking an unsigned member opens
+    // "No signed waiver — Admit anyway?", and this case is about the coach's
+    // right to mark, not the waiver warning.
+    await sql('UPDATE "Member" SET "waiverAccepted" = true, "waiverAcceptedAt" = now() WHERE id = $1', [member.id]);
 
     // The register lists the class ROSTER — `/api/coach/instances/[id]/register`
     // builds `expected` from ClassSubscription — not every member in the club.
