@@ -140,8 +140,11 @@ test.describe("B · a parent runs the whole family from a phone", () => {
   test("B-01 SCREEN · My Family lists both children; a child's page shows belt, waiver and attendance tiles", async () => {
     const page = await parentCtx.newPage();
     await page.goto("/member/profile");
-    await expect(page.getByText("My Family")).toBeVisible();
-    await expect(page.getByText(kidA.name)).toBeVisible();
+    // The children arrive from /api/member/me/children after the page paints;
+    // on a dev server against the remote test branch that outlasts the
+    // default 5 s (traced at 3.3 s for one plain member request).
+    await expect(page.getByText("My Family")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(kidA.name)).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText(kidB.name)).toBeVisible();
     await shot(page, "profile-family-375");
 
