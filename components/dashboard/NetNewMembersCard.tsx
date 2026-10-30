@@ -206,7 +206,9 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
   const current = NET_NEW_VIEWS.find((v) => v.value === view) ?? NET_NEW_VIEWS[0];
   const band = estimatedBand(estimatedRange(points, view === "members" ? "headcountBasis" : "basis"), view !== "bars");
   const anyEstimated = points.some((p) => p.basis !== "recorded" || p.headcountBasis !== "recorded");
-  const mixedMonths = partlyEstimatedMonths(points, view === "members" ? "headcountBasis" : "basis");
+  const mixedMoves = partlyEstimatedMonths(points, "basis");
+  const mixedCount = partlyEstimatedMonths(points, "headcountBasis");
+  const mixedMonths = view === "members" ? mixedCount : mixedMoves;
   const marks = partlyEstimatedMarks(mixedMonths, view !== "bars");
   const caption = estimatedCaption(membership);
   const t = membership.totals;
@@ -343,10 +345,28 @@ export default function NetNewMembersCard({ membership }: { membership: Membersh
                 : `${caption}: nothing in this window was recorded at the time.`}
             </p>
           )}
-          {mixedMonths.length > 0 && (
-            <p data-testid="net-new-partly-estimated">
-              Partly estimated (dashed): {mixedMonths.join(", ")} — some {view === "members" ? "of the month-end count is" : "of the moves are"} reconstructed, not recorded at the time.
-            </p>
+          {(mixedMoves.length > 0 || mixedCount.length > 0) && (
+            // Both views' notes share one grid cell, the other one hidden, so the
+            // note is as tall as the taller of the two and switching the view
+            // moves nothing below the card (at phone width the wordings wrap to
+            // different line counts).
+            <div className="grid" data-testid="net-new-partly-estimated-slot">
+              {(["moves", "members"] as const).map((kind) => {
+                const months = kind === "members" ? mixedCount : mixedMoves;
+                const shown = (view === "members") === (kind === "members");
+                return (
+                  <p
+                    key={kind}
+                    className={`[grid-area:1/1] ${shown ? "" : "invisible"}`}
+                    aria-hidden={shown ? undefined : true}
+                    data-testid={shown ? "net-new-partly-estimated" : undefined}
+                  >
+                    {months.length > 0 &&
+                      `Partly estimated (dashed): ${months.join(", ")} — some ${kind === "members" ? "of the month-end count is" : "of the moves are"} reconstructed, not recorded at the time.`}
+                  </p>
+                );
+              })}
+            </div>
           )}
           {membership.undatedHistory > 0 && (
             <p>
