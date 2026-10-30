@@ -273,7 +273,9 @@ test("4 · the search marks someone who is not booked, lists them as a walk-in, 
   await expect(registerRow(page, fx.b.name)).toHaveCount(0);
 
   await page.getByLabel("Search members").fill(fx.b.name);
-  // Unique match → marked after the 600 ms window → the register reloads.
+  // Since 30 Sep (5f9122df) a unique match is highlighted, never marked by
+  // typing alone: Enter (or a tap) marks it, then the register reloads.
+  await page.getByLabel("Search members").press("Enter");
   await expect(page.getByRole("button", { name: `Mark ${fx.b.name} absent`, exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(registerRow(page, fx.b.name).getByText("WALK-IN", { exact: true })).toBeVisible();
   const marked = await records(fx.b.id);
