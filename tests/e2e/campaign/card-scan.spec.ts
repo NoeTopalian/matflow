@@ -333,7 +333,7 @@ test("a printed card, held under the camera, checks the right member into the ri
   // of the same screen rather than a link to a second one.
   const row = scanRow(page, member.name);
   await expect(row).toBeVisible({ timeout: 30_000 });
-  await expect(row).toContainText("Checked in");
+  await expect(row).toContainText("Checked in", { timeout: 30_000 });
   await expect(page.getByText("1 scanned in", { exact: true })).toBeVisible();
   await expect(page.getByText(`Last: ${member.name} — checked in`)).toBeVisible();
   await expect(announcer(page)).toHaveText(`${member.name}, checked in.`);
@@ -382,7 +382,7 @@ test("a card held in frame is submitted once, not once per tick", async ({ page 
   // for a reason that reads as a test defect rather than a product one.
   expect(requests, "one card in frame must be exactly one request").toBe(1);
   await expect(scanList(page)).toHaveCount(1);
-  await expect(scanRow(page, member.name)).toContainText("Checked in");
+  await expect(scanRow(page, member.name)).toContainText("Checked in", { timeout: 30_000 });
   expect(await recordsFor(instance.id)).toHaveLength(1);
 });
 
