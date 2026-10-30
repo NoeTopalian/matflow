@@ -22,12 +22,16 @@ test.describe("Member Home", () => {
     await expect(page.locator("button", { hasText: /sign in to class/i })).toBeVisible();
   });
 
+  // Both sections render only once the home data has loaded (D5: an unloaded
+  // list is not an empty one), which on a dev server against a remote test
+  // database can take longer than the default 5 s — the other member specs
+  // give home 45 s.
   test("Today's Classes section is shown", async ({ page }) => {
-    await expect(page.locator("text=Today's Classes").first()).toBeVisible();
+    await expect(page.locator("text=Today's Classes").first()).toBeVisible({ timeout: 30_000 });
   });
 
   test("Announcements section is shown", async ({ page }) => {
-    await expect(page.locator("text=Announcements")).toBeVisible();
+    await expect(page.locator("text=Announcements")).toBeVisible({ timeout: 30_000 });
   });
 
   test("bottom nav has 4 tabs (no Shop)", async ({ page }) => {
