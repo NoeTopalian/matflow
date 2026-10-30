@@ -105,4 +105,25 @@ describe("GET /api/members when the database is unreachable", () => {
     expect(body.members[0].photos, "…and the relation itself never reaches the wire").toBeUndefined();
     expect(body).toHaveProperty("nextCursor");
   });
+
+  // The select reads nextDueAt, stripeSubscriptionId and membershipTierId only
+  // to derive the shown payment status (lib/overdue shownPaymentStatus); none of
+  // the three is a list field. The e2e allow-list (lc-1-members J22) holds the
+  // same set for every staff role.
+  it("returns only the list's allow-listed fields", async () => {
+    findManyMock.mockResolvedValueOnce([
+      { id: "m1", name: "Alex", email: "a@b.c", phone: null, status: "active",
+        paymentStatus: "paid", nextDueAt: null, stripeSubscriptionId: "sub_1", membershipTierId: "tier_1",
+        membershipType: "Adult", joinedAt: new Date(), billedBy: "matflow", billingStatusAsOf: null,
+        waiverAccepted: true, accountType: "adult", dateOfBirth: null, parentMemberId: null,
+        hasKidsHint: false, memberRanks: [], photos: [] },
+    ]);
+    const res = await GET(req());
+    const body = await res.json();
+    expect(Object.keys(body.members[0]).sort()).toEqual([
+      "accountType", "billedBy", "billingStatusAsOf", "dateOfBirth", "email", "hasKidsHint", "id", "joinedAt",
+      "memberRanks", "membershipType", "name", "parentMemberId", "paymentStatus",
+      "phone", "profilePictureUrl", "status", "waiverAccepted",
+    ]);
+  });
 });

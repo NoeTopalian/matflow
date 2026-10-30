@@ -159,10 +159,13 @@ export async function GET(req: Request) {
     // simple `profilePictureUrl: string | null` field instead of a nested
     // array. Internal naming `photos` is a relation, not a response field.
     const now = new Date();
-    const flattened = members.map(({ photos, nextDueAt, stripeSubscriptionId, ...rest }) => ({
+    // nextDueAt, stripeSubscriptionId and membershipTierId are read only to
+    // derive the shown payment status; none is a list field (the staff
+    // allow-list in tests/e2e/campaign/assess/lc-1-members.spec.ts J22).
+    const flattened = members.map(({ photos, nextDueAt, stripeSubscriptionId, membershipTierId, ...rest }) => ({
       ...rest,
       // Derived like the dashboard and Outstanding tab (lib/overdue.ts).
-      paymentStatus: shownPaymentStatus({ paymentStatus: rest.paymentStatus, nextDueAt, stripeSubscriptionId, billedBy: rest.billedBy, membershipTierId: rest.membershipTierId }, now),
+      paymentStatus: shownPaymentStatus({ paymentStatus: rest.paymentStatus, nextDueAt, stripeSubscriptionId, billedBy: rest.billedBy, membershipTierId }, now),
       profilePictureUrl: photos[0]?.url ?? null,
     }));
     // Lane 1 iter-2 L1-I2-S-02 [High]: per-tenant member directory.
