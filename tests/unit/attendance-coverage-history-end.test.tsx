@@ -36,7 +36,7 @@ vi.mock("@/components/dashboard/ConversionFunnel", () => ({ default: () => null 
 vi.mock("@/components/dashboard/NetNewMembersCard", () => ({ default: () => null }));
 vi.mock("@/components/dashboard/charts/Sparkline", () => ({ default: () => null }));
 
-import ReportsView, { attendanceChartRows, attendanceCoverageView, noDataRuns } from "@/components/dashboard/ReportsView";
+import ReportsView, { attendanceChartRows, attendanceCoverageView, noDataRuns, RUN_LABEL_MIN_BARS } from "@/components/dashboard/ReportsView";
 import { createEmptyReportsData, type ReportsData } from "@/lib/reports";
 import { resolveReportPeriod } from "@/lib/report-period";
 import {
@@ -252,7 +252,9 @@ describe("4. Reports after the imported history ends, before any MatFlow check-i
       ["19 Oct", 50, null],
       ["26 Oct", null, GAP_BAR],
     ]);
-    expect(noDataRuns(rows)).toEqual([{ from: "26 Oct", to: "26 Oct", label: "No records since import" }]);
+    // One week wide: shaded, but too narrow for its label to fit (RUN_LABEL_MIN_BARS).
+    expect(noDataRuns(rows)).toEqual([{ from: "26 Oct", to: "26 Oct", label: "No records since import", bars: 1 }]);
+    expect(RUN_LABEL_MIN_BARS).toBe(3);
   });
 
   it("runs before the records start and after the history ends are shaded separately", () => {
@@ -264,8 +266,8 @@ describe("4. Reports after the imported history ends, before any MatFlow check-i
       { week: "e", value: null, coverage: "gap" },
     ];
     expect(noDataRuns(rows)).toEqual([
-      { from: "a", to: "b", label: "No records" },
-      { from: "d", to: "e", label: "No records since import" },
+      { from: "a", to: "b", label: "No records", bars: 2 },
+      { from: "d", to: "e", label: "No records since import", bars: 2 },
     ]);
   });
 });

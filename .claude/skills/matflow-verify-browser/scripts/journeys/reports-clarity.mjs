@@ -123,17 +123,27 @@ try {
     cov?.resumes === null && cov?.thisWeek === "gap", { resumes: cov?.resumes, thisWeek: cov?.thisWeek, lastWeek: cov?.lastWeek });
 
   // R: the screen.
-  await page.goto("/dashboard/reports?period=3m");
-  await page.getByTestId("reports-filters").waitFor({ timeout: 90000 });
+  // The page's cache serves a stale copy once after it expires and refreshes behind it (it says "As of <time>"):
+  // reload until the page itself holds this run's classes.
+  let pageFresh = false;
+  for (let i = 0; i < 20 && !pageFresh; i++) {
+    await page.goto("/dashboard/reports?period=3m");
+    await page.getByTestId("reports-filters").waitFor({ timeout: 90000 });
+    pageFresh = (await page.getByText(TAG, { exact: false }).count()) > 0;
+    if (!pageFresh) await sleep(4000);
+  }
+  L.check("reports", "R0 the page holds this run's seed", pageFresh, { asOf: norm(await page.getByTestId("reports-generated-at").first().innerText()) });
   const weekTile = page.getByTestId("metric-card").filter({ has: page.getByText("Attendance this week", { exact: true }) }).first();
   const weekLines = (await weekTile.locator("p").allInnerTexts()).map(norm);
   L.check("reports", "R1 \"Attendance this week\" is \"—\" and says the imported history ended with nothing recorded in MatFlow since (never 0)",
     weekLines[0] === "—" && weekLines[2] === `Now · ${GAP_NOTE}`, { saw: weekLines.slice(0, 3), expected: ["—", "Attendance this week", `Now · ${GAP_NOTE}`] });
   const weekly = page.locator("[data-slot='card']").filter({ has: page.getByRole("heading", { name: "Weekly Attendance" }) }).first();
   const weeklyText = norm(await weekly.innerText());
-  L.check("reports", "R2 the weekly chart shades the weeks since the import as no data and says so",
-    weeklyText.includes("weeks without records shaded as no data") && weeklyText.includes("No records since import"),
-    { around: weeklyText.slice(0, 260) });
+  // A one-week stretch is shaded without a label (it has no room for one); the subtitle and the bar's tooltip say why.
+  const gapWeeks = (api?.weeklyAttendance ?? []).filter((r) => r.coverage === "gap").length;
+  L.check("reports", "R2 the weekly chart says weeks without records are shaded, and labels the stretch since the import only when it has room (3+ weeks)",
+    weeklyText.includes("weeks without records shaded as no data") && weeklyText.includes("No records since import") === (gapWeeks >= 3),
+    { gapWeeks, around: weeklyText.slice(0, 260) });
   const legendNames = (await page.getByTestId("donut-legend-ratio").locator("xpath=ancestor::li[1]").allInnerTexts()).map(norm);
   const fullA = legendNames.some((t) => t.startsWith(CLASS_A)), fullB = legendNames.some((t) => t.startsWith(CLASS_B));
   const legendCut = await page.locator("ul li span", { hasText: TAG }).evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 1).length);
@@ -191,8 +201,13 @@ try {
   const p2 = await pctx.newPage();
   p2.on("pageerror", (e) => errors.push(String(e).slice(0, 200)));
   await ownerSignIn(p2, club);
-  await p2.goto("/dashboard/reports?period=3m&ageGroup=kids");
-  await p2.getByTestId("whole-club-tag").first().waitFor({ timeout: 90000 });
+  let p2Fresh = false;
+  for (let i = 0; i < 20 && !p2Fresh; i++) {
+    await p2.goto("/dashboard/reports?period=3m&ageGroup=kids");
+    await p2.getByTestId("whole-club-tag").first().waitFor({ timeout: 90000 });
+    p2Fresh = (await p2.getByText(TAG, { exact: false }).count()) > 0;
+    if (!p2Fresh) await sleep(4000);
+  }
   await p2.waitForTimeout(1500);
   const m = await noHScroll(p2);
   L.check("mobile", "M1 /dashboard/reports at 390 px has no horizontal page scroll", m.scroll <= m.width + 1, m);
@@ -202,8 +217,10 @@ try {
     return a.right <= b.right + 1 && a.left >= b.left - 1;
   }));
   L.check("mobile", "M2 every Whole club tag stays inside its tile or card", tagsInside, {});
-  const mLegendCut = await p2.locator("ul li span", { hasText: TAG }).evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 1).length);
-  L.check("mobile", "M3 the long class names wrap at 390 px, none cut off", mLegendCut === 0, { cut: mLegendCut });
+  const mNames = p2.locator("ul li span", { hasText: TAG });
+  const mLegendCut = await mNames.evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 1).length);
+  const mShown = await mNames.count();
+  L.check("mobile", "M3 the long class names wrap at 390 px, none cut off", p2Fresh && mShown >= 2 && mLegendCut === 0, { shown: mShown, cut: mLegendCut, fresh: p2Fresh });
   const tap = await p2.getByText("What counts", { exact: true }).first().boundingBox();
   L.note("mobile", "N3 the \"What counts\" tap target (summary line; the tile's link above it is the card-sized target)", tap);
   await shot(p2, "reports-clarity-mobile");

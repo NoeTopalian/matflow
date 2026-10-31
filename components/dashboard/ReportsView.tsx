@@ -366,17 +366,20 @@ export function attendanceChartRows(data: Pick<ReportsData, "weeklyAttendance" |
  * until MatFlow check-ins begin. One shaded area per run, so a gap at the end
  * is never drawn as one area across the covered weeks in between.
  */
-export function noDataRuns<T extends { week: string; value: number | null; coverage?: string }>(rows: T[]): Array<{ from: string; to: string; label: string }> {
-  const runs: Array<{ from: string; to: string; label: string }> = [];
+export function noDataRuns<T extends { week: string; value: number | null; coverage?: string }>(rows: T[]): Array<{ from: string; to: string; label: string; bars: number }> {
+  const runs: Array<{ from: string; to: string; label: string; bars: number }> = [];
   rows.forEach((row, i) => {
     if (row.value !== null) return;
     const label = row.coverage === "gap" ? "No records since import" : "No records";
     const last = runs[runs.length - 1];
-    if (last && i > 0 && rows[i - 1].value === null && last.label === label) last.to = row.week;
-    else runs.push({ from: row.week, to: row.week, label });
+    if (last && i > 0 && rows[i - 1].value === null && last.label === label) { last.to = row.week; last.bars += 1; }
+    else runs.push({ from: row.week, to: row.week, label, bars: 1 });
   });
   return runs;
 }
+
+/** A run's label is drawn only when it has room (3+ bars); a narrower run is still shaded, and its bars' tooltips and the card's subtitle say why. */
+export const RUN_LABEL_MIN_BARS = 3;
 
 /** The top classes the class-mix donut shares check-ins across. */
 export function classComposition(topClasses: ReportsData["topClasses"]) {
@@ -1653,7 +1656,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                     fill="var(--tx-4)"
                     fillOpacity={0.12}
                     ifOverflow="extendDomain"
-                    label={{ value: run.label, position: "insideTop", fill: "var(--tx-3)", fontSize: 11 }}
+                    label={run.bars >= RUN_LABEL_MIN_BARS ? { value: run.label, position: "insideTop", fill: "var(--tx-3)", fontSize: 11 } : undefined}
                   />
                 ))}
                 <Tooltip content={<ChartTooltip suffix="check-ins" noteFor={(p) => (p as { note?: string | null }).note ?? null} />} cursor={{ fill: "var(--sf-2)" }} />
