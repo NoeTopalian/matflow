@@ -41,7 +41,7 @@ function report(period: Parameters<typeof resolveReportPeriod>[0]): ReportsData 
     ...base,
     range: resolveReportPeriod(period, NOW, LONDON),
     summary: { ...base.summary, newMembersThisMonth: 7, newMembersLastMonth: 4 },
-    churn: { cancelled: 2, joined: 9, net: 7 },
+    churn: { cancelled: 2, joined: 9, net: 7, opening: 31, base: 40, ratePct: 5 },
     periodMovement: {
       totals: { new: 7, rejoined: 2, lost: 2, lostCancelled: 2, lostCompleted: 0, net: 7, imported: 0, otherIn: 0, otherOut: 0, tasterAdded: 1 },
       basis: "recorded",
@@ -104,9 +104,9 @@ describe("ReportsView with a period", () => {
     expect((screen.getByLabelText("Period from month") as HTMLInputElement).value).toBe("2026-08");
     expect((screen.getByLabelText("Period to month") as HTMLInputElement).value).toBe("2026-10");
     expect(screen.getByText("New in the last 3 months", { selector: "p" })).toBeTruthy();
-    // Churn is a count of cancellations worded for the period, under the title "Churn" (owner decision, 27 Oct 2026).
-    const churn = screen.getByRole("link", { name: "Churn: 2 cancellations in the last 3 months — see the members behind this number" });
-    expect([...churn.querySelectorAll("p")].map((p) => p.textContent).slice(0, 2)).toEqual(["2 cancellations in the last 3 months", "Churn"]);
+    // Churn: the percentage with its counts, and the cancellations worded for the period, under the title "Churn" (owner, 27 and 31 Oct 2026).
+    const churn = screen.getByRole("link", { name: "Churn: 5% (2 of 40), 2 cancellations in the last 3 months — see the members behind this number" });
+    expect([...churn.querySelectorAll("p")].map((p) => p.textContent).slice(0, 3)).toEqual(["5% (2 of 40)", "Churn", "2 cancellations in the last 3 months, out of 40 members (31 at the start, 9 became members since) · Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide"]);
     expect(churn.getAttribute("href")).toBe("/dashboard/members?filter=churned-this-month&from=2026-08&to=2026-10");
     const joined = screen.getByTestId("reports-joined-tile");
     expect(within(joined).getByText("Joined in the last 3 months (new + rejoined)")).toBeTruthy();
@@ -152,8 +152,7 @@ describe("ReportsView with a period", () => {
   it("the CSV states the period and uses its words", () => {
     const csv = reportsCsv(report({ period: "3m" }), ATTRIBUTION as never);
     expect(csv).toContain("Report,Period,Aug – Oct 2026,");
-    expect(csv).toContain("Health,Churn (cancellations) in the last 3 months,2,");
-    expect(csv).not.toMatch(/Churn[^\n]*%/);
+    expect(csv).toContain('Health,Churn in the last 3 months,5% (2 of 40),"2 cancellations in the last 3 months, out of 40 members (31 at the start, 9 became members since) · ');
     // The detail has commas in it, so the cell is quoted.
     // The change against the period before, worded by lib/report-period periodChange (W3 + #48).
     expect(csv).toContain('Summary,New members in the last 3 months,7,"Change +75% (7 so far in the last 3 months vs 4 all the 3 months before)');

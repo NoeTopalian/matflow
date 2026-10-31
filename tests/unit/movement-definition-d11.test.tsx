@@ -138,7 +138,10 @@ describe("D11: one movement definition", () => {
     expect(csv).toContain("Health,Rejoined this month,1,Started again after leaving");
     expect(csv).toContain("Health,Tasters added this month,1,Not in Joined or Net");
     expect(csv).toContain("Health,Left this month,2,\"Cancelled, or finished a prepaid course\"");
-    expect(csv).toContain("Health,Churn (cancellations) this month,1,");
+    // Churn's base: the members at the start plus every move into active this month (imports included, never joins).
+    expect(data.churn.base).toBe(data.churn.opening + t.new + t.rejoined + t.imported + t.otherIn);
+    expect(data.churn.ratePct).toBe(Math.round(1000 / data.churn.base) / 10);
+    expect(csv).toContain(`Health,Churn this month,${data.churn.ratePct}% (1 of ${data.churn.base}),`);
     expect(csv).toContain("New 1 · Rejoined 1 · Left 2 (cancelled 1, completed course 1) · Tasters added 1");
     expect(csv).toContain("Brought over by an import without dated history 1");
   });

@@ -87,7 +87,7 @@ function reports(overrides: Partial<ReportsData> = {}): ReportsData {
       totalMembers: 15, currentMembers: 12, activeMembers: 9, inactiveMembers: 2, tasterMembers: 1, cancelledMembers: 3,
       newMembersThisMonth: 3,
     },
-    churn: { cancelled: 1, joined: 3, net: 2 },
+    churn: { cancelled: 1, joined: 3, net: 2, opening: 9, base: 12, ratePct: 8.3 },
     // The net beside churn comes from the Net New Members card's current month (T8c review).
     membership: {
       ...base.membership,
@@ -137,16 +137,15 @@ function tileFor(label: string): HTMLElement {
   return card as HTMLElement;
 }
 
-describe("ReportsView — churn is a count of cancellations, joined beside it (owner decision, 27 Oct 2026)", () => {
-  it("titled \"Churn\": the count worded for the period, what it counts, no percentage, and the Joined tile immediately after it", () => {
+describe("ReportsView — churn is a percentage with its counts, joined beside it (owner, 27 and 31 Oct 2026)", () => {
+  it("titled \"Churn\": the percentage with its counts, the cancellations and the base worded for the period, what it counts, and the Joined tile immediately after it", () => {
     renderReports(reports());
     const churn = tileFor("Churn");
     const ps = [...churn.querySelectorAll("p")].map((p) => p.textContent);
-    expect(ps[0]).toBe("1 cancellation this month");
+    expect(ps[0]).toBe("8.3% (1 of 12)");
     expect(ps[1]).toBe("Churn");
-    expect(ps[2]).toBe("Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide");
-    expect(churn.textContent).not.toMatch(/%/);
-    expect(churn.closest("a")?.getAttribute("aria-label")).toBe("Churn: 1 cancellation this month — see the members behind this number");
+    expect(ps[2]).toBe("1 cancellation this month, out of 12 members (9 at the start, 3 became members since) · Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide");
+    expect(churn.closest("a")?.getAttribute("aria-label")).toBe("Churn: 8.3% (1 of 12), 1 cancellation this month — see the members behind this number");
     expect(churn.closest("a")?.getAttribute("href")).toMatch(/^\/dashboard\/members\?filter=churned-this-month&month=\d{4}-\d{2}$/);
     // D11: the Joined tile sits immediately after churn, by the movement definition.
     const joined = screen.getByTestId("reports-joined-tile");
@@ -161,20 +160,27 @@ describe("ReportsView — churn is a count of cancellations, joined beside it (o
     expect(screen.getByTestId("reports-joined-net").textContent).toBe("Net +2 this month (new + rejoined − left)");
   });
 
-  it("plural and zero: \"4 cancellations\", \"0 cancellations\" — a count, never a dash or a percentage", () => {
-    renderReports(reports({ churn: { cancelled: 4, joined: 3, net: 2 } }));
-    expect(tileFor("Churn").querySelector("p")!.textContent).toBe("4 cancellations this month");
+  it("plural, zero and an empty base: \"4 cancellations\", \"0% (0 of 9)\", and a dash when nobody was a member", () => {
+    renderReports(reports({ churn: { cancelled: 4, joined: 3, net: 2, opening: 37, base: 40, ratePct: 10 } }));
+    const four = [...tileFor("Churn").querySelectorAll("p")].map((p) => p.textContent);
+    expect(four[0]).toBe("10% (4 of 40)");
+    expect(four[2]).toMatch(/^4 cancellations this month, out of 40 members \(37 at the start, 3 became members since\) · /);
     cleanup();
-    renderReports(reports({ churn: { cancelled: 0, joined: 0, net: 0 } }));
-    const zero = tileFor("Churn");
-    expect(zero.querySelector("p")!.textContent).toBe("0 cancellations this month");
-    expect(zero.textContent).not.toMatch(/—|%/);
+    renderReports(reports({ churn: { cancelled: 0, joined: 0, net: 0, opening: 9, base: 9, ratePct: 0 } }));
+    const zero = [...tileFor("Churn").querySelectorAll("p")].map((p) => p.textContent);
+    expect(zero[0]).toBe("0% (0 of 9)");
+    expect(zero[2]).toMatch(/^0 cancellations this month, out of 9 members \(9 at the start, 0 became members since\) · /);
+    cleanup();
+    renderReports(reports({ churn: { cancelled: 0, joined: 0, net: 0, opening: 0, base: 0, ratePct: null } }));
+    const empty = [...tileFor("Churn").querySelectorAll("p")].map((p) => p.textContent);
+    expect(empty[0]).toBe("—");
+    expect(empty[2]).toMatch(/^No members this month · /);
   });
 
-  it("the CSV row is the same count, named with its unit, and carries no percentage", () => {
-    const csv = reportsCsv(reports({ churn: { cancelled: 4, joined: 3, net: 2 } }), ATTRIBUTION as never);
-    expect(csv).toContain("Health,Churn (cancellations) this month,4,");
-    expect(csv).not.toMatch(/Churn[^\n]*%/);
+  it("the CSV row is the same percentage with its counts and the same words", () => {
+    const csv = reportsCsv(reports({ churn: { cancelled: 4, joined: 3, net: 2, opening: 37, base: 40, ratePct: 10 } }), ATTRIBUTION as never);
+    // The detail has commas in it, so the cell is quoted.
+    expect(csv).toContain('Health,Churn this month,10% (4 of 40),"4 cancellations this month, out of 40 members (37 at the start, 3 became members since) · Every cancellation');
   });
 
   it("payment recovery and 6-month survival carry their counts", () => {
@@ -216,9 +222,10 @@ describe("ReportsView — every percentage shows its counts, matching the CSV", 
     const data = reports();
     const csv = reportsCsv(data, ATTRIBUTION as never);
     renderReports(data);
-    // Churn is a count (27 Oct 2026): the screen says "1 cancellation this month", the CSV row carries 1.
-    expect(document.body.textContent).toContain("1 cancellation this month");
-    expect(csv).toContain("Health,Churn (cancellations) this month,1,");
+    // Churn (31 Oct 2026): the screen and the CSV row both print "8.3% (1 of 12)" and "1 cancellation this month".
+    expect(document.body.textContent).toContain("8.3% (1 of 12)");
+    expect(document.body.textContent).toContain("1 cancellation this month, out of 12 members");
+    expect(csv).toContain('Health,Churn this month,8.3% (1 of 12),"1 cancellation this month, out of 12 members');
     for (const text of [
       "50% (1 of 2)",
       "75% (15 of 20)",

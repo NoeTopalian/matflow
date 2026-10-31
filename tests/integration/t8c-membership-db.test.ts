@@ -260,7 +260,9 @@ describe.skipIf(!HAS_DB)("T8c: movement and headcount on a real database", () =>
 
     const reports = await getReportsData(c.tenantId);
     expect(reports.period.monthKey).toBe(month.monthKey);
-    expect(reports.churn).toEqual({ cancelled: 3, joined: 2, net: -2 });
+    // Its percentage (owner, 31 Oct 2026) is of everyone who was a member this month: stay, rae and cole at the start,
+    // then jo's join and rae's rejoin — 3 of 5. Cole's finished course is in the base, not in the count.
+    expect(reports.churn).toEqual({ cancelled: 3, joined: 2, net: -2, opening: 3, base: 5, ratePct: 60 });
     expect(reports.periodMovement.totals).toMatchObject({ new: 1, rejoined: 1, lostCancelled: 3, lostCompleted: 1, lost: 4 });
 
     // The drill-through: the people behind the count, each once; its headline is the count.

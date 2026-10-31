@@ -152,10 +152,11 @@ export interface PeriodMembership {
   /**
    * Moves inside the period: joined (new + rejoined), left, net, tasters, and
    * the cancellations churn counts (`lostCancelled`, cancellationsOf; owner
-   * decision, 27 Oct 2026). No churn base: a percentage's denominator is not
-   * approved, so none is carried.
+   * decision, 27 Oct 2026).
    */
   totals: MovementTally;
+  /** Active members just before the period opens: the start of churn's base (churnBaseOf). */
+  openingHeadcount: number;
   /** Whether the period's moves were recorded at the time or are (partly) estimated. */
   basis: MembershipBasis;
   /** The same figures for the equal run of months straight before (comparisons); null when that run has no data. */
@@ -183,6 +184,7 @@ export async function loadMembershipForPeriod(
     report: { ...series, historySource: loaded.historySource, undatedHistory: loaded.undatedHistory, fromJoinDates: loaded.fromJoinDates },
     period: {
       totals: own.totals,
+      openingHeadcount: own.openingHeadcount,
       basis: combinedBasis(own.movementsByMonth.map((m) => m.basis)),
       previous: beforeBasis === "none" ? null : { totals: before.totals, basis: beforeBasis },
     },

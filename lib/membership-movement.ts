@@ -332,10 +332,24 @@ export function joinedOf(t: Pick<MovementTally, "new" | "rejoined">): number {
  *   ruled on it for churn — an open question, not settled here.
  * - Scope: club-wide training members (never guardians). The Reports class
  *   and age-group filters do not narrow it (lib/reports.ts `filters`).
- * - No percentage: the denominator is not approved, so none is computed.
+ * - Percentage: over churnBaseOf (owner, 31 Oct 2026: "Should show % with
+ *   number"), always printed with both counts.
  */
 export function cancellationsOf(t: Pick<MovementTally, "lostCancelled">): number {
   return t.lostCancelled;
+}
+
+/**
+ * Churn's base (owner, 31 Oct 2026: a percentage with its counts; the base is
+ * the agent's call, which the owner may change): everyone who was a member
+ * during the period, counted as the active members at its start plus every move
+ * INTO active inside it — joins, rejoins, imports and returns from a pause.
+ * Moves, like the count: every cancellation follows a move into active or an
+ * opening member, so the rate never passes 100%. A finished prepaid course's
+ * member is in the base and not in the count.
+ */
+export function churnBaseOf(openingHeadcount: number, t: Pick<MovementTally, "new" | "rejoined" | "imported" | "otherIn">): number {
+  return openingHeadcount + t.new + t.rejoined + t.imported + t.otherIn;
 }
 
 function addMove(t: MovementTally, kind: MovementKind) {

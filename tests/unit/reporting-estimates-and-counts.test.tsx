@@ -115,7 +115,7 @@ function reports(m: MembershipReport = membership()): ReportsData {
   return {
     ...base,
     summary: { ...base.summary, activeMembers: 32, currentMembers: 35, attendanceThisWeek: 45, attendanceLastWeek: 40, newMembersThisMonth: 2, newMembersLastMonth: 2 },
-    churn: { cancelled: 1, joined: 3, net: 2 },
+    churn: { cancelled: 1, joined: 3, net: 2, opening: 9, base: 12, ratePct: 8.3 },
     membership: m,
     // The period is this month: its movement is October's tally, the run before it September.
     periodMovement: { totals: tallyOf(m.movementsByMonth[2]), basis: m.movementsByMonth[2].basis, previousBasis: m.movementsByMonth[1].basis },
