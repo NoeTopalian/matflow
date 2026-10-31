@@ -1099,7 +1099,16 @@ export const REPORTS_CACHE_VERSION = "v13";
  * received, so it carries exactly the on-screen figures — and its first data
  * row states their `generatedAt`, so the file says when they were computed.
  */
-export function getReportsDataCached(
+/**
+ * The oldest cached report the page may show (31 Oct 2026). `unstable_cache`
+ * serves an EXPIRED entry once while it refreshes behind it, so the first
+ * owner to open Reports after a quiet hour saw that hour-old copy ("As of"
+ * gave only its time, which read as today). An entry older than this is
+ * recomputed instead: the 60-second window, plus room for the computation.
+ */
+export const REPORTS_MAX_AGE_MS = 90_000;
+
+export async function getReportsDataCached(
   tenantId: string,
   options: Parameters<typeof getReportsData>[1] = {},
 ): Promise<ReportsData> {
@@ -1113,8 +1122,11 @@ export function getReportsDataCached(
     options.ageGroup ?? "-",
     resolveAttendanceRateMode(options.attendanceRateMode),
   ];
-  return unstable_cache(() => getReportsData(tenantId, options), key, {
+  const cached = await unstable_cache(() => getReportsData(tenantId, options), key, {
     revalidate: 60,
     tags: [`reports-${tenantId}`],
   })();
+  const computedAt = new Date((cached as { generatedAt?: string }).generatedAt ?? "").getTime();
+  if (Number.isFinite(computedAt) && Date.now() - computedAt > REPORTS_MAX_AGE_MS) return getReportsData(tenantId, options);
+  return cached;
 }

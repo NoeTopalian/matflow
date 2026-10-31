@@ -628,8 +628,10 @@ try {
   const joinedAll = norm(await joinedTileEl.innerText());
   L.check("reports", "R3c the net reads \"Net ±N this month (new + rejoined − left)\" and the old joinedAt wording is gone",
     joinedNet === X.joinedNet && !joinedAll.includes("People added in MatFlow"), { saw: joinedNet, expected: X.joinedNet });
-  const next = await churnLink.evaluate((el) => el.nextElementSibling?.getAttribute("data-testid") ?? null);
-  const cb = await churnLink.boundingBox(); const jb = await joinedTileEl.boundingBox();
+  // The link sits inside the churn card, "What counts" beside it: the card is what Joined follows.
+  const churnCardEl = churnLink.locator("xpath=ancestor::*[@data-testid='metric-card'][1]");
+  const next = await churnCardEl.evaluate((el) => el.nextElementSibling?.getAttribute("data-testid") ?? null);
+  const cb = await churnCardEl.boundingBox(); const jb = await joinedTileEl.boundingBox();
   L.check("reports", "R4 Joined this month sits immediately beside churn (next tile, same row, to its right)",
     next === "reports-joined-tile" && cb && jb && Math.abs(cb.y - jb.y) <= 2 && jb.x >= cb.x + cb.width - 1,
     { nextTile: next, churn: cb, joined: jb });
