@@ -9,7 +9,7 @@ import { emptyMembershipReport, loadMembershipForPeriod, type MembershipReport }
 import { inReportRange, reportPeriodCacheKey, resolveReportPeriod, type ReportPeriodParams, type ReportRange } from "@/lib/report-period";
 import { cancellationsOf, churnBaseOf, joinedOf, type MembershipBasis } from "@/lib/membership-movement";
 import { liveClassWhere } from "@/lib/class-live";
-import { attendanceCoverageFor, coverageOf, noCoverage, readAttendanceCoverageStart, type AttendanceCoverage, type CoverageState } from "@/lib/attendance-coverage";
+import { attendanceCoverageFor, coverageOf, noCoverage, readAttendanceCoverage, type AttendanceCoverage, type CoverageState } from "@/lib/attendance-coverage";
 
 export type { MembershipReport } from "@/lib/membership-report";
 
@@ -691,7 +691,7 @@ export async function getReportsData(
       // record of any method, imported history included, club-wide (never
       // narrowed by the class or age filter). Before it a count of zero is
       // "no records", not "nobody attended".
-      readAttendanceCoverageStart(tx, tenantId, club?.timezone),
+      readAttendanceCoverage(tx, tenantId, club?.timezone),
     ]),
     // ~12 parallel aggregate queries in one transaction — needs more than the
     // default budget on large tenants (was expiring with P2028/commit-expired).
@@ -1076,8 +1076,10 @@ export async function getReportsData(
  * period with no attendance records is null (28 Oct 2026).
  * "v12" = churn carries `opening`, `base` and `ratePct` again, over everyone
  * who was a member during the period (owner, 31 Oct 2026).
+ * "v13" = attendance coverage carries `historyEnd` and `resumes`: the weeks
+ * after an imported history stops are "gap", not covered zeros (31 Oct 2026).
  */
-export const REPORTS_CACHE_VERSION = "v12";
+export const REPORTS_CACHE_VERSION = "v13";
 
 /**
  * The cached read the reports page and API use. Under 25 concurrent staff
@@ -1097,7 +1099,16 @@ export const REPORTS_CACHE_VERSION = "v12";
  * received, so it carries exactly the on-screen figures — and its first data
  * row states their `generatedAt`, so the file says when they were computed.
  */
-export function getReportsDataCached(
+/**
+ * The oldest cached report the page may show (31 Oct 2026). `unstable_cache`
+ * serves an EXPIRED entry once while it refreshes behind it, so the first
+ * owner to open Reports after a quiet hour saw that hour-old copy ("As of"
+ * gave only its time, which read as today). An entry older than this is
+ * recomputed instead: the 60-second window, plus room for the computation.
+ */
+export const REPORTS_MAX_AGE_MS = 90_000;
+
+export async function getReportsDataCached(
   tenantId: string,
   options: Parameters<typeof getReportsData>[1] = {},
 ): Promise<ReportsData> {
@@ -1111,8 +1122,11 @@ export function getReportsDataCached(
     options.ageGroup ?? "-",
     resolveAttendanceRateMode(options.attendanceRateMode),
   ];
-  return unstable_cache(() => getReportsData(tenantId, options), key, {
+  const cached = await unstable_cache(() => getReportsData(tenantId, options), key, {
     revalidate: 60,
     tags: [`reports-${tenantId}`],
   })();
+  const computedAt = new Date((cached as { generatedAt?: string }).generatedAt ?? "").getTime();
+  if (Number.isFinite(computedAt) && Date.now() - computedAt > REPORTS_MAX_AGE_MS) return getReportsData(tenantId, options);
+  return cached;
 }

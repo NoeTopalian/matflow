@@ -23,7 +23,7 @@ const { unstableCacheMock, calls } = vi.hoisted(() => {
 vi.mock("next/cache", () => ({ unstable_cache: unstableCacheMock }));
 vi.mock("@/lib/prisma-tenant", () => ({ withTenantContext: vi.fn() }));
 
-import { getReportsDataCached, createEmptyReportsData, REPORTS_CACHE_VERSION } from "@/lib/reports";
+import { getReportsDataCached, createEmptyReportsData, REPORTS_CACHE_VERSION, REPORTS_MAX_AGE_MS } from "@/lib/reports";
 
 beforeEach(() => { calls.length = 0; unstableCacheMock.mockClear(); });
 
@@ -52,6 +52,28 @@ describe("getReportsDataCached", () => {
     expect(calls.map((c) => c.key[3])).toEqual(["12m", "custom:2026-01:2026-06", "this-month", "this-month"]);
   });
 
+  it("never shows an expired entry: one older than REPORTS_MAX_AGE_MS is recomputed, a fresh one is served as it is (31 Oct 2026)", async () => {
+    const { withTenantContext } = await import("@/lib/prisma-tenant");
+    vi.mocked(withTenantContext).mockRejectedValue(new Error("recomputed"));
+    expect(REPORTS_MAX_AGE_MS).toBe(90_000);
+    // Fresh (30 s old): the cached entry is returned and nothing is recomputed.
+    unstableCacheMock.mockImplementationOnce((_fn: () => unknown, key: string[], opts: Record<string, unknown>) => {
+      calls.push({ key, opts });
+      return () => Promise.resolve({ __cached: true, generatedAt: new Date(Date.now() - 30_000).toISOString() });
+    });
+    const fresh = await getReportsDataCached("tenant-A");
+    expect(fresh).toMatchObject({ generatedAt: expect.any(String) });
+    expect(withTenantContext).not.toHaveBeenCalled();
+    // Expired (an hour old, served once by unstable_cache while it refreshes): computed again, not shown.
+    unstableCacheMock.mockImplementationOnce((_fn: () => unknown, key: string[], opts: Record<string, unknown>) => {
+      calls.push({ key, opts });
+      return () => Promise.resolve({ __cached: true, generatedAt: new Date(Date.now() - 3_600_000).toISOString() });
+    });
+    await expect(getReportsDataCached("tenant-A")).rejects.toThrow("recomputed");
+    expect(withTenantContext).toHaveBeenCalled();
+    vi.mocked(withTenantContext).mockReset();
+  });
+
   it("revalidates every 60 seconds under the per-tenant reports tag", async () => {
     await getReportsDataCached("tenant-A");
     expect(calls[0].opts).toEqual({ revalidate: 60, tags: ["reports-tenant-A"] });
@@ -72,7 +94,8 @@ describe("getReportsDataCached", () => {
     // v10 (27 Oct): churn is a count of cancellations — no ratePct, no base, no churnRate.
     // v11 (28 Oct): attendanceCoverage and weeklyAttendance[].coverage.
     // v12 (31 Oct): churn carries opening, base and ratePct again (its percentage with counts).
-    expect(REPORTS_CACHE_VERSION).toBe("v12");
+    // v13 (31 Oct): attendance coverage carries historyEnd and resumes (where imported history stops).
+    expect(REPORTS_CACHE_VERSION).toBe("v13");
     await getReportsDataCached("tenant-A");
     expect(calls[0].key[1]).toBe(REPORTS_CACHE_VERSION);
   });
