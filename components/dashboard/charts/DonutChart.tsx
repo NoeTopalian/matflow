@@ -128,10 +128,12 @@ export function DonutLegend({ data }: { data: DonutSlice[] }) {
   return (
     <ul className="w-full min-w-0 space-y-2">
       {data.map((d) => (
-        <li key={d.label} className="flex items-center justify-between gap-3 text-sm">
-          <span className="flex items-center gap-2 min-w-0">
-            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color }} />
-            <span className="truncate" style={{ color: "var(--tx-2)" }}>{d.label}</span>
+        <li key={d.label} className="flex items-start justify-between gap-3 text-sm">
+          {/* The full name, wrapped: a cut-off class name ("Kids BJJ (Ag…") is
+              ambiguous when two classes share a prefix (31 Oct 2026). */}
+          <span className="flex items-start gap-2 min-w-0">
+            <span className="mt-[5px] w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color }} />
+            <span className="min-w-0 break-words leading-snug" style={{ color: "var(--tx-2)" }}>{d.label}</span>
           </span>
           <span className="shrink-0 tabular-nums" style={{ color: "var(--tx-3)" }}>
             <span data-testid="donut-legend-ratio">{share(d)}</span>

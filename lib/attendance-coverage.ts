@@ -25,14 +25,24 @@
  * history answers. The query below reuses the gate's shape (one indexed
  * `findFirst` on AttendanceRecord(tenantId, checkInTime)) without its filter.
  *
- * What this cannot know: a gap INSIDE coverage. A club whose imported history
- * stops at the export and whose MatFlow check-ins start weeks later has no
- * records for the weeks between, and those weeks read as zero. Nothing in the
- * data tells that gap from a real closure (the At-Risk gate has the same
- * limit, and handles its own window with a "paused" state).
+ * WHERE THE RECORDS STOP (31 Oct 2026). An imported history ends at its
+ * export: Sean's club imported TeamUp's visits up to its export and had
+ * recorded no check-in in MatFlow since, so every week after the export read
+ * as a real 0 ("nobody trained"). The coverage therefore also knows the
+ * HISTORY END (the club-local day after the latest imported visit) and where
+ * MatFlow's own check-ins RESUME after it (the day of the first non-imported
+ * check-in on or after the history end). Records cover [start, historyEnd)
+ * and [resumes, now); a span inside neither is "gap": no records, said as
+ * such, never 0. A club with no imported rows keeps one open run from its
+ * first record, exactly as before.
+ *
+ * What this still cannot know: a quiet stretch INSIDE a run. One MatFlow
+ * check-in after the export (a staff test, say) resumes the records from that
+ * day, and a zero after it reads as real. Nothing in the data tells that from
+ * a closure (the At-Risk gate has the same limit).
  *
  * The day is the club's (Tenant.timezone), as every period boundary is
- * (lib/report-period, lib/club-month). Pure apart from `readAttendanceCoverageStart`.
+ * (lib/report-period, lib/club-month). Pure apart from the two `readAttendanceCoverage...` reads.
  */
 import { usableTimezone, zoneOffsetMs } from "@/lib/class-time";
 
@@ -40,15 +50,28 @@ import { usableTimezone, zoneOffsetMs } from "@/lib/class-time";
  * How much of a span the club's records cover:
  *   - "none": the club has no attendance records at all;
  *   - "before": the span ends on or before the coverage start (no records for it);
- *   - "partial": the coverage start falls inside the span (count only what exists);
- *   - "covered": the span starts on or after the coverage start (a zero is a real zero).
+ *   - "gap": the span lies after the imported history ends and before (or
+ *     without) any MatFlow check-in, so there are no records for it either;
+ *   - "partial": the span is only partly inside the records (count only what exists);
+ *   - "covered": the span lies wholly inside the records (a zero is a real zero).
  */
-export type CoverageState = "none" | "before" | "partial" | "covered";
+export type CoverageState = "none" | "before" | "gap" | "partial" | "covered";
+
+/**
+ * Where a club's records run: from `start` to `historyEnd` (exclusive; null =
+ * no imported history, so one open run), then again from `resumes` (the first
+ * MatFlow check-in day on or after the history end; null = none yet).
+ */
+export type CoverageSpans = { start: Date | null; historyEnd: Date | null; resumes: Date | null };
 
 /** The coverage of a statistics page's spans, computed once on the server. */
 export type AttendanceCoverage = {
   /** The coverage start (ISO): midnight, club time, of the day of the earliest record. Null when there are no records. */
   start: string | null;
+  /** Midnight, club time, after the day of the latest imported visit (ISO); absent = no imported history. */
+  historyEnd?: string | null;
+  /** Midnight, club time, of the first MatFlow check-in on or after the history end (ISO); null = none yet. */
+  resumes?: string | null;
   timeZone: string;
   /** The selected period. */
   period: CoverageState;
@@ -72,18 +95,33 @@ export function clubDayStart(instant: Date, timeZoneRaw: string | null | undefin
 type Instant = string | Date;
 const ms = (d: Instant) => (d instanceof Date ? d.getTime() : new Date(d).getTime());
 
-/** The coverage of the half-open span [start, end). */
-export function coverageOf(coverageStart: Instant | null | undefined, start: Instant, end: Instant): CoverageState {
-  if (!coverageStart) return "none";
-  const c = ms(coverageStart);
-  if (ms(end) <= c) return "before";
-  if (ms(start) < c) return "partial";
-  return "covered";
+type Records = { start: number; historyEnd: number | null; resumes: number | null };
+type CoverageInput = Instant | CoverageSpans | Pick<AttendanceCoverage, "start" | "historyEnd" | "resumes"> | null | undefined;
+
+function recordsOf(c: CoverageInput): Records | null {
+  if (!c) return null;
+  if (typeof c === "string" || c instanceof Date) return { start: ms(c), historyEnd: null, resumes: null };
+  if (!c.start) return null;
+  return { start: ms(c.start), historyEnd: c.historyEnd ? ms(c.historyEnd) : null, resumes: c.resumes ? ms(c.resumes) : null };
+}
+
+/** The coverage of the half-open span [start, end): against a coverage start alone (one open run), or the club's runs. */
+export function coverageOf(coverage: CoverageInput, start: Instant, end: Instant): CoverageState {
+  const r = recordsOf(coverage);
+  if (!r) return "none";
+  const s = ms(start);
+  const e = ms(end);
+  if (e <= r.start) return "before";
+  const runs: Array<[number, number]> =
+    r.historyEnd === null ? [[r.start, Infinity]] : [[r.start, r.historyEnd], ...(r.resumes !== null ? [[r.resumes, Infinity] as [number, number]] : [])];
+  const inside = runs.reduce((sum, [from, to]) => sum + Math.max(0, Math.min(e, to) - Math.max(s, from)), 0);
+  if (inside <= 0) return "gap";
+  return inside >= e - s ? "covered" : "partial";
 }
 
 /** True when a span has no records at all: its figures are "—", never 0. */
 export function noCoverage(state: CoverageState | null | undefined): boolean {
-  return state === "none" || state === "before";
+  return state === "none" || state === "before" || state === "gap";
 }
 
 /** "3 Mar 2026": the coverage start's club-local date. */
@@ -100,38 +138,68 @@ export const NO_RECORDS_BEFORE = "— (no records for the period before)";
 /** A comparison whose base is only partly covered: no percentage either, since the base undercounts. */
 export const PARTLY_COVERED_BEFORE = "— (the period before is only partly covered)";
 
+type NoteCoverage = Pick<AttendanceCoverage, "start" | "timeZone" | "historyEnd" | "resumes">;
+
+/** "27 Oct 2026": the last day of the imported history (the day before its exclusive end). */
+function historyLastDay(coverage: NoteCoverage): string {
+  return coverageDate(new Date(ms(coverage.historyEnd!) - 1), coverage.timeZone);
+}
+
+/** Why a "gap" span has no records, in a few words. */
+function gapReason(coverage: NoteCoverage): string {
+  return coverage.resumes
+    ? `imported history ends ${historyLastDay(coverage)}; MatFlow check-ins start ${coverageDate(coverage.resumes, coverage.timeZone)}`
+    : `imported history ends ${historyLastDay(coverage)}; no check-ins recorded in MatFlow since`;
+}
+
+/** "Records start 3 Mar 2026", or after an imported history "Records cover 3 Mar 2024 – 27 Oct 2026 (and from 14 Nov 2026)". */
+function runsText(coverage: NoteCoverage): string {
+  const from = coverageDate(coverage.start!, coverage.timeZone);
+  if (!coverage.historyEnd) return `Records start ${from}`;
+  const runs = `Records cover ${from} – ${historyLastDay(coverage)}`;
+  return coverage.resumes ? `${runs} and from ${coverageDate(coverage.resumes, coverage.timeZone)}` : runs;
+}
+
 /**
  * The note in place of a figure for a span with no records:
- * "No attendance recorded yet", or "No attendance records for this period
- * (MatFlow's records start 3 Mar 2026)". Null for a span with records.
+ * "No attendance recorded yet", "No attendance records for this period
+ * (MatFlow's records start 3 Mar 2026)", or after an imported history "No
+ * attendance records for this period (imported history ends 27 Oct 2026; no
+ * check-ins recorded in MatFlow since)". Null for a span with records.
  */
-export function noRecordsNote(coverage: Pick<AttendanceCoverage, "start" | "timeZone">, state: CoverageState | null | undefined): string | null {
+export function noRecordsNote(coverage: NoteCoverage, state: CoverageState | null | undefined): string | null {
   if (state === "none") return NO_ATTENDANCE_YET;
-  if (state !== "before") return null;
+  if (state !== "before" && state !== "gap") return null;
   if (!coverage.start) return NO_ATTENDANCE_YET;
+  if (state === "gap" && coverage.historyEnd) return `No attendance records for this period (${gapReason(coverage)})`;
   return `No attendance records for this period (MatFlow's records start ${coverageDate(coverage.start, coverage.timeZone)})`;
 }
 
-/** "Records start 3 Mar 2026": the label on a figure whose span starts before the records do. Null otherwise. */
-export function partialNote(coverage: Pick<AttendanceCoverage, "start" | "timeZone">, state: CoverageState | null | undefined): string | null {
+/** The label on a figure whose span is only partly inside the records ("Records start 3 Mar 2026", or the runs). Null otherwise. */
+export function partialNote(coverage: NoteCoverage, state: CoverageState | null | undefined): string | null {
   if (state !== "partial" || !coverage.start) return null;
-  return `Records start ${coverageDate(coverage.start, coverage.timeZone)}`;
+  return runsText(coverage);
 }
 
 /** The one note a span's figures carry, if any: the no-records note or the partial label. */
-export function coverageNote(coverage: Pick<AttendanceCoverage, "start" | "timeZone">, state: CoverageState | null | undefined): string | null {
+export function coverageNote(coverage: NoteCoverage, state: CoverageState | null | undefined): string | null {
   return noRecordsNote(coverage, state) ?? partialNote(coverage, state);
 }
 
 /**
  * One chart bar's (or CSV bucket row's) note: "No records (MatFlow's records
- * start 3 Mar 2026)" for a bucket before the records, "Partly covered (records
- * start 3 Mar 2026)" for the bucket they start in, null for a covered one.
+ * start 3 Mar 2026)" for a bucket before the records, "No records (imported
+ * history ends 27 Oct 2026; ...)" for one after them, "Partly covered (records
+ * start 3 Mar 2026)" for a bucket only partly inside them, null when covered.
  */
-export function bucketNote(coverage: Pick<AttendanceCoverage, "start" | "timeZone">, state: CoverageState | null | undefined): string | null {
-  if (state === "none" || ((state === "before" || state === "partial") && !coverage.start)) return NO_ATTENDANCE_YET;
-  if (state === "before") return `No records (MatFlow's records start ${coverageDate(coverage.start!, coverage.timeZone)})`;
-  if (state === "partial") return `Partly covered (records start ${coverageDate(coverage.start!, coverage.timeZone)})`;
+export function bucketNote(coverage: NoteCoverage, state: CoverageState | null | undefined): string | null {
+  if (state === "none" || ((state === "before" || state === "gap" || state === "partial") && !coverage.start)) return NO_ATTENDANCE_YET;
+  if (state === "gap" && coverage.historyEnd) return `No records (${gapReason(coverage)})`;
+  if (state === "before" || state === "gap") return `No records (MatFlow's records start ${coverageDate(coverage.start!, coverage.timeZone)})`;
+  if (state === "partial") {
+    const runs = runsText(coverage);
+    return `Partly covered (${runs.charAt(0).toLowerCase()}${runs.slice(1)})`;
+  }
   return null;
 }
 
@@ -140,7 +208,7 @@ export function bucketNote(coverage: Pick<AttendanceCoverage, "start" | "timeZon
  * covered, or null when the base is covered and the ordinary change applies.
  */
 export function comparisonGap(previous: CoverageState | null | undefined): string | null {
-  if (previous === "none" || previous === "before") return NO_RECORDS_BEFORE;
+  if (previous === "none" || previous === "before" || previous === "gap") return NO_RECORDS_BEFORE;
   if (previous === "partial") return PARTLY_COVERED_BEFORE;
   return null;
 }
@@ -149,8 +217,14 @@ export function comparisonGap(previous: CoverageState | null | undefined): strin
 export type CoverageClient = {
   attendanceRecord: {
     findFirst(args: {
-      where: { tenantId: string };
-      orderBy: { checkInTime: "asc" };
+      where: {
+        tenantId: string;
+        checkInTime?: { gte: Date };
+        checkInMethod?: { not: "import" };
+        importJobId?: null;
+        OR?: Array<{ checkInMethod: "import" } | { importJobId: { not: null } }>;
+      };
+      orderBy: { checkInTime: "asc" | "desc" };
       select: { checkInTime: true };
     }): PromiseLike<{ checkInTime: Date } | null>;
   };
@@ -171,18 +245,50 @@ export async function readAttendanceCoverageStart(tx: CoverageClient, tenantId: 
   return first ? clubDayStart(first.checkInTime, timeZone) : null;
 }
 
+/** Midnight, club time, of the club-local day after the one `instant` falls on (DST-safe: 36 h past a midnight is always the next day). */
+function nextClubDayStart(instant: Date, timeZone: string | null | undefined): Date {
+  return clubDayStart(new Date(clubDayStart(instant, timeZone).getTime() + 36 * 3_600_000), timeZone);
+}
+
+/**
+ * Where the club's records run (31 Oct 2026): the coverage start and, when it
+ * has imported history, the day after its latest imported visit and the first
+ * MatFlow check-in day on or after that. Imported = method "import" or an
+ * import job: the complement of MATFLOW_CHECKIN_WHERE (lib/dashboard-action-items).
+ * Up to three probes on AttendanceRecord(tenantId, checkInTime). Tenant-scoped
+ * by `where`; run it inside withTenantContext so RLS backs the filter.
+ */
+export async function readAttendanceCoverage(tx: CoverageClient, tenantId: string, timeZone: string | null | undefined): Promise<CoverageSpans> {
+  const start = await readAttendanceCoverageStart(tx, tenantId, timeZone);
+  if (!start) return { start: null, historyEnd: null, resumes: null };
+  const lastImported = await tx.attendanceRecord.findFirst({
+    where: { tenantId, OR: [{ checkInMethod: "import" }, { importJobId: { not: null } }] },
+    orderBy: { checkInTime: "desc" },
+    select: { checkInTime: true },
+  });
+  if (!lastImported) return { start, historyEnd: null, resumes: null };
+  const historyEnd = nextClubDayStart(lastImported.checkInTime, timeZone);
+  const firstAfter = await tx.attendanceRecord.findFirst({
+    where: { tenantId, checkInMethod: { not: "import" }, importJobId: null, checkInTime: { gte: historyEnd } },
+    orderBy: { checkInTime: "asc" },
+    select: { checkInTime: true },
+  });
+  return { start, historyEnd, resumes: firstAfter ? clubDayStart(firstAfter.checkInTime, timeZone) : null };
+}
+
 /** The page-level coverage for a period and the run before it. */
 export function attendanceCoverageFor(
-  start: Date | null,
+  records: Date | CoverageSpans | null,
   timeZoneRaw: string | null | undefined,
   period: { start: Instant; end: Instant },
   previous: { start: Instant; end: Instant },
 ): AttendanceCoverage {
-  const iso = start ? start.toISOString() : null;
+  const spans: CoverageSpans = records instanceof Date || records === null ? { start: records, historyEnd: null, resumes: null } : records;
   return {
-    start: iso,
+    start: spans.start ? spans.start.toISOString() : null,
+    ...(spans.historyEnd ? { historyEnd: spans.historyEnd.toISOString(), resumes: spans.resumes ? spans.resumes.toISOString() : null } : {}),
     timeZone: usableTimezone(timeZoneRaw),
-    period: coverageOf(iso, period.start, period.end),
-    previous: coverageOf(iso, previous.start, previous.end),
+    period: coverageOf(spans, period.start, period.end),
+    previous: coverageOf(spans, previous.start, previous.end),
   };
 }

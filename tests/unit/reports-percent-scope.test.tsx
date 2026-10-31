@@ -39,7 +39,7 @@ vi.mock("@/components/dashboard/NetNewMembersCard", () => ({ default: () => null
 vi.mock("@/components/dashboard/charts/Sparkline", () => ({ default: () => null }));
 
 import { formatChange, MONTH_SO_FAR, WEEK_SO_FAR } from "@/lib/percent";
-import ReportsView, { activeMembersDetail, reportsCsv, trendDelta } from "@/components/dashboard/ReportsView";
+import ReportsView, { activeMembersDetail, activeMembersShort, reportsCsv, trendDelta } from "@/components/dashboard/ReportsView";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import AnalysisView from "@/components/dashboard/AnalysisView";
 import { createEmptyReportsData, type ReportsData } from "@/lib/reports";
@@ -149,8 +149,11 @@ describe("Reports: a count that is a share of a named population carries its per
       `Includes 0 on hold · 0 current members · ${excludes}`,
     );
     render(<ReportsView data={reports()} attribution={NO_TRIALS} primaryColor="#3b82f6" />);
-    // The tile also says it is a "Now" figure (the statistics period, #48).
-    expect(screen.getByText(`Now · Includes 12 on hold · 9% of 130 active · 87% of 150 current members · ${excludes}`)).toBeTruthy();
+    // The tile says it is a "Now" figure (the statistics period, #48) in one
+    // short line; the full wording is under "What counts" (31 Oct 2026).
+    expect(activeMembersShort({ activeMembers: 130, activeOnHoldMembers: 12, currentMembers: 150 })).toBe("Includes 12 on hold · 87% of 150 current members");
+    expect(screen.getByText("Now · Includes 12 on hold · 87% of 150 current members")).toBeTruthy();
+    expect(screen.getByText(`Includes 12 on hold · 9% of 130 active · 87% of 150 current members · ${excludes}`)).toBeTruthy();
   });
 
   it("Member attention: the inactive count with its share of current members", () => {

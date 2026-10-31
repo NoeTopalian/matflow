@@ -5,7 +5,7 @@ import { ACTIVE_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { loadJoinedInWindows } from "@/lib/membership-report";
 import { liveClassWhere } from "@/lib/class-live";
 import { resolveReportPeriod } from "@/lib/report-period";
-import { attendanceCoverageFor, coverageOf, readAttendanceCoverageStart } from "@/lib/attendance-coverage";
+import { attendanceCoverageFor, coverageOf, readAttendanceCoverage } from "@/lib/attendance-coverage";
 
 export const metadata = { title: "Analysis | MatFlow" };
 
@@ -72,7 +72,7 @@ export default async function AnalysisPage({ searchParams }: Props) {
         .then((groups) => groups.length),
       // Where the club's attendance records begin (28 Oct 2026; the same read
       // as Reports): before it, check-ins and engagement are "—", not 0.
-      readAttendanceCoverageStart(tx, tenantId, tenant?.timezone),
+      readAttendanceCoverage(tx, tenantId, tenant?.timezone),
     ]),
   );
   const coverage = attendanceCoverageFor(coverageStart, range.timeZone, range, range.previous);

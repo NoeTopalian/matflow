@@ -144,13 +144,17 @@ describe("ReportsView — churn is a percentage with its counts, joined beside i
     const ps = [...churn.querySelectorAll("p")].map((p) => p.textContent);
     expect(ps[0]).toBe("8.3% (1 of 12)");
     expect(ps[1]).toBe("Churn");
-    expect(ps[2]).toBe("1 cancellation this month, out of 12 members (9 at the start, 3 became members since) · Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide");
-    expect(churn.closest("a")?.getAttribute("aria-label")).toBe("Churn: 8.3% (1 of 12), 1 cancellation this month — see the members behind this number");
-    expect(churn.closest("a")?.getAttribute("href")).toMatch(/^\/dashboard\/members\?filter=churned-this-month&month=\d{4}-\d{2}$/);
+    // One short line on the tile; the full wording under "What counts" (31 Oct 2026).
+    expect(ps[2]).toBe("1 cancellation this month, of 12 members");
+    expect(within(churn).getByTestId("metric-card-more").textContent).toBe("What counts1 cancellation this month, out of 12 members (9 at the start, 3 became members since) · Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide");
+    expect(churn.querySelector("a")?.getAttribute("aria-label")).toBe("Churn: 8.3% (1 of 12), 1 cancellation this month — see the members behind this number");
+    expect(churn.querySelector("a")?.getAttribute("href")).toMatch(/^\/dashboard\/members\?filter=churned-this-month&month=\d{4}-\d{2}$/);
+    // "What counts" sits outside the link: opening it never navigates.
+    expect(within(churn).getByTestId("metric-card-more").closest("a")).toBeNull();
     // D11: the Joined tile sits immediately after churn, by the movement definition.
     const joined = screen.getByTestId("reports-joined-tile");
-    // The churn tile is a drill-through link around its card.
-    expect((churn.closest("a") ?? churn).nextElementSibling).toBe(joined);
+    // The churn card (its drill-through link inside it) is followed by Joined.
+    expect(churn.nextElementSibling).toBe(joined);
     expect(within(joined).getByText("Joined this month (new + rejoined)")).toBeTruthy();
     expect(screen.getByTestId("reports-joined-value").textContent).toBe("3");
     expect(screen.getByTestId("reports-joined-new-this-month").textContent).toBe("New2");
@@ -164,17 +168,20 @@ describe("ReportsView — churn is a percentage with its counts, joined beside i
     renderReports(reports({ churn: { cancelled: 4, joined: 3, net: 2, opening: 37, base: 40, ratePct: 10 } }));
     const four = [...tileFor("Churn").querySelectorAll("p")].map((p) => p.textContent);
     expect(four[0]).toBe("10% (4 of 40)");
-    expect(four[2]).toMatch(/^4 cancellations this month, out of 40 members \(37 at the start, 3 became members since\) · /);
+    expect(four[2]).toBe("4 cancellations this month, of 40 members");
+    expect(four[3]).toMatch(/^4 cancellations this month, out of 40 members \(37 at the start, 3 became members since\) · /);
     cleanup();
     renderReports(reports({ churn: { cancelled: 0, joined: 0, net: 0, opening: 9, base: 9, ratePct: 0 } }));
     const zero = [...tileFor("Churn").querySelectorAll("p")].map((p) => p.textContent);
     expect(zero[0]).toBe("0% (0 of 9)");
-    expect(zero[2]).toMatch(/^0 cancellations this month, out of 9 members \(9 at the start, 0 became members since\) · /);
+    expect(zero[2]).toBe("0 cancellations this month, of 9 members");
+    expect(zero[3]).toMatch(/^0 cancellations this month, out of 9 members \(9 at the start, 0 became members since\) · /);
     cleanup();
     renderReports(reports({ churn: { cancelled: 0, joined: 0, net: 0, opening: 0, base: 0, ratePct: null } }));
     const empty = [...tileFor("Churn").querySelectorAll("p")].map((p) => p.textContent);
     expect(empty[0]).toBe("—");
-    expect(empty[2]).toMatch(/^No members this month · /);
+    expect(empty[2]).toBe("No members this month");
+    expect(empty[3]).toMatch(/^No members this month · /);
   });
 
   it("the CSV row is the same percentage with its counts and the same words", () => {

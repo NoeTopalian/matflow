@@ -293,6 +293,8 @@ const churnExpect = (mv, during, other) => {
   return {
     base, opening, ratio,
     linkName: `${CHURN_TITLE}: ${ratio}, ${churnText(mv.cancelled, during)}`,
+    // The tile's one line (ReportsView.tsx churnShortText); `detail` is under "What counts" and in the CSV.
+    short: base === 0 ? `No members ${during}` : `${churnText(mv.cancelled, during)}, of ${fmtNum(base)} ${base === 1 ? "member" : "members"}`,
     detail: base === 0
       ? `No members ${during} · ${CHURN_COUNTED}`
       : `${churnText(mv.cancelled, during)}, out of ${fmtNum(base)} ${base === 1 ? "member" : "members"} (${fmtNum(opening)} at the start, ${fmtNum(since)} became ${since === 1 ? "a member" : "members"} since) · ${CHURN_COUNTED}`,
@@ -304,6 +306,11 @@ const X = {
   membersTile: [String(E.active), "Active members", ...(E.activeOnHold > 0 ? [`Includes ${E.activeOnHold} on hold`] : []), ACTIVE_EXCLUDES],
   // W3 (owner decision, 27 Oct 2026, 23:30): each count that is a share of a
   // named population carries its percentage (lib/percent shareOf, half-up).
+  // The tile's one line (ReportsView.tsx activeMembersShort); activeDetail is under "What counts" and in the CSV.
+  activeShort: [
+    `Includes ${fmtNum(E.activeOnHold)} on hold`,
+    E.current > 0 ? `${Math.round((E.active * 100) / E.current)}% of ${fmtNum(E.current)} current members` : `${fmtNum(E.current)} current members`,
+  ].join(" · "),
   activeDetail: [
     `Includes ${fmtNum(E.activeOnHold)} on hold`,
     E.active > 0 ? `${Math.round((E.activeOnHold * 100) / E.active)}% of ${fmtNum(E.active)} active` : null,
@@ -460,6 +467,15 @@ L.note("seed", "N5 expected D9 and D10 figures", { OW, RC, owing: debtRows.map((
 
 // ── Page helpers ────────────────────────────────────────────────────────────
 const tileLink = (page, name) => page.getByRole("link", { name: `${name} — see the members behind this number`, exact: true });
+// "What counts" (31 Oct 2026): a tile shows one short line; its full definition is folded under "What counts",
+// outside the drill-through link. Opens it and returns the text and whether the page stayed put.
+const whatCounts = async (page, link) => {
+  const card = link.locator("xpath=ancestor::*[@data-testid='metric-card'][1]");
+  const before = page.url();
+  await card.getByText("What counts", { exact: true }).click();
+  const text = norm(await card.getByTestId("metric-card-more").locator("p").innerText());
+  return { text, stayed: page.url() === before };
+};
 const pTexts = async (loc) => (await loc.locator("p").allInnerTexts()).map(norm);
 const noHScroll = async (page) => page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
 const membersHeadline = async (page) => {
@@ -545,8 +561,11 @@ try {
   const activeTile = await pTexts(activeLink);
   L.check("reports", "R1 Reports Active members tile equals the Members headline and Settings, and says what it counts",
     // On screen the tile says it is a "now" figure (26 Oct 2026); the CSV row keeps the plain detail.
-    activeTile[0] === fmtNum(E.active) && activeTile[1] === "Active members" && activeTile[2] === `Now · ${X.activeDetail}`,
-    { saw: activeTile, expected: [fmtNum(E.active), "Active members", `Now · ${X.activeDetail}`] });
+    activeTile[0] === fmtNum(E.active) && activeTile[1] === "Active members" && activeTile[2] === `Now · ${X.activeShort}`,
+    { saw: activeTile, expected: [fmtNum(E.active), "Active members", `Now · ${X.activeShort}`] });
+  const activeMore = await whatCounts(page, activeLink);
+  L.check("reports", "R1b its \"What counts\" opens in place (no navigation) to the full definition: on hold as a share of active, the share of current members and what it excludes",
+    activeMore.text === X.activeDetail && activeMore.stayed, { saw: activeMore, expected: X.activeDetail });
 
   // 24 Oct 2026: a month not wholly recorded says so on every movement figure (ReportsView.tsx estimateLabel/withEstimate).
   // A failed read must not become an expectation of "no estimate" (29 Oct 2026: a network drop did exactly that).
@@ -579,11 +598,14 @@ try {
   L.note("reports", "N7 churn's base, worked out from SQL Active members + this month's leavers; the app's import/pause moves (fixture has none)", { expected: { base: C1.base, opening: C1.opening, ratio: C1.ratio }, app: apiReport?.churn ?? null, other: other1 });
   const churnLink = tileLink(page, C1.linkName);
   const churnTile = await pTexts(churnLink);
-  const churnWant = [C1.ratio, CHURN_TITLE, est(C1.detail)];
+  const churnWant = [C1.ratio, CHURN_TITLE, est(C1.short)];
   L.check("reports", "R2 churn reads \"x% (n of m)\" — this month's cancellations (joiners included) of everyone who was a member this month — titled Churn, with both counts in words and what it counts",
     JSON.stringify(churnTile) === JSON.stringify(churnWant)
       && apiReport?.churn?.cancelled === MV.cancelled && apiReport?.churn?.base === C1.base && apiReport?.churn?.opening === C1.opening,
     { saw: churnTile, expected: churnWant, movement: MV, app: apiReport?.churn ?? null });
+  const churnMore = await whatCounts(page, churnLink);
+  L.check("reports", "R2b churn's \"What counts\" opens in place to both counts in words (members at the start and since) and what churn counts",
+    churnMore.text === C1.detail && churnMore.stayed, { saw: churnMore, expected: C1.detail });
   // D11: the Joined tile (ReportsView.tsx:489-529 JoinedThisMonthTile).
   const joinedTileEl = page.getByTestId("reports-joined-tile").first();
   const joinedValue = norm(await joinedTileEl.getByTestId("reports-joined-value").innerText());
@@ -886,7 +908,7 @@ try {
   const X3 = {
     churn: C3.ratio,
     churnLinkName: C3.linkName,
-    churnDetail: est3(C3.detail),
+    churnDetail: est3(C3.short),
     newHref: `/dashboard/members?filter=new-this-month&from=${monthKeyOf(-2)}&to=${monthKeyOf(0)}`,
     lostHref: `/dashboard/members?filter=lost-this-month&from=${monthKeyOf(-2)}&to=${monthKeyOf(0)}`,
     churnHref: `/dashboard/members?filter=churned-this-month&from=${monthKeyOf(-2)}&to=${monthKeyOf(0)}`,
@@ -1002,13 +1024,15 @@ try {
   await pActive.waitFor({ timeout: 90000 });
   const pActiveTile = await pTexts(pActive);
   L.check("mobile", "M3 at 390 px the Reports Active members tile shows the same number and detail",
-    pActiveTile[0] === fmtNum(E.active) && pActiveTile[2] === `Now · ${X.activeDetail}`, { saw: pActiveTile });
+    pActiveTile[0] === fmtNum(E.active) && pActiveTile[2] === `Now · ${X.activeShort}`, { saw: pActiveTile });
   const pChurn = tileLink(p2, X.churnLinkName); const pJoined = p2.getByTestId("reports-joined-tile").first();
   await pChurn.scrollIntoViewIfNeeded();
   const pChurnTile = await pTexts(pChurn);
   const pJoinedValue = norm(await pJoined.getByTestId("reports-joined-value").innerText());
-  const pcb = await pChurn.boundingBox(); const pjb = await pJoined.boundingBox();
-  const pNext = await pChurn.evaluate((el) => el.nextElementSibling?.getAttribute("data-testid") ?? null);
+  // The link sits inside the churn card (with "What counts" beside it): the card is what Joined follows.
+  const pChurnCard = pChurn.locator("xpath=ancestor::*[@data-testid='metric-card'][1]");
+  const pcb = await pChurnCard.boundingBox(); const pjb = await pJoined.boundingBox();
+  const pNext = await pChurnCard.evaluate((el) => el.nextElementSibling?.getAttribute("data-testid") ?? null);
   L.check("mobile", "M4 at 390 px churn reads \"x% (n of m)\" and the Joined tile follows it directly (stacked, next tile)",
     pChurnTile[0] === X.churnRatio && pJoinedValue === X.joinedValue && pNext === "reports-joined-tile"
       && pcb && pjb && pjb.y >= pcb.y + pcb.height - 1 && Math.abs(pjb.x - pcb.x) <= 2,

@@ -6,7 +6,9 @@
 // Neon TEST branch:
 //   A: an imported visit on 3 Mar 2026 (its earliest) and a MatFlow check-in on 1 May 2026;
 //   B: a MatFlow check-in on 10 Jun 2025 — earlier than anything of A's;
-//   C: no attendance at all.
+//   C: no attendance at all;
+//   D (31 Oct 2026): imported visits up to 24 Oct 2026 and no MatFlow check-in since — Sean's state: its records
+//      stop at the history end, while B's later MatFlow check-in (28 Oct 2026) must not resume them.
 // Asserted through the raw read (inside withTenantContext, so RLS backs the filter under matflow_app) and through
 // getReportsData, the Reports page's own load. Runs as both roles via the matflow-verify-local db-tests.mjs runner.
 // Fixture prefix cov- (names, slugs, example.test addresses); torn down by tenant id.
@@ -16,7 +18,7 @@ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 vi.mock("next/cache", () => ({ unstable_cache: <T,>(fn: T) => fn, revalidateTag: vi.fn() }));
 
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
-import { readAttendanceCoverageStart } from "@/lib/attendance-coverage";
+import { readAttendanceCoverage, readAttendanceCoverageStart } from "@/lib/attendance-coverage";
 import { getReportsData } from "@/lib/reports";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -50,14 +52,22 @@ describe.skipIf(!HAS_DB)("attendance coverage start is per club", () => {
   let A: Club;
   let B: Club;
   let C: Club;
+  let D: Club;
 
   beforeAll(async () => {
     A = await mkClub("a", [
       { at: "2026-03-03T18:45:00.000Z", method: "import" },
       { at: "2026-05-01T18:10:00.000Z", method: "admin" },
     ]);
-    B = await mkClub("b", [{ at: "2025-06-10T18:00:00.000Z", method: "admin" }]);
+    B = await mkClub("b", [
+      { at: "2025-06-10T18:00:00.000Z", method: "admin" },
+      { at: "2026-10-28T18:00:00.000Z", method: "admin" },
+    ]);
     C = await mkClub("c", []);
+    D = await mkClub("d", [
+      { at: "2026-09-05T09:00:00.000Z", method: "import" },
+      { at: "2026-10-24T09:00:00.000Z", method: "import" },
+    ]);
   }, 90_000);
 
   afterAll(async () => {
@@ -84,6 +94,27 @@ describe.skipIf(!HAS_DB)("attendance coverage start is per club", () => {
     // C has no records: no coverage, whatever the other clubs hold.
     expect(c).toBeNull();
   });
+
+  it("each club's runs are its own: the history end is the day after its last imported visit, and only its own MatFlow check-ins resume them", async () => {
+    const a = await withTenantContext(A.tenantId, (tx) => readAttendanceCoverage(tx, A.tenantId, LONDON));
+    const b = await withTenantContext(B.tenantId, (tx) => readAttendanceCoverage(tx, B.tenantId, LONDON));
+    const d = await withTenantContext(D.tenantId, (tx) => readAttendanceCoverage(tx, D.tenantId, LONDON));
+    // A: imported 3 Mar 2026, then a MatFlow check-in on 1 May 2026 (BST: midnight is 23:00Z the day before).
+    expect([a.start?.toISOString(), a.historyEnd?.toISOString(), a.resumes?.toISOString()]).toEqual(["2026-03-03T00:00:00.000Z", "2026-03-04T00:00:00.000Z", "2026-04-30T23:00:00.000Z"]);
+    // B has no imported history: one open run.
+    expect([b.historyEnd, b.resumes]).toEqual([null, null]);
+    // D: the last imported visit is 24 Oct 2026 (BST), so the history ends at 25 Oct 00:00 BST; B's 28 Oct check-in is not D's.
+    expect([d.start?.toISOString(), d.historyEnd?.toISOString(), d.resumes]).toEqual(["2026-09-04T23:00:00.000Z", "2026-10-24T23:00:00.000Z", null]);
+  });
+
+  it("the Reports load says a club whose history has ended has no records since, not zero", async () => {
+    const d = await getReportsData(D.tenantId, {});
+    expect(d.attendanceCoverage).toMatchObject({ historyEnd: "2026-10-24T23:00:00.000Z", resumes: null, thisWeek: "gap" });
+    // Every chart week after the history end is "gap" (drawn as no data), never a covered zero.
+    const after = d.weeklyAttendance.filter((row) => row.coverage === "gap");
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.every((row) => row.count === 0)).toBe(true);
+  }, 90_000);
 
   it("the Reports load carries each club's own coverage", async () => {
     const a = await getReportsData(A.tenantId, { period: { period: "custom", from: "2026-01", to: "2026-02" } });

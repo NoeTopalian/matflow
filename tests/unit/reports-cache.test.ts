@@ -72,7 +72,8 @@ describe("getReportsDataCached", () => {
     // v10 (27 Oct): churn is a count of cancellations — no ratePct, no base, no churnRate.
     // v11 (28 Oct): attendanceCoverage and weeklyAttendance[].coverage.
     // v12 (31 Oct): churn carries opening, base and ratePct again (its percentage with counts).
-    expect(REPORTS_CACHE_VERSION).toBe("v12");
+    // v13 (31 Oct): attendance coverage carries historyEnd and resumes (where imported history stops).
+    expect(REPORTS_CACHE_VERSION).toBe("v13");
     await getReportsDataCached("tenant-A");
     expect(calls[0].key[1]).toBe(REPORTS_CACHE_VERSION);
   });

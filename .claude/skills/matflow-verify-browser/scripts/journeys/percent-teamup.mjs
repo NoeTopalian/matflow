@@ -40,6 +40,7 @@ const UNDECIDED_SHARE = "63% (5 of 8) of trials"; // 62.5, half-up
 const COACH_LOST = /Lost ?13% \(1 of 8\)/;
 const COACH_UNDECIDED = /No decision ?63% \(5 of 8\)/;
 const ACTIVE_DETAIL = /Includes \d+ on hold · \d+% of \d+ active · \d+% of \d+ current members/;
+const ACTIVE_SHORT = /Includes \d+ on hold · \d+% of \d+ current members/;
 const TEAMUP = "Billed by TeamUp · imported 3 Oct 2026";
 L.note("seed", "N1 seeded 8 trials (2 converted, 1 lost, 5 deciding) and one TeamUp-billed member", { expectedConversion: CONVERSION, teamup: TEAMUP });
 
@@ -67,8 +68,14 @@ try {
   L.check("reports", "W3b the coach row gives lost and no decision as shares of the coach's trials",
     COACH_LOST.test(reportsText) && COACH_UNDECIDED.test(reportsText),
     { around: reportsText.slice(Math.max(0, reportsText.search(/Lost ?\d/) - 60), reportsText.search(/Lost ?\d/) + 80) });
-  L.check("reports", "W3c the Active members tile gives on hold and active as shares of named populations",
-    ACTIVE_DETAIL.test(reportsText), { match: reportsText.match(/Includes \d+ on hold.{0,80}/)?.[0] });
+  // 31 Oct 2026: the tile shows one short line (on hold, share of current members); the
+  // full wording, with on hold as a share of active, is under its "What counts".
+  L.check("reports", "W3c the Active members tile gives active as a share of current members on its one line",
+    ACTIVE_SHORT.test(reportsText), { match: reportsText.match(/Includes \d+ on hold.{0,80}/)?.[0] });
+  const activeCard = page.getByTestId("metric-card").filter({ has: page.getByText("Active members", { exact: true }) }).first();
+  await activeCard.getByText("What counts", { exact: true }).click();
+  const activeMore = norm(await activeCard.getByTestId("metric-card-more").locator("p").innerText());
+  L.check("reports", "W3d its \"What counts\" gives on hold and active as shares of named populations", ACTIVE_DETAIL.test(activeMore), { saw: activeMore });
   await shot(page, "percent-teamup-reports");
 
   // The attribution page: the same funnel and the per-coach table.
