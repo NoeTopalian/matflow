@@ -60,7 +60,8 @@ try {
   const reportsText = norm(await page.locator("main").innerText({ timeout: 60000 }));
   L.check("reports", "G1a the Reports conversion funnel shows the rate with its counts, \"25% (2 of 8)\"", reportsText.includes(CONVERSION),
     { found: reportsText.includes(CONVERSION), around: reportsText.slice(Math.max(0, reportsText.indexOf("25%") - 80), reportsText.indexOf("25%") + 80) });
-  L.check("reports", "G1b no bare percentage without counts in the funnel (no \"25.0%\" or \"25%\" alone)", !/\b25\.0%/.test(reportsText) && !/25%(?! \(2 of 8\))/.test(reportsText),
+  L.check("reports", "G1b no bare percentage without counts in the funnel (no \"25.0%\" or \"25%\" alone)", !/\b25\.0%/.test(reportsText) && !/25%(?! \(\d+ of \d+\))/.test(reportsText),
+    // Any "25%" must carry its counts; another figure that is 25% too ("25% (7 of 28)", from other journeys' seeds) is not bare.
     { matches: reportsText.match(/25(\.0)?%.{0,14}/g) });
   L.check("reports", `W3a the funnel drop-offs name their base: "${LOST_SHARE}", "${UNDECIDED_SHARE}"`,
     reportsText.includes(LOST_SHARE) && reportsText.includes(UNDECIDED_SHARE),
