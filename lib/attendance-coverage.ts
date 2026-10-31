@@ -60,7 +60,9 @@ export type CoverageState = "none" | "before" | "gap" | "partial" | "covered";
 /**
  * Where a club's records run: from `start` to `historyEnd` (exclusive; null =
  * no imported history, so one open run), then again from `resumes` (the first
- * MatFlow check-in day on or after the history end; null = none yet).
+ * MatFlow check-in day on or after the history end; null = none yet). A club
+ * that checked people in on MatFlow before its import has check-ins inside the
+ * history run too; `resumes` is only the first one after it.
  */
 export type CoverageSpans = { start: Date | null; historyEnd: Date | null; resumes: Date | null };
 
@@ -148,7 +150,7 @@ function historyLastDay(coverage: NoteCoverage): string {
 /** Why a "gap" span has no records, in a few words. */
 function gapReason(coverage: NoteCoverage): string {
   return coverage.resumes
-    ? `imported history ends ${historyLastDay(coverage)}; MatFlow check-ins start ${coverageDate(coverage.resumes, coverage.timeZone)}`
+    ? `imported history ends ${historyLastDay(coverage)}; MatFlow check-ins from ${coverageDate(coverage.resumes, coverage.timeZone)}`
     : `imported history ends ${historyLastDay(coverage)}; no check-ins recorded in MatFlow since`;
 }
 
@@ -228,6 +230,9 @@ export type CoverageClient = {
       select: { checkInTime: true };
     }): PromiseLike<{ checkInTime: Date } | null>;
   };
+  importJob?: {
+    findFirst(args: { where: { tenantId: string }; select: { id: true } }): PromiseLike<{ id: string } | null>;
+  };
 };
 
 /**
@@ -255,12 +260,21 @@ function nextClubDayStart(instant: Date, timeZone: string | null | undefined): D
  * has imported history, the day after its latest imported visit and the first
  * MatFlow check-in day on or after that. Imported = method "import" or an
  * import job: the complement of MATFLOW_CHECKIN_WHERE (lib/dashboard-action-items).
- * Up to three probes on AttendanceRecord(tenantId, checkInTime). Tenant-scoped
- * by `where`; run it inside withTenantContext so RLS backs the filter.
+ * The history ends at the day after the last imported VISIT, not at the
+ * export time (ImportJob.sourceExportedAt can be a provisional estimate): days
+ * between the last visit and the export read "no records", never a zero.
+ *
+ * Cost: the latest-imported probe walks the club's records from the newest, so
+ * a club that never imported is first asked one indexed question instead — does
+ * it have any import job at all (ImportJob(tenantId, createdAt))? Every
+ * attendance import runs as a job, so none means no imported history. Up to
+ * four probes in all. Tenant-scoped by `where`; run it inside
+ * withTenantContext so RLS backs the filter.
  */
 export async function readAttendanceCoverage(tx: CoverageClient, tenantId: string, timeZone: string | null | undefined): Promise<CoverageSpans> {
   const start = await readAttendanceCoverageStart(tx, tenantId, timeZone);
   if (!start) return { start: null, historyEnd: null, resumes: null };
+  if (tx.importJob && !(await tx.importJob.findFirst({ where: { tenantId }, select: { id: true } }))) return { start, historyEnd: null, resumes: null };
   const lastImported = await tx.attendanceRecord.findFirst({
     where: { tenantId, OR: [{ checkInMethod: "import" }, { importJobId: { not: null } }] },
     orderBy: { checkInTime: "desc" },

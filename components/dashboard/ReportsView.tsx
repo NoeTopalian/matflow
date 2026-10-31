@@ -176,7 +176,7 @@ interface Props {
  * (it used to be a conditional paragraph, and every click reflowed the bar).
  */
 const SCOPE_NOTE =
-  "Class and age filters scope attendance, check-ins, top classes, the rate above and the owner insights. Growth, churn, retention, payments and the conversion funnel stay club-wide.";
+  "Class and age filters scope attendance, check-ins, top classes, the rate above and the attendance insights. Members, growth, churn, retention, payments and the conversion funnel stay club-wide, marked \"Whole club\" while a filter is on.";
 
 function ScopeInfo() {
   // Focusable (tabIndex) so a keyboard user reaches the note; the global
@@ -207,7 +207,7 @@ function WholeClubTag({ show }: { show: boolean }) {
   return (
     <span
       data-testid="whole-club-tag"
-      className="ml-1.5 inline-flex items-center rounded-full border border-bd-default px-1.5 py-px align-middle text-[10px] font-medium whitespace-nowrap text-tx-2"
+      className="ml-1.5 inline-flex items-center rounded-full border border-bd-default px-1.5 py-px align-middle text-[10px] font-medium normal-case tracking-normal whitespace-nowrap text-tx-2"
       title="Counts the whole club: the class and age filters do not change this figure"
     >
       {WHOLE_CLUB}
@@ -980,7 +980,8 @@ function MetricCard({
 
   const whatCounts = more ? (
     <details className="mt-2 text-[11px]" data-testid="metric-card-more">
-      <summary className="w-fit cursor-pointer select-none rounded text-tx-3 hover:text-tx-2">What counts</summary>
+      {/* 44 px tall below sm: a thumb-sized target on a phone (UI-RULES tap targets). */}
+      <summary className="flex min-h-[44px] w-fit cursor-pointer select-none items-center rounded text-tx-3 hover:text-tx-2 sm:min-h-0">What counts</summary>
       <p className="mt-1 leading-snug text-tx-3">{more}</p>
     </details>
   ) : null;
@@ -990,7 +991,7 @@ function MetricCard({
       <Card data-testid="metric-card" className="h-full min-h-[126px] flex flex-col transition-colors hover:border-bd-hover">
         <Link
           href={href}
-          aria-label={`${hrefLabel ?? label} — see the members behind this number`}
+          aria-label={`${hrefLabel ?? label}${clubWide ? ` (${WHOLE_CLUB.toLowerCase()})` : ""} — see the members behind this number`}
           className="block rounded-xl"
         >
           {body}
@@ -1108,6 +1109,7 @@ function InsightRow({
   detail,
   color,
   wrapValue = false,
+  clubWide = false,
 }: {
   icon: ElementType;
   label: string;
@@ -1116,6 +1118,8 @@ function InsightRow({
   color: string;
   /** Let a long value (a change with its periods named) wrap rather than be cut off. */
   wrapValue?: boolean;
+  /** A class/age filter is on and this row ignores it: tag it "Whole club". */
+  clubWide?: boolean;
 }) {
   return (
     <div className="flex gap-3 py-3 border-b last:border-b-0" style={{ borderColor: "var(--bd-default)" }}>
@@ -1123,7 +1127,7 @@ function InsightRow({
         <Icon className="w-4 h-4" style={{ color }} />
       </div>
       <div className="min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--tx-3)" }}>{label}</p>
+        <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--tx-3)" }}>{label}<WholeClubTag show={clubWide} /></p>
         <p className={`text-sm font-semibold mt-0.5 ${wrapValue ? "break-words" : "truncate"}`} style={{ color: "var(--tx-1)" }}>{value}</p>
         <p className="text-xs mt-0.5" style={{ color: "var(--tx-2)" }}>{detail}</p>
       </div>
@@ -1700,6 +1704,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <InsightRow
               icon={attentionMembers > 0 ? AlertTriangle : ShieldCheck}
               label="Member attention"
+              clubWide={clubWide}
               value={inactiveToReview(attentionMembers, summary.currentMembers)}
               wrapValue
               detail={

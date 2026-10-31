@@ -35,13 +35,17 @@ async function mkClub(label: string, visits: { at: string; method: string }[]): 
     if (visits.length === 0) return { tenantId: t.id };
     const m = await tx.member.create({ data: { tenantId: t.id, name: `cov ${label} member`, email: `${STAMP}-${label}@example.test` } });
     const cls = await tx.class.create({ data: { tenantId: t.id, name: `cov ${label} class`, duration: 60 } });
+    // Imported visits belong to an import job, as lib/attendance-import.ts writes them (the coverage read asks for one first).
+    const job = visits.some((v) => v.method === "import")
+      ? await tx.importJob.create({ data: { tenantId: t.id, createdById: `${STAMP}-${label}`, source: "teamup-attendance", fileName: `${STAMP}.csv`, fileBlobUrl: "none", status: "complete" } })
+      : null;
     for (const v of visits) {
       const day = new Date(v.at);
       const inst = await tx.classInstance.create({
         data: { classId: cls.id, date: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate())), startTime: "18:00", endTime: "19:00" },
       });
       await tx.attendanceRecord.create({
-        data: { tenantId: t.id, memberId: m.id, classInstanceId: inst.id, checkInTime: day, checkInMethod: v.method },
+        data: { tenantId: t.id, memberId: m.id, classInstanceId: inst.id, checkInTime: day, checkInMethod: v.method, importJobId: v.method === "import" ? job!.id : null },
       });
     }
     return { tenantId: t.id };
@@ -74,6 +78,7 @@ describe.skipIf(!HAS_DB)("attendance coverage start is per club", () => {
     if (made.length === 0) return;
     await withRlsBypass(async (tx) => {
       await tx.attendanceRecord.deleteMany({ where: { tenantId: { in: made } } });
+      await tx.importJob.deleteMany({ where: { tenantId: { in: made } } });
       await tx.classInstance.deleteMany({ where: { class: { tenantId: { in: made } } } });
       await tx.class.deleteMany({ where: { tenantId: { in: made } } });
       await tx.member.deleteMany({ where: { tenantId: { in: made } } });

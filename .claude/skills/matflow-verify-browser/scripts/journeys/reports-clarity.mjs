@@ -11,7 +11,7 @@
 //   M  390 px: no horizontal scroll, names wrap inside their card, tags stay inside their tile.
 //
 // Seed (written with `q`, in the shape lib/attendance-import.ts writes: checkInMethod "import"): two kids classes
-// whose names share a long prefix, one kids member, and imported visits on four Saturdays, the last one the
+// whose names share a long prefix, one junior member (a "kids" account needs a parent; junior is in the Kids filter), and imported visits on four Saturdays, the last one the
 // Saturday before this week. Read-only feature: there is no save to fail or retry (NOTE N1). Deletes its seed.
 //
 // Needs `fixture.mjs create` and `server.mjs start`. Run it on a fresh fixture, before journeys that check people
@@ -46,15 +46,20 @@ const GAP_NOTE = `No attendance records for this period (imported history ends $
 // ── Seed ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 const CLASS_A = `Kids BJJ (Age 4–7) Little Grapplers Fundamentals ${TAG}`;
 const CLASS_B = `Kids BJJ (Age 4–7) Little Grapplers Advanced ${TAG}`;
-const seeded = { classes: [], instances: [], members: [], records: [] };
+const seeded = { classes: [], instances: [], members: [], records: [], jobs: [] };
 async function seed() {
+  // The import job the visits belong to (lib/attendance-import.ts writes importJobId on every imported visit).
+  const job = randomUUID();
+  await q(`insert into "ImportJob" (id, "tenantId", "createdById", source, "fileName", "fileBlobUrl", status) values ($1, $2, $3, 'teamup-attendance', $4, 'none', 'complete')`,
+    [job, tenantId, club.owner.id, `clarity-${TAG}.csv`]);
+  seeded.jobs.push(job);
   for (const name of [CLASS_A, CLASS_B]) {
     const id = randomUUID();
     await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity") values ($1, $2, $3, 60, 50)`, [id, tenantId, name]);
     seeded.classes.push(id);
   }
   const kid = randomUUID();
-  await q(`insert into "Member" (id, "tenantId", email, name, "accountType", "waiverAccepted", "updatedAt") values ($1, $2, $3, $4, 'kids', true, now())`,
+  await q(`insert into "Member" (id, "tenantId", email, name, "accountType", "waiverAccepted", "updatedAt") values ($1, $2, $3, $4, 'junior', true, now())`,
     [kid, tenantId, `${club.slug}-kid-${TAG}@example.test`.toLowerCase(), `Kid Clarity ${TAG}`]);
   seeded.members.push(kid);
   for (const [i, sat] of saturdays.entries()) {
@@ -65,8 +70,10 @@ async function seed() {
       seeded.instances.push(inst);
       const rec = randomUUID();
       const at = visitAt(sat, c, i);
-      await q(`insert into "AttendanceRecord" (id, "tenantId", "memberId", "classInstanceId", "checkInTime", "checkInMethod") values ($1, $2, $3, $4, $5, 'import')`,
-        [rec, tenantId, kid, inst, at]);
+      await q(`insert into "AttendanceRecord" (id, "tenantId", "memberId", "classInstanceId", "checkInTime", "checkInMethod", "importJobId") values ($1, $2, $3, $4, $5::timestamp, 'import', $6)`,
+        // The column holds UTC wall time (Prisma's convention): pass the UTC instant as text, never a JS Date,
+        // which node-postgres would send in this machine's zone.
+        [rec, tenantId, kid, inst, at.toISOString().replace("Z", ""), job]);
       seeded.records.push(rec);
     }
   }
@@ -76,18 +83,21 @@ async function cleanup() {
   if (seeded.instances.length) await q(`delete from "ClassInstance" where id = any($1::text[])`, [seeded.instances]);
   if (seeded.classes.length) await q(`delete from "Class" where "tenantId" = $1 and id = any($2::text[])`, [tenantId, seeded.classes]);
   if (seeded.members.length) await q(`delete from "Member" where "tenantId" = $1 and id = any($2::text[])`, [tenantId, seeded.members]);
+  if (seeded.jobs.length) await q(`delete from "ImportJob" where "tenantId" = $1 and id = any($2::text[])`, [tenantId, seeded.jobs]);
   const left = Number((await q(`select (select count(*) from "AttendanceRecord" where id = any($1::text[])) + (select count(*) from "Class" where id = any($2::text[])) + (select count(*) from "Member" where id = any($3::text[])) as n`,
     [seeded.records, seeded.classes, seeded.members]))[0].n);
   L.check("teardown", "T1 the journey's seed is deleted (rows left = 0)", left === 0, { left });
 }
 
-await seed();
+try { await seed(); } catch (e) { await cleanup().catch(() => {}); throw e; }
 L.note("seed", "N0 seeded imported visits on four Saturdays; the last is the Saturday before this week", { lastVisit: lastVisit.toISOString(), historyEnd: historyEnd.toISOString(), monday: monday.toISOString(), zone: clubZone });
 L.note("seed", "N1 read-only change: no save exists to force a failure on or to retry; the failure paths of the page are unchanged", "n/a");
 const liveAfter = Number((await q(`select count(*)::int as n from "AttendanceRecord" where "tenantId" = $1 and "checkInMethod" <> 'import' and "importJobId" is null and "checkInTime" >= $2`, [tenantId, historyEnd]))[0].n);
-const lastImported = (await q(`select max("checkInTime") as t from "AttendanceRecord" where "tenantId" = $1 and ("checkInMethod" = 'import' or "importJobId" is not null)`, [tenantId]))[0].t;
+// Compared in SQL: node-postgres reads a timestamp column back in this machine's zone.
+const lastImported = (await q(`select max("checkInTime") = $2::timestamp as same, to_char(max("checkInTime"), 'YYYY-MM-DD"T"HH24:MI') as t from "AttendanceRecord" where "tenantId" = $1 and ("checkInMethod" = 'import' or "importJobId" is not null)`,
+  [tenantId, lastVisit.toISOString().replace("Z", "")]))[0];
 L.check("seed", "P1 precondition: no MatFlow check-in in this club since the seeded history ends", liveAfter === 0, { liveAfter });
-L.check("seed", "P2 precondition: the seeded visit is the club's latest imported visit", new Date(lastImported).getTime() === lastVisit.getTime(),
+L.check("seed", "P2 precondition: the seeded visit is the club's latest imported visit", lastImported.same === true,
   { lastImported, seededLast: lastVisit.toISOString() });
 
 const browser = await chromium.launch();
@@ -97,13 +107,15 @@ try {
   page.on("pageerror", (e) => errors.push(String(e).slice(0, 200)));
   await ownerSignIn(page, club);
 
-  // C: the coverage the server computes. The report is cached for up to 60 s per club: wait for this seed to show.
+  // C: the coverage the server computes. The report is cached for up to 60 s per club: wait until it holds THIS
+  // run's seed (its classes, by tag), not an earlier run's.
   let api = null;
-  for (let i = 0; i < 16; i++) {
-    api = await page.request.get("/api/reports").then((r) => r.json()).catch(() => null);
-    if (api?.attendanceCoverage?.historyEnd) break;
+  for (let i = 0; i < 20; i++) {
+    api = await page.request.get("/api/reports?period=3m").then((r) => r.json()).catch(() => null);
+    if (api?.topClasses?.some((c) => String(c.name).includes(TAG))) break;
     await sleep(6000);
   }
+  L.check("coverage", "C0 the report holds this run's seed (the 60-second cache has turned over)", !!api?.topClasses?.some((c) => String(c.name).includes(TAG)), { classes: (api?.topClasses ?? []).map((c) => c.name) });
   const cov = api?.attendanceCoverage ?? null;
   L.check("coverage", "C1 /api/reports knows where the imported history ends: the club day after the last imported visit",
     cov?.historyEnd === historyEnd.toISOString(), { saw: cov?.historyEnd ?? null, expected: historyEnd.toISOString() });
@@ -156,15 +168,21 @@ try {
   const churnCard = page.getByTestId("metric-card").filter({ has: page.locator("p", { hasText: /^Churn$/ }) }).first();
   const summary = churnCard.getByText("What counts", { exact: true });
   const before = page.url();
-  await summary.focus();
-  const focusVisible = await summary.evaluate((el) => el === document.activeElement && getComputedStyle(el).outlineStyle !== "none");
+  // By keyboard only: Tab from the churn tile's own link (the control before it) until the summary has focus.
+  await churnCard.locator("a").first().focus();
+  let reachedSummary = false;
+  for (let i = 0; i < 5 && !reachedSummary; i++) {
+    await page.keyboard.press("Tab");
+    reachedSummary = await summary.evaluate((el) => el === document.activeElement);
+  }
+  const focusVisible = reachedSummary && await summary.evaluate((el) => el.matches(":focus-visible") && getComputedStyle(el).outlineStyle !== "none");
+  L.check("keyboard", "W0 Tab from the churn tile's link lands on its \"What counts\", with a visible focus ring", reachedSummary && focusVisible, { reachedSummary, focusVisible });
   await page.keyboard.press("Enter");
   const open = await churnCard.getByTestId("metric-card-more").evaluate((el) => el.open);
   const moreText = norm(await churnCard.getByTestId("metric-card-more").locator("p").innerText());
   L.check("keyboard", "W1 \"What counts\" is reached by focus, opens with Enter, stays on the page and shows churn's full wording",
     open && page.url() === before && moreText.includes("Every cancellation in the period"),
     { open, stayed: page.url() === before, focusVisible, moreText: moreText.slice(0, 160) });
-  L.note("keyboard", "N2 focus ring on the summary (global :focus-visible)", { focusVisible });
   await page.keyboard.press("Enter");
   L.check("keyboard", "W2 Enter again closes it", !(await churnCard.getByTestId("metric-card-more").evaluate((el) => el.open)), {});
 

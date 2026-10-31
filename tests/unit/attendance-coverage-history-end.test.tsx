@@ -145,6 +145,23 @@ describe("2. readAttendanceCoverage", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("a club with records but no import job never runs the latest-imported probe (it would walk every record)", async () => {
+    const calls: unknown[] = [];
+    const findFirst = vi.fn(async (args: unknown) => { calls.push(args); return { checkInTime: new Date("2026-03-03T09:00:00.000Z") }; });
+    const jobs = vi.fn(async () => null);
+    const spans = await readAttendanceCoverage({ attendanceRecord: { findFirst }, importJob: { findFirst: jobs } } as never, "tenant-a", LONDON);
+    expect(spans).toEqual({ start: new Date("2026-03-03T00:00:00.000Z"), historyEnd: null, resumes: null });
+    expect(calls).toHaveLength(1);
+    expect(jobs).toHaveBeenCalledWith({ where: { tenantId: "tenant-a" }, select: { id: true } });
+  });
+
+  it("with an import job the probes run as before", async () => {
+    const { tx, calls } = client([{ checkInTime: new Date("2024-03-04T18:00:00.000Z") }, { checkInTime: new Date("2026-10-25T19:30:00.000Z") }, null]);
+    const withJob = { ...(tx as object), importJob: { findFirst: vi.fn(async () => ({ id: "job-1" })) } };
+    expect((await readAttendanceCoverage(withJob as never, "tenant-a", LONDON)).historyEnd?.toISOString()).toBe("2026-10-26T00:00:00.000Z");
+    expect(calls).toHaveLength(3);
+  });
+
   it("no records at all: one probe", async () => {
     const { tx, calls } = client([null]);
     expect(await readAttendanceCoverage(tx, "tenant-a", LONDON)).toEqual({ start: null, historyEnd: null, resumes: null });
@@ -179,7 +196,7 @@ describe("3. the notes", () => {
   it("once MatFlow check-ins resume, the notes name both runs", () => {
     const r = attendanceCoverageFor(RESUMED, LONDON, { start: "2026-11-02T00:00:00.000Z", end: "2026-11-09T00:00:00.000Z" }, { start: "2026-10-26T00:00:00.000Z", end: "2026-11-02T00:00:00.000Z" });
     expect(r.period).toBe("gap");
-    expect(noRecordsNote(r, "gap")).toBe("No attendance records for this period (imported history ends 25 Oct 2026; MatFlow check-ins start 9 Nov 2026)");
+    expect(noRecordsNote(r, "gap")).toBe("No attendance records for this period (imported history ends 25 Oct 2026; MatFlow check-ins from 9 Nov 2026)");
     expect(partialNote(r, "partial")).toBe("Records cover 4 Mar 2024 – 25 Oct 2026 and from 9 Nov 2026");
   });
 });
@@ -265,6 +282,9 @@ describe("5. the Whole club tag", () => {
     expect(screen.getByText("New this month", { exact: false, selector: "p" }).textContent).toBe("New this monthWhole club");
     expect(screen.getByTestId("reports-joined-tile").textContent).toContain("Joined this month (new + rejoined)Whole club");
     expect(screen.getByRole("heading", { name: /Health Metrics/ }).textContent).toBe("Health MetricsWhole club");
+    expect(screen.getByText("Member attention", { exact: false, selector: "p" }).textContent).toBe("Member attentionWhole club");
+    // A screen reader hears it too: the drill-through link's name carries it.
+    expect(screen.getByRole("link", { name: /^Active members \(whole club\) — see the members behind this number$/ })).toBeTruthy();
     expect(tile("Check-ins")[1]).toBe("Check-ins");
     expect(tile("Busiest class")[1]).toBe("Busiest class");
   });
