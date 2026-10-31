@@ -75,10 +75,25 @@ const norm = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 
 const DEFINITION = "New: first ever start. Rejoined: started again after leaving. Joined = new + rejoined. Left: cancelled, or finished a prepaid course. Net = new + rejoined − left. Tasters added are counted apart, and imports are never joins."; // membership-movement.ts:147-148
 const JOINED_LABEL = "Joined this month (new + rejoined)";                                                 // membership-movement.ts:150, ReportsView.tsx:506
-// Churn (owner decision, 27 Oct 2026): ReportsView.tsx CHURN_TITLE, CHURN_COUNTED and churnValueText — a count, no percentage.
+// Churn (owner decision, 27 Oct 2026): ReportsView.tsx CHURN_TITLE, CHURN_COUNTED and churnValueText. Owner, 31 Oct
+// 2026: "Should show % with number" — "x% (n of m)" (lib/percent formatRatio, ratePct1dp) and churnDetailText.
 const CHURN_TITLE = "Churn";
 const CHURN_COUNTED = "Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide";
 const churnText = (n) => `${fmtNum(n)} ${n === 1 ? "cancellation" : "cancellations"} this month`;
+const fmtRatio = (n, b) => (b > 0 ? `${(Math.round((n * 1000) / b) / 10).toLocaleString("en-GB", { maximumFractionDigits: 1 })}% (${fmtNum(n)} of ${fmtNum(b)})` : "—");
+// Churn's base without the app's figure: everyone who was a member this month = the SQL Active members now + every
+// move out of active this month (Left, and any hand pause); the members at the start = the base − every move in.
+const churnExpect = (activeNow, t, cancelled) => {
+  const base = activeNow + t.lost + (t.otherOut ?? 0);
+  const opening = base - t.new - t.rejoined - (t.imported ?? 0) - (t.otherIn ?? 0);
+  const since = base - opening;
+  return {
+    base, opening, ratio: fmtRatio(cancelled, base),
+    detail: base === 0
+      ? `No members this month · ${CHURN_COUNTED}`
+      : `${churnText(cancelled)}, out of ${fmtNum(base)} ${base === 1 ? "member" : "members"} (${fmtNum(opening)} at the start, ${fmtNum(since)} became ${since === 1 ? "a member" : "members"} since) · ${CHURN_COUNTED}`,
+  };
+};
 const JOINED_LINES = [                                                                                      // ReportsView.tsx:491-496, 513
   { key: "new", label: "New", filter: "new-this-month" },
   { key: "rejoined", label: "Rejoined", filter: "rejoined-this-month" },
@@ -460,12 +475,14 @@ try {
     post.churn.joined === cur.new + cur.rejoined && seedJoined === SEED_JOINED && JSON.stringify(seedNow) === JSON.stringify(SEED_NOW),
     { joined: post.churn.joined, newPlusRejoined: cur.new + cur.rejoined, seedJoined, seedNow, expected: { seedJoined: SEED_JOINED, seedNow: SEED_NOW } });
   // Churn (owner decision, 27 Oct 2026): the cancellations this month. The seed adds exactly one — Eve. Dan's finished
-  // course is Left only, never churn; Cara's rejoin is no cancellation. No rate and no base in the report data.
+  // course is Left only, never churn, but she is in the base; Cara's rejoin is no cancellation and is in the base.
   const churnSeed = post.churn.cancelled - pre.churn.cancelled;
-  L.check("seed", "S8 churn = this month's cancellations: the report's count equals the movement's cancellations, the seed adds 1 (Eve; not Dan's finished course, not Cara), no percentage or base is carried, and Active members equal SQL",
-    post.churn.cancelled === cur.lostCancelled && churnSeed === 1 && !("ratePct" in post.churn) && !("base" in post.churn) && !("churnRate" in post)
+  const CH = churnExpect(E.active, cur, post.churn.cancelled);
+  L.check("seed", "S8 churn = this month's cancellations: the report's count equals the movement's cancellations, the seed adds 1 (Eve; not Dan's finished course, not Cara); its base is everyone who was a member this month (SQL Active members + this month's leavers) and its rate is n ÷ base; Active members equal SQL",
+    post.churn.cancelled === cur.lostCancelled && churnSeed === 1 && post.churn.base === CH.base && post.churn.opening === CH.opening
+      && post.churn.ratePct === (CH.base > 0 ? Math.round((post.churn.cancelled * 1000) / CH.base) / 10 : null) && !("churnRate" in post)
       && post.summary.activeMembers === E.active,
-    { churnSeed, expected: 1, cancelled: post.churn.cancelled, movementCancelled: cur.lostCancelled, keys: Object.keys(post.churn), active: [post.summary.activeMembers, E.active] });
+    { churnSeed, expected: 1, cancelled: post.churn.cancelled, movementCancelled: cur.lostCancelled, app: post.churn, expectedBase: { base: CH.base, opening: CH.opening }, active: [post.summary.activeMembers, E.active] });
   L.note("d11", "N3 D11 for the ledger: the retired joinedAt count would read this month vs the Joined tile now (the seed adds 3 by joinedAt — Ana, Ben, Ivy — and 2 by movement — Ana, Cara)", {
     retiredJoinedAt: { wholeClub: E.joinedAtCount, seed: E.joinedAtCount - tileBefore.joinedAtCount },
     joinedTile: { wholeClub: post.churn.joined, seed: seedJoined },
@@ -494,13 +511,12 @@ try {
       return parts.length > 0 ? `Estimated from ${parts.join(" and ")}` : "Estimated";
     })() : null;
   const est = (d) => (estimateWords ? `${d} · ${estimateWords}` : d);
-  const churnValue = churnText(post.churn.cancelled);
-  const churnLink = tileLink(page, `${CHURN_TITLE}: ${churnValue}`);
+  const churnLink = tileLink(page, `${CHURN_TITLE}: ${CH.ratio}, ${churnText(post.churn.cancelled)}`);
   const churnTile = await pTexts(churnLink);
-  const churnExpected = [churnValue, CHURN_TITLE, est(CHURN_COUNTED)];
+  const churnExpected = [CH.ratio, CHURN_TITLE, est(CH.detail)];
   const nextToChurn = await churnLink.evaluate((el) => el.nextElementSibling?.getAttribute("data-testid") ?? null);
-  L.check("reports", "R4 churn beside it reads \"N cancellations this month\" (the report's cancellations), titled Churn, says what it counts, no percentage, and the Joined tile is its next tile",
-    JSON.stringify(churnTile) === JSON.stringify(churnExpected) && !churnTile.join(" ").includes("%") && nextToChurn === "reports-joined-tile",
+  L.check("reports", "R4 churn beside it reads \"x% (n of m)\" (the report's cancellations of everyone who was a member this month), titled Churn, with both counts in words and what it counts, and the Joined tile is its next tile",
+    JSON.stringify(churnTile) === JSON.stringify(churnExpected) && nextToChurn === "reports-joined-tile",
     { saw: churnTile, expected: churnExpected, nextTile: nextToChurn });
 
   const card = page.getByTestId("net-new-card");
@@ -570,7 +586,7 @@ try {
     joined: healthRow(JOINED_LABEL),
     new: healthRow("New this month"), rejoined: healthRow("Rejoined this month"),
     tasters: healthRow("Tasters added this month"), left: healthRow("Left this month"),
-    churn: healthRow("Churn (cancellations) this month"),
+    churn: healthRow("Churn this month"),
   };
   const csvJoinedExpected = {
     joined: ["Health", JOINED_LABEL, String(post.churn.joined), est(`${joinedTileDetail(cur)} · ${DEFINITION}`)],
@@ -578,9 +594,9 @@ try {
     rejoined: ["Health", "Rejoined this month", String(cur.rejoined), est("Started again after leaving")],
     tasters: ["Health", "Tasters added this month", String(cur.tasterAdded ?? 0), est("Not in Joined or Net")],
     left: ["Health", "Left this month", String(cur.lost), est("Cancelled, or finished a prepaid course")],
-    churn: ["Health", "Churn (cancellations) this month", String(post.churn.cancelled), est(CHURN_COUNTED)],
+    churn: ["Health", "Churn this month", CH.ratio, est(CH.detail)],
   };
-  L.check("csv", "C1 CSV Joined rows = the tile: \"Joined this month (new + rejoined)\" with its New · Rejoined · Tasters added · Left · Net detail, then one row per line; the churn row is the count of cancellations (Left keeps the finished course)",
+  L.check("csv", "C1 CSV Joined rows = the tile: \"Joined this month (new + rejoined)\" with its New · Rejoined · Tasters added · Left · Net detail, then one row per line; the churn row is the tile's \"x% (n of m)\" and words (Left keeps the finished course)",
     JSON.stringify(csvJoined) === JSON.stringify(csvJoinedExpected), { saw: csvJoined, expected: csvJoinedExpected });
   const csvWindow = csv.find((r) => r[0] === "Membership movement");
   L.check("csv", "C2 CSV window row = the tally: window, net, \"New · Rejoined · Left (cancelled, completed course) · Tasters added\" (ReportsView.tsx:321)",

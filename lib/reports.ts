@@ -7,7 +7,7 @@ import { percent, ratePct1dp } from "@/lib/percent";
 import { clubMonthKey, clubMonthWindow, clubMonthWindowForKey, type ClubMonthWindow } from "@/lib/club-month";
 import { emptyMembershipReport, loadMembershipForPeriod, type MembershipReport } from "@/lib/membership-report";
 import { inReportRange, reportPeriodCacheKey, resolveReportPeriod, type ReportPeriodParams, type ReportRange } from "@/lib/report-period";
-import { cancellationsOf, joinedOf, type MembershipBasis } from "@/lib/membership-movement";
+import { cancellationsOf, churnBaseOf, joinedOf, type MembershipBasis } from "@/lib/membership-movement";
 import { liveClassWhere } from "@/lib/class-live";
 import { attendanceCoverageFor, coverageOf, noCoverage, readAttendanceCoverageStart, type AttendanceCoverage, type CoverageState } from "@/lib/attendance-coverage";
 
@@ -70,10 +70,19 @@ export interface ChurnFigures {
    * 26 Oct): the total cancellations in the period — joiners who cancelled
    * included; a finished prepaid course is Left, never churn; one person who
    * cancels twice is two (moves, as Left and Joined count them). Club-wide.
-   * The rule is cancellationsOf (lib/membership-movement.ts). No rate and no
-   * base: a percentage's denominator is not approved, so none is carried.
+   * The rule is cancellationsOf (lib/membership-movement.ts).
    */
   cancelled: number;
+  /** Active members just before the period opened. */
+  opening: number;
+  /**
+   * Churn's base (owner, 31 Oct 2026: "Should show % with number"): everyone
+   * who was a member during the period — `opening` plus every move into active
+   * inside it (churnBaseOf). Never smaller than `cancelled`.
+   */
+  base: number;
+  /** cancelled ÷ base, one decimal place; null when the base is 0 ("—"). */
+  ratePct: number | null;
   /**
    * D11: Joined in the period by the movement definition — new + rejoined
    * (lib/membership-movement.ts), the same figure as the Net New Members
@@ -228,9 +237,9 @@ export interface ReportsData {
     capacityTotal: number;
   }[];
   /**
-   * Churn as a count of cancellations, and joined beside it for the same
-   * period. (`churnRate` was removed on 27 Oct 2026: any percentage would pick
-   * a denominator the owner has not approved.)
+   * Churn: the cancellations, their percentage of everyone who was a member
+   * during the period, and joined beside it for the same period. (The old
+   * opening-cohort `churnRate` was removed on 27 Oct 2026.)
    */
   churn: ChurnFigures;
   retentionRate: number | null;
@@ -451,7 +460,7 @@ export function createEmptyReportsData(): ReportsData {
     currentMembersByStatus: [],
     checkInMethods: [],
     topClasses: [],
-    churn: { cancelled: 0, joined: 0, net: 0 },
+    churn: { cancelled: 0, joined: 0, net: 0, opening: 0, base: 0, ratePct: null },
     retentionRate: null,
     retention: { ratePct: null, survived: 0, cohort: 0 },
     netNewByMonth: [],
@@ -886,13 +895,21 @@ export async function getReportsData(
   // Churn (owner decision, 27 Oct 2026): "the total cancellations in the
   // selected period … including people who joined during that period and then
   // cancelled. Do not substitute an opening-cohort-only count." It supersedes
-  // the opening-cohort rate of 26 Oct for the displayed figure. A count, not a
-  // percentage: the denominator is not approved, so none is computed here.
+  // the opening-cohort rate of 26 Oct for the displayed figure. Its percentage
+  // (owner, 31 Oct 2026) is over everyone who was a member during the period
+  // (churnBaseOf), printed with both counts; an empty base is null ("—").
   // Club-wide: the class and age-group filters do not narrow it (`filters`).
+  const noMoves = periodMoves.basis === "none";
+  const churnCancelled = noMoves ? 0 : cancellationsOf(periodMoves.totals);
+  const churnOpening = noMoves ? 0 : periodMoves.openingHeadcount;
+  const churnBase = noMoves ? 0 : churnBaseOf(periodMoves.openingHeadcount, periodMoves.totals);
   const churn: ChurnFigures = {
-    cancelled: periodMoves.basis === "none" ? 0 : cancellationsOf(periodMoves.totals),
-    joined: periodMoves.basis === "none" ? 0 : joinedOf(periodMoves.totals),
-    net: periodMoves.basis === "none" ? 0 : periodMoves.totals.net,
+    cancelled: churnCancelled,
+    joined: noMoves ? 0 : joinedOf(periodMoves.totals),
+    net: noMoves ? 0 : periodMoves.totals.net,
+    opening: churnOpening,
+    base: churnBase,
+    ratePct: ratePct1dp(churnCancelled, churnBase),
   };
 
   // 0/0 is "no data", not "perfect": a club with no members who joined 6+
@@ -1057,8 +1074,10 @@ export async function getReportsData(
  * `base`, and `churnRate` is gone (owner decision, 27 Oct 2026).
  * "v11" = attendanceCoverage and weeklyAttendance[].coverage; a rate over a
  * period with no attendance records is null (28 Oct 2026).
+ * "v12" = churn carries `opening`, `base` and `ratePct` again, over everyone
+ * who was a member during the period (owner, 31 Oct 2026).
  */
-export const REPORTS_CACHE_VERSION = "v11";
+export const REPORTS_CACHE_VERSION = "v12";
 
 /**
  * The cached read the reports page and API use. Under 25 concurrent staff

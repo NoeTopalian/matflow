@@ -118,7 +118,7 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
       // Churn (27 Oct 2026): the period's cancellations, a count (October has
       // none: lostCancelled 0 below). D11: joined and net are the movement
       // figures for the current month (Oct: 2 new + 1 rejoined).
-      churn: { cancelled: 0, joined: 3, net: 3 },
+      churn: { cancelled: 0, joined: 3, net: 3, opening: 6, base: 9, ratePct: 0 },
       paymentHealth: {
         overdueCount: 0, noPaymentYetCount: 0, failedLast30Days: 0, recoveryRate: 50,
         recovery: { ratePct: 50, recovered: 1, failedMembers: 2 },
@@ -183,11 +183,10 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
     const left = rows.find((r) => r[0] === "Left the club");
     expect(left?.[2]).toBe("1");
     expect(left?.[3]).not.toMatch(/%/);
-    // Churn row: the tile's count of cancellations, what it counts, the period's estimate note, no percentage.
-    const churnRow = rows.find((r) => r[1] === "Churn (cancellations) this month");
-    expect(churnRow?.[2]).toBe("0");
-    expect(churnRow?.[3]).toBe("Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide · Partly estimated");
-    expect(rows.some((r) => /churn/i.test(r[1]) && /%/.test(r[2]))).toBe(false);
+    // Churn row: the tile's percentage with its counts, the cancellations and base in words, what it counts, the period's estimate note.
+    const churnRow = rows.find((r) => r[1] === "Churn this month");
+    expect(churnRow?.[2]).toBe("0% (0 of 9)");
+    expect(churnRow?.[3]).toBe("0 cancellations this month, out of 9 members (6 at the start, 3 became members since) · Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide · Partly estimated");
     // D11: the Joined tile line for line — the movement definition, the card's figures.
     const joined = rows.find((r) => r[1] === "Joined this month (new + rejoined)");
     expect(joined?.[2]).toBe("3");
@@ -236,7 +235,7 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
       summary: { totalMembers: 0, currentMembers: 0, activeMembers: 0, cancelledMembers: 0, totalCheckIns: 0, totalActiveClasses: 0, attendanceThisWeek: 0, attendanceLastWeek: 0, newMembersThisMonth: 0, newMembersLastMonth: 0 },
       attendanceRate: { mode: "checkins-per-member", label: "Rate", value: null, formula: "a / b", numerator: 0, denominator: 0 },
       retention: { ratePct: null, survived: 0, cohort: 0 },
-      churn: { cancelled: 0, joined: 0, net: 0 },
+      churn: { cancelled: 0, joined: 0, net: 0, opening: 0, base: 0, ratePct: null },
       paymentHealth: { recovery: { ratePct: null, recovered: 0, failedMembers: 0 } },
       weeklyAttendance: [], monthlySignups: [], topClasses: [], currentMembersByStatus: [], checkInMethods: [],
       membership: { movementsByMonth: [], headcountByMonth: [] },

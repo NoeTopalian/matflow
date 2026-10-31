@@ -200,61 +200,81 @@ function history({ stayers = 0, leaversNow = 0, leaversLast = 0, joinersNow = 0,
 
 // Churn (owner decision, 27 Oct 2026, superseding the opening-cohort rate of
 // 26 Oct): the total cancellations in the selected period, joiners included.
-// No percentage: its denominator is not approved, so the report carries the
-// count and no rate or base at all.
+// Its percentage (owner, 31 Oct 2026: "Should show % with number") is over
+// everyone who was a member during the period: the active members at its start
+// plus every move into active inside it (churnBaseOf).
 describe("getReportsData — churn is the total cancellations in the period", () => {
-  it("one long-standing member cancels this month → 1 cancellation; joined and net for the same month beside it", async () => {
+  it("one long-standing member cancels this month → 1 cancellation of 12 (10 at the start + 2 joiners); joined and net beside it", async () => {
     setup({ ...BASE, history: history({ stayers: 9, leaversNow: 1, joinersNow: 2 }) });
     const data = await getReportsData("tenant-A");
-    expect(data.churn).toEqual({ cancelled: 1, joined: 2, net: 1 });
+    expect(data.churn).toEqual({ cancelled: 1, joined: 2, net: 1, opening: 10, base: 12, ratePct: 8.3 });
   });
 
-  it("carries no percentage and no denominator anywhere in the report data", async () => {
+  it("carries its percentage and both counts, and no old churnRate field", async () => {
     setup({ ...BASE, history: history({ stayers: 9, leaversNow: 1 }) });
     const data = await getReportsData("tenant-A");
-    expect(data.churn).not.toHaveProperty("ratePct");
-    expect(data.churn).not.toHaveProperty("base");
+    expect(data.churn).toMatchObject({ cancelled: 1, opening: 10, base: 10, ratePct: 10 });
     expect(data).not.toHaveProperty("churnRate");
   });
 
-  it("a joiner who cancels inside the period is counted", async () => {
+  it("a joiner who cancels inside the period is counted, and is in the base", async () => {
     setup({ ...BASE, history: history({ stayers: 3, joinersLeft: 1 }) });
     const data = await getReportsData("tenant-A");
-    expect(data.churn).toEqual({ cancelled: 1, joined: 1, net: 0 });
+    expect(data.churn).toEqual({ cancelled: 1, joined: 1, net: 0, opening: 3, base: 4, ratePct: 25 });
     expect(data.periodMovement.totals).toMatchObject({ new: 1, lost: 1, lostCancelled: 1 });
   });
 
-  it("a club with no history before the period: a joiner who cancels is still 1 cancellation", async () => {
+  it("a club with no history before the period: a joiner who cancels is 1 of 1, 100%", async () => {
     setup({ ...BASE, history: history({ joinersLeft: 1 }) });
     const data = await getReportsData("tenant-A");
-    expect(data.churn.cancelled).toBe(1);
+    expect(data.churn).toMatchObject({ cancelled: 1, opening: 0, base: 1, ratePct: 100 });
   });
 
-  it("a finished prepaid course is counted in Left, not as churn", async () => {
+  it("members brought in by an import during the period are in the base (never joins): 1 of 5", async () => {
+    const h = history({ stayers: 1 });
+    for (let i = 0; i < 4; i++) {
+      const at = thisMonthAt(1);
+      h.events.push(ev(`im${i}`, null, "active", at, { reason: "import", sourceAction: "import_create" }));
+      h.live.push({ id: `im${i}`, status: i === 0 ? "cancelled" : "active", joinedAt: at, cancelledAt: i === 0 ? thisMonthAt(2) : null });
+    }
+    h.events.push(ev("im0", "active", "cancelled", thisMonthAt(2)));
+    setup({ ...BASE, history: h });
+    const data = await getReportsData("tenant-A");
+    expect(data.churn).toMatchObject({ cancelled: 1, joined: 0, opening: 1, base: 5, ratePct: 20 });
+    expect(data.periodMovement.totals).toMatchObject({ imported: 4, new: 0 });
+  });
+
+  it("never exceeds 100%: a member who cancels, rejoins and cancels again brings the rejoin into the base", async () => {
+    setup({ ...BASE, history: history({ repeaters: 1 }) });
+    const data = await getReportsData("tenant-A");
+    expect(data.churn).toMatchObject({ cancelled: 2, opening: 1, base: 2, ratePct: 100 });
+  });
+
+  it("a finished prepaid course is counted in Left, not as churn (but its member is in the base)", async () => {
     setup({ ...BASE, history: history({ stayers: 3, courses: 1 }) });
     const data = await getReportsData("tenant-A");
-    expect(data.churn.cancelled).toBe(0);
+    expect(data.churn).toMatchObject({ cancelled: 0, opening: 4, base: 4, ratePct: 0 });
     expect(data.periodMovement.totals).toMatchObject({ lost: 1, lostCompleted: 1, lostCancelled: 0 });
   });
 
   it("cancel, rejoin and cancel again inside the period is two cancellations (moves, as Left and Joined count them)", async () => {
     setup({ ...BASE, history: history({ stayers: 3, repeaters: 1 }) });
     const data = await getReportsData("tenant-A");
-    expect(data.churn.cancelled).toBe(2);
+    expect(data.churn).toMatchObject({ cancelled: 2, opening: 4, base: 5, ratePct: 40 });
     expect(data.periodMovement.totals).toMatchObject({ rejoined: 1, lostCancelled: 2, lost: 2 });
   });
 
-  it("no members at all is 0 cancellations", async () => {
+  it("no members at all is 0 cancellations and no percentage (an empty base is a dash, never 0%)", async () => {
     setup({ ...BASE, history: history({}) });
     const data = await getReportsData("tenant-A");
-    expect(data.churn).toEqual({ cancelled: 0, joined: 0, net: 0 });
+    expect(data.churn).toEqual({ cancelled: 0, joined: 0, net: 0, opening: 0, base: 0, ratePct: null });
   });
 
-  it("last month: only last month's cancellations", async () => {
+  it("last month: only last month's cancellations, over last month's members", async () => {
     setup({ ...BASE, history: history({ stayers: 8, leaversLast: 2, leaversNow: 1 }) });
     const data = await getReportsData("tenant-A", { period: { period: "last-month" } });
     expect(data.range.key).toBe("last-month");
-    expect(data.churn.cancelled).toBe(2);
+    expect(data.churn).toMatchObject({ cancelled: 2, opening: 11, base: 11, ratePct: 18.2 });
   });
 
   it("stays club-wide: the age-group and class filters do not narrow it", async () => {
@@ -272,7 +292,7 @@ describe("getReportsData — churn is the total cancellations in the period", ()
     // with no status events nobody joined or left by the movement definition.
     setup({ ...BASE, cancelledThisMonth: 4, joinedThisMonth: 1 });
     const data = await getReportsData("tenant-A");
-    expect(data.churn).toMatchObject({ joined: 0, net: 0, cancelled: 0 });
+    expect(data.churn).toMatchObject({ joined: 0, net: 0, cancelled: 0, base: 0, ratePct: null });
   });
 });
 

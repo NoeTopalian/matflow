@@ -216,7 +216,7 @@ describe("Reports tiles, CSV and drill-through agree on the club's month", () =>
     expect(newRows.headline).toBe("2 new this month");
     expect(churnedRows.names).toEqual(["c1"]);
     expect(churnedRows.headline).toBe("1 cancelled this month");
-    expect(csvValue("Churn (cancellations) this month")).toBe("1");
+    expect(csvValue("Churn this month")).toMatch(/^[\d.]+% \(1 of \d+\)$/);
   });
 
   it("mirror: Los Angeles club, UTC server, Auckland browser, 2026-11-01T05:00Z: all three still count October", async () => {

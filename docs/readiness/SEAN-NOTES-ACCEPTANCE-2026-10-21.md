@@ -23,7 +23,7 @@ No item is production-checked yet.
 | 3 | Joins, rejoins, departures, net movement; imports never create joins | live (#47), verified, not production-checked | **headcount-movement 38/0:** New, Rejoined, Left and Net equal the movement; the imported member appears in none. **DB, both roles:** `t8c-membership-db` 2/2, `teamup-rehearsal` 5/5. |
 | 4 | A real member-headcount chart over time, estimates labelled | live (#47), verified, not production-checked | **headcount-movement 38/0:** the axis starts at zero; each month's dot sits at its month-end headcount; today = Active members. **Estimate labels:** covered by unit tests of the chart component (`net-new-members-card`, `membership-movement`). The browser fixture has no import history, so it shows no estimated months. |
 | 5 | Editable weekly, monthly and fixed 4-week limits; four visits usable in one week; no staff override | live (#47), verified, not production-checked | **allowances-periods 56/0:** week, calendar month and every 4 weeks; clear to Unlimited; refusals at each boundary; no override; races. **member-booking-notice 8/0.** **DB, both roles:** `sean-four-every-four-weeks-db` 4/4 (all four classes in one week are admitted at the member's door and the desk; a fifth is refused at both with "used 4 of 4"; the next period starts fresh); `tier-class-allowance-db` 21/21. |
-| 6 | Counts beside percentages; Joined beside churn; churn shown as a count with no percentage until its denominator is decided; one period selector | implemented and tested, awaiting deployment (#52) | **reporting-truth 86/0:** churn is a count with no percentage; Joined is the next tile; every share reads "x% (n of m)"; the period selector works by keyboard and changes churn, Joined and the drill-throughs. **percent-teamup 16/0** (conversion "25% (2 of 8)"). **headcount-movement 38/0.** |
+| 6 | Counts beside percentages; Joined beside churn; churn shown as a percentage with its counts (Noe, 31 Oct 2026: "Should show % with number"); one period selector | live (#52, deployed 29 Oct) as a count; the percentage with counts is on `feat/churn-percent`, not merged | **reporting-truth 86/0:** churn is a count with no percentage; Joined is the next tile; every share reads "x% (n of m)"; the period selector works by keyboard and changes churn, Joined and the drill-throughs. **percent-teamup 16/0** (conversion "25% (2 of 8)"). **headcount-movement 38/0.** |
 | 7 | Class settings for ordinary and competition classes: categories, squad lists, pause, archive, restore | live (#47), verified, not production-checked | **classes-lifecycle 56/0:** create a competition class with a squad and a plan; edit its category; pause closes check-in and booking and resume reopens them; archive states the kept counts and keeps the history; restore. **permissions-matrix 166/0:** only the owner can change these, and never another club's. **DB, both roles:** `class-lifecycle-db` 4/4, `squad-class-tier-db` 7/7. |
 
 **Carried in #52 and left as built** (not part of the seven; no further work):
@@ -39,7 +39,7 @@ No item is production-checked yet.
 3. Reports shows Joined, Rejoined, Left and Net for this month, and the TeamUp import shows no joins.
 4. The Reports headcount chart shows real totals, with estimated months labelled.
 5. A plan set to "4 every 4 weeks" shows its period dates, and clearing the limit reads Unlimited.
-6. On Reports and Analysis, every percentage shows its counts, Joined sits beside churn, and churn is a count without a percentage. The period selector changes the figures.
+6. On Reports and Analysis, every percentage shows its counts, and Joined sits beside churn. Once `feat/churn-percent` is deployed, churn reads "x% (n of m)": the cancellations in the period of everyone who was a member during it, with both counts in words underneath. The period selector changes the figures.
 7. Create a competition class with a squad, then pause, archive and restore a class. Its history stays.
 
 ### Final verification (29 Oct 2026; head `5602b27a`, product code `7edfaa63`)
@@ -127,7 +127,7 @@ Pushed is not deployed. Deployed is not "checked by Sean".
 
 **Open owner questions** (no code change made; each needs Noe):
 
-1. **Churn percentage denominator.**
+1. **Churn percentage denominator.** *Decided 31 Oct 2026:* Noe asked for the percentage with its number; the agent chose option B (everyone who was a member during the period: the members at its start plus every move into active, imports included), which Noe may change to A. Built on `feat/churn-percent`.
    - Option A: cancellations ÷ members active at the start of the period.
    - Option B: cancellations ÷ everyone who was a member at any point in the period.
    - Synthetic example: 40 active on 1 Aug, 10 join, 6 cancel (4 of the 40 and 2 of the joiners). A = 15%, B = 12%.
