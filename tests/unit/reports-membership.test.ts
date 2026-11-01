@@ -34,7 +34,8 @@ vi.mock("@/lib/prisma", () => ({
     tenant: { findUnique: vi.fn() },
     memberStatusEvent: { findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn() },
     importedMembership: { findMany: vi.fn() },
-    importJob: { findMany: vi.fn() },
+    // No import job: the attendance coverage read skips its imported-history probes (31 Oct 2026).
+    importJob: { findMany: vi.fn(), findFirst: async () => null },
   },
 }));
 

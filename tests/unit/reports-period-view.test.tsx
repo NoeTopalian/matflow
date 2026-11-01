@@ -106,7 +106,9 @@ describe("ReportsView with a period", () => {
     expect(screen.getByText("New in the last 3 months", { selector: "p" })).toBeTruthy();
     // Churn: the percentage with its counts, and the cancellations worded for the period, under the title "Churn" (owner, 27 and 31 Oct 2026).
     const churn = screen.getByRole("link", { name: "Churn: 5% (2 of 40), 2 cancellations in the last 3 months — see the members behind this number" });
-    expect([...churn.querySelectorAll("p")].map((p) => p.textContent).slice(0, 3)).toEqual(["5% (2 of 40)", "Churn", "2 cancellations in the last 3 months, out of 40 members (31 at the start, 9 became members since) · Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide"]);
+    expect([...churn.querySelectorAll("p")].map((p) => p.textContent).slice(0, 3)).toEqual(["5% (2 of 40)", "Churn", "2 cancellations in the last 3 months, of 40 members"]);
+    // The full wording, under "What counts" beside the link (31 Oct 2026).
+    expect(within(churn.closest("[data-testid='metric-card']") as HTMLElement).getByTestId("metric-card-more").textContent).toBe("What counts2 cancellations in the last 3 months, out of 40 members (31 at the start, 9 became members since) · Every cancellation in the period, including people who joined during it. Finished prepaid courses are not churn (they are in Left). Club-wide");
     expect(churn.getAttribute("href")).toBe("/dashboard/members?filter=churned-this-month&from=2026-08&to=2026-10");
     const joined = screen.getByTestId("reports-joined-tile");
     expect(within(joined).getByText("Joined in the last 3 months (new + rejoined)")).toBeTruthy();

@@ -89,6 +89,8 @@ const churnExpect = (activeNow, t, cancelled) => {
   const since = base - opening;
   return {
     base, opening, ratio: fmtRatio(cancelled, base),
+    // The tile's one line (ReportsView.tsx churnShortText); `detail` is under "What counts" and in the CSV.
+    short: base === 0 ? "No members this month" : `${churnText(cancelled)}, of ${fmtNum(base)} ${base === 1 ? "member" : "members"}`,
     detail: base === 0
       ? `No members this month · ${CHURN_COUNTED}`
       : `${churnText(cancelled)}, out of ${fmtNum(base)} ${base === 1 ? "member" : "members"} (${fmtNum(opening)} at the start, ${fmtNum(since)} became ${since === 1 ? "a member" : "members"} since) · ${CHURN_COUNTED}`,
@@ -513,11 +515,18 @@ try {
   const est = (d) => (estimateWords ? `${d} · ${estimateWords}` : d);
   const churnLink = tileLink(page, `${CHURN_TITLE}: ${CH.ratio}, ${churnText(post.churn.cancelled)}`);
   const churnTile = await pTexts(churnLink);
-  const churnExpected = [CH.ratio, CHURN_TITLE, est(CH.detail)];
-  const nextToChurn = await churnLink.evaluate((el) => el.nextElementSibling?.getAttribute("data-testid") ?? null);
+  const churnExpected = [CH.ratio, CHURN_TITLE, est(CH.short)];
+  // The link sits inside the churn card, "What counts" beside it: the card is what Joined follows.
+  const nextToChurn = await churnLink.evaluate((el) => el.closest("[data-testid='metric-card']")?.nextElementSibling?.getAttribute("data-testid") ?? null);
   L.check("reports", "R4 churn beside it reads \"x% (n of m)\" (the report's cancellations of everyone who was a member this month), titled Churn, with both counts in words and what it counts, and the Joined tile is its next tile",
     JSON.stringify(churnTile) === JSON.stringify(churnExpected) && nextToChurn === "reports-joined-tile",
     { saw: churnTile, expected: churnExpected, nextTile: nextToChurn });
+  const churnCard = churnLink.locator("xpath=ancestor::*[@data-testid='metric-card'][1]");
+  const beforeMore = page.url();
+  await churnCard.getByText("What counts", { exact: true }).click();
+  const churnMore = norm(await churnCard.getByTestId("metric-card-more").locator("p").innerText());
+  L.check("reports", "R4b churn's \"What counts\" opens in place (no navigation) to both counts in words and what churn counts",
+    churnMore === CH.detail && page.url() === beforeMore, { saw: churnMore, expected: CH.detail, stayed: page.url() === beforeMore });
 
   const card = page.getByTestId("net-new-card");
   await card.scrollIntoViewIfNeeded();

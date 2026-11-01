@@ -176,7 +176,7 @@ interface Props {
  * (it used to be a conditional paragraph, and every click reflowed the bar).
  */
 const SCOPE_NOTE =
-  "Class and age filters scope attendance, check-ins, top classes, the rate above and the owner insights. Growth, churn, retention, payments and the conversion funnel stay club-wide.";
+  "Class and age filters scope attendance, check-ins, top classes, the rate above and the attendance insights. Members, growth, churn, retention, payments and the conversion funnel stay club-wide, marked \"Whole club\" while a filter is on.";
 
 function ScopeInfo() {
   // Focusable (tabIndex) so a keyboard user reaches the note; the global
@@ -191,6 +191,26 @@ function ScopeInfo() {
       tabIndex={0}
     >
       <Info className="w-4 h-4 shrink-0" style={{ color: "var(--tx-3)" }} aria-hidden="true" />
+    </span>
+  );
+}
+
+/**
+ * "Whole club" (31 Oct 2026): beside a figure the class/age filters do NOT
+ * narrow, shown only while a filter is on — so with "Kids" picked, Active
+ * members (everyone) never reads as the number of kids.
+ */
+export const WHOLE_CLUB = "Whole club";
+
+function WholeClubTag({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <span
+      data-testid="whole-club-tag"
+      className="ml-1.5 inline-flex items-center rounded-full border border-bd-default px-1.5 py-px align-middle text-[10px] font-medium normal-case tracking-normal whitespace-nowrap text-tx-2"
+      title="Counts the whole club: the class and age filters do not change this figure"
+    >
+      {WHOLE_CLUB}
     </span>
   );
 }
@@ -261,6 +281,18 @@ function derivedShares(data: ReportsData) {
  * "Includes 12 on hold · 9% of 130 active · 87% of 150 current members".
  * An empty population has no percentage.
  */
+/**
+ * The Active members tile's one line (31 Oct 2026): on hold and the share of
+ * current members. The full definition (activeMembersDetail) sits under the
+ * tile's "What counts" and in the CSV.
+ */
+export function activeMembersShort(summary: Pick<ReportsData["summary"], "activeMembers" | "activeOnHoldMembers" | "currentMembers">): string {
+  return [
+    `Includes ${formatNumber(summary.activeOnHoldMembers ?? 0)} on hold`,
+    shareOf(summary.activeMembers, summary.currentMembers, "current members") ?? `${formatNumber(summary.currentMembers)} current members`,
+  ].join(" · ");
+}
+
 export function activeMembersDetail(summary: Pick<ReportsData["summary"], "activeMembers" | "activeOnHoldMembers" | "currentMembers">): string {
   const onHold = summary.activeOnHoldMembers ?? 0;
   return [
@@ -327,6 +359,27 @@ export function attendanceChartRows(data: Pick<ReportsData, "weeklyAttendance" |
     note: c ? bucketNote(c, row.coverage) : null,
   }));
 }
+
+/**
+ * The chart's no-data stretches, each a run of adjacent bars without records
+ * (31 Oct 2026): before the records start, and after an imported history ends
+ * until MatFlow check-ins begin. One shaded area per run, so a gap at the end
+ * is never drawn as one area across the covered weeks in between.
+ */
+export function noDataRuns<T extends { week: string; value: number | null; coverage?: string }>(rows: T[]): Array<{ from: string; to: string; label: string; bars: number }> {
+  const runs: Array<{ from: string; to: string; label: string; bars: number }> = [];
+  rows.forEach((row, i) => {
+    if (row.value !== null) return;
+    const label = row.coverage === "gap" ? "No records since import" : "No records";
+    const last = runs[runs.length - 1];
+    if (last && i > 0 && rows[i - 1].value === null && last.label === label) { last.to = row.week; last.bars += 1; }
+    else runs.push({ from: row.week, to: row.week, label, bars: 1 });
+  });
+  return runs;
+}
+
+/** A run's label is drawn only when it has room (3+ bars); a narrower run is still shaded, and its bars' tooltips and the card's subtitle say why. */
+export const RUN_LABEL_MIN_BARS = 3;
 
 /** The top classes the class-mix donut shares check-ins across. */
 export function classComposition(topClasses: ReportsData["topClasses"]) {
@@ -425,6 +478,18 @@ export function churnDetailText(
   const since = c.base - c.opening;
   return `${churnValueText(c.cancelled, words)}, out of ${formatNumber(c.base)} ${c.base === 1 ? "member" : "members"} (${formatNumber(c.opening)} at the start, ${formatNumber(since)} became ${since === 1 ? "a member" : "members"} since) · ${CHURN_COUNTED}`;
 }
+
+/** The churn tile's one line (31 Oct 2026): "1 cancellation this month, of 313 members". The full text is under "What counts". */
+export function churnShortText(
+  c: Pick<ReportsData["churn"], "cancelled" | "base">,
+  words: Pick<ReturnType<typeof periodWords>, "during">,
+): string {
+  if (c.base === 0) return `No members ${words.during}`;
+  return `${churnValueText(c.cancelled, words)}, of ${formatNumber(c.base)} ${c.base === 1 ? "member" : "members"}`;
+}
+
+/** The payment recovery tile's one line; RECOVERY_SCOPE is under "What counts". */
+export const RECOVERY_SHORT = "Failed payments since marked paid";
 
 /**
  * Delta as display text, or null when nothing moved. A percentage always
@@ -783,6 +848,7 @@ function JoinedThisMonthTile({
   range,
   words,
   estimate = null,
+  clubWide = false,
 }: {
   joined: number;
   t: MembershipReport["totals"];
@@ -791,6 +857,8 @@ function JoinedThisMonthTile({
   words: ReturnType<typeof periodWords>;
   /** "Partly estimated" (or what an estimate came from) when the period is not wholly recorded. */
   estimate?: string | null;
+  /** A class/age filter is on and this tile ignores it: tag it "Whole club". */
+  clubWide?: boolean;
 }) {
   const lines: { label: string; value: number; filter: MonthDrillFilter }[] = [
     { label: "New", value: t.new, filter: "new-this-month" },
@@ -807,7 +875,7 @@ function JoinedThisMonthTile({
         <UserPlus className="w-5 h-5" style={{ color: "var(--color-primary)" }} />
       </div>
       <p className="mt-5 text-2xl font-bold leading-tight text-tx-1" data-testid="reports-joined-value">{formatNumber(joined)}</p>
-      <p className="text-xs font-medium mt-1 text-tx-3">Joined {words.during} (new + rejoined)</p>
+      <p className="text-xs font-medium mt-1 text-tx-3">Joined {words.during} (new + rejoined)<WholeClubTag show={clubWide} /></p>
       <ul className="mt-2 space-y-0.5 text-[11px]">
         {lines.map((line) => (
           <li key={line.filter}>
@@ -847,9 +915,19 @@ function MetricCard({
   compactValue = false,
   href,
   hrefLabel,
+  clubWide = false,
+  more,
 }: {
   icon: ElementType;
   label: string;
+  /** A class/age filter is on and this figure ignores it: tag it "Whole club". */
+  clubWide?: boolean;
+  /**
+   * The figure's full definition (31 Oct 2026): folded under "What counts" so
+   * the tile reads as one short line, never a paragraph, and nothing is lost.
+   * Outside the drill-through link, so opening it never navigates.
+   */
+  more?: string;
   value: ReactNode;
   detail?: string;
   primaryColor: string;
@@ -886,7 +964,7 @@ function MetricCard({
         >
           {value}
         </p>
-        <p className="text-xs font-medium mt-1" style={{ color: "var(--tx-3)" }}>{label}</p>
+        <p className="text-xs font-medium mt-1" style={{ color: "var(--tx-3)" }}>{label}<WholeClubTag show={clubWide} /></p>
         {detail && <p className="text-[11px] mt-2" style={{ color: "var(--tx-2)" }}>{detail}</p>}
         {/* The trend pill gets its own line. It used to share the top row with
             the icon and chevron, where "−69% vs last week" had ~185px of
@@ -903,23 +981,33 @@ function MetricCard({
     </>
   );
 
+  const whatCounts = more ? (
+    <details className="mt-2 text-[11px]" data-testid="metric-card-more">
+      {/* 44 px tall below sm: a thumb-sized target on a phone (UI-RULES tap targets). */}
+      <summary className="flex min-h-[44px] w-fit cursor-pointer select-none items-center rounded text-tx-3 hover:text-tx-2 sm:min-h-0">What counts</summary>
+      <p className="mt-1 leading-snug text-tx-3">{more}</p>
+    </details>
+  ) : null;
+
   if (href) {
     return (
-      <Link
-        href={href}
-        aria-label={`${hrefLabel ?? label} — see the members behind this number`}
-        className="block rounded-2xl"
-      >
-        <Card data-testid="metric-card" className="h-full min-h-[126px] flex flex-col transition-colors hover:border-bd-hover">
+      <Card data-testid="metric-card" className="h-full min-h-[126px] flex flex-col transition-colors hover:border-bd-hover">
+        <Link
+          href={href}
+          aria-label={`${hrefLabel ?? label}${clubWide ? ` (${WHOLE_CLUB.toLowerCase()})` : ""} — see the members behind this number`}
+          className="block rounded-xl"
+        >
           {body}
-        </Card>
-      </Link>
+        </Link>
+        {whatCounts}
+      </Card>
     );
   }
 
   return (
     <Card data-testid="metric-card" className="h-full min-h-[126px] flex flex-col">
       {body}
+      {whatCounts}
     </Card>
   );
 }
@@ -1005,7 +1093,7 @@ function ProgressRow({
     <div>
       <div className="flex items-start justify-between gap-3 mb-1.5">
         <div className="min-w-0">
-          <p className="text-sm font-medium truncate" style={{ color: "var(--tx-1)" }}>{label}</p>
+          <p className="text-sm font-medium break-words leading-snug" style={{ color: "var(--tx-1)" }}>{label}</p>
           {detail && <p className="text-[11px] mt-0.5" style={{ color: "var(--tx-3)" }}>{detail}</p>}
         </div>
         <span className="text-xs font-semibold shrink-0" style={{ color: "var(--tx-2)" }}>{value}</span>
@@ -1024,6 +1112,7 @@ function InsightRow({
   detail,
   color,
   wrapValue = false,
+  clubWide = false,
 }: {
   icon: ElementType;
   label: string;
@@ -1032,6 +1121,8 @@ function InsightRow({
   color: string;
   /** Let a long value (a change with its periods named) wrap rather than be cut off. */
   wrapValue?: boolean;
+  /** A class/age filter is on and this row ignores it: tag it "Whole club". */
+  clubWide?: boolean;
 }) {
   return (
     <div className="flex gap-3 py-3 border-b last:border-b-0" style={{ borderColor: "var(--bd-default)" }}>
@@ -1039,7 +1130,7 @@ function InsightRow({
         <Icon className="w-4 h-4" style={{ color }} />
       </div>
       <div className="min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--tx-3)" }}>{label}</p>
+        <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--tx-3)" }}>{label}<WholeClubTag show={clubWide} /></p>
         <p className={`text-sm font-semibold mt-0.5 ${wrapValue ? "break-words" : "truncate"}`} style={{ color: "var(--tx-1)" }}>{value}</p>
         <p className="text-xs mt-0.5" style={{ color: "var(--tx-2)" }}>{detail}</p>
       </div>
@@ -1161,6 +1252,8 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
     filters.ageGroup === "adult" ? "Adults" : filters.ageGroup === "kids" ? "Kids" : null,
   ].filter(Boolean).join(" · ");
   const scopedWindowLabel = filterSuffix ? `${windowLabel} · ${filterSuffix}` : windowLabel;
+  // While a filter is on, every figure it does NOT narrow carries "Whole club" (31 Oct 2026).
+  const clubWide = filterSuffix !== "";
   // Attendance coverage (owner rule, 28 Oct 2026): with no records for the
   // period the attendance figures are "—" with `cov.missing` as their note;
   // a period that starts before the records names where they start.
@@ -1453,8 +1546,10 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <MetricCard
           icon={Users}
           label="Active members"
+          clubWide={clubWide}
           value={formatNumber(summary.activeMembers)}
-          detail={`Now · ${activeMembersDetail(summary)}`}
+          detail={`Now · ${activeMembersShort(summary)}`}
+          more={activeMembersDetail(summary)}
           primaryColor={primaryColor}
           href="/dashboard/members?filter=active"
         />
@@ -1476,8 +1571,10 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <MetricCard
           icon={UserPlus}
           label={`New ${words.during}`}
+          clubWide={clubWide}
           value={formatNumber(summary.newMembersThisMonth)}
-          detail={[NEW_SCOPE, periodPairEstimateNote(data)].filter(Boolean).join(" · ")}
+          detail={["First ever start", periodPairEstimateNote(data)].filter(Boolean).join(" · ")}
+          more={NEW_SCOPE}
           primaryColor={primaryColor}
           // The period against the equal period before it; a period that ends
           // today is "so far", the one before it whole.
@@ -1494,6 +1591,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <MetricCard
           icon={Calendar}
           label="Active classes"
+          clubWide={clubWide}
           value={formatNumber(summary.totalActiveClasses)}
           detail="Now · live timetable classes"
           primaryColor={primaryColor}
@@ -1521,7 +1619,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               attendanceLabel,
               weeklyAttendance.some((r) => r.isCurrentWeek) ? `current ${byMonth ? "month" : "week"} highlighted` : null,
               weeklyAttendance.some((r) => r.inPeriod === false) ? "earlier weeks faint for context" : null,
-              !cov.missing && noDataRows.length > 0 ? `${byMonth ? "months" : "weeks"} before the records start shaded as no data` : null,
+              !cov.missing && noDataRows.length > 0 ? `${byMonth ? "months" : "weeks"} without records shaded as no data` : null,
             ].filter(Boolean).join(", ")}
             icon={Activity}
           />
@@ -1550,16 +1648,17 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   tickLine={false}
                   allowDecimals={false}
                 />
-                {noDataRows.length > 0 && (
+                {noDataRuns(chartRows).map((run) => (
                   <ReferenceArea
-                    x1={noDataRows[0].week}
-                    x2={noDataRows[noDataRows.length - 1].week}
+                    key={run.from}
+                    x1={run.from}
+                    x2={run.to}
                     fill="var(--tx-4)"
                     fillOpacity={0.12}
                     ifOverflow="extendDomain"
-                    label={{ value: "No records", position: "insideTop", fill: "var(--tx-3)", fontSize: 11 }}
+                    label={run.bars >= RUN_LABEL_MIN_BARS ? { value: run.label, position: "insideTop", fill: "var(--tx-3)", fontSize: 11 } : undefined}
                   />
-                )}
+                ))}
                 <Tooltip content={<ChartTooltip suffix="check-ins" noteFor={(p) => (p as { note?: string | null }).note ?? null} />} cursor={{ fill: "var(--sf-2)" }} />
                 <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={34}>
                   {chartRows.map((row) => (
@@ -1608,6 +1707,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             <InsightRow
               icon={attentionMembers > 0 ? AlertTriangle : ShieldCheck}
               label="Member attention"
+              clubWide={clubWide}
               value={inactiveToReview(attentionMembers, summary.currentMembers)}
               wrapValue
               detail={
@@ -1625,9 +1725,9 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <Card>
           <SectionTitle
             title="Joined"
-            subtitle={monthlySignups.some((r) => r.inPeriod === false)
+            subtitle={`${clubWide ? `${WHOLE_CLUB} · ` : ""}${monthlySignups.some((r) => r.inPeriod === false)
               ? `Joined (new + rejoined) per month · ${range.label} shaded, earlier months for context`
-              : `Joined (new + rejoined) per month · ${range.label}`}
+              : `Joined (new + rejoined) per month · ${range.label}`}`}
             icon={UserPlus}
           />
           {monthlySignups.every((row) => row.count === 0) ? (
@@ -1707,7 +1807,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
               never a share of the people still on the books. */}
           <SectionTitle
             title="Current members by status"
-            subtitle="Share of current members: active, inactive and tasters. Excludes guardians."
+            subtitle={`${clubWide ? `${WHOLE_CLUB} · ` : ""}Share of current members: active, inactive and tasters. Excludes guardians.`}
             icon={Users}
           />
           {summary.currentMembers === 0 ? (
@@ -1791,7 +1891,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
       {/* Health Metrics ─────────────────────────────────────────────────────── */}
       <div>
         <div className="mb-3">
-          <h2 className="font-semibold text-base" style={{ color: "var(--tx-1)" }}>Health Metrics</h2>
+          <h2 className="font-semibold text-base" style={{ color: "var(--tx-1)" }}>Health Metrics<WholeClubTag show={clubWide} /></h2>
           <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
             Member lifecycle and payment health at a glance.
           </p>
@@ -1812,8 +1912,10 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           <MetricCard
             icon={UserMinus}
             label={CHURN_TITLE}
+            clubWide={clubWide}
             value={<RatioValue pct={churn.ratePct} n={churn.cancelled} base={churn.base} />}
-            detail={withEstimate(churnDetailText(churn, words), estimateLabel(pm.basis, estimatedCaption(membership)))}
+            detail={withEstimate(churnShortText(churn, words), estimateLabel(pm.basis, estimatedCaption(membership)))}
+            more={churnDetailText(churn, words)}
             primaryColor={primaryColor}
             // The churn slice lists the people behind the count: everyone
             // with a cancelled move in the period, joiners included.
@@ -1827,12 +1929,15 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
             range={range}
             words={words}
             estimate={estimateLabel(pm.basis, estimatedCaption(membership))}
+            clubWide={clubWide}
           />
           <MetricCard
             icon={RefreshCcw}
             label="Payment recovery rate"
+            clubWide={clubWide}
             value={<RatioValue pct={recovery.ratePct} n={recovery.recovered} base={recovery.failedMembers} />}
-            detail={recovery.failedMembers > 0 ? RECOVERY_SCOPE : "No failed payments in the period"}
+            detail={recovery.failedMembers > 0 ? RECOVERY_SHORT : "No failed payments in the period"}
+            more={recovery.failedMembers > 0 ? RECOVERY_SCOPE : undefined}
             primaryColor={primaryColor}
           />
         </div>
@@ -1860,7 +1965,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
         <NetNewMembersCard membership={membership} />
         <div className="grid grid-cols-1 gap-4">
           <Card>
-            <SectionTitle title="Payment Health" subtitle={`Overdue now · failures ${words.during}`} icon={CreditCard} />
+            <SectionTitle title="Payment Health" subtitle={`${clubWide ? `${WHOLE_CLUB} · ` : ""}Overdue now · failures ${words.during}`} icon={CreditCard} />
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-6">
               <Link
                 href="/dashboard/members?filter=overdue"

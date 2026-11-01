@@ -204,7 +204,7 @@ describe("3. a period that straddles the records start (Feb – Apr 2026)", () =
     expect(screen.getByTestId("reports-trend-coverage").textContent).toBe(RECORDS_START);
     expect(screen.getByTestId("rate-readout-note").textContent).toBe(RECORDS_START);
     expect(within(card("Top Classes")).getByText(`Check-ins, average attendance, and fill rate — Feb – Apr 2026 · ${RECORDS_START}`)).toBeTruthy();
-    expect(within(card("Weekly Attendance")).getByText(`Feb – Apr 2026 · ${RECORDS_START}, weeks before the records start shaded as no data`)).toBeTruthy();
+    expect(within(card("Weekly Attendance")).getByText(`Feb – Apr 2026 · ${RECORDS_START}, weeks without records shaded as no data`)).toBeTruthy();
   });
 
   it("bars before the start are no-data, not zero, and every uncovered bar is marked for the tooltip", () => {

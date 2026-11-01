@@ -190,7 +190,9 @@ describe("estimate labels: Reports screen", () => {
     expect(screen.getByTestId("reports-joined-estimate").textContent).toBe(
       "Partly estimated: some of this month's moves are reconstructed, not recorded at the time.",
     );
-    expect(screen.getByText(/First ever start\. Rejoins, tasters and imports are counted apart · This month partly estimated · last month estimated from your TeamUp history/)).toBeTruthy();
+    // One short line on the tile; the definition sits under "What counts" (31 Oct 2026).
+    expect(screen.getByText("First ever start · This month partly estimated · last month estimated from your TeamUp history")).toBeTruthy();
+    expect(screen.getByText("First ever start. Rejoins, tasters and imports are counted apart")).toBeTruthy();
     expect(screen.getByTestId("reports-joined-chart-estimate").textContent).toBe(
       "Estimated from your TeamUp history: Aug 2026, Sep 2026. Partly estimated: Oct 2026. Hollow dots are not wholly recorded at the time.",
     );

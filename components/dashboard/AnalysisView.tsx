@@ -331,10 +331,12 @@ export default function AnalysisView({ metrics, primaryColor }: Props) {
     const state = p.coverage ?? (metrics.coverage && !metrics.coverage.start ? "none" : "covered");
     return !noCoverage(state);
   });
-  // Under the chart: months before the records start are left out, and it says where they start.
+  // Under the chart: months without records are left out, and it says where
+  // the records run (after an imported history they can stop, 31 Oct 2026).
   const c = metrics.coverage;
   const trendNote = !c ? null
     : !c.start ? NO_ATTENDANCE_YET
+    : (metrics.monthlyTrend ?? []).some((p) => p.coverage === "gap") ? `${partialNote(c, "partial")}; months without records are left out`
     : (metrics.monthlyTrend ?? []).some((p) => noCoverage(p.coverage)) ? `Records start ${coverageDate(c.start, c.timeZone)}; earlier months have no records` : null;
   // Engagement = % of members with ≥1 check-in this month (bounded 0..100).
   const engagementRate = metrics.totalMembers > 0
