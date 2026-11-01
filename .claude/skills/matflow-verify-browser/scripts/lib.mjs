@@ -34,12 +34,18 @@ export async function freshCode(secret) {
 
 /** Raw SQL on the TEST branch with RLS bypassed (fixtures and assertions only). */
 export async function q(sql, params = []) {
-  const c = new pg.Client({ connectionString: DB_URL, statement_timeout: 30000 });
+  // Client-side limits too: statement_timeout is enforced by the server, so a connection Neon drops silently would
+  // otherwise block a journey forever (accounts-and-members hung 5 h on 23 Oct). A timeout fails the step loudly.
+  const c = new pg.Client({ connectionString: DB_URL, statement_timeout: 30000, connectionTimeoutMillis: 20000, query_timeout: 45000, keepAlive: true });
   await c.connect();
   try {
     await c.query("begin");
     await c.query("select set_config('app.bypass_rls','on',true)");
-    const r = await c.query(sql, params);
+    // Every timestamp column in this schema is `timestamp` WITHOUT zone holding UTC wall-clock (Prisma's DateTime;
+    // no timestamptz anywhere). node-postgres sends a JS Date in the machine's local zone, so during BST it stored and
+    // matched an hour off (a 00:00Z day marker became 01:00; review of 23 Oct). Send a Date as its UTC wall-clock.
+    const sqlParams = params.map((v) => (v instanceof Date ? v.toISOString().replace("T", " ").replace("Z", "") : v));
+    const r = await c.query(sql, sqlParams);
     await c.query("commit");
     return r.rows;
   } catch (e) { await c.query("rollback").catch(() => {}); throw e; } finally { await c.end(); }
