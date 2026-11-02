@@ -14,6 +14,7 @@ import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { isTenantBlobUrl } from "@/lib/blob-url";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
+import { firstForeignAttribution, attributionNotFoundMessage } from "@/lib/attribution-scope";
 import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
 import { refuseSupportSession, refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
@@ -368,6 +369,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // panel shows it. Nothing is cut short (an undo restores `from` verbatim).
     const norm = (v: unknown) => (v instanceof Date ? v.toISOString() : v ?? null);
     const isoDate = (d: unknown) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ?? null);
+
+    // Attribution ids a PATCH may set must resolve inside this tenant (reviewer
+    // A-1, 2026-11-02); an unresolved foreign id is rejected before the update,
+    // matching the membershipTier check above.
+    const foreignAttribution = await withTenantContext(session.user.tenantId, (tx) =>
+      firstForeignAttribution(tx, session.user.tenantId, parsed.data),
+    );
+    if (foreignAttribution) {
+      return NextResponse.json({ error: attributionNotFoundMessage(foreignAttribution) }, { status: 400 });
+    }
 
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
       // Version history (2026-08-17): before-values for the from→to diff in
