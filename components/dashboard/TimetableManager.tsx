@@ -1621,7 +1621,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   const byDay: DaySession[][] = Array.from({ length: 7 }, (_, i) =>
     visibleClasses
       .flatMap((cls) => cls.schedules.filter((s) => s.dayOfWeek === i).map((slot) => ({ cls, slot })))
-      .sort((a, b) => a.slot.startTime.localeCompare(b.slot.startTime))
+      .sort((a, b) => a.slot.startTime.localeCompare(b.slot.startTime) || a.cls.name.localeCompare(b.cls.name))
   );
 
   function openAdd() {
@@ -2097,7 +2097,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                         const chipStates = chipStatesFor(byDay[agendaDow], agendaIsToday, cancelledToday);
                         return byDay[agendaDow].map(({ cls, slot }, i) => (
                           <ClassChip
-                            key={`${cls.id}|${slot.startTime}`}
+                            key={slot.id}
                             cls={cls}
                             startTime={slot.startTime}
                             primaryColor={primaryColor}
@@ -2158,7 +2158,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                             ) : (
                               daySessions.map(({ cls, slot }, i) => (
                                 <ClassChip
-                                  key={`${cls.id}|${slot.startTime}`}
+                                  key={slot.id}
                                   cls={cls}
                                   startTime={slot.startTime}
                                   primaryColor={primaryColor}

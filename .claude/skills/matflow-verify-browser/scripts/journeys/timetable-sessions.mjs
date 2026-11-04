@@ -16,9 +16,12 @@ const errors = [];
 const DAY = { 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 0: "Sun" };
 
 const gridDay = (page, day) => page.locator(".grid-cols-7 > div").filter({ has: page.getByText(day, { exact: true }) });
-const chips = (page, day, name) => gridDay(page, day).getByRole("button", { name: `Edit ${name}`, exact: true });
+// On today's column a chip's name carries its state: "Edit Gi (live)". Match the class, whatever the day.
+const chipName = (name) => new RegExp(`^Edit ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( \\([a-z]+\\))?$`);
+const chips = (page, day, name) => gridDay(page, day).getByRole("button", { name: chipName(name) });
 const allChips = (page, day) => gridDay(page, day).getByRole("button", { name: /^Edit / });
 const times = async (loc) => (await loc.allTextContents()).map((t) => t.match(/\d\d:\d\d/)?.[0]);
+const labels = async (loc) => (await loc.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")))).map((l) => l?.replace(/ \([a-z]+\)$/, ""));
 const slots = async (classId) =>
   q(`select "dayOfWeek", "startTime" from "ClassSchedule" where "classId" = $1 and "isActive" = true order by "dayOfWeek", "startTime"`, [classId]);
 const isPatch = (id) => (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/classes/${id}` && !r.url().includes("dryRun");
@@ -83,8 +86,8 @@ try {
   await section("interleave", "a second class at Mon 19:30 sits after the three Gi chips; every chip opens its own class", async () => {
     adv = await create(main, ADV, [[1, "19:30"]]);
     await expect.poll(() => times(allChips(main, "Mon")), { timeout: 20_000 }).toEqual(["06:30", "12:00", "18:40", "19:30"]);
-    const labels = await allChips(main, "Mon").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
-    expect(labels).toEqual([`Edit ${GI}`, `Edit ${GI}`, `Edit ${GI}`, `Edit ${ADV}`]);
+    const monday = await labels(allChips(main, "Mon"));
+    expect(monday).toEqual([`Edit ${GI}`, `Edit ${GI}`, `Edit ${GI}`, `Edit ${ADV}`]);
     await allChips(main, "Mon").nth(1).click();
     await expect(main.getByLabel("Class Name", { exact: true })).toHaveValue(GI);
     await expect(main.getByLabel("Day of the week")).toHaveCount(6);
@@ -94,14 +97,14 @@ try {
     await expect(main.getByLabel("Class Name", { exact: true })).toHaveValue(ADV);
     await main.keyboard.press("Escape");
     await expect(main.getByRole("dialog")).toHaveCount(0);
-    return { monday: labels };
+    return { monday };
   });
 
   await section("keyboard", "Tab moves through the three Monday Gi chips in order; Enter opens the class; focus is visible", async () => {
     await allChips(main, "Mon").nth(0).focus();
     const seen = [];
     for (let i = 0; i < 3; i++) {
-      seen.push(await main.evaluate(() => ({ label: document.activeElement?.getAttribute("aria-label"), time: document.activeElement?.textContent?.match(/\d\d:\d\d/)?.[0] })));
+      seen.push(await main.evaluate(() => ({ label: document.activeElement?.getAttribute("aria-label")?.replace(/ \([a-z]+\)$/, ""), time: document.activeElement?.textContent?.match(/\d\d:\d\d/)?.[0] })));
       if (i < 2) await main.keyboard.press("Tab");
     }
     expect(seen).toEqual([{ label: `Edit ${GI}`, time: "06:30" }, { label: `Edit ${GI}`, time: "12:00" }, { label: `Edit ${GI}`, time: "18:40" }]);
@@ -123,8 +126,11 @@ try {
     await main.getByLabel("Start time", { exact: true }).nth(row).fill("12:30");
     const url = `**/api/classes/${gi.id}`;
     await main.route(url, (r) => (r.request().method() === "PATCH" ? r.abort() : r.continue()));
+    const aborted = main.waitForEvent("requestfailed", (r) => r.method() === "PATCH" && new URL(r.url()).pathname === `/api/classes/${gi.id}`);
     await main.getByRole("button", { name: "Save changes", exact: true }).click();
+    await aborted;
     await expect(main.getByRole("button", { name: "Save changes", exact: true })).toBeEnabled();
+    await expect(main.getByRole("dialog")).toHaveCount(1);
     await expect(main.getByLabel("Start time", { exact: true }).nth(row)).toHaveValue("12:30");
     await main.unroute(url);
     await main.route(url, (r) =>
@@ -155,30 +161,35 @@ try {
 
   await shot(main, "timetable-sessions-desktop");
 
-  await section("phone", "390 x 844: Monday's agenda lists four sessions in time order, the day picker counts 4, no sideways scroll, rows are tappable", async () => {
-    const mobile = await context(browser, "10.94.3.2", { viewport: { width: 390, height: 844 }, isMobile: true, storageState: await ctx.storageState() });
+  await section("phone", "375 x 812: Monday's agenda lists four sessions in time order, the day picker counts 4, no sideways scroll, rows are tappable", async () => {
+    const mobile = await context(browser, "10.94.3.2", { viewport: { width: 375, height: 812 }, isMobile: true, storageState: await ctx.storageState() });
     const phone = await mobile.newPage();
     phone.on("pageerror", (e) => errors.push(e.message));
-    await phone.goto("/dashboard/timetable");
-    const tab = phone.getByRole("tab", { name: /^Mon/ });
-    await tab.click();
-    const agenda = phone.locator('[role="tablist"][aria-label="Day of week"] + div');
-    const rows = agenda.getByRole("button", { name: /^Edit / });
-    await expect(rows).toHaveCount(4);
-    const order = await times(rows);
-    const labels = await rows.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
-    const counts = await phone.getByRole("tab").evaluateAll((els) => els.map((e) => e.querySelectorAll("span")[2]?.textContent));
-    const boxes = [];
-    for (let i = 0; i < 4; i++) { const b = await rows.nth(i).boundingBox(); boxes.push(b ? Math.round(b.height) : null); }
-    const noSideScroll = await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
-    await shot(phone, "timetable-sessions-phone");
-    await mobile.close();
-    expect(order).toEqual(["06:30", "12:30", "18:40", "19:30"]);
-    expect(labels).toEqual([`Edit ${GI}`, `Edit ${GI}`, `Edit ${GI}`, `Edit ${ADV}`]);
-    expect(counts).toEqual(["4", "1", "1", "—", "—", "1", "—"]);
-    expect(noSideScroll).toBe(true);
-    expect(Math.min(...boxes)).toBeGreaterThanOrEqual(44);
-    return { order, counts, rowHeights: boxes, noSideScroll };
+    try {
+      await phone.goto("/dashboard/timetable");
+      await phone.getByRole("tab", { name: /^Mon/ }).click();
+      const agenda = phone.locator('[role="tablist"][aria-label="Day of week"] + div');
+      const rows = agenda.getByRole("button", { name: /^Edit / });
+      await expect(rows).toHaveCount(4);
+      const order = await times(rows);
+      const names = await labels(rows);
+      const counts = await phone.getByRole("tab").evaluateAll((els) => els.map((e) => e.querySelectorAll("span")[2]?.textContent));
+      const boxes = [];
+      for (let i = 0; i < 4; i++) { const b = await rows.nth(i).boundingBox(); boxes.push(b ? Math.round(b.height) : null); }
+      const noSideScroll = await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+      await shot(phone, "timetable-sessions-phone");
+      expect(order).toEqual(["06:30", "12:30", "18:40", "19:30"]);
+      expect(names).toEqual([`Edit ${GI}`, `Edit ${GI}`, `Edit ${GI}`, `Edit ${ADV}`]);
+      expect(counts).toEqual(["4", "1", "1", "—", "—", "1", "—"]);
+      expect(noSideScroll).toBe(true);
+      expect(Math.min(...boxes)).toBeGreaterThanOrEqual(44);
+      return { order, counts, rowHeights: boxes, noSideScroll };
+    } catch (e) {
+      await shot(phone, "timetable-sessions-fail-phone").catch(() => {});
+      throw e;
+    } finally {
+      await mobile.close();
+    }
   });
 
   await section("database", "exactly the typed sessions are stored, per class", async () => {

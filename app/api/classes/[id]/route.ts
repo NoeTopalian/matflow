@@ -694,7 +694,7 @@ export async function PATCH(req: Request, { params }: Params) {
       const found = await tx.class.findFirst({
         where: { id, tenantId },
         include: {
-          schedules: { where: { isActive: true } }, requiredRank: true, maxRank: true, coachUser: { select: { id: true, name: true } },
+          schedules: { where: { isActive: true }, orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }] }, requiredRank: true, maxRank: true, coachUser: { select: { id: true, name: true } },
           allowedTiers: { select: { tier: { select: { id: true, name: true, isActive: true } } } },
         },
       });

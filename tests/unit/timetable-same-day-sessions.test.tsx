@@ -6,7 +6,7 @@
 // sessions on one day collapsed to its first slot. They are built from
 // sessions now: one chip per (class, slot), in time order.
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import React from "react";
 import TimetableManager, { chipStatesFor } from "@/components/dashboard/TimetableManager";
@@ -69,6 +69,10 @@ const PROPS = {
 };
 
 beforeEach(() => {
+  // Thursday 5 Nov 2026, 10:00 — a day with no fixture sessions, so no chip
+  // carries a Live / Next / Ended suffix in its name (on a Monday they would).
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 10, 5, 10, 0));
   vi.unstubAllGlobals();
   vi.stubGlobal(
     "fetch",
@@ -79,6 +83,8 @@ beforeEach(() => {
     }),
   );
 });
+
+afterEach(() => vi.useRealTimers());
 
 /** The desktop week grid's column for a weekday (0 = Monday … 6 = Sunday). */
 function gridColumn(container: HTMLElement, index: number): HTMLElement {
