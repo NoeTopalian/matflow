@@ -54,8 +54,11 @@ describe("member schedule — the mat beside side-by-side sessions", () => {
     // The day strip renders three panels (previous, current, next); today's panel holds the pair.
     const labelled = gi.filter((b) => b.querySelector('[data-testid="schedule-cell-place"]'));
     expect(labelled.length).toBeGreaterThanOrEqual(2);
-    expect(labelled.map((b) => b.querySelector('[data-testid="schedule-cell-place"]')?.textContent).slice(0, 2).sort()).toEqual(["Mat 1 · ", "Mat 2 · "]);
+    expect(labelled.map((b) => b.querySelector('[data-testid="schedule-cell-place"]')?.textContent?.trim()).slice(0, 2).sort()).toEqual(["Mat 1", "Mat 2"]);
+    // The mat takes the coach's place on that line (plan §3: `18:40–19:30 · Mat 2`).
+    expect(labelled[0].textContent).not.toContain("Sam Doe");
     const open = await screen.findAllByRole("button", { name: /^Open Mat, 20:00 to 21:00/ });
     expect(open.every((b) => !b.querySelector('[data-testid="schedule-cell-place"]'))).toBe(true);
+    expect(open[0].textContent).toContain("Sam Doe");
   });
 });

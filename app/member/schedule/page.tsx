@@ -577,6 +577,8 @@ function SessionBlock({
           }}
         >
           {cls.name}
+          {/* A short block has no second line; the mat still shows when it is the differentiator. */}
+          {short && showPlace && cls.location ? <span className="font-normal" style={{ color: muted }} data-testid="schedule-cell-place"> · {cls.location}</span> : null}
         </p>
         {cls.isKids && (
           <span
@@ -633,7 +635,8 @@ function SessionBlock({
         <p className="leading-tight truncate mt-0.5" style={{ color: muted, fontSize: 10 }}>
           {/* T6c: the category leads the line when the class has one. */}
           {classCategoryTag(cls) && <span data-testid="schedule-cell-category">{classCategoryTag(cls)} · </span>}
-          {cls.time}–{cls.endTime} · {showPlace && cls.location ? <span data-testid="schedule-cell-place">{cls.location} · </span> : null}{cls.coach}
+          {/* Side by side with another session, the mat replaces the coach: it is what tells two of the same class apart. */}
+          {cls.time}–{cls.endTime} · {showPlace && cls.location ? <span data-testid="schedule-cell-place">{cls.location}</span> : cls.coach}
         </p>
       )}
       {isSub && !short && !live && (

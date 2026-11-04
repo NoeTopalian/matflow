@@ -76,6 +76,8 @@ try {
     await expect(dayView(main)).toBeVisible();
     await expect(main.getByTestId("week-scroller")).toHaveCount(0);
     await expect(main.getByTestId("timetable-view-day")).toHaveAttribute("aria-pressed", "true");
+    await expect(main.getByRole("button", { name: "Previous week" })).toBeVisible();
+    await expect(main.getByRole("button", { name: "Next week" })).toBeVisible();
     const hours = await grid(main).evaluate((g) => [...g.querySelectorAll("span")].map((s) => s.textContent).filter((t) => /^\d\d:00$/.test(t)));
     await main.getByTestId("timetable-view-week").click();
     await expect(main.getByTestId("week-scroller")).toBeVisible();
@@ -85,8 +87,8 @@ try {
     return { hours: `${hours[0]}–${hours[hours.length - 1]}` };
   });
 
-  await section("lanes", "Monday: nine blocks in time order; the staggered trio shares two lanes by measured position; the 18:40 trio sits three abreast with its duplicates flagged", async () => {
-    await dayView(main).getByRole("tab", { name: /^Mon/ }).click();
+  await section("lanes", `Monday: ${MONDAY} blocks in time order; the staggered trio shares two lanes by measured position; the 18:40 trio sits three abreast with its duplicates flagged`, async () => {
+    await dayView(main).getByRole("button", { name: /^Monday/ }).click();
     const all = blocks(grid(main));
     await expect(all).toHaveCount(MONDAY);
     const labels = (await all.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")))).map(stripped);
@@ -101,7 +103,7 @@ try {
       "Edit Beginners Course Gi, 18:40 to 19:30",
       "Edit Beginners Course Gi, 18:40 to 19:30",
       "Edit Advanced Gi Comp Class, 19:30 to 21:00",
-    ].slice(0, MONDAY));
+    ]);
     const boxes = await all.evaluateAll((els) => els.map((e) => { const b = e.getBoundingClientRect(); return { x: Math.round(b.x), w: Math.round(b.width), y: Math.round(b.y), h: Math.round(b.height) }; }));
     const [, , , champs, kids, teens, gi1, gi2, gi3] = boxes;
     expect(kids.x).toBeGreaterThan(champs.x + champs.w - 8); // side by side
@@ -127,25 +129,29 @@ try {
   });
 
   await section("four-way", "Saturday's four-way clash is one group block; it opens to four blocks with their mats and collapses", async () => {
-    await dayView(main).getByRole("tab", { name: /^Sat/ }).click();
+    await dayView(main).getByRole("button", { name: /^Saturday/ }).click();
     const group = main.getByTestId("day-grid-cluster");
     await expect(group).toBeVisible();
     await expect(group).toContainText("4 classes at once");
     await expect(blocks(grid(main))).toHaveCount(0);
-    await group.click();
+    // Open it from the keyboard: focus lands on the first row; Collapse returns focus to the group.
+    await group.focus();
+    await main.keyboard.press("Enter");
     const open = main.getByTestId("day-grid-cluster-open");
     await expect(blocks(open)).toHaveCount(4);
+    expect(await main.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toMatch(/^Edit Juniors Comp, 10:00 to 10:45/);
     const rows = await blocks(open).allTextContents();
     // Rows keep the day's order (same start → by name), each with its own mat.
     expect(rows.map((t) => t.replace(/ · Mat \d.*$/, "").replace(/\d\d:\d\d.*$/, "").trim())).toEqual(["Juniors Comp", "Kids BJJ", "Little Champs", "Teens"]);
     expect(rows.map((t) => t.match(/Mat \d/)?.[0]).sort()).toEqual(["Mat 1", "Mat 2", "Mat 3", "Mat 4"]);
     await open.getByRole("button", { name: "Collapse" }).click();
     await expect(main.getByTestId("day-grid-cluster-open")).toHaveCount(0);
+    expect(await main.evaluate(() => document.activeElement?.getAttribute("data-testid"))).toBe("day-grid-cluster");
     return { rows: rows.map((t) => t.match(/^[A-Za-z ]+/)?.[0].trim() + " / " + t.match(/Mat \d/)?.[0]) };
   });
 
   await section("keyboard", "Tab reaches each Monday block in order and Enter opens it; focus is visible", async () => {
-    await dayView(main).getByRole("tab", { name: /^Mon/ }).click();
+    await dayView(main).getByRole("button", { name: /^Monday/ }).click();
     await blocks(grid(main)).first().focus();
     const seen = [];
     for (let i = 0; i < 4; i++) {

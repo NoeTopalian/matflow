@@ -1702,7 +1702,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
     const scroller = col?.parentElement?.parentElement;
     if (!col || !scroller || scroller.scrollWidth <= scroller.clientWidth + 1) return;
     col.scrollIntoView({ inline: "center", block: "nearest" });
-  }, [weekOffset]);
+  }, [weekOffset, desktopView]);
   // Which day the MOBILE agenda is showing. Defaults to today so a phone opens
   // on the day the owner almost always wants, rather than on Sunday.
   const [agendaDow, setAgendaDow] = useState(() => new Date().getDay());
@@ -2220,21 +2220,24 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                     </Button>
                   </div>
                   <div className="flex items-center gap-2">
-                    {weekOffset !== 0 && (
-                      <Button variant="secondary" size="compact" onClick={() => setWeekOffset(0)}>
+                    {(weekOffset !== 0 || (desktopView === "day" && dayDow !== new Date().getDay())) && (
+                      <Button variant="secondary" size="compact" onClick={() => { setWeekOffset(0); setDayDow(new Date().getDay()); }}>
                         Today
                       </Button>
                     )}
-                    {/* Desktop only: the phone already shows one day at a time. */}
+                    {/* Desktop only: the phone already shows one day at a time. The
+                        selected segment is white on the grey track (UI-RULES §4a.5). */}
                     <div className="hidden md:flex items-center gap-1 rounded-lg p-0.5" role="group" aria-label="Timetable view" style={{ background: "var(--sf-2)" }}>
                       {(["week", "day"] as const).map((v) => (
                         <Button
                           key={v}
-                          variant={desktopView === v ? "secondary" : "ghost"}
+                          variant="ghost"
                           size="compact"
                           aria-pressed={desktopView === v}
                           onClick={() => setDesktopView(v)}
                           data-testid={`timetable-view-${v}`}
+                          className={desktopView === v ? "border" : ""}
+                          style={desktopView === v ? { background: "var(--sf-1)", borderColor: "var(--bd-active)", boxShadow: "var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.08))", color: "var(--tx-1)" } : { color: "var(--tx-2)" }}
                         >
                           {v === "week" ? "Week" : "Day"}
                         </Button>
@@ -2399,25 +2402,27 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                      in lanes, so a clash is visible. Same hours, same lane maths as
                      the member day view (lib/schedule-state). */
                   <div className="hidden md:block" data-testid="day-view">
-                    <div className="flex gap-1.5 mb-3" role="tablist" aria-label="Day">
+                    <div className="flex gap-1.5 mb-3 rounded-xl p-1" role="group" aria-label="Day" style={{ background: "var(--sf-2)" }}>
                       {weekDates.map((date, rawIdx) => {
                         const dow = rawIdx === 6 ? 0 : rawIdx + 1;
                         const isToday = date.getTime() === todayMidnight.getTime();
                         const n = byDay[dow].length;
+                        const selected = dayDow === dow;
                         return (
                           <Button
                             key={rawIdx}
-                            role="tab"
-                            aria-selected={dayDow === dow}
-                            variant={dayDow === dow ? "secondary" : "ghost"}
+                            aria-pressed={selected}
+                            aria-label={`${DAYS_FULL[dow]} ${date.getDate()}${isToday ? ", today" : ""}, ${n === 0 ? "no sessions" : `${n} session${n === 1 ? "" : "s"}`}`}
+                            variant="ghost"
                             size="compact"
                             onClick={() => setDayDow(dow)}
-                            className="h-auto flex-col gap-0 px-3 py-1.5"
+                            className={["h-auto flex-col gap-0 px-3 py-1.5", selected ? "border" : ""].join(" ")}
+                            style={selected ? { background: "var(--sf-1)", borderColor: "var(--bd-active)", boxShadow: "var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.08))" } : undefined}
                           >
-                            <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: isToday ? primaryColor : undefined }}>
+                            <span className={["text-[10px] font-semibold uppercase tracking-wider", isToday ? "underline underline-offset-2" : ""].join(" ")} style={{ color: "var(--tx-1)" }}>
                               {DAYS[dow]} {date.getDate()}
                             </span>
-                            <span className="text-[10px] tabular-nums" style={{ color: "var(--tx-4)" }}>{n === 0 ? "—" : n}</span>
+                            <span className="text-[10px] tabular-nums" style={{ color: "var(--tx-3)" }}>{n === 0 ? "—" : n}</span>
                           </Button>
                         );
                       })}
@@ -2430,6 +2435,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                       return (
                         <div className="rounded-2xl border p-3 pt-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
                           <DayGrid
+                            key={dayDow}
                             items={sessions.map(({ cls, slot }, i) => ({
                               key: slot.id,
                               name: cls.name,
@@ -2442,13 +2448,13 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                             }))}
                             startHour={dayHours.startHour}
                             endHour={dayHours.endHour}
-                            hourHeight={48}
+                            hourHeight={56}
                             isToday={isToday}
-                            action="Edit"
-                            onActivate={(key) => {
+                            action={canManage ? "Edit" : undefined}
+                            onActivate={canManage ? (key) => {
                               const s = sessions.find((x) => x.slot.id === key);
-                              if (s && canManage) openEdit(s.cls);
-                            }}
+                              if (s) openEdit(s.cls);
+                            } : undefined}
                             emptyText="No sessions on this day"
                           />
                         </div>
