@@ -27,7 +27,7 @@ const SEED = [
   ["Beginners Course Gi", "Mat 1", [[1, "18:40", "19:30"]]],
   ["Advanced Gi Comp Class", "Mat 1", [[1, "19:30", "21:00"]]],
 ];
-const MONDAY = SEED.flatMap(([, , s]) => s.filter(([d]) => d === 1)).length; // 9
+const MONDAY = SEED.flatMap(([, , s]) => s.filter(([d]) => d === 1)).length; // 10
 
 const dayView = (page) => page.getByTestId("day-view");
 const grid = (page) => page.getByTestId("day-grid");
@@ -135,11 +135,13 @@ try {
     await group.click();
     const open = main.getByTestId("day-grid-cluster-open");
     await expect(blocks(open)).toHaveCount(4);
-    const mats = await blocks(open).allTextContents();
-    expect(mats.map((t) => t.match(/Mat \d/)?.[0])).toEqual(["Mat 1", "Mat 2", "Mat 3", "Mat 4"]);
+    const rows = await blocks(open).allTextContents();
+    // Rows keep the day's order (same start → by name), each with its own mat.
+    expect(rows.map((t) => t.replace(/ · Mat \d.*$/, "").replace(/\d\d:\d\d.*$/, "").trim())).toEqual(["Juniors Comp", "Kids BJJ", "Little Champs", "Teens"]);
+    expect(rows.map((t) => t.match(/Mat \d/)?.[0]).sort()).toEqual(["Mat 1", "Mat 2", "Mat 3", "Mat 4"]);
     await open.getByRole("button", { name: "Collapse" }).click();
     await expect(main.getByTestId("day-grid-cluster-open")).toHaveCount(0);
-    return { mats: mats.map((t) => t.match(/Mat \d/)?.[0]) };
+    return { rows: rows.map((t) => t.match(/^[A-Za-z ]+/)?.[0].trim() + " / " + t.match(/Mat \d/)?.[0]) };
   });
 
   await section("keyboard", "Tab reaches each Monday block in order and Enter opens it; focus is visible", async () => {
