@@ -973,6 +973,7 @@ function ClassForm({
   onSave,
   onCancel,
   saving,
+  error = null,
 }: {
   initial: Partial<ClassRow> | null;
   rankSystems: RankOption[];
@@ -982,6 +983,8 @@ function ClassForm({
   onSave: (data: Record<string, unknown>) => void;
   onCancel: () => void;
   saving: boolean;
+  /** Why the last save was refused, shown beside the buttons (UI-RULES §7) — never a toast over them. */
+  error?: string | null;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [coachName, setCoachName] = useState(initial?.coachName ?? "");
@@ -1654,6 +1657,23 @@ function ClassForm({
 
       {/* Actions — a disabled button always says why (UI-RULES §7). */}
       <div className="pt-2 space-y-2">
+        {error && (
+          // A refused save stays with the form, above the buttons it belongs
+          // to: on a phone a toast sat over Cancel / Save and the class
+          // status controls.
+          <p
+            role="alert"
+            data-testid="class-form-save-error"
+            className="text-xs rounded-lg px-3 py-2"
+            style={{
+              background: "color-mix(in srgb, var(--hue-danger) 10%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--hue-danger) 35%, transparent)",
+              color: "var(--hue-danger-ink)",
+            }}
+          >
+            {error}
+          </p>
+        )}
         {missing.length > 0 && (
           <p role="status" className="text-xs" style={{ color: "var(--tx-3)" }}>
             Fill in: {missing.join(", ")}.
@@ -1690,6 +1710,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [generating, setGenerating] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   // Desktop: the week grid, or one day on a time axis (lanes show what clashes).
@@ -1823,6 +1844,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
 
   function openAdd() {
     setEditTarget(null);
+    setSaveError(null);
     setDrawerOpen(true);
   }
 
@@ -1837,11 +1859,13 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
 
   function openEdit(cls: ClassRow) {
     setEditTarget(cls);
+    setSaveError(null);
     setDrawerOpen(true);
   }
 
   async function handleSave(data: Record<string, unknown>) {
     setSaving(true);
+    setSaveError(null);
     try {
       // D2 (booking preservation, approved 21 Oct 2026): a change to who can
       // attend — squad list, rank gate or memberships — is previewed first:
@@ -1922,7 +1946,8 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
       }
       setDrawerOpen(false);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Something went wrong", "error");
+      // In the form, beside the buttons — not a toast that lands on top of them.
+      setSaveError(err instanceof Error && err.message ? err.message : "Something went wrong. Try again.");
     } finally {
       setSaving(false);
     }
@@ -2527,6 +2552,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
           onSave={handleSave}
           onCancel={() => setDrawerOpen(false)}
           saving={saving}
+          error={saveError}
         />
         {/* T6b: the lifecycle actions, on the class itself as well as its card. */}
         {editTarget && canManage && (
