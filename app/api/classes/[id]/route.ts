@@ -696,11 +696,19 @@ export async function PATCH(req: Request, { params }: Params) {
         include: {
           schedules: { where: { isActive: true } }, requiredRank: true, maxRank: true, coachUser: { select: { id: true, name: true } },
           allowedTiers: { select: { tier: { select: { id: true, name: true, isActive: true } } } },
+          // The squad, in the timetable page's shape: without it the client
+          // kept the row's old roster, so a just-saved squad class reopened
+          // showing no squad until the next page load.
+          rosterMembers: { select: { memberId: true, member: { select: { name: true } } } },
         },
       });
       if (!found) return null;
-      const { allowedTiers, ...rest } = found;
-      const cls = { ...rest, allowedTiers: (allowedTiers ?? []).map((t) => t.tier) };
+      const { allowedTiers, rosterMembers, ...rest } = found;
+      const cls = {
+        ...rest,
+        allowedTiers: (allowedTiers ?? []).map((t) => t.tier),
+        roster: (rosterMembers ?? []).map((r) => ({ memberId: r.memberId, name: r.member?.name })),
+      };
       return {
         cls, scheduleChange, before, tiersBefore, tiersAfter, keptBookings, sessionsCreatedOnResume,
         lifecycleChange, legacyArchivedOn,
