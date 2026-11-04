@@ -33,15 +33,25 @@ const PROPS = { rankSystems: [], coachUsers: [], primaryColor: "#2563eb", role: 
 type Call = { url: string; method: string; body: Record<string, unknown> | undefined };
 let calls: Call[];
 let saved: ClassRow[];
+let failWrites: boolean;
 beforeEach(() => {
   calls = [];
   saved = [];
+  failWrites = false;
   refresh.mockClear();
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url, method, body });
+    if (method === "DELETE" && url.includes("dryRun=1")) {
+      return { ok: true, json: async () => ({ dryRun: true, state: "active", attendanceCount: 0, rosterCount: 0, bookingCount: 0 }) };
+    }
+    if (method === "DELETE") {
+      if (failWrites) return { ok: false, json: async () => ({ error: "Synthetic failure" }) };
+      return { ok: true, json: async () => ({ success: true, archivedAt: "2026-11-04T00:00:00.000Z" }) };
+    }
     if (url.includes("dryRun=1")) return { ok: true, json: async () => ({ dryRun: true, restriction: null }) };
+    if (failWrites && method === "PATCH") return { ok: false, json: async () => ({ error: "Synthetic failure" }) };
     if (url === "/api/locations") return { ok: true, json: async () => ({ locations: [] }) };
     if (method === "PATCH" && typeof body?.isActive === "boolean") {
       return { ok: true, json: async () => ({ id: url.split("/").at(-1), sessionsCreatedOnResume: body.isActive ? 8 : 0 }) };
@@ -171,6 +181,71 @@ describe("after a confirmed change the page asks for a fresh snapshot", () => {
     render(<TimetableManager {...PROPS} initialClasses={[makeClass("c1", [1, 2])]} initialInactiveClasses={[]} />);
     await pauseFromCard();
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("an edit requests exactly one refresh", async () => {
+    const view = render(<TimetableManager {...PROPS} initialClasses={[makeClass("c1", [1, 2])]} initialInactiveClasses={[]} />);
+    fireEvent.click(gridDay(view.container, "Tue").getByRole("button", { name: "Edit Gi" }));
+    fireEvent.change(screen.getAllByLabelText("Start time")[1], { target: { value: "19:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("an archive requests exactly one refresh", async () => {
+    render(<TimetableManager {...PROPS} initialClasses={[makeClass("c1", [1, 2])]} initialInactiveClasses={[]} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Archive Gi" })[0]);
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Archive class" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Restore Gi" })).toBeTruthy());
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("a resume requests exactly one refresh", async () => {
+    const view = render(
+      <TimetableManager {...PROPS} initialClasses={[]} initialInactiveClasses={[makeClass("c1", [1, 2], { lifecycle: "paused" })]} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Resume Gi" }));
+    await waitFor(() => expectDays(view.container, { Mon: 1, Tue: 1 }));
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a failed pause, archive or resume changes nothing and requests no refresh", () => {
+  it("pause", async () => {
+    failWrites = true;
+    const view = render(<TimetableManager {...PROPS} initialClasses={[makeClass("c1", [1, 2])]} initialInactiveClasses={[]} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Pause Gi" })[0]);
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Pause class" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expectDays(view.container, { Mon: 1, Tue: 1 });
+    expect(screen.queryByTestId("inactive-classes")).toBeNull();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("archive", async () => {
+    failWrites = true;
+    const view = render(<TimetableManager {...PROPS} initialClasses={[makeClass("c1", [1, 2])]} initialInactiveClasses={[]} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Archive Gi" })[0]);
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Archive class" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && !c.url.includes("dryRun"))).toBe(true));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expectDays(view.container, { Mon: 1, Tue: 1 });
+    expect(screen.queryByTestId("inactive-classes")).toBeNull();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("resume", async () => {
+    failWrites = true;
+    const view = render(
+      <TimetableManager {...PROPS} initialClasses={[]} initialInactiveClasses={[makeClass("c1", [1, 2], { lifecycle: "paused" })]} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Resume Gi" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Resume Gi" }) as HTMLButtonElement).disabled).toBe(false));
+    expectDays(view.container, { Mon: 0, Tue: 0 });
+    expect(screen.getAllByTestId("inactive-class-c1")).toHaveLength(1);
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("a failed save requests none, keeps the form open and the typed value", async () => {

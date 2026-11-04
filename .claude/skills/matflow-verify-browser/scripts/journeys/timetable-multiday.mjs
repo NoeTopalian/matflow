@@ -1,11 +1,11 @@
 // Timetable: Gi on Monday and Tuesday stays on screen (synthetic data only).
-//   node timetable-multiday.mjs   (after `node fixture.mjs create` and a running server)
+//   node run-journeys.mjs timetable-multiday   (needs a running server)
 // Covers the stale-snapshot fix (another tab's change after a route refresh,
 // browser Back after a save, pause/resume elsewhere) and the journeys around
 // it: keyboard creation, failed saves with one-request retry, same-name
 // classes, the who-can-attend preview, archive/restore and phone width.
 import { createRequire } from "node:module";
-import { chromium, state, q, ledger, shot, context, ownerSignIn } from "./lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn } from "../lib.mjs";
 
 const require = createRequire(import.meta.url);
 const { expect } = require("@playwright/test");
