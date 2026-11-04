@@ -15,7 +15,7 @@ import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { hex } from "@/lib/color";
 import { describeApiError } from "@/lib/api-field-errors";
-import { sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
+import { duplicateSessionKeys, packLanes, sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
 import type { ClassRow, CoachUserOption, TierOption } from "@/app/dashboard/timetable/page";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, classCategoryLabel, classCategoryTag } from "@/lib/class-category";
@@ -140,6 +140,9 @@ const UNCATEGORISED = "__uncategorised";
 function ClassChip({
   cls,
   startTime,
+  endTime,
+  place,
+  duplicate = false,
   primaryColor,
   canManage,
   onEdit,
@@ -148,11 +151,17 @@ function ClassChip({
 }: {
   cls: ClassRow;
   startTime: string | undefined;
+  /** With `endTime` the chip shows `start–end` (inside an overlap group, where the end decides the clash). */
+  endTime?: string;
+  /** Mat or coach, shown inside an overlap group — the only thing that tells two same-time sessions apart. */
+  place?: string | null;
+  /** Looks like the same session entered twice (lib/schedule-state#duplicateSessionKeys). A flag for staff, never a merge. */
+  duplicate?: boolean;
   primaryColor: string;
   canManage: boolean;
   onEdit: (cls: ClassRow) => void;
-  /** "grid" = dense 7-column cell, "agenda" = full-width mobile row. */
-  size?: "grid" | "agenda";
+  /** "grid" = 7-column cell, "compact" = two-line cell for a busy day, "agenda" = full-width mobile row. */
+  size?: "grid" | "agenda" | "compact";
   /**
    * Today's temporal state for this slot (lib/schedule-state.ts) — the same
    * words the member's day view uses. `null` on any other day. Today's
@@ -167,28 +176,100 @@ function ClassChip({
     state === "live" ? "var(--hue-success)" : state === "next" ? "var(--hue-info)" : null;
   const stateInk =
     state === "live" ? "var(--hue-success-ink)" : state === "next" ? "var(--hue-info-ink)" : "var(--tx-3)";
+  const label = canManage
+    ? `Edit ${cls.name}${showState ? ` (${sessionStateLabel(state).toLowerCase()})` : ""}${duplicate ? " (possible duplicate)" : ""}`
+    : undefined;
+  const timeText = endTime ? `${startTime}–${endTime}` : `${startTime}${cls.duration != null ? ` · ${cls.duration}m` : ""}`;
+  const statePill = showState && (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px]"
+      style={{
+        background: stateTint ? `color-mix(in srgb, ${stateTint} 14%, transparent)` : "var(--sf-2)",
+        border: `1px solid ${stateTint ? `color-mix(in srgb, ${stateTint} 45%, transparent)` : "var(--bd-default)"}`,
+        color: stateInk,
+      }}
+    >
+      {state === "live" && (
+        <span
+          aria-hidden="true"
+          className="w-1.5 h-1.5 rounded-full motion-safe:animate-pulse"
+          style={{ background: "var(--hue-success)" }}
+        />
+      )}
+      {sessionStateLabel(state)}
+    </span>
+  );
+  const duplicateText = duplicate && (
+    <span className="font-semibold" style={{ color: "var(--hue-warning-ink)" }}>Duplicate?</span>
+  );
+  const frame = {
+    background: hex(color, 0.12),
+    border: `1px solid ${hex(color, 0.2)}`,
+    borderLeft: duplicate ? "3px solid var(--hue-warning)" : state === "live" ? `3px solid ${color}` : undefined,
+    opacity: state === "ended" || state === "cancelled" ? 0.55 : undefined,
+  };
+  if (size === "compact") {
+    // A busy day (DENSE_DAY+ sessions) or an overlap group: the time range and
+    // place on one line, the full name on its own line — never a truncated
+    // name beside a time.
+    return (
+      <button
+        type="button"
+        onClick={() => canManage && onEdit(cls)}
+        disabled={!canManage}
+        aria-label={label}
+        data-session-state={state ?? undefined}
+        data-chip-size="compact"
+        className="w-full text-left rounded-[10px] px-2 py-1 transition-all enabled:hover:brightness-110 disabled:cursor-default"
+        style={frame}
+      >
+        <span className="flex items-center gap-1.5 min-w-0">
+          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
+          <span className="text-[11px] font-bold tabular-nums shrink-0" style={{ color: "var(--tx-1)" }}>{timeText}</span>
+          {statePill}
+          <span className="ml-auto text-[10px] truncate" style={{ color: "var(--tx-3)" }}>{duplicateText || place}</span>
+        </span>
+        <span className="flex items-center gap-1 min-w-0 pl-3">
+          <span
+            className={["text-xs font-semibold truncate min-w-0 flex-1", state === "cancelled" ? "line-through" : ""].join(" ")}
+            style={{ color: "var(--tx-1)" }}
+          >
+            {cls.name}
+          </span>
+          {cls.isKids && (
+            <span
+              className="inline-flex items-center rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px] shrink-0"
+              style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
+            >
+              Kids
+            </span>
+          )}
+          {classCategoryTag(cls) && (
+            <span
+              data-testid="class-chip-category"
+              className="inline-flex items-center rounded-full px-1.5 font-semibold tracking-wide leading-4 text-[9px] shrink-0"
+              style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
+            >
+              {classCategoryTag(cls)}
+            </span>
+          )}
+        </span>
+      </button>
+    );
+  }
   return (
     <button
       type="button"
       onClick={() => canManage && onEdit(cls)}
       disabled={!canManage}
-      aria-label={
-        canManage
-          ? `Edit ${cls.name}${showState ? ` (${sessionStateLabel(state).toLowerCase()})` : ""}`
-          : undefined
-      }
+      aria-label={label}
       data-session-state={state ?? undefined}
       className={[
         "w-full text-left flex items-start gap-1.5 transition-all",
         "enabled:hover:brightness-110 disabled:cursor-default",
         agenda ? "rounded-xl px-3 py-2.5 gap-2.5" : "rounded-xl px-2 py-1.5",
       ].join(" ")}
-      style={{
-        background: hex(color, 0.12),
-        border: `1px solid ${hex(color, 0.2)}`,
-        borderLeft: state === "live" ? `3px solid ${color}` : undefined,
-        opacity: state === "ended" || state === "cancelled" ? 0.55 : undefined,
-      }}
+      style={frame}
     >
       <div
         className={agenda ? "w-2 h-2 rounded-full shrink-0 mt-1.5" : "w-1.5 h-1.5 rounded-full shrink-0 mt-1"}
@@ -207,7 +288,9 @@ function ClassChip({
           {cls.name}
         </p>
         <p className={agenda ? "text-xs mt-0.5 flex items-center gap-1.5 flex-wrap" : "text-[10px] mt-0.5 flex items-center gap-1 flex-wrap"} style={{ color: "var(--tx-3)" }}>
-          <span>{startTime}{cls.duration != null && ` · ${cls.duration}m`}</span>
+          <span className="tabular-nums">{timeText}</span>
+          {place && !duplicate && <span>· {place}</span>}
+          {duplicateText}
           {cls.isKids && (
             <span
               className="inline-flex items-center rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px]"
@@ -225,28 +308,96 @@ function ClassChip({
               {classCategoryTag(cls)}
             </span>
           )}
-          {showState && (
-            <span
-              className="inline-flex items-center gap-1 rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px]"
-              style={{
-                background: stateTint ? `color-mix(in srgb, ${stateTint} 14%, transparent)` : "var(--sf-2)",
-                border: `1px solid ${stateTint ? `color-mix(in srgb, ${stateTint} 45%, transparent)` : "var(--bd-default)"}`,
-                color: stateInk,
-              }}
-            >
-              {state === "live" && (
-                <span
-                  aria-hidden="true"
-                  className="w-1.5 h-1.5 rounded-full motion-safe:animate-pulse"
-                  style={{ background: "var(--hue-success)" }}
-                />
-              )}
-              {sessionStateLabel(state)}
-            </span>
-          )}
+          {statePill}
         </p>
       </div>
     </button>
+  );
+}
+
+/** A day with this many sessions switches the week to the wider, compact layout. */
+export const DENSE_DAY = 7;
+
+export type SessionGroup = { members: number[]; lanes: number; startMin: number; endMin: number };
+
+/**
+ * One day's sessions as overlap groups, in time order. A group is a run of
+ * sessions that overlap transitively (the clustering the member day view's
+ * lanes use); `lanes` is the most that run at once — "up to 2" for a staggered
+ * 16:30–17:15 / 17:00–17:45 / 17:30–18:30, never 3. A session that overlaps
+ * nothing is a group of one.
+ */
+export function groupSessions(sessions: DaySession[]): SessionGroup[] {
+  const packed = packLanes(sessions.map(({ slot }) => spanMinutes(slot.startTime, slot.endTime)), { maxLanes: Number.MAX_SAFE_INTEGER });
+  return packed.clusters.map((c) => ({ members: [...c.members].sort((a, b) => a - b), lanes: c.lanes, startMin: c.startMin, endMin: c.endMin }));
+}
+export const groupLabel = (g: SessionGroup) => (g.lanes === g.members.length ? `${g.lanes} at once` : `Up to ${g.lanes} at once`);
+const minToTime = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+const placeOf = (cls: ClassRow) => cls.location ?? cls.coachUser?.name ?? cls.coachName ?? null;
+
+/**
+ * The chips of one day: a plain chip per session, and an overlap group (rail,
+ * "Up to N at once", compact chips showing start–end and place) wherever
+ * sessions overlap. Used by the week grid and the phone agenda.
+ */
+function DaySessions({
+  sessions,
+  states,
+  size,
+  duplicates,
+  primaryColor,
+  canManage,
+  onEdit,
+}: {
+  sessions: DaySession[];
+  states: (SessionState | null)[];
+  /** Chip size outside an overlap group; inside one the grid uses "compact", the agenda stays "agenda". */
+  size: "grid" | "compact" | "agenda";
+  duplicates: ReadonlySet<string>;
+  primaryColor: string;
+  canManage: boolean;
+  onEdit: (cls: ClassRow) => void;
+}) {
+  const chip = (i: number, grouped: boolean) => {
+    const { cls, slot } = sessions[i];
+    return (
+      <ClassChip
+        key={slot.id}
+        cls={cls}
+        startTime={slot.startTime}
+        endTime={grouped ? slot.endTime : undefined}
+        place={grouped ? placeOf(cls) : undefined}
+        duplicate={duplicates.has(slot.id)}
+        primaryColor={primaryColor}
+        canManage={canManage}
+        onEdit={onEdit}
+        size={grouped && size !== "agenda" ? "compact" : size}
+        state={states[i]}
+      />
+    );
+  };
+  return (
+    <>
+      {groupSessions(sessions).map((g) =>
+        g.members.length === 1 ? (
+          chip(g.members[0], false)
+        ) : (
+          <div
+            key={`group-${sessions[g.members[0]].slot.id}`}
+            role="group"
+            aria-label={`${groupLabel(g)}, ${minToTime(g.startMin)} to ${minToTime(g.endMin)}`}
+            data-testid="overlap-group"
+            className="space-y-1 pl-1.5 ml-0.5 border-l-2"
+            style={{ borderColor: "var(--bd-strong, rgba(0,0,0,0.16))" }}
+          >
+            <p className={size === "agenda" ? "text-xs font-semibold" : "text-[10px] font-semibold"} style={{ color: "var(--tx-3)" }}>
+              {groupLabel(g)}
+            </p>
+            {g.members.map((i) => chip(i, true))}
+          </div>
+        ),
+      )}
+    </>
   );
 }
 
@@ -937,7 +1088,18 @@ function ClassForm({
   if (!durationOk) missing.push("Duration (1–480 minutes)");
   if (schedules.length === 0) missing.push("at least one day");
   else if (schedules.some((s) => !s.startTime || !s.endTime)) missing.push("a start and end time on every day");
-  const canSubmit = missing.length === 0;
+  // The same day, start and end twice in one class: the server would quietly
+  // merge them (its reconcile keys on day|start|end), so refuse out loud here.
+  const repeated: string[] = [];
+  {
+    const seen = new Set<string>();
+    for (const s of schedules) {
+      const k = `${s.dayOfWeek}|${s.startTime}|${s.endTime}`;
+      if (seen.has(k) && s.startTime && s.endTime) repeated.push(`${DAYS_FULL[s.dayOfWeek]} ${s.startTime}–${s.endTime}`);
+      seen.add(k);
+    }
+  }
+  const canSubmit = missing.length === 0 && repeated.length === 0;
 
   function submit() {
     if (!canSubmit) return;
@@ -1480,9 +1642,14 @@ function ClassForm({
 
       {/* Actions — a disabled button always says why (UI-RULES §7). */}
       <div className="pt-2 space-y-2">
-        {!canSubmit && (
+        {missing.length > 0 && (
           <p role="status" className="text-xs" style={{ color: "var(--tx-3)" }}>
             Fill in: {missing.join(", ")}.
+          </p>
+        )}
+        {repeated.length > 0 && (
+          <p role="status" className="text-xs" style={{ color: "var(--hue-warning-ink)" }}>
+            {repeated.join(", ")} {repeated.length === 1 ? "is" : "are"} already in this class — remove the repeat or change its time.
           </p>
         )}
         <div className="flex gap-3">
@@ -1622,6 +1789,14 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
     visibleClasses
       .flatMap((cls) => cls.schedules.filter((s) => s.dayOfWeek === i).map((slot) => ({ cls, slot })))
       .sort((a, b) => a.slot.startTime.localeCompare(b.slot.startTime) || a.cls.name.localeCompare(b.cls.name))
+  );
+  // A busy club: once any day has DENSE_DAY sessions the week needs wider
+  // columns (it scrolls sideways below that, as it already does at 980 px) and
+  // the compact two-line chip, so a time range and a full name both fit.
+  const dense = byDay.some((d) => d.length >= DENSE_DAY);
+  // Same name, day, start and place twice: almost certainly entered twice.
+  const duplicates = duplicateSessionKeys(
+    visibleClasses.flatMap((cls) => cls.schedules.map((slot) => ({ key: slot.id, name: cls.name, dayOfWeek: slot.dayOfWeek, startTime: slot.startTime, place: placeOf(cls) }))),
   );
 
   function openAdd() {
@@ -2095,18 +2270,17 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                         const agendaDate = weekDates[agendaDow === 0 ? 6 : agendaDow - 1];
                         const agendaIsToday = agendaDate.getTime() === todayMidnight.getTime();
                         const chipStates = chipStatesFor(byDay[agendaDow], agendaIsToday, cancelledToday);
-                        return byDay[agendaDow].map(({ cls, slot }, i) => (
-                          <ClassChip
-                            key={slot.id}
-                            cls={cls}
-                            startTime={slot.startTime}
+                        return (
+                          <DaySessions
+                            sessions={byDay[agendaDow]}
+                            states={chipStates}
+                            size="agenda"
+                            duplicates={duplicates}
                             primaryColor={primaryColor}
                             canManage={canManage}
                             onEdit={openEdit}
-                            size="agenda"
-                            state={chipStates[i]}
                           />
-                        ));
+                        );
                       })()
                     )}
                   </div>
@@ -2114,7 +2288,10 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
 
                 {/* ── Desktop: the week grid ─────────────────────────────── */}
                 <div className="hidden md:block overflow-x-auto xl:overflow-x-visible -mx-1 px-1">
-                  <div className="grid grid-cols-7 min-w-[980px] xl:min-w-0 gap-2">
+                  <div
+                    className={["grid grid-cols-7 gap-2", dense ? "min-w-[1260px] 2xl:min-w-0" : "min-w-[980px] xl:min-w-0"].join(" ")}
+                    data-dense={dense || undefined}
+                  >
                     {weekDates.map((date, rawIdx) => {
                       const dow = rawIdx === 6 ? 0 : rawIdx + 1;
                       const daySessions = byDay[dow];
@@ -2149,6 +2326,11 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                             >
                               {date.getDate()}
                             </div>
+                            {dense && (
+                              <p className="text-[10px] tabular-nums mt-1" style={{ color: "var(--tx-4)" }}>
+                                {daySessions.length === 0 ? "—" : `${daySessions.length} session${daySessions.length === 1 ? "" : "s"}`}
+                              </p>
+                            )}
                           </div>
 
                           {/* Classes */}
@@ -2156,17 +2338,15 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                             {daySessions.length === 0 ? (
                               <p className="text-center text-[11px] py-4" style={{ color: "var(--tx-4)" }}>—</p>
                             ) : (
-                              daySessions.map(({ cls, slot }, i) => (
-                                <ClassChip
-                                  key={slot.id}
-                                  cls={cls}
-                                  startTime={slot.startTime}
-                                  primaryColor={primaryColor}
-                                  canManage={canManage}
-                                  onEdit={openEdit}
-                                  state={chipStates[i]}
-                                />
-                              ))
+                              <DaySessions
+                                sessions={daySessions}
+                                states={chipStates}
+                                size={daySessions.length >= DENSE_DAY ? "compact" : "grid"}
+                                duplicates={duplicates}
+                                primaryColor={primaryColor}
+                                canManage={canManage}
+                                onEdit={openEdit}
+                              />
                             )}
                           </div>
                         </div>

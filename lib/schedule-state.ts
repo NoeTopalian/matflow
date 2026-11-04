@@ -161,6 +161,29 @@ export interface PackedLanes {
 const overlaps = (a: SessionSpan, b: SessionSpan) => a.startMin < b.endMin && b.startMin < a.endMin;
 
 /**
+ * Sessions that look like the same one entered twice: the same class name
+ * (case and spacing ignored), weekday, start time and place. Two genuine
+ * sessions on different mats are not duplicates; the place tells them apart.
+ * Returns the keys of every member of every such group — a hygiene flag for
+ * staff, never a merge.
+ */
+export function duplicateSessionKeys(
+  sessions: { key: string; name: string; dayOfWeek: number; startTime: string; place: string | null | undefined }[],
+): Set<string> {
+  const norm = (s: string | null | undefined) => (s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  const groups = new Map<string, string[]>();
+  for (const s of sessions) {
+    const g = `${norm(s.name)}|${s.dayOfWeek}|${s.startTime}|${norm(s.place)}`;
+    const list = groups.get(g);
+    if (list) list.push(s.key);
+    else groups.set(g, [s.key]);
+  }
+  const flagged = new Set<string>();
+  for (const keys of groups.values()) if (keys.length > 1) keys.forEach((k) => flagged.add(k));
+  return flagged;
+}
+
+/**
  * Cluster transitively overlapping sessions and assign lanes so no two
  * overlapping sessions share one. Deterministic: sessions are placed in start
  * order, longer first on a tie, then input order; each takes the lowest lane
