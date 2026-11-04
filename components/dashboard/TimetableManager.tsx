@@ -221,21 +221,25 @@ function ClassChip({
     borderLeft: duplicate ? "3px solid var(--hue-warning)" : state === "live" ? `3px solid ${color}` : undefined,
     opacity: state === "ended" || state === "cancelled" ? 0.55 : undefined,
   };
-  if (size === "compact") {
-    // A busy day (DENSE_DAY+ sessions) or an overlap group: the time range and
-    // place on one line, the full name on its own line — never a truncated
-    // name beside a time.
-    return (
-      <button
-        type="button"
-        onClick={() => canManage && onEdit(cls)}
-        disabled={!canManage}
-        aria-label={label}
-        data-session-state={state ?? undefined}
-        data-chip-size="compact"
-        className="w-full text-left rounded-[10px] px-2 py-1 transition-all enabled:hover:brightness-110 disabled:cursor-default"
-        style={frame}
-      >
+  const compact = size === "compact";
+  // One button element for every size (the UI-RULES ratchet counts raw buttons;
+  // this one predates it). Compact — a busy day or an overlap group — puts the
+  // time range and place on one line and the full name on its own line.
+  return (
+    <button
+      type="button"
+      onClick={() => canManage && onEdit(cls)}
+      disabled={!canManage}
+      aria-label={label}
+      data-session-state={state ?? undefined}
+      data-chip-size={compact ? "compact" : undefined}
+      className={[
+        "w-full text-left transition-all enabled:hover:brightness-110 disabled:cursor-default",
+        compact ? "rounded-[10px] px-2 py-1" : agenda ? "flex items-start gap-2.5 rounded-xl px-3 py-2.5" : "flex items-start gap-1.5 rounded-xl px-2 py-1.5",
+      ].join(" ")}
+      style={frame}
+    >
+      {compact ? (<>
         <span className="flex items-center gap-1.5 min-w-0">
           <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
           <span className="text-[11px] font-bold tabular-nums shrink-0" style={{ color: "var(--tx-1)" }}>{timeText}</span>
@@ -269,23 +273,7 @@ function ClassChip({
             </span>
           )}
         </span>
-      </button>
-    );
-  }
-  return (
-    <button
-      type="button"
-      onClick={() => canManage && onEdit(cls)}
-      disabled={!canManage}
-      aria-label={label}
-      data-session-state={state ?? undefined}
-      className={[
-        "w-full text-left flex items-start gap-1.5 transition-all",
-        "enabled:hover:brightness-110 disabled:cursor-default",
-        agenda ? "rounded-xl px-3 py-2.5 gap-2.5" : "rounded-xl px-2 py-1.5",
-      ].join(" ")}
-      style={frame}
-    >
+      </>) : (<>
       <div
         className={agenda ? "w-2 h-2 rounded-full shrink-0 mt-1.5" : "w-1.5 h-1.5 rounded-full shrink-0 mt-1"}
         style={{ background: color }}
@@ -326,6 +314,7 @@ function ClassChip({
           {statePill}
         </p>
       </div>
+      </>)}
     </button>
   );
 }
