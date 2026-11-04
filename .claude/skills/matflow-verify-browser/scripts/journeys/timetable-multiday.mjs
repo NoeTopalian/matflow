@@ -253,9 +253,9 @@ try {
     await main.getByRole("button", { name: "Switch back to rank gate" }).click();
     const reopened = main.waitForResponse(isPatch(gi.id));
     await main.getByRole("button", { name: "Save changes", exact: true }).click();
-    const again = main.getByRole("dialog").last().getByRole("button", { name: "Save — bookings are kept" });
-    if (await again.isVisible().catch(() => false)) await again.click();
+    // Opening a class turns no one away, so no confirmation is asked for.
     expect((await reopened).status()).toBe(200);
+    await expect(main.getByText("Check who this change turns away")).toHaveCount(0);
     await expect(main.getByRole("dialog")).toHaveCount(0);
     const afterSwitchBack = await rosterRows(gi.id);
     expect(afterSwitchBack).toBe(0);

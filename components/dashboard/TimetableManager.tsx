@@ -340,6 +340,7 @@ function ClassCard({
   onGenerate,
   generating,
   busy,
+  locked,
   canManage,
 }: {
   cls: ClassRow;
@@ -354,6 +355,8 @@ function ClassCard({
   generating: boolean;
   /** The lifecycle action in flight for THIS class, if any. */
   busy: "pause" | "archive" | "restore" | null;
+  /** True while a lifecycle action runs on ANY class — one at a time, like its dialog. */
+  locked: boolean;
   canManage: boolean;
 }) {
   const color = cls.color ?? primaryColor;
@@ -399,7 +402,7 @@ function ClassCard({
               variant="ghost"
               size="compact"
               onClick={() => onPause(cls)}
-              disabled={busy !== null}
+              disabled={locked}
               loading={busy === "pause"}
               aria-label={`Pause ${cls.name}`}
               title="Pause: take it off the timetable for now"
@@ -412,7 +415,7 @@ function ClassCard({
               variant="ghost"
               size="compact"
               onClick={() => onArchive(cls)}
-              disabled={busy !== null}
+              disabled={locked}
               loading={busy === "archive"}
               aria-label={`Archive ${cls.name}`}
               title="Archive: remove it from the timetable, keep its history"
@@ -519,12 +522,13 @@ function ClassCard({
  */
 function InactiveClassList({
   classes,
-  busyId,
+  busy,
   onRestore,
   onArchive,
 }: {
   classes: ClassRow[];
-  busyId: string | null;
+  /** The lifecycle action in flight on any class, if one is. */
+  busy: { id: string; action: "pause" | "archive" | "restore" } | null;
   onRestore: (c: ClassRow) => void;
   onArchive: (c: ClassRow) => void;
 }) {
@@ -569,10 +573,11 @@ function InactiveClassList({
                       variant="ghost"
                       size="compact"
                       onClick={() => onArchive(cls)}
-                      disabled={busyId === cls.id}
+                      disabled={busy !== null}
+                      loading={busy?.id === cls.id && busy.action === "archive"}
                       aria-label={`Archive ${cls.name}`}
                     >
-                      <Archive className="size-3.5" />
+                      {!(busy?.id === cls.id && busy.action === "archive") && <Archive className="size-3.5" />}
                       Archive
                     </Button>
                   )}
@@ -580,7 +585,8 @@ function InactiveClassList({
                     variant="secondary"
                     size="compact"
                     onClick={() => onRestore(cls)}
-                    loading={busyId === cls.id}
+                    disabled={busy !== null}
+                    loading={busy?.id === cls.id && busy.action === "restore"}
                     aria-label={`${isArchived ? "Restore" : "Resume"} ${cls.name}`}
                   >
                     {isArchived ? <ArchiveRestore className="size-3.5" /> : <Play className="size-3.5" />}
@@ -1541,6 +1547,8 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   }
   // Which class has a lifecycle action in flight, and which action — so the
   // right button shows it (Archive is busy from its history read onwards).
+  // One at a time, like its confirmation: every class's lifecycle buttons are
+  // disabled meanwhile, and each handler clears only its own entry.
   const [lifecycleBusy, setLifecycleBusy] = useState<{ id: string; action: "pause" | "archive" | "restore" } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null);
@@ -1800,7 +1808,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
       } catch (err) {
         showToast(err instanceof Error && err.message ? err.message : "Could not pause the class. Try again.", "error");
       } finally {
-        setLifecycleBusy(null);
+        setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
       }
     },
     [ask, showToast, router]
@@ -1831,7 +1839,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         counts = { attendanceCount: body.attendanceCount, rosterCount: body.rosterCount, bookingCount: body.bookingCount };
       } catch (err) {
         showToast(err instanceof Error && err.message ? err.message : "Could not check this class's history. Try again.", "error");
-        setLifecycleBusy(null);
+        setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
         return;
       }
       const confirmed = await ask({
@@ -1840,7 +1848,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         confirmLabel: "Archive class",
       });
       if (!confirmed) {
-        setLifecycleBusy(null);
+        setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
         return;
       }
       try {
@@ -1857,7 +1865,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
       } catch (err) {
         showToast(err instanceof Error && err.message ? err.message : "Could not archive the class. Try again.", "error");
       } finally {
-        setLifecycleBusy(null);
+        setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
       }
     },
     [ask, showToast, router]
@@ -1889,7 +1897,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
           "error",
         );
       } finally {
-        setLifecycleBusy(null);
+        setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
       }
     },
     [showToast, router]
@@ -2247,6 +2255,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                   onGenerate={handleGenerate}
                   generating={generating === cls.id}
                   busy={lifecycleBusy?.id === cls.id ? lifecycleBusy.action : null}
+                  locked={lifecycleBusy !== null}
                   canManage={canManage}
                 />
               ))}
@@ -2261,7 +2270,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
       {canManage && (
         <InactiveClassList
           classes={inactiveClasses}
-          busyId={lifecycleBusy?.id ?? null}
+          busy={lifecycleBusy}
           onRestore={handleRestore}
           onArchive={handleArchive}
         />

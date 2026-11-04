@@ -39,10 +39,13 @@ let calls: Call[];
 // Archive's history read; a test may hold it open to look at the busy state.
 let countsGate: Promise<void>;
 let countsOk: boolean;
+// The server's roster per class, so every reply carries it as the real one does.
+let serverRoster: Record<string, { memberId: string; name?: string }[]>;
 beforeEach(() => {
   calls = [];
   countsGate = Promise.resolve();
   countsOk = true;
+  serverRoster = { c1: [] };
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -57,11 +60,12 @@ beforeEach(() => {
     }
     if (url.includes("dryRun=1")) return { ok: true, json: async () => ({ dryRun: true, restriction: null }) };
     if (method === "PATCH") {
-      // As the server now replies: the class's roster after the save.
-      const roster = Array.isArray(body?.roster)
-        ? (body!.roster as { memberId: string }[]).map((r) => ({ memberId: r.memberId, name: MEMBERS.find((m) => m.id === r.memberId)?.name }))
-        : undefined;
-      return { ok: true, json: async () => ({ id: "c1", ...(roster ? { roster } : {}) }) };
+      // As the server replies: the class's roster after the save, always.
+      const id = url.split("/").at(-1)!;
+      if (Array.isArray(body?.roster)) {
+        serverRoster[id] = (body!.roster as { memberId: string }[]).map((r) => ({ memberId: r.memberId, name: MEMBERS.find((m) => m.id === r.memberId)?.name }));
+      }
+      return { ok: true, json: async () => ({ id, roster: serverRoster[id] ?? [] }) };
     }
     return { ok: true, json: async () => [] };
   }));
@@ -118,7 +122,9 @@ describe("switching a squad class back to open", () => {
 });
 
 describe("a just-saved squad reopens as a squad", () => {
-  it("uses the roster in the save's reply, without waiting for a page refresh", async () => {
+  // The server half (the reply carrying the roster) is pinned by
+  // tests/integration/class-roster-reply-db.test.ts; this is the client half.
+  it("the client adopts the roster in the save's reply, without waiting for a page refresh", async () => {
     render(<TimetableManager {...PROPS} initialClasses={[makeClass()]} initialInactiveClasses={[]} />);
     await openEdit();
     fireEvent.click(screen.getByRole("button", { name: "+ Select specific people (comp class)" }));
@@ -161,5 +167,51 @@ describe("Archive shows it is working from the click", () => {
     await waitFor(() => expect(archive.disabled).toBe(false));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(calls.some((c) => c.method === "DELETE" && !c.url.includes("dryRun"))).toBe(false);
+  });
+
+  it("while one class archives, every class's Pause and Archive wait; all are free again after", async () => {
+    let release!: () => void;
+    countsGate = new Promise((r) => { release = r; });
+    render(<TimetableManager {...PROPS} initialClasses={[makeClass(), makeClass({ id: "c2", name: "Nogi" })]} initialInactiveClasses={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Archive Gi" }));
+    const others = ["Pause Nogi", "Archive Nogi", "Pause Gi"].map((name) => screen.getByRole("button", { name }) as HTMLButtonElement);
+    await waitFor(() => expect(others.every((b) => b.disabled)).toBe(true));
+    // Only the acting button spins.
+    expect(screen.getByRole("button", { name: "Archive Nogi" }).getAttribute("aria-busy")).toBeNull();
+    release();
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(others.every((b) => !b.disabled)).toBe(true));
+  });
+
+  it("in the Paused list, archiving spins Archive, not Resume", async () => {
+    let release!: () => void;
+    countsGate = new Promise((r) => { release = r; });
+    render(
+      <TimetableManager {...PROPS} initialClasses={[makeClass()]} initialInactiveClasses={[makeClass({ id: "c3", name: "Kids", lifecycle: "paused" })]} />,
+    );
+    const archive = screen.getByRole("button", { name: "Archive Kids" });
+    const resume = screen.getByRole("button", { name: "Resume Kids" }) as HTMLButtonElement;
+    fireEvent.click(archive);
+    await waitFor(() => expect(archive.getAttribute("aria-busy")).toBe("true"));
+    expect(resume.getAttribute("aria-busy")).toBeNull();
+    expect(resume.disabled).toBe(true);
+    release();
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(resume.disabled).toBe(false));
+  });
+});
+
+describe("an unrelated edit to a squad class", () => {
+  it("keeps the squad: the reply carries it and the class reopens as that squad", async () => {
+    serverRoster.c1 = SQUAD.roster!;
+    render(<TimetableManager {...PROPS} initialClasses={[SQUAD]} initialInactiveClasses={[]} />);
+    await openEdit();
+    fireEvent.change(screen.getAllByLabelText("Start time")[0], { target: { value: "19:00" } });
+    await save();
+    // A squad class's form resends its roster unchanged on any save.
+    expect(lastPatch().roster).toEqual([{ memberId: "m1" }]);
+    await openEdit();
+    expect(screen.getByRole("button", { name: "Switch back to rank gate" })).toBeTruthy();
+    expect((await screen.findByRole("checkbox", { name: /Member 1/ }) as HTMLInputElement).checked).toBe(true);
   });
 });
