@@ -156,9 +156,11 @@ describe("overlapping sessions sit in a group", () => {
     const texts = chipsIn(clash).map((b) => b.textContent);
     // Same name and start: ordered by place, so the two Mat 1 entries sit together.
     expect(texts[0]).toContain("18:40–19:30");
-    expect(texts[0]).toContain("Duplicate?"); // the flag takes the place's spot
+    expect(texts[0]).toContain("· Mat 1");
+    expect(texts[0]).toContain("Duplicate?");
     expect(texts[1]).toContain("Duplicate?");
     expect(texts[2]).toContain("· Mat 2");
+    expect(texts[2]).not.toContain("Duplicate?");
     expect(chipsIn(clash).some((b) => b.dataset.chipSize === "compact")).toBe(false);
   });
 });

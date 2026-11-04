@@ -213,9 +213,11 @@ try {
       expect(groups).toBe(5);
       expect(counts).toEqual(["14", "2", "—", "—", "—", "—", "—"]);
       expect(clashTexts[0]).toContain("18:40–19:30");
+      expect(clashTexts[0]).toContain("Mat 1");
       expect(clashTexts[0]).toContain("Duplicate?");
       expect(clashTexts[1]).toContain("Duplicate?");
       expect(clashTexts[2]).toContain("Mat 2");
+      expect(clashTexts[2]).not.toContain("Duplicate?");
       expect(noSideScroll).toBe(true);
       expect(Math.min(...heights)).toBeGreaterThanOrEqual(44);
       return { groups, counts, minRowHeight: Math.min(...heights), noSideScroll };

@@ -199,11 +199,21 @@ function ClassChip({
       {sessionStateLabel(state)}
     </span>
   );
-  // The word is in the text colour, not amber: amber ink measures under 4.5:1
-  // on the chip's tint (UI-RULES §8). The amber left edge carries the colour,
-  // and the accessible name says "(possible duplicate)" — never colour alone.
-  const duplicateText = duplicate && (
-    <span className="font-semibold" style={{ color: "var(--tx-1)" }}>Duplicate?</span>
+  // A tag beside the name, not in the place's slot (the mat still shows — it is
+  // part of what makes it a duplicate). Ink is the text colour: amber ink
+  // measures under 4.5:1 on the chip's tint (UI-RULES §8). The amber edge and
+  // tint carry the colour; the accessible name says "(possible duplicate)".
+  const duplicateTag = duplicate && (
+    <span
+      className="inline-flex items-center rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px] shrink-0"
+      style={{
+        background: "color-mix(in srgb, var(--hue-warning) 18%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--hue-warning) 55%, transparent)",
+        color: "var(--tx-1)",
+      }}
+    >
+      Duplicate?
+    </span>
   );
   const frame = {
     background: hex(color, 0.12),
@@ -230,7 +240,7 @@ function ClassChip({
           <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
           <span className="text-[11px] font-bold tabular-nums shrink-0" style={{ color: "var(--tx-1)" }}>{timeText}</span>
           {statePill}
-          <span className="ml-auto text-[10px] truncate" style={{ color: "var(--tx-2)" }}>{duplicateText || place}</span>
+          {place && <span className="ml-auto text-[10px] truncate" style={{ color: "var(--tx-2)" }}>{place}</span>}
         </span>
         <span className="flex items-start gap-1 min-w-0 pl-3">
           <span
@@ -240,6 +250,7 @@ function ClassChip({
           >
             {cls.name}
           </span>
+          {duplicateTag}
           {cls.isKids && (
             <span
               className="inline-flex items-center rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px] shrink-0"
@@ -293,8 +304,8 @@ function ClassChip({
         </p>
         <p className={agenda ? "text-xs mt-0.5 flex items-center gap-1.5 flex-wrap" : "text-[10px] mt-0.5 flex items-center gap-1 flex-wrap"} style={{ color: "var(--tx-3)" }}>
           <span className="tabular-nums">{timeText}</span>
-          {place && !duplicate && <span>· {place}</span>}
-          {duplicateText}
+          {place && <span>· {place}</span>}
+          {duplicateTag}
           {cls.isKids && (
             <span
               className="inline-flex items-center rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px]"
