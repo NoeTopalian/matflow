@@ -30,6 +30,12 @@ const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
 
 const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
+  // P6 (lost update): the active slot ids the client saw when it loaded the
+  // class. With `schedules`, the save is refused (409) if the class's slots
+  // have changed since — a tab that never saw a day added elsewhere used to
+  // deactivate it, because the submitted list was taken as the whole truth.
+  // Omitted = legacy behaviour (the list is the truth); the app always sends it.
+  baseScheduleIds: z.array(z.string().min(1)).max(50).optional(),
   description: z.string().max(500).optional().nullable(),
   coachName: z.string().max(100).optional().nullable(),
   coachUserId: z.string().optional().nullable(),
@@ -143,6 +149,33 @@ type ScheduleChange = {
 /** A slot's identity for diffing. Day + both times — a 30-minute change is a different slot. */
 const slotKey = (s: { dayOfWeek: number; startTime: string; endTime: string }) =>
   `${s.dayOfWeek}|${s.startTime}|${s.endTime}`;
+
+export const STALE_SCHEDULES_REFUSAL =
+  "This class's days changed since you opened it. Reload to see the latest, then make your change again.";
+
+/** Thrown inside the write transaction so nothing of the edit survives (see the catch below). */
+class StaleScheduleError extends Error {}
+
+/**
+ * P6: are the class's active slots still the ones the client saw? `base` is
+ * the id list the form loaded with; any id added or removed since means
+ * another tab or device edited the days, and a save built on the old list
+ * would quietly undo that. Scoped through the class relation (RULES §4).
+ */
+async function schedulesAreFresh(
+  tx: Parameters<Parameters<typeof withTenantContext>[1]>[0],
+  tenantId: string,
+  classId: string,
+  base: string[],
+): Promise<boolean> {
+  const current = await tx.classSchedule.findMany({
+    where: { classId, class: { tenantId }, isActive: true },
+    select: { id: true },
+  });
+  const now = new Set(current.map((s) => s.id));
+  const seen = new Set(base);
+  return now.size === seen.size && [...now].every((id) => seen.has(id));
+}
 
 /**
  * Bring ClassSchedule into line with `desired`, then reconcile the
@@ -420,6 +453,13 @@ export async function PATCH(req: Request, { params }: Params) {
       // one on the timetable would offer a class that never ran.
       if (parsed.data.isActive === true && owned.sourceImportJobId) return { kind: "imported" as const };
 
+      // P6: a save built on days another tab has since changed is refused
+      // before anything else runs (the write transaction checks again under
+      // the Class lock; this one also covers the dry-run preview).
+      if (wantsSchedules && parsed.data.baseScheduleIds && !(await schedulesAreFresh(tx, tenantId, id, parsed.data.baseScheduleIds))) {
+        return { kind: "stale" as const };
+      }
+
       // Finding E-2: rank, coach and location ids must be this club's. Checked
       // here, before the write transaction, so a refusal never follows a
       // committed roster delete (returning from an interactive transaction
@@ -465,6 +505,9 @@ export async function PATCH(req: Request, { params }: Params) {
     if (pre.kind === "bad_ref") return NextResponse.json({ error: pre.error }, { status: 400 });
     if (pre.kind === "imported") {
       return NextResponse.json({ error: IMPORTED_CLASS_REACTIVATE_REFUSAL, reason: "imported_class" }, { status: 409 });
+    }
+    if (pre.kind === "stale") {
+      return NextResponse.json({ error: STALE_SCHEDULES_REFUSAL, reason: "stale_schedules" }, { status: 409 });
     }
     const { rosterIds } = pre;
 
@@ -620,6 +663,10 @@ export async function PATCH(req: Request, { params }: Params) {
       // the day marker every instance row carries is the club's calendar date,
       // and resolving it from the process's clock is the defect the round-3
       // migration closes.
+      // P6: checked again under the Class lock — the pre-flight ran outside it.
+      if (wantsSchedules && parsed.data.baseScheduleIds && !(await schedulesAreFresh(tx, tenantId, id, parsed.data.baseScheduleIds))) {
+        throw new StaleScheduleError();
+      }
       const scheduleChange = wantsSchedules
         ? await reconcileSchedules(
             tx,
@@ -765,6 +812,9 @@ export async function PATCH(req: Request, { params }: Params) {
     // booking change survives a refused tier list.
     if (e instanceof TierRefError) {
       return NextResponse.json({ error: CLASS_REF_ERRORS.tier }, { status: 400 });
+    }
+    if (e instanceof StaleScheduleError) {
+      return NextResponse.json({ error: STALE_SCHEDULES_REFUSAL, reason: "stale_schedules" }, { status: 409 });
     }
     return NextResponse.json({ error: "Failed to update class" }, { status: 500 });
   }

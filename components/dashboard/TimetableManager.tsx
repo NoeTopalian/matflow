@@ -1137,6 +1137,10 @@ function ClassForm({
       ...(!initial?.id || !sameTierSet(allowedTierIds, initialTierIds) ? { allowedTierIds } : {}),
       color,
       schedules,
+      // P6: the slot ids this form loaded with. The server refuses the save
+      // (409) if the class's days changed since, instead of taking this list
+      // as the whole truth and quietly undoing another tab's change.
+      ...(initial?.id ? { baseScheduleIds: (initial.schedules ?? []).map((s) => s.id) } : {}),
     });
   }
 
