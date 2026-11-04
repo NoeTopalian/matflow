@@ -35,7 +35,7 @@ const updateSchema = z.object({
   // have changed since — a tab that never saw a day added elsewhere used to
   // deactivate it, because the submitted list was taken as the whole truth.
   // Omitted = legacy behaviour (the list is the truth); the app always sends it.
-  baseScheduleIds: z.array(z.string().min(1)).max(50).optional(),
+  baseScheduleIds: z.array(z.string().min(1).max(64)).max(50).optional(),
   description: z.string().max(500).optional().nullable(),
   coachName: z.string().max(100).optional().nullable(),
   coachUserId: z.string().optional().nullable(),
@@ -151,7 +151,7 @@ const slotKey = (s: { dayOfWeek: number; startTime: string; endTime: string }) =
   `${s.dayOfWeek}|${s.startTime}|${s.endTime}`;
 
 export const STALE_SCHEDULES_REFUSAL =
-  "This class's days changed since you opened it. Reload to see the latest, then make your change again.";
+  "This class's days or times changed since you opened it. Reload to see the latest, then make your change again.";
 
 /** Thrown inside the write transaction so nothing of the edit survives (see the catch below). */
 class StaleScheduleError extends Error {}
@@ -551,6 +551,12 @@ export async function PATCH(req: Request, { params }: Params) {
         SELECT "id", "isActive", "deletedAt", "requiredRankId", "maxRankId" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
       `;
       if (owned.length === 0) return null;
+      // P6: checked again now that the Class lock is held — the pre-flight ran
+      // outside it. First thing after the lock, so a doomed save does no
+      // roster, tier or booking work and holds the lock no longer than needed.
+      if (wantsSchedules && parsed.data.baseScheduleIds && !(await schedulesAreFresh(tx, tenantId, id, parsed.data.baseScheduleIds))) {
+        throw new StaleScheduleError();
+      }
       // T6b: whether the class is live once this edit lands. A Resume /
       // Restore makes it live; a pause does not; otherwise it keeps its state.
       const liveAfterEdit = parsed.data.isActive === true
@@ -663,10 +669,6 @@ export async function PATCH(req: Request, { params }: Params) {
       // the day marker every instance row carries is the club's calendar date,
       // and resolving it from the process's clock is the defect the round-3
       // migration closes.
-      // P6: checked again under the Class lock — the pre-flight ran outside it.
-      if (wantsSchedules && parsed.data.baseScheduleIds && !(await schedulesAreFresh(tx, tenantId, id, parsed.data.baseScheduleIds))) {
-        throw new StaleScheduleError();
-      }
       const scheduleChange = wantsSchedules
         ? await reconcileSchedules(
             tx,
@@ -762,7 +764,8 @@ export async function PATCH(req: Request, { params }: Params) {
       entityType: "Class",
       entityId: id,
       metadata: {
-        fields: Object.keys(parsed.data),
+        // `baseScheduleIds` is the client's freshness check, not a field of the class.
+        fields: Object.keys(parsed.data).filter((k) => k !== "baseScheduleIds"),
         // D2: no booking is cancelled by an edit any more. The members it newly
         // turns away (bookings kept) are on the durable
         // class.bookings.kept_ineligible rows written inside the transaction;

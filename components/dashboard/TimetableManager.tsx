@@ -323,6 +323,16 @@ function ClassChip({
 /** A day with this many sessions switches the week to the wider, compact layout. */
 export const DENSE_DAY = 7;
 
+/** A refused save: the server's sentence, plus its machine reason when it gives one. */
+class ApiRefusal extends Error {
+  reason?: string;
+  constructor(message: string, reason?: string) {
+    super(message);
+    this.reason = reason;
+  }
+}
+export type SaveError = { message: string; reason?: string };
+
 export type SessionGroup = SessionCluster;
 
 /**
@@ -984,7 +994,7 @@ function ClassForm({
   onCancel: () => void;
   saving: boolean;
   /** Why the last save was refused, shown beside the buttons (UI-RULES §7) — never a toast over them. */
-  error?: string | null;
+  error?: SaveError | null;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [coachName, setCoachName] = useState(initial?.coachName ?? "");
@@ -1660,19 +1670,24 @@ function ClassForm({
         {error && (
           // A refused save stays with the form, above the buttons it belongs
           // to: on a phone a toast sat over Cancel / Save and the class
-          // status controls.
-          <p
-            role="alert"
-            data-testid="class-form-save-error"
-            className="text-xs rounded-lg px-3 py-2"
+          // status controls. A stale-days refusal offers the way out, since
+          // an installed app has no reload control of its own.
+          <div
+            className="flex items-start gap-2 rounded-lg px-3 py-2"
             style={{
               background: "color-mix(in srgb, var(--hue-danger) 10%, transparent)",
               border: "1px solid color-mix(in srgb, var(--hue-danger) 35%, transparent)",
-              color: "var(--hue-danger-ink)",
             }}
           >
-            {error}
-          </p>
+            <p role="alert" data-testid="class-form-save-error" className="text-xs flex-1" style={{ color: "var(--hue-danger-ink)" }}>
+              {error.message}
+            </p>
+            {error.reason === "stale_schedules" && (
+              <Button variant="secondary" size="compact" onClick={() => window.location.reload()} className="shrink-0">
+                Reload
+              </Button>
+            )}
+          </div>
         )}
         {missing.length > 0 && (
           <p role="status" className="text-xs" style={{ color: "var(--tx-3)" }}>
@@ -1710,7 +1725,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<SaveError | null>(null);
   const [generating, setGenerating] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   // Desktop: the week grid, or one day on a time axis (lanes show what clashes).
@@ -1880,7 +1895,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         });
         if (!preview.ok) {
           const body = await preview.json().catch(() => null);
-          throw new Error(describeApiError(body));
+          throw new ApiRefusal(describeApiError(body), body?.reason);
         }
         const { restriction } = (await preview.json()) as { restriction?: RestrictionPreview };
         if (previewHasRefusals(restriction)) {
@@ -1900,7 +1915,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         });
         if (!res.ok) {
           const body = await res.json().catch(() => null);
-          throw new Error(describeApiError(body));
+          throw new ApiRefusal(describeApiError(body), body?.reason);
         }
         // `scheduleChange` is a report about the save, not a field of the
         // class — destructured out so it never lands on the row.
@@ -1947,7 +1962,10 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
       setDrawerOpen(false);
     } catch (err) {
       // In the form, beside the buttons — not a toast that lands on top of them.
-      setSaveError(err instanceof Error && err.message ? err.message : "Something went wrong. Try again.");
+      setSaveError({
+        message: err instanceof Error && err.message ? err.message : "Something went wrong. Try again.",
+        reason: err instanceof ApiRefusal ? err.reason : undefined,
+      });
     } finally {
       setSaving(false);
     }

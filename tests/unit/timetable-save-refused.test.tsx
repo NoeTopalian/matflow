@@ -23,7 +23,7 @@ const GI: ClassRow = {
   roster: [], lifecycle: "active", archivedAt: null,
 };
 const PROPS = { rankSystems: [], coachUsers: [], primaryColor: "var(--color-primary)", role: "owner", currentUserId: "u1" };
-const STALE = "This class's days changed since you opened it. Reload to see the latest, then make your change again.";
+const STALE = "This class's days or times changed since you opened it. Reload to see the latest, then make your change again.";
 
 type Call = { url: string; method: string; body: Record<string, unknown> | undefined };
 let calls: Call[] = [];
@@ -60,6 +60,8 @@ describe("a refused save stays with the form", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(STALE);
     expect(screen.getByTestId("class-form-save-error")).toBe(alert);
+    // A stale-days refusal offers the way out: an installed app has no reload control.
+    expect(screen.getByRole("button", { name: "Reload" })).toBeTruthy();
     expect((screen.getByLabelText("Class Name") as HTMLInputElement).value).toBe("Gi Fundamentals");
     expect(screen.getByRole("button", { name: "Save changes" })).toBeTruthy();
     expect(toastSpy).not.toHaveBeenCalled();

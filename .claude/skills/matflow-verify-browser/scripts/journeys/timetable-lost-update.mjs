@@ -15,7 +15,10 @@ const L = ledger("timetable-lost-update");
 const errors = [];
 
 const gridDay = (page, day) => page.locator(".grid-cols-7 > div").filter({ has: page.getByText(day, { exact: true }) });
-const chips = (page, day, name) => gridDay(page, day).getByRole("button", { name: new RegExp(`^Edit ${name}( \\([a-z]+\\))?$`) });
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const chips = (page, day, name) => gridDay(page, day).getByRole("button", { name: new RegExp(`^Edit ${escapeRe(name)}( \\([a-z]+\\))?$`) });
+// The refusal must be IN the form (role=alert beside the buttons), never a toast.
+const refusal = (page) => page.getByRole("dialog").getByTestId("class-form-save-error");
 const activeDays = async (classId) =>
   (await q(`select "dayOfWeek" from "ClassSchedule" where "classId" = $1 and "isActive" = true order by "dayOfWeek"`, [classId])).map((r) => r.dayOfWeek);
 const nameOf = async (classId) => (await q(`select name from "Class" where id = $1`, [classId]))[0]?.name;
@@ -91,7 +94,8 @@ try {
     await main.getByRole("button", { name: "Save changes", exact: true }).click();
     const status = (await res).status();
     expect(status).toBe(409);
-    await expect(main.getByText(/days changed since you opened it/).first()).toBeVisible();
+    await expect(refusal(main)).toContainText(/days or times changed since you opened it/);
+    await expect(main.getByRole("dialog").getByRole("button", { name: "Reload" })).toBeVisible();
     await expect(main.getByRole("dialog")).toHaveCount(1);
     await expect(main.getByLabel("Class Name", { exact: true })).toHaveValue("Gi Fundamentals");
     const days = await activeDays(gi.id);
@@ -130,7 +134,7 @@ try {
     await main.getByRole("button", { name: "Save changes", exact: true }).click();
     const status = (await preview).status();
     expect(status).toBe(409);
-    await expect(main.getByText(/days changed since you opened it/).first()).toBeVisible();
+    await expect(refusal(main)).toContainText(/days or times changed since you opened it/);
     await expect(main.getByText("Check who this change turns away")).toHaveCount(0);
     const roster = (await q(`select count(*)::int n from "ClassRoster" where "classId" = $1`, [gi.id]))[0].n;
     expect(roster).toBe(0);
@@ -161,8 +165,9 @@ try {
       const res = phone.waitForResponse(isPatch(gi.id));
       await phone.getByRole("button", { name: "Save changes", exact: true }).click();
       expect((await res).status()).toBe(409);
-      const msg = phone.getByText(/days changed since you opened it/).first();
-      await expect(msg).toBeVisible();
+      const msg = refusal(phone);
+      await expect(msg).toContainText(/days or times changed since you opened it/);
+      await expect(phone.getByRole("dialog").getByRole("button", { name: "Reload" })).toBeVisible();
       const [m, save] = await Promise.all([msg.boundingBox(), phone.getByRole("button", { name: "Save changes", exact: true }).boundingBox()]);
       const noSideScroll = await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
       await shot(phone, "timetable-lost-update-phone");

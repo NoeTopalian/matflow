@@ -70,6 +70,28 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("P6 — a stale tab cannot delet
     expect((await activeSlots(created.id)).map(s => s.dayOfWeek)).toEqual([1, 2]);
   }, 120_000);
 
+  it("a change that lands between the pre-flight and the Class lock is still caught, under the lock", async () => {
+    // The pre-flight runs outside the lock. Hold the Class row locked, let a
+    // save's pre-flight pass on the current base, add Tuesday inside the
+    // holding transaction, commit — the save then takes the lock, re-checks,
+    // and must refuse. Nothing else proves the in-lock check exists.
+    const created = await (await POST(request("/api/classes", "POST", { name: "Judo", duration: 60, schedules: [slot(1)] }))).json();
+    const base = await activeSlots(created.id);
+    let inFlight: Promise<Response> | null = null;
+    await withRlsBypass(async tx => {
+      await tx.$queryRaw`SELECT "id" FROM "Class" WHERE "id" = ${created.id} FOR UPDATE`;
+      inFlight = patch(created.id, { name: "Judo (renamed)", schedules: [slot(1)], baseScheduleIds: base.map(s => s.id) });
+      // Long enough for the pre-flight's handful of round trips to the test branch.
+      await new Promise(r => setTimeout(r, 4000));
+      await tx.classSchedule.create({ data: { classId: created.id, dayOfWeek: 2, startTime: "18:00", endTime: "19:00", startDate: new Date() } });
+    });
+    const res = await inFlight!;
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ reason: "stale_schedules" });
+    expect((await activeSlots(created.id)).map(s => s.dayOfWeek)).toEqual([1, 2]);
+    expect((await className(created.id))?.name).toBe("Judo");
+  }, 120_000);
+
   it("a removed day is also a change: a base that still lists it is refused", async () => {
     const created = await (await POST(request("/api/classes", "POST", { name: "No-Gi", duration: 60, schedules: [slot(1), slot(3)] }))).json();
     const base = await activeSlots(created.id);
