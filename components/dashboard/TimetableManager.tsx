@@ -199,8 +199,11 @@ function ClassChip({
       {sessionStateLabel(state)}
     </span>
   );
+  // The word is in the text colour, not amber: amber ink measures under 4.5:1
+  // on the chip's tint (UI-RULES §8). The amber left edge carries the colour,
+  // and the accessible name says "(possible duplicate)" — never colour alone.
   const duplicateText = duplicate && (
-    <span className="font-semibold" style={{ color: "var(--hue-warning-ink)" }}>Duplicate?</span>
+    <span className="font-semibold" style={{ color: "var(--tx-1)" }}>Duplicate?</span>
   );
   const frame = {
     background: hex(color, 0.12),
@@ -227,12 +230,13 @@ function ClassChip({
           <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
           <span className="text-[11px] font-bold tabular-nums shrink-0" style={{ color: "var(--tx-1)" }}>{timeText}</span>
           {statePill}
-          <span className="ml-auto text-[10px] truncate" style={{ color: "var(--tx-3)" }}>{duplicateText || place}</span>
+          <span className="ml-auto text-[10px] truncate" style={{ color: "var(--tx-2)" }}>{duplicateText || place}</span>
         </span>
-        <span className="flex items-center gap-1 min-w-0 pl-3">
+        <span className="flex items-start gap-1 min-w-0 pl-3">
           <span
-            className={["text-xs font-semibold truncate min-w-0 flex-1", state === "cancelled" ? "line-through" : ""].join(" ")}
+            className={["text-xs font-semibold leading-tight break-words line-clamp-2 min-w-0 flex-1", state === "cancelled" ? "line-through" : ""].join(" ")}
             style={{ color: "var(--tx-1)" }}
+            title={cls.name}
           >
             {cls.name}
           </span>
@@ -360,13 +364,16 @@ function DaySessions({
 }) {
   const chip = (i: number, grouped: boolean) => {
     const { cls, slot } = sessions[i];
+    // A compact chip always carries its range and place — on a busy day the
+    // class duration is not the slot's span (Open Mat 09:30–11:00 on a 60 min class).
+    const ranged = grouped || size === "compact";
     return (
       <ClassChip
         key={slot.id}
         cls={cls}
         startTime={slot.startTime}
-        endTime={grouped ? slot.endTime : undefined}
-        place={grouped ? placeOf(cls) : undefined}
+        endTime={ranged ? slot.endTime : undefined}
+        place={ranged ? placeOf(cls) : undefined}
         duplicate={duplicates.has(slot.id)}
         primaryColor={primaryColor}
         canManage={canManage}
@@ -388,9 +395,10 @@ function DaySessions({
             aria-label={`${groupLabel(g)}, ${minToTime(g.startMin)} to ${minToTime(g.endMin)}`}
             data-testid="overlap-group"
             className="space-y-1 pl-1.5 ml-0.5 border-l-2"
-            style={{ borderColor: "var(--bd-strong, rgba(0,0,0,0.16))" }}
+            style={{ borderColor: "var(--bd-active)" }}
           >
-            <p className={size === "agenda" ? "text-xs font-semibold" : "text-[10px] font-semibold"} style={{ color: "var(--tx-3)" }}>
+            {/* The group's accessible name already says this (with the range); don't read it twice. */}
+            <p aria-hidden="true" className={size === "agenda" ? "text-xs font-semibold" : "text-[10px] font-semibold"} style={{ color: "var(--tx-2)" }}>
               {groupLabel(g)}
             </p>
             {g.members.map((i) => chip(i, true))}
@@ -1088,14 +1096,18 @@ function ClassForm({
   if (!durationOk) missing.push("Duration (1–480 minutes)");
   if (schedules.length === 0) missing.push("at least one day");
   else if (schedules.some((s) => !s.startTime || !s.endTime)) missing.push("a start and end time on every day");
-  // The same day, start and end twice in one class: the server would quietly
-  // merge them (its reconcile keys on day|start|end), so refuse out loud here.
+  // The same day and start twice in one class: a session is class + day +
+  // start everywhere downstream (one ClassInstance per start, cancel keys,
+  // the member view), so a second row at the same start would be quietly
+  // collapsed by the server. Refuse out loud here instead.
   const repeated: string[] = [];
   {
     const seen = new Set<string>();
     for (const s of schedules) {
-      const k = `${s.dayOfWeek}|${s.startTime}|${s.endTime}`;
-      if (seen.has(k) && s.startTime && s.endTime) repeated.push(`${DAYS_FULL[s.dayOfWeek]} ${s.startTime}–${s.endTime}`);
+      if (!s.startTime) continue;
+      const k = `${s.dayOfWeek}|${s.startTime}`;
+      const label = `${DAYS_FULL[s.dayOfWeek]} ${s.startTime}`;
+      if (seen.has(k) && !repeated.includes(label)) repeated.push(label);
       seen.add(k);
     }
   }
@@ -1649,7 +1661,7 @@ function ClassForm({
         )}
         {repeated.length > 0 && (
           <p role="status" className="text-xs" style={{ color: "var(--hue-warning-ink)" }}>
-            {repeated.join(", ")} {repeated.length === 1 ? "is" : "are"} already in this class — remove the repeat or change its time.
+            {repeated.join(", ")} {repeated.length === 1 ? "is" : "are"} already in this class — remove the repeat or change its start time.
           </p>
         )}
         <div className="flex gap-3">
@@ -1788,7 +1800,11 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   const byDay: DaySession[][] = Array.from({ length: 7 }, (_, i) =>
     visibleClasses
       .flatMap((cls) => cls.schedules.filter((s) => s.dayOfWeek === i).map((slot) => ({ cls, slot })))
-      .sort((a, b) => a.slot.startTime.localeCompare(b.slot.startTime) || a.cls.name.localeCompare(b.cls.name))
+      .sort((a, b) =>
+        a.slot.startTime.localeCompare(b.slot.startTime)
+        || a.cls.name.localeCompare(b.cls.name)
+        || (placeOf(a.cls) ?? "").localeCompare(placeOf(b.cls) ?? "")
+        || a.cls.id.localeCompare(b.cls.id))
   );
   // A busy club: once any day has DENSE_DAY sessions the week needs wider
   // columns (it scrolls sideways below that, as it already does at 980 px) and
@@ -1796,7 +1812,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   const dense = byDay.some((d) => d.length >= DENSE_DAY);
   // Same name, day, start and place twice: almost certainly entered twice.
   const duplicates = duplicateSessionKeys(
-    visibleClasses.flatMap((cls) => cls.schedules.map((slot) => ({ key: slot.id, name: cls.name, dayOfWeek: slot.dayOfWeek, startTime: slot.startTime, place: placeOf(cls) }))),
+    visibleClasses.flatMap((cls) => cls.schedules.map((slot) => ({ key: slot.id, name: cls.name, dayOfWeek: slot.dayOfWeek, startTime: slot.startTime, place: placeOf(cls), venue: cls.locationId }))),
   );
 
   function openAdd() {
@@ -2287,9 +2303,12 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                 </div>
 
                 {/* ── Desktop: the week grid ─────────────────────────────── */}
-                <div className="hidden md:block overflow-x-auto xl:overflow-x-visible -mx-1 px-1">
+                {/* The content column is capped at max-w-6xl (1152 px), so a dense
+                    week's 1260 px grid never fits: it scrolls sideways inside this
+                    box at every desktop width, never the page (UI-RULES §4a). */}
+                <div className={["hidden md:block overflow-x-auto -mx-1 px-1", dense ? "" : "xl:overflow-x-visible"].join(" ")} data-testid="week-scroller">
                   <div
-                    className={["grid grid-cols-7 gap-2", dense ? "min-w-[1260px] 2xl:min-w-0" : "min-w-[980px] xl:min-w-0"].join(" ")}
+                    className={["grid grid-cols-7 gap-2", dense ? "min-w-[1260px]" : "min-w-[980px] xl:min-w-0"].join(" ")}
                     data-dense={dense || undefined}
                   >
                     {weekDates.map((date, rawIdx) => {

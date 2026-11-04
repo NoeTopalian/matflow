@@ -88,12 +88,31 @@ try {
     // Every compact chip shows its whole name: no ellipsis on a 180 px column.
     const clipped = await chips(mon).evaluateAll((els) =>
       els.map((e) => [...e.querySelectorAll("span")].filter((s) => s.scrollWidth > s.clientWidth + 1).map((s) => s.textContent)).flat());
-    const scroll = await main.evaluate(() => {
-      const box = document.querySelector(".grid-cols-7")?.parentElement;
-      return { weekScrollsSideways: !!box && box.scrollWidth > box.clientWidth, pageScrollsSideways: document.documentElement.scrollWidth > window.innerWidth + 1 };
+    // The week scrolls sideways inside its own box (overflow-x: auto) and nothing
+    // else does: at md+ the shell's scrollport is <main>, so measure that, not the
+    // document. Checked at the common laptop widths and a wide desktop.
+    const measure = () => main.evaluate(() => {
+      const box = document.querySelector('[data-testid="week-scroller"]');
+      const m = document.querySelector("main");
+      return {
+        boxOverflowX: box ? getComputedStyle(box).overflowX : null,
+        weekScrollsSideways: !!box && box.scrollWidth > box.clientWidth,
+        mainScrollsSideways: !!m && m.scrollWidth > m.clientWidth + 1,
+        documentScrollsSideways: document.documentElement.scrollWidth > window.innerWidth + 1,
+      };
     });
+    const scroll = {};
+    for (const width of [1280, 1440, 1600]) {
+      await main.setViewportSize({ width, height: 900 });
+      scroll[width] = await measure();
+    }
+    await main.setViewportSize({ width: 1280, height: 900 });
     expect(clipped).toEqual([]);
-    expect(scroll.pageScrollsSideways).toBe(false);
+    for (const width of [1280, 1440, 1600]) {
+      expect(scroll[width].boxOverflowX).toBe("auto");
+      expect(scroll[width].mainScrollsSideways).toBe(false);
+      expect(scroll[width].documentScrollsSideways).toBe(false);
+    }
     return { sizes: [...new Set(sizes)], scroll };
   });
 
@@ -120,7 +139,8 @@ try {
   await section("duplicate", "the two 'Beginners Course Gi' at 18:40 on Mat 1 are flagged 'Duplicate?'; the Mat 2 one is not; all three stay on the grid and each opens its own class", async () => {
     const clash = gridDay(main, "Mon").getByRole("group").nth(3);
     const labels = (await chips(clash).evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")))).map((l) => l.replace(/ \((?:live|next|ended|cancelled)\)/, ""));
-    expect(labels).toEqual(["Edit Beginners Course Gi (possible duplicate)", "Edit Beginners Course Gi", "Edit Beginners Course Gi (possible duplicate)"]);
+    // Same name and start sort by place, so the two Mat 1 entries sit together.
+    expect(labels).toEqual(["Edit Beginners Course Gi (possible duplicate)", "Edit Beginners Course Gi (possible duplicate)", "Edit Beginners Course Gi"]);
     await expect(clash.getByText("Duplicate?")).toHaveCount(2);
     const ids = [];
     for (let i = 0; i < 3; i++) {
@@ -130,7 +150,9 @@ try {
       await main.keyboard.press("Escape");
       await expect(main.getByRole("dialog")).toHaveCount(0);
     }
-    expect(ids).toEqual([4, 1, 1]); // the first class has four days; the other two one each
+    // Three distinct classes: one with four days, two with one (the Mat 1 pair's order within itself is by id).
+    expect([...ids].sort()).toEqual([1, 1, 4]);
+    expect(ids[2]).toBe(1); // the Mat 2 class is last
     return { labels, dayRowsPerClass: ids };
   });
 
@@ -151,12 +173,12 @@ try {
     return { tabStops: seen.length };
   });
 
-  await section("form-refusal", "an identical slot twice in one class is refused with the typed values kept; changing the day clears it; Escape saves nothing", async () => {
+  await section("form-refusal", "the same day and start twice in one class is refused with the typed values kept; changing the day clears it; Escape saves nothing", async () => {
     await main.getByRole("button", { name: "Add class", exact: true }).first().click();
     await main.getByLabel("Class Name", { exact: true }).fill("Wrestling");
     await main.getByRole("button", { name: "Add day", exact: true }).click();
     await main.getByRole("button", { name: "Add day", exact: true }).click();
-    await expect(main.getByText(/Monday 18:00–19:00 is already in this class/)).toBeVisible();
+    await expect(main.getByText(/Monday 18:00 is already in this class/)).toBeVisible();
     await expect(main.getByRole("button", { name: "Create class", exact: true })).toBeDisabled();
     await expect(main.getByLabel("Class Name", { exact: true })).toHaveValue("Wrestling");
     await main.getByLabel("Day of the week").nth(1).selectOption("2");
@@ -191,8 +213,9 @@ try {
       expect(groups).toBe(5);
       expect(counts).toEqual(["14", "2", "—", "—", "—", "—", "—"]);
       expect(clashTexts[0]).toContain("18:40–19:30");
-      expect(clashTexts[0]).toContain("Mat 1");
-      expect(clashTexts[1]).toContain("Mat 2");
+      expect(clashTexts[0]).toContain("Duplicate?");
+      expect(clashTexts[1]).toContain("Duplicate?");
+      expect(clashTexts[2]).toContain("Mat 2");
       expect(noSideScroll).toBe(true);
       expect(Math.min(...heights)).toBeGreaterThanOrEqual(44);
       return { groups, counts, minRowHeight: Math.min(...heights), noSideScroll };

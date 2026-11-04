@@ -154,9 +154,11 @@ describe("overlapping sessions sit in a group", () => {
     expect(groupsIn(agenda)).toHaveLength(5);
     const clash = groupsIn(agenda)[3];
     const texts = chipsIn(clash).map((b) => b.textContent);
+    // Same name and start: ordered by place, so the two Mat 1 entries sit together.
     expect(texts[0]).toContain("18:40–19:30");
     expect(texts[0]).toContain("Duplicate?"); // the flag takes the place's spot
-    expect(texts[1]).toContain("· Mat 2");
+    expect(texts[1]).toContain("Duplicate?");
+    expect(texts[2]).toContain("· Mat 2");
     expect(chipsIn(clash).some((b) => b.dataset.chipSize === "compact")).toBe(false);
   });
 });
@@ -168,38 +170,55 @@ describe("duplicates are flagged, never merged", () => {
     const chips = chipsIn(clash);
     expect(chips.map((b) => b.getAttribute("aria-label"))).toEqual([
       "Edit Beginners Course Gi (possible duplicate)",
-      "Edit Beginners Course Gi",
       "Edit Beginners Course Gi (possible duplicate)",
+      "Edit Beginners Course Gi",
     ]);
     expect(within(clash).getAllByText("Duplicate?")).toHaveLength(2);
     expect(within(column(container, 0)).getAllByText("Duplicate?")).toHaveLength(2);
     expect(chipsIn(clash)).toHaveLength(3); // all three still drawn
   });
 
-  it("duplicateSessionKeys ignores case and spacing in the name, and treats a different place as distinct", () => {
+  it("duplicateSessionKeys ignores case and spacing in the name, and treats a different place or venue as distinct", () => {
     const flagged = duplicateSessionKeys([
       { key: "a", name: "Beginners Gi", dayOfWeek: 1, startTime: "18:40", place: "Mat 1" },
       { key: "b", name: " beginners  gi ", dayOfWeek: 1, startTime: "18:40", place: "mat 1" },
       { key: "c", name: "Beginners Gi", dayOfWeek: 1, startTime: "18:40", place: "Mat 2" },
       { key: "d", name: "Beginners Gi", dayOfWeek: 2, startTime: "18:40", place: "Mat 1" },
       { key: "e", name: "Beginners Gi", dayOfWeek: 1, startTime: "18:45", place: "Mat 1" },
+      { key: "f", name: "Beginners Gi", dayOfWeek: 1, startTime: "18:40", place: "Mat 1", venue: "venue-b" },
     ]);
     expect([...flagged].sort()).toEqual(["a", "b"]);
   });
+
+  it("groupSessions: an overnight pair is one group of two lanes", () => {
+    const late = cls("Late Open Mat", null, [[5, "22:00", "00:30"]]);
+    const wrestling = cls("Wrestling", null, [[5, "23:00", "23:30"]]);
+    const g = groupSessions([late, wrestling].map((c) => ({ cls: c, slot: c.schedules[0] })));
+    expect(g).toEqual([{ members: [0, 1], lanes: 2, startMin: 22 * 60, endMin: 24 * 60 + 30 }]);
+  });
 });
 
-describe("the form refuses an identical slot in one class", () => {
-  it("two Monday 18:00–19:00 rows: says so, disables Create; changing one day clears it", async () => {
+describe("the form refuses the same day and start twice in one class", () => {
+  it("two Monday 18:00 rows: says so once, disables Create; a different end is still the same session; changing the day clears it", async () => {
     render(<TimetableManager initialClasses={QUIET} {...PROPS} />);
     fireEvent.click(screen.getAllByRole("button", { name: "Add class" })[0]);
     fireEvent.change(screen.getByLabelText("Class Name"), { target: { value: "Wrestling" } });
     fireEvent.click(screen.getByRole("button", { name: "Add day" }));
     fireEvent.click(screen.getByRole("button", { name: "Add day" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add day" }));
     const days = screen.getAllByLabelText("Day of the week");
-    expect(days).toHaveLength(2);
-    expect(screen.getByText(/Monday 18:00–19:00 is already in this class/)).toBeTruthy();
+    expect(days).toHaveLength(3);
+    // Three identical rows name the slot once.
+    expect(screen.getAllByText(/Monday 18:00 is already in this class/)).toHaveLength(1);
+    expect(screen.getByText(/Monday 18:00 is already in this class/).textContent).not.toMatch(/Monday 18:00, Monday 18:00/);
     expect((screen.getByRole("button", { name: "Create class" }) as HTMLButtonElement).disabled).toBe(true);
+    // A longer second row (same start, later end) is the same session downstream: still refused.
+    const ends = screen.queryAllByLabelText("End time");
+    if (ends.length) fireEvent.change(ends[1], { target: { value: "19:30" } });
+    else fireEvent.change(screen.getAllByLabelText("Duration (mins)")[1], { target: { value: "90" } });
+    expect(screen.getAllByText(/Monday 18:00 is already in this class/)).toHaveLength(1);
     fireEvent.change(days[1], { target: { value: "2" } });
+    fireEvent.change(days[2], { target: { value: "3" } });
     expect(screen.queryByText(/already in this class/)).toBeNull();
     expect((screen.getByRole("button", { name: "Create class" }) as HTMLButtonElement).disabled).toBe(false);
   });

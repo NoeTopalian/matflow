@@ -168,12 +168,13 @@ const overlaps = (a: SessionSpan, b: SessionSpan) => a.startMin < b.endMin && b.
  * staff, never a merge.
  */
 export function duplicateSessionKeys(
-  sessions: { key: string; name: string; dayOfWeek: number; startTime: string; place: string | null | undefined }[],
+  sessions: { key: string; name: string; dayOfWeek: number; startTime: string; place: string | null | undefined; venue?: string | null }[],
 ): Set<string> {
   const norm = (s: string | null | undefined) => (s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
   const groups = new Map<string, string[]>();
   for (const s of sessions) {
-    const g = `${norm(s.name)}|${s.dayOfWeek}|${s.startTime}|${norm(s.place)}`;
+    // `venue` is the club location (ADR-001 D2): the same mat name at two venues is two mats.
+    const g = `${s.venue ?? ""}|${norm(s.name)}|${s.dayOfWeek}|${s.startTime}|${norm(s.place)}`;
     const list = groups.get(g);
     if (list) list.push(s.key);
     else groups.set(g, [s.key]);
