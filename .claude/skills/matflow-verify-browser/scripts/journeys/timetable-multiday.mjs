@@ -228,59 +228,54 @@ try {
   });
 
   const rosterRows = async (id) => (await q(`select count(*)::int n from "ClassRoster" where "classId" = $1`, [id]))[0].n;
-  // The PATCH reply carries no roster; the row is only complete again once the
-  // refresh each save asks for has landed — so wait for it, as a person would.
-  const refreshed = (page) =>
-    page.waitForResponse((r) => new URL(r.url()).pathname === "/dashboard/timetable" && r.request().headers().rsc === "1");
-  await section("eligibility", "limiting Gi to one member shows who it turns away, saves on confirm, keeps both days, and reopens as a squad", async () => {
+  await section("eligibility", "limiting Gi to one member shows who it turns away and saves on confirm; it reopens as that squad at once; switching back clears it", async () => {
     await openEdit(main, "Gi", 1);
     await main.getByRole("button", { name: "+ Select specific people (comp class)" }).click();
     await main.getByRole("checkbox", { name: /Member 1/ }).check();
     const preview = main.waitForResponse((r) => r.request().method() === "PATCH" && r.url().includes(`/api/classes/${gi.id}?dryRun=1`));
     const saved = main.waitForResponse(isPatch(gi.id));
-    const afterSave = refreshed(main);
     await main.getByRole("button", { name: "Save changes", exact: true }).click();
     expect((await preview).status()).toBe(200);
     const confirm = main.getByRole("dialog").last();
     await expect(confirm.getByText("Check who this change turns away")).toBeVisible();
     await confirm.getByRole("button", { name: "Save — bookings are kept" }).click();
     expect((await saved).status()).toBe(200);
-    await afterSave;
     await expect(main.getByRole("dialog")).toHaveCount(0);
     await expectDays(main, "Gi", { 1: 1, 2: 1 });
     const limited = await rosterRows(gi.id);
     expect(limited).toBe(1);
-    // A form opened before the refresh lands is seeded from the row without
-    // its roster (~6 s on this harness). Reopen until the squad shows.
-    const t0 = Date.now();
-    let squadShown = false;
-    while (!squadShown && Date.now() - t0 < 45_000) {
-      await openEdit(main, "Gi", 1);
-      squadShown = (await main.getByRole("button", { name: "Switch back to rank gate" }).count()) > 0;
-      if (!squadShown) {
-        await main.keyboard.press("Escape");
-        await expect(main.getByRole("dialog")).toHaveCount(0);
-        await main.waitForTimeout(1000);
-      }
-    }
-    const squadAfterMs = Date.now() - t0;
-    expect(squadShown).toBe(true);
+    // Reopened straight away — no waiting for the page refresh: the save's
+    // reply now carries the roster.
+    await openEdit(main, "Gi", 1);
+    await expect(main.getByRole("button", { name: "Switch back to rank gate" })).toBeVisible();
     await expect(main.getByRole("checkbox", { name: /Member 1/ })).toBeChecked({ timeout: 20_000 });
+    await expect(main.getByRole("checkbox", { name: /Member 2/ })).not.toBeChecked();
     await main.getByRole("button", { name: "Switch back to rank gate" }).click();
     const reopened = main.waitForResponse(isPatch(gi.id));
     await main.getByRole("button", { name: "Save changes", exact: true }).click();
     const again = main.getByRole("dialog").last().getByRole("button", { name: "Save — bookings are kept" });
     if (await again.isVisible().catch(() => false)) await again.click();
     expect((await reopened).status()).toBe(200);
+    await expect(main.getByRole("dialog")).toHaveCount(0);
+    const afterSwitchBack = await rosterRows(gi.id);
+    expect(afterSwitchBack).toBe(0);
+    await openEdit(main, "Gi", 1);
+    await expect(main.getByRole("button", { name: "+ Select specific people (comp class)" })).toBeVisible();
+    await main.keyboard.press("Escape");
+    await expect(main.getByRole("dialog")).toHaveCount(0);
     await expectDays(main, "Gi", { 1: 1, 2: 1 });
-    return { rosterRowsWhileLimited: limited, squadShownAfterMs: squadAfterMs, rosterRowsAfterOpening: await rosterRows(gi.id), slots: await activeSlots(gi.id) };
+    return { rosterRowsWhileLimited: limited, rosterRowsAfterSwitchBack: afterSwitchBack, slots: await activeSlots(gi.id) };
   });
 
   await section("archive", "archive Comp with its counted confirmation, then restore it: one list at a time, both days back", async () => {
     // Archive reads the class's history counts before it asks (a dry run).
     const counts = main.waitForResponse((r) => r.request().method() === "DELETE" && r.url().includes(`/api/classes/${comp.id}?dryRun=1`));
     const t0 = Date.now();
-    await main.getByRole("button", { name: "Archive Comp", exact: true }).first().click();
+    const archiveBtn = main.getByRole("button", { name: "Archive Comp", exact: true }).first();
+    await archiveBtn.click();
+    // Busy from the click, while the history is read — not an idle button.
+    await expect(archiveBtn).toHaveAttribute("aria-busy", "true", { timeout: 2_000 });
+    await expect(archiveBtn).toBeDisabled();
     expect((await counts).status()).toBe(200);
     const countsMs = Date.now() - t0;
     const dialog = main.getByRole("dialog", { name: "Archive Comp?" });

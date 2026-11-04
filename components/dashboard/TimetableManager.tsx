@@ -339,6 +339,7 @@ function ClassCard({
   onArchive,
   onGenerate,
   generating,
+  busy,
   canManage,
 }: {
   cls: ClassRow;
@@ -351,6 +352,8 @@ function ClassCard({
   onGenerate: (id: string) => void;
   /** True while THIS class's instance generation is in flight. */
   generating: boolean;
+  /** The lifecycle action in flight for THIS class, if any. */
+  busy: "pause" | "archive" | "restore" | null;
   canManage: boolean;
 }) {
   const color = cls.color ?? primaryColor;
@@ -396,21 +399,26 @@ function ClassCard({
               variant="ghost"
               size="compact"
               onClick={() => onPause(cls)}
+              disabled={busy !== null}
+              loading={busy === "pause"}
               aria-label={`Pause ${cls.name}`}
               title="Pause: take it off the timetable for now"
               className="w-7 px-0"
             >
-              <Pause className="size-3.5" />
+              {/* Icon-only: the spinner takes the icon's place, not a second slot. */}
+              {busy !== "pause" && <Pause className="size-3.5" />}
             </Button>
             <Button
               variant="ghost"
               size="compact"
               onClick={() => onArchive(cls)}
+              disabled={busy !== null}
+              loading={busy === "archive"}
               aria-label={`Archive ${cls.name}`}
               title="Archive: remove it from the timetable, keep its history"
               className="w-7 px-0"
             >
-              <Archive className="size-3.5" />
+              {busy !== "archive" && <Archive className="size-3.5" />}
             </Button>
           </div>
         )}
@@ -958,7 +966,15 @@ function ClassForm({
       maxRankId: useRoster ? null : (maxRankId || null),
       // Task 12: roster array is sent when in comp-class mode. Server clears
       // requiredRankId/maxRankId on the row to enforce mutual exclusion.
-      roster: useRoster ? rosterMemberIds.map((id) => ({ memberId: id })) : undefined,
+      // Switching an existing squad back with no rank chosen sends [] so the
+      // server clears it: omitted, the squad stayed in force while the form
+      // said anyone could attend. With a rank chosen the rank gate clears the
+      // squad itself — and any roster array, even [], would null the rank.
+      roster: useRoster
+        ? rosterMemberIds.map((id) => ({ memberId: id }))
+        : initial?.roster?.length && !requiredRankId && !maxRankId
+          ? []
+          : undefined,
       // T6a: [] = everyone. Sent on create, and on edit only when changed, so
       // an unrelated edit never rewrites the list; clearing every tick sends
       // [] and reopens the class.
@@ -1523,7 +1539,9 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
     setClasses(initialClasses);
     setInactiveClasses(initialInactiveClasses);
   }
-  const [lifecycleBusy, setLifecycleBusy] = useState<string | null>(null);
+  // Which class has a lifecycle action in flight, and which action — so the
+  // right button shows it (Archive is busy from its history read onwards).
+  const [lifecycleBusy, setLifecycleBusy] = useState<{ id: string; action: "pause" | "archive" | "restore" } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1764,7 +1782,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         confirmLabel: "Pause class",
       });
       if (!confirmed) return;
-      setLifecycleBusy(cls.id);
+      setLifecycleBusy({ id: cls.id, action: "pause" });
       try {
         const res = await fetch(`/api/classes/${cls.id}`, {
           method: "PATCH",
@@ -1793,6 +1811,9 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   const handleArchive = useCallback(
     async (cls: ClassRow) => {
       let counts: { attendanceCount: number; rosterCount: number; bookingCount: number };
+      // Busy from the click: the history read can take seconds, and an idle
+      // button invited a second click and a second confirmation.
+      setLifecycleBusy({ id: cls.id, action: "archive" });
       try {
         const preview = await fetch(`/api/classes/${cls.id}?dryRun=1`, { method: "DELETE" });
         const body = (await preview.json().catch(() => null)) as Partial<typeof counts> | null;
@@ -1810,6 +1831,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         counts = { attendanceCount: body.attendanceCount, rosterCount: body.rosterCount, bookingCount: body.bookingCount };
       } catch (err) {
         showToast(err instanceof Error && err.message ? err.message : "Could not check this class's history. Try again.", "error");
+        setLifecycleBusy(null);
         return;
       }
       const confirmed = await ask({
@@ -1817,8 +1839,10 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         body: archiveConfirmBody(counts, cls.lifecycle),
         confirmLabel: "Archive class",
       });
-      if (!confirmed) return;
-      setLifecycleBusy(cls.id);
+      if (!confirmed) {
+        setLifecycleBusy(null);
+        return;
+      }
       try {
         const res = await fetch(`/api/classes/${cls.id}`, { method: "DELETE" });
         const body = (await res.json().catch(() => null)) as { archivedAt?: string } | null;
@@ -1844,7 +1868,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   const handleRestore = useCallback(
     async (cls: ClassRow) => {
       const wasArchived = cls.lifecycle === "archived";
-      setLifecycleBusy(cls.id);
+      setLifecycleBusy({ id: cls.id, action: "restore" });
       try {
         const res = await fetch(`/api/classes/${cls.id}`, {
           method: "PATCH",
@@ -2222,6 +2246,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                   onArchive={handleArchive}
                   onGenerate={handleGenerate}
                   generating={generating === cls.id}
+                  busy={lifecycleBusy?.id === cls.id ? lifecycleBusy.action : null}
                   canManage={canManage}
                 />
               ))}
@@ -2236,7 +2261,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
       {canManage && (
         <InactiveClassList
           classes={inactiveClasses}
-          busyId={lifecycleBusy}
+          busyId={lifecycleBusy?.id ?? null}
           onRestore={handleRestore}
           onArchive={handleArchive}
         />
